@@ -1,0 +1,89 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kod-types",
+    "crates/kod-error",
+    "crates/kod-config",
+    "crates/kod-provider",
+    "crates/kod-provider-ollama",
+    "crates/kod-skills",
+    "crates/kod-memory",
+    "crates/kod-tools",
+    "crates/kod-swarm",
+    "crates/kod-tui",
+    "crates/kod-cli",
+    "crates/kod-core",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["KOD Team"]
+
+[workspace.dependencies]
+# Core
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.19"
+anyhow = "1.0.104"
+bytes = "1.11.1"
+
+# Async
+tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "process", "net", "io-util", "io-std"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
+eventsource-stream = "0.2.3"
+futures = "0.3.31"
+async-stream = "0.3"
+
+# Data structures
+compact_str = { version = "0.10.0", features = ["serde"] }
+bitflags = { version = "2.13.0", features = ["serde"] }
+slotmap = "1.1.1"
+arc-swap = "1.9.2"
+parking_lot = "0.12.5"
+
+# Storage
+redb = "4.1.0"
+
+# Time & dirs
+time = { version = "0.3.55", features = ["serde", "formatting", "parsing"] }
+dirs = "6.0.0"
+
+# CLI & config
+clap = { version = "4.6.6", features = ["derive", "env"] }
+toml = "1.1.2"
+
+# Git & GitHub
+octocrab = "0.54.1"
+
+# Tools & schema
+schemars = "1.2.2"
+walkdir = "2.5.0"
+globset = "0.4.20"
+notify = "8.2.0"
+fs4 = "1.1.0"
+
+# Tracing
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json", "fmt"] }
+
+# Embedding (heavy — isolated in kod-embed)
+fastembed = "5.17.4"
+
+# TUI
+ratatui = "0.29.0"
+crossterm = { version = "0.28.1", features = ["event-stream"] }
+
+# Testing
+proptest = "1.11.0"
+rstest = "0.26.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 1
