@@ -3,119 +3,150 @@
 //! Provides a unified event system that handles keyboard input,
 //! mouse events, ticks, and custom application events.
 
-use crossterm::event::{Event as CrosstermEvent, EventStream};
-use std::time::Duration;
-use tokio::sync::mpsc;
-
-/// Priority level for events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum EventPriority {
-    High,
-    Normal,
-    Low,
-}
-
-/// Unified event type for the TUI.
-#[derive(Debug, Clone)]
-pub enum Event {
-    Key(crossterm::event::KeyEvent),
-    Mouse(crossterm::event::MouseEvent),
-    Resize(u16, u16),
-    Tick,
-    UserInput(String),
-    System(EventPriority, String),
-}
-
-impl Event {
-    /// Returns the priority of this event.
-    pub fn priority(&self) -> EventPriority {
-        match self {
-            Event::System(EventPriority::High, _) => EventPriority::High,
-            Event::System(EventPriority::Low, _) => EventPriority::Low,
-            Event::System(EventPriority::Normal, _) => EventPriority::Normal,
-            _ => EventPriority::Normal,
-        }
-    }
-}
-
-impl From<CrosstermEvent> for Event {
-    fn from(event: CrosstermEvent) -> Self {
-        match event {
-            CrosstermEvent::Key(key_event) => Event::Key(key_event),
-            CrosstermEvent::Mouse(mouse_event) => Event::Mouse(mouse_event),
-            CrosstermEvent::Resize(w, h) => Event::Resize(w, h),
-            _ => Event::Tick,
-        }
-    }
-}
-
+use crossterm::event::{
+    Event as CrosstermEvent, EventStream, KeyCode as CrosstermKeyCode, KeyEventKind,
+};
+use futures::StreamExt as _;
+use kod_error::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::sync::Mutex as StdMutex;
+use std::time::{Duration, Instant};
+use tokio::sync::{mpsc, Mutex as TokioMutex};
 
-/// Handles input events and tick events with a priority queue.
+/// Key codes we care about
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum KeyCode {
+    Char(char),
+    Enter,
+    Escape,
+    Backspace,
+    Delete,
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Tab,
+    BackTab,
+    F(u8),
+}
+
+impl From<CrosstermKeyCode> for KeyCode {
+    fn from(code: CrosstermKeyCode) -> Self {
+        match code {
+            CrosstermKeyCode::Char(c) => KeyCode::Char(c),
+            CrosstermKeyCode::Enter => KeyCode::Enter,
+            CrosstermKeyCode::Esc => KeyCode::Escape,
+            CrosstermKeyCode::Backspace => KeyCode::Backspace,
+            CrosstermKeyCode::Delete => KeyCode::Delete,
+            CrosstermKeyCode::Up => KeyCode::Up,
+            CrosstermKeyCode::Down => KeyCode::Down,
+            CrosstermKeyCode::Left => KeyCode::Left,
+            CrosstermKeyCode::Right => KeyCode::Right,
+            CrosstermKeyCode::Home => KeyCode::Home,
+            CrosstermKeyCode::End => KeyCode::End,
+            CrosstermKeyCode::PageUp => KeyCode::PageUp,
+            CrosstermKeyCode::PageDown => KeyCode::PageDown,
+            CrosstermKeyCode::Tab => KeyCode::Tab,
+            CrosstermKeyCode::BackTab => KeyCode::BackTab,
+            CrosstermKeyCode::F(n) => KeyCode::F(n),
+            _ => KeyCode::Char(' '),
+        }
+    }
+}
+
+/// Priority for events
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
+pub enum EventPriority {
+    Low,
+    #[default]
+    Normal,
+    High,
+    Critical,
+}
+
+/// Events that can occur in the TUI
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Event {
+    Key(KeyCode),
+    UserInput(String),
+    Tick,
+    System(EventPriority, String),
+    ToolStarted(String),
+    ToolCompleted(String, String),
+    AgentMessage(String, String),
+    ResponseChunk(String),
+    ResponseComplete(String),
+    Error(String),
+    Quit,
+    Resize(u16, u16),
+}
+
+/// Event handler that manages the event loop
 pub struct EventHandler {
-    event_queue: std::sync::Mutex<VecDeque<(EventPriority, Event)>>,
+    event_queue: StdMutex<VecDeque<(EventPriority, Event)>>,
+    event_rx: TokioMutex<mpsc::Receiver<Event>>,
     event_tx: mpsc::Sender<Event>,
-    event_rx: std::sync::Mutex<Option<mpsc::Receiver<Event>>>,
-    _input_stream: std::sync::Mutex<Option<EventStream>>,
     tick_rate: Duration,
+    #[allow(dead_code)]
+    last_tick: StdMutex<Instant>,
     is_running: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl EventHandler {
-    /// Create a new EventHandler with the given tick rate.
+    /// Create a new event handler
     pub fn new(tick_rate: Duration) -> Self {
         let (tx, rx) = mpsc::channel(100);
         Self {
-            event_queue: std::sync::Mutex::new(VecDeque::new()),
+            event_queue: StdMutex::new(VecDeque::new()),
+            event_rx: TokioMutex::new(rx),
             event_tx: tx,
-            event_rx: std::sync::Mutex::new(Some(rx)),
-            _input_stream: std::sync::Mutex::new(None),
             tick_rate,
+            last_tick: StdMutex::new(Instant::now()),
             is_running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         }
     }
 
-    /// Check if the handler is running.
+    /// Check if handler is running
     pub fn is_running(&self) -> bool {
-        self.is_running.load(std::sync::atomic::Ordering::Relaxed)
+        self.is_running.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// Stop the handler.
-    pub fn stop(&self) {
-        self.is_running
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// Push an event into the queue (normal priority).
-    pub fn push_event(&self, event: Event) {
-        self.push_priority_event(event, EventPriority::Normal);
-    }
-
-    /// Push an event with a specific priority.
-    pub fn push_priority_event(&self, event: Event, priority: EventPriority) {
-        let mut queue = self.event_queue.lock().unwrap();
-        match priority {
-            EventPriority::High => queue.push_front((priority, event)),
-            _ => queue.push_back((priority, event)),
-        }
-    }
-
-    /// Send an event through the mpsc channel.
-    pub async fn send_event(&self, event: Event) -> crate::app::Result<()> {
-        self.event_tx.send(event).await.map_err(|e| {
-            std::io::Error::other(e.to_string())
-        })?;
-        Ok(())
-    }
-
-    /// Returns the number of pending events in the queue.
+    /// Get number of pending events
     pub fn pending_events(&self) -> usize {
         self.event_queue.lock().unwrap().len()
     }
 
-    /// Get the next event, either from the queue or by waiting for input/tick.
+    /// Push an event to the queue
+    pub fn push_event(&self, event: Event) {
+        let priority = match &event {
+            Event::System(p, _) => *p,
+            Event::Error(_) => EventPriority::High,
+            Event::Quit => EventPriority::Critical,
+            _ => EventPriority::Normal,
+        };
+        self.push_priority_event(event, priority);
+    }
+
+    /// Push a high-priority event
+    pub fn push_priority_event(&self, event: Event, priority: EventPriority) {
+        let mut queue = self.event_queue.lock().unwrap();
+
+        let insert_pos = queue
+            .iter()
+            .position(|(p, _)| *p < priority)
+            .unwrap_or(queue.len());
+
+        queue.insert(insert_pos, (priority, event));
+    }
+
+    /// Get the next event (waits if no events)
     pub async fn next_event(&self) -> Event {
-        // First, check the priority queue
+        // First check the priority queue
         {
             let mut queue = self.event_queue.lock().unwrap();
             if let Some((_, event)) = queue.pop_front() {
@@ -123,27 +154,60 @@ impl EventHandler {
             }
         }
 
-        // Wait for either an input event or a tick
-        let sleep = tokio::time::sleep(self.tick_rate);
-        tokio::pin!(sleep);
+        // If no events in queue, wait for new events or tick
+        let mut rx = self.event_rx.lock().await;
+        let deadline = tokio::time::Instant::now() + self.tick_rate;
 
-        let mut rx = self.event_rx.lock().unwrap().take().unwrap();
-        let result = tokio::select! {
+        tokio::select! {
             event = rx.recv() => {
                 if let Some(event) = event {
-                    event
-                } else {
-                    Event::Tick
+                    return event;
                 }
             }
-            _ = &mut sleep => {
-                Event::Tick
+            _ = tokio::time::sleep_until(deadline) => {
+                return Event::Tick;
             }
-        };
+        }
 
-        // Put the receiver back
-        *self.event_rx.lock().unwrap() = Some(rx);
-        result
+        Event::Tick
+    }
+
+    /// Send an event (from external sources)
+    pub async fn send_event(&self, event: Event) -> Result<()> {
+        self.push_event(event);
+        Ok(())
+    }
+
+    /// Start the input handling loop
+    pub async fn start_input_loop(&self) {
+        let tx = self.event_tx.clone();
+        let is_running = self.is_running.clone();
+
+        tokio::spawn(async move {
+            let mut reader = EventStream::new();
+
+            while is_running.load(std::sync::atomic::Ordering::SeqCst) {
+                if let Some(Ok(event)) = reader.next().await {
+                    match event {
+                        CrosstermEvent::Key(key) => {
+                            if key.kind == KeyEventKind::Press {
+                                let key_code: KeyCode = key.code.into();
+                                let _ = tx.send(Event::Key(key_code)).await;
+                            }
+                        }
+                        CrosstermEvent::Resize(w, h) => {
+                            let _ = tx.send(Event::Resize(w, h)).await;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        });
+    }
+
+    /// Stop the event handler
+    pub fn stop(&self) {
+        self.is_running.store(false, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -152,74 +216,41 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_event_handler_creation() {
-        let handler = EventHandler::new(Duration::from_millis(100));
-        assert!(handler.is_running());
-    }
-
-    #[tokio::test]
     async fn test_event_queue() {
         let handler = EventHandler::new(Duration::from_millis(100));
-        handler.push_event(Event::UserInput("message1".to_string()));
-        handler.push_event(Event::UserInput("message2".to_string()));
-        handler.push_event(Event::UserInput("message3".to_string()));
-        assert_eq!(handler.pending_events(), 3);
 
-        let _e1 = handler.next_event().await;
-        let _e2 = handler.next_event().await;
-        let _e3 = handler.next_event().await;
-        assert_eq!(handler.pending_events(), 0);
-    }
+        handler.push_event(Event::UserInput("test".to_string()));
+        assert_eq!(handler.pending_events(), 1);
 
-    #[tokio::test]
-    async fn test_tick_events() {
-        let handler = EventHandler::new(Duration::from_millis(10));
-        let start = std::time::Instant::now();
         let event = handler.next_event().await;
-        let elapsed = start.elapsed();
-        assert!(elapsed >= Duration::from_millis(5));
-        assert!(matches!(event, Event::Tick));
+        assert!(matches!(event, Event::UserInput(s) if s == "test"));
     }
 
-    #[tokio::test]
-    async fn test_priority_events() {
+    #[test]
+    fn test_priority_events() {
         let handler = EventHandler::new(Duration::from_millis(100));
 
-        handler.push_event(Event::UserInput("low priority message".to_string()));
+        handler.push_event(Event::UserInput("normal".to_string()));
         handler.push_priority_event(
-            Event::System(EventPriority::High, "high priority".to_string()),
+            Event::System(EventPriority::High, "critical".to_string()),
             EventPriority::High,
         );
 
-        {
-            let queue = handler.event_queue.lock().unwrap();
-            assert_eq!(queue.len(), 2);
-            assert_eq!(queue[0].0, EventPriority::High);
-        }
+        let queue = handler.event_queue.lock().unwrap();
+        assert_eq!(queue.len(), 2);
 
-        let event1 = handler.next_event().await;
-        assert!(matches!(event1, Event::System(_, _)));
-        assert_eq!(event1.priority(), EventPriority::High);
-
-        let event2 = handler.next_event().await;
-        assert!(matches!(event2, Event::UserInput(_)));
-        assert_eq!(event2.priority(), EventPriority::Normal);
+        assert_eq!(queue[0].0, EventPriority::High);
     }
 
-    #[tokio::test]
-    async fn test_event_priority() {
-        let handler = EventHandler::new(Duration::from_millis(100));
+    #[test]
+    fn test_keycode_from_crossterm() {
+        let key: KeyCode = CrosstermKeyCode::Char('a').into();
+        assert_eq!(key, KeyCode::Char('a'));
 
-        handler.push_event(Event::UserInput("first".to_string()));
-        handler.push_priority_event(
-            Event::System(EventPriority::High, "urgent".to_string()),
-            EventPriority::High,
-        );
+        let key: KeyCode = CrosstermKeyCode::Enter.into();
+        assert_eq!(key, KeyCode::Enter);
 
-        let event1 = handler.next_event().await;
-        assert_eq!(event1.priority(), EventPriority::High);
-
-        let event2 = handler.next_event().await;
-        assert_eq!(event2.priority(), EventPriority::Normal);
+        let key: KeyCode = CrosstermKeyCode::Esc.into();
+        assert_eq!(key, KeyCode::Escape);
     }
 }

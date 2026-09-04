@@ -1,8 +1,11 @@
 //! Header widget for the TUI.
 
 use crate::app::KodApp;
-use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Paragraph, Widget};
 
 /// Widget for the header bar
 pub struct HeaderWidget;
@@ -12,17 +15,33 @@ impl HeaderWidget {
         Self
     }
 
-    pub fn render(&self, app: &KodApp, buf: &mut Buffer) {
-        let area = buf.area;
-        let text = ratatui::text::Text::from(format!(
-            "KOD - Mode: {:?} | Agents: {}",
-            app.mode(),
-            app.agents().len()
-        ));
+    pub fn render(&self, app: &KodApp, area: &mut Buffer) {
+        let rect = Rect {
+            x: area.area.x,
+            y: area.area.y,
+            width: area.area.width,
+            height: area.area.height,
+        };
 
-        let paragraph = Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("KOD"));
+        let spans = vec![
+            Span::styled(
+                " KOD ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!(" Mode: {:?} ", app.mode())),
+            Span::raw(format!("Input: {:?} ", app.input_mode())),
+            Span::raw(format!("Messages: {} ", app.messages().len())),
+        ];
 
-        Widget::render(paragraph, area, buf);
+        let line = Line::from(spans);
+        let text = ratatui::text::Text::from(vec![line]);
+
+        let paragraph = Paragraph::new(text)
+            .style(Style::default().bg(Color::DarkGray));
+
+        paragraph.render(rect, area);
     }
 }
 

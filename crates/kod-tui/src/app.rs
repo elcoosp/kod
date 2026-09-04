@@ -3,13 +3,10 @@
 //! Manages messages, input, agent status, tool execution state,
 //! and scrolling.
 
-use kod_types::{MessageMetadata, MessageRole, MessageId};
+use kod_types::{MessageId, MessageMetadata, MessageRole};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc};
-
-/// Result type for TUI operations
-pub type Result<T> = std::result::Result<T, std::io::Error>;
 
 /// Message displayed in the chat
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,19 +16,6 @@ pub struct Message {
     pub content: String,
     pub timestamp: DateTime<Utc>,
     pub metadata: MessageMetadata,
-}
-
-impl Message {
-    /// Returns a display label for the message role
-    pub fn role_label(&self) -> &str {
-        match self.role {
-            MessageRole::User => "You",
-            MessageRole::Assistant => "KOD",
-            MessageRole::Tool => "Tool",
-            MessageRole::System => "System",
-            MessageRole::Agent(_) => "Agent",
-        }
-    }
 }
 
 /// Agent status information
@@ -144,10 +128,6 @@ impl KodApp {
         &self.input
     }
 
-    pub fn current_input(&self) -> &str {
-        &self.input
-    }
-
     pub fn set_input(&mut self, input: String) {
         self.input = input;
         self.cursor_position = self.input.len();
@@ -165,13 +145,6 @@ impl KodApp {
         }
     }
 
-    pub fn remove_char(&mut self) {
-        if self.cursor_position > 0 {
-            self.cursor_position -= 1;
-            self.input.remove(self.cursor_position);
-        }
-    }
-
     pub fn clear_input(&mut self) {
         self.input.clear();
         self.cursor_position = 0;
@@ -180,6 +153,7 @@ impl KodApp {
     pub fn submit_input(&mut self) {
         if !self.input.is_empty() {
             self.input_history.push(self.input.clone());
+
             self.add_message(Message {
                 id: MessageId::new(),
                 role: MessageRole::User,
@@ -187,6 +161,7 @@ impl KodApp {
                 timestamp: Utc::now(),
                 metadata: MessageMetadata::default(),
             });
+
             self.clear_input();
             self.history_index = None;
         }
@@ -242,16 +217,6 @@ impl KodApp {
         self.scroll_to_bottom();
     }
 
-    pub fn add_agent_message(&mut self, content: String) {
-        self.add_message(Message {
-            id: MessageId::new(),
-            role: MessageRole::Assistant,
-            content,
-            timestamp: Utc::now(),
-            metadata: MessageMetadata::default(),
-        });
-    }
-
     pub fn scroll_up(&mut self, lines: usize) {
         self.scroll_position = self.scroll_position.saturating_sub(lines);
     }
@@ -264,12 +229,12 @@ impl KodApp {
         self.scroll_position = self.messages.len().saturating_sub(1);
     }
 
-    pub fn scroll_offset(&self) -> usize {
-        self.scroll_position
-    }
-
     pub fn is_scrolled_to_bottom(&self) -> bool {
         self.scroll_position >= self.messages.len().saturating_sub(1)
+    }
+
+    pub fn scroll_offset(&self) -> usize {
+        self.scroll_position
     }
 
     // Agent management
@@ -282,15 +247,12 @@ impl KodApp {
     }
 
     pub fn add_agent(&mut self, name: &str, capabilities: Vec<String>) {
-        self.agents.insert(
-            name.to_string(),
-            AgentInfo {
-                name: name.to_string(),
-                capabilities,
-                status: "idle".to_string(),
-                current_task: None,
-            },
-        );
+        self.agents.insert(name.to_string(), AgentInfo {
+            name: name.to_string(),
+            capabilities,
+            status: "idle".to_string(),
+            current_task: None,
+        });
     }
 
     pub fn get_agent(&self, name: &str) -> Option<&AgentInfo> {
@@ -395,6 +357,7 @@ impl KodApp {
     pub fn complete_response(&mut self) {
         if self.is_streaming {
             let response = self.current_response.clone();
+
             self.add_message(Message {
                 id: MessageId::new(),
                 role: MessageRole::Assistant,
@@ -402,6 +365,7 @@ impl KodApp {
                 timestamp: Utc::now(),
                 metadata: MessageMetadata::default(),
             });
+
             self.is_streaming = false;
             self.current_response.clear();
         }
@@ -468,8 +432,18 @@ mod tests {
             timestamp: Utc::now(),
             metadata: MessageMetadata::default(),
         });
+    }
 
-        let msg = &app.messages()[0];
-        assert_eq!(msg.role_label(), "You");
+    #[test]
+    fn test_scroll_to_bottom() {
+        let mut app = KodApp::new();
+        app.add_message(Message {
+            id: MessageId::new(),
+            role: MessageRole::User,
+            content: "test".to_string(),
+            timestamp: Utc::now(),
+            metadata: MessageMetadata::default(),
+        });
+        assert!(app.is_scrolled_to_bottom());
     }
 }

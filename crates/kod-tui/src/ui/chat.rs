@@ -1,67 +1,98 @@
-//! Chat display widget.
+//! Chat message display widget.
 
-use crate::app::{InputMode, KodApp};
-use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use crate::app::{KodApp, Message};
+use kod_types::MessageRole;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{Paragraph, Widget, Wrap};
 
 /// Widget for displaying chat messages
-pub struct ChatWidget {
-    input_mode: InputMode,
-}
+pub struct ChatWidget;
 
 impl ChatWidget {
     pub fn new() -> Self {
-        Self {
-            input_mode: InputMode::Normal,
-        }
+        Self
     }
 
-    pub fn with_input_mode(input_mode: InputMode) -> Self {
-        Self {
-            input_mode,
-        }
-    }
-
-    pub fn render(&self, app: &KodApp, buf: &mut Buffer) {
-        let area = buf.area;
-
-        let messages: Vec<ratatui::text::Line> = app
-            .messages()
-            .iter()
-            .flat_map(|m| {
-                let style = match m.role {
-                    kod_types::MessageRole::User => Style::default().fg(Color::Yellow),
-                    kod_types::MessageRole::Assistant => Style::default().fg(Color::Cyan),
-                    kod_types::MessageRole::Tool => Style::default().fg(Color::Green),
-                    kod_types::MessageRole::System => Style::default().fg(Color::Gray),
-                    kod_types::MessageRole::Agent(_) => Style::default().fg(Color::Magenta),
-                };
-
-                vec![
-                    ratatui::text::Line::from(format!("{}: {}", m.role_label(), m.content))
-                        .style(style),
-                    ratatui::text::Line::from(""),
-                ]
-            })
-            .collect();
-
-        let input_text = if self.input_mode == InputMode::Insert {
-            app.current_input()
-        } else {
-            ""
+    pub fn render(&self, app: &KodApp, area: &mut Buffer) {
+        let rect = Rect {
+            x: area.area.x,
+            y: area.area.y,
+            width: area.area.width,
+            height: area.area.height,
         };
 
-        let input_line = ratatui::text::Line::from(format!(">{}", input_text));
+        let mut lines: Vec<Line> = Vec::new();
 
-        let mut all_lines = messages;
-        all_lines.push(input_line);
+        let messages: Vec<&Message> = app.messages().iter().collect();
 
-        let text = ratatui::text::Text::from(all_lines);
+        for message in messages {
+            let (prefix, style) = match message.role {
+                MessageRole::User => (
+                    "[You] ",
+                    Style::default().fg(Color::Green),
+                ),
+                MessageRole::Assistant => (
+                    "[AI] ",
+                    Style::default().fg(Color::Cyan),
+                ),
+                MessageRole::System => (
+                    "[System] ",
+                    Style::default().fg(Color::Yellow),
+                ),
+                MessageRole::Tool => (
+                    "[Tool] ",
+                    Style::default().fg(Color::Magenta),
+                ),
+                MessageRole::Agent(_) => (
+                    "[Agent] ",
+                    Style::default().fg(Color::Blue),
+                ),
+            };
+
+            let timestamp = message.timestamp.format("%H:%M:%S");
+
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{} ", timestamp),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(prefix.to_string(), style),
+            ]));
+
+            let content_lines: Vec<&str> = message.content.lines().collect();
+            for (i, line) in content_lines.iter().enumerate() {
+                if i == 0 {
+                    lines.push(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(*line, style),
+                    ]));
+                } else {
+                    lines.push(Line::from(format!("  {}", line)));
+                }
+            }
+
+            lines.push(Line::from(""));
+        }
+
+        if app.is_streaming() {
+            lines.push(Line::from(vec![
+                Span::styled("[AI] ", Style::default().fg(Color::Cyan)),
+                Span::styled("(streaming...)", Style::default().fg(Color::DarkGray)),
+            ]));
+
+            for line in app.current_response().lines() {
+                lines.push(Line::from(format!("  {}", line)));
+            }
+        }
+
+        let text = Text::from(lines);
         let paragraph = Paragraph::new(text)
-            .block(Block::default().borders(Borders::ALL).title("Chat"))
             .wrap(Wrap { trim: false });
 
-        Widget::render(paragraph, area, buf);
+        paragraph.render(rect, area);
     }
 }
 

@@ -6,8 +6,9 @@
 pub mod event;
 pub mod app;
 pub mod ui;
+pub mod components;
 pub mod main_loop;
 
-pub use event::{Event, EventHandler, EventPriority};
+pub use event::{Event, EventHandler, EventPriority, KeyCode};
 pub use app::{KodApp, Message, AppMode, InputMode};
 pub use main_loop::TuiLoop;
