@@ -1,0 +1,16 @@
+[package]
+name = "kod-types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+compact_str = { workspace = true }
+time = { workspace = true }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+
+[dev-dependencies]
+rstest = { workspace = true }
