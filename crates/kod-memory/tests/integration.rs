@@ -14,6 +14,22 @@ fn create_episode(content: &str, task_type: &str, outcome: Outcome) -> EpisodicM
     }
 }
 
+fn create_episode_with_embedding(
+    content: &str,
+    task_type: &str,
+    outcome: Outcome,
+    embedding: Vec<f32>,
+) -> EpisodicMemoryType {
+    EpisodicMemoryType {
+        id: MemoryId::new(),
+        content: content.to_string(),
+        embedding,
+        task_type: task_type.to_string(),
+        outcome,
+        timestamp: time::OffsetDateTime::now_utc(),
+    }
+}
+
 #[tokio::test]
 async fn test_episodic_store_and_get() {
     let memory = EpisodicMemory::new();
@@ -31,21 +47,27 @@ async fn test_episodic_find_similar() {
     let memory = EpisodicMemory::new();
 
     let ep1 = create_episode("Fixed login bug", "debugging", Outcome::Success);
-    let ep2 = create_episode("Fixed payment bug", "debugging", Outcome::Success);
-    let ep3 = create_episode("Wrote new feature", "coding", Outcome::Success);
+    let ep2 = create_episode_with_embedding(
+        "Fixed payment bug",
+        "debugging",
+        Outcome::Success,
+        vec![0.9, 0.8, 0.7],
+    );
+    let ep3 = create_episode_with_embedding(
+        "Wrote new feature",
+        "coding",
+        Outcome::Success,
+        vec![0.1, 0.5, 0.9],
+    );
 
     memory.store(ep1.clone()).await.unwrap();
-    memory.store(ep2.clone()).await.unwrap();
+    memory.store(ep2).await.unwrap();
     memory.store(ep3).await.unwrap();
 
-    // Search using ep1's embedding
-    let similar = memory
-        .find_similar(&ep1.embedding, 2)
-        .await
-        .unwrap();
+    // Search using ep1's embedding — ep1 should be the most similar (identical embedding)
+    let similar = memory.find_similar(&ep1.embedding, 2).await.unwrap();
 
     assert_eq!(similar.len(), 2);
-    // ep1 should be the most similar (identical embedding)
     assert_eq!(similar[0].id, ep1.id);
 }
 
