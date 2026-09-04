@@ -1,6 +1,13 @@
-//! Terminal UI for KOD.
+//! Terminal UI for KOD - provides interactive interface.
 //!
-//! Provides a Ratatui-based terminal interface with chat display,
-//! agent panel, and input area.
+//! This crate implements the terminal user interface using Ratatui,
+//! including chat display, agent panel, input handling, and tool execution display.
 
-// TODO: Implement in Chunk 9
+pub mod event;
+pub mod app;
+pub mod ui;
+pub mod main_loop;
+
+pub use event::{Event, EventHandler, EventPriority};
+pub use app::{KodApp, Message, AppMode, InputMode};
+pub use main_loop::TuiLoop;
