@@ -7,6 +7,10 @@ use kod_error::Result;
 #[derive(Parser, Debug)]
 #[command(name = "kod", version, about)]
 pub struct Cli {
+    /// Verbose output
+    #[arg(short, long, default_value_t = false)]
+    pub verbose: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }

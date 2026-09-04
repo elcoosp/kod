@@ -37,7 +37,7 @@ pub mod context;
 pub mod executor;
 pub mod registry;
 pub mod tools;
-pub use tools::{ReadFileTool, WriteFileTool, ListFilesTool, FileInfoTool, GrepTool};
+pub use tools::{FileInfoTool, GrepTool, ListFilesTool, ReadFileTool, WriteFileTool};
 
 pub use context::ToolContext;
 pub use executor::ToolExecutor;
@@ -105,7 +105,10 @@ mod tests {
     async fn test_tool_execute() {
         let tool = TestTool;
         let context = ToolContext::new("/tmp");
-        let result = tool.execute(&serde_json::json!({}), &context).await.unwrap();
+        let result = tool
+            .execute(&serde_json::json!({}), &context)
+            .await
+            .unwrap();
         match result {
             ToolResult::Success(data) => {
                 assert_eq!(data["test"], true);

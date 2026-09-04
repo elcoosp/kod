@@ -24,27 +24,13 @@ impl InputWidget {
         };
 
         let (title, style) = match app.input_mode() {
-            InputMode::Normal => (
-                " Normal ",
-                Style::default().fg(Color::Blue),
-            ),
-            InputMode::Insert => (
-                " Input ",
-                Style::default().fg(Color::Green),
-            ),
+            InputMode::Normal => (" Normal ", Style::default().fg(Color::Blue)),
+            InputMode::Insert => (" Input ", Style::default().fg(Color::Green)),
         };
 
-        let _title_span = Span::styled(
-            title,
-            style.add_modifier(Modifier::BOLD),
-        );
+        let _title_span = Span::styled(title, style.add_modifier(Modifier::BOLD));
 
-        let mut spans = vec![
-            Span::styled(
-                "❯ ",
-                Style::default().fg(Color::Cyan),
-            ),
-        ];
+        let mut spans = vec![Span::styled("❯ ", Style::default().fg(Color::Cyan))];
 
         if app.input().is_empty() {
             if *app.input_mode() == InputMode::Insert {
@@ -64,7 +50,9 @@ impl InputWidget {
             if *app.input_mode() == InputMode::Insert {
                 spans.push(Span::styled(
                     "▌",
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
                 ));
             }
         }

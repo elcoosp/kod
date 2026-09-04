@@ -11,10 +11,7 @@ async fn test_example_skills_load() {
     // Should have loaded 3 example skills
     assert_eq!(skills.len(), 3);
 
-    let names: Vec<String> = skills
-        .iter()
-        .map(|s| s.metadata.name.clone())
-        .collect();
+    let names: Vec<String> = skills.iter().map(|s| s.metadata.name.clone()).collect();
 
     assert!(names.contains(&"rust-refactoring".to_string()));
     assert!(names.contains(&"python-testing".to_string()));
@@ -51,8 +48,16 @@ async fn test_example_skills_match() {
 
     // Test trigger-based matching
     let matches = matcher.find_relevant_skills("refactor rust code").await;
-    assert!(matches.iter().any(|m| m.skill.metadata.name == "rust-refactoring"));
+    assert!(
+        matches
+            .iter()
+            .any(|m| m.skill.metadata.name == "rust-refactoring")
+    );
 
     let matches = matcher.find_relevant_skills("write pytest tests").await;
-    assert!(matches.iter().any(|m| m.skill.metadata.name == "python-testing"));
+    assert!(
+        matches
+            .iter()
+            .any(|m| m.skill.metadata.name == "python-testing")
+    );
 }

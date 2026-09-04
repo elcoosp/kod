@@ -76,10 +76,20 @@ fn test_parse_valid_skill() {
     assert!(skill.metadata.tags.contains(&"refactoring".to_string()));
 
     assert_eq!(skill.metadata.capabilities.len(), 2);
-    assert!(skill.metadata.capabilities.contains(&"code-refactoring".to_string()));
+    assert!(
+        skill
+            .metadata
+            .capabilities
+            .contains(&"code-refactoring".to_string())
+    );
 
     assert_eq!(skill.metadata.triggers.len(), 2);
-    assert!(skill.metadata.triggers.contains(&"refactor rust".to_string()));
+    assert!(
+        skill
+            .metadata
+            .triggers
+            .contains(&"refactor rust".to_string())
+    );
 }
 
 #[test]
@@ -87,7 +97,11 @@ fn test_parse_instructions() {
     let parser = SkillParser::new();
     let skill = parser.parse_content(VALID_SKILL, "test.md").unwrap();
 
-    assert!(skill.instructions.contains("expert Rust refactoring assistant"));
+    assert!(
+        skill
+            .instructions
+            .contains("expert Rust refactoring assistant")
+    );
     assert!(skill.instructions.contains("LSP tools"));
     assert!(!skill.instructions.contains("Examples"));
 }

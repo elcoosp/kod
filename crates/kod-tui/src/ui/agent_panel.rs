@@ -25,14 +25,12 @@ impl AgentPanelWidget {
 
         let mut lines: Vec<Line> = Vec::new();
 
-        lines.push(Line::from(vec![
-            Span::styled(
-                "Agents",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            "Agents",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )]));
 
         lines.push(Line::from("─".repeat(area.area.width as usize)));
 
@@ -49,10 +47,7 @@ impl AgentPanelWidget {
                 };
 
                 lines.push(Line::from(vec![
-                    Span::styled(
-                        "● ".to_string(),
-                        Style::default().fg(status_color),
-                    ),
+                    Span::styled("● ".to_string(), Style::default().fg(status_color)),
                     Span::styled(
                         agent.name.clone(),
                         Style::default().add_modifier(Modifier::BOLD),
@@ -61,47 +56,32 @@ impl AgentPanelWidget {
 
                 if !agent.capabilities.is_empty() {
                     let caps = agent.capabilities.join(", ");
-                    lines.push(Line::from(format!(
-                        "  caps: {}",
-                        caps
-                    )));
+                    lines.push(Line::from(format!("  caps: {}", caps)));
                 }
 
                 if let Some(task) = &agent.current_task {
-                    lines.push(Line::from(format!(
-                        "  task: {}",
-                        task
-                    )));
+                    lines.push(Line::from(format!("  task: {}", task)));
                 }
 
-                lines.push(Line::from(format!(
-                    "  status: {}",
-                    agent.status
-                )));
+                lines.push(Line::from(format!("  status: {}", agent.status)));
 
                 lines.push(Line::from(""));
             }
         }
 
-        lines.push(Line::from(vec![
-            Span::styled(
-                "Tool Executions",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            "Tool Executions",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]));
 
         if let Some(current_tool) = app.current_tool() {
-            lines.push(Line::from(format!(
-                "▶ {} (running...)",
-                current_tool
-            )));
+            lines.push(Line::from(format!("▶ {} (running...)", current_tool)));
         }
 
         let text = ratatui::text::Text::from(lines);
-        let paragraph = Paragraph::new(text)
-            .wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
 
         paragraph.render(rect, area);
     }

@@ -2,7 +2,7 @@ use kod_tui::app::{KodApp, Message};
 use kod_tui::ui::{AgentPanelWidget, ChatWidget, InputWidget};
 use kod_types::{MessageId, MessageRole};
 use ratatui::backend::TestBackend;
-use ratatui::{buffer::Buffer, Terminal};
+use ratatui::{Terminal, buffer::Buffer};
 
 #[test]
 fn test_chat_widget_rendering() {

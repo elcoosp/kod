@@ -172,7 +172,9 @@ mod tests {
     #[tokio::test]
     async fn test_basic_matching() {
         let matcher = SkillMatcher::new();
-        matcher.add_skill(create_skill("test", vec!["test trigger"])).await;
+        matcher
+            .add_skill(create_skill("test", vec!["test trigger"]))
+            .await;
 
         let results = matcher.find_relevant_skills("test trigger").await;
         assert_eq!(results.len(), 1);

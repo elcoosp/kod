@@ -105,8 +105,13 @@ impl SkillLoader {
             .values()
             .filter(|skill| {
                 skill.metadata.name.to_lowercase().contains(&query_lower)
-                    || skill.metadata.description.to_lowercase().contains(&query_lower)
-                    || skill.metadata
+                    || skill
+                        .metadata
+                        .description
+                        .to_lowercase()
+                        .contains(&query_lower)
+                    || skill
+                        .metadata
                         .tags
                         .iter()
                         .any(|t| t.to_lowercase().contains(&query_lower))
@@ -193,25 +198,23 @@ async fn handle_watch_event(
     parser: &SkillParser,
 ) {
     match event {
-        WatchEvent::Created(path) | WatchEvent::Modified(path) => {
-            match parser.parse_file(&path) {
-                Ok(skill) => {
-                    let mut cache_guard = cache.write().await;
-                    cache_guard.insert(skill.metadata.name.clone(), skill);
-                    tracing::info!(
-                        path = %path.display(),
-                        "Skill reloaded"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        path = %path.display(),
-                        error = %e,
-                        "Failed to reload skill"
-                    );
-                }
+        WatchEvent::Created(path) | WatchEvent::Modified(path) => match parser.parse_file(&path) {
+            Ok(skill) => {
+                let mut cache_guard = cache.write().await;
+                cache_guard.insert(skill.metadata.name.clone(), skill);
+                tracing::info!(
+                    path = %path.display(),
+                    "Skill reloaded"
+                );
             }
-        }
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "Failed to reload skill"
+                );
+            }
+        },
         WatchEvent::Removed(path) => {
             let mut cache_guard = cache.write().await;
             // Find and remove skill by path

@@ -71,7 +71,8 @@ impl TaskCoordinator {
     /// Assign a task to an agent
     pub async fn assign_task(&self, task_id: &TaskId, agent_id: &AgentId) -> Result<()> {
         let mut tasks = self.tasks.write().await;
-        let task = tasks.get_mut(task_id)
+        let task = tasks
+            .get_mut(task_id)
             .ok_or_else(|| KodError::InvalidState(format!("Task {} not found", task_id)))?;
         task.assigned_to = Some(agent_id.clone());
         task.status = TaskStatus::InProgress;
@@ -95,7 +96,9 @@ impl TaskCoordinator {
 
     /// Get all pending tasks
     pub async fn pending_tasks(&self) -> Vec<Task> {
-        self.tasks.read().await
+        self.tasks
+            .read()
+            .await
             .values()
             .filter(|t| t.status == TaskStatus::Pending)
             .cloned()
@@ -104,7 +107,9 @@ impl TaskCoordinator {
 
     /// Get tasks assigned to an agent
     pub async fn tasks_for_agent(&self, agent_id: &AgentId) -> Vec<Task> {
-        self.tasks.read().await
+        self.tasks
+            .read()
+            .await
             .values()
             .filter(|t| t.assigned_to.as_ref() == Some(agent_id))
             .cloned()
@@ -113,7 +118,9 @@ impl TaskCoordinator {
 
     /// Get agent load (number of tasks assigned)
     pub async fn agent_load(&self, agent_id: &AgentId) -> usize {
-        self.agent_load.read().await
+        self.agent_load
+            .read()
+            .await
             .get(agent_id)
             .copied()
             .unwrap_or(0)
@@ -130,9 +137,6 @@ impl TaskCoordinator {
 
     /// Get all task assignments
     pub async fn all_assignments(&self) -> Vec<TaskAssignment> {
-        self.assignments.read().await
-            .values()
-            .cloned()
-            .collect()
+        self.assignments.read().await.values().cloned().collect()
     }
 }

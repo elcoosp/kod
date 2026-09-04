@@ -36,8 +36,14 @@ async fn test_search() {
 
     let memory = LongTermMemory::new(&db_path).unwrap();
 
-    memory.store(create_entry("Rust is a systems language")).await.unwrap();
-    memory.store(create_entry("Python is a scripting language")).await.unwrap();
+    memory
+        .store(create_entry("Rust is a systems language"))
+        .await
+        .unwrap();
+    memory
+        .store(create_entry("Python is a scripting language"))
+        .await
+        .unwrap();
 
     let results = memory.search("rust").await.unwrap();
     assert_eq!(results.len(), 1);

@@ -1,11 +1,11 @@
 //! Provider traits for LLM integration.
 
-use async_trait::async_trait;
 use crate::{GenerationResponse, StreamChunk};
+use async_trait::async_trait;
+use futures::Stream;
 use kod_error::Result;
 use kod_types::ToolDefinition;
 use std::pin::Pin;
-use futures::Stream;
 
 #[async_trait]
 pub trait LlmProvider: Send + Sync {

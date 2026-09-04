@@ -2,10 +2,10 @@
 
 use crate::{client::OllamaClient, generate::GenerateRequest, streaming};
 use async_trait::async_trait;
+use futures::Stream;
 use kod_error::Result;
 use kod_provider::{GenerationOptions, GenerationResponse, LlmProvider, StreamChunk};
 use kod_types::ToolDefinition;
-use futures::Stream;
 
 /// Adapter that implements LlmProvider for Ollama
 pub struct OllamaLlmProvider {
@@ -58,7 +58,9 @@ impl LlmProvider for OllamaLlmProvider {
     }
 
     async fn generate(&self, prompt: &str, options: &GenerationOptions) -> Result<String> {
-        let model = options.model.as_deref()
+        let model = options
+            .model
+            .as_deref()
             .unwrap_or(self.client.default_model());
 
         let request = GenerateRequest::new(model, prompt);
@@ -76,7 +78,9 @@ impl LlmProvider for OllamaLlmProvider {
         tools: &[ToolDefinition],
         options: &GenerationOptions,
     ) -> Result<GenerationResponse> {
-        let model = options.model.as_deref()
+        let model = options
+            .model
+            .as_deref()
             .unwrap_or(self.client.default_model());
 
         let request = GenerateRequest::new(model, prompt);
@@ -99,7 +103,9 @@ impl LlmProvider for OllamaLlmProvider {
         prompt: &str,
         options: &GenerationOptions,
     ) -> std::pin::Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + '_>> {
-        let model = options.model.clone()
+        let model = options
+            .model
+            .clone()
             .unwrap_or_else(|| self.client.default_model().to_string());
 
         let client = &self.client;

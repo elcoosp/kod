@@ -1,5 +1,5 @@
 use kod_tui::app::{AppMode, InputMode, KodApp, Message};
-use kod_types::{MessageRole, MessageId};
+use kod_types::{MessageId, MessageRole};
 
 #[test]
 fn test_app_creation() {
@@ -93,7 +93,10 @@ fn test_mode_switching() {
 fn test_agent_status() {
     let mut app = KodApp::new();
 
-    app.add_agent("architect", vec!["planning".to_string(), "research".to_string()]);
+    app.add_agent(
+        "architect",
+        vec!["planning".to_string(), "research".to_string()],
+    );
     app.add_agent("coder", vec!["coding".to_string()]);
 
     assert_eq!(app.agents().len(), 2);
@@ -114,9 +117,11 @@ fn test_tool_execution() {
 
     app.complete_tool_execution("read_file", "File contents...");
 
-    assert!(app.messages().iter().any(|m| {
-        m.role == MessageRole::Tool && m.content.contains("read_file")
-    }));
+    assert!(
+        app.messages()
+            .iter()
+            .any(|m| { m.role == MessageRole::Tool && m.content.contains("read_file") })
+    );
 }
 
 #[test]
@@ -132,9 +137,11 @@ fn test_streaming_response() {
 
     app.complete_response();
 
-    assert!(app.messages().iter().any(|m| {
-        m.role == MessageRole::Assistant && m.content == "Hello world"
-    }));
+    assert!(
+        app.messages()
+            .iter()
+            .any(|m| { m.role == MessageRole::Assistant && m.content == "Hello world" })
+    );
 
     assert_eq!(app.current_response(), "");
 }

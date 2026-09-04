@@ -20,8 +20,9 @@ impl LongTermMemory {
     /// Open (or create) a long-term memory database
     pub fn new(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| KodError::MemoryStorage(format!("Failed to create db directory: {}", e)))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                KodError::MemoryStorage(format!("Failed to create db directory: {}", e))
+            })?;
         }
 
         let db = Database::create(path)
@@ -44,7 +45,8 @@ impl LongTermMemory {
     /// Store an entry persistently
     pub async fn store(&self, entry: MemoryEntry) -> Result<()> {
         let key = entry.id.as_uuid().as_bytes().to_vec();
-        let value = serde_json::to_vec(&entry).map_err(|e| KodError::Serialization(e.to_string()))?;
+        let value =
+            serde_json::to_vec(&entry).map_err(|e| KodError::Serialization(e.to_string()))?;
 
         let txn = self
             .db
@@ -71,10 +73,9 @@ impl LongTermMemory {
     pub async fn get(&self, id: &MemoryId) -> Result<Option<MemoryEntry>> {
         let key = id.as_uuid().as_bytes().to_vec();
 
-        let txn = self
-            .db
-            .begin_read()
-            .map_err(|e| KodError::MemoryDatabase(format!("Failed to start read transaction: {}", e)))?;
+        let txn = self.db.begin_read().map_err(|e| {
+            KodError::MemoryDatabase(format!("Failed to start read transaction: {}", e))
+        })?;
 
         let table = txn
             .open_table(MEMORY_TABLE)
@@ -124,10 +125,9 @@ impl LongTermMemory {
 
     /// Get all entries
     pub async fn get_all(&self) -> Result<Vec<MemoryEntry>> {
-        let txn = self
-            .db
-            .begin_read()
-            .map_err(|e| KodError::MemoryDatabase(format!("Failed to start read transaction: {}", e)))?;
+        let txn = self.db.begin_read().map_err(|e| {
+            KodError::MemoryDatabase(format!("Failed to start read transaction: {}", e))
+        })?;
 
         let table = txn
             .open_table(MEMORY_TABLE)
@@ -135,7 +135,10 @@ impl LongTermMemory {
 
         let mut entries = Vec::new();
 
-        for entry in table.iter().map_err(|e| KodError::MemoryDatabase(format!("Failed to iterate: {}", e)))? {
+        for entry in table
+            .iter()
+            .map_err(|e| KodError::MemoryDatabase(format!("Failed to iterate: {}", e)))?
+        {
             match entry {
                 Ok((_, value)) => {
                     if let Ok(memory_entry) = serde_json::from_slice::<MemoryEntry>(value.value()) {
@@ -164,17 +167,19 @@ impl LongTermMemory {
 
     /// Count total entries
     pub async fn count(&self) -> Result<usize> {
-        let txn = self
-            .db
-            .begin_read()
-            .map_err(|e| KodError::MemoryDatabase(format!("Failed to start read transaction: {}", e)))?;
+        let txn = self.db.begin_read().map_err(|e| {
+            KodError::MemoryDatabase(format!("Failed to start read transaction: {}", e))
+        })?;
 
         let table = txn
             .open_table(MEMORY_TABLE)
             .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {}", e)))?;
 
         let mut count = 0;
-        for entry in table.iter().map_err(|e| KodError::MemoryDatabase(format!("Failed to iterate: {}", e)))? {
+        for entry in table
+            .iter()
+            .map_err(|e| KodError::MemoryDatabase(format!("Failed to iterate: {}", e)))?
+        {
             if entry.is_ok() {
                 count += 1;
             }
@@ -200,13 +205,11 @@ impl LongTermMemory {
             let keys: Vec<Vec<u8>> = table
                 .iter()
                 .map_err(|e| KodError::MemoryDatabase(format!("Failed to iterate: {}", e)))?
-                .filter_map(|entry| {
-                    match entry {
-                        Ok((key, _)) => Some(key.value().to_vec()),
-                        Err(e) => {
-                            tracing::warn!("Failed to read key: {}", e);
-                            None
-                        }
+                .filter_map(|entry| match entry {
+                    Ok((key, _)) => Some(key.value().to_vec()),
+                    Err(e) => {
+                        tracing::warn!("Failed to read key: {}", e);
+                        None
                     }
                 })
                 .collect();
@@ -227,7 +230,9 @@ impl LongTermMemory {
 
 impl Clone for LongTermMemory {
     fn clone(&self) -> Self {
-        Self { db: self.db.clone() }
+        Self {
+            db: self.db.clone(),
+        }
     }
 }
 

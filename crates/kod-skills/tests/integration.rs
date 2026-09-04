@@ -46,7 +46,9 @@ async fn test_full_skills_pipeline() {
     }
 
     // 4. Find matching skill
-    let matches = matcher.find_relevant_skills("please refactor rust code").await;
+    let matches = matcher
+        .find_relevant_skills("please refactor rust code")
+        .await;
 
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].skill.metadata.name, "rust-refactoring");

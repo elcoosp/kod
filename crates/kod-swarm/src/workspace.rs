@@ -105,8 +105,9 @@ impl SharedWorkspace {
         };
 
         // Check the path is within workspace
-        let canonical = std::fs::canonicalize(&resolved)
-            .map_err(|_| KodError::InvalidState(format!("Path not found: {}", resolved.display())))?;
+        let canonical = std::fs::canonicalize(&resolved).map_err(|_| {
+            KodError::InvalidState(format!("Path not found: {}", resolved.display()))
+        })?;
         let root_canonical = std::fs::canonicalize(&self.root)
             .map_err(|_| KodError::InvalidState("Workspace root not found".to_string()))?;
 
@@ -122,7 +123,9 @@ impl SharedWorkspace {
 
     /// List all active locks
     pub async fn list_locks(&self) -> Vec<FileLock> {
-        self.locks.lock().await
+        self.locks
+            .lock()
+            .await
             .values()
             .flatten()
             .cloned()

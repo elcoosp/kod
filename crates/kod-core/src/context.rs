@@ -34,8 +34,18 @@ impl EngineContext {
     /// Estimate token count (rough approximation)
     pub fn estimated_tokens(&self) -> usize {
         let total_chars = self.user_input.len()
-            + self.memory_context.working_memory.iter().map(|m| m.content.len()).sum::<usize>()
-            + self.memory_context.long_term.iter().map(|m| m.content.len()).sum::<usize>()
+            + self
+                .memory_context
+                .working_memory
+                .iter()
+                .map(|m| m.content.len())
+                .sum::<usize>()
+            + self
+                .memory_context
+                .long_term
+                .iter()
+                .map(|m| m.content.len())
+                .sum::<usize>()
             + self.skills.iter().map(|s| s.content.len()).sum::<usize>();
 
         // Rough: 1 token ≈ 4 characters
@@ -72,7 +82,10 @@ impl EngineContext {
         if !self.skills.is_empty() {
             prompt.push_str("## Relevant Skills\n\n");
             for skill in &self.skills {
-                prompt.push_str(&format!("### {}\n\n{}\n\n", skill.metadata.name, skill.instructions));
+                prompt.push_str(&format!(
+                    "### {}\n\n{}\n\n",
+                    skill.metadata.name, skill.instructions
+                ));
             }
         }
 
@@ -151,9 +164,7 @@ mod tests {
 
     #[test]
     fn test_context_builder() {
-        let context = EngineContextBuilder::new()
-            .with_user_input("Test")
-            .build();
+        let context = EngineContextBuilder::new().with_user_input("Test").build();
 
         assert_eq!(context.user_input, "Test");
     }

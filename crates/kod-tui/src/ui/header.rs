@@ -38,8 +38,7 @@ impl HeaderWidget {
         let line = Line::from(spans);
         let text = ratatui::text::Text::from(vec![line]);
 
-        let paragraph = Paragraph::new(text)
-            .style(Style::default().bg(Color::DarkGray));
+        let paragraph = Paragraph::new(text).style(Style::default().bg(Color::DarkGray));
 
         paragraph.render(rect, area);
     }

@@ -61,7 +61,11 @@ impl AgentSwarm {
 
     /// Get an agent by ID
     pub async fn get_agent(&self, agent_id: &AgentId) -> Option<AgentId> {
-        self.agents.read().await.get(agent_id).map(|_| agent_id.clone())
+        self.agents
+            .read()
+            .await
+            .get(agent_id)
+            .map(|_| agent_id.clone())
     }
 
     /// List all agents
@@ -71,7 +75,9 @@ impl AgentSwarm {
 
     /// Find agents with a specific capability
     pub async fn find_agents_with_capability(&self, capability: Capability) -> Vec<AgentId> {
-        self.agents.read().await
+        self.agents
+            .read()
+            .await
             .values()
             .filter(|a| a.has_capability(&capability))
             .map(|a| a.id().clone())

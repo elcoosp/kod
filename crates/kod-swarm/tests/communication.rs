@@ -20,7 +20,9 @@ async fn test_direct_message() {
             description: "Implement user auth".to_string(),
             priority: Priority::High,
         },
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     // Agent B should receive the message
     let receiver = hub.get_agent_receiver(&agent_b).await.unwrap();
@@ -30,7 +32,10 @@ async fn test_direct_message() {
     assert_eq!(message.to, MessageDestination::Agent(agent_b.clone()));
 
     match message.content {
-        MessageContent::TaskAssignment { description, priority } => {
+        MessageContent::TaskAssignment {
+            description,
+            priority,
+        } => {
             assert_eq!(description, "Implement user auth");
             assert_eq!(priority, Priority::High);
         }
@@ -58,7 +63,9 @@ async fn test_broadcast_message() {
             information: "Found a bug in auth module".to_string(),
             tags: vec!["auth".to_string(), "bug".to_string()],
         },
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     // Both B and C should receive
     let receiver_b = hub.get_agent_receiver(&agent_b).await.unwrap();
@@ -80,14 +87,16 @@ async fn test_agent_not_found() {
     hub.register_agent(agent_a.clone()).await.unwrap();
 
     // Try to send to non-existent agent
-    let result = hub.send_direct(
-        &agent_a,
-        &nonexistent,
-        MessageContent::ProgressUpdate {
-            status: TaskStatus::InProgress,
-            details: "Test".to_string(),
-        },
-    ).await;
+    let result = hub
+        .send_direct(
+            &agent_a,
+            &nonexistent,
+            MessageContent::ProgressUpdate {
+                status: TaskStatus::InProgress,
+                details: "Test".to_string(),
+            },
+        )
+        .await;
 
     assert!(result.is_err());
 }
@@ -106,14 +115,16 @@ async fn test_agent_offline() {
     hub.set_agent_offline(&agent_b).await;
 
     // Try to send to offline agent
-    let result = hub.send_direct(
-        &agent_a,
-        &agent_b,
-        MessageContent::HelpRequest {
-            question: "Can you help?".to_string(),
-            context: "Auth implementation".to_string(),
-        },
-    ).await;
+    let result = hub
+        .send_direct(
+            &agent_a,
+            &agent_b,
+            MessageContent::HelpRequest {
+                question: "Can you help?".to_string(),
+                context: "Auth implementation".to_string(),
+            },
+        )
+        .await;
 
     assert!(result.is_err());
 }
@@ -132,13 +143,15 @@ async fn test_unregister_agent() {
     hub.unregister_agent(&agent_b).await;
 
     // Try to send to unregistered agent
-    let result = hub.send_direct(
-        &agent_a,
-        &agent_b,
-        MessageContent::ResultDelivery {
-            result: "Done".to_string(),
-        },
-    ).await;
+    let result = hub
+        .send_direct(
+            &agent_a,
+            &agent_b,
+            MessageContent::ResultDelivery {
+                result: "Done".to_string(),
+            },
+        )
+        .await;
 
     assert!(result.is_err());
 }
@@ -161,7 +174,9 @@ async fn test_message_history() {
             description: "Task 1".to_string(),
             priority: Priority::Medium,
         },
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     hub.send_direct(
         &agent_b,
@@ -170,7 +185,9 @@ async fn test_message_history() {
             status: TaskStatus::Completed,
             details: "Finished task 1".to_string(),
         },
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     // Get history for agent A
     let history_a = hub.get_agent_history(&agent_a).await;
@@ -197,18 +214,18 @@ async fn test_coordination_messages() {
         MessageContent::Coordination {
             action: kod_types::CoordinationAction::RequestingSync,
         },
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     let receiver = hub.get_agent_receiver(&agent_b).await.unwrap();
     let message = receiver.recv().await.unwrap();
 
     match message.content {
-        MessageContent::Coordination { action } => {
-            match action {
-                kod_types::CoordinationAction::RequestingSync => {}
-                _ => panic!("Expected RequestingSync"),
-            }
-        }
+        MessageContent::Coordination { action } => match action {
+            kod_types::CoordinationAction::RequestingSync => {}
+            _ => panic!("Expected RequestingSync"),
+        },
         _ => panic!("Expected Coordination message"),
     }
 }

@@ -43,7 +43,9 @@ async fn test_match_by_trigger() {
     matcher.add_skill(skill).await;
 
     // Query that matches a trigger
-    let matches = matcher.find_relevant_skills("please refactor rust code for me").await;
+    let matches = matcher
+        .find_relevant_skills("please refactor rust code for me")
+        .await;
 
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].skill.metadata.name, "rust-skill");
@@ -65,7 +67,9 @@ async fn test_match_by_tags() {
     matcher.add_skill(skill).await;
 
     // Query that mentions a tag
-    let matches = matcher.find_relevant_skills("I need help with python testing").await;
+    let matches = matcher
+        .find_relevant_skills("I need help with python testing")
+        .await;
 
     assert_eq!(matches.len(), 1);
     assert!(matches[0].score > 0.3);
@@ -85,7 +89,9 @@ async fn test_match_by_capabilities() {
     matcher.add_skill(skill).await;
 
     // Query that mentions a capability
-    let matches = matcher.find_relevant_skills("help me with api-design patterns").await;
+    let matches = matcher
+        .find_relevant_skills("help me with api-design patterns")
+        .await;
 
     assert_eq!(matches.len(), 1);
 }
@@ -132,7 +138,9 @@ async fn test_multiple_matches_ranked() {
     matcher.add_skill(low_relevance).await;
 
     // Query that matches both skills
-    let matches = matcher.find_relevant_skills("refactor rust code coding").await;
+    let matches = matcher
+        .find_relevant_skills("refactor rust code coding")
+        .await;
 
     assert_eq!(matches.len(), 2);
 

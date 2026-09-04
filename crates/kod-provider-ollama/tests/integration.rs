@@ -8,7 +8,10 @@ async fn test_real_generation() {
     let client = OllamaClient::new("http://localhost:11434");
 
     // First check health
-    client.health_check().await.expect("Ollama should be running");
+    client
+        .health_check()
+        .await
+        .expect("Ollama should be running");
 
     // List models
     let models = client.list_models().await.unwrap();
@@ -18,8 +21,8 @@ async fn test_real_generation() {
     let model_name = models[0].name.clone();
 
     // Generate
-    let request = GenerateRequest::new(&model_name, "Say 'hello' and nothing else.")
-        .with_temperature(0.1);
+    let request =
+        GenerateRequest::new(&model_name, "Say 'hello' and nothing else.").with_temperature(0.1);
 
     let response = client.generate(&request).await.unwrap();
     assert!(response.done);
@@ -34,7 +37,10 @@ async fn test_real_streaming() {
     use kod_provider_ollama::StreamAccumulator;
 
     let client = OllamaClient::new("http://localhost:11434");
-    client.health_check().await.expect("Ollama should be running");
+    client
+        .health_check()
+        .await
+        .expect("Ollama should be running");
 
     let models = client.list_models().await.unwrap();
     let model_name = models[0].name.clone();
@@ -50,8 +56,14 @@ async fn test_real_streaming() {
             kod_provider_ollama::StreamEvent::Chunk { response, .. } => {
                 accumulator.add_chunk(&response).unwrap();
             }
-            kod_provider_ollama::StreamEvent::Done { total_duration, eval_count, .. } => {
-                accumulator.finish_with_stats(total_duration, eval_count).unwrap();
+            kod_provider_ollama::StreamEvent::Done {
+                total_duration,
+                eval_count,
+                ..
+            } => {
+                accumulator
+                    .finish_with_stats(total_duration, eval_count)
+                    .unwrap();
             }
         }
     }
@@ -65,7 +77,10 @@ async fn test_real_streaming() {
 #[ignore = "requires running Ollama with tool-supporting model"]
 async fn test_tool_calling() {
     let client = OllamaClient::new("http://localhost:11434");
-    client.health_check().await.expect("Ollama should be running");
+    client
+        .health_check()
+        .await
+        .expect("Ollama should be running");
 
     let request = GenerateRequest::new("llama3.2", "What is the weather in Paris?");
 

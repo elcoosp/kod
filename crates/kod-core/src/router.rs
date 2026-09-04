@@ -189,7 +189,9 @@ impl TaskRouter {
         let task_type = self.classify_task(input).await?;
 
         // 2. Build context (placeholder - would integrate with memory_manager)
-        let _context = self.build_context(input, &memory_context, &task_type).await?;
+        let _context = self
+            .build_context(input, &memory_context, &task_type)
+            .await?;
 
         // 3. Find relevant skills
         let skills_used = self.find_relevant_skills(input).await?;
@@ -265,11 +267,15 @@ impl TaskRouter {
             }
             TaskType::Testing => {
                 context.push_str("## Task Type: Testing\n\n");
-                context.push_str("You are helping write tests. Generate comprehensive test cases.\n\n");
+                context.push_str(
+                    "You are helping write tests. Generate comprehensive test cases.\n\n",
+                );
             }
             TaskType::Documentation => {
                 context.push_str("## Task Type: Documentation\n\n");
-                context.push_str("You are helping write documentation. Create clear and concise docs.\n\n");
+                context.push_str(
+                    "You are helping write documentation. Create clear and concise docs.\n\n",
+                );
             }
             TaskType::Complex | TaskType::MultiStep => {
                 context.push_str("## Task Type: Complex Task\n\n");
@@ -357,7 +363,10 @@ impl TaskRouter {
             // Use swarm coordination
             // In a full implementation, this would delegate to the swarm
             Ok(HandlerResponse {
-                text: Some(format!("Complex task received for swarm coordination: {}", input)),
+                text: Some(format!(
+                    "Complex task received for swarm coordination: {}",
+                    input
+                )),
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
             })
@@ -388,9 +397,24 @@ mod tests {
 
         let router = TaskRouter::new(RouterConfig::default(), db_path).unwrap();
 
-        assert_eq!(router.classify_task("What is 2+2?").await.unwrap(), TaskType::Simple);
-        assert_eq!(router.classify_task("Fix the bug").await.unwrap(), TaskType::CodeModification);
-        assert_eq!(router.classify_task("Debug this error").await.unwrap(), TaskType::Debugging);
-        assert_eq!(router.classify_task("Research async patterns").await.unwrap(), TaskType::Research);
+        assert_eq!(
+            router.classify_task("What is 2+2?").await.unwrap(),
+            TaskType::Simple
+        );
+        assert_eq!(
+            router.classify_task("Fix the bug").await.unwrap(),
+            TaskType::CodeModification
+        );
+        assert_eq!(
+            router.classify_task("Debug this error").await.unwrap(),
+            TaskType::Debugging
+        );
+        assert_eq!(
+            router
+                .classify_task("Research async patterns")
+                .await
+                .unwrap(),
+            TaskType::Research
+        );
     }
 }

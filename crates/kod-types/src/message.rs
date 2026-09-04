@@ -100,17 +100,9 @@ pub enum TaskStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CoordinationAction {
     RequestingSync,
-    ProposingChange {
-        file: String,
-        description: String,
-    },
-    AcknowledgingChange {
-        file: String,
-    },
-    ConflictDetected {
-        file: String,
-        description: String,
-    },
+    ProposingChange { file: String, description: String },
+    AcknowledgingChange { file: String },
+    ConflictDetected { file: String, description: String },
 }
 
 #[cfg(test)]

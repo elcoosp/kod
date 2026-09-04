@@ -54,12 +54,9 @@ impl Tool for ReadFileTool {
         self.definition.clone()
     }
 
-    async fn execute(
-        &self,
-        params: &Value,
-        context: &ToolContext,
-    ) -> Result<ToolResult> {
-        let path = params["path"].as_str()
+    async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
+        let path = params["path"]
+            .as_str()
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "Missing 'path' parameter".to_string(),
             })?;
@@ -67,8 +64,7 @@ impl Tool for ReadFileTool {
         let resolved = context.resolve_path(path);
         context.can_read(&resolved)?;
 
-        let content = std::fs::read_to_string(&resolved)
-            .map_err(KodError::Io)?;
+        let content = std::fs::read_to_string(&resolved).map_err(KodError::Io)?;
 
         Ok(ToolResult::Success(serde_json::json!({
             "path": resolved.to_string_lossy().to_string(),
@@ -134,16 +130,14 @@ impl Tool for WriteFileTool {
         self.definition.clone()
     }
 
-    async fn execute(
-        &self,
-        params: &Value,
-        context: &ToolContext,
-    ) -> Result<ToolResult> {
-        let path = params["path"].as_str()
+    async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
+        let path = params["path"]
+            .as_str()
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "Missing 'path' parameter".to_string(),
             })?;
-        let content = params["content"].as_str()
+        let content = params["content"]
+            .as_str()
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "Missing 'content' parameter".to_string(),
             })?;
@@ -220,12 +214,9 @@ impl Tool for ExecuteCommandTool {
         self.definition.clone()
     }
 
-    async fn execute(
-        &self,
-        params: &Value,
-        context: &ToolContext,
-    ) -> Result<ToolResult> {
-        let command = params["command"].as_str()
+    async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
+        let command = params["command"]
+            .as_str()
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "Missing 'command' parameter".to_string(),
             })?;
@@ -300,12 +291,9 @@ impl Tool for ListFilesTool {
         self.definition.clone()
     }
 
-    async fn execute(
-        &self,
-        params: &Value,
-        context: &ToolContext,
-    ) -> Result<ToolResult> {
-        let path = params["path"].as_str()
+    async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
+        let path = params["path"]
+            .as_str()
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "Missing 'path' parameter".to_string(),
             })?;
@@ -324,9 +312,7 @@ impl Tool for ListFilesTool {
                 files.push(entry.path().to_string_lossy().to_string());
             }
         } else {
-            for entry in std::fs::read_dir(&resolved)
-                .map_err(KodError::Io)?
-        {
+            for entry in std::fs::read_dir(&resolved).map_err(KodError::Io)? {
                 let entry = entry.map_err(KodError::Io)?;
                 files.push(entry.path().to_string_lossy().to_string());
             }
@@ -398,16 +384,14 @@ impl Tool for GrepTool {
         self.definition.clone()
     }
 
-    async fn execute(
-        &self,
-        params: &Value,
-        context: &ToolContext,
-    ) -> Result<ToolResult> {
-        let path = params["path"].as_str()
+    async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
+        let path = params["path"]
+            .as_str()
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "Missing 'path' parameter".to_string(),
             })?;
-        let pattern = params["pattern"].as_str()
+        let pattern = params["pattern"]
+            .as_str()
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "Missing 'pattern' parameter".to_string(),
             })?;
@@ -423,7 +407,10 @@ impl Tool for GrepTool {
         };
 
         let matcher = globset::GlobSetBuilder::new()
-            .add(globset::Glob::new(&glob).map_err(|e| KodError::InvalidState(format!("Invalid glob: {}", e)))?)
+            .add(
+                globset::Glob::new(&glob)
+                    .map_err(|e| KodError::InvalidState(format!("Invalid glob: {}", e)))?,
+            )
             .build()
             .map_err(|e| KodError::InvalidState(format!("Invalid globset: {}", e)))?;
 
@@ -509,12 +496,9 @@ impl Tool for FileInfoTool {
         self.definition.clone()
     }
 
-    async fn execute(
-        &self,
-        params: &Value,
-        context: &ToolContext,
-    ) -> Result<ToolResult> {
-        let path = params["path"].as_str()
+    async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
+        let path = params["path"]
+            .as_str()
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "Missing 'path' parameter".to_string(),
             })?;
@@ -522,8 +506,7 @@ impl Tool for FileInfoTool {
         let resolved = context.resolve_path(path);
         context.can_read(&resolved)?;
 
-        let metadata = std::fs::metadata(&resolved)
-            .map_err(KodError::Io)?;
+        let metadata = std::fs::metadata(&resolved).map_err(KodError::Io)?;
 
         Ok(ToolResult::Success(serde_json::json!({
             "path": resolved.to_string_lossy().to_string(),

@@ -38,7 +38,9 @@ impl ToolRegistry {
 
     /// Get a tool by name (returns true if found)
     pub async fn get(&self, name: &str) -> bool {
-        self.tools.read().await
+        self.tools
+            .read()
+            .await
             .iter()
             .any(|t| t.definition().name == name)
     }
@@ -58,7 +60,8 @@ impl ToolRegistry {
     /// List tools by category
     pub async fn list_by_category(&self, category: ToolCategory) -> Vec<String> {
         let tools = self.tools.read().await;
-        tools.iter()
+        tools
+            .iter()
             .filter(|t| t.definition().category == category)
             .map(|t| t.definition().name.clone())
             .collect()
@@ -73,7 +76,8 @@ impl ToolRegistry {
     pub async fn get_definitions_for_llm(&self) -> Vec<serde_json::Value> {
         let tools = self.tools.read().await;
 
-        tools.iter()
+        tools
+            .iter()
             .map(|tool| {
                 let def = tool.definition();
                 serde_json::json!({
@@ -91,7 +95,8 @@ impl ToolRegistry {
     /// Get tool permissions by name
     pub async fn get_permissions(&self, name: &str) -> Option<kod_types::ToolPermissions> {
         let tools = self.tools.read().await;
-        tools.iter()
+        tools
+            .iter()
             .find(|t| t.definition().name == name)
             .map(|t| t.definition().permissions)
     }
@@ -112,8 +117,7 @@ impl ToolRegistry {
         let tools = self.tools.read().await;
 
         // Find the tool and get its definition to check permissions
-        let tool = tools.iter()
-            .find(|t| t.definition().name == name);
+        let tool = tools.iter().find(|t| t.definition().name == name);
 
         match tool {
             Some(t) => {

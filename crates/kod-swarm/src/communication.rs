@@ -5,7 +5,7 @@ use kod_types::{AgentId, AgentMessageContent, Priority};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc};
 
 /// Alias for message content type (re-exports AgentMessageContent)
 pub type MessageContent = AgentMessageContent;
@@ -102,11 +102,14 @@ impl AgentCommunicationHub {
                 agent_id
             )));
         }
-        agents.insert(agent_id.clone(), AgentInfo {
-            tx,
-            rx: Arc::new(Mutex::new(Some(rx))),
-            online: true,
-        });
+        agents.insert(
+            agent_id.clone(),
+            AgentInfo {
+                tx,
+                rx: Arc::new(Mutex::new(Some(rx))),
+                online: true,
+            },
+        );
         drop(agents);
 
         let mut history = self.history.write().await;
@@ -145,13 +148,11 @@ impl AgentCommunicationHub {
                 drop(agents);
                 self.record_message(from, &message).await;
                 self.record_message(to, &message).await;
-                tx.send(message).map_err(|e| KodError::InvalidState(e.to_string()))?;
+                tx.send(message)
+                    .map_err(|e| KodError::InvalidState(e.to_string()))?;
                 Ok(())
             }
-            Some(_) => Err(KodError::InvalidState(format!(
-                "Agent {} is offline",
-                to
-            ))),
+            Some(_) => Err(KodError::InvalidState(format!("Agent {} is offline", to))),
             None => Err(KodError::InvalidState(format!(
                 "Agent {} not registered",
                 to
@@ -159,11 +160,7 @@ impl AgentCommunicationHub {
         }
     }
 
-    pub async fn broadcast(
-        &self,
-        from: &AgentId,
-        content: MessageContent,
-    ) -> Result<()> {
+    pub async fn broadcast(&self, from: &AgentId, content: MessageContent) -> Result<()> {
         let agents = self.agents.read().await;
         if !agents.contains_key(from) {
             return Err(KodError::InvalidState(format!(
@@ -191,7 +188,8 @@ impl AgentCommunicationHub {
         }
 
         for (_, tx) in recipients {
-            tx.send(message.clone()).map_err(|e| KodError::InvalidState(e.to_string()))?;
+            tx.send(message.clone())
+                .map_err(|e| KodError::InvalidState(e.to_string()))?;
         }
         Ok(())
     }
@@ -239,6 +237,9 @@ impl AgentCommunicationHub {
 
     async fn record_message(&self, agent_id: &AgentId, message: &SwarmMessage) {
         let mut history = self.history.write().await;
-        history.entry(agent_id.clone()).or_default().push(message.clone());
+        history
+            .entry(agent_id.clone())
+            .or_default()
+            .push(message.clone());
     }
 }

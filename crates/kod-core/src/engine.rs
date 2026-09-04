@@ -3,7 +3,7 @@
 //! Coordinates the task router, LLM providers, skills, memory, and swarm
 //! to process user requests end-to-end.
 
-use crate::router::{RouterConfig, TaskRouter, TaskResponse};
+use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
 use kod_provider::{GenerationOptions, LlmProvider};
 use std::path::PathBuf;

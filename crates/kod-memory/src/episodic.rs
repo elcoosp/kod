@@ -54,10 +54,7 @@ impl EpisodicMemory {
             .collect();
 
         // Sort by similarity (descending)
-        scored.sort_by(|a, b| {
-            b.0.partial_cmp(&a.0)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
         Ok(scored
             .into_iter()
@@ -93,7 +90,9 @@ impl EpisodicMemory {
         results.sort_by(|a, b| {
             let sim_a = cosine_similarity(query_embedding, &a.embedding);
             let sim_b = cosine_similarity(query_embedding, &b.embedding);
-            sim_b.partial_cmp(&sim_a).unwrap_or(std::cmp::Ordering::Equal)
+            sim_b
+                .partial_cmp(&sim_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         Ok(results)

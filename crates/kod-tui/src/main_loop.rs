@@ -7,9 +7,9 @@ use crate::{
 };
 use kod_error::{KodError, Result};
 use ratatui::{
+    Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
-    Terminal,
 };
 use std::io::Stdout;
 use std::time::Duration;
@@ -51,7 +51,8 @@ impl TuiLoop {
             std::io::stdout(),
             crossterm::terminal::EnterAlternateScreen,
             crossterm::event::EnableMouseCapture
-        ).map_err(|e| KodError::Internal(format!("Failed to enter alternate screen: {}", e)))?;
+        )
+        .map_err(|e| KodError::Internal(format!("Failed to enter alternate screen: {}", e)))?;
 
         let backend = CrosstermBackend::new(std::io::stdout());
         let terminal = Terminal::new(backend)
@@ -69,7 +70,8 @@ impl TuiLoop {
         self.event_handler.stop();
 
         if let Some(terminal) = &mut self.terminal {
-            terminal.show_cursor()
+            terminal
+                .show_cursor()
                 .map_err(|e| KodError::Internal(format!("Failed to show cursor: {}", e)))?;
         }
 
@@ -77,7 +79,8 @@ impl TuiLoop {
             std::io::stdout(),
             crossterm::terminal::LeaveAlternateScreen,
             crossterm::event::DisableMouseCapture
-        ).map_err(|e| KodError::Internal(format!("Failed to leave alternate screen: {}", e)))?;
+        )
+        .map_err(|e| KodError::Internal(format!("Failed to leave alternate screen: {}", e)))?;
 
         crossterm::terminal::disable_raw_mode()
             .map_err(|e| KodError::Internal(format!("Failed to disable raw mode: {}", e)))?;
@@ -113,56 +116,55 @@ impl TuiLoop {
     /// Render the UI
     async fn render(&mut self) -> Result<()> {
         if let Some(terminal) = &mut self.terminal {
-            terminal.draw(|f| {
-                let size = f.area();
+            terminal
+                .draw(|f| {
+                    let size = f.area();
 
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(1),
-                        Constraint::Min(1),
-                        Constraint::Length(3),
-                    ])
-                    .split(size);
-
-                let status_text = format!(
-                    " KOD | Mode: {:?} | Input: {:?} | Messages: {} ",
-                    self.app.mode(),
-                    self.app.input_mode(),
-                    self.app.messages().len()
-                );
-
-                let status = ratatui::widgets::Paragraph::new(status_text)
-                    .style(ratatui::style::Style::default().fg(ratatui::style::Color::White));
-
-                f.render_widget(status, chunks[0]);
-
-                if *self.app.mode() == AppMode::AgentPanel {
-                    let _main_chunks = Layout::default()
-                        .direction(Direction::Horizontal)
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
                         .constraints([
-                            Constraint::Percentage(70),
-                            Constraint::Percentage(30),
+                            Constraint::Length(1),
+                            Constraint::Min(1),
+                            Constraint::Length(3),
                         ])
-                        .split(chunks[1]);
+                        .split(size);
 
-                    let chat_widget = ChatWidget::new();
-                    let chat_buffer = f.buffer_mut();
-                    chat_widget.render(&self.app, &mut *chat_buffer);
+                    let status_text = format!(
+                        " KOD | Mode: {:?} | Input: {:?} | Messages: {} ",
+                        self.app.mode(),
+                        self.app.input_mode(),
+                        self.app.messages().len()
+                    );
 
-                    let agent_widget = AgentPanelWidget::new();
-                    let agent_buffer = f.buffer_mut();
-                    agent_widget.render(&self.app, &mut *agent_buffer);
-                } else {
-                    let chat_widget = ChatWidget::new();
-                    let chat_buffer = f.buffer_mut();
-                    chat_widget.render(&self.app, &mut *chat_buffer);
-                }
+                    let status = ratatui::widgets::Paragraph::new(status_text)
+                        .style(ratatui::style::Style::default().fg(ratatui::style::Color::White));
 
-                let input_widget = InputWidget::new();
-                let input_buffer = f.buffer_mut();
-                input_widget.render(&self.app, &mut *input_buffer);
-            }).map_err(|e| KodError::Internal(format!("Failed to draw: {}", e)))?;
+                    f.render_widget(status, chunks[0]);
+
+                    if *self.app.mode() == AppMode::AgentPanel {
+                        let _main_chunks = Layout::default()
+                            .direction(Direction::Horizontal)
+                            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+                            .split(chunks[1]);
+
+                        let chat_widget = ChatWidget::new();
+                        let chat_buffer = f.buffer_mut();
+                        chat_widget.render(&self.app, &mut *chat_buffer);
+
+                        let agent_widget = AgentPanelWidget::new();
+                        let agent_buffer = f.buffer_mut();
+                        agent_widget.render(&self.app, &mut *agent_buffer);
+                    } else {
+                        let chat_widget = ChatWidget::new();
+                        let chat_buffer = f.buffer_mut();
+                        chat_widget.render(&self.app, &mut *chat_buffer);
+                    }
+
+                    let input_widget = InputWidget::new();
+                    let input_buffer = f.buffer_mut();
+                    input_widget.render(&self.app, &mut *input_buffer);
+                })
+                .map_err(|e| KodError::Internal(format!("Failed to draw: {}", e)))?;
         }
 
         Ok(())
@@ -236,13 +238,11 @@ impl TuiLoop {
             KeyCode::Char('q') | KeyCode::Escape => {
                 self.app.quit();
             }
-            KeyCode::Tab => {
-                match self.app.mode() {
-                    AppMode::Normal => self.app.set_mode(AppMode::AgentPanel),
-                    AppMode::AgentPanel => self.app.set_mode(AppMode::Normal),
-                    _ => self.app.set_mode(AppMode::Normal),
-                }
-            }
+            KeyCode::Tab => match self.app.mode() {
+                AppMode::Normal => self.app.set_mode(AppMode::AgentPanel),
+                AppMode::AgentPanel => self.app.set_mode(AppMode::Normal),
+                _ => self.app.set_mode(AppMode::Normal),
+            },
             KeyCode::Char('h') | KeyCode::Char('?') => {
                 self.app.set_mode(AppMode::Help);
             }
@@ -312,7 +312,9 @@ mod tests {
     async fn test_tui_lifecycle() {
         let mut tui = TuiLoop::new();
 
-        tui.handle_event(Event::Key(KeyCode::Char('i'))).await.unwrap();
+        tui.handle_event(Event::Key(KeyCode::Char('i')))
+            .await
+            .unwrap();
         assert_eq!(tui.app().input_mode(), &InputMode::Insert);
 
         tui.handle_event(Event::Key(KeyCode::Escape)).await.unwrap();

@@ -23,7 +23,7 @@ pub mod long_term;
 pub mod manager;
 pub mod short_term;
 
-pub use context::{ContextBuilder, Context};
+pub use context::{Context, ContextBuilder};
 pub use episodic::EpisodicMemory;
 pub use long_term::LongTermMemory;
 pub use manager::MemoryManager;

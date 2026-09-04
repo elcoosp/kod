@@ -27,3 +27,6 @@ kod-swarm = { path = "../kod-swarm" }
 rstest = { workspace = true }
 tempfile = "3.8"
 time = { workspace = true }
+criterion = { workspace = true }
+tokio = { workspace = true }
+kod-swarm = { path = "../kod-swarm" }

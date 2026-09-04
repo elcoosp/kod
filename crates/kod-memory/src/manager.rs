@@ -107,7 +107,12 @@ impl MemoryManager {
     }
 
     /// Update memory content
-    pub async fn update(&self, memory_type: MemoryType, id: &MemoryId, content: &str) -> Result<()> {
+    pub async fn update(
+        &self,
+        memory_type: MemoryType,
+        id: &MemoryId,
+        content: &str,
+    ) -> Result<()> {
         match memory_type {
             MemoryType::ShortTerm => {
                 // Short-term memory doesn't support update, so remove and re-add
@@ -131,7 +136,9 @@ impl MemoryManager {
             MemoryType::Episodic => {
                 // Episodic memory update would need embedding regeneration
                 // For now, return error
-                Err(KodError::MemoryStorage("Episodic memory update not supported".to_string()))
+                Err(KodError::MemoryStorage(
+                    "Episodic memory update not supported".to_string(),
+                ))
             }
         }
     }
@@ -143,9 +150,7 @@ impl MemoryManager {
                 self.short_term.remove(id);
                 Ok(())
             }
-            MemoryType::LongTerm | MemoryType::Semantic => {
-                self.long_term.remove(id).await
-            }
+            MemoryType::LongTerm | MemoryType::Semantic => self.long_term.remove(id).await,
             MemoryType::Episodic => {
                 self.episodic.remove(id).await?;
                 Ok(())

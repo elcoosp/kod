@@ -158,13 +158,15 @@ impl Agent {
             )));
         }
 
-        self.state.send(AgentState::Starting)
+        self.state
+            .send(AgentState::Starting)
             .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
 
         // Simulate initialization
         tokio::time::sleep(Duration::from_millis(10)).await;
 
-        self.state.send(AgentState::Running)
+        self.state
+            .send(AgentState::Running)
             .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
 
         self.record_heartbeat();
@@ -181,7 +183,8 @@ impl Agent {
             )));
         }
 
-        self.state.send(AgentState::Paused)
+        self.state
+            .send(AgentState::Paused)
             .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
 
         Ok(())
@@ -196,7 +199,8 @@ impl Agent {
             )));
         }
 
-        self.state.send(AgentState::Running)
+        self.state
+            .send(AgentState::Running)
             .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
 
         self.record_heartbeat();
@@ -208,14 +212,16 @@ impl Agent {
     pub async fn stop(&mut self) -> Result<()> {
         match self.state() {
             AgentState::Running | AgentState::Paused | AgentState::Starting => {
-                self.state.send(AgentState::Stopping)
-                    .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
+                self.state.send(AgentState::Stopping).map_err(|e| {
+                    KodError::InvalidState(format!("Failed to update state: {:?}", e))
+                })?;
 
                 // Cleanup
                 tokio::time::sleep(Duration::from_millis(10)).await;
 
-                self.state.send(AgentState::Stopped)
-                    .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
+                self.state.send(AgentState::Stopped).map_err(|e| {
+                    KodError::InvalidState(format!("Failed to update state: {:?}", e))
+                })?;
             }
             AgentState::Stopped => return Ok(()),
             _ => {
@@ -305,7 +311,9 @@ impl AgentBuilder {
     /// Build the agent
     pub fn build(self) -> Agent {
         let (state_tx, state_rx) = watch::channel(AgentState::Idle);
-        let model = self.model.unwrap_or_else(|| self.model_config.model_name.clone());
+        let model = self
+            .model
+            .unwrap_or_else(|| self.model_config.model_name.clone());
 
         Agent {
             id: AgentId::new(),

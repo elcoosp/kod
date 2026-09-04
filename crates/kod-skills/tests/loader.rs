@@ -72,10 +72,7 @@ async fn test_load_skills_from_directory() {
     // Should load 2 valid skills, skip invalid and non-md files
     assert_eq!(skills.len(), 2);
 
-    let names: Vec<String> = skills
-        .iter()
-        .map(|s| s.metadata.name.clone())
-        .collect();
+    let names: Vec<String> = skills.iter().map(|s| s.metadata.name.clone()).collect();
 
     assert!(names.contains(&"rust-refactoring".to_string()));
     assert!(names.contains(&"python-testing".to_string()));

@@ -58,7 +58,8 @@ impl OllamaClient {
     pub async fn health_check(&self) -> Result<()> {
         let url = format!("{}/api/tags", self.base_url);
 
-        let response = self.http
+        let response = self
+            .http
             .get(&url)
             .timeout(Duration::from_secs(5))
             .send()
@@ -79,7 +80,8 @@ impl OllamaClient {
     pub async fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/api/tags", self.base_url);
 
-        let response = self.http
+        let response = self
+            .http
             .get(&url)
             .send()
             .await
@@ -114,10 +116,14 @@ impl OllamaClient {
     }
 
     /// Generate a completion (non-streaming)
-    pub async fn generate(&self, request: &crate::generate::GenerateRequest) -> Result<crate::generate::GenerateResponse> {
+    pub async fn generate(
+        &self,
+        request: &crate::generate::GenerateRequest,
+    ) -> Result<crate::generate::GenerateResponse> {
         let url = self.url("generate");
 
-        let response = self.http
+        let response = self
+            .http
             .post(&url)
             .json(request)
             .timeout(self.timeout)
@@ -152,7 +158,8 @@ impl OllamaClient {
 
         let url = self.url("generate");
 
-        let response = self.http
+        let response = self
+            .http
             .post(&url)
             .json(&stream_request)
             .timeout(self.timeout)
@@ -208,10 +215,9 @@ impl OllamaClient {
                         }
                     }
                     Err(e) => {
-                        let _ = tx.send(Err(KodError::Provider(format!(
-                            "Stream error: {}",
-                            e
-                        )))).await;
+                        let _ = tx
+                            .send(Err(KodError::Provider(format!("Stream error: {}", e))))
+                            .await;
                         return;
                     }
                 }
@@ -229,13 +235,15 @@ impl OllamaClient {
     ) -> Result<(String, Vec<kod_types::ToolCall>)> {
         let url = self.url("generate");
 
-        let mut request_with_tools = serde_json::to_value(request)
-            .map_err(|e| KodError::Serialization(e.to_string()))?;
+        let mut request_with_tools =
+            serde_json::to_value(request).map_err(|e| KodError::Serialization(e.to_string()))?;
 
-        request_with_tools["tools"] = serde_json::to_value(crate::tools::format_tools_for_ollama(tools))
-            .map_err(|e| KodError::Serialization(e.to_string()))?;
+        request_with_tools["tools"] =
+            serde_json::to_value(crate::tools::format_tools_for_ollama(tools))
+                .map_err(|e| KodError::Serialization(e.to_string()))?;
 
-        let response = self.http
+        let response = self
+            .http
             .post(&url)
             .json(&request_with_tools)
             .timeout(self.timeout)
@@ -298,7 +306,8 @@ impl OllamaClientBuilder {
 
     pub fn build(self) -> OllamaClient {
         let mut client = OllamaClient::new(
-            self.base_url.unwrap_or_else(|| "http://localhost:11434".to_string())
+            self.base_url
+                .unwrap_or_else(|| "http://localhost:11434".to_string()),
         );
 
         if let Some(model) = self.model {
@@ -349,7 +358,10 @@ mod tests {
     #[test]
     fn test_url_construction() {
         let client = OllamaClient::new("http://localhost:11434/");
-        assert_eq!(client.url("generate"), "http://localhost:11434/api/generate");
+        assert_eq!(
+            client.url("generate"),
+            "http://localhost:11434/api/generate"
+        );
         assert_eq!(client.url("tags"), "http://localhost:11434/api/tags");
     }
 

@@ -22,7 +22,9 @@ pub mod swarm;
 pub mod workspace;
 
 pub use agent::{Agent, AgentBuilder, AgentState, Capability, ModelConfig};
-pub use communication::{AgentCommunicationHub, AgentMessageReceiver, MessageContent, MessageDestination, SwarmMessage};
+pub use communication::{
+    AgentCommunicationHub, AgentMessageReceiver, MessageContent, MessageDestination, SwarmMessage,
+};
 pub use coordination::{TaskAssignment, TaskCoordinator};
 pub use swarm::AgentSwarm;
 pub use workspace::{FileLock, LockType, SharedWorkspace};

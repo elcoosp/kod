@@ -30,26 +30,11 @@ impl ChatWidget {
 
         for message in messages {
             let (prefix, style) = match message.role {
-                MessageRole::User => (
-                    "[You] ",
-                    Style::default().fg(Color::Green),
-                ),
-                MessageRole::Assistant => (
-                    "[AI] ",
-                    Style::default().fg(Color::Cyan),
-                ),
-                MessageRole::System => (
-                    "[System] ",
-                    Style::default().fg(Color::Yellow),
-                ),
-                MessageRole::Tool => (
-                    "[Tool] ",
-                    Style::default().fg(Color::Magenta),
-                ),
-                MessageRole::Agent(_) => (
-                    "[Agent] ",
-                    Style::default().fg(Color::Blue),
-                ),
+                MessageRole::User => ("[You] ", Style::default().fg(Color::Green)),
+                MessageRole::Assistant => ("[AI] ", Style::default().fg(Color::Cyan)),
+                MessageRole::System => ("[System] ", Style::default().fg(Color::Yellow)),
+                MessageRole::Tool => ("[Tool] ", Style::default().fg(Color::Magenta)),
+                MessageRole::Agent(_) => ("[Agent] ", Style::default().fg(Color::Blue)),
             };
 
             let timestamp = message.timestamp.format("%H:%M:%S");
@@ -89,8 +74,7 @@ impl ChatWidget {
         }
 
         let text = Text::from(lines);
-        let paragraph = Paragraph::new(text)
-            .wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
 
         paragraph.render(rect, area);
     }

@@ -19,8 +19,18 @@ impl Context {
     /// Estimate token count (rough approximation)
     pub fn estimated_tokens(&self) -> usize {
         let total_chars = self.user_input.len()
-            + self.memory_context.working_memory.iter().map(|m| m.content.len()).sum::<usize>()
-            + self.memory_context.long_term.iter().map(|m| m.content.len()).sum::<usize>()
+            + self
+                .memory_context
+                .working_memory
+                .iter()
+                .map(|m| m.content.len())
+                .sum::<usize>()
+            + self
+                .memory_context
+                .long_term
+                .iter()
+                .map(|m| m.content.len())
+                .sum::<usize>()
             + self.skills.iter().map(|s| s.content.len()).sum::<usize>();
 
         // Rough: 1 token ≈ 4 characters
@@ -133,9 +143,7 @@ mod tests {
 
     #[test]
     fn test_prompt_generation() {
-        let context = ContextBuilder::new()
-            .with_user_input("Help me")
-            .build();
+        let context = ContextBuilder::new().with_user_input("Help me").build();
 
         let prompt = context.to_prompt();
         assert!(prompt.contains("Help me"));

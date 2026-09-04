@@ -30,12 +30,14 @@ impl SkillWatcher {
         let (event_tx, event_rx) = mpsc::channel(100);
         let (notify_tx, notify_rx) = std_mpsc::channel();
 
-        let mut watcher = notify::recommended_watcher(move |res: std::result::Result<NotifyEvent, notify::Error>| {
+        let mut watcher = notify::recommended_watcher(
+            move |res: std::result::Result<NotifyEvent, notify::Error>| {
                 if let Ok(event) = res {
                     let _ = notify_tx.send(event);
                 }
-            })
-            .map_err(|e| KodError::Internal(format!("Failed to create watcher: {}", e)))?;
+            },
+        )
+        .map_err(|e| KodError::Internal(format!("Failed to create watcher: {}", e)))?;
 
         watcher
             .watch(watch_dir, RecursiveMode::Recursive)
@@ -76,8 +78,7 @@ impl SkillWatcher {
 
     /// Check if watcher is running
     pub fn is_running(&self) -> bool {
-        self.is_running
-            .load(std::sync::atomic::Ordering::SeqCst)
+        self.is_running.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Get the watched directory

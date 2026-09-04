@@ -36,11 +36,10 @@ impl SkillParser {
         })?;
 
         let source_name = path.display().to_string();
-        self.parse_content(&content, &source_name)
-            .map(|mut skill| {
-                skill.path = path.to_path_buf();
-                skill
-            })
+        self.parse_content(&content, &source_name).map(|mut skill| {
+            skill.path = path.to_path_buf();
+            skill
+        })
     }
 
     /// Parse skill content from a string
@@ -83,10 +82,12 @@ impl SkillParser {
 
         // Find the closing --- marker
         let rest = &content[3..];
-        let end_pos = rest.find("\n---").ok_or_else(|| KodError::SkillParseError {
-            path: source.to_string(),
-            reason: "Missing closing --- marker for front matter".to_string(),
-        })?;
+        let end_pos = rest
+            .find("\n---")
+            .ok_or_else(|| KodError::SkillParseError {
+                path: source.to_string(),
+                reason: "Missing closing --- marker for front matter".to_string(),
+            })?;
 
         let yaml_str = &rest[..end_pos];
         let body = rest[end_pos + 4..].trim().to_string();

@@ -1,6 +1,6 @@
-use kod_tui::main_loop::TuiLoop;
-use kod_tui::event::{Event, KeyCode};
 use kod_tui::app::{AppMode, InputMode};
+use kod_tui::event::{Event, KeyCode};
+use kod_tui::main_loop::TuiLoop;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_tui_loop_creation() {
@@ -12,9 +12,15 @@ async fn test_tui_loop_creation() {
 async fn test_tui_event_processing() {
     let mut tui = TuiLoop::new();
 
-    tui.handle_event(Event::Key(KeyCode::Char('i'))).await.unwrap();
-    tui.handle_event(Event::Key(KeyCode::Char('h'))).await.unwrap();
-    tui.handle_event(Event::Key(KeyCode::Char('i'))).await.unwrap();
+    tui.handle_event(Event::Key(KeyCode::Char('i')))
+        .await
+        .unwrap();
+    tui.handle_event(Event::Key(KeyCode::Char('h')))
+        .await
+        .unwrap();
+    tui.handle_event(Event::Key(KeyCode::Char('i')))
+        .await
+        .unwrap();
 
     assert_eq!(tui.app().input_mode(), &InputMode::Insert);
     assert_eq!(tui.app().input(), "hi");
@@ -24,11 +30,21 @@ async fn test_tui_event_processing() {
 async fn test_tui_input_submission() {
     let mut tui = TuiLoop::new();
 
-    tui.handle_event(Event::Key(KeyCode::Char('i'))).await.unwrap();
-    tui.handle_event(Event::Key(KeyCode::Char('t'))).await.unwrap();
-    tui.handle_event(Event::Key(KeyCode::Char('e'))).await.unwrap();
-    tui.handle_event(Event::Key(KeyCode::Char('s'))).await.unwrap();
-    tui.handle_event(Event::Key(KeyCode::Char('t'))).await.unwrap();
+    tui.handle_event(Event::Key(KeyCode::Char('i')))
+        .await
+        .unwrap();
+    tui.handle_event(Event::Key(KeyCode::Char('t')))
+        .await
+        .unwrap();
+    tui.handle_event(Event::Key(KeyCode::Char('e')))
+        .await
+        .unwrap();
+    tui.handle_event(Event::Key(KeyCode::Char('s')))
+        .await
+        .unwrap();
+    tui.handle_event(Event::Key(KeyCode::Char('t')))
+        .await
+        .unwrap();
 
     tui.handle_event(Event::Key(KeyCode::Enter)).await.unwrap();
 

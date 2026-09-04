@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+build = "build.rs"
 
 [dependencies]
 serde = { workspace = true }
@@ -12,6 +13,17 @@ kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
 kod-config = { path = "../kod-config" }
 kod-core = { path = "../kod-core" }
+kod-skills = { path = "../kod-skills" }
+kod-memory = { path = "../kod-memory" }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = "3.8"
+kod-config = { path = "../kod-config" }
+toml = { workspace = true }
+
+[build-dependencies]
+chrono = { workspace = true }
 
 [[bin]]
 name = "kod"

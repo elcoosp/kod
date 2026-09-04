@@ -1,4 +1,7 @@
-use kod_core::{engine::KodEngine, router::{RouterConfig, TaskType}};
+use kod_core::{
+    engine::KodEngine,
+    router::{RouterConfig, TaskType},
+};
 use tempfile::TempDir;
 
 fn create_test_environment() -> (KodEngine, TempDir) {

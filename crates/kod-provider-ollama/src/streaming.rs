@@ -32,10 +32,7 @@ pub struct RawStreamEvent {
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
     /// A chunk of generated text
-    Chunk {
-        response: String,
-        done: bool,
-    },
+    Chunk { response: String, done: bool },
     /// Final event with statistics
     Done {
         response: String,
@@ -116,18 +113,16 @@ impl GenerationStream {
 impl Stream for GenerationStream {
     type Item = Result<StreamEvent>;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.receiver.poll_recv(cx)
     }
 }
 
 /// Parse a line of NDJSON into a StreamEvent
 pub fn parse_stream_line(line: &str) -> Result<StreamEvent> {
-    let raw: RawStreamEvent = serde_json::from_str(line)
-        .map_err(|e| KodError::Provider(format!("Failed to parse stream line: {} - {}", line, e)))?;
+    let raw: RawStreamEvent = serde_json::from_str(line).map_err(|e| {
+        KodError::Provider(format!("Failed to parse stream line: {} - {}", line, e))
+    })?;
 
     if raw.done {
         Ok(StreamEvent::Done {
@@ -169,7 +164,11 @@ mod tests {
         let event = parse_stream_line(line).unwrap();
 
         match event {
-            StreamEvent::Done { total_duration, eval_count, .. } => {
+            StreamEvent::Done {
+                total_duration,
+                eval_count,
+                ..
+            } => {
                 assert_eq!(total_duration, 1000);
                 assert_eq!(eval_count, 10);
             }

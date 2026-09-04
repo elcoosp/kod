@@ -1,7 +1,7 @@
 //! Comprehensive error types for the KOD system.
 
-use thiserror::Error;
 use kod_types::{AgentId, SkillId};
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum KodError {
@@ -149,7 +149,12 @@ mod tests {
     #[test]
     fn test_recoverable_errors() {
         assert!(KodError::ProviderTimeout { timeout_ms: 1000 }.is_recoverable());
-        assert!(KodError::RateLimited { retry_after_secs: 30 }.is_recoverable());
+        assert!(
+            KodError::RateLimited {
+                retry_after_secs: 30
+            }
+            .is_recoverable()
+        );
         assert!(!KodError::Internal("test".to_string()).is_recoverable());
     }
 

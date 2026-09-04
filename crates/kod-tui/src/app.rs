@@ -3,10 +3,10 @@
 //! Manages messages, input, agent status, tool execution state,
 //! and scrolling.
 
+use chrono::{DateTime, Utc};
 use kod_types::{MessageId, MessageMetadata, MessageRole};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 
 /// Message displayed in the chat
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,12 +247,15 @@ impl KodApp {
     }
 
     pub fn add_agent(&mut self, name: &str, capabilities: Vec<String>) {
-        self.agents.insert(name.to_string(), AgentInfo {
-            name: name.to_string(),
-            capabilities,
-            status: "idle".to_string(),
-            current_task: None,
-        });
+        self.agents.insert(
+            name.to_string(),
+            AgentInfo {
+                name: name.to_string(),
+                capabilities,
+                status: "idle".to_string(),
+                current_task: None,
+            },
+        );
     }
 
     pub fn get_agent(&self, name: &str) -> Option<&AgentInfo> {

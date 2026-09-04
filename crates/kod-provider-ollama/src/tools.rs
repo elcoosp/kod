@@ -5,7 +5,7 @@
 
 use kod_error::{KodError, Result};
 use kod_types::{ToolCall, ToolDefinition};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Format tool definitions for the Ollama API
 pub fn format_tools_for_ollama(tools: &[ToolDefinition]) -> Vec<Value> {
@@ -26,10 +26,7 @@ pub fn format_tools_for_ollama(tools: &[ToolDefinition]) -> Vec<Value> {
 
 /// Parse a response from Ollama that may contain tool calls
 pub fn parse_tool_calls(response: &Value) -> Result<(String, Vec<ToolCall>)> {
-    let text = response["response"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let text = response["response"].as_str().unwrap_or("").to_string();
 
     let mut tool_calls = Vec::new();
 
@@ -47,8 +44,7 @@ pub fn parse_tool_calls(response: &Value) -> Result<(String, Vec<ToolCall>)> {
             let arguments = if arguments.is_string() {
                 // Some models return arguments as a JSON string
                 let arg_str = arguments.as_str().unwrap();
-                serde_json::from_str(arg_str)
-                    .unwrap_or_else(|_| json!({}))
+                serde_json::from_str(arg_str).unwrap_or_else(|_| json!({}))
             } else if arguments.is_null() {
                 json!({})
             } else {
@@ -66,10 +62,7 @@ pub fn parse_tool_calls(response: &Value) -> Result<(String, Vec<ToolCall>)> {
 }
 
 /// Build a tool result message to send back to Ollama
-pub fn build_tool_result_message(
-    tool_name: &str,
-    result: &Value,
-) -> Value {
+pub fn build_tool_result_message(tool_name: &str, result: &Value) -> Value {
     json!({
         "role": "tool",
         "tool_name": tool_name,

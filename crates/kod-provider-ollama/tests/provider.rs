@@ -9,8 +9,7 @@ async fn test_provider_name() {
 
 #[tokio::test]
 async fn test_provider_with_model() {
-    let provider = OllamaLlmProvider::new("http://localhost:11434")
-        .with_model("codellama:13b");
+    let provider = OllamaLlmProvider::new("http://localhost:11434").with_model("codellama:13b");
 
     // This will fail if Ollama isn't running, which is expected for unit test
     let models = provider.list_models().await;

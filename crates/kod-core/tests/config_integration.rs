@@ -1,5 +1,5 @@
-use kod_core::config::EngineConfig;
 use kod_config::{KodConfig, LlmConfig, MemoryConfig, SkillsConfig, SwarmConfig};
+use kod_core::config::EngineConfig;
 use tempfile::TempDir;
 
 #[test]

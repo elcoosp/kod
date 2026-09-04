@@ -1,4 +1,4 @@
-use kod_core::router::{TaskRouter, TaskType, RouterConfig};
+use kod_core::router::{RouterConfig, TaskRouter, TaskType};
 use kod_types::MemoryContext;
 use tempfile::TempDir;
 
@@ -6,10 +6,7 @@ fn create_test_router() -> (TaskRouter, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.redb");
 
-    let router = TaskRouter::new(
-        RouterConfig::default(),
-        db_path,
-    ).unwrap();
+    let router = TaskRouter::new(RouterConfig::default(), db_path).unwrap();
 
     (router, temp_dir)
 }
@@ -26,10 +23,16 @@ async fn test_classify_simple_task() {
 async fn test_classify_code_modification() {
     let (router, _temp) = create_test_router();
 
-    let task_type = router.classify_task("Refactor the main function to use async").await.unwrap();
+    let task_type = router
+        .classify_task("Refactor the main function to use async")
+        .await
+        .unwrap();
     assert_eq!(task_type, TaskType::CodeModification);
 
-    let task_type = router.classify_task("Fix the bug in auth handler").await.unwrap();
+    let task_type = router
+        .classify_task("Fix the bug in auth handler")
+        .await
+        .unwrap();
     assert_eq!(task_type, TaskType::CodeModification);
 }
 
@@ -37,10 +40,16 @@ async fn test_classify_code_modification() {
 async fn test_classify_debugging() {
     let (router, _temp) = create_test_router();
 
-    let task_type = router.classify_task("Debug this error: panic in main.rs").await.unwrap();
+    let task_type = router
+        .classify_task("Debug this error: panic in main.rs")
+        .await
+        .unwrap();
     assert_eq!(task_type, TaskType::Debugging);
 
-    let task_type = router.classify_task("Traceback: TypeError in line 42").await.unwrap();
+    let task_type = router
+        .classify_task("Traceback: TypeError in line 42")
+        .await
+        .unwrap();
     assert_eq!(task_type, TaskType::Debugging);
 }
 
@@ -48,10 +57,16 @@ async fn test_classify_debugging() {
 async fn test_classify_research() {
     let (router, _temp) = create_test_router();
 
-    let task_type = router.classify_task("Research best practices for async Rust").await.unwrap();
+    let task_type = router
+        .classify_task("Research best practices for async Rust")
+        .await
+        .unwrap();
     assert_eq!(task_type, TaskType::Research);
 
-    let task_type = router.classify_task("Find documentation for tokio runtime").await.unwrap();
+    let task_type = router
+        .classify_task("Find documentation for tokio runtime")
+        .await
+        .unwrap();
     assert_eq!(task_type, TaskType::Research);
 }
 
@@ -59,10 +74,16 @@ async fn test_classify_research() {
 async fn test_classify_complex_task() {
     let (router, _temp) = create_test_router();
 
-    let task_type = router.classify_task("Design and implement a complete authentication system").await.unwrap();
+    let task_type = router
+        .classify_task("Design and implement a complete authentication system")
+        .await
+        .unwrap();
     assert_eq!(task_type, TaskType::Complex);
 
-    let task_type = router.classify_task("Analyze the architecture and plan refactoring").await.unwrap();
+    let task_type = router
+        .classify_task("Analyze the architecture and plan refactoring")
+        .await
+        .unwrap();
     assert_eq!(TaskType::Complex, task_type);
 }
 
@@ -70,7 +91,10 @@ async fn test_classify_complex_task() {
 async fn test_classify_testing() {
     let (router, _temp) = create_test_router();
 
-    let task_type = router.classify_task("Write unit tests for the auth module").await.unwrap();
+    let task_type = router
+        .classify_task("Write unit tests for the auth module")
+        .await
+        .unwrap();
     assert_eq!(task_type, TaskType::Testing);
 }
 
@@ -78,7 +102,10 @@ async fn test_classify_testing() {
 async fn test_classify_documentation() {
     let (router, _temp) = create_test_router();
 
-    let task_type = router.classify_task("Document the public API").await.unwrap();
+    let task_type = router
+        .classify_task("Document the public API")
+        .await
+        .unwrap();
     assert_eq!(task_type, TaskType::Documentation);
 }
 
@@ -86,7 +113,10 @@ async fn test_classify_documentation() {
 async fn test_classify_multi_step() {
     let (router, _temp) = create_test_router();
 
-    let task_type = router.classify_task("First analyze the code, then implement changes, then test them").await.unwrap();
+    let task_type = router
+        .classify_task("First analyze the code, then implement changes, then test them")
+        .await
+        .unwrap();
     assert_eq!(task_type, TaskType::Complex);
 }
 
@@ -114,10 +144,10 @@ async fn test_route_with_context() {
         total_tokens: 100,
     };
 
-    let response = router.process_input_with_context(
-        "What is Rust?",
-        Some(memory_context),
-    ).await.unwrap();
+    let response = router
+        .process_input_with_context("What is Rust?", Some(memory_context))
+        .await
+        .unwrap();
 
     assert!(response.text.is_some());
 }

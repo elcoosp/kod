@@ -1,6 +1,6 @@
 use kod_provider_ollama::tools::{format_tools_for_ollama, parse_tool_calls};
 use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn create_test_tool() -> ToolDefinition {
     ToolDefinition {

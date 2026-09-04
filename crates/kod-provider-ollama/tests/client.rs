@@ -14,8 +14,7 @@ async fn test_client_creation_trailing_slash() {
 
 #[tokio::test]
 async fn test_client_with_custom_model() {
-    let client = OllamaClient::new("http://localhost:11434")
-        .with_model("llama3.2");
+    let client = OllamaClient::new("http://localhost:11434").with_model("llama3.2");
     assert_eq!(client.default_model(), "llama3.2");
 }
 

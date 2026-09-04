@@ -46,14 +46,17 @@ fn test_context_to_prompt() {
     let mut context = EngineContext::new("How do I implement auth?");
 
     // Add memory context
-    context.memory_context.working_memory.push(kod_types::MemoryEntry {
-        id: kod_types::MemoryId::new(),
-        memory_type: kod_types::MemoryType::ShortTerm,
-        content: "User is working on auth system".to_string(),
-        timestamp: time::OffsetDateTime::now_utc(),
-        relevance: 1.0,
-        metadata: Default::default(),
-    });
+    context
+        .memory_context
+        .working_memory
+        .push(kod_types::MemoryEntry {
+            id: kod_types::MemoryId::new(),
+            memory_type: kod_types::MemoryType::ShortTerm,
+            content: "User is working on auth system".to_string(),
+            timestamp: time::OffsetDateTime::now_utc(),
+            relevance: 1.0,
+            metadata: Default::default(),
+        });
 
     let prompt = context.to_prompt();
 

@@ -117,6 +117,9 @@ fn test_capability_equality() {
 #[test]
 fn test_capability_from_str() {
     assert_eq!("coding".parse::<Capability>().unwrap(), Capability::Coding);
-    assert_eq!("testing".parse::<Capability>().unwrap(), Capability::Testing);
+    assert_eq!(
+        "testing".parse::<Capability>().unwrap(),
+        Capability::Testing
+    );
     assert!("invalid".parse::<Capability>().is_err());
 }

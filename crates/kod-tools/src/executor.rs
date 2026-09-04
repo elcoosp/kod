@@ -1,7 +1,7 @@
 //! Tool executor - executes tools with timeout and error handling.
 
-use crate::context::ToolContext;
 use crate::Tool;
+use crate::context::ToolContext;
 use kod_error::{KodError, Result};
 use kod_types::ToolResult;
 use std::time::Duration;
@@ -18,11 +18,7 @@ impl ToolExecutor {
     }
 
     /// Execute a single tool call
-    pub async fn execute(
-        &self,
-        tool: &dyn Tool,
-        params: &serde_json::Value,
-    ) -> Result<ToolResult> {
+    pub async fn execute(&self, tool: &dyn Tool, params: &serde_json::Value) -> Result<ToolResult> {
         let tool_name = tool.definition().name.clone();
         let timeout_secs = self.context.timeout_secs;
 
@@ -56,7 +52,8 @@ impl ToolExecutor {
             let result = tokio::time::timeout(
                 Duration::from_secs(timeout_secs),
                 tool.execute(params, &context),
-            ).await;
+            )
+            .await;
 
             match result {
                 Ok(Ok(r)) => results.push(Ok(r)),
@@ -68,7 +65,7 @@ impl ToolExecutor {
                 }
                 Err(_) => {
                     results.push(Err(KodError::ProviderTimeout {
-                        timeout_ms: timeout_secs * 1000
+                        timeout_ms: timeout_secs * 1000,
                     }));
                 }
             }
@@ -81,8 +78,8 @@ impl ToolExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions};
     use async_trait::async_trait;
+    use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions};
 
     struct SlowTool;
 

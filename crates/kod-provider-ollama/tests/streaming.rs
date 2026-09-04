@@ -1,4 +1,4 @@
-use kod_provider_ollama::streaming::{parse_stream_line, StreamEvent, StreamAccumulator};
+use kod_provider_ollama::streaming::{StreamAccumulator, StreamEvent, parse_stream_line};
 
 #[test]
 fn test_stream_event_parsing() {
@@ -21,7 +21,11 @@ fn test_stream_done_event() {
     let event = parse_stream_line(json).unwrap();
 
     match event {
-        StreamEvent::Done { total_duration, eval_count, .. } => {
+        StreamEvent::Done {
+            total_duration,
+            eval_count,
+            ..
+        } => {
             assert_eq!(total_duration, 1_000_000_000);
             assert_eq!(eval_count, 10);
         }
