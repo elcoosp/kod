@@ -1,6 +1,38 @@
-//! Agent swarm system.
+//! Agent swarm system for coordinated multi-agent collaboration.
 //!
-//! Manages multiple AI agents collaborating on tasks with
-//! shared workspace and coordination protocols.
+//! This crate handles agent lifecycle, direct messaging, shared workspace
+//! coordination, and task orchestration.
+//!
+//! # Example
+//!
+//! ```
+//! use kod_swarm::agent::{Agent, Capability};
+//!
+//! let agent = Agent::new("architect")
+//!     .with_capability(Capability::Planning)
+//!     .build();
+//!
+//! assert_eq!(agent.name(), "architect");
+//! ```
 
-// TODO: Implement in Chunk 7
+pub mod agent;
+pub mod communication;
+pub mod coordination;
+pub mod swarm;
+pub mod workspace;
+
+pub use agent::{Agent, AgentBuilder, AgentState, Capability, ModelConfig};
+pub use communication::{AgentCommunicationHub, AgentMessageReceiver, MessageContent, MessageDestination, SwarmMessage};
+pub use coordination::{TaskAssignment, TaskCoordinator};
+pub use swarm::AgentSwarm;
+pub use workspace::{FileLock, LockType, SharedWorkspace};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_swarm_exports() {
+        let _agent = Agent::new("test");
+    }
+}

@@ -56,6 +56,8 @@ toml = "1.1.2"
 
 # Git & GitHub
 octocrab = "0.54.1"
+git2 = "0.19"
+chrono = { version = "0.4", features = ["serde"] }
 
 # Tools & schema
 schemars = "1.2.2"

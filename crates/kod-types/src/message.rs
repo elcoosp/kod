@@ -40,7 +40,7 @@ pub struct AgentMessage {
     pub timestamp: OffsetDateTime,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MessageDestination {
     Agent(AgentId),
     Broadcast,
