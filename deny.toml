@@ -1,0 +1,17 @@
+# Cargo deny configuration
+# https://github.com/EmbarkStudios/cargo-deny
+
+[graph]
+# Allow crates that are not published to crates.io
+all-features = true
+
+[licenses]
+# We use the UNLICENSE for code in this project.
+# For dual-licensed projects, you can specify multiple licenses.
+license-files = [
+    { path = "LICENSE", hash = 0xff1bba7b76842121 }
+]
+
+[bans]
+# Deny multiple versions of the same crate
+multiple-versions = "Warn"
