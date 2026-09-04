@@ -1,0 +1,14 @@
+[package]
+name = "kod-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+tokio = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+kod-types = { path = "../kod-types" }
+kod-error = { path = "../kod-error" }
