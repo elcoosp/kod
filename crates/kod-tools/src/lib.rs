@@ -1,5 +1,116 @@
-//! Tool calling system.
+//! Tool system for agent-environment interaction.
 //!
-//! Provides tool registry, execution, and built-in tool implementations.
+//! Provides the Tool trait, registry, execution context, and built-in tools
+//! that can be called by the AI agent.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use kod_tools::{ToolRegistry, Tool, ToolContext, ToolResult};
+//! use kod_types::ToolDefinition;
+//! use async_trait::async_trait;
+//!
+//! struct EchoTool;
+//!
+//! #[async_trait]
+//! impl Tool for EchoTool {
+//!     fn definition(&self) -> ToolDefinition {
+//!         // ...
+//!         # unimplemented!()
+//!     }
+//!
+//!     async fn execute(
+//!         &self,
+//!         _params: &serde_json::Value,
+//!         _context: &ToolContext,
+//!     ) -> Result<ToolResult, kod_error::KodError> {
+//!         // ...
+//!         # unimplemented!()
+//!     }
+//! }
+//! #
+//! # // Suppress unused warnings
+//! # fn main() {}
+//! ```
 
-// TODO: Implement in Chunk 8
+pub mod context;
+pub mod executor;
+pub mod registry;
+pub mod tools;
+pub use tools::{ReadFileTool, WriteFileTool, ListFilesTool, FileInfoTool, GrepTool};
+
+pub use context::ToolContext;
+pub use executor::ToolExecutor;
+pub use registry::ToolRegistry;
+
+// Re-export tool trait and result for convenience
+pub use kod_types::{ToolDefinition, ToolResult};
+
+/// Trait that all tools must implement.
+#[async_trait::async_trait]
+pub trait Tool: Send + Sync {
+    /// Get the tool definition (name, description, schema, permissions)
+    fn definition(&self) -> ToolDefinition;
+
+    /// Execute the tool with the given parameters
+    async fn execute(
+        &self,
+        params: &serde_json::Value,
+        context: &ToolContext,
+    ) -> Result<ToolResult, kod_error::KodError>;
+}
+
+/// Extension trait for sync tool registration
+/// Requires a boxed tool that can be used across async boundaries.
+pub type BoxedTool = Box<dyn Tool>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kod_types::{ToolCategory, ToolId, ToolPermissions};
+
+    struct TestTool;
+
+    #[async_trait::async_trait]
+    impl Tool for TestTool {
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                id: ToolId::new(),
+                name: "test".to_string(),
+                description: "Test tool".to_string(),
+                category: ToolCategory::System,
+                parameters_schema: serde_json::json!({}),
+                permissions: ToolPermissions::default(),
+            }
+        }
+
+        async fn execute(
+            &self,
+            _params: &serde_json::Value,
+            _context: &ToolContext,
+        ) -> kod_error::Result<ToolResult> {
+            Ok(ToolResult::Success(serde_json::json!({"test": true})))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tool_definition() {
+        let tool = TestTool;
+        let def = tool.definition();
+        assert_eq!(def.name, "test");
+        assert_eq!(def.category, ToolCategory::System);
+    }
+
+    #[tokio::test]
+    async fn test_tool_execute() {
+        let tool = TestTool;
+        let context = ToolContext::new("/tmp");
+        let result = tool.execute(&serde_json::json!({}), &context).await.unwrap();
+        match result {
+            ToolResult::Success(data) => {
+                assert_eq!(data["test"], true);
+            }
+            _ => panic!("Expected success"),
+        }
+    }
+}
