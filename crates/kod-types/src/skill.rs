@@ -22,9 +22,13 @@ pub struct SkillMetadata {
     pub version: String,
     pub author: Option<String>,
     pub category: String,
+    #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default)]
     pub requirements: Vec<String>,
+    #[serde(default)]
     pub triggers: Vec<String>,
 }
 

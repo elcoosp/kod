@@ -8,8 +8,15 @@ authors.workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = "0.9"
 walkdir = { workspace = true }
 notify = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
+kod-config = { path = "../kod-config" }
+
+[dev-dependencies]
+rstest = { workspace = true }
+tempfile = "3.8"
