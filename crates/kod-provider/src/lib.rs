@@ -5,5 +5,5 @@
 pub mod traits;
 pub mod types;
 
-pub use traits::LlmProvider;
+pub use traits::{GenerationOptions, LlmProvider};
 pub use types::*;
