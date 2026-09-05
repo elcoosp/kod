@@ -37,7 +37,9 @@ pub mod context;
 pub mod executor;
 pub mod registry;
 pub mod tools;
-pub use tools::{FileInfoTool, GrepTool, ListFilesTool, ReadFileTool, WriteFileTool};
+pub use tools::{
+    ExecuteCommandTool, FileInfoTool, GrepTool, ListFilesTool, ReadFileTool, WriteFileTool,
+};
 
 pub use context::ToolContext;
 pub use executor::ToolExecutor;
