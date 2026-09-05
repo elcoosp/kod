@@ -137,10 +137,13 @@ impl SkillMatcher {
             }
         }
 
-        // 4. Name matching (if query is similar to skill name)
+        // 4. Name matching (weighty: a directly named skill should win).
         let name_lower = skill.metadata.name.to_lowercase();
         if query.contains(&name_lower) || name_lower.contains(query) {
-            score += 0.5;
+            score += 0.9;
+            reasons.push(MatchReason::NameMatch {
+                name: skill.metadata.name.clone(),
+            });
         }
 
         // 5. Description keyword overlap: the skill's description talks
@@ -165,7 +168,10 @@ impl SkillMatcher {
             }
         }
         if desc_hits > 0 {
-            let desc_score = (0.15 * desc_hits as f32).min(0.45);
+            // Weak lift only: enough to surface a genuinely related skill when
+            // nothing stronger matches, but never enough to outrank an explicit
+            // name or trigger hit on its own (≤ 0.2 vs ≥ 0.9).
+            let desc_score = (0.10 * desc_hits as f32).min(0.20);
             score += desc_score;
             reasons.push(MatchReason::SemanticSimilarity { score: desc_score });
         }
@@ -227,16 +233,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_description_overlap_matches_semantic_query() {
+    async fn test_description_overlap_alone_is_not_enough() {
         let matcher = SkillMatcher::new();
         let mut skill = create_skill("ui-ux-designer", Vec::new());
         skill.metadata.description =
             "Design beautiful user interfaces and experiences for applications".to_string();
         matcher.add_skill(skill).await;
 
-        // No trigger/tag/capability/name overlap — description words carry it.
+        // No trigger/tag/capability/name overlap — description words alone
+        // no longer surface a skill (capped at 0.2 < 0.3 threshold) so that
+        // generic word sharing doesn't pollute the matched set.
         let results = matcher
             .find_relevant_skills("help me design the interface")
+            .await;
+        assert_eq!(results.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_name_match_dominates_description_noise() {
+        // Three skills: one explicitly named in the query, two only sharing a
+        // single description word. The named one wins big; the others stay
+        // below threshold so they don't pollute [skills] used.
+        let matcher = SkillMatcher::new();
+        let mut make = |name: &str, desc: &str| {
+            let mut s = create_skill(name, Vec::new());
+            s.metadata.description = desc.to_string();
+            s
+        };
+        matcher
+            .add_skill(make("ui-ux-designer", "Design beautiful user interfaces"))
+            .await;
+        matcher
+            .add_skill(make("spec-writer", "Write design specs"))
+            .await;
+        matcher
+            .add_skill(make("marketing-ideas", "Creative marketing copy"))
+            .await;
+        let results = matcher
+            .find_relevant_skills("instructions for ui-ux-designer")
             .await;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].skill.metadata.name, "ui-ux-designer");

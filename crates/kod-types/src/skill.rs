@@ -52,6 +52,7 @@ pub enum MatchReason {
     TriggerMatch { trigger: String },
     TagMatch { tag: String },
     CapabilityMatch { capability: String },
+    NameMatch { name: String },
     SemanticSimilarity { score: f32 },
 }
 
