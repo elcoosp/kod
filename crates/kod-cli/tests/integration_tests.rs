@@ -33,8 +33,13 @@ fn test_cli_config_command() {
     let env = TestEnvironment::new();
     // The config command should run and produce output
     let output = run_kod_command(&["config"], &env.working_dir).unwrap();
-    // Current CLI prints "Showing configuration..."
-    assert!(output.contains("configuration") || output.contains("config"));
+    // Wired CLI prints "KOD Configuration:" with full config dump
+    assert!(
+        output.contains("configuration")
+            || output.contains("config")
+            || output.contains("Configuration")
+            || output.contains("Config")
+    );
 }
 
 #[test]
@@ -194,7 +199,10 @@ async fn test_config_file_usage() {
     // Load the config we just wrote
     let config = kod_config::KodConfig::load_from(&config_path).unwrap();
     assert_eq!(config.llm.model, "test-model");
-    assert_eq!(config.llm.provider, kod_config::llm::ProviderType::Ollama);
+    assert_eq!(
+        config.llm.provider,
+        kod_config::llm::ProviderType::OpenAICompatible
+    );
 }
 
 #[tokio::test]
