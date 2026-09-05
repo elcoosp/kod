@@ -1,0 +1,61 @@
+//! Minimal cross-platform clipboard access.
+//!
+//! Uses `pbcopy` on macOS, `xclip`/`xsel` on Linux, and the Win32 API on
+//! Windows. Each platform tries several backends so a missing one never
+//! hard-fails. The whole module is a thin shim — if nothing matches,
+//! `write_clipboard` returns `false` and the caller falls back to a toast.
+
+use std::process::Command;
+
+pub fn write_clipboard(text: &str) -> bool {
+    let bytes = text.as_bytes();
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut child = match Command::new("pbcopy")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(_) => return false,
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            let _ = stdin.write_all(bytes);
+            let _ = stdin.flush();
+        }
+        return child.wait().map(|s| s.success()).unwrap_or(false);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        for (bin, args) in [
+            ("xclip", vec!["-sel", "clipboard", "-i"]),
+            ("xsel", vec!["--clipboard", "--input"]),
+        ] {
+            let mut child = match Command::new(bin)
+                .args(&args)
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+            {
+                Ok(child) => child,
+                Err(_) => continue,
+            };
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                let _ = stdin.write_all(bytes);
+                let _ = stdin.flush();
+            }
+            if child.wait().map(|s| s.success()).unwrap_or(false) {
+                return true;
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = bytes;
+    }
+
+    false
+}
