@@ -19,8 +19,10 @@ pub struct Skill {
 pub struct SkillMetadata {
     pub name: String,
     pub description: String,
+    #[serde(default)]
     pub version: String,
     pub author: Option<String>,
+    #[serde(default)]
     pub category: String,
     #[serde(default)]
     pub tags: Vec<String>,
