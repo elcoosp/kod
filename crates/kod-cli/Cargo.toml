@@ -15,6 +15,11 @@ kod-config = { path = "../kod-config" }
 kod-core = { path = "../kod-core" }
 kod-skills = { path = "../kod-skills" }
 kod-memory = { path = "../kod-memory" }
+kod-provider = { path = "../kod-provider" }
+kod-provider-openai = { path = "../kod-provider-openai" }
+kod-tui = { path = "../kod-tui" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-std", "io-util"] }
+dirs.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true }
