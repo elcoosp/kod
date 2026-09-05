@@ -4,4 +4,4 @@
 
 pub mod commands;
 
-pub use commands::{Cli, Commands};
+pub use commands::{Cli, Command};
