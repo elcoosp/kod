@@ -50,10 +50,10 @@ impl SkillParser {
 
         let instructions = self
             .extract_section(&body, "## Instructions")
-            .ok_or_else(|| KodError::SkillParseError {
-                path: source_name.to_string(),
-                reason: "Missing '## Instructions' section".to_string(),
-            })?;
+            // Real-world SKILL.md files (Claude-style) rarely have an
+            // `## Instructions` section — the whole body IS the instructions.
+            // Fall back to it instead of rejecting the skill.
+            .unwrap_or_else(|| body.clone());
 
         let examples = self.extract_examples(&body);
         let constraints = self.extract_section(&body, "## Constraints");
@@ -243,5 +243,27 @@ Just instructions.
         let parser = SkillParser::new();
         let skill = parser.parse_content(content, "test.md").unwrap();
         assert!(skill.constraints.is_none());
+    }
+
+    #[test]
+    fn test_claude_style_skill_without_instructions_section() {
+        // Real-world SKILL.md files (e.g. ~/.agents/skills) rarely carry an
+        // `## Instructions` section — the whole body becomes instructions.
+        let content = r#"---
+name: caveman
+description: A test skill
+---
+
+# Caveman
+
+## Rules
+
+Do things well.
+"#;
+
+        let parser = SkillParser::new();
+        let skill = parser.parse_content(content, "SKILL.md").unwrap();
+        assert_eq!(skill.metadata.name, "caveman");
+        assert!(skill.instructions.contains("Do things well."));
     }
 }
