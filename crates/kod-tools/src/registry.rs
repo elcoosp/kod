@@ -121,10 +121,8 @@ impl ToolRegistry {
 
         match tool {
             Some(t) => {
-                // Check permissions before executing
-                let _def = t.definition();
-                context.can_read(std::path::Path::new("."))?;
-                // Execute the tool
+                // Permissions are checked per-tool in `execute()` (via
+                // `ToolContext::can_read/can_write/...`). No global check here.
                 t.execute(params, context).await
             }
             None => Err(KodError::ToolNotFound {
