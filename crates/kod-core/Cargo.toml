@@ -29,4 +29,8 @@ tempfile = "3.8"
 time = { workspace = true }
 criterion = { workspace = true }
 tokio = { workspace = true }
+async-trait = "0.1"
+serde_json = { workspace = true }
 kod-swarm = { path = "../kod-swarm" }
+kod-provider = { path = "../kod-provider" }
+kod-types = { path = "../kod-types" }
