@@ -279,6 +279,18 @@ impl MemoryManager {
             }
         }
         context.long_term = long_term;
+
+        // Limit episodic (previously uncapped — could blow the window)
+        let mut episodic = Vec::new();
+        for entry in context.episodic.drain(..) {
+            total_chars += entry.content.len();
+            if total_chars <= max_chars {
+                episodic.push(entry);
+            } else {
+                break;
+            }
+        }
+        context.episodic = episodic;
     }
 }
 
