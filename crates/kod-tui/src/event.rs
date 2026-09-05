@@ -4,7 +4,7 @@
 //! mouse events, ticks, and custom application events.
 
 use crossterm::event::{
-    Event as CrosstermEvent, EventStream, KeyCode as CrosstermKeyCode, KeyEventKind,
+    Event as CrosstermEvent, EventStream, KeyCode as CrosstermKeyCode, KeyEventKind, KeyModifiers,
 };
 use futures::StreamExt as _;
 use kod_error::Result;
@@ -32,6 +32,21 @@ pub enum KeyCode {
     PageDown,
     Tab,
     BackTab,
+    /// Ctrl+C — cancels the running prompt.
+    CtrlC,
+    /// Ctrl+J (or Shift+Enter) — newline inside the input box.
+    CtrlJ,
+    /// Shift+Enter — newline inside the input box.
+    ShiftEnter,
+    /// Ctrl+U — delete to the start of the current line.
+    CtrlU,
+    /// Ctrl+W — delete the word before the cursor.
+    CtrlW,
+    /// Ctrl+E — load your last message back for editing.
+    CtrlE,
+    CtrlK,
+    CtrlLeft,
+    CtrlRight,
     F(u8),
 }
 
@@ -78,9 +93,23 @@ pub enum Event {
     System(EventPriority, String),
     ToolStarted(String),
     ToolCompleted(String, String),
+    /// Live per-tool completion from the engine's done-marker: same row
+    /// fill as `ToolCompleted`, plus wall time for the header
+    /// (`execute_command … · 1.2s`). Arrives the moment the call
+    /// finishes, not at task end.
+    ToolCompletedWithDuration(String, String, u64),
+    /// Live one-line excerpt of what the running tool is doing
+    /// (`execute_command cargo test …`). Refreshes the running indicator.
+    ToolProgress(String),
+    /// A running prompt was cancelled (Esc / Ctrl+C / `/cancel`).
+    Cancelled,
     AgentMessage(String, String),
     ResponseChunk(String),
     ResponseComplete(String),
+    /// Real token usage from the provider (prompt+completion total)
+    TokenUsage(usize),
+    /// Post-tool thinking phase (tool result reinjected, LLM reasoning again)
+    Thinking,
     Error(String),
     Quit,
     Resize(u16, u16),
@@ -178,6 +207,11 @@ impl EventHandler {
         Ok(())
     }
 
+    /// Get a clone of the event sender for use in background tasks
+    pub fn sender(&self) -> mpsc::Sender<Event> {
+        self.event_tx.clone()
+    }
+
     /// Start the input handling loop
     pub async fn start_input_loop(&self) {
         let tx = self.event_tx.clone();
@@ -191,12 +225,66 @@ impl EventHandler {
                     match event {
                         CrosstermEvent::Key(key) => {
                             if key.kind == KeyEventKind::Press {
+                                // Ctrl combos that edit or cancel — map them
+                                // before the plain char so typing is unaffected.
+                                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                    let mapped = match key.code {
+                                        CrosstermKeyCode::Char('c' | 'C') => Some(KeyCode::CtrlC),
+                                        CrosstermKeyCode::Char('j' | 'J') => Some(KeyCode::CtrlJ),
+                                        CrosstermKeyCode::Char('k' | 'K') => Some(KeyCode::CtrlK),
+                                        CrosstermKeyCode::Char('u' | 'U') => Some(KeyCode::CtrlU),
+                                        CrosstermKeyCode::Char('w' | 'W') => Some(KeyCode::CtrlW),
+                                        CrosstermKeyCode::Char('e' | 'E') => Some(KeyCode::CtrlE),
+                                        CrosstermKeyCode::Left => Some(KeyCode::CtrlLeft),
+                                        CrosstermKeyCode::Right => Some(KeyCode::CtrlRight),
+                                        _ => None,
+                                    };
+                                    if let Some(code) = mapped {
+                                        let _ = tx.send(Event::Key(code)).await;
+                                        continue;
+                                    }
+                                }
+                                // Shift+Enter inserts a newline (plain Enter sends).
+                                if key.modifiers.contains(KeyModifiers::SHIFT)
+                                    && matches!(key.code, CrosstermKeyCode::Enter)
+                                {
+                                    let _ = tx.send(Event::Key(KeyCode::ShiftEnter)).await;
+                                    continue;
+                                }
+                                // Shift+↑/↓ scrolls (laptop keyboards often
+                                // have no PgUp/PgDn); Fn+↑/↓ already arrives
+                                // as PageUp/PageDown from the terminal.
+                                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                    match key.code {
+                                        CrosstermKeyCode::Up => {
+                                            let _ = tx.send(Event::Key(KeyCode::PageUp)).await;
+                                            continue;
+                                        }
+                                        CrosstermKeyCode::Down => {
+                                            let _ = tx.send(Event::Key(KeyCode::PageDown)).await;
+                                            continue;
+                                        }
+                                        _ => {}
+                                    }
+                                }
                                 let key_code: KeyCode = key.code.into();
                                 let _ = tx.send(Event::Key(key_code)).await;
                             }
                         }
                         CrosstermEvent::Resize(w, h) => {
                             let _ = tx.send(Event::Resize(w, h)).await;
+                        }
+                        CrosstermEvent::Mouse(mouse) => {
+                            use crossterm::event::MouseEventKind;
+                            match mouse.kind {
+                                MouseEventKind::ScrollUp => {
+                                    let _ = tx.send(Event::Key(KeyCode::PageUp)).await;
+                                }
+                                MouseEventKind::ScrollDown => {
+                                    let _ = tx.send(Event::Key(KeyCode::PageDown)).await;
+                                }
+                                _ => {}
+                            }
                         }
                         _ => {}
                     }
