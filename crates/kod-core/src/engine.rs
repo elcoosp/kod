@@ -226,6 +226,35 @@ pub fn summarize_tool_result(name: &str, result: &ToolResult) -> String {
 }
 
 fn summarize_success(name: &str, v: &serde_json::Value) -> String {
+    // read_file: path + size + short preview only. The full content still
+    // reaches the model through the tool-result feedback block — the chat
+    // row stays lean while the agent loses nothing.
+    if name == "read_file" {
+        if let Some(content) = v.get("content").and_then(|s| s.as_str()) {
+            let path = v
+                .get("path")
+                .and_then(|p| p.as_str())
+                .map(shorten_path)
+                .unwrap_or_else(|| name.to_string());
+            let lines = content.lines().count();
+            let mut out = format!(
+                "{} · {} line{} · {} chars",
+                path,
+                lines,
+                if lines == 1 { "" } else { "s" },
+                content.len()
+            );
+            let preview: Vec<&str> = content.lines().take(3).collect();
+            if !preview.is_empty() {
+                out.push('\n');
+                out.push_str(&preview.join("\n"));
+                if lines > preview.len() {
+                    out.push_str("\n…");
+                }
+            }
+            return out;
+        }
+    }
     // list_files: {path, files:[...]} → count + names.
     if let Some(files) = v.get("files").and_then(|f| f.as_array()) {
         let dir = v
@@ -1156,5 +1185,15 @@ mod tests {
         assert_eq!(ok, "hi");
         let hdr = format_tool_header("read_file", &serde_json::json!({"path": "/a/b/c/main.rs"}));
         assert!(hdr.starts_with("read_file path="), "got: {hdr}");
+        // read_file success stays compact: path + size + preview, not a dump.
+        let read = summarize_tool_result(
+            "read_file",
+            &ToolResult::Success(
+                serde_json::json!({"path": "/a/main.rs", "content": "one\ntwo\nthree\nfour\n"}),
+            ),
+        );
+        assert!(read.contains("4 lines"), "got: {read}");
+        assert!(read.contains("one\ntwo\nthree"), "got: {read}");
+        assert!(!read.contains("four"), "got: {read}");
     }
 }
