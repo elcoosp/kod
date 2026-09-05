@@ -324,6 +324,9 @@ impl TaskRouter {
              You have filesystem tools (function calls, listed under ## Tool use) and a library of \
              skills (## Available skills). When asked what you can do or which skills you have, \
              answer from those lists by name — never invent tool or skill names. \
+             The full instructions of any skill whose name or triggers appear in the user's request \
+             are already inserted under ## Relevant Skills. If the user asks for a skill's \
+             instructions, answer directly from that context — do not call tools to look it up. \
              Prefer calling tools over guessing, and summarize results in plain text.\n\n",
         );
         prompt.push_str(&self.build_context(input, &None, task_type).await?);
