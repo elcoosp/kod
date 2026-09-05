@@ -4,11 +4,17 @@
 //! including chat display, agent panel, input handling, and tool execution display.
 
 pub mod app;
+pub mod clipboard;
 pub mod components;
 pub mod event;
+pub mod keybindings;
 pub mod main_loop;
+pub mod theme;
 pub mod ui;
 
-pub use app::{AppMode, InputMode, KodApp, Message};
+pub use app::{
+    AppMode, CompletionKind, ConfirmKind, GenPhase, InputMode, KodApp, Message, SLASH_COMMANDS,
+    SlashCommand,
+};
 pub use event::{Event, EventHandler, EventPriority, KeyCode};
 pub use main_loop::TuiLoop;
