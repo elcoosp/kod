@@ -18,7 +18,7 @@ KOD is a high-performance AI coding agent harness built with a multi-crate works
 │ (kod-skills)│(kod-memory) │ (kod-swarm) │(kod-tools)│
 ├─────────────┴─────────────┴─────────────┴──────────┤
 │                LLM Providers                         │
-│        (kod-provider, kod-provider-ollama)           │
+│        (kod-provider, kod-provider-openai)           │
 ├─────────────────────────────────────────────────────┤
 │                   Foundation                         │
 │        (kod-types, kod-error, kod-config)            │
@@ -58,12 +58,12 @@ Provider abstraction:
 - Generation options and responses
 - Streaming support
 
-#### kod-provider-ollama
-Ollama implementation:
-- HTTP client with health checking
-- Generation (streaming and non-streaming)
-- Tool calling support
-- Model management
+#### kod-provider-openai
+OpenAI-compatible implementation (backed by `adk-model`):
+- Single code path for Ollama (`/v1`), LM Studio, MLX Omni Serve, vLLM, OpenAI
+- Automatic `/v1` base-URL normalization
+- Generation (streaming and non-streaming) with tool calling
+- Model listing via `GET /v1/models`
 
 ### Skills Layer
 
