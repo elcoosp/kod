@@ -52,6 +52,25 @@ impl SkillMatcher {
         self.skills.write().await.remove(name);
     }
 
+    /// Names of all loaded skills (for `/skills` listing).
+    pub async fn skill_names(&self) -> Vec<String> {
+        let skills = self.skills.read().await;
+        let mut names: Vec<String> = skills.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// Names + descriptions of all loaded skills (for `/skills` listing).
+    pub async fn skill_details(&self) -> Vec<(String, String)> {
+        let skills = self.skills.read().await;
+        let mut out: Vec<(String, String)> = skills
+            .values()
+            .map(|s| (s.metadata.name.clone(), s.metadata.description.clone()))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
     /// Find skills relevant to the given query
     pub async fn find_relevant_skills(&self, query: &str) -> Vec<SkillMatch> {
         let query_lower = query.to_lowercase();
@@ -124,6 +143,33 @@ impl SkillMatcher {
             score += 0.5;
         }
 
+        // 5. Description keyword overlap: the skill's description talks
+        // about the query's words (e.g. "design a landing page" finds a
+        // skill described as "UI/UX design"). Capped so a wordy
+        // description can't outrank trigger/tag matches. Both directions:
+        // a description word in the query ("design"), or a query word
+        // inside the description ("interface" ⊂ "interfaces").
+        let desc_lower = skill.metadata.description.to_lowercase();
+        let mut desc_hits = 0;
+        let mut seen: Vec<&str> = Vec::new();
+        for word in query.split(|c: char| !c.is_alphanumeric()) {
+            if word.len() > 3 && desc_lower.contains(word) && !seen.contains(&word) {
+                seen.push(word);
+                desc_hits += 1;
+            }
+        }
+        for word in desc_lower.split(|c: char| !c.is_alphanumeric()) {
+            if word.len() > 4 && query.contains(word) && !seen.contains(&word) {
+                seen.push(word);
+                desc_hits += 1;
+            }
+        }
+        if desc_hits > 0 {
+            let desc_score = (0.15 * desc_hits as f32).min(0.45);
+            score += desc_score;
+            reasons.push(MatchReason::SemanticSimilarity { score: desc_score });
+        }
+
         // Normalize score to 0.0 - 1.0
         score = score.min(1.0);
 
@@ -178,5 +224,21 @@ mod tests {
 
         let results = matcher.find_relevant_skills("test trigger").await;
         assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_description_overlap_matches_semantic_query() {
+        let matcher = SkillMatcher::new();
+        let mut skill = create_skill("ui-ux-designer", Vec::new());
+        skill.metadata.description =
+            "Design beautiful user interfaces and experiences for applications".to_string();
+        matcher.add_skill(skill).await;
+
+        // No trigger/tag/capability/name overlap — description words carry it.
+        let results = matcher
+            .find_relevant_skills("help me design the interface")
+            .await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].skill.metadata.name, "ui-ux-designer");
     }
 }
