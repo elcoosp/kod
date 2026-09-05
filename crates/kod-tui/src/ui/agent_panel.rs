@@ -15,14 +15,7 @@ impl AgentPanelWidget {
         Self
     }
 
-    pub fn render(&self, app: &KodApp, area: &mut Buffer) {
-        let rect = Rect {
-            x: area.area.x,
-            y: area.area.y,
-            width: area.area.width,
-            height: area.area.height,
-        };
-
+    pub fn render(&self, app: &KodApp, area: Rect, buf: &mut Buffer) {
         let mut lines: Vec<Line> = Vec::new();
 
         lines.push(Line::from(vec![Span::styled(
@@ -32,7 +25,7 @@ impl AgentPanelWidget {
                 .add_modifier(Modifier::BOLD),
         )]));
 
-        lines.push(Line::from("─".repeat(area.area.width as usize)));
+        lines.push(Line::from("─".repeat(area.width as usize)));
 
         let agents = app.agents();
         if agents.is_empty() {
@@ -83,7 +76,7 @@ impl AgentPanelWidget {
         let text = ratatui::text::Text::from(lines);
         let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
 
-        paragraph.render(rect, area);
+        paragraph.render(area, buf);
     }
 }
 
