@@ -113,39 +113,43 @@ impl ChatWidget {
         let mut rows: Vec<Vec<Span<'a>>> = vec![Vec::new()];
         let mut cur_w = 0;
         let push_span =
-            |rows: &mut Vec<Vec<Span<'a>>>, cur_w: &mut usize, text: String, style: Style|
-             {
-            for ch in text.chars() {
-                let w = Span::raw(ch.to_string()).width().max(1);
-                if *cur_w + w > width && *cur_w > 0 {
-                    rows.push(Vec::new());
-                    *cur_w = 0;
-                }
-                match rows.last_mut().unwrap().last_mut() {
-                    Some(last) if last.style == style => {
-                        let mut s = last.content.clone().into_owned();
-                        s.push(ch);
-                        *last = Span::styled(s, style);
+            |rows: &mut Vec<Vec<Span<'a>>>, cur_w: &mut usize, text: String, style: Style| {
+                for ch in text.chars() {
+                    let w = Span::raw(ch.to_string()).width().max(1);
+                    if *cur_w + w > width && *cur_w > 0 {
+                        rows.push(Vec::new());
+                        *cur_w = 0;
                     }
-                    _ => rows
-                        .last_mut()
-                        .unwrap()
-                        .push(Span::styled(ch.to_string(), style)),
+                    match rows.last_mut().unwrap().last_mut() {
+                        Some(last) if last.style == style => {
+                            let mut s = last.content.clone().into_owned();
+                            s.push(ch);
+                            *last = Span::styled(s, style);
+                        }
+                        _ => rows
+                            .last_mut()
+                            .unwrap()
+                            .push(Span::styled(ch.to_string(), style)),
+                    }
+                    *cur_w += w;
                 }
-                *cur_w += w;
-            }
-        };
+            };
         for span in line.spans {
             let style = span.style;
             let text: String = span.content.into_owned();
             push_span(&mut rows, &mut cur_w, text, style);
         }
-        rows
-            .into_iter()
+        rows.into_iter()
             .map(Line::from)
             .collect::<Vec<Line<'a>>>()
             .into_iter()
-            .map(|l| if l.spans.is_empty() { Line::from("") } else { l })
+            .map(|l| {
+                if l.spans.is_empty() {
+                    Line::from("")
+                } else {
+                    l
+                }
+            })
             .collect()
     }
 
@@ -173,10 +177,7 @@ impl ChatWidget {
                 // text keeps offsets identical; anything else tints the
                 // remainder once instead of slicing mid-char.
                 let (before, hit) = if text.len() == lower.len() {
-                    (
-                        text[rest..start].to_string(),
-                        text[start..end].to_string(),
-                    )
+                    (text[rest..start].to_string(), text[start..end].to_string())
                 } else {
                     (text[rest..].to_string(), String::new())
                 };
@@ -222,7 +223,9 @@ impl ChatWidget {
             let is_error = rest.trim_start().starts_with("Error:");
             let icon = if is_error { "✗ " } else { "⚙ " };
             let tool_style = if is_error {
-                Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.error)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.tool).add_modifier(Modifier::BOLD)
             };
@@ -236,8 +239,7 @@ impl ChatWidget {
                 Span::styled(header.to_string(), tool_style),
             ])];
             if !rest.is_empty() || !rest_raw.is_empty() {
-                let rows: Vec<String> =
-                    Self::wrap_text(&rest, width.saturating_sub(4).max(1));
+                let rows: Vec<String> = Self::wrap_text(&rest, width.saturating_sub(4).max(1));
                 let expanded = app.is_tool_expanded(&message.id);
                 let shown = if expanded {
                     rows.len()
@@ -293,9 +295,10 @@ impl ChatWidget {
     /// Tint search hits across finished lines (no-op without a query).
     fn apply_search<'a>(app: &KodApp, lines: Vec<Line<'a>>) -> Vec<Line<'a>> {
         match app.search_query() {
-            Some(q) if !q.is_empty() => {
-                lines.into_iter().map(|l| Self::highlight_line(l, q)).collect()
-            }
+            Some(q) if !q.is_empty() => lines
+                .into_iter()
+                .map(|l| Self::highlight_line(l, q))
+                .collect(),
             _ => lines,
         }
     }
@@ -320,9 +323,7 @@ impl ChatWidget {
             let mut hidden = 0;
             // Count hidden tools for the footer, same as final pass
             for m in &ordered {
-                if app.search_query().is_none()
-                    && !app.show_tools()
-                    && m.role == MessageRole::Tool
+                if app.search_query().is_none() && !app.show_tools() && m.role == MessageRole::Tool
                 {
                     let body = m.content.split_once('\n').map(|x| x.1).unwrap_or("");
                     if !body.trim_start().starts_with("Error:") {
@@ -332,9 +333,7 @@ impl ChatWidget {
             }
             let mut est_lines: Vec<Line> = Vec::new();
             for (i, m) in ordered.iter().enumerate() {
-                if app.search_query().is_none()
-                    && !app.show_tools()
-                    && m.role == MessageRole::Tool
+                if app.search_query().is_none() && !app.show_tools() && m.role == MessageRole::Tool
                 {
                     let body = m.content.split_once('\n').map(|x| x.1).unwrap_or("");
                     if !body.trim_start().starts_with("Error:") {
@@ -406,7 +405,9 @@ impl ChatWidget {
         if hidden_tools > 0 {
             lines.push(Line::from(vec![Span::styled(
                 format!("⋯ {hidden_tools} tool output(s) hidden — t to show"),
-                Style::default().fg(theme.dim).add_modifier(Modifier::ITALIC),
+                Style::default()
+                    .fg(theme.dim)
+                    .add_modifier(Modifier::ITALIC),
             )]));
         }
 

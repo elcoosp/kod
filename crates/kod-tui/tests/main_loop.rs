@@ -57,7 +57,9 @@ async fn test_tui_quit() {
     let mut tui = TuiLoop::new();
 
     // Esc no longer quits unconditionally — only 'q' does (or Esc while generating/help)
-    tui.handle_event(Event::Key(KeyCode::Char('q'))).await.unwrap();
+    tui.handle_event(Event::Key(KeyCode::Char('q')))
+        .await
+        .unwrap();
 
     assert!(tui.app().should_quit());
 }

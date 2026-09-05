@@ -367,14 +367,22 @@ impl TaskRouter {
             if !matches.is_empty() {
                 prompt.push_str("## Relevant Skills\n\n");
                 for skill_match in matches.iter().take(self.config.max_skills_per_query) {
+                    // Tell the agent where the skill lives so it can read
+                    // reference files with the correct absolute path instead of
+                    // guessing relative to the project root.
+                    let base_dir = skill_match
+                        .skill
+                        .path
+                        .parent()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| ".".to_string());
                     prompt.push_str(&format!(
-                        "### {}\n\n{}\n\n",
-                        skill_match.skill.metadata.name, skill_match.skill.instructions
+                        "### {}\nSkill location: {}\n\n{}\n\n",
+                        skill_match.skill.metadata.name, base_dir, skill_match.skill.instructions
                     ));
                 }
             }
         }
-
         // Add user input
         prompt.push_str(&format!(
             "## Conversation so far\n\n{}\n\n## User Request\n\n{}",
@@ -561,7 +569,7 @@ mod tests {
             .await;
         let with_skill = router
             .build_prompt(
-                "which skills do you have?",
+                "which skills do you have — tell me about ui-ux-designer?",
                 &task_type,
                 "User: what can you do?\nAssistant: I can help.\n",
             )
@@ -570,6 +578,10 @@ mod tests {
         assert!(
             with_skill.contains("ui-ux-designer") && with_skill.contains("Design help"),
             "skill inventory missing: {with_skill}"
+        );
+        assert!(
+            with_skill.contains("Skill location:"),
+            "skill location not injected: {with_skill}"
         );
         assert!(
             with_skill.contains("what can you do?"),

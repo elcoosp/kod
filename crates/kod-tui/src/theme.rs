@@ -77,7 +77,9 @@ impl Theme {
     pub fn load() -> Self {
         let paths: [std::path::PathBuf; 2] = [
             std::path::PathBuf::from(".kod-theme.toml"),
-            dirs::config_dir().map(|d| d.join("kod").join("theme.toml")).unwrap_or_default(),
+            dirs::config_dir()
+                .map(|d| d.join("kod").join("theme.toml"))
+                .unwrap_or_default(),
         ];
         for path in &paths {
             if path.as_os_str().is_empty() {
@@ -131,9 +133,8 @@ impl ThemeFile {
     fn into_theme(self) -> Theme {
         let mut theme = Theme::from_name(self.theme.as_deref().unwrap_or("dark"));
         if let Some(c) = self.colors {
-            let parse = |s: &Option<String>, cur: Color| {
-                s.as_deref().and_then(parse_color).unwrap_or(cur)
-            };
+            let parse =
+                |s: &Option<String>, cur: Color| s.as_deref().and_then(parse_color).unwrap_or(cur);
             theme.background = parse(&c.background, theme.background);
             theme.foreground = parse(&c.foreground, theme.foreground);
             theme.assistant = parse(&c.assistant, theme.assistant);

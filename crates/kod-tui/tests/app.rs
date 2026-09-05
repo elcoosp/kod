@@ -20,7 +20,7 @@ fn test_add_message() {
         content: "Hello".to_string(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
-    sequence: 0,
+        sequence: 0,
     };
 
     app.add_message(message.clone());
@@ -168,7 +168,7 @@ fn test_scroll_position() {
             content: format!("Message {}", i),
             timestamp: chrono::Utc::now(),
             metadata: Default::default(),
-        sequence: 0,
+            sequence: 0,
         });
     }
 
@@ -190,7 +190,7 @@ fn test_serialization() {
         content: "test".to_string(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
-    sequence: 0,
+        sequence: 0,
     });
 
     let json = serde_json::to_string(&app.messages()).unwrap();

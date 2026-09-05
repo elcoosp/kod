@@ -25,9 +25,7 @@ impl StatusWidget {
         // 1. Confirmation prompts win — they need an answer.
         if let Some(confirm) = app.pending_confirm() {
             let label = match confirm {
-                crate::app::ConfirmKind::Clear => {
-                    "Clear all messages? y = yes · n/Esc = keep"
-                }
+                crate::app::ConfirmKind::Clear => "Clear all messages? y = yes · n/Esc = keep",
                 crate::app::ConfirmKind::Quit => {
                     "Quit with a generation running? y = quit · n/Esc = stay"
                 }
@@ -134,10 +132,7 @@ impl StatusWidget {
         }
 
         Widget::render(
-            Line::from(vec![Span::styled(
-                format!(" {} ", app.hint_line()),
-                dim,
-            )]),
+            Line::from(vec![Span::styled(format!(" {} ", app.hint_line()), dim)]),
             area,
             buf,
         );

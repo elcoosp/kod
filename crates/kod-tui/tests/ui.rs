@@ -22,7 +22,7 @@ fn test_chat_widget_rendering() {
         content: "Hello".to_string(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
-    sequence: 0,
+        sequence: 0,
     });
 
     app.add_message(Message {
@@ -31,7 +31,7 @@ fn test_chat_widget_rendering() {
         content: "Hi there!".to_string(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
-    sequence: 0,
+        sequence: 0,
     });
 
     let _terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
@@ -135,7 +135,10 @@ fn test_thinking_indicator_visible_while_generating() {
     let mut buffer = Buffer::empty(area);
     chat.render(&app, area, &mut buffer);
     let text = buffer_text(&buffer);
-    assert!(text.contains("done"), "response must be visible, got: {text}");
+    assert!(
+        text.contains("done"),
+        "response must be visible, got: {text}"
+    );
 }
 
 #[test]
@@ -205,7 +208,7 @@ fn test_chat_scrollbar_appears_on_overflow() {
             content: format!("message number {i}"),
             timestamp: chrono::Utc::now(),
             metadata: Default::default(),
-        sequence: 0,
+            sequence: 0,
         });
     }
 
@@ -233,7 +236,7 @@ fn test_chat_scrollbar_slim_when_scrolled_back() {
             content: format!("message number {i}"),
             timestamp: chrono::Utc::now(),
             metadata: Default::default(),
-        sequence: 0,
+            sequence: 0,
         });
     }
     app.scroll_up(15);
@@ -258,7 +261,7 @@ fn push_msg(app: &mut KodApp, role: MessageRole, content: &str) {
         content: content.to_string(),
         timestamp: chrono::Utc::now(),
         metadata: Default::default(),
-    sequence: 0,
+        sequence: 0,
     });
 }
 
@@ -417,7 +420,7 @@ fn test_messages_render_in_chronological_order() {
         content: "first line".to_string(),
         timestamp: early,
         metadata: Default::default(),
-    sequence: 0,
+        sequence: 0,
     });
     app.add_message(Message {
         id: MessageId::new(),
@@ -425,7 +428,7 @@ fn test_messages_render_in_chronological_order() {
         content: "second line".to_string(),
         timestamp: late,
         metadata: Default::default(),
-    sequence: 0,
+        sequence: 0,
     });
 
     let widget = ChatWidget::new();

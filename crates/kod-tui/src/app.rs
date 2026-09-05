@@ -441,7 +441,7 @@ impl KodApp {
                 content: self.input.clone(),
                 timestamp: Utc::now(),
                 metadata: MessageMetadata::default(),
-            sequence: 0,
+                sequence: 0,
             });
 
             self.clear_input();
@@ -786,7 +786,7 @@ impl KodApp {
             content: trimmed.to_string(),
             timestamp: Utc::now(),
             metadata: MessageMetadata::default(),
-        sequence: 0,
+            sequence: 0,
         });
     }
 
@@ -812,7 +812,7 @@ impl KodApp {
             content: content.to_string(),
             timestamp: Utc::now(),
             metadata: MessageMetadata::default(),
-        sequence: 0,
+            sequence: 0,
         });
     }
 
@@ -907,7 +907,7 @@ impl KodApp {
             content: format!("[{tool_name}]\n{}", Self::LIVE_TOOL_BODY_PLACEHOLDER),
             timestamp: Utc::now(),
             metadata: MessageMetadata::default(),
-        sequence: 0,
+            sequence: 0,
         });
     }
 
@@ -1016,8 +1016,12 @@ impl KodApp {
         } else if let Some(i) = self.messages.iter().rposition(|m| {
             // Header was rewritten by ToolProgress — match by tool base name
             let header = m.content.lines().next().unwrap_or("").trim();
-            let header = header.strip_prefix('[').and_then(|s| s.strip_suffix(']')).unwrap_or(header);
-            m.role == MessageRole::Tool && tool_name.contains(header) || header.contains(tool_name.split_whitespace().next().unwrap_or(""))
+            let header = header
+                .strip_prefix('[')
+                .and_then(|s| s.strip_suffix(']'))
+                .unwrap_or(header);
+            m.role == MessageRole::Tool && tool_name.contains(header)
+                || header.contains(tool_name.split_whitespace().next().unwrap_or(""))
         }) {
             self.messages[i].content = content;
             self.messages[i].id.clone()
@@ -1070,17 +1074,12 @@ impl KodApp {
     }
 
     pub fn fail_tool_execution(&mut self, tool_name: &str, error: &str) {
-        if let Some(execution) = self
-            .tool_executions
-            .iter_mut()
-            .rev()
-            .find(|e| {
-                e.status == ToolStatus::Running
-                    && (e.tool_name == tool_name
-                        || tool_name.starts_with(&format!("{} ", e.tool_name))
-                        || tool_name.contains(&e.tool_name))
-            })
-        {
+        if let Some(execution) = self.tool_executions.iter_mut().rev().find(|e| {
+            e.status == ToolStatus::Running
+                && (e.tool_name == tool_name
+                    || tool_name.starts_with(&format!("{} ", e.tool_name))
+                    || tool_name.contains(&e.tool_name))
+        }) {
             execution.status = ToolStatus::Failed;
             execution.result = Some(error.to_string());
         }
@@ -1142,7 +1141,7 @@ impl KodApp {
                     content: response,
                     timestamp: Utc::now(),
                     metadata: MessageMetadata::default(),
-                sequence: 0,
+                    sequence: 0,
                 });
                 self.stream_flushed_bubble = true;
             }
@@ -1265,11 +1264,17 @@ impl KodApp {
             || lower.contains("connection closed")
         {
             " Could not reach the model server — is it running? For Ollama: `ollama serve`, then check `base_url` in the kod config."
-        } else if lower.contains("401") || lower.contains("unauthorized") || lower.contains("api key") {
+        } else if lower.contains("401")
+            || lower.contains("unauthorized")
+            || lower.contains("api key")
+        {
             " Looks like an auth problem — check `api_key` in the kod config."
         } else if lower.contains("404") {
             " Endpoint not found — check `base_url` ends with `/v1` for OpenAI-compatible servers."
-        } else if lower.contains("timed out") || lower.contains("timeout") || lower.contains("deadline") {
+        } else if lower.contains("timed out")
+            || lower.contains("timeout")
+            || lower.contains("deadline")
+        {
             " The request timed out — the model may still be loading (first run pulls weights). Wait a minute and `/retry`."
         } else if lower.contains("cancelled by user") {
             ""
@@ -1279,7 +1284,9 @@ impl KodApp {
         let mut out = format!("Error: {error}");
         out.push_str(advice);
         if fail_count >= 2 {
-            out.push_str(" (offline mode: generation keeps failing — fix the server, then `/retry`)");
+            out.push_str(
+                " (offline mode: generation keeps failing — fix the server, then `/retry`)",
+            );
         }
         out
     }
@@ -1303,7 +1310,7 @@ impl KodApp {
                 content: format!("{partial}\n(cancelled — partial answer)"),
                 timestamp: Utc::now(),
                 metadata: MessageMetadata::default(),
-            sequence: 0,
+                sequence: 0,
             });
             self.stream_flushed_bubble = true;
         } else {
@@ -1386,8 +1393,17 @@ impl KodApp {
     }
 
     /// Record real usage from a TokenUsage-like triple (prompt/completion/total).
-    pub fn note_usage_tokens(&mut self, prompt_tokens: usize, completion_tokens: usize, total_tokens: usize) {
-        let total = if total_tokens > 0 { total_tokens } else { prompt_tokens + completion_tokens };
+    pub fn note_usage_tokens(
+        &mut self,
+        prompt_tokens: usize,
+        completion_tokens: usize,
+        total_tokens: usize,
+    ) {
+        let total = if total_tokens > 0 {
+            total_tokens
+        } else {
+            prompt_tokens + completion_tokens
+        };
         self.note_real_usage(total);
     }
 
@@ -1454,7 +1470,7 @@ impl KodApp {
             content: note,
             timestamp: Utc::now(),
             metadata: MessageMetadata::default(),
-        sequence: 0,
+            sequence: 0,
         });
         self.scroll_to_bottom();
     }
@@ -1549,10 +1565,7 @@ impl KodApp {
             .map(|m| m.to_string())
             .collect();
         for name in &self.available_models {
-            if !name.is_empty()
-                && name.to_lowercase().contains(&partial)
-                && !out.contains(name)
-            {
+            if !name.is_empty() && name.to_lowercase().contains(&partial) && !out.contains(name) {
                 out.push(name.clone());
             }
         }
@@ -2245,7 +2258,7 @@ mod tests {
             content: "hello".to_string(),
             timestamp: Utc::now(),
             metadata: MessageMetadata::default(),
-        sequence: 0,
+            sequence: 0,
         });
     }
 
@@ -2258,7 +2271,7 @@ mod tests {
             content: "test".to_string(),
             timestamp: Utc::now(),
             metadata: MessageMetadata::default(),
-        sequence: 0,
+            sequence: 0,
         });
         assert!(app.is_scrolled_to_bottom());
     }

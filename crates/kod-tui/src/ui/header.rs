@@ -34,18 +34,25 @@ impl HeaderWidget {
         if app.is_offline() {
             spans.push(Span::styled(
                 format!(" offline ×{} ", app.consecutive_failures()),
-                Style::default().fg(theme.error).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.error)
+                    .add_modifier(Modifier::BOLD),
             ));
         }
 
         // Context meter with a near-limit warning (rough estimate).
         let usage = app.context_usage();
         let ctx_style = if usage > 0.85 {
-            Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme.error)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.warning)
         };
-        spans.push(Span::styled(format!(" {} ", app.context_label()), ctx_style));
+        spans.push(Span::styled(
+            format!(" {} ", app.context_label()),
+            ctx_style,
+        ));
         if usage > 0.85 {
             spans.push(Span::styled("ctx nearly full ", ctx_style));
         }

@@ -522,7 +522,11 @@ impl TuiLoop {
                     }
                     let text = response.text.unwrap_or_default();
                     if let Some(usage) = response.usage {
-                        let total = if usage.total_tokens > 0 { usage.total_tokens } else { usage.prompt_tokens + usage.completion_tokens };
+                        let total = if usage.total_tokens > 0 {
+                            usage.total_tokens
+                        } else {
+                            usage.prompt_tokens + usage.completion_tokens
+                        };
                         let _ = event_tx.send(Event::TokenUsage(total)).await;
                     }
                     let _ = event_tx.send(Event::ResponseComplete(text)).await;
@@ -587,8 +591,9 @@ impl TuiLoop {
             }
             "/clear" => {
                 if self.app.is_generating() {
-                    self.app
-                        .push_system_message("Wait for the current prompt to finish before clearing.");
+                    self.app.push_system_message(
+                        "Wait for the current prompt to finish before clearing.",
+                    );
                 } else {
                     self.app.request_confirm(ConfirmKind::Clear);
                 }
@@ -752,10 +757,10 @@ impl TuiLoop {
             }
             "/undo" => {
                 if self.app.undo_clear() {
-                    self.app.push_system_message("Restored last cleared messages.");
-                } else {
                     self.app
-                        .push_system_message("Nothing to undo.");
+                        .push_system_message("Restored last cleared messages.");
+                } else {
+                    self.app.push_system_message("Nothing to undo.");
                 }
             }
             _ => {
@@ -801,10 +806,7 @@ impl TuiLoop {
                     }
                     return Ok(());
                 }
-                KeyCode::Char('n') | KeyCode::Char('N')
-                | KeyCode::Escape
-                | KeyCode::CtrlC =>
-                {
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Escape | KeyCode::CtrlC => {
                     self.app.resolve_confirm(false);
                     return Ok(());
                 }
@@ -848,14 +850,19 @@ impl TuiLoop {
             }
             KeyCode::Char('u') => {
                 if self.app.undo_clear() {
-                    self.app.push_system_message("Restored last cleared messages.");
+                    self.app
+                        .push_system_message("Restored last cleared messages.");
                 } else {
                     self.app.push_system_message("Nothing to undo.");
                 }
             }
             KeyCode::Char('t') => {
                 let on = self.app.toggle_show_tools();
-                self.app.push_system_message(if on { "Tool outputs shown." } else { "Tool outputs hidden." });
+                self.app.push_system_message(if on {
+                    "Tool outputs shown."
+                } else {
+                    "Tool outputs hidden."
+                });
             }
             KeyCode::Char('f') => {
                 self.app.set_input("/search ".to_string());
@@ -863,9 +870,11 @@ impl TuiLoop {
             }
             KeyCode::Char('y') => {
                 if self.app.copy_last_to_clipboard() {
-                    self.app.push_system_message("Copied last assistant reply to clipboard.");
+                    self.app
+                        .push_system_message("Copied last assistant reply to clipboard.");
                 } else {
-                    self.app.push_system_message("Nothing to copy — no assistant reply yet.");
+                    self.app
+                        .push_system_message("Nothing to copy — no assistant reply yet.");
                 }
             }
             KeyCode::Char('r') => {
@@ -877,13 +886,19 @@ impl TuiLoop {
                 }
             }
             KeyCode::Char('n') => {
-                if self.app.is_searching() && let Some((pos, total)) = self.app.search_next() {
-                    self.app.push_system_message(&format!("Search {pos}/{total}"));
+                if self.app.is_searching()
+                    && let Some((pos, total)) = self.app.search_next()
+                {
+                    self.app
+                        .push_system_message(&format!("Search {pos}/{total}"));
                 }
             }
             KeyCode::Char('N') => {
-                if self.app.is_searching() && let Some((pos, total)) = self.app.search_prev() {
-                    self.app.push_system_message(&format!("Search {pos}/{total}"));
+                if self.app.is_searching()
+                    && let Some((pos, total)) = self.app.search_prev()
+                {
+                    self.app
+                        .push_system_message(&format!("Search {pos}/{total}"));
                 }
             }
             KeyCode::Escape => {
@@ -1107,7 +1122,10 @@ mod tests {
         tui.app_mut().set_input_mode(InputMode::Insert);
         tui.app_mut().begin_generation();
         tui.handle_event(Event::Key(KeyCode::Escape)).await.unwrap();
-        assert!(tui.app().is_generating(), "Esc in insert must not cancel generation");
+        assert!(
+            tui.app().is_generating(),
+            "Esc in insert must not cancel generation"
+        );
         assert_eq!(tui.app().input_mode(), &InputMode::Normal);
     }
 
@@ -1325,7 +1343,7 @@ mod tests {
         assert_eq!((h, s, ms), ("read_file path=main.rs", "12 lines", 42));
     }
 
-        #[tokio::test]
+    #[tokio::test]
     async fn test_task_end_does_not_reprint_flushed_text_as_giant_bubble() {
         // Screenshot repro: text streams, a tool runs, more text streams,
         // then the task ends with ToolCompleted + ResponseComplete carrying

@@ -684,7 +684,12 @@ impl KodEngine {
         pending: &mut String,
         definitions: &[ToolDefinition],
         options: &GenerationOptions,
-    ) -> Result<(String, Vec<ToolCall>, Vec<ToolResult>, Option<kod_provider::TokenUsage>)> {
+    ) -> Result<(
+        String,
+        Vec<ToolCall>,
+        Vec<ToolResult>,
+        Option<kod_provider::TokenUsage>,
+    )> {
         let mut final_text = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut tool_results: Vec<ToolResult> = Vec::new();
@@ -713,7 +718,11 @@ impl KodEngine {
                     pending.push_str(&format!("\n\n{}", section.prompt_block));
                     self.apply_steers(pending).await;
                 }
-                GenerationResponse::Mixed { content, calls, usage } => {
+                GenerationResponse::Mixed {
+                    content,
+                    calls,
+                    usage,
+                } => {
                     last_usage = usage.or(last_usage);
                     final_text.push_str(&content);
                     if calls.is_empty() {
@@ -748,7 +757,12 @@ impl KodEngine {
         definitions: &[ToolDefinition],
         options: &GenerationOptions,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
-    ) -> Result<(String, Vec<ToolCall>, Vec<ToolResult>, Option<kod_provider::TokenUsage>)> {
+    ) -> Result<(
+        String,
+        Vec<ToolCall>,
+        Vec<ToolResult>,
+        Option<kod_provider::TokenUsage>,
+    )> {
         let mut final_text = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut tool_results: Vec<ToolResult> = Vec::new();
