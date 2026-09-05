@@ -249,7 +249,7 @@ impl ListFilesTool {
             definition: ToolDefinition {
                 id: ToolId::new(),
                 name: "list_files".to_string(),
-                description: "List files in a directory".to_string(),
+                description: "List files in a directory. Respects .gitignore (skips target/, node_modules/, .git, …); results cap at 5000 entries".to_string(),
                 category: ToolCategory::FileSystem,
                 parameters_schema: serde_json::json!({
                     "type": "object",
@@ -302,29 +302,62 @@ impl Tool for ListFilesTool {
         let resolved = context.resolve_path(path);
         context.can_read(&resolved)?;
 
-        let mut files = Vec::new();
-
-        if recursive {
-            for entry in walkdir::WalkDir::new(&resolved)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                files.push(entry.path().to_string_lossy().to_string());
-            }
-        } else {
-            for entry in std::fs::read_dir(&resolved).map_err(KodError::Io)? {
-                let entry = entry.map_err(KodError::Io)?;
-                files.push(entry.path().to_string_lossy().to_string());
-            }
-        }
+        let mut files: Vec<String> = gitaware_walk(&resolved, recursive)
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
 
         files.sort();
+
+        let total = files.len();
+        let truncated = total > MAX_LIST_ENTRIES;
+        if truncated {
+            files.truncate(MAX_LIST_ENTRIES);
+        }
 
         Ok(ToolResult::Success(serde_json::json!({
             "path": resolved.to_string_lossy().to_string(),
             "files": files,
+            "total": total,
+            "truncated": truncated,
         })))
     }
+}
+
+/// Cap for directory listings: a recursive `list_files` over a repo with a
+/// `target/` dir used to return 40k+ entries and blow the model context.
+/// Results past the cap are dropped and reported via `truncated`.
+const MAX_LIST_ENTRIES: usize = 5000;
+/// Cap for grep matches for the same reason.
+const MAX_GREP_MATCHES: usize = 500;
+
+/// Walk `root` honoring `.gitignore`/`.ignore`/`.git/info/exclude` (plus
+/// global git excludes), keeping dotfiles visible but always pruning `.git`.
+/// Used by `list_files` and `grep` so ignored build output (`target/`,
+/// `node_modules/`, …) never bloats tool results.
+fn gitaware_walk(root: &std::path::Path, recursive: bool) -> Vec<std::path::PathBuf> {
+    let mut builder = ignore::WalkBuilder::new(root);
+    builder
+        .hidden(false)
+        .git_ignore(true)
+        .ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        // Honor .gitignore files even outside a git checkout: the tool's
+        // contract is filesystem-based, not repo-based.
+        .require_git(false)
+        .filter_entry(|e| e.file_name().to_str().is_some_and(|n| n != ".git"));
+    if !recursive {
+        builder.max_depth(Some(1));
+    }
+    builder
+        .build()
+        .filter_map(|e| e.ok())
+        .map(|e| e.into_path())
+        // The walker yields the root itself as its first entry — callers
+        // want the root's children, not the root.
+        .filter(|p| p != root)
+        .collect()
 }
 
 /// Search files for a pattern
@@ -416,18 +449,19 @@ impl Tool for GrepTool {
 
         let mut results = Vec::new();
 
-        for entry in walkdir::WalkDir::new(&resolved)
-            .into_iter()
-            .filter_entry(|_| recursive)
-            .filter_map(|e| e.ok())
-        {
-            let file_path = entry.path();
-            if !matcher.is_match(file_path) {
+        for file_path in gitaware_walk(&resolved, recursive) {
+            if !matcher.is_match(&file_path) {
                 continue;
             }
 
-            if file_path.is_file() && std::fs::read_to_string(file_path).is_ok() {
-                let content = std::fs::read_to_string(file_path).unwrap();
+            if results.len() >= MAX_GREP_MATCHES {
+                break;
+            }
+            if file_path.is_file() {
+                let content = match std::fs::read_to_string(&file_path) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
                 for (line_num, line) in content.lines().enumerate() {
                     if line.contains(pattern) {
                         results.push(serde_json::json!({
@@ -435,6 +469,9 @@ impl Tool for GrepTool {
                             "line": line_num + 1,
                             "text": line.trim(),
                         }));
+                        if results.len() >= MAX_GREP_MATCHES {
+                            break;
+                        }
                     }
                 }
             }
@@ -443,6 +480,7 @@ impl Tool for GrepTool {
         Ok(ToolResult::Success(serde_json::json!({
             "pattern": pattern,
             "results": results,
+            "truncated": results.len() >= MAX_GREP_MATCHES,
         })))
     }
 }
