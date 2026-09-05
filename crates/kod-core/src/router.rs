@@ -55,6 +55,7 @@ pub struct TaskResponse {
     pub memory_used: bool,
     pub swarm_used: bool,
     pub execution_time_ms: u64,
+    pub usage: Option<kod_provider::TokenUsage>,
 }
 
 /// Main task router that coordinates all subsystems
@@ -91,10 +92,12 @@ impl TaskRouter {
         })
     }
 
-    /// Load skills from a directory
-    pub async fn load_skills(&mut self, skills_dir: &std::path::Path) -> Result<()> {
+    /// Load skills from a directory (matcher uses interior mutability,
+    /// so this works through the shared `Arc` in the engine).
+    pub async fn load_skills(&self, skills_dir: &std::path::Path) -> Result<usize> {
         let mut loader = kod_skills::loader::SkillLoader::new(skills_dir);
         let skills = loader.load_all().await?;
+        let count = skills.len();
 
         if let Some(matcher) = &self.skill_matcher {
             for skill in skills {
@@ -102,7 +105,23 @@ impl TaskRouter {
             }
         }
 
-        Ok(())
+        Ok(count)
+    }
+
+    /// Names of all loaded skills (for `/skills` listing).
+    pub async fn loaded_skill_names(&self) -> Vec<String> {
+        match &self.skill_matcher {
+            Some(matcher) => matcher.skill_names().await,
+            None => Vec::new(),
+        }
+    }
+
+    /// Names + descriptions of all loaded skills (for `/skills` listing).
+    pub async fn loaded_skill_details(&self) -> Vec<(String, String)> {
+        match &self.skill_matcher {
+            Some(matcher) => matcher.skill_details().await,
+            None => Vec::new(),
+        }
     }
 
     /// Classify a task based on its content
@@ -220,6 +239,7 @@ impl TaskRouter {
             swarm_used: matches!(task_type, TaskType::Complex | TaskType::MultiStep)
                 && self.swarm.is_some(),
             execution_time_ms,
+            usage: None,
         })
     }
 
@@ -289,7 +309,77 @@ impl TaskRouter {
         Ok(context)
     }
 
-    /// Find relevant skills for input
+    /// Build a full prompt for LLM generation. `history` is the rendered
+    /// transcript of past turns (`(start of conversation)` on the first
+    /// turn) — without it every prompt arrives context-free and the model
+    /// opens with "this is a fresh conversation".
+    pub async fn build_prompt(
+        &self,
+        input: &str,
+        task_type: &TaskType,
+        history: &str,
+    ) -> Result<String> {
+        let mut prompt = String::from(
+            "## Identity\n\nYou are kod, a helpful AI assistant running inside the user's machine. \
+             You have filesystem tools (function calls, listed under ## Tool use) and a library of \
+             skills (## Available skills). When asked what you can do or which skills you have, \
+             answer from those lists by name — never invent tool or skill names. \
+             Prefer calling tools over guessing, and summarize results in plain text.\n\n",
+        );
+        prompt.push_str(&self.build_context(input, &None, task_type).await?);
+
+        // Skill knowledge, two layers: the full name+description inventory is
+        // always present (so "which skills do you have?" is answerable), and
+        // the top relevant skills add their full instructions.
+        if let Some(matcher) = &self.skill_matcher {
+            let all = matcher.get_all_skills().await;
+            if !all.is_empty() {
+                let mut names: Vec<(&str, &str)> = all
+                    .iter()
+                    .map(|s| (s.metadata.name.as_str(), s.metadata.description.as_str()))
+                    .collect();
+                names.sort();
+                const MAX_INVENTORY: usize = 60;
+                let listed: Vec<String> = names
+                    .iter()
+                    .take(MAX_INVENTORY)
+                    .map(|(n, d)| format!("- {}: {}", n, d))
+                    .collect();
+                let more = if names.len() > MAX_INVENTORY {
+                    format!(
+                        "\n…and {} more (ask /skills for the full list)",
+                        names.len() - MAX_INVENTORY
+                    )
+                } else {
+                    String::new()
+                };
+                prompt.push_str(&format!(
+                    "## Available skills ({})\n\n{}{}\n\n",
+                    names.len(),
+                    listed.join("\n"),
+                    more
+                ));
+            }
+            let matches = matcher.find_relevant_skills(input).await;
+            if !matches.is_empty() {
+                prompt.push_str("## Relevant Skills\n\n");
+                for skill_match in matches.iter().take(self.config.max_skills_per_query) {
+                    prompt.push_str(&format!(
+                        "### {}\n\n{}\n\n",
+                        skill_match.skill.metadata.name, skill_match.skill.instructions
+                    ));
+                }
+            }
+        }
+
+        // Add user input
+        prompt.push_str(&format!(
+            "## Conversation so far\n\n{}\n\n## User Request\n\n{}",
+            history, input
+        ));
+
+        Ok(prompt)
+    }
     async fn find_relevant_skills(&self, input: &str) -> Result<Vec<String>> {
         if let Some(matcher) = &self.skill_matcher {
             let matches = matcher.find_relevant_skills(input).await;
@@ -415,6 +505,72 @@ mod tests {
                 .await
                 .unwrap(),
             TaskType::Research
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_prompt_carries_identity_and_skill_inventory() {
+        use kod_types::{Skill, SkillId, SkillMetadata};
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.redb");
+
+        let router = TaskRouter::new(RouterConfig::default(), db_path).unwrap();
+        let task_type = router
+            .classify_task("which skills do you have?")
+            .await
+            .unwrap();
+
+        // No skills loaded: identity + request still present.
+        let bare = router
+            .build_prompt("hello?", &task_type, "(start of conversation)")
+            .await
+            .unwrap();
+        assert!(bare.contains("You are kod"), "identity preamble missing");
+        assert!(bare.contains("hello?"), "user request missing");
+        assert!(
+            bare.contains("## Conversation so far"),
+            "history section missing"
+        );
+
+        // One loaded skill: its name + description join the inventory.
+        let matcher = router.skill_matcher.as_ref().expect("matcher present");
+        matcher
+            .add_skill(Skill {
+                id: SkillId::new(),
+                metadata: SkillMetadata {
+                    name: "ui-ux-designer".to_string(),
+                    description: "Design help".to_string(),
+                    version: "1.0.0".to_string(),
+                    author: None,
+                    category: "test".to_string(),
+                    tags: Vec::new(),
+                    capabilities: Vec::new(),
+                    requirements: Vec::new(),
+                    triggers: Vec::new(),
+                },
+                instructions: String::new(),
+                examples: Vec::new(),
+                constraints: None,
+                content: String::new(),
+                path: temp_dir.path().to_path_buf(),
+            })
+            .await;
+        let with_skill = router
+            .build_prompt(
+                "which skills do you have?",
+                &task_type,
+                "User: what can you do?\nAssistant: I can help.\n",
+            )
+            .await
+            .unwrap();
+        assert!(
+            with_skill.contains("ui-ux-designer") && with_skill.contains("Design help"),
+            "skill inventory missing: {with_skill}"
+        );
+        assert!(
+            with_skill.contains("what can you do?"),
+            "history not carried: {with_skill}"
         );
     }
 }
