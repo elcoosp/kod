@@ -85,6 +85,67 @@ async fn test_list_files_tool() {
 }
 
 #[tokio::test]
+async fn test_list_files_respects_gitignore() {
+    // Ignored build output (target/, *.log) must not bloat the listing;
+    // dotfiles stay visible and .git is always pruned.
+    let temp_dir = TempDir::new().unwrap();
+    std::fs::write(temp_dir.path().join(".gitignore"), "target/\n*.log\n").unwrap();
+    std::fs::create_dir_all(temp_dir.path().join("target/debug")).unwrap();
+    std::fs::write(temp_dir.path().join("target/debug/blob"), "x").unwrap();
+    std::fs::write(temp_dir.path().join("nope.log"), "x").unwrap();
+    std::fs::create_dir_all(temp_dir.path().join(".git/objects")).unwrap();
+    std::fs::write(temp_dir.path().join(".git/HEAD"), "ref").unwrap();
+    std::fs::write(temp_dir.path().join("keep.txt"), "k").unwrap();
+    std::fs::write(temp_dir.path().join(".env"), "k=v").unwrap();
+
+    let perms = ToolPermissions {
+        read_files: true,
+        ..Default::default()
+    };
+    let context = ToolContext::new(temp_dir.path()).with_permissions(perms);
+
+    let tool = ListFilesTool::new();
+    let params = json!({ "path": ".", "recursive": true });
+
+    let result = tool.execute(&params, &context).await.unwrap();
+
+    match result {
+        ToolResult::Success(data) => {
+            let files: Vec<&str> = data["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect();
+            assert!(
+                files.iter().any(|f| f.ends_with("keep.txt")),
+                "keep.txt listed: {files:?}"
+            );
+            assert!(
+                files.iter().any(|f| f.ends_with(".env")),
+                "dotfiles stay visible: {files:?}"
+            );
+            assert!(
+                !files.iter().any(|f| f.contains("target")),
+                "gitignored target/ pruned: {files:?}"
+            );
+            assert!(
+                !files.iter().any(|f| f.ends_with("nope.log")),
+                "*.log pruned: {files:?}"
+            );
+            assert!(
+                !files
+                    .iter()
+                    .any(|f| f.contains("/.git/") || f.ends_with("/.git")),
+                ".git pruned: {files:?}"
+            );
+            assert_eq!(data["truncated"], false);
+        }
+        _ => panic!("Expected success"),
+    }
+}
+
+#[tokio::test]
 async fn test_file_info_tool() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.txt");
