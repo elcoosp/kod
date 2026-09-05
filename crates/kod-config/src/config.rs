@@ -32,7 +32,9 @@ impl Default for PerformanceConfig {
 }
 
 impl KodConfig {
-    /// Load configuration from the default location (~/.kod/config.toml)
+    /// Load configuration from the default location
+    /// (`dirs::config_dir()/kod/config.toml`,
+    /// i.e. `~/Library/Application Support/kod/config.toml` on macOS).
     pub fn load_default() -> Result<Self> {
         let config_dir = Self::config_dir()?;
         let config_path = config_dir.join("config.toml");
