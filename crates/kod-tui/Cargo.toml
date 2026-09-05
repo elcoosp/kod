@@ -17,8 +17,12 @@ chrono = { version = "0.4", features = ["serde"] }
 futures = { workspace = true }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
+kod-config = { path = "../kod-config" }
 kod-core = { path = "../kod-core" }
 kod-skills = { path = "../kod-skills" }
+kod-provider-openai = { path = "../kod-provider-openai" }
+dirs = { workspace = true }
+toml = { workspace = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
