@@ -84,7 +84,7 @@ impl Default for ModelConfig {
     fn default() -> Self {
         Self {
             model_name: "codellama:13b".to_string(),
-            provider: "ollama".to_string(),
+            provider: "openai-compatible".to_string(),
             temperature: 0.7,
             max_tokens: 2048,
         }
