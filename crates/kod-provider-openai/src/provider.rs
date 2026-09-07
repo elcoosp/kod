@@ -99,7 +99,11 @@ impl OpenAICompatProvider {
     }
 
     /// Run a request and split the collected stream into text + tool calls.
-    async fn collect(&self, request: LlmRequest, stream: bool) -> Result<(String, Vec<ToolCall>, Option<kod_provider::TokenUsage>)> {
+    async fn collect(
+        &self,
+        request: LlmRequest,
+        stream: bool,
+    ) -> Result<(String, Vec<ToolCall>, Option<kod_provider::TokenUsage>)> {
         let mut responses = self
             .inner
             .generate_content(request, stream)
@@ -186,7 +190,10 @@ impl LlmProvider for OpenAICompatProvider {
         let request = self.text_request(prompt, options, tools);
         let (text, calls, usage) = self.collect(request, false).await?;
         if calls.is_empty() {
-            Ok(GenerationResponse::Text { content: text, usage })
+            Ok(GenerationResponse::Text {
+                content: text,
+                usage,
+            })
         } else if text.is_empty() {
             Ok(GenerationResponse::ToolCalls { calls, usage })
         } else {

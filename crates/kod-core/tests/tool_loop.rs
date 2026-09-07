@@ -48,12 +48,12 @@ impl LlmProvider for ScriptedProvider {
                     tool_name: "list_files".to_string(),
                     arguments: serde_json::json!({"path": "."}),
                 }],
-                usage: None
+                usage: None,
             })
         } else {
             Ok(GenerationResponse::Text {
                 content: "saw the files".to_string(),
-                usage: None
+                usage: None,
             })
         }
     }
@@ -218,12 +218,12 @@ impl LlmProvider for CapturingProvider {
                     tool_name: "list_files".to_string(),
                     arguments: serde_json::json!({"path": "."}),
                 }],
-                usage: None
+                usage: None,
             })
         } else {
             Ok(GenerationResponse::Text {
                 content: "done".to_string(),
-                usage: None
+                usage: None,
             })
         }
     }
@@ -331,12 +331,12 @@ impl LlmProvider for GoalProvider {
                     tool_name: "list_files".to_string(),
                     arguments: serde_json::json!({"path": "."}),
                 }],
-                usage: None
+                usage: None,
             })
         } else {
             Ok(GenerationResponse::Text {
                 content: "everything is done\nGOAL MET".to_string(),
-                usage: None
+                usage: None,
             })
         }
     }
