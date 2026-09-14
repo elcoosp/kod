@@ -3,13 +3,12 @@
 A high-performance AI coding agent for the terminal, built with Rust.
 
 KOD is a multi-crate workspace that provides a full agent harness with skills,
-memory, agent swarms, tool calling, and both CLI and TUI interfaces.
+memory, tool calling, and both CLI and TUI interfaces.
 
 ## Features
 
 - **Skills System**: Markdown-based skills with pattern matching and hot reload
 - **Memory System**: Multi-layer memory (short-term, long-term, episodic)
-- **Agent Swarm**: Multi-agent coordination with task decomposition
 - **Tool Calling**: File system and git tools with permission-based sandboxing
 - **LLM Provider Abstraction**: Pluggable provider support (Ollama built-in)
 - **TUI Interface**: Full terminal UI with chat, agent panels, and input handling
@@ -85,7 +84,7 @@ KOD uses a multi-crate workspace architecture with clear layer separation:
 │            Core Engine              │
 │              (kod-core)              │
 ├───────┬────────┬────────┬──────────┤
-│Skills │ Memory │  Swarm  │  Tools   │
+│Skills │ Memory │  Core   │  Tools   │
 ├───────┴────────┴────────┴──────────┤
 │           LLM Providers              │
 │   (kod-provider, kod-provider-ollama) │
@@ -110,7 +109,6 @@ kod/
 │   ├── kod-skills/          # Skills system
 │   ├── kod-memory/          # Memory system
 │   ├── kod-tools/           # Tool calling
-│   ├── kod-swarm/           # Agent swarm
 │   ├── kod-tui/             # Terminal UI
 │   ├── kod-cli/             # CLI interface
 │   └── kod-core/            # Core engine

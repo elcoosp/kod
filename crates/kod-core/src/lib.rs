@@ -1,6 +1,6 @@
 //! Core engine for KOD - coordinates all subsystems.
 //!
-//! This crate integrates skills, memory, tools, swarm, and LLM providers
+//! This crate integrates skills, memory, tools, and LLM providers
 //! into a unified task routing and execution engine.
 
 pub mod config;

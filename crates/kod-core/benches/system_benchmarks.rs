@@ -9,7 +9,6 @@ use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_ma
 use kod_core::router::{RouterConfig, TaskRouter};
 use kod_memory::short_term::ShortTermMemory;
 use kod_skills::{SkillLoader, SkillMatcher};
-use kod_swarm::{AgentBuilder, Capability};
 use kod_types::{MemoryEntry, MemoryType};
 use time::OffsetDateTime;
 
@@ -125,33 +124,6 @@ fn benchmark_memory_operations(c: &mut Criterion) {
     group.finish();
 }
 
-fn benchmark_agent_operations(c: &mut Criterion) {
-    let mut group = c.benchmark_group("agent_operations");
-
-    // Agent creation
-    group.bench_function("agent_creation", |b| {
-        b.iter(|| {
-            let agent = AgentBuilder::new("bench-agent")
-                .with_capability(Capability::Coding)
-                .with_capability(Capability::Testing)
-                .build();
-
-            black_box(agent.name());
-        });
-    });
-
-    // Agent swarm creation
-    group.bench_function("swarm_creation", |b| {
-        b.iter(|| {
-            let env = BenchEnvironment::new();
-            let swarm = kod_swarm::swarm::AgentSwarm::new(env.working_dir.clone());
-            let runtime = tokio::runtime::Runtime::new().unwrap();
-            let _ = black_box(runtime.block_on(async { swarm.list_agents().await }));
-        });
-    });
-
-    group.finish();
-}
 
 fn benchmark_task_classification(c: &mut Criterion) {
     let env = BenchEnvironment::new();
@@ -241,7 +213,6 @@ criterion_group!(
     benchmark_skill_loading,
     benchmark_skill_matching,
     benchmark_memory_operations,
-    benchmark_agent_operations,
     benchmark_task_classification,
     benchmark_task_processing,
 );

@@ -21,7 +21,6 @@ kod-provider = { path = "../kod-provider" }
 kod-skills = { path = "../kod-skills" }
 kod-memory = { path = "../kod-memory" }
 kod-tools = { path = "../kod-tools" }
-kod-swarm = { path = "../kod-swarm" }
 
 [dev-dependencies]
 proptest = { workspace = true }
@@ -32,6 +31,5 @@ criterion = { workspace = true }
 tokio = { workspace = true }
 async-trait = "0.1"
 serde_json = { workspace = true }
-kod-swarm = { path = "../kod-swarm" }
 kod-provider = { path = "../kod-provider" }
 kod-types = { path = "../kod-types" }

@@ -14,8 +14,6 @@ KOD is a high-performance AI coding agent harness built with a multi-crate works
 │                   Core Engine                        │
 │                      (kod-core)                     │
 ├─────────────┬─────────────┬─────────────┬──────────┤
-│   Skills    │   Memory    │   Swarm     │  Tools   │
-│ (kod-skills)│(kod-memory) │ (kod-swarm) │(kod-tools)│
 ├─────────────┴─────────────┴─────────────┴──────────┤
 │                LLM Providers                         │
 │        (kod-provider, kod-provider-openai)           │
@@ -93,16 +91,6 @@ Tool calling system:
 - **Executor**: Tool execution with timeout
 - **Tools**: Built-in tools (file system, git)
 
-### Swarm Layer
-
-#### kod-swarm
-Agent swarm coordination:
-- **Agent**: Agent lifecycle and capabilities
-- **Communication**: Direct messaging between agents
-- **Workspace**: Shared workspace with file locking
-- **Coordination**: Task decomposition and assignment
-- **Swarm**: Swarm manager
-
 ### Interface Layer
 
 #### kod-tui
@@ -135,7 +123,6 @@ Core engine:
 4. **Task Routing** → Core Engine
 5. **LLM Generation** → Provider
 6. **Tool Execution** → Tools (if needed)
-7. **Swarm Coordination** → Swarm (if needed)
 8. **Response** → CLI/TUI
 
 ## Design Principles
@@ -163,4 +150,3 @@ Core engine:
 - **Additional Providers**: Anthropic, OpenAI, custom endpoints
 - **Vector Search**: Integration with vector databases
 - **Plugin System**: Dynamic loading of plugins
-- **Remote Swarm**: Distributed agent coordination

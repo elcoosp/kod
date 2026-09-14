@@ -35,7 +35,6 @@ The workspace currently contains 251 tests across 12 crates (plus `#[ignore]`-ga
 | kod-skills             | 31    |
 | kod-memory             | 24    |
 | kod-tools              | 23    |
-| kod-swarm              | 19    |
 | kod-cli                | 14    |
 | kod-types              | 9     |
 | kod-config             | 9     |
@@ -58,7 +57,6 @@ crates/
   kod-skills/         -- Skill loading, parsing, matching, hot-reload watcher
   kod-memory/         -- Short-term, long-term, and episodic memory
   kod-tools/          -- Tool trait, registry, and built-in tools
-  kod-swarm/          -- Agent lifecycle, communication, task coordination
   kod-tui/            -- Terminal UI (ratatui-based)
   kod-core/           -- KodEngine, TaskRouter, EngineConfig, EngineContext
   kod-cli/            -- CLI binary (kod)
@@ -278,43 +276,6 @@ cargo test -p kod-tools --test registry   # Tool registry registration/lookup
 - `tools.rs` (in `src/`) -- inline tests for the Tool trait
 - `tools.rs` (in `tests/`) -- integration tests for `ReadFileTool`, `WriteFileTool`, `ListFilesTool`, `FileInfoTool`, permission enforcement, missing parameters
 - `registry.rs` (in `tests/`) -- registry operations: register, get, list, remove, count, LLM definitions
-
-### kod-swarm
-
-Agent swarm system:
-
-```bash
-cargo test -p kod-swarm
-
-# Test specific components
-cargo test -p kod-swarm --test agent          # Agent lifecycle, capabilities
-cargo test -p kod-swarm --test communication  # Inter-agent messaging
-```
-
-**Key APIs:**
-- `Agent::new(name)` returns `AgentBuilder` (builder pattern)
-- `AgentBuilder::new(name)` -- then `.with_capability(Capability::Coding)`, `.with_model("...")`, `.with_max_context_tokens(n)`, `.build()`
-- `Agent` lifecycle: `start()`, `pause()`, `resume()`, `stop()` -- all async, must be `mut`
-- `Agent::state()` returns `AgentState` (`Idle`, `Starting`, `Running`, `Paused`, `Stopping`, `Stopped`, `Failed`)
-- `Agent::has_capability(&Capability)`, `agent.capabilities()` -> `Vec<Capability>`
-- `Agent::watch_state()` -> `watch::Receiver<AgentState>`
-- `Agent::last_heartbeat()`, `agent.is_timed_out(Duration)`
-- `AgentSwarm::new(workspace_root: PathBuf)` -- create swarm
-- `swarm.add_agent(agent)`, `swarm.remove_agent(&id)`, `swarm.list_agents() -> Vec<AgentId>`
-- `swarm.find_agents_with_capability(&Capability) -> Vec<AgentId>`
-- `swarm.communication()` -> `&AgentCommunicationHub`
-- `swarm.coordinator()` -> `&TaskCoordinator`
-- `AgentCommunicationHub::new()` -- `register_agent(id)`, `send_direct(&from, &to, content)`, `broadcast(&from, content)`
-- `TaskCoordinator::new()` -- `register_task(task)`, `assign_task(&task_id, &agent_id)`, `pending_tasks()`, `tasks_for_agent(&id)`
-- `SharedWorkspace::new(root)` -- `acquire_lock(&path, &agent_id, LockType)`, `release_lock(&path, &agent_id)`
-
-**Capabilities:** `Coding`, `Testing`, `Documentation`, `CodeReview`, `Planning`, `Research`, `Debugging`, `Refactoring`
-
-**Message content types:** `TaskAssignment { description, priority }`, `ProgressUpdate { status, details }`, `HelpRequest { question, context }`, `KnowledgeShare { information, tags }`, `Coordination { action }`, `FileClaim { path, duration_secs }`, `FileRelease { path }`, `ResultDelivery { result }`
-
-**Test files:**
-- `agent.rs` -- agent creation, builder, lifecycle, capabilities, heartbeat, timeout
-- `communication.rs` -- direct messaging, broadcast, offline, unregister, history, coordination
 
 ### kod-tui
 
@@ -636,8 +597,7 @@ let result = tool.execute(&params, &context).await.unwrap();
 cargo test --workspace -- --nocapture
 
 # Single test with backtrace
-RUST_BACKTRACE=1 cargo test -p kod-swarm -- test_agent_lifecycle --nocapture
-
+RUST_BACKTRACE=1 
 # Run tests serially (for race conditions)
 cargo test --workspace -- --test-threads=1
 
