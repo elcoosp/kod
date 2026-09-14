@@ -1203,6 +1203,19 @@ impl KodEngine {
         out
     }
 
+    /// Seed one turn into the model-visible transcript.
+    ///
+    /// Used by the TUI after restoring a saved session so the model's
+    /// memory of the conversation matches what the user sees on screen.
+    /// Without this, a restart would show the old chat but the model
+    /// would open the next turn with "this is a fresh conversation".
+    ///
+    /// Runs through the same truncation as `record_turn`, so seeding
+    /// hundreds of restored turns can never blow the context window.
+    pub async fn seed_turn(&self, user: bool, text: &str) {
+        self.record_turn(user, text).await;
+    }
+
     /// Forget the transcript (`/clear`). Display messages are cleared
     /// separately by the TUI — this is the model's copy.
     pub async fn clear_history(&self) {

@@ -101,12 +101,44 @@ impl TuiLoop {
             self.app.set_available_models(models);
         }
 
-        // Welcome line so an empty screen never looks dead.
-        self.app.push_system_message(&format!(
-            "Connected · model {} · {} skill(s) · type /help for commands",
-            model_name,
-            self.app.loaded_skills().len()
-        ));
+        // Restore a saved session, if any. The chat messages come back
+        // (what the user sees), and we seed the engine's transcript with
+        // the same user/assistant pairs (what the model sees) so the two
+        // views agree on the next prompt — without the seed, the model
+        // opens the next turn with "this is a fresh conversation" while
+        // the screen is full of history.
+        let restored = self.app.load_session();
+        if restored > 0 {
+            if let Some(engine) = &self.engine {
+                for m in self.app.messages() {
+                    match m.role {
+                        kod_types::MessageRole::User => {
+                            engine.seed_turn(true, &m.content).await;
+                        }
+                        kod_types::MessageRole::Assistant => {
+                            engine.seed_turn(false, &m.content).await;
+                        }
+                        // System / Tool / Agent messages are display-only:
+                        // they never reached the model as turns, so they
+                        // should not enter the model's transcript now.
+                        _ => {}
+                    }
+                }
+            }
+            self.app.push_system_message(&format!(
+                "Restored {} message(s) · model {} · {} skill(s)",
+                restored,
+                model_name,
+                self.app.loaded_skills().len()
+            ));
+        } else {
+            // Welcome line so an empty screen never looks dead.
+            self.app.push_system_message(&format!(
+                "Connected · model {} · {} skill(s) · type /help for commands",
+                model_name,
+                self.app.loaded_skills().len()
+            ));
+        }
 
         Ok(())
     }
@@ -204,6 +236,11 @@ impl TuiLoop {
         self.init_engine(model).await?;
         self.init_terminal().await?;
         let result = self.main_loop().await;
+
+        // Persist the chat for the next session. Save before restoring
+        // the terminal so a crossterm error cannot lose the chat; the
+        // save itself is best-effort (see KodApp::save_session).
+        self.app.save_session();
 
         // Restore the original hook before tearing down.
         let default_hook = std::sync::Arc::try_unwrap(default_hook)

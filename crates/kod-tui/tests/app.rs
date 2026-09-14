@@ -257,3 +257,77 @@ fn test_no_path_completion_for_plain_words() {
     assert!(app.path_candidates().is_empty());
     assert!(!app.show_completions());
 }
+
+
+/// `KodApp::save_session` + `load_session` are the only persistence
+/// between TUI runs. Regression: both existed but neither was called
+/// from TuiLoop, so a restart silently lost the whole chat and the
+/// engine's transcript started empty every time.
+///
+/// Uses KOD_TUI_STATE_DIR so the test never touches the user's real
+/// ~/.kod directory. The env var is process-global, so this test must
+/// not run in parallel with any other test that relies on the same
+/// state dir — it sets a per-test unique path under the OS temp dir,
+/// and the other session test below uses a different dir.
+#[test]
+fn test_session_persistence_roundtrip() {
+    use kod_tui::app::{KodApp, Message};
+    use kod_types::{MessageId, MessageMetadata, MessageRole};
+
+    let tmp = std::env::temp_dir().join(format!(
+        "kod-tui-session-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    // SAFETY: tests that touch KOD_TUI_STATE_DIR are serialized below
+    // via a shared mutex (see `session_state_dir_lock`).
+    let _guard = session_state_dir_lock();
+    unsafe { std::env::set_var("KOD_TUI_STATE_DIR", &tmp) };
+
+    // Build a session with a user prompt and an assistant reply.
+    let mut app = KodApp::new();
+    app.add_message(Message {
+        id: MessageId::new(),
+        role: MessageRole::User,
+        content: "hello from a test".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: MessageMetadata::default(),
+        sequence: 0,
+    });
+    app.add_message(Message {
+        id: MessageId::new(),
+        role: MessageRole::Assistant,
+        content: "hi, I am an assistant".to_string(),
+        timestamp: chrono::Utc::now(),
+        metadata: MessageMetadata::default(),
+        sequence: 0,
+    });
+    app.save_session();
+
+    // A fresh app loading the same state dir must see the same messages
+    // in the same order.
+    let mut restored = KodApp::new();
+    let n = restored.load_session();
+    assert_eq!(n, 2, "expected 2 restored messages");
+    let roles: Vec<_> = restored.messages().iter().map(|m| m.role.clone()).collect();
+    assert_eq!(roles, vec![MessageRole::User, MessageRole::Assistant]);
+    assert_eq!(restored.messages()[0].content, "hello from a test");
+    assert_eq!(restored.messages()[1].content, "hi, I am an assistant");
+    // Sequences must be monotonic so new messages sort after restored ones.
+    assert!(restored.messages()[0].sequence < restored.messages()[1].sequence);
+
+    unsafe { std::env::remove_var("KOD_TUI_STATE_DIR") };
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Serializes tests that mutate KOD_TUI_STATE_DIR (process-global).
+/// Rust runs unit tests in parallel by default; the session tests must
+/// not race each other for the same env var.
+fn session_state_dir_lock() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
