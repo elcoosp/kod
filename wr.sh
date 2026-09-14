@@ -26,14 +26,14 @@ run_with_timeout() {
 
 COMPILE_OK=true
 INCOMPLETE=false
-TARGET=crates/kod-tui/src/main_loop.rs
+TARGET=crates/kod-core/src/engine.rs
 
 if [ ! -f Cargo.toml ] || [ ! -f "$TARGET" ]; then
     echo "ERROR: run from the kod workspace root ($TARGET missing)"
     exit 1
 fi
 
-echo "Patching $TARGET: /goal dispatches directly instead of pushing a fake Enter"
+echo "Patching $TARGET: clone provider before awaits + regression test"
 
 python3 - "$TARGET" << 'PYEOF'
 import os
@@ -55,102 +55,244 @@ def patch(old, new, label, expect=1):
     content = content.replace(old, new, expect if expect else n)
     print(f"Patched: {label}")
 
-# --- 1. /goal arm: replace synthetic Enter with direct dispatch --------
+# --- 1. process(): clone provider out of the lock ----------------------
 patch(
-    '''                } else {
-                    self.app.set_goal(rest);
-                    self.app.push_system_message(&format!(
-                        "Goal set: {rest}\\nEvery prompt now works turn by turn until GOAL MET. Esc cancels; /steer redirects; /goal clear stops."
-                    ));
-                    // Start working immediately: reload the goal as the next
-                    // prompt and queue an Enter behind this command, so the
-                    // loop picks it up and dispatches without extra keystrokes.
-                    self.app.set_input(rest.to_string());
-                    self.app.set_input_mode(InputMode::Insert);
-                    self.event_handler.push_event(Event::Key(KeyCode::Enter));
-                }''',
-    '''                } else {
-                    self.app.set_goal(rest);
-                    self.app.push_system_message(&format!(
-                        "Goal set: {rest}\\nEvery prompt now works turn by turn until GOAL MET. Esc cancels; /steer redirects; /goal clear stops."
-                    ));
-                    // Start working immediately: the goal itself becomes
-                    // the first prompt. Call dispatch_prompt directly
-                    // instead of pushing a synthetic Enter into the event
-                    // queue — the previous approach relied on Enter's
-                    // Insert-mode binding and could misfire if the user
-                    // changed keybindings or was mid-typing.
-                    //
-                    // Box::pin breaks the dispatch → handle_command →
-                    // (goal arm) → dispatch recursion the same way
-                    // retry_generation does.
-                    self.app.set_input(rest.to_string());
-                    Box::pin(self.dispatch_prompt()).await?;
-                }''',
-    "/goal direct dispatch",
+    '''        // If we have a provider, use it to generate a response
+        let provider = self.provider.read().await;
+        if let Some(provider) = provider.as_ref() {''',
+    '''        // Clone the provider Arc out of the read lock before any long
+        // await. Holding the read guard across the agentic loop below
+        // made `set_provider` (used by the TUI's `/model` switch) block
+        // until the current generation finished — the write acquired
+        // only after the last read released, i.e. at the very end of
+        // the response. Cloning is one atomic increment on the Arc, so
+        // the read lock is held for microseconds.
+        let provider: Option<Arc<dyn LlmProvider>> =
+            self.provider.read().await.clone();
+        if let Some(provider) = provider.as_ref() {''',
+    "process(): clone provider",
 )
 
-# --- 2. Update the test that asserted the old Insert-mode + queued Enter
+# --- 2. process_streaming(): clone provider out of the lock ------------
 patch(
-    '''    #[tokio::test]
-    async fn test_goal_set_show_clear() {
-        let mut tui = TuiLoop::new();
-        tui.handle_command("/goal ship the fix").await.unwrap();
-        assert_eq!(tui.app().goal(), Some("ship the fix"));
-        // Setting a goal also queues its first prompt: input prefilled,
-        // Insert mode on, so the queued Enter dispatches without keystrokes.
-        assert_eq!(tui.app().input(), "ship the fix");
-        assert!(matches!(
-            tui.app().input_mode(),
-            crate::app::InputMode::Insert
-        ));
-        tui.handle_command("/goal").await.unwrap();
-        let last = tui.app().messages().last().unwrap();
-        assert!(
-            last.content.contains("ship the fix"),
-            "got: {}",
-            last.content
-        );
-        tui.handle_command("/goal clear").await.unwrap();
-        assert_eq!(tui.app().goal(), None);
-    }''',
-    '''    #[tokio::test]
-    async fn test_goal_set_show_clear() {
-        let mut tui = TuiLoop::new();
-        tui.handle_command("/goal ship the fix").await.unwrap();
-        assert_eq!(tui.app().goal(), Some("ship the fix"));
-        // Setting a goal dispatches it as the first prompt immediately.
-        // Without a live engine (this test has none) dispatch_prompt
-        // records the user message and returns without generating.
-        // The input box is cleared by submit_input, and the goal text
-        // appears in the chat as a user message.
-        assert_eq!(tui.app().input(), "");
-        let user_msg = tui
-            .app()
-            .messages()
-            .iter()
-            .find(|m| m.role == kod_types::MessageRole::User)
-            .expect("goal text should be recorded as a user message");
-        assert_eq!(user_msg.content, "ship the fix");
+    '''        let provider = self.provider.read().await;
+        if let Some(provider) = provider.as_ref() {
+            let response = self.router.process_input(input).await?;
+            let task_type = response.task_type;
+            let history = self.render_history().await;
+            self.record_turn(true, input).await;
+            let prompt = self
+                .router
+                .build_prompt(input, &task_type, &history)
+                .await?;
+            let definitions = self.tools.get_definitions().await;
+            let mut pending = self.ground_prompt(prompt, &definitions);
 
-        tui.handle_command("/goal").await.unwrap();
-        let last = tui.app().messages().last().unwrap();
-        assert!(
-            last.content.contains("ship the fix"),
-            "got: {}",
-            last.content
-        );
-        tui.handle_command("/goal clear").await.unwrap();
-        assert_eq!(tui.app().goal(), None);
-    }''',
-    "test_goal_set_show_clear updated",
+            let options = GenerationOptions::default();
+            let (final_text, tool_calls, tool_results, usage) = self
+                .run_streaming_loop(provider, &mut pending, &definitions, &options, chunk_tx)
+                .await?;''',
+    '''        // See process(): clone out of the lock before any long await.
+        let provider: Option<Arc<dyn LlmProvider>> =
+            self.provider.read().await.clone();
+        if let Some(provider) = provider.as_ref() {
+            let response = self.router.process_input(input).await?;
+            let task_type = response.task_type;
+            let history = self.render_history().await;
+            self.record_turn(true, input).await;
+            let prompt = self
+                .router
+                .build_prompt(input, &task_type, &history)
+                .await?;
+            let definitions = self.tools.get_definitions().await;
+            let mut pending = self.ground_prompt(prompt, &definitions);
+
+            let options = GenerationOptions::default();
+            let (final_text, tool_calls, tool_results, usage) = self
+                .run_streaming_loop(provider, &mut pending, &definitions, &options, chunk_tx)
+                .await?;''',
+    "process_streaming(): clone provider",
 )
+
+# --- 3. process_goal_streaming(): clone provider out of the lock -------
+patch(
+    '''        let provider = self.provider.read().await;
+        if let Some(provider) = provider.as_ref() {
+            let response = self.router.process_input(input).await?;
+            let task_type = response.task_type;
+            let history = self.render_history().await;
+            self.record_turn(true, input).await;
+            let prompt = self
+                .router
+                .build_prompt(input, &task_type, &history)
+                .await?;
+            let definitions = self.tools.get_definitions().await;
+            let mut pending = self.ground_prompt(prompt, &definitions);
+            pending.push_str(&format!(
+                "\\n## Goal\\n\\n{goal}\\n\\nWork turn by turn toward this goal using tools. Do not ask the user for confirmation — act. When the goal is fully reached, end your reply with a line containing exactly GOAL MET and summarize what was done. If a tool errors, work around it and keep going.\\n"
+            ));''',
+    '''        // See process(): clone out of the lock before any long await.
+        let provider: Option<Arc<dyn LlmProvider>> =
+            self.provider.read().await.clone();
+        if let Some(provider) = provider.as_ref() {
+            let response = self.router.process_input(input).await?;
+            let task_type = response.task_type;
+            let history = self.render_history().await;
+            self.record_turn(true, input).await;
+            let prompt = self
+                .router
+                .build_prompt(input, &task_type, &history)
+                .await?;
+            let definitions = self.tools.get_definitions().await;
+            let mut pending = self.ground_prompt(prompt, &definitions);
+            pending.push_str(&format!(
+                "\\n## Goal\\n\\n{goal}\\n\\nWork turn by turn toward this goal using tools. Do not ask the user for confirmation — act. When the goal is fully reached, end your reply with a line containing exactly GOAL MET and summarize what was done. If a tool errors, work around it and keep going.\\n"
+            ));''',
+    "process_goal_streaming(): clone provider",
+)
+
+# --- 4. Regression test, inserted before an unconditional anchor -------
+if "test_set_provider_not_blocked_by_running_generation" in content:
+    print("Regression test already present, skipping insert")
+else:
+    anchor = "    #[test]\n    fn test_tool_done_marker_roundtrip() {"
+    if content.count(anchor) != 1:
+        print("ERROR: anchor test_tool_done_marker_roundtrip not unique")
+        sys.exit(2)
+
+    new_test = '''    /// set_provider must complete promptly even while a streaming
+    /// generation is in flight. Before the fix, process_streaming held
+    /// the RwLock read guard across the whole agentic loop, so
+    /// set_provider's write awaited the end of the generation — a
+    /// `/model` switch mid-prompt looked like a hang.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_set_provider_not_blocked_by_running_generation() {
+        use futures::Stream;
+        use std::pin::Pin;
+        use std::sync::Arc as StdArc;
+        use std::time::Duration;
+        use tokio::sync::Notify;
+
+        /// Provider whose `stream_with_tools` signals `started` and then
+        /// parks for `hold_for` before yielding `Done`. The signal is
+        /// what makes the test deterministic: by the time `started`
+        /// fires, the running `process_streaming` has definitely
+        /// acquired the read guard and entered the streaming loop.
+        struct SlowProvider {
+            hold_for: Duration,
+            started: StdArc<Notify>,
+        }
+
+        #[async_trait::async_trait]
+        impl LlmProvider for SlowProvider {
+            fn name(&self) -> &str {
+                "slow"
+            }
+            async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+                Ok(vec![])
+            }
+            async fn generate(
+                &self,
+                _prompt: &str,
+                _opts: &GenerationOptions,
+            ) -> kod_error::Result<String> {
+                Ok(String::new())
+            }
+            async fn generate_with_tools(
+                &self,
+                _prompt: &str,
+                _tools: &[ToolDefinition],
+                _opts: &GenerationOptions,
+            ) -> kod_error::Result<GenerationResponse> {
+                Ok(GenerationResponse::Text {
+                    content: String::new(),
+                    usage: None,
+                })
+            }
+            fn stream(
+                &self,
+                _prompt: &str,
+                _opts: &GenerationOptions,
+            ) -> Pin<Box<dyn Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+            {
+                Box::pin(futures::stream::empty())
+            }
+            fn stream_with_tools<'a>(
+                &'a self,
+                _prompt: &'a str,
+                _tools: &'a [ToolDefinition],
+                _opts: &'a GenerationOptions,
+            ) -> Pin<Box<dyn Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+            {
+                let hold = self.hold_for;
+                let started = self.started.clone();
+                Box::pin(futures::stream::once(async move {
+                    started.notify_one();
+                    tokio::time::sleep(hold).await;
+                    Ok(StreamChunk::Done)
+                }))
+            }
+        }
+
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = Arc::new(KodEngine::new(cfg, db_path).unwrap());
+        engine.start().await.unwrap();
+
+        let started = StdArc::new(Notify::new());
+        engine
+            .set_provider(Arc::new(SlowProvider {
+                hold_for: Duration::from_millis(1000),
+                started: started.clone(),
+            }))
+            .await;
+
+        let engine_for_gen = engine.clone();
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(4);
+        let gen_task = tokio::spawn(async move {
+            let _ = engine_for_gen.process_streaming("hello", &tx).await;
+        });
+
+        // Block until the streaming loop is definitely running and the
+        // read guard is held.
+        started.notified().await;
+
+        // Swap providers. With the fix this returns immediately; without
+        // it, it waits for the 1s stream to finish and the assertion
+        // below fails.
+        let start = std::time::Instant::now();
+        engine
+            .set_provider(Arc::new(SlowProvider {
+                hold_for: Duration::from_millis(1),
+                started: StdArc::new(Notify::new()),
+            }))
+            .await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "set_provider blocked for {elapsed:?} — the read lock is \\
+             still held across the agentic loop"
+        );
+
+        let _ = gen_task.await;
+    }
+
+'''
+    content = content.replace(anchor, new_test + anchor, 1)
+    print("Inserted regression test before test_tool_done_marker_roundtrip")
 
 tmp = target + ".tmp"
 with open(tmp, "w") as f:
     f.write(content)
 os.replace(tmp, target)
-print("Patched", target)
+print("Wrote", target)
 PYEOF
 
 if [ $? -ne 0 ]; then
@@ -169,9 +311,9 @@ if [ "$INCOMPLETE" = true ] || [ "$COMPILE_OK" = false ]; then
     exit 1
 fi
 
-echo "Running kod-tui tests (120s wall clock)"
-if ! run_with_timeout 120 cargo test -p kod-tui 2>&1; then
-    echo "kod-tui tests failed or hung. Paste the full output for a surgical fix."
+echo "Running kod-core tests (180s wall clock)"
+if ! run_with_timeout 180 cargo test -p kod-core 2>&1; then
+    echo "kod-core tests failed or hung. Paste the full output for a surgical fix."
     exit 1
 fi
 
@@ -189,28 +331,21 @@ fi
 
 echo "All checks passed. Committing."
 git add -A
-git commit -m "fix(tui): /goal dispatches its first prompt directly, no fake Enter
+git commit -m "fix(core): release provider lock before long-running generation
 
-The /goal command set the goal, prefilled the input box with the goal
-text, switched to Insert mode, and pushed a synthetic Event::Key(Enter)
-into the event queue to trigger dispatch. That is a hack:
+KodEngine::process, process_streaming, and process_goal_streaming each
+did 'let provider = self.provider.read().await' and held the read
+guard across the entire agentic loop. set_provider takes the write
+lock, so a model switch issued while a generation was in flight
+blocked until that generation completed — for a TUI user typing
+'/model qwen3:0.6b' mid-prompt, this looked like a hang.
 
-- It routes the immediate dispatch through the Insert-mode Enter
-  binding, so a user who remaps Enter (or changes the input submode)
-  silently breaks /goal's 'start working now' behavior.
-- It races with real keystrokes. A user typing while the queue drains
-  could see their input appended to the goal text or the wrong mode
-  active when the synthetic Enter is processed.
-- The queue hop makes reasoning about ordering between /goal and any
-  user keystroke immediate afterwards harder than it needs to be.
+Clone the Arc<dyn LlmProvider> out of the guard instead. Cloning is a
+single atomic increment; the read lock is held for microseconds, and
+set_provider's write can proceed immediately.
 
-We are already inside an async handler. Call dispatch_prompt directly
-(Box::pin, same pattern as retry_generation, to break the dispatch →
-handle_command → goal-arm → dispatch recursion). The goal text still
-lands in the chat as the first user message, the input box is cleared
-by submit_input, and the input mode is left exactly where the user had
-it — we no longer force Insert.
-
-Updates test_goal_set_show_clear to assert the new observable state
-(empty input, goal text recorded as a user message) instead of the
-pre-filled input + Insert mode the hack produced."
+Adds a regression test with a SlowProvider whose stream_with_tools
+signals via Notify the moment the streaming loop is entered, then
+sleeps for 1s. The test waits on the Notify (so the read guard is
+definitely held), calls set_provider, and asserts it returns within
+200ms. Without the fix it takes ~900ms and the assertion fails."
