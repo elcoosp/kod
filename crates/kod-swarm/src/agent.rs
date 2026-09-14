@@ -173,12 +173,22 @@ impl Agent {
             )));
         }
 
+        // No work happens between Starting and Running today: the
+        // agent has no real initialization step. The previous
+        // `tokio::time::sleep(Duration::from_millis(10))` labelled
+        // "Simulate initialization" was pure waste — every call paid
+        // 10 ms of wall clock and every test that drove an agent
+        // through its lifecycle paid it too.
+        //
+        // If a real initialization step is added later (registering
+        // with a coordination service, opening a per-agent socket),
+        // put its actual await here. The `Starting` state remains in
+        // the enum so a caller that subscribes before calling start
+        // can observe the transition; today the transition is
+        // instantaneous, which is the honest description of the work.
         self.state
             .send(AgentState::Starting)
             .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
-
-        // Simulate initialization
-        tokio::time::sleep(Duration::from_millis(10)).await;
 
         self.state
             .send(AgentState::Running)
@@ -227,12 +237,16 @@ impl Agent {
     pub async fn stop(&self) -> Result<()> {
         match self.state() {
             AgentState::Running | AgentState::Paused | AgentState::Starting => {
+                // Same reasoning as start(): no work happens between
+                // Stopping and Stopped today. The previous
+                // `tokio::time::sleep(Duration::from_millis(10))` with
+                // a "Cleanup" comment was a placeholder for work that
+                // does not exist. Add the real await here if a
+                // shutdown step is added; today the transition is
+                // instantaneous.
                 self.state.send(AgentState::Stopping).map_err(|e| {
                     KodError::InvalidState(format!("Failed to update state: {:?}", e))
                 })?;
-
-                // Cleanup
-                tokio::time::sleep(Duration::from_millis(10)).await;
 
                 self.state.send(AgentState::Stopped).map_err(|e| {
                     KodError::InvalidState(format!("Failed to update state: {:?}", e))
@@ -364,6 +378,39 @@ mod tests {
         assert_eq!(agent.state(), AgentState::Running);
 
         agent.stop().await.unwrap();
+        assert_eq!(agent.state(), AgentState::Stopped);
+    }
+
+    /// start() and stop() must not contain artificial delays. They
+    /// used to sleep 10 ms each, which added up across a swarm of
+    /// agents and made lifecycle tests pay for a wall-clock cost that
+    /// did no real work. The bound below is generous (100 ms) so a
+    /// busy CI machine does not flake; the assertions fail loudly if
+    /// a "Simulate initialization" sleep ever returns.
+    #[tokio::test]
+    async fn test_start_stop_are_not_sleep_bound() {
+        use std::time::{Duration, Instant};
+
+        let agent = Agent::new("no-sleep").build();
+        let budget = Duration::from_millis(100);
+
+        let t0 = Instant::now();
+        agent.start().await.unwrap();
+        let start_elapsed = t0.elapsed();
+        assert!(
+            start_elapsed < budget,
+            "start() took {start_elapsed:?} — expected under {budget:?}"
+        );
+
+        let t0 = Instant::now();
+        agent.stop().await.unwrap();
+        let stop_elapsed = t0.elapsed();
+        assert!(
+            stop_elapsed < budget,
+            "stop() took {stop_elapsed:?} — expected under {budget:?}"
+        );
+
+        // State machine is unchanged: Idle -> Running -> Stopped.
         assert_eq!(agent.state(), AgentState::Stopped);
     }
 

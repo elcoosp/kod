@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-TARGET=crates/kod-swarm/src/coordination.rs
+AGENT=crates/kod-swarm/src/agent.rs
 
-echo "=== Current unassign_task ==="
-awk '/pub async fn unassign_task/,/^    \}$/' "$TARGET" | head -30
-
-echo
-echo "=== Current finish_task tail ==="
-awk '/async fn finish_task/,/^    \}$/' "$TARGET" | tail -20
+echo "=== Current start/stop bodies ==="
+awk '/pub async fn start\(/,/^    \}$/' "$AGENT" | head -35
+echo "---"
+awk '/pub async fn stop\(/,/^    \}$/' "$AGENT" | head -35
 
 echo
-echo "Patching $TARGET"
+echo "=== All sleeps in agent.rs ==="
+grep -n "sleep\|Duration" "$AGENT"
 
-python3 - "$TARGET" << 'PYEOF'
+echo
+echo "Patching $AGENT"
+
+python3 - "$AGENT" << 'PYEOF'
 import os
 import sys
 
@@ -35,194 +37,129 @@ def patch(old, new, label, expect=1):
     return True
 
 # ----------------------------------------------------------------------
-# 1. Rewrite unassign_task to refuse terminal states and return a
-#    TaskFinish so a caller can tell "unassigned" from "nothing to do".
+# 1. start(): remove the fake init sleep.
 # ----------------------------------------------------------------------
 patch(
-    '''    /// Unassign a pending task without marking it complete or failed —
-    /// useful when a re-plan moves the work to a different agent.
-    /// Releases the load slot for the previous assignee.
-    pub async fn unassign_task(&self, task_id: &TaskId) -> Result<()> {
-        let assigned_to = {
-            let mut tasks = self.tasks.write().await;
-            let task = tasks.get_mut(task_id).ok_or_else(|| {
-                KodError::InvalidState(format!("Task {} not found", task_id))
-            })?;
-            let prev = task.assigned_to.take();
-            task.status = TaskStatus::Pending;
-            prev
-        };
-        if let Some(agent_id) = assigned_to {
-            let mut load = self.agent_load.write().await;
-            if let Some(slot) = load.get_mut(&agent_id) {
-                *slot = slot.saturating_sub(1);
-            }
-        }
-        let mut assignments = self.assignments.write().await;
-        assignments.remove(task_id);
-        Ok(())
-    }''',
-    '''    /// Unassign a task without marking it complete or failed — useful
-    /// when a re-plan moves the work to a different agent. Releases
-    /// the load slot for the previous assignee and returns the task to
-    /// Pending.
-    ///
-    /// Returns [`TaskFinish::Transitioned`] when the task moved from
-    /// InProgress (or Blocked) to Pending, and
-    /// [`TaskFinish::AlreadyInState`] when the task was already
-    /// Pending and no state changed — the same shape
-    /// [`TaskCoordinator::complete_task`] and [`TaskCoordinator::fail_task`]
-    /// use, so a caller does not have to switch conventions between
-    /// the three terminal transitions.
-    ///
-    /// Refuses to unassign a task that has already reached a terminal
-    /// state. `complete_task` and `fail_task` do not clear
-    /// `assigned_to` when the task finishes (the field is left as the
-    /// historical record of who did the work), so the previous
-    /// implementation — which unconditionally took `assigned_to` and
-    /// decremented the load — would decrement a second time on any
-    /// already-finished task and reset its status to Pending. The
-    /// load counter drifted negative-by-one and the task appeared to
-    /// need doing again. Terminal is terminal; a caller that needs to
-    /// redo the work creates a new task.
-    pub async fn unassign_task(&self, task_id: &TaskId) -> Result<TaskFinish> {
-        let (from, was_assigned) = {
-            let mut tasks = self.tasks.write().await;
-            let task = tasks.get_mut(task_id).ok_or_else(|| {
-                KodError::InvalidState(format!("Task {} not found", task_id))
-            })?;
-            let from = task.status;
-            if matches!(from, TaskStatus::Completed | TaskStatus::Failed) {
-                return Err(KodError::InvalidState(format!(
-                    "Task {} is already {:?}; refusing to unassign. Create a new task \\
-                     if the work needs redoing.",
-                    task_id, from
-                )));
-            }
-            if from == TaskStatus::Pending {
-                return Ok(TaskFinish::AlreadyInState);
-            }
-            let was_assigned = task.assigned_to.take().is_some();
-            task.status = TaskStatus::Pending;
-            (from, was_assigned)
-        };
-        if was_assigned
-            && let Some(prev_assignee) = self
-                .assignments
-                .read()
-                .await
-                .get(task_id)
-                .map(|a| a.agent_id.clone())
-        {
-            let mut load = self.agent_load.write().await;
-            if let Some(slot) = load.get_mut(&prev_assignee) {
-                *slot = slot.saturating_sub(1);
-            }
-        }
-        let mut assignments = self.assignments.write().await;
-        assignments.remove(task_id);
-        Ok(TaskFinish::Transitioned { from })
-    }''',
-    "unassign_task refuses terminal, returns TaskFinish",
+    '''        self.state
+            .send(AgentState::Starting)
+            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
+
+        // Simulate initialization
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        self.state
+            .send(AgentState::Running)
+            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
+
+        self.record_heartbeat();
+
+        Ok(())''',
+    '''        // No work happens between Starting and Running today: the
+        // agent has no real initialization step. The previous
+        // `tokio::time::sleep(Duration::from_millis(10))` labelled
+        // "Simulate initialization" was pure waste — every call paid
+        // 10 ms of wall clock and every test that drove an agent
+        // through its lifecycle paid it too.
+        //
+        // If a real initialization step is added later (registering
+        // with a coordination service, opening a per-agent socket),
+        // put its actual await here. The `Starting` state remains in
+        // the enum so a caller that subscribes before calling start
+        // can observe the transition; today the transition is
+        // instantaneous, which is the honest description of the work.
+        self.state
+            .send(AgentState::Starting)
+            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
+
+        self.state
+            .send(AgentState::Running)
+            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
+
+        self.record_heartbeat();
+
+        Ok(())''',
+    "start(): remove fake init sleep",
 )
 
 # ----------------------------------------------------------------------
-# 2. Tests: extending the existing swarm test block. Idempotent.
+# 2. stop(): remove the fake cleanup sleep.
 # ----------------------------------------------------------------------
-if "test_unassign_refuses_terminal_task" not in src:
-    anchor = '''    #[tokio::test]
-    async fn least_loaded_picks_the_free_agent() {'''
+patch(
+    '''                self.state.send(AgentState::Stopping).map_err(|e| {
+                    KodError::InvalidState(format!("Failed to update state: {:?}", e))
+                })?;
+
+                // Cleanup
+                tokio::time::sleep(Duration::from_millis(10)).await;
+
+                self.state.send(AgentState::Stopped).map_err(|e| {
+                    KodError::InvalidState(format!("Failed to update state: {:?}", e))
+                })?;''',
+    '''                // Same reasoning as start(): no work happens between
+                // Stopping and Stopped today. The previous
+                // `tokio::time::sleep(Duration::from_millis(10))` with
+                // a "Cleanup" comment was a placeholder for work that
+                // does not exist. Add the real await here if a
+                // shutdown step is added; today the transition is
+                // instantaneous.
+                self.state.send(AgentState::Stopping).map_err(|e| {
+                    KodError::InvalidState(format!("Failed to update state: {:?}", e))
+                })?;
+
+                self.state.send(AgentState::Stopped).map_err(|e| {
+                    KodError::InvalidState(format!("Failed to update state: {:?}", e))
+                })?;''',
+    "stop(): remove fake cleanup sleep",
+)
+
+# ----------------------------------------------------------------------
+# 3. Tests: start/stop complete quickly.
+# ----------------------------------------------------------------------
+if "test_start_stop_are_not_sleep_bound" not in src:
+    anchor = '''    #[test]
+    fn test_capabilities() {'''
     if anchor not in src:
         print("  ERROR: test anchor not found")
         sys.exit(2)
-    new_tests = '''    /// unassign_task must refuse a task that has already reached a
-    /// terminal state. Regression: the previous implementation took
-    /// assigned_to unconditionally, decremented the assignee's load
-    /// counter a second time (the first decrement was at
-    /// complete_task), and reset the task to Pending — corrupting the
-    /// load accounting and resurrecting finished work.
+    new_test = '''    /// start() and stop() must not contain artificial delays. They
+    /// used to sleep 10 ms each, which added up across a swarm of
+    /// agents and made lifecycle tests pay for a wall-clock cost that
+    /// did no real work. The bound below is generous (100 ms) so a
+    /// busy CI machine does not flake; the assertions fail loudly if
+    /// a "Simulate initialization" sleep ever returns.
     #[tokio::test]
-    async fn test_unassign_refuses_terminal_task() {
-        let coord = TaskCoordinator::new();
-        let agent = AgentId::new();
-        let t = task("done");
-        let t_id = t.id.clone();
-        coord.register_task(t).await.unwrap();
-        coord.assign_task(&t_id, &agent).await.unwrap();
+    async fn test_start_stop_are_not_sleep_bound() {
+        use std::time::{Duration, Instant};
 
-        coord.complete_task(&t_id).await.unwrap();
-        assert_eq!(coord.agent_load(&agent).await, 0);
+        let agent = Agent::new("no-sleep").build();
+        let budget = Duration::from_millis(100);
 
-        let err = coord.unassign_task(&t_id).await.unwrap_err();
-        match err {
-            KodError::InvalidState(msg) => {
-                assert!(
-                    msg.contains("Completed"),
-                    "error should name the status: {msg}"
-                );
-            }
-            other => panic!("expected InvalidState, got {other:?}"),
-        }
-        // Load stayed at 0 — no second decrement.
-        assert_eq!(coord.agent_load(&agent).await, 0);
-        // Status stayed Completed — no resurrection.
-        assert_eq!(
-            coord.task_status(&t_id).await,
-            Some(TaskStatus::Completed)
+        let t0 = Instant::now();
+        agent.start().await.unwrap();
+        let start_elapsed = t0.elapsed();
+        assert!(
+            start_elapsed < budget,
+            "start() took {start_elapsed:?} — expected under {budget:?}"
         );
+
+        let t0 = Instant::now();
+        agent.stop().await.unwrap();
+        let stop_elapsed = t0.elapsed();
+        assert!(
+            stop_elapsed < budget,
+            "stop() took {stop_elapsed:?} — expected under {budget:?}"
+        );
+
+        // State machine is unchanged: Idle -> Running -> Stopped.
+        assert_eq!(agent.state(), AgentState::Stopped);
     }
 
-    /// unassign_task on an InProgress task returns Transitioned and
-    /// releases the load slot.
-    #[tokio::test]
-    async fn test_unassign_in_progress_releases_load() {
-        let coord = TaskCoordinator::new();
-        let agent = AgentId::new();
-        let t = task("re-plan");
-        let t_id = t.id.clone();
-        coord.register_task(t).await.unwrap();
-        coord.assign_task(&t_id, &agent).await.unwrap();
-        assert_eq!(coord.agent_load(&agent).await, 1);
-
-        let outcome = coord.unassign_task(&t_id).await.unwrap();
-        assert_eq!(
-            outcome,
-            TaskFinish::Transitioned {
-                from: TaskStatus::InProgress
-            }
-        );
-        assert_eq!(coord.agent_load(&agent).await, 0);
-        assert_eq!(
-            coord.task_status(&t_id).await,
-            Some(TaskStatus::Pending)
-        );
-        assert!(coord.all_assignments().await.is_empty());
-    }
-
-    /// unassign_task on a Pending task reports AlreadyInState and
-    /// changes nothing. A caller that races a re-plan sees exactly
-    /// that, without having to unwind.
-    #[tokio::test]
-    async fn test_unassign_pending_is_no_op() {
-        let coord = TaskCoordinator::new();
-        let t = task("untouched");
-        let t_id = t.id.clone();
-        coord.register_task(t).await.unwrap();
-
-        let outcome = coord.unassign_task(&t_id).await.unwrap();
-        assert_eq!(outcome, TaskFinish::AlreadyInState);
-        assert_eq!(
-            coord.task_status(&t_id).await,
-            Some(TaskStatus::Pending)
-        );
-    }
-
-    #[tokio::test]
-    async fn least_loaded_picks_the_free_agent() {'''
-    src = src.replace(anchor, new_tests, 1)
-    print("  added unassign tests")
+    #[test]
+    fn test_capabilities() {'''
+    src = src.replace(anchor, new_test, 1)
+    print("  added test_start_stop_are_not_sleep_bound")
 else:
-    print("  unassign tests already present")
+    print("  test already present")
 
 tmp = target + ".tmp"
 with open(tmp, "w") as f:
@@ -237,6 +174,10 @@ if [ $? -ne 0 ]; then
 fi
 
 echo
+echo "=== Post-state: remaining sleeps in agent.rs ==="
+grep -n "sleep\|Duration" "$AGENT"
+
+echo
 echo "cargo check --workspace --all-targets 2>&1 | tail -15"
 if ! cargo check --workspace --all-targets 2>&1 | tail -15; then
     echo "Compilation failed"
@@ -244,37 +185,27 @@ if ! cargo check --workspace --all-targets 2>&1 | tail -15; then
 fi
 
 cat > /tmp/kod_commit_msg.txt <<'MSG'
-fix(swarm): unassign_task refuses terminal tasks, returns TaskFinish
+fix(swarm): drop the fake init/cleanup sleeps from Agent::start and stop
 
-complete_task and fail_task do not clear assigned_to when a task
-finishes — the field is left as the historical record of who did
-the work. unassign_task took assigned_to unconditionally,
-decremented the assignee's load, and reset the status to Pending.
-Given a task that had already completed, that meant:
+Agent::start awaited `tokio::time::sleep(Duration::from_millis(10))`
+with the comment "Simulate initialization"; Agent::stop awaited the
+same with the comment "Cleanup". Nothing runs during either wait —
+the agent has no initialization work and no shutdown work today.
+Every start and stop paid 10 ms of wall clock, and every test that
+drove an agent through a lifecycle (agent.rs tests, swarm.rs tests,
+communication.rs tests) paid it too.
 
-  - the assignee's load was decremented a second time (the first
-    decrement was at complete_task), so least_loaded_agent's view
-    of that agent drifted below reality;
-  - the task re-entered Pending, and a subsequent assign_task would
-    hand the finished work to a different agent.
+Remove both sleeps. The state transitions happen synchronously
+through the watch channel, which is the honest description of the
+work. The Starting and Stopping intermediate states remain in the
+enum so a watcher that subscribes before calling start/stop can
+still observe them if a real async step is ever added; the comment
+in each method names where such a step would go.
 
-Refuse any unassign on a Completed or Failed task, with an error
-naming the state and pointing at "create a new task if the work
-needs redoing."
-
-Also change the return type from Result<()> to Result<TaskFinish>,
-matching complete_task and fail_task. The three transition methods
-now share one convention: Transitioned { from } when state changed,
-AlreadyInState when the call was a no-op. The previous Result<()>
-made a no-op indistinguishable from a real transition, so a
-caller that wanted to log "task moved back to Pending" had no way
-to know it should.
-
-Adds three tests: unassign on a Completed task errors and leaves
-the load at 0 and the status Completed; unassign on an InProgress
-task reports Transitioned { from: InProgress }, releases the slot,
-and empties the assignments map; unassign on a Pending task reports
-AlreadyInState and changes nothing.
+Adds test_start_stop_are_not_sleep_bound: a start + stop cycle must
+complete in under 100 ms total, and the state machine ends Stopped.
+The bound is generous (a busy CI machine should not flake) but
+fails loudly if the fake sleeps come back.
 MSG
 
 git add -A
