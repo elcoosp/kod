@@ -1493,6 +1493,16 @@ impl KodEngine {
         Ok(total)
     }
 
+    /// Watch `skills_dir` for changes and rebuild the router's skill
+    /// matcher on each event. Call this after `load_skills` /
+    /// `load_skills_from_dirs` when the caller wants newly-added or
+    /// edited skills to appear without a restart. No-op when the
+    /// directory does not exist or hot reload was already enabled for
+    /// it.
+    pub async fn enable_hot_reload(&self, skills_dir: &std::path::Path) -> Result<()> {
+        self.router.enable_hot_reload(skills_dir).await
+    }
+
     /// Names of all loaded skills (for `/skills` listing).
     pub async fn loaded_skill_names(&self) -> Vec<String> {
         self.router.loaded_skill_names().await
@@ -1956,7 +1966,6 @@ mod tests {
             working_dir: temp.path().to_path_buf(),
             enable_memory: true,
             max_skills_per_query: 3,
-            ..Default::default()
         };
         let engine = KodEngine::new(cfg, db_path).unwrap();
         engine.start().await.unwrap();
@@ -1995,7 +2004,6 @@ mod tests {
             working_dir: temp.path().to_path_buf(),
             enable_memory: true,
             max_skills_per_query: 3,
-            ..Default::default()
         };
         let engine = KodEngine::new(cfg, db_path).unwrap();
         engine.start().await.unwrap();

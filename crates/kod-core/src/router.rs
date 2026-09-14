@@ -3,6 +3,8 @@
 //! The router analyzes user input, classifies it into a task type,
 //! builds context from memory/skills, and dispatches to the appropriate handler.
 
+use std::sync::Arc;
+
 use kod_error::Result;
 use kod_memory::manager::MemoryManager;
 use kod_skills::matcher::SkillMatcher;
@@ -91,7 +93,16 @@ pub struct TaskResponse {
 pub struct TaskRouter {
     config: RouterConfig,
     memory_manager: Option<MemoryManager>,
-    skill_matcher: Option<SkillMatcher>,
+    /// The live skill set. `Arc` so the hot-reload task can hold a
+    /// `Weak` reference and the matcher can be shared without
+    /// duplicating its interior state.
+    skill_matcher: Option<Arc<SkillMatcher>>,
+    /// Watchers kept alive for the router's lifetime — dropping a
+    /// `SkillWatcher` stops the OS watch and the background task.
+    /// One per directory that has hot reload enabled; a `Mutex`
+    /// because the router is behind an `Arc` and enabling happens
+    /// through `&self`.
+    skill_watchers: std::sync::Mutex<Vec<kod_skills::SkillWatcher>>,
 }
 
 impl TaskRouter {
@@ -110,13 +121,14 @@ impl TaskRouter {
             None
         };
 
-        let skill_matcher = Some(SkillMatcher::new());
+        let skill_matcher = Some(Arc::new(SkillMatcher::new()));
 
 
         Ok(Self {
             config,
             memory_manager,
             skill_matcher,
+            skill_watchers: std::sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -197,6 +209,89 @@ impl TaskRouter {
         if let Some(m) = &self.memory_manager {
             m.clear_short_term();
         }
+    }
+
+    /// Watch `skills_dir` for changes and rebuild the matcher's
+    /// contents on any file-system event.
+    ///
+    /// The router's matcher is the single source of truth for skill
+    /// lookup — `build_prompt` reads it, not any loader cache. A
+    /// watcher task therefore holds a `Weak` reference to the matcher
+    /// and, on each event, re-reads the whole directory and replaces
+    /// the matcher contents. The `SkillWatcher` handle is stored on
+    /// the router so it is not dropped the moment this returns.
+    ///
+    /// Debouncing is handled by reloading the whole directory on
+    /// every event: a burst of events from one edit (truncate then
+    /// write, common on some editors) ends up doing a handful of
+    /// re-reads, and re-reading a directory of skill files is cheap.
+    /// A per-file debounce would be more efficient; it would also
+    /// need the watcher to know which file each event concerns and
+    /// to coalesce across them, which is more machinery than the
+    /// skill set size justifies.
+    ///
+    /// Idempotent: a second call is a no-op. No-op when the directory
+    /// does not exist.
+    pub async fn enable_hot_reload(&self, skills_dir: &std::path::Path) -> Result<()> {
+        if !skills_dir.is_dir() {
+            return Ok(());
+        }
+        // Already watching? One watcher per directory is enough.
+        {
+            let Ok(guard) = self.skill_watchers.lock() else {
+                // A poisoned lock means a watcher setup panicked
+                // earlier; leave hot reload off rather than risk a
+                // second panic.
+                return Ok(());
+            };
+            if !guard.is_empty() {
+                return Ok(());
+            }
+        }
+
+        let Some(matcher) = self.skill_matcher.clone() else {
+            // No matcher means no lookup path to update.
+            return Ok(());
+        };
+
+        let (watcher, mut event_rx) = kod_skills::SkillWatcher::new(skills_dir)?;
+        watcher.start()?;
+
+        let dir = skills_dir.to_path_buf();
+        let weak_matcher = Arc::downgrade(&matcher);
+        tokio::spawn(async move {
+            while let Some(_event) = event_rx.recv().await {
+                // The matcher being gone means the router was
+                // dropped; exit rather than leak this task.
+                let Some(matcher) = weak_matcher.upgrade() else {
+                    break;
+                };
+                let mut loader = kod_skills::loader::SkillLoader::new(&dir);
+                match loader.load_all().await {
+                    Ok(skills) => {
+                        let n = skills.len();
+                        matcher.replace_all(skills).await;
+                        tracing::info!(
+                            dir = %dir.display(),
+                            count = n,
+                            "hot-reloaded skills"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            dir = %dir.display(),
+                            error = %e,
+                            "skill hot-reload failed"
+                        );
+                    }
+                }
+            }
+        });
+
+        if let Ok(mut guard) = self.skill_watchers.lock() {
+            guard.push(watcher);
+        }
+        Ok(())
     }
 
     /// Names of all loaded skills (for `/skills` listing).
@@ -911,6 +1006,122 @@ mod tests {
         assert!(
             with_skill.contains("Never use more than two fonts"),
             "constraints missing from prompt: {with_skill}"
+        );
+    }
+
+    /// A nonexistent directory is a no-op: nothing to watch, nothing
+    /// to reload. The call returns Ok and stores no watcher.
+    #[tokio::test]
+    async fn test_enable_hot_reload_missing_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.redb");
+        let router = TaskRouter::new(
+            RouterConfig {
+                enable_memory: false,
+                context_window: 8192,
+                max_skills_per_query: 3,
+                working_dir: temp_dir.path().to_path_buf(),
+            },
+            db_path,
+        )
+        .unwrap();
+        let missing = temp_dir.path().join("no-such-dir");
+        router.enable_hot_reload(&missing).await.unwrap();
+        assert_eq!(
+            router.skill_watchers.lock().unwrap().len(),
+            0,
+            "no watcher for a nonexistent dir"
+        );
+    }
+
+    /// A second call for the same directory is a no-op — one watcher
+    /// per directory, not one per call.
+    #[tokio::test]
+    async fn test_enable_hot_reload_idempotent() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.redb");
+        let router = TaskRouter::new(
+            RouterConfig {
+                enable_memory: false,
+                context_window: 8192,
+                max_skills_per_query: 3,
+                working_dir: temp_dir.path().to_path_buf(),
+            },
+            db_path,
+        )
+        .unwrap();
+        let dir = temp_dir.path().join("skills");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        router.enable_hot_reload(&dir).await.unwrap();
+        router.enable_hot_reload(&dir).await.unwrap();
+        assert_eq!(
+            router.skill_watchers.lock().unwrap().len(),
+            1,
+            "second enable must not add a second watcher"
+        );
+    }
+
+    /// End-to-end: add a skill file after hot reload is enabled, wait
+    /// for the filesystem event, and confirm the matcher sees the new
+    /// skill. Ignored by default — `notify` event latency and coalescing
+    /// vary across platforms and CI; run with `--ignored` when
+    /// investigating hot reload locally.
+    #[tokio::test]
+    #[ignore = "filesystem event notification can be flaky in CI"]
+    async fn test_hot_reload_picks_up_new_skill() {
+        use std::time::{Duration, Instant};
+
+        let temp_dir = TempDir::new().unwrap();
+        let skills_dir = temp_dir.path().join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+
+        // Seed one skill.
+        std::fs::write(
+            skills_dir.join("first.md"),
+            "---\nname: first\ndescription: seed\n---\n\nbody\n",
+        )
+        .unwrap();
+
+        let db_path = temp_dir.path().join("test.redb");
+        let router = TaskRouter::new(
+            RouterConfig {
+                enable_memory: false,
+                context_window: 8192,
+                max_skills_per_query: 3,
+                working_dir: temp_dir.path().to_path_buf(),
+            },
+            db_path,
+        )
+        .unwrap();
+        router.load_skills(&skills_dir).await.unwrap();
+        assert_eq!(router.loaded_skill_names().await, vec!["first".to_string()]);
+
+        router.enable_hot_reload(&skills_dir).await.unwrap();
+
+        // Add a second skill.
+        std::fs::write(
+            skills_dir.join("second.md"),
+            "---\nname: second\ndescription: hot-reload\n---\n\nbody\n",
+        )
+        .unwrap();
+
+        // Poll for up to 2s for the matcher to include both. A fixed
+        // sleep would be either too long on fast hosts or flaky on
+        // loaded ones.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut names = router.loaded_skill_names().await;
+        while Instant::now() < deadline && !names.contains(&"second".to_string()) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            names = router.loaded_skill_names().await;
+        }
+        assert!(
+            names.contains(&"first".to_string()),
+            "seed skill lost: {names:?}"
+        );
+        assert!(
+            names.contains(&"second".to_string()),
+            "new skill not picked up within 2s: {names:?}"
         );
     }
 }

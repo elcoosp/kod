@@ -133,6 +133,24 @@ impl TuiLoop {
                 Ok(n) => tracing::info!("Loaded {} skill file(s)", n),
                 Err(e) => tracing::warn!("Could not load skills: {}", e),
             }
+            // Hot reload: watch each existing skills directory so a
+            // skill file added or edited mid-session appears in the
+            // matcher without a restart. Gated by the config flag;
+            // watching is cheap but every session that has it off
+            // should not pay for the OS watcher.
+            if config.skills.enable_hot_reload {
+                for dir in &skills_dirs {
+                    if dir.is_dir()
+                        && let Err(e) = engine.enable_hot_reload(dir).await
+                    {
+                        tracing::warn!(
+                            dir = %dir.display(),
+                            error = %e,
+                            "could not enable skill hot reload"
+                        );
+                    }
+                }
+            }
             let loaded: Vec<String> = engine.loaded_skill_names().await;
             self.app.set_loaded_skills(loaded);
         }

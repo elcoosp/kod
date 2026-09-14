@@ -47,6 +47,25 @@ impl SkillMatcher {
             .insert(skill.metadata.name.clone(), skill);
     }
 
+    /// Replace the matcher's contents with exactly `skills`,
+    /// discarding whatever was there before.
+    ///
+    /// Used by hot reload: a file-system event means the on-disk
+    /// skill set changed, and the matcher rebuilds from a fresh
+    /// directory read. Add/remove-one-at-a-time would need the event
+    /// to carry the change kind (Created / Modified / Removed) plus
+    /// the skill's name, and even then two events from one edit (a
+    /// truncate and a write, common on some editors) would need
+    /// coalescing. A full replace is O(n) directory reads — cheap for
+    /// a skill set — and cannot drift.
+    pub async fn replace_all(&self, skills: Vec<kod_types::Skill>) {
+        let mut map = self.skills.write().await;
+        map.clear();
+        for skill in skills {
+            map.insert(skill.metadata.name.clone(), skill);
+        }
+    }
+
     /// Remove a skill from the matcher
     pub async fn remove_skill(&self, name: &str) {
         self.skills.write().await.remove(name);
@@ -315,5 +334,49 @@ mod tests {
         // A query long enough to be meaningful still matches by name.
         let results = matcher.find_relevant_skills("use this-tool").await;
         assert!(!results.is_empty(), "expected a match for 'this-tool'");
+    }
+
+    #[tokio::test]
+    async fn test_replace_all_swaps_contents() {
+        let matcher = SkillMatcher::new();
+        matcher
+            .add_skill(create_skill("first", vec!["one"]))
+            .await;
+        matcher
+            .add_skill(create_skill("second", vec!["two"]))
+            .await;
+        matcher
+            .add_skill(create_skill("third", vec!["three"]))
+            .await;
+        assert_eq!(matcher.count().await, 3);
+
+        // replace_all with a smaller set: everything from before is
+        // gone, only the new set is visible.
+        matcher
+            .replace_all(vec![create_skill("fresh", vec!["new"])])
+            .await;
+        assert_eq!(matcher.count().await, 1);
+        let names = matcher.skill_names().await;
+        assert_eq!(names, vec!["fresh".to_string()]);
+
+        // Matching uses only the new set.
+        let hits = matcher.find_relevant_skills("new").await;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].skill.metadata.name, "fresh");
+
+        // The old name does not match anything.
+        let hits = matcher.find_relevant_skills("one").await;
+        assert!(hits.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_replace_all_with_empty_clears() {
+        let matcher = SkillMatcher::new();
+        matcher
+            .add_skill(create_skill("a", vec!["x"]))
+            .await;
+        assert_eq!(matcher.count().await, 1);
+        matcher.replace_all(Vec::new()).await;
+        assert_eq!(matcher.count().await, 0);
     }
 }

@@ -207,6 +207,15 @@ pub async fn run_chat(model: Option<String>, _temperature: f32, _interactive: bo
         Ok(_) => {}
         Err(e) => eprintln!("Could not load skills: {}", e),
     }
+    if config.skills.enable_hot_reload {
+        for dir in &skills_dirs {
+            if dir.is_dir()
+                && let Err(e) = engine.enable_hot_reload(dir).await
+            {
+                eprintln!("Could not enable skill hot reload for {}: {}", dir.display(), e);
+            }
+        }
+    }
 
     println!(
         "KOD Chat (model: {}) - Type 'quit' or Ctrl+C to exit",
