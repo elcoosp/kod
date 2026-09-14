@@ -381,6 +381,13 @@ impl ChatWidget {
         // A dim rule between turns (never after the last one) so exchanges
         // scan visually instead of piling up with one blank row.
         let mut hidden_tools = 0;
+        // Maps each rendered message's id to the index of its first
+        // line in `lines`. Used by the search-active scroll override
+        // below to compute the target message's vertical position.
+        let mut message_line_offsets: std::collections::HashMap<
+            kod_types::MessageId,
+            usize,
+        > = std::collections::HashMap::new();
         for (i, message) in ordered.iter().enumerate() {
             if app.search_query().is_none()
                 && !app.show_tools()
@@ -400,6 +407,7 @@ impl ChatWidget {
                     Style::default().fg(theme.dim),
                 )]));
             }
+            message_line_offsets.insert(message.id.clone(), lines.len());
             lines.extend(Self::message_lines(app, message, text_width));
         }
         if hidden_tools > 0 {
@@ -451,10 +459,43 @@ impl ChatWidget {
         };
         let max_offset = total_rows.saturating_sub(height);
         let offset = app.scroll_offset().min(max_offset);
-        let skip_rows = total_rows
-            .saturating_sub(height)
-            .saturating_sub(offset)
-            .min(u16::MAX as usize) as u16;
+        // Skip-to-row for this frame. While a search is active, the
+        // targeted message is centered in the viewport — that is the
+        // user's focus, not wherever they had scrolled to before
+        // starting the search. The user's own scroll offset
+        // (`app.scroll_lines`) is never touched, so clearing the
+        // search (Escape) or the search finding no more matches
+        // restores the previous viewport immediately.
+        //
+        // The centering computation is a per-frame cost only while a
+        // search is active: measure the visual rows of the `lines`
+        // prefix before the target, then subtract half the viewport.
+        // `line_count` gives the true wrapped-row count, matching the
+        // scrollbar's own measurement a few lines down.
+        let skip_rows = if let Some(target_id) = app.search_target_message_id() {
+            if let Some(&line_idx) = message_line_offsets.get(target_id) {
+                let prefix = Text::from(lines[..line_idx].to_vec());
+                #[allow(unstable_name_collisions)]
+                let prefix_rows = Paragraph::new(prefix)
+                    .wrap(Wrap { trim: false })
+                    .line_count(text_width as u16) as usize;
+                let desired = prefix_rows.saturating_sub(height / 2);
+                desired.min(max_offset).min(u16::MAX as usize) as u16
+            } else {
+                // Target message did not render in this frame (it was
+                // a tool row and `show_tools` is off, for example).
+                // Fall back to the user's own scroll.
+                total_rows
+                    .saturating_sub(height)
+                    .saturating_sub(offset)
+                    .min(u16::MAX as usize) as u16
+            }
+        } else {
+            total_rows
+                .saturating_sub(height)
+                .saturating_sub(offset)
+                .min(u16::MAX as usize) as u16
+        };
         let text_area = if show_bar {
             Rect {
                 width: area.width - 1,

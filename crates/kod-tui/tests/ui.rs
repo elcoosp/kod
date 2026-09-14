@@ -309,6 +309,45 @@ fn test_tool_message_renders_header_row() {
     assert!(text.contains("3 entries"), "tool body missing: {text}");
 }
 
+/// With an active search targeting an early message, the chat widget
+/// must scroll that message into view — not stay pinned to the live
+/// bottom where the user happened to be before searching.
+#[test]
+fn test_search_scrolls_target_into_view() {
+    use kod_tui::app::KodApp;
+    use kod_tui::ui::ChatWidget;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = KodApp::new();
+    for i in 0..40 {
+        app.push_system_message(&format!("line-{i}-{}", "x".repeat(60)));
+    }
+    let n = app.set_search("line-0-x");
+    assert_eq!(n, 1, "search should find exactly the first message");
+    assert!(app.is_searching());
+
+    let backend = TestBackend::new(80, 8);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            ChatWidget::new().render(&app, f.area(), f.buffer_mut());
+        })
+        .unwrap();
+
+    let visible: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(
+        visible.contains("line-0-x"),
+        "search target should be visible; got:\n{visible}"
+    );
+}
+
 #[test]
 fn test_scroll_to_top_reaches_oldest() {
     let mut app = KodApp::new();

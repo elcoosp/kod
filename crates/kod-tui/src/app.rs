@@ -2458,6 +2458,25 @@ impl KodApp {
         }
     }
 
+    /// The message id currently targeted by the active search, if
+    /// any. Returns `None` when no search query is set, when the
+    /// query is empty (editing), or when it found no matches.
+    ///
+    /// Used by the chat widget to scroll the targeted message into
+    /// view. The underlying `search_index` is private so the widget
+    /// cannot reach it directly; this exposes exactly what the widget
+    /// needs (the id of the match to center) without exposing the
+    /// index arithmetic.
+    pub fn search_target_message_id(&self) -> Option<&kod_types::MessageId> {
+        let matches = self.search_matches();
+        if matches.is_empty() {
+            return None;
+        }
+        let pos = self.search_index % matches.len();
+        let msg_idx = *matches.get(pos)?;
+        self.messages().get(msg_idx).map(|m| &m.id)
+    }
+
     /// Display string for the status bar. Built here so the widget does
     /// not re-implement the match on `SearchStatus` and drift.
     pub fn search_status_label(&self) -> String {
