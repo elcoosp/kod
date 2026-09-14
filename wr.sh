@@ -1,184 +1,151 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-CTX=crates/kod-tools/src/context.rs
+TOOLS=crates/kod-tools/src/tools.rs
+EVENT=crates/kod-tui/src/event.rs
 
-echo "=== Diagnostic: matches_pattern + is_path_allowed ==="
-awk '/fn matches_pattern/,/^    \}$/' "$CTX"
-echo "---"
-awk '/fn is_path_allowed/,/^    \}$/' "$CTX"
+echo "=== event.rs:180-205 ==="
+sed -n '180,205p' "$EVENT"
 
 echo
-echo "Patching $CTX"
+echo "Patching $TOOLS (the actual select! block)"
 
-python3 - "$CTX" << 'PYEOF'
+python3 - "$TOOLS" "$EVENT" << 'PYEOF'
 import os
 import sys
 
-target = sys.argv[1]
-with open(target, "r") as f:
-    src = f.read()
+tools, event = sys.argv[1], sys.argv[2]
 
-def patch(old, new, label, expect=1):
-    global src
+def patch(path, old, new, label, expect=1):
+    with open(path, "r") as f:
+        src = f.read()
     n = src.count(old)
     if n == 0:
         print(f"  SKIP (anchor absent): {label}")
         return False
     if expect and n != expect:
-        print(f"  ERROR: expected {expect} occurrence(s) of {label}, found {n}")
+        print(f"  ERROR: expected {expect} occurrence(s) of {label} in {path}, found {n}")
         sys.exit(2)
-    src = src.replace(old, new, expect if expect else n)
-    print(f"  patched: {label}")
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(src.replace(old, new, expect if expect else n))
+    os.replace(tmp, path)
+    print(f"  patched {path}: {label}")
     return True
 
 # ----------------------------------------------------------------------
-# 1. matches_pattern: also match the path itself, not only its children.
+# tools.rs: remove `&& !timed_out` from the two read arms. Keep the
+# guard on the timeout arm.
 # ----------------------------------------------------------------------
 patch(
-    '''    /// Match a path against a glob pattern
-    fn matches_pattern(path: &Path, pattern: &str) -> bool {
-        let glob = format!("{}/**", pattern);
-        match globset::Glob::new(&glob) {
-            Ok(glob) => glob.compile_matcher().is_match(path),
-            Err(_) => false,
-        }
-    }''',
-    '''    /// Does `path` fall under `pattern`?
-    ///
-    /// A pattern matches the path it names *and* anything below it.
-    /// The previous implementation only built `pattern/**`, so
-    /// `/tmp/allowed/file.txt` matched the entry `/tmp/allowed` but
-    /// `/tmp/allowed` itself did not — the directory could not be
-    /// listed or read by the user who had just allowed it, only its
-    /// contents could. The same gap reversed on the forbidden side: a
-    /// forbidden directory was itself readable, and only its children
-    /// were blocked.
-    ///
-    /// Patterns containing `*`, `?`, or `[` are honored verbatim: a
-    /// user who wrote `/tmp/*` meant exactly that set, and appending
-    /// `/**` would broaden it to `/tmp/*/**` and match unrelated
-    /// paths. Everything else gets both the literal pattern and
-    /// `pattern/**`.
-    ///
-    /// Failure to compile either glob returns `false` — a bad pattern
-    /// matches nothing, so a permission that names an invalid glob
-    /// does not silently allow or forbid everything.
-    fn matches_pattern(path: &Path, pattern: &str) -> bool {
-        let has_wildcard =
-            pattern.contains('*') || pattern.contains('?') || pattern.contains('[');
-        let mut builder = globset::GlobSetBuilder::new();
-        match globset::Glob::new(pattern) {
-            Ok(g) => {
-                builder.add(g);
+    tools,
+    '''        loop {
+            if stdout_res.is_some() && stderr_res.is_some() {
+                break;
             }
-            Err(_) => return false,
-        }
-        if !has_wildcard
-            && let Ok(g) = globset::Glob::new(&format!("{}/**", pattern))
-        {
-            builder.add(g);
-        }
-        match builder.build() {
-            Ok(set) => set.is_match(path),
-            Err(_) => false,
-        }
-    }''',
-    "matches_pattern: also match the named path",
+            // No timed_out handling here: when the timeout branch fires
+            // we call start_kill, the child dies, and the child's death
+            // closes its pipe ends — so the two read arms complete on
+            // their own and the loop exits through the top-of-loop
+            // check above. (The previous version carried an empty
+            // `if timed_out {}` block whose only content was a comment
+            // explaining that fact.)
+            tokio::select! {
+                r = &mut stdout_fut, if stdout_res.is_none() && !timed_out => {
+                    let over_cap = matches!(&r, Ok((_, true)));
+                    stdout_res = Some(r);
+                    if over_cap && stderr_res.is_none() {
+                        let _ = child.start_kill();
+                    }
+                }
+                r = &mut stderr_fut, if stderr_res.is_none() && !timed_out => {
+                    let over_cap = matches!(&r, Ok((_, true)));
+                    stderr_res = Some(r);
+                    if over_cap && stdout_res.is_none() {
+                        let _ = child.start_kill();
+                    }
+                }
+                _ = &mut timeout, if !timed_out => {
+                    timed_out = true;
+                    let _ = child.start_kill();
+                }
+            }
+        }''',
+    '''        loop {
+            if stdout_res.is_some() && stderr_res.is_some() {
+                break;
+            }
+            // The two read arms are gated only on "this read has not
+            // finished yet" — NOT on `!timed_out`. The previous code
+            // included `!timed_out` in every read guard, so the
+            // moment the timeout arm fired (set `timed_out = true`,
+            // killed the child), the next loop iteration reached
+            // `tokio::select!` with all three arms disabled and no
+            // `else` — which panics with "all branches are disabled
+            // and there is no else branch".
+            //
+            // The panic fired on the exact case the timeout exists
+            // for: a command that produces no output and never exits
+            // (e.g. `sleep 9999`). The runaway-output test used `yes`
+            // and never hit it, because a read arm always completed
+            // before the timeout had a chance to fire.
+            //
+            // With the reads polled after a timeout: the child is
+            // dead, its death closes the pipe write ends, and each
+            // read returns whatever bytes were buffered followed by
+            // EOF. The timeout arm keeps `!timed_out` so the sleep
+            // fires exactly once.
+            tokio::select! {
+                r = &mut stdout_fut, if stdout_res.is_none() => {
+                    let over_cap = matches!(&r, Ok((_, true)));
+                    stdout_res = Some(r);
+                    if over_cap && stderr_res.is_none() {
+                        let _ = child.start_kill();
+                    }
+                }
+                r = &mut stderr_fut, if stderr_res.is_none() => {
+                    let over_cap = matches!(&r, Ok((_, true)));
+                    stderr_res = Some(r);
+                    if over_cap && stdout_res.is_none() {
+                        let _ = child.start_kill();
+                    }
+                }
+                _ = &mut timeout, if !timed_out => {
+                    timed_out = true;
+                    let _ = child.start_kill();
+                }
+            }
+        }''',
+    "tools.rs: drop !timed_out from read arms",
 )
 
 # ----------------------------------------------------------------------
-# 2. Extend the existing forbidden-path test to cover the boundary.
+# event.rs:190 — inspect and patch if all arms are guarded.
 # ----------------------------------------------------------------------
-patch(
-    '''    #[test]
-    fn test_forbidden_path() {
-        let perms = ToolPermissions {
-            read_files: true,
-            allowed_paths: vec!["/tmp/allowed".to_string()],
-            forbidden_paths: vec!["/tmp/allowed/forbidden".to_string()],
-            ..Default::default()
-        };
-        let context = ToolContext::new("/tmp").with_permissions(perms);
+with open(event, "r") as f:
+    ev_src = f.read()
 
-        // Allowed path
-        let result = context.can_read(Path::new("/tmp/allowed/test.txt"));
-        assert!(result.is_ok());
+old_sel = '''        tokio::select! {
+            event = rx.recv() => {
+                if let Some(event) = event {
+                    return event;
+                }
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                return Event::Tick;
+            }
+        }'''
 
-        // Forbidden path
-        let result = context.can_read(Path::new("/tmp/allowed/forbidden/secret.txt"));
-        assert!(result.is_err());
-    }''',
-    '''    #[test]
-    fn test_forbidden_path() {
-        let perms = ToolPermissions {
-            read_files: true,
-            allowed_paths: vec!["/tmp/allowed".to_string()],
-            forbidden_paths: vec!["/tmp/allowed/forbidden".to_string()],
-            ..Default::default()
-        };
-        let context = ToolContext::new("/tmp").with_permissions(perms);
-
-        // Child of an allowed directory: allowed.
-        let result = context.can_read(Path::new("/tmp/allowed/test.txt"));
-        assert!(result.is_ok());
-
-        // The allowed directory itself: allowed. Regression: the
-        // previous matches_pattern only built `pattern/**`, so the
-        // directory named by an allowed_paths entry did not match
-        // that entry — a user who allowed a directory could read its
-        // children but not the directory.
-        let result = context.can_read(Path::new("/tmp/allowed"));
-        assert!(
-            result.is_ok(),
-            "allowed directory itself must be readable: {result:?}"
-        );
-
-        // Child of a forbidden directory: forbidden.
-        let result = context.can_read(Path::new("/tmp/allowed/forbidden/secret.txt"));
-        assert!(result.is_err());
-
-        // The forbidden directory itself: forbidden. Regression: the
-        // same gap in the other direction — a forbidden directory was
-        // readable, only its contents were blocked.
-        let result = context.can_read(Path::new("/tmp/allowed/forbidden"));
-        assert!(
-            result.is_err(),
-            "forbidden directory itself must be rejected: {result:?}"
-        );
-    }
-
-    /// A pattern with a wildcard is honored verbatim — the fix must
-    /// not broaden `/tmp/*` to `/tmp/*/**` and match unrelated paths.
-    #[test]
-    fn test_wildcard_pattern_is_verbatim() {
-        let perms = ToolPermissions {
-            read_files: true,
-            allowed_paths: vec!["/tmp/*".to_string()],
-            ..Default::default()
-        };
-        let context = ToolContext::new("/").with_permissions(perms);
-
-        // `/tmp/anything` matches `/tmp/*`.
-        assert!(context.can_read(Path::new("/tmp/anything")).is_ok());
-        // `/tmp/anything/deeper` does not match `/tmp/*` under
-        // globset's default separator handling — `*` is a single
-        // path segment.
-        assert!(
-            context.can_read(Path::new("/tmp/anything/deeper")).is_err(),
-            "wildcard must not be silently broadened to match nested paths"
-        );
-        // And it definitely does not match unrelated paths.
-        assert!(context.can_read(Path::new("/var/log")).is_err());
-    }''',
-    "extend forbidden-path test + wildcard test",
-)
-
-tmp = target + ".tmp"
-with open(tmp, "w") as f:
-    f.write(src)
-os.replace(tmp, target)
-print("Wrote", target)
+if old_sel in ev_src:
+    print("  event.rs: select! has an unguarded `rx.recv()` arm — no fix needed")
+else:
+    # Print the actual block so we can see what it looks like.
+    idx = ev_src.find("tokio::select!")
+    if idx >= 0:
+        print("  event.rs select! block (first 400 chars):")
+        print("    " + ev_src[idx:idx + 400].replace("\n", "\n    "))
+    else:
+        print("  event.rs: select! not found?")
 PYEOF
 
 if [ $? -ne 0 ]; then
@@ -187,51 +154,53 @@ if [ $? -ne 0 ]; then
 fi
 
 echo
-echo "cargo check --workspace --all-targets 2>&1 | tail -12"
-if ! cargo check --workspace --all-targets 2>&1 | tail -12; then
+echo "cargo check --workspace --all-targets 2>&1 | tail -10"
+if ! cargo check --workspace --all-targets 2>&1 | tail -10; then
     echo "Compilation failed"
     exit 1
 fi
 
 echo
-echo "cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tail -12"
-if ! cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tail -12; then
-    echo "Clippy failed"
+echo "cargo test -p kod-tools execute_command 2>&1 | tail -18"
+if ! cargo test -p kod-tools execute_command 2>&1 | tail -18; then
+    echo "kod-tools tests failed"
     exit 1
 fi
 
 cat > /tmp/kod_commit_msg.txt <<'MSG'
-fix(tools): permission patterns match the named path, not just children
+fix(tools): execute_command no longer panics on timeout
 
-ToolContext::matches_pattern built `format!("{}/**", pattern)` for
-every entry. Under globset, `/tmp/allowed/**` matches
-`/tmp/allowed/file.txt` but not `/tmp/allowed` itself. Two
-consequences, one on each side of the permission check:
+The select! loop in ExecuteCommandTool::execute gated all three
+arms on `!timed_out`:
 
-- A user who wrote `allowed_paths = ["/tmp/allowed"]` could read
-  files under that directory but not the directory itself. A tool
-  that tried to stat, list, or read the allowed path directly got a
-  permission error — surprising, and hard to diagnose because the
-  files inside worked.
-- A user who wrote `forbidden_paths = ["/tmp/secrets"]` could still
-  read the `/tmp/secrets` directory (its own contents): only the
-  children were blocked. The natural reading of "forbid this
-  directory" is that the directory itself is off limits too.
+  tokio::select! {
+      r = &mut stdout_fut, if stdout_res.is_none() && !timed_out => { ... }
+      r = &mut stderr_fut, if stderr_res.is_none() && !timed_out => { ... }
+      _ = &mut timeout,    if !timed_out                       => { ... }
+  }
 
-Rebuild matches_pattern to try both the literal pattern and
-`pattern/**`. Patterns that already contain `*`, `?`, or `[` are
-honored verbatim: a user who wrote `/tmp/*` meant exactly that set,
-and appending `/**` would broaden it to `/tmp/*/**` — the opposite
-of the intent.
+When the timeout arm fired (set timed_out = true, killed the child)
+and the loop came around to a fresh select!, all three guards were
+false. `tokio::select!` with every arm disabled and no `else`
+panics with "all branches are disabled and there is no else branch".
 
-An invalid glob matches nothing (returns false), so a permission
-that names a malformed pattern does not silently allow or forbid
-everything. Same contract as before for the failure case.
+So a command that produces no output and never exits — the exact
+case the timeout was added for, like `sleep 9999` — did not time
+out cleanly; it panicked after the kill. The runaway-output test
+did not catch this: `yes` produces output, so a read arm always
+completed before the timeout had a chance to fire.
 
-Extends test_forbidden_path with the two boundary cases (allowed
-directory itself readable; forbidden directory itself rejected) and
-adds test_wildcard_pattern_is_verbatim, which pins that `/tmp/*`
-does not silently become `/tmp/*/**`.
+Remove `&& !timed_out` from the two read arms. The reads are polled
+until they finish; the child is dead by then, its death closes the
+pipe write ends, and each read returns whatever bytes were
+buffered followed by EOF. The timeout arm keeps `!timed_out` so the
+sleep fires exactly once.
+
+Adds execute_command_times_out_without_panic: 1-second timeout,
+`sleep 60`, assertions that the call returns within a few seconds
+and reports timed_out: true with empty stdout. The panic this
+replaces fails the test before any assertion; a missed timeout
+blows past the elapsed bound.
 MSG
 
 git add -A

@@ -449,22 +449,35 @@ impl Tool for ExecuteCommandTool {
             if stdout_res.is_some() && stderr_res.is_some() {
                 break;
             }
-            // No timed_out handling here: when the timeout branch fires
-            // we call start_kill, the child dies, and the child's death
-            // closes its pipe ends — so the two read arms complete on
-            // their own and the loop exits through the top-of-loop
-            // check above. (The previous version carried an empty
-            // `if timed_out {}` block whose only content was a comment
-            // explaining that fact.)
+            // The two read arms are gated only on "this read has not
+            // finished yet" — NOT on `!timed_out`. The previous code
+            // included `!timed_out` in every read guard, so the
+            // moment the timeout arm fired (set `timed_out = true`,
+            // killed the child), the next loop iteration reached
+            // `tokio::select!` with all three arms disabled and no
+            // `else` — which panics with "all branches are disabled
+            // and there is no else branch".
+            //
+            // The panic fired on the exact case the timeout exists
+            // for: a command that produces no output and never exits
+            // (e.g. `sleep 9999`). The runaway-output test used `yes`
+            // and never hit it, because a read arm always completed
+            // before the timeout had a chance to fire.
+            //
+            // With the reads polled after a timeout: the child is
+            // dead, its death closes the pipe write ends, and each
+            // read returns whatever bytes were buffered followed by
+            // EOF. The timeout arm keeps `!timed_out` so the sleep
+            // fires exactly once.
             tokio::select! {
-                r = &mut stdout_fut, if stdout_res.is_none() && !timed_out => {
+                r = &mut stdout_fut, if stdout_res.is_none() => {
                     let over_cap = matches!(&r, Ok((_, true)));
                     stdout_res = Some(r);
                     if over_cap && stderr_res.is_none() {
                         let _ = child.start_kill();
                     }
                 }
-                r = &mut stderr_fut, if stderr_res.is_none() && !timed_out => {
+                r = &mut stderr_fut, if stderr_res.is_none() => {
                     let over_cap = matches!(&r, Ok((_, true)));
                     stderr_res = Some(r);
                     if over_cap && stdout_res.is_none() {
@@ -1206,6 +1219,56 @@ mod tests {
                 // `take(cap + 1)` reads one extra byte then we truncate,
                 // so the returned length is exactly the cap.
                 assert_eq!(out.len(), MAX_CMD_OUTPUT_BYTES);
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    /// A command that produces no output and never exits must be
+    /// killed at `context.timeout_secs` — without panicking.
+    ///
+    /// Regression: the previous select! loop gated all three branches
+    /// on `!timed_out`. When the timeout branch set `timed_out =
+    /// true`, the next loop iteration reached `tokio::select!` with
+    /// every branch guard false and no `else`, which panics with
+    /// "all branches are disabled and there is no else branch". The
+    /// runaway-output test used `yes` and never hit this path.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn execute_command_times_out_without_panic() {
+        let temp = tempfile::TempDir::new().unwrap();
+        // 1-second timeout so the test runs quickly.
+        let ctx = ToolContext::new(temp.path())
+            .with_permissions(kod_types::ToolPermissions {
+                execute_commands: true,
+                ..Default::default()
+            })
+            .with_timeout(1);
+        let tool = ExecuteCommandTool::new();
+        // `sleep 60` produces no output and exits only when it
+        // finishes. The timeout is the only thing that ends it here.
+        let params = serde_json::json!({ "command": "sleep 60" });
+
+        let start = std::time::Instant::now();
+        let result = tool.execute(&params, &ctx).await.unwrap();
+        let elapsed = start.elapsed();
+
+        // Generous upper bound: 1s timeout + process-kill overhead.
+        // A panic would fail the test before this assertion; a
+        // missed timeout would blow past it.
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "execute_command returned after {elapsed:?} — timeout of 1s was not enforced"
+        );
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(
+                    v["timed_out"], true,
+                    "result must report timed_out: {v}"
+                );
+                assert_eq!(v["timeout_secs"], 1);
+                // Nothing on stdout — sleep produces no output.
+                assert_eq!(v["stdout"], "");
             }
             other => panic!("expected success, got {:?}", other),
         }
