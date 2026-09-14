@@ -86,6 +86,59 @@ impl ToolContext {
             });
         }
 
+        // Final-component symlink check.
+        //
+        // The initial `canonicalize` above resolves any symlink whose
+        // target exists — including a symlink at the final component
+        // pointing outside the workspace, which the containment check
+        // catches. The case it does not catch is a *dangling* symlink:
+        // canonicalize fails on a target that does not exist, the
+        // fallback canonicalizes the parent (inside the workspace) and
+        // re-appends the leaf, and the resulting lexical path passes
+        // containment while the OS-level write would follow the
+        // symlink and create the file at the target outside.
+        //
+        // Refuse a dangling leaf symlink. Resolving its target would
+        // require recursively following read_link chains and is not a
+        // destination whose containment can be verified; the safe
+        // answer is "no". A symlink whose target *does* exist is
+        // unaffected — that case was already safe.
+        if let Ok(meta) = std::fs::symlink_metadata(&canonical)
+            && meta.file_type().is_symlink()
+        {
+            match std::fs::canonicalize(&canonical) {
+                Ok(target) => {
+                    // Should be unreachable given the flow above
+                    // (canonicalize on the target would have set
+                    // `canonical` to it), but cheap insurance if the
+                    // fallback path was taken for any other reason.
+                    if !target.starts_with(&root) {
+                        return Err(KodError::PermissionDenied {
+                            action: "resolve path".to_string(),
+                            reason: format!(
+                                "Path is a symlink whose target escapes the \
+                                 working directory: {} -> {}",
+                                path,
+                                target.display()
+                            ),
+                        });
+                    }
+                }
+                Err(_) => {
+                    return Err(KodError::PermissionDenied {
+                        action: "resolve path".to_string(),
+                        reason: format!(
+                            "Path is a dangling symlink: {}. Refusing to read \
+                             or write through it — the target does not exist \
+                             and cannot be verified as inside the working \
+                             directory.",
+                            canonical.display()
+                        ),
+                    });
+                }
+            }
+        }
+
         Ok(canonical)
     }
 
@@ -465,6 +518,55 @@ mod tests {
             context.can_read(Path::new("/etc/hostname")).is_err(),
             "wildcard must not match paths outside its literal prefix"
         );
+    }
+
+    /// A dangling symlink inside the workspace must be rejected by
+    /// resolve_path. Regression: the previous code canonicalized the
+    /// parent (inside the workspace) and re-appended the leaf when
+    /// the full canonicalize failed, so a dangling symlink passed the
+    /// containment check while `File::create` would have created the
+    /// file at the symlink's target outside the workspace.
+    #[cfg(unix)]
+    #[test]
+    fn test_resolve_path_rejects_dangling_symlink() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        // A symlink whose target does not exist.
+        let link = root.join("dangling");
+        std::os::unix::fs::symlink("/nonexistent-kod-test-target", &link).unwrap();
+
+        let ctx = ToolContext::new(&root);
+        let result = ctx.resolve_path("dangling");
+        assert!(
+            result.is_err(),
+            "dangling symlink must be rejected, got: {result:?}"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("dangling") || msg.contains("symlink"),
+            "error should name the problem: {msg}"
+        );
+    }
+
+    /// A symlink whose target is inside the workspace and *exists*
+    /// still resolves. The fix must not reject every symlink.
+    #[cfg(unix)]
+    #[test]
+    fn test_resolve_path_accepts_symlink_to_inside_file() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::write(root.join("real.txt"), "hi").unwrap();
+        let link = root.join("link.txt");
+        std::os::unix::fs::symlink(root.join("real.txt"), &link).unwrap();
+
+        let ctx = ToolContext::new(&root);
+        let result = ctx.resolve_path("link.txt");
+        assert!(
+            result.is_ok(),
+            "symlink to an inside file must resolve: {result:?}"
+        );
+        // Resolved form is the target, not the link.
+        assert_eq!(result.unwrap(), root.join("real.txt"));
     }
 
     #[test]
