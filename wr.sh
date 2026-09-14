@@ -29,9 +29,6 @@ def write(p, s):
 
 src = read(tools)
 
-# Each entry: (marker-in-file, test-body). Only inserted if the marker
-# is absent. All bodies are added just before the final `}` of the
-# tests module.
 tests = [
     ("read_file_detects_binary_content", '''
     /// A file with NUL bytes in the first 1 KB must be returned as
@@ -228,59 +225,30 @@ tests = [
 '''),
 ]
 
-missing = [(marker, body) for (marker, body) in tests if marker not in src]
-print(f"  Missing tests: {len(missing)}")
+missing = [(m, b) for (m, b) in tests if m not in src]
+print(f"Missing in tools.rs: {len(missing)}")
 for m, _ in missing:
-    print(f"    - {m}")
+    print(f"  - {m}")
 
 if missing:
     stripped = src.rstrip()
     if not stripped.endswith("}"):
-        print("  ERROR: file does not end with `}`")
+        print("ERROR: tools.rs does not end with `}`")
         sys.exit(2)
     idx = stripped.rfind("}")
     body = "\n".join(b for _, b in missing)
-    src = stripped[:idx] + body + "\n}\n"
-    write(tools, src)
-    print("  tools.rs: inserted missing tests")
+    write(tools, stripped[:idx] + body + "\n}\n")
+    print("Inserted tests into tools.rs")
 else:
-    print("  tools.rs: all tests present")
+    print("tools.rs: nothing to insert")
 
-# ======================================================================
-# engine.rs summarize test.
-# ======================================================================
 src = read(engine)
 if "is a file, not a directory" in src:
-    print("  engine.rs: summarize test already extended")
+    print("engine.rs: summarize test already covers the file branch")
 else:
     anchor = "        // read_file binary result: one-line summary, no text preview."
     if anchor not in src:
-        # Fall back to the "untruncated read must not carry the marker"
-        # assertion, which exists in the current test.
-        anchor = '''        // read_file without the flag: no marker.'''
-        if anchor not in src:
-            print("  WARN: engine.rs summarize test anchor not found; skipping")
-        else:
-            addition = '''        // list_files on a file: reports "is a file", not "1 entry".
-        let lf_file = summarize_tool_result(
-            "list_files",
-            &ToolResult::Success(serde_json::json!({
-                "path": "/a/single.txt",
-                "path_kind": "file",
-                "files": ["/a/single.txt"],
-                "total": 1,
-                "truncated": false
-            })),
-        );
-        assert!(
-            lf_file.contains("is a file, not a directory"),
-            "file-shaped list_files summary: {lf_file}"
-        );
-
-'''
-            src = src.replace(anchor, addition + anchor, 1)
-            write(engine, src)
-            print("  engine.rs: extended summarize test (fallback anchor)")
+        print("WARN: engine.rs summarize-test anchor absent; skipping")
     else:
         addition = '''        // list_files on a file: reports "is a file", not "1 entry".
         let lf_file = summarize_tool_result(
@@ -299,11 +267,8 @@ else:
         );
 
 '''
-        src = src.replace(anchor, addition + anchor, 1)
-        write(engine, src)
-        print("  engine.rs: extended summarize test")
-
-print("Done.")
+        write(engine, src.replace(anchor, addition + anchor, 1))
+        print("Extended summarize test in engine.rs")
 PYEOF
 
 if [ $? -ne 0 ]; then
@@ -318,30 +283,32 @@ if ! cargo check --workspace --all-targets 2>&1 | tail -15; then
     exit 1
 fi
 
-echo
-echo "Committing."
-git add -A
-git commit -F - <<'MSG'
-test(tools,core): fill in missing tests for the binary/path work
+cat > /tmp/kod_commit_msg.txt <<'MSG'
+test(tools,core): add missing tests for binary detection and path errors
 
 Several tests that accompanied the binary-detection and
-structured-path-error work never landed (earlier script runs
-aborted at the write step). This commit adds whichever are
-missing, gated on presence:
+structured-path-error work never landed — earlier script runs
+aborted before their write step, or their anchors no longer
+matched the file. This commit inserts whichever are missing,
+gated on presence so a re-run duplicates nothing:
 
-  - read_file_detects_binary_content
-  - read_file_text_file_reports_not_binary
-  - read_file_multibyte_utf8_is_not_binary
-  - read_file_directory_returns_actionable_error
-  - read_file_missing_returns_actionable_error
-  - list_files_on_file_reports_file_kind
-  - list_files_on_directory_reports_directory_kind
-  - list_files_missing_path_errors
+  read_file_detects_binary_content
+  read_file_text_file_reports_not_binary
+  read_file_multibyte_utf8_is_not_binary
+  read_file_directory_returns_actionable_error
+  read_file_missing_returns_actionable_error
+  list_files_on_file_reports_file_kind
+  list_files_on_directory_reports_directory_kind
+  list_files_missing_path_errors
 
 Plus the engine summarize-test extension for the file-shaped
 list_files case.
 
-Insertion uses the file's final `}` as the anchor rather than a
-named-test anchor, so this lands regardless of how earlier edits
+Insertion uses the file's final closing brace as the anchor rather
+than a named test, so this lands regardless of how earlier edits
 reordered the tests module.
 MSG
+
+git add -A
+git commit -F /tmp/kod_commit_msg.txt
+rm -f /tmp/kod_commit_msg.txt
