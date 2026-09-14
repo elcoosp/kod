@@ -255,12 +255,23 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             .map(shorten_path)
             .unwrap_or_else(|| name.to_string());
         let lines = content.lines().count();
+        // When the file was larger than the reader's byte cap, the tool
+        // sets "truncated": true. Without surfacing it, the row reads
+        // "path · 3 lines · 98 chars" for what is actually the first
+        // 256 KB of a multi-megabyte file — the user (and the model)
+        // have no way to tell the preview is not the whole file.
+        let truncated = v
+            .get("truncated")
+            .and_then(|t| t.as_bool())
+            .unwrap_or(false);
+        let suffix = if truncated { " (truncated)" } else { "" };
         let mut out = format!(
-            "{} · {} line{} · {} chars",
+            "{} · {} line{} · {} chars{}",
             path,
             lines,
             if lines == 1 { "" } else { "s" },
-            content.len()
+            content.len(),
+            suffix,
         );
         let preview: Vec<&str> = content.lines().take(3).collect();
         if !preview.is_empty() {
@@ -317,6 +328,29 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             && !stderr.trim().is_empty()
         {
             out.push_str(&format!("\nstderr:\n{}", cap_lines(stderr.trim_end(), 4)));
+        }
+        // The runaway-command guard in ExecuteCommandTool reports
+        // "stdout_truncated" / "stderr_truncated" so downstream can
+        // distinguish a command that finished from one that was killed
+        // mid-output. Drop that flag and a `yes` output looks like a
+        // perfectly ordinary 64 KB of text.
+        let stdout_trunc = v
+            .get("stdout_truncated")
+            .and_then(|t| t.as_bool())
+            .unwrap_or(false);
+        let stderr_trunc = v
+            .get("stderr_truncated")
+            .and_then(|t| t.as_bool())
+            .unwrap_or(false);
+        if stdout_trunc || stderr_trunc {
+            out.push_str(&format!(
+                "\n[output truncated at cap{}]",
+                if v.get("exit_code").and_then(|c| c.as_i64()).unwrap_or(0) != 0 {
+                    " — command was killed"
+                } else {
+                    ""
+                }
+            ));
         }
         return if out.is_empty() {
             "(no output)".to_string()
@@ -1775,6 +1809,76 @@ mod tests {
         );
         assert!(block.contains("alpha.txt"), "got: {block}");
         assert!(block.contains("beta.txt"), "got: {block}");
+    }
+
+    /// summarize_success must surface the tool's truncation flags so
+    /// the row does not present a partial read or a killed command as
+    /// if it were complete.
+    #[test]
+    fn test_summarize_reports_truncation() {
+        // read_file: "truncated": true adds "(truncated)".
+        let read = summarize_tool_result(
+            "read_file",
+            &ToolResult::Success(serde_json::json!({
+                "path": "/a/big.rs",
+                "content": "line1\nline2\n",
+                "truncated": true
+            })),
+        );
+        assert!(
+            read.contains("(truncated)"),
+            "read_file truncation not surfaced: {read}"
+        );
+
+        // read_file without the flag: no marker.
+        let read_ok = summarize_tool_result(
+            "read_file",
+            &ToolResult::Success(serde_json::json!({
+                "path": "/a/small.rs",
+                "content": "hello\n",
+                "truncated": false
+            })),
+        );
+        assert!(
+            !read_ok.contains("(truncated)"),
+            "untruncated read must not carry the marker: {read_ok}"
+        );
+
+        // execute_command: "stdout_truncated": true adds a note.
+        let exec = summarize_tool_result(
+            "execute_command",
+            &ToolResult::Success(serde_json::json!({
+                "stdout": "y\ny\n",
+                "stderr": "",
+                "exit_code": 0,
+                "stdout_truncated": true,
+                "stderr_truncated": false
+            })),
+        );
+        assert!(
+            exec.contains("output truncated at cap"),
+            "command truncation not surfaced: {exec}"
+        );
+        assert!(
+            !exec.contains("killed"),
+            "clean exit must not be labelled killed: {exec}"
+        );
+
+        // execute_command killed by the cap: exit code non-zero, label.
+        let exec_killed = summarize_tool_result(
+            "execute_command",
+            &ToolResult::Success(serde_json::json!({
+                "stdout": "y\n",
+                "stderr": "",
+                "exit_code": -1,
+                "stdout_truncated": true,
+                "stderr_truncated": false
+            })),
+        );
+        assert!(
+            exec_killed.contains("killed"),
+            "killed command must be labelled: {exec_killed}"
+        );
     }
 
     #[test]

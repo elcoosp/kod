@@ -96,7 +96,21 @@ impl SharedWorkspace {
         Ok(())
     }
 
-    /// Resolve a path relative to workspace root
+    /// Resolve a path relative to the workspace root and confirm it
+    /// lies inside the workspace.
+    ///
+    /// Files that do not exist yet are handled by canonicalizing the
+    /// deepest existing ancestor and re-appending the remainder. Without
+    /// this, `std::fs::canonicalize(&resolved)` failed on any path that
+    /// did not already exist, so the workspace could never lock a file
+    /// *before* it was written — exactly the case pre-write coordination
+    /// exists for. A second agent about to write the same path is what
+    /// needs the lock.
+    ///
+    /// Traversal is still blocked: after canonicalization the result is
+    /// compared against the canonicalized workspace root, so `../etc/…`
+    /// and absolute paths outside the root are rejected whether the
+    /// target exists or not.
     pub fn resolve_path(&self, path: &Path) -> Result<PathBuf> {
         let resolved = if path.is_absolute() {
             path.to_path_buf()
@@ -104,14 +118,46 @@ impl SharedWorkspace {
             self.root.join(path)
         };
 
-        // Check the path is within workspace
-        let canonical = std::fs::canonicalize(&resolved).map_err(|_| {
-            KodError::InvalidState(format!("Path not found: {}", resolved.display()))
-        })?;
+        // Canonicalize the deepest existing ancestor, then re-attach the
+        // non-existent suffix. Any failure to canonicalize an existing
+        // ancestor (permission denied, races) propagates as an I/O error.
+        let canonical = match std::fs::canonicalize(&resolved) {
+            Ok(c) => c,
+            Err(_) => {
+                // Walk up until an ancestor exists, then rebuild.
+                let mut tail: Vec<std::ffi::OsString> = Vec::new();
+                let mut cur = resolved.as_path();
+                let canon_ancestor = loop {
+                    match cur.parent() {
+                        Some(parent) => {
+                            if let Some(name) = cur.file_name() {
+                                tail.push(name.to_os_string());
+                            }
+                            if let Ok(c) = std::fs::canonicalize(parent) {
+                                break c;
+                            }
+                            cur = parent;
+                        }
+                        None => {
+                            return Err(KodError::InvalidState(format!(
+                                "Path has no existing ancestor: {}",
+                                resolved.display()
+                            )));
+                        }
+                    }
+                };
+                let mut rebuilt = canon_ancestor;
+                for name in tail.iter().rev() {
+                    rebuilt.push(name);
+                }
+                rebuilt
+            }
+        };
+
         let root_canonical = std::fs::canonicalize(&self.root)
             .map_err(|_| KodError::InvalidState("Workspace root not found".to_string()))?;
 
-        if !canonical.starts_with(root_canonical) {
+        if !canonical.starts_with(&root_canonical) {
             return Err(KodError::PermissionDenied {
                 action: "access".to_string(),
                 reason: format!("Path outside workspace: {}", canonical.display()),
@@ -130,5 +176,82 @@ impl SharedWorkspace {
             .flatten()
             .cloned()
             .collect()
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kod_types::AgentId;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn ws() -> (TempDir, SharedWorkspace) {
+        let tmp = TempDir::new().unwrap();
+        let ws = SharedWorkspace::new(tmp.path().to_path_buf());
+        (tmp, ws)
+    }
+
+    /// A file that does not exist yet but would live inside the
+    /// workspace must resolve. This is the pre-write lock case: two
+    /// agents coordinating on a new file both call acquire_lock before
+    /// either has created it.
+    #[test]
+    fn test_resolve_path_allows_nonexistent_inside_root() {
+        let (tmp, ws) = ws();
+        let resolved = ws
+            .resolve_path(Path::new("brand_new.txt"))
+            .expect("should resolve a not-yet-existing path inside the root");
+        assert!(resolved.starts_with(tmp.path().canonicalize().unwrap()));
+        assert!(resolved.ends_with("brand_new.txt"));
+    }
+
+    /// A `..` climb that escapes the workspace is rejected whether or
+    /// not the target exists.
+    #[test]
+    fn test_resolve_path_rejects_traversal() {
+        let (_tmp, ws) = ws();
+        let escape = PathBuf::from("..").join("outside.txt");
+        assert!(
+            ws.resolve_path(&escape).is_err(),
+            "traversal to a non-existent parent must be rejected"
+        );
+    }
+
+    /// An absolute path outside the workspace is rejected.
+    #[test]
+    fn test_resolve_path_rejects_absolute_outside_root() {
+        let (_tmp, ws) = ws();
+        assert!(ws.resolve_path(Path::new("/etc/hostname")).is_err());
+    }
+
+    /// The full pre-write flow: a lock can be acquired on a file that
+    /// does not exist yet, then the file is created, and the lock is
+    /// released.
+    #[tokio::test]
+    async fn test_acquire_lock_on_nonexistent_file() {
+        let (tmp, ws) = ws();
+        let agent = AgentId::new();
+        let path = Path::new("to_be_created.txt");
+
+        let lock = ws
+            .acquire_lock(path, &agent, LockType::Exclusive)
+            .await
+            .expect("should be able to lock a not-yet-existing path inside the root");
+        assert_eq!(lock.path, tmp.path().canonicalize().unwrap().join("to_be_created.txt"));
+
+        // Second agent cannot acquire the same exclusive lock.
+        let other = AgentId::new();
+        assert!(
+            ws.acquire_lock(path, &other, LockType::Exclusive).await.is_err(),
+            "exclusive lock should be held"
+        );
+
+        ws.release_lock(path, &agent).await.unwrap();
+        // After release, the second agent can acquire it.
+        ws.acquire_lock(path, &other, LockType::Exclusive)
+            .await
+            .expect("lock should be free after release");
     }
 }
