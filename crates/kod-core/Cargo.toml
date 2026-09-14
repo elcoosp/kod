@@ -24,6 +24,7 @@ kod-tools = { path = "../kod-tools" }
 kod-swarm = { path = "../kod-swarm" }
 
 [dev-dependencies]
+proptest = { workspace = true }
 rstest = { workspace = true }
 tempfile = "3.8"
 time = { workspace = true }
