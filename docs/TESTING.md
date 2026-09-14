@@ -26,22 +26,30 @@ cargo test --workspace --tests
 
 ## Test Counts
 
-The workspace currently contains 251 tests across 12 crates (plus `#[ignore]`-gated live tests):
+The workspace currently contains roughly 356 test attributes
+(`#[test]`, `#[tokio::test]`, `#[rstest]`) across 11 crates. The
+numbers are illustrative, not canonical — `#[rstest]` cases expand
+into multiple tests at runtime, and ordinary development adds tests
+without updating the count. To see the exact current total:
 
-| Crate                  | Tests |
-|------------------------|-------|
-| kod-tui                | 76    |
-| kod-core               | 40    |
-| kod-skills             | 31    |
-| kod-memory             | 24    |
-| kod-tools              | 23    |
-| kod-cli                | 14    |
-| kod-types              | 9     |
-| kod-config             | 9     |
-| kod-provider-openai    | 5     |
-| kod-error              | 3     |
-| kod-provider           | 0     |
-| **Total**              | **253** |
+```bash
+cargo test --workspace -- --list | tail -1
+```
+
+| Crate                  | Attributes |
+|------------------------|------------|
+| kod-tui                | 105        |
+| kod-core               | 79         |
+| kod-tools              | 47         |
+| kod-skills             | 34         |
+| kod-memory             | 25         |
+| kod-config             | 18         |
+| kod-cli                | 15         |
+| kod-types              | 9          |
+| kod-provider-openai    | 6          |
+| kod-error              | 3          |
+| kod-provider           | 0          |
+| **Total (attributes)** | **341**    |
 
 ## Workspace Structure
 
@@ -55,7 +63,7 @@ crates/
   kod-provider/       -- Provider traits (LlmProvider trait, GenerationOptions)
   kod-provider-openai/ -- OpenAI-compatible LLM provider (Ollama, LM Studio, MLX, vLLM)
   kod-skills/         -- Skill loading, parsing, matching, hot-reload watcher
-  kod-memory/         -- Short-term, long-term, and episodic memory
+  kod-memory/         -- Short-term and long-term memory
   kod-tools/          -- Tool trait, registry, and built-in tools
   kod-tui/            -- Terminal UI (ratatui-based)
   kod-core/           -- KodEngine, TaskRouter, EngineConfig, EngineContext
@@ -227,7 +235,7 @@ cargo test -p kod-memory --test integration  # Full MemoryManager lifecycle
 
 **Key APIs:**
 - `MemoryManager::new(db_path: PathBuf, short_term_capacity: usize) -> Result<Self>`
-- `manager.store(memory_type, content) -> Result<MemoryId>` -- `MemoryType` variants: `ShortTerm`, `LongTerm`, `Episodic`, `Semantic`
+- `manager.store(memory_type, content) -> Result<MemoryId>` -- `MemoryType` variants: `ShortTerm`, `LongTerm`
 - `manager.get_short_term(&id) -> Option<MemoryEntry>`
 - `manager.get_long_term(&id) -> Result<Option<MemoryEntry>>`
 - `manager.search(query) -> Result<Vec<MemoryEntry>>` -- searches short-term + long-term
@@ -235,7 +243,6 @@ cargo test -p kod-memory --test integration  # Full MemoryManager lifecycle
 - `manager.clear_all() -> Result<()>`
 - `ShortTermMemory::new(capacity)` -- FIFO eviction when at capacity
 - `LongTermMemory::new(db_path)` -- redb-backed, persistent
-- `EpisodicMemory::new()` -- in-memory with cosine similarity search
 
 **Test files:**
 - `short_term.rs` -- FIFO eviction, store/get/remove/search/clear
