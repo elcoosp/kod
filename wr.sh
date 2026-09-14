@@ -1,255 +1,60 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-APP=crates/kod-tui/src/app.rs
 LOOP=crates/kod-tui/src/main_loop.rs
 
-for f in "$APP" "$LOOP"; do
-    if [ ! -f "$f" ]; then
-        echo "ERROR: missing $f"
-        exit 1
-    fi
-done
+if [ ! -f Cargo.toml ] || [ ! -f "$LOOP" ]; then
+    echo "ERROR: run from the kod workspace root ($LOOP missing)"
+    exit 1
+fi
 
-echo "Patching $APP: suppress char estimate after real usage arrives"
+echo "Patching $LOOP: begin_generation before note_prompt"
 
-python3 - "$APP" "$LOOP" << 'PYEOF'
+python3 - "$LOOP" << 'PYEOF'
 import os
 import sys
 
-app, loop = sys.argv[1], sys.argv[2]
+target = sys.argv[1]
+with open(target, "r") as f:
+    src = f.read()
 
-def patch(path, old, new, label, expect=1):
-    with open(path, "r") as f:
-        src = f.read()
-    n = src.count(old)
-    if n == 0:
-        print(f"ERROR: anchor not found in {path}: {label}")
-        sys.exit(2)
-    if expect and n != expect:
-        print(f"ERROR: expected {expect} occurrence(s) of {label} in {path}, found {n}")
-        sys.exit(2)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(src.replace(old, new, expect if expect else n))
-    os.replace(tmp, path)
-    print(f"Patched {path}: {label}")
+old = '''        // Track session context before the prompt leaves the TUI.
+        self.app.note_prompt(&input);
 
-# ======================================================================
-# 1. New field on KodApp.
-# ======================================================================
-patch(
-    app,
-    '''    /// Rough session token accounting (1 token ≈ 4 chars over prompts +
-    /// replies). Drives the context meter and auto-compact.
-    context_tokens: usize,''',
-    '''    /// Rough session token accounting (1 token ≈ 4 chars over prompts +
-    /// replies). Drives the context meter and auto-compact.
-    context_tokens: usize,
-    /// Set when the provider has reported real token usage for the
-    /// current turn. Once set, the char-based estimate stops
-    /// contributing to `context_tokens` until the next
-    /// `begin_generation`.
-    ///
-    /// The provider's `usage` totals are authoritative and already
-    /// include every token the model saw (prompt + completion). The
-    /// estimate that `note_usage` accumulates from
-    /// `note_prompt` / `flush_streamed_text` / `finish_response` also
-    /// runs across the same turn. Without this flag the two stacked:
-    /// TokenUsage arrived, replaced the estimate with the real total,
-    /// and then finish_response immediately added the assistant's
-    /// chars/4 on top — over-reporting the context by roughly the
-    /// reply length every turn.
-    turn_has_real_usage: bool,''',
-    "turn_has_real_usage field",
-)
+        // Show the thinking indicator until the response lands. This also
+        // arms the streaming accumulator so ResponseChunk events are kept.
+        self.app.begin_generation();'''
 
-# ======================================================================
-# 2. Initialise it in KodApp::new.
-# ======================================================================
-patch(
-    app,
-    '''            context_tokens: 0,
-            context_limit: DEFAULT_CONTEXT_LIMIT,
-            compacted_messages: 0,''',
-    '''            context_tokens: 0,
-            turn_has_real_usage: false,
-            context_limit: DEFAULT_CONTEXT_LIMIT,
-            compacted_messages: 0,''',
-    "init turn_has_real_usage",
-)
+new = '''        // Mark the turn as started BEFORE counting the prompt.
+        //
+        // begin_generation resets `turn_has_real_usage`, which
+        // note_prompt's estimate consults via note_usage. The previous
+        // order (note_prompt, then begin_generation) meant that on any
+        // turn after a turn that received a real TokenUsage total, the
+        // flag was still true from the previous turn when note_prompt
+        // ran, so the prompt's estimate was silently dropped and the
+        // meter under-reported until the next TokenUsage arrived.
+        //
+        // begin_generation also arms the streaming accumulator, so
+        // moving it up does not change event handling — it just
+        // establishes "new turn" before anything contributes to the
+        // turn's accounting.
+        self.app.begin_generation();
 
-# ======================================================================
-# 3. begin_generation resets the flag.
-# ======================================================================
-patch(
-    app,
-    '''    pub fn begin_generation(&mut self) {
-        self.generating = true;
-        self.spinner_started = Some(Instant::now());
-        self.stream_flushed_bubble = false;
-        self.last_error = None;
-        self.set_phase(GenPhase::Connecting);
-        self.start_response_stream();
-    }''',
-    '''    pub fn begin_generation(&mut self) {
-        self.generating = true;
-        self.spinner_started = Some(Instant::now());
-        self.stream_flushed_bubble = false;
-        self.last_error = None;
-        // New turn: no real usage seen yet, so the char estimate
-        // contributes until (or unless) the provider reports a total.
-        self.turn_has_real_usage = false;
-        self.set_phase(GenPhase::Connecting);
-        self.start_response_stream();
-    }''',
-    "begin_generation resets flag",
-)
+        // Track session context after the turn boundary is set.
+        self.app.note_prompt(&input);'''
 
-# ======================================================================
-# 4. note_real_usage sets the flag.
-# ======================================================================
-patch(
-    app,
-    '''    pub fn note_real_usage(&mut self, total_tokens: usize) {
-        if total_tokens > 0 {
-            self.context_tokens = total_tokens;
-        }
-        self.maybe_compact();
-    }''',
-    '''    pub fn note_real_usage(&mut self, total_tokens: usize) {
-        if total_tokens > 0 {
-            self.context_tokens = total_tokens;
-            // Once real usage has arrived, the char estimate must stop
-            // contributing for the rest of the turn. The provider's
-            // total already covers prompt + completion, so any
-            // subsequent `note_usage` from `finish_response` /
-            // `flush_streamed_text` would double-count the reply.
-            self.turn_has_real_usage = true;
-        }
-        self.maybe_compact();
-    }''',
-    "note_real_usage sets flag",
-)
+n = src.count(old)
+if n != 1:
+    print(f"ERROR: expected 1 occurrence of the prompt/generation block, found {n}")
+    sys.exit(2)
+src = src.replace(old, new, 1)
 
-# ======================================================================
-# 5. note_usage is gated.
-# ======================================================================
-patch(
-    app,
-    '''    fn note_usage(&mut self, chars: usize) {
-        self.context_tokens = self
-            .context_tokens
-            .saturating_add(Self::estimate_tokens(chars));
-    }''',
-    '''    fn note_usage(&mut self, chars: usize) {
-        // Suppressed once real usage for this turn has been recorded.
-        // See `turn_has_real_usage` for the double-count this avoids.
-        if self.turn_has_real_usage {
-            return;
-        }
-        self.context_tokens = self
-            .context_tokens
-            .saturating_add(Self::estimate_tokens(chars));
-    }''',
-    "note_usage gated",
-)
-
-# ======================================================================
-# 6. Reset the flag on cancel / fail so the next turn starts clean
-#    even if begin_generation is not reached.
-# ======================================================================
-patch(
-    app,
-    '''    pub fn cancel_generation(&mut self) {
-        let partial = Self::trim_blank_lines(&self.current_response);''',
-    '''    pub fn cancel_generation(&mut self) {
-        // The turn is over; a subsequent prompt must see a fresh
-        // turn state even if begin_generation is not called before
-        // next note_prompt. begin_generation resets this again.
-        self.turn_has_real_usage = false;
-        let partial = Self::trim_blank_lines(&self.current_response);''',
-    "cancel_generation resets flag",
-)
-
-patch(
-    app,
-    '''    pub fn fail_generation(&mut self, error: &str) {
-        self.is_streaming = false;''',
-    '''    pub fn fail_generation(&mut self, error: &str) {
-        // Same rationale as cancel_generation: settle the flag so the
-        // next turn does not inherit "real usage seen" from this one.
-        self.turn_has_real_usage = false;
-        self.is_streaming = false;''',
-    "fail_generation resets flag",
-)
-
-# ======================================================================
-# 7. Test.
-# ======================================================================
-patch(
-    app,
-    '''    /// `search_status` must distinguish the states the old''',
-    '''    /// Real token usage replaces the char estimate, and subsequent
-    /// estimate calls in the same turn must not stack on top of it.
-    /// Regression: TokenUsage arrives before ResponseComplete in the
-    /// event queue; finish_response then called note_usage, adding
-    /// the reply's chars/4 to a total that already included the
-    /// completion — every turn over-reported by roughly the reply
-    /// length.
-    #[test]
-    fn test_real_usage_suppresses_further_estimates() {
-        let mut app = KodApp::new();
-        app.set_context_limit(100_000);
-
-        // New turn: estimate-only until real usage arrives.
-        app.begin_generation();
-        app.note_prompt(&"x".repeat(4_000)); // ≈ 1_000 estimate
-        assert!(app.context_tokens() >= 1_000);
-        let after_prompt = app.context_tokens();
-
-        // Provider reports the real total (already includes the
-        // completion). Replaces the estimate.
-        app.note_real_usage(1_500);
-        assert_eq!(app.context_tokens(), 1_500);
-
-        // finish_response adds the reply's chars/4 via note_usage;
-        // gated by the flag, it must be a no-op.
-        let reply = "y".repeat(2_000); // would be +500 if applied
-        app.finish_response(&reply);
-        assert_eq!(
-            app.context_tokens(),
-            1_500,
-            "post-usage estimate must not stack (was {} before reply, {} after)",
-            after_prompt,
-            app.context_tokens(),
-        );
-    }
-
-    /// A turn where the provider reports no usage must fall back to
-    /// the char estimate, unchanged from before.
-    #[test]
-    fn test_estimate_still_works_without_real_usage() {
-        let mut app = KodApp::new();
-        app.set_context_limit(100_000);
-
-        app.begin_generation();
-        app.note_prompt(&"x".repeat(4_000)); // ≈ 1_000
-        let after_prompt = app.context_tokens();
-        assert!(after_prompt >= 1_000);
-
-        app.finish_response(&"y".repeat(4_000)); // ≈ +1_000
-        assert!(
-            app.context_tokens() > after_prompt,
-            "estimate must accumulate when no real usage arrives"
-        );
-    }
-
-    /// `search_status` must distinguish the states the old''',
-    "turn_has_real_usage tests",
-)
-
-print("Done.")
+tmp = target + ".tmp"
+with open(tmp, "w") as f:
+    f.write(src)
+os.replace(tmp, target)
+print("Patched", target)
 PYEOF
 
 if [ $? -ne 0 ]; then
@@ -275,35 +80,25 @@ echo
 echo "Committing."
 git add -A
 git commit -F - <<'MSG'
-fix(tui): real token usage suppresses further char estimates in the turn
+fix(tui): begin_generation before note_prompt in dispatch_prompt
 
-The pump in dispatch_prompt sends Event::TokenUsage (real totals
-from the provider) before Event::ResponseComplete. Event::TokenUsage
-calls KodApp::note_real_usage, which replaces context_tokens with
-the authoritative value. Then Event::ResponseComplete calls
-KodApp::finish_response, which calls note_usage(text.len()) —
-adding the assistant reply's chars/4 on top of a number that
-already included the completion tokens.
+The previous commit (real usage suppresses further char estimates)
+introduced an ordering bug that only shows after the first turn:
 
-For a one-round turn this over-reported by roughly the reply length
-every turn. For a multi-round agentic turn, flush_streamed_text at
-each tool boundary stacked pre-tool text estimates on top of a real
-total that arrives only at the end, so the visible meter during the
-turn could be much larger than the eventual real number, and
-maybe_compact could fire mid-turn on an inflated reading.
+  dispatch_prompt called note_prompt, then begin_generation.
+  begin_generation resets turn_has_real_usage to false. On a turn
+  after a turn that received a real TokenUsage event, the flag was
+  still true when note_prompt ran, so note_usage was a no-op for the
+  new prompt. begin_generation then reset the flag — but the
+  estimate had already been dropped.
 
-Add a `turn_has_real_usage: bool` on KodApp. begin_generation
-resets it; note_real_usage sets it when a nonzero total arrives;
-note_usage is a no-op once it is set. cancel_generation and
-fail_generation also reset it so a subsequent turn that never
-reaches begin_generation (rare, but possible) starts clean.
+Result: the first turn of a session was counted, every subsequent
+turn's prompt was not. The context meter lagged reality by the
+length of the current prompt until TokenUsage arrived, and
+auto-compact could fire a turn late.
 
-The char estimate remains in place for providers that omit usage —
-some local OpenAI-compatible servers do — and the second test pins
-that path: with no TokenUsage event, note_prompt and
-finish_response accumulate as before.
-
-Two tests: real usage replaces the estimate and blocks the
-subsequent finish_response estimate; no real usage lets the
-estimate accumulate normally.
+Swap the two calls: begin_generation first (new turn, flag reset),
+then note_prompt (counts under the fresh turn). No other behaviour
+changes; begin_generation also arms the streaming accumulator, which
+does not depend on note_prompt's state.
 MSG

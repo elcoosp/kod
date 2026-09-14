@@ -574,12 +574,24 @@ impl TuiLoop {
             return Ok(());
         };
 
-        // Track session context before the prompt leaves the TUI.
-        self.app.note_prompt(&input);
-
-        // Show the thinking indicator until the response lands. This also
-        // arms the streaming accumulator so ResponseChunk events are kept.
+        // Mark the turn as started BEFORE counting the prompt.
+        //
+        // begin_generation resets `turn_has_real_usage`, which
+        // note_prompt's estimate consults via note_usage. The previous
+        // order (note_prompt, then begin_generation) meant that on any
+        // turn after a turn that received a real TokenUsage total, the
+        // flag was still true from the previous turn when note_prompt
+        // ran, so the prompt's estimate was silently dropped and the
+        // meter under-reported until the next TokenUsage arrived.
+        //
+        // begin_generation also arms the streaming accumulator, so
+        // moving it up does not change event handling — it just
+        // establishes "new turn" before anything contributes to the
+        // turn's accounting.
         self.app.begin_generation();
+
+        // Track session context after the turn boundary is set.
+        self.app.note_prompt(&input);
 
         let event_tx = self.event_handler.sender();
         // A previous cancel must not leak into the new prompt.
