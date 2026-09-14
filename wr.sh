@@ -2,16 +2,16 @@
 set -uo pipefail
 
 COMPILE_OK=true
-TARGET=crates/kod-tui/src/main_loop.rs
+LLM=crates/kod-config/src/llm.rs
 
-if [ ! -f Cargo.toml ] || [ ! -f "$TARGET" ]; then
-    echo "ERROR: run from the kod workspace root ($TARGET missing)"
+if [ ! -f Cargo.toml ] || [ ! -f "$LLM" ]; then
+    echo "ERROR: run from the kod workspace root ($LLM missing)"
     exit 1
 fi
 
-echo "Patching $TARGET: dispatch_prompt records last_prompt; add tests"
+echo "Patching $LLM: collapse redundant OpenAI variant; warn on unsupported providers"
 
-python3 - "$TARGET" << 'PYEOF'
+python3 - "$LLM" << 'PYEOF'
 import os
 import sys
 
@@ -31,136 +31,142 @@ def patch(old, new, label, expect=1):
     content = content.replace(old, new, expect if expect else n)
     print(f"Patched: {label}")
 
-# --- 1. dispatch_prompt records the prompt before the engine check ---
+# --- 1. Collapse OpenAI into OpenAICompatible as an alias --------------
 patch(
-    '''        self.app.submit_input();
-
-        // Without an engine (e.g. in tests) the message is recorded and
-        // nothing else happens.
-        let Some(engine) = self.engine.clone() else {
-            return Ok(());
-        };''',
-    '''        self.app.submit_input();
-
-        // Remember the prompt so /retry (and the `r` key) can resend it
-        // after a failure. The previous code only set last_prompt from
-        // retry_generation itself, so last_prompt() was always None on
-        // first use and /retry always answered 'Nothing to retry'.
-        self.app.set_last_prompt(&input);
-
-        // Without an engine (e.g. in tests) the message is recorded and
-        // nothing else happens.
-        let Some(engine) = self.engine.clone() else {
-            return Ok(());
-        };''',
-    "dispatch_prompt records last_prompt",
+    '''#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ProviderType {
+    /// Any OpenAI-spec chat-completions endpoint (Ollama `/v1`, LM Studio,
+    /// MLX Omni Serve, vLLM, OpenAI). `Ollama` is kept as a deprecated alias
+    /// so existing config files keep loading.
+    #[serde(alias = "Ollama")]
+    OpenAICompatible,
+    Anthropic,
+    OpenAI,
+    Custom,
+}''',
+    '''#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ProviderType {
+    /// Any OpenAI-spec chat-completions endpoint: Ollama `/v1`, LM Studio,
+    /// MLX Omni Serve, vLLM, and OpenAI itself — they all speak the same
+    /// wire protocol, so one code path serves them all. `Ollama` and
+    /// `OpenAI` are accepted as aliases so config files written against
+    /// earlier enum names keep loading.
+    #[serde(alias = "Ollama", alias = "OpenAI")]
+    OpenAICompatible,
+    /// Anthropic's Messages API. Not implemented — a config with this
+    /// provider loads (so `kod config` shows it) but the first prompt
+    /// will fail. `LlmConfig::validate` warns about this at startup.
+    Anthropic,
+    /// Anything else. Same situation as Anthropic: recognised as a
+    /// provider name, not implemented.
+    Custom,
+}''',
+    "collapse OpenAI into OpenAICompatible",
 )
 
-# --- 2. retry_generation no longer re-sets last_prompt or clones ---
+# --- 2. Warn on non-OpenAICompatible providers in validate --------------
 patch(
-    '''        // Set input to the last prompt, then dispatch as a normal submit.
-        self.app.set_input(prompt.clone());
-        self.app.set_last_prompt(&prompt);
-        // Box::pin to break the dispatch → handle_command → retry → dispatch
-        // recursive future cycle (Rust requires indirection for recursive
-        // async fns).
-        Box::pin(self.dispatch_prompt()).await''',
-    '''        // Restore into the input box and dispatch again. No need to
-        // re-set last_prompt: dispatch_prompt overwrites it with the
-        // same text on the way through.
-        self.app.set_input(prompt);
-        // Box::pin breaks the dispatch → handle_command → retry →
-        // dispatch recursive future cycle (Rust requires indirection).
-        Box::pin(self.dispatch_prompt()).await''',
-    "retry_generation drops redundant set_last_prompt",
+    '''        // Model: empty model name is rejected by every provider.
+        if self.model.trim().is_empty() {
+            tracing::warn!(
+                "llm.model is empty; falling back to {}",
+                LlmConfig::default().model
+            );
+            self.model = LlmConfig::default().model;
+        }
+    }''',
+    '''        // Model: empty model name is rejected by every provider.
+        if self.model.trim().is_empty() {
+            tracing::warn!(
+                "llm.model is empty; falling back to {}",
+                LlmConfig::default().model
+            );
+            self.model = LlmConfig::default().model;
+        }
+
+        // Provider: only OpenAICompatible is implemented today. The
+        // other variants are recognised so a config with them loads
+        // (the user can still see it via `kod config`), but the CLI
+        // constructs an OpenAI-compatible client regardless, so an
+        // Anthropic or Custom config fails at the first prompt with
+        // whatever error the server returns. Warn loudly here so the
+        // mismatch is named at startup rather than discovered after a
+        // wasted prompt.
+        match self.provider {
+            ProviderType::OpenAICompatible => {}
+            ProviderType::Anthropic | ProviderType::Custom => {
+                tracing::warn!(
+                    provider = ?self.provider,
+                    "llm.provider names a protocol that kod does not yet speak; \\
+                     the CLI will send OpenAI-compatible requests to {} and the \\
+                     server is likely to reject them. Set provider = \\"OpenAICompatible\\" \\
+                     for now (Anthropic and Custom support is planned).",
+                    self.base_url
+                );
+            }
+        }
+    }''',
+    "provider validation warning",
 )
 
-# --- 3. Tests: insert four tests before a stable anchor. Use
-#        test_steer_command_without_run_explains, which is present
-#        in the file and unique. ---
-if "test_retry_prompt_is_recorded_on_dispatch" in content:
-    print("Skipped: retry tests already present")
-else:
-    anchor = """    #[tokio::test]
-    async fn test_steer_command_without_run_explains() {"""
-    if content.count(anchor) != 1:
-        print("ERROR: anchor test_steer_command_without_run_explains not unique")
-        sys.exit(2)
-
-    new_tests = '''    /// Dispatching a plain prompt must record it as `last_prompt`, so
-    /// `/retry` and the `r` key have something to resend. Regression:
-    /// before this, last_prompt was only set by retry_generation
-    /// itself — a chicken-and-egg that made /retry a no-op.
-    #[tokio::test]
-    async fn test_retry_prompt_is_recorded_on_dispatch() {
-        let mut tui = TuiLoop::new();
-        tui.app_mut().set_input_mode(InputMode::Insert);
-        tui.app_mut().set_input("hello there".to_string());
-        // dispatch_prompt with no engine records the message and returns.
-        tui.handle_event(Event::Key(KeyCode::Enter)).await.unwrap();
-        assert_eq!(
-            tui.app().last_prompt(),
-            Some("hello there"),
-            "last_prompt must be set by dispatch_prompt"
-        );
+# --- 3. Test that OpenAI is accepted as an alias and validate warns ----
+patch(
+    '''    #[test]
+    fn test_legacy_ollama_provider_alias() {''',
+    '''    /// `provider = "OpenAI"` must still deserialize — the OpenAI API
+    /// IS the OpenAI-compatible protocol, so the two variants were
+    /// merged. A config written against the old enum value must keep
+    /// loading.
+    #[test]
+    fn test_legacy_openai_provider_alias() {
+        let config: LlmConfig = toml::from_str(
+            r#"
+            provider = "OpenAI"
+            model = "gpt-4o-mini"
+            base_url = "https://api.openai.com"
+            context_window = 128000
+            max_tokens = 4096
+            temperature = 0.7
+            timeout_secs = 120
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.provider, ProviderType::OpenAICompatible);
     }
 
-    /// Slash commands must not become the retry target: /retry should
-    /// resend a user prompt, not re-run a /command.
-    #[tokio::test]
-    async fn test_slash_commands_do_not_become_retry_target() {
-        let mut tui = TuiLoop::new();
-        tui.app_mut().set_input_mode(InputMode::Insert);
-        tui.app_mut().set_input("real prompt".to_string());
-        tui.handle_event(Event::Key(KeyCode::Enter)).await.unwrap();
-        assert_eq!(tui.app().last_prompt(), Some("real prompt"));
+    /// Non-OpenAICompatible providers must not silently pass through
+    /// validate(); the warn! cannot be asserted directly, but the
+    /// variant must survive validate() unchanged (no accidental
+    /// normalization), and OpenAICompatible must be a no-op.
+    #[test]
+    fn test_validate_leaves_provider_choice_intact() {
+        // Anthropic is unsupported but loadable. validate must not
+        // rewrite it — the warning is the entire user-facing signal,
+        // and changing the enum behind the user's back would be worse
+        // than the warning.
+        let mut c = LlmConfig {
+            provider: ProviderType::Anthropic,
+            ..LlmConfig::default()
+        };
+        c.validate();
+        assert_eq!(c.provider, ProviderType::Anthropic);
 
-        tui.app_mut().set_input("/help".to_string());
-        tui.handle_event(Event::Key(KeyCode::Enter)).await.unwrap();
-        assert_eq!(
-            tui.app().last_prompt(),
-            Some("real prompt"),
-            "/help should not become the retry target"
-        );
+        let mut c = LlmConfig {
+            provider: ProviderType::Custom,
+            ..LlmConfig::default()
+        };
+        c.validate();
+        assert_eq!(c.provider, ProviderType::Custom);
+
+        let mut c = LlmConfig::default();
+        c.validate();
+        assert_eq!(c.provider, ProviderType::OpenAICompatible);
     }
 
-    /// `/model` with no argument must route to show_and_refresh_models.
-    /// Without an engine the handler reports that clearly rather than
-    /// printing the old "Usage: /model <name>".
-    #[tokio::test]
-    async fn test_model_with_no_args_lists_or_reports_engine_missing() {
-        let mut tui = TuiLoop::new();
-        tui.app_mut()
-            .set_available_models(vec!["qwen2.5:0.5b".to_string()]);
-        tui.handle_command("/model").await.unwrap();
-        let last = tui.app().messages().last().unwrap();
-        assert!(
-            last.content.contains("Engine not initialized"),
-            "got: {}",
-            last.content
-        );
-    }
-
-    /// available_models() reports what was last set. Pins the shape
-    /// switch_model relies on: an empty list means 'unknown' (do not
-    /// warn), a non-empty list is what validation compares against.
-    #[tokio::test]
-    async fn test_available_models_accessor_roundtrips() {
-        let mut tui = TuiLoop::new();
-        assert!(tui.app().available_models().is_empty());
-        tui.app_mut()
-            .set_available_models(vec!["a".to_string(), "b".to_string()]);
-        let got = tui.app().available_models();
-        assert_eq!(got.len(), 2);
-        assert!(got.contains(&"a".to_string()));
-        assert!(got.contains(&"b".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_steer_command_without_run_explains() {'''
-
-    content = content.replace(anchor, new_tests, 1)
-    print("Inserted retry + model tests before test_steer_command_without_run_explains")
+    #[test]
+    fn test_legacy_ollama_provider_alias() {''',
+    "OpenAI alias + provider tests",
+)
 
 tmp = target + ".tmp"
 with open(tmp, "w") as f:
@@ -188,40 +194,30 @@ fi
 
 echo "Committing."
 git add -A
-git commit -m "fix(tui): record last_prompt on dispatch; validate /model names
+git commit -m "fix(config): collapse redundant OpenAI variant; warn on unsupported providers
 
-Two related /retry and /model corrections.
+ProviderType had four variants: OpenAICompatible, Anthropic,
+OpenAI, and Custom. But OpenAI's chat-completions API *is* the
+OpenAI-compatible protocol — the two are the same wire format, so
+carrying both variants was redundant. A config with
+\\`provider = \"OpenAI\"\\` worked only by accident: the CLI constructs
+an OpenAICompatProvider regardless, so the variant was accepted but
+never consulted for anything the OpenAICompatible one would not
+have done.
 
-1. /retry (and the r key) always answered 'Nothing to retry — no
-   previous prompt.' The TUI's last_prompt field was only ever set
-   by retry_generation itself: retry_generation read last_prompt,
-   found None, and bailed. Dispatch never wrote it, so the very
-   first retry after a failure was a no-op and so was every retry
-   after that.
+Merge OpenAI into OpenAICompatible as a serde alias. Existing
+configs keep loading; the enum loses a synonym that only invited
+the reader to look for a difference that did not exist.
 
-   dispatch_prompt now calls self.app.set_last_prompt(&input) for
-   plain prompts, immediately after submit_input. Slash commands do
-   not become retry targets — the /-arm of dispatch_prompt returns
-   before the set_last_prompt line, so /help does not overwrite the
-   last real prompt. retry_generation no longer re-sets the field;
-   the subsequent dispatch does that anyway.
+Anthropic and Custom stay as recognised-but-unimplemented variants
+— removing them would break configs that name them, and the docs
+already list Anthropic as planned. LlmConfig::validate now warns at
+startup when either is set, naming the consequence ('the CLI will
+send OpenAI-compatible requests to <base_url> and the server is
+likely to reject them') and the fix (set OpenAICompatible for now).
+Before this, an Anthropic config produced an opaque HTTP error on
+the first prompt; the warning makes the mismatch visible at load.
 
-2. /model <typo> silently succeeded. OpenAICompatProvider::from_config
-   never fails on a name the server has not pulled — it just stores
-   the string — so switch_model printed 'Switched model to X' and the
-   user's next prompt failed with an opaque 'model not found' from
-   the server. switch_model now checks the requested name against
-   the list fetched at startup (KodApp::available_models). A name
-   that is not in a *non-empty* list gets a warning that names the
-   fix. The switch still happens — the list can be stale — but the
-   user is not misled. An empty list means 'unknown' (cold start,
-   list_models failed) and suppresses the warning.
-
-   /model with no argument now calls show_and_refresh_models, which
-   queries the provider, refreshes the cache, and prints the models
-   with the current one marked. This is the natural recovery path
-   when the user has pulled a new model after the TUI started.
-
-Adds KodApp::available_models() accessor and four tests: two for
-the retry target (prompt recorded; slash commands excluded), one
-for /model with no engine, and one pinning the accessor's shape."
+Adds two tests: test_legacy_openai_provider_alias pins the alias,
+and test_validate_leaves_provider_choice_intact confirms validate()
+does not rewrite the user's choice (the warning is the signal)."

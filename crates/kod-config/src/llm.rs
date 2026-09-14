@@ -126,18 +126,46 @@ impl LlmConfig {
             );
             self.model = LlmConfig::default().model;
         }
+
+        // Provider: only OpenAICompatible is implemented today. The
+        // other variants are recognised so a config with them loads
+        // (the user can still see it via `kod config`), but the CLI
+        // constructs an OpenAI-compatible client regardless, so an
+        // Anthropic or Custom config fails at the first prompt with
+        // whatever error the server returns. Warn loudly here so the
+        // mismatch is named at startup rather than discovered after a
+        // wasted prompt.
+        match self.provider {
+            ProviderType::OpenAICompatible => {}
+            ProviderType::Anthropic | ProviderType::Custom => {
+                tracing::warn!(
+                    provider = ?self.provider,
+                    "llm.provider names a protocol that kod does not yet speak; \
+                     the CLI will send OpenAI-compatible requests to {} and the \
+                     server is likely to reject them. Set provider = \"OpenAICompatible\" \
+                     for now (Anthropic and Custom support is planned).",
+                    self.base_url
+                );
+            }
+        }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ProviderType {
-    /// Any OpenAI-spec chat-completions endpoint (Ollama `/v1`, LM Studio,
-    /// MLX Omni Serve, vLLM, OpenAI). `Ollama` is kept as a deprecated alias
-    /// so existing config files keep loading.
-    #[serde(alias = "Ollama")]
+    /// Any OpenAI-spec chat-completions endpoint: Ollama `/v1`, LM Studio,
+    /// MLX Omni Serve, vLLM, and OpenAI itself — they all speak the same
+    /// wire protocol, so one code path serves them all. `Ollama` and
+    /// `OpenAI` are accepted as aliases so config files written against
+    /// earlier enum names keep loading.
+    #[serde(alias = "Ollama", alias = "OpenAI")]
     OpenAICompatible,
+    /// Anthropic's Messages API. Not implemented — a config with this
+    /// provider loads (so `kod config` shows it) but the first prompt
+    /// will fail. `LlmConfig::validate` warns about this at startup.
     Anthropic,
-    OpenAI,
+    /// Anything else. Same situation as Anthropic: recognised as a
+    /// provider name, not implemented.
     Custom,
 }
 
@@ -232,6 +260,56 @@ mod tests {
         assert_eq!(c.timeout_secs, expected.timeout_secs);
         assert_eq!(c.base_url, expected.base_url);
         assert_eq!(c.model, expected.model);
+    }
+
+    /// `provider = "OpenAI"` must still deserialize — the OpenAI API
+    /// IS the OpenAI-compatible protocol, so the two variants were
+    /// merged. A config written against the old enum value must keep
+    /// loading.
+    #[test]
+    fn test_legacy_openai_provider_alias() {
+        let config: LlmConfig = toml::from_str(
+            r#"
+            provider = "OpenAI"
+            model = "gpt-4o-mini"
+            base_url = "https://api.openai.com"
+            context_window = 128000
+            max_tokens = 4096
+            temperature = 0.7
+            timeout_secs = 120
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.provider, ProviderType::OpenAICompatible);
+    }
+
+    /// Non-OpenAICompatible providers must not silently pass through
+    /// validate(); the warn! cannot be asserted directly, but the
+    /// variant must survive validate() unchanged (no accidental
+    /// normalization), and OpenAICompatible must be a no-op.
+    #[test]
+    fn test_validate_leaves_provider_choice_intact() {
+        // Anthropic is unsupported but loadable. validate must not
+        // rewrite it — the warning is the entire user-facing signal,
+        // and changing the enum behind the user's back would be worse
+        // than the warning.
+        let mut c = LlmConfig {
+            provider: ProviderType::Anthropic,
+            ..LlmConfig::default()
+        };
+        c.validate();
+        assert_eq!(c.provider, ProviderType::Anthropic);
+
+        let mut c = LlmConfig {
+            provider: ProviderType::Custom,
+            ..LlmConfig::default()
+        };
+        c.validate();
+        assert_eq!(c.provider, ProviderType::Custom);
+
+        let mut c = LlmConfig::default();
+        c.validate();
+        assert_eq!(c.provider, ProviderType::OpenAICompatible);
     }
 
     #[test]
