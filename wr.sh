@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-CTX=crates/kod-tools/src/context.rs
+TARGET=crates/kod-swarm/src/coordination.rs
 
-echo "=== Current dangerous-command check ==="
-awk '/Refuse a small set of unambiguously destructive/,/^        Ok\(\)$/' "$CTX" | head -40
+echo "=== Current unassign_task ==="
+awk '/pub async fn unassign_task/,/^    \}$/' "$TARGET" | head -30
 
 echo
-echo "Patching $CTX"
+echo "=== Current finish_task tail ==="
+awk '/async fn finish_task/,/^    \}$/' "$TARGET" | tail -20
 
-python3 - "$CTX" << 'PYEOF'
+echo
+echo "Patching $TARGET"
+
+python3 - "$TARGET" << 'PYEOF'
 import os
 import sys
 
@@ -17,147 +21,208 @@ target = sys.argv[1]
 with open(target, "r") as f:
     src = f.read()
 
-old = '''        // Refuse a small set of unambiguously destructive commands.
-        // These run through `sh -c` / `cmd /C`, so both shells' worst
-        // offenders are listed. The check is a guardrail, not a sandbox:
-        // `true; rm -rf /` slips past `starts_with`, and that is
-        // acceptable — the real defense is that the whole tool is
-        // behind ToolPermissions::execute_commands and the default is
-        // off. This just stops the accidental "delete everything"
-        // command from a model that read the wrong directory.
-        let dangerous_patterns: &[&str] = &[
-            // POSIX
-            "rm -rf",
-            "sudo",
-            "chmod 777",
-            "mkfs",
-            "> /dev/sda",
-            "> /dev/disk",
-            // cmd.exe
-            "format ",
-            "del /f /q /s",
-            "rd /s /q",
-            "rmdir /s /q",
-        ];
-        for pattern in dangerous_patterns {
-            if command.starts_with(pattern) {
-                return Err(KodError::PermissionDenied {
-                    action: "execute".to_string(),
-                    reason: format!("Dangerous command pattern detected: {}", pattern),
-                });
-            }
-        }'''
-
-new = '''        // Refuse a small set of unambiguously destructive commands.
-        //
-        // These run through `sh -c` / `cmd /C`, so both shells' worst
-        // offenders are listed. The check is a guardrail, not a sandbox:
-        // `true; rm -rf /` slips past the prefix test, and that is
-        // acceptable — the real defense is that the whole tool is
-        // behind `ToolPermissions::execute_commands`, which is off by
-        // default. This stops the accidental "delete everything"
-        // command from a model that read the wrong directory.
-        //
-        // Trim leading whitespace before matching. The previous
-        // `command.starts_with(pattern)` check was defeated by a
-        // single leading space — `"  rm -rf /"` passed. A leading tab
-        // or newline did too. Trimming does not turn this into a
-        // sandbox; it removes a footgun that would have let an
-        // accidental destructive command through the one layer of
-        // defense that exists.
-        //
-        // Note about `sudo`: it can precede any of the other patterns
-        // (`sudo rm -rf /`). Listing it as its own prefix is
-        // deliberate — `sudo` on its own is the shape that matters
-        // most; the pattern check does not scan for `sudo` mid-string,
-        // matching the guardrail-not-sandbox contract above.
-        let trimmed = command.trim_start();
-        let dangerous_patterns: &[&str] = &[
-            // POSIX
-            "rm -rf",
-            "rm -fr",
-            "rm -r -f",
-            "sudo",
-            "chmod 777",
-            "mkfs",
-            "> /dev/sda",
-            "> /dev/disk",
-            // cmd.exe
-            "format ",
-            "del /f /q /s",
-            "rd /s /q",
-            "rmdir /s /q",
-        ];
-        for pattern in dangerous_patterns {
-            if trimmed.starts_with(pattern) {
-                return Err(KodError::PermissionDenied {
-                    action: "execute".to_string(),
-                    reason: format!(
-                        "Dangerous command pattern detected: {}",
-                        pattern
-                    ),
-                });
-            }
-        }'''
-
-n = src.count(old)
-if n != 1:
-    print(f"ERROR: expected 1 occurrence of the check, found {n}")
-    sys.exit(2)
-src = src.replace(old, new, 1)
-
-# Add tests if not present.
-if "test_can_execute_command_rejects_leading_whitespace" not in src:
-    anchor = '''    #[test]
-    fn test_context_creation() {'''
-    if anchor not in src:
-        print("ERROR: test anchor not found in context.rs")
+def patch(old, new, label, expect=1):
+    global src
+    n = src.count(old)
+    if n == 0:
+        print(f"  SKIP (anchor absent): {label}")
+        return False
+    if expect and n != expect:
+        print(f"  ERROR: expected {expect} occurrence(s) of {label}, found {n}")
         sys.exit(2)
-    new_tests = '''    /// The dangerous-command guardrail must fire on a leading-space
-    /// command. Regression: the previous check used the raw string
-    /// with `starts_with`, so `"  rm -rf /"` — a single space — passed
-    /// the one layer of defense the tool has.
-    #[test]
-    fn test_can_execute_command_rejects_leading_whitespace() {
-        let perms = ToolPermissions {
-            execute_commands: true,
-            ..Default::default()
+    src = src.replace(old, new, expect if expect else n)
+    print(f"  patched: {label}")
+    return True
+
+# ----------------------------------------------------------------------
+# 1. Rewrite unassign_task to refuse terminal states and return a
+#    TaskFinish so a caller can tell "unassigned" from "nothing to do".
+# ----------------------------------------------------------------------
+patch(
+    '''    /// Unassign a pending task without marking it complete or failed —
+    /// useful when a re-plan moves the work to a different agent.
+    /// Releases the load slot for the previous assignee.
+    pub async fn unassign_task(&self, task_id: &TaskId) -> Result<()> {
+        let assigned_to = {
+            let mut tasks = self.tasks.write().await;
+            let task = tasks.get_mut(task_id).ok_or_else(|| {
+                KodError::InvalidState(format!("Task {} not found", task_id))
+            })?;
+            let prev = task.assigned_to.take();
+            task.status = TaskStatus::Pending;
+            prev
         };
-        let ctx = ToolContext::new("/tmp").with_permissions(perms);
+        if let Some(agent_id) = assigned_to {
+            let mut load = self.agent_load.write().await;
+            if let Some(slot) = load.get_mut(&agent_id) {
+                *slot = slot.saturating_sub(1);
+            }
+        }
+        let mut assignments = self.assignments.write().await;
+        assignments.remove(task_id);
+        Ok(())
+    }''',
+    '''    /// Unassign a task without marking it complete or failed — useful
+    /// when a re-plan moves the work to a different agent. Releases
+    /// the load slot for the previous assignee and returns the task to
+    /// Pending.
+    ///
+    /// Returns [`TaskFinish::Transitioned`] when the task moved from
+    /// InProgress (or Blocked) to Pending, and
+    /// [`TaskFinish::AlreadyInState`] when the task was already
+    /// Pending and no state changed — the same shape
+    /// [`TaskCoordinator::complete_task`] and [`TaskCoordinator::fail_task`]
+    /// use, so a caller does not have to switch conventions between
+    /// the three terminal transitions.
+    ///
+    /// Refuses to unassign a task that has already reached a terminal
+    /// state. `complete_task` and `fail_task` do not clear
+    /// `assigned_to` when the task finishes (the field is left as the
+    /// historical record of who did the work), so the previous
+    /// implementation — which unconditionally took `assigned_to` and
+    /// decremented the load — would decrement a second time on any
+    /// already-finished task and reset its status to Pending. The
+    /// load counter drifted negative-by-one and the task appeared to
+    /// need doing again. Terminal is terminal; a caller that needs to
+    /// redo the work creates a new task.
+    pub async fn unassign_task(&self, task_id: &TaskId) -> Result<TaskFinish> {
+        let (from, was_assigned) = {
+            let mut tasks = self.tasks.write().await;
+            let task = tasks.get_mut(task_id).ok_or_else(|| {
+                KodError::InvalidState(format!("Task {} not found", task_id))
+            })?;
+            let from = task.status;
+            if matches!(from, TaskStatus::Completed | TaskStatus::Failed) {
+                return Err(KodError::InvalidState(format!(
+                    "Task {} is already {:?}; refusing to unassign. Create a new task \\
+                     if the work needs redoing.",
+                    task_id, from
+                )));
+            }
+            if from == TaskStatus::Pending {
+                return Ok(TaskFinish::AlreadyInState);
+            }
+            let was_assigned = task.assigned_to.take().is_some();
+            task.status = TaskStatus::Pending;
+            (from, was_assigned)
+        };
+        if was_assigned
+            && let Some(prev_assignee) = self
+                .assignments
+                .read()
+                .await
+                .get(task_id)
+                .map(|a| a.agent_id.clone())
+        {
+            let mut load = self.agent_load.write().await;
+            if let Some(slot) = load.get_mut(&prev_assignee) {
+                *slot = slot.saturating_sub(1);
+            }
+        }
+        let mut assignments = self.assignments.write().await;
+        assignments.remove(task_id);
+        Ok(TaskFinish::Transitioned { from })
+    }''',
+    "unassign_task refuses terminal, returns TaskFinish",
+)
 
-        // Baseline: no leading whitespace -> rejected.
-        assert!(ctx.can_execute_command("rm -rf /").is_err());
-        // Leading space -> must also be rejected.
-        assert!(
-            ctx.can_execute_command("  rm -rf /").is_err(),
-            "leading space must not defeat the guardrail"
-        );
-        // Leading tab.
-        assert!(
-            ctx.can_execute_command("\\trm -rf /").is_err(),
-            "leading tab must not defeat the guardrail"
-        );
-        // Leading newline.
-        assert!(
-            ctx.can_execute_command("\\nrm -rf /").is_err(),
-            "leading newline must not defeat the guardrail"
-        );
+# ----------------------------------------------------------------------
+# 2. Tests: extending the existing swarm test block. Idempotent.
+# ----------------------------------------------------------------------
+if "test_unassign_refuses_terminal_task" not in src:
+    anchor = '''    #[tokio::test]
+    async fn least_loaded_picks_the_free_agent() {'''
+    if anchor not in src:
+        print("  ERROR: test anchor not found")
+        sys.exit(2)
+    new_tests = '''    /// unassign_task must refuse a task that has already reached a
+    /// terminal state. Regression: the previous implementation took
+    /// assigned_to unconditionally, decremented the assignee's load
+    /// counter a second time (the first decrement was at
+    /// complete_task), and reset the task to Pending — corrupting the
+    /// load accounting and resurrecting finished work.
+    #[tokio::test]
+    async fn test_unassign_refuses_terminal_task() {
+        let coord = TaskCoordinator::new();
+        let agent = AgentId::new();
+        let t = task("done");
+        let t_id = t.id.clone();
+        coord.register_task(t).await.unwrap();
+        coord.assign_task(&t_id, &agent).await.unwrap();
 
-        // rm -fr and rm -r -f are the same operation.
-        assert!(ctx.can_execute_command("rm -fr /").is_err());
-        assert!(ctx.can_execute_command("rm -r -f /").is_err());
+        coord.complete_task(&t_id).await.unwrap();
+        assert_eq!(coord.agent_load(&agent).await, 0);
 
-        // A safe command still passes.
-        assert!(ctx.can_execute_command("ls -la").is_ok());
-        assert!(ctx.can_execute_command("  cargo test").is_ok());
+        let err = coord.unassign_task(&t_id).await.unwrap_err();
+        match err {
+            KodError::InvalidState(msg) => {
+                assert!(
+                    msg.contains("Completed"),
+                    "error should name the status: {msg}"
+                );
+            }
+            other => panic!("expected InvalidState, got {other:?}"),
+        }
+        // Load stayed at 0 — no second decrement.
+        assert_eq!(coord.agent_load(&agent).await, 0);
+        // Status stayed Completed — no resurrection.
+        assert_eq!(
+            coord.task_status(&t_id).await,
+            Some(TaskStatus::Completed)
+        );
     }
 
-    #[test]
-    fn test_context_creation() {'''
+    /// unassign_task on an InProgress task returns Transitioned and
+    /// releases the load slot.
+    #[tokio::test]
+    async fn test_unassign_in_progress_releases_load() {
+        let coord = TaskCoordinator::new();
+        let agent = AgentId::new();
+        let t = task("re-plan");
+        let t_id = t.id.clone();
+        coord.register_task(t).await.unwrap();
+        coord.assign_task(&t_id, &agent).await.unwrap();
+        assert_eq!(coord.agent_load(&agent).await, 1);
+
+        let outcome = coord.unassign_task(&t_id).await.unwrap();
+        assert_eq!(
+            outcome,
+            TaskFinish::Transitioned {
+                from: TaskStatus::InProgress
+            }
+        );
+        assert_eq!(coord.agent_load(&agent).await, 0);
+        assert_eq!(
+            coord.task_status(&t_id).await,
+            Some(TaskStatus::Pending)
+        );
+        assert!(coord.all_assignments().await.is_empty());
+    }
+
+    /// unassign_task on a Pending task reports AlreadyInState and
+    /// changes nothing. A caller that races a re-plan sees exactly
+    /// that, without having to unwind.
+    #[tokio::test]
+    async fn test_unassign_pending_is_no_op() {
+        let coord = TaskCoordinator::new();
+        let t = task("untouched");
+        let t_id = t.id.clone();
+        coord.register_task(t).await.unwrap();
+
+        let outcome = coord.unassign_task(&t_id).await.unwrap();
+        assert_eq!(outcome, TaskFinish::AlreadyInState);
+        assert_eq!(
+            coord.task_status(&t_id).await,
+            Some(TaskStatus::Pending)
+        );
+    }
+
+    #[tokio::test]
+    async fn least_loaded_picks_the_free_agent() {'''
     src = src.replace(anchor, new_tests, 1)
-    print("  added leading-whitespace tests")
+    print("  added unassign tests")
 else:
-    print("  tests already present")
+    print("  unassign tests already present")
 
 tmp = target + ".tmp"
 with open(tmp, "w") as f:
@@ -179,26 +244,37 @@ if ! cargo check --workspace --all-targets 2>&1 | tail -15; then
 fi
 
 cat > /tmp/kod_commit_msg.txt <<'MSG'
-fix(tools): reject destructive commands with leading whitespace
+fix(swarm): unassign_task refuses terminal tasks, returns TaskFinish
 
-can_execute_command tested the dangerous-command list against the
-raw command string with `starts_with`. A single leading space
-defeated it: "  rm -rf /" passed. Same for a leading tab or
-newline. Trim_start before matching.
+complete_task and fail_task do not clear assigned_to when a task
+finishes — the field is left as the historical record of who did
+the work. unassign_task took assigned_to unconditionally,
+decremented the assignee's load, and reset the status to Pending.
+Given a task that had already completed, that meant:
 
-Add rm -fr and rm -r -f to the list — the same operation as
-rm -rf, in a form a shell accepts and a model occasionally emits.
+  - the assignee's load was decremented a second time (the first
+    decrement was at complete_task), so least_loaded_agent's view
+    of that agent drifted below reality;
+  - the task re-entered Pending, and a subsequent assign_task would
+    hand the finished work to a different agent.
 
-The guardrail-not-sandbox contract is unchanged and the comment
-now states it more explicitly: "true; rm -rf /" still slips past
-the prefix test, and the real defense remains
-ToolPermissions::execute_commands being off by default. This fix
-removes a footgun that let an accidental destructive command
-through the one layer of defense the tool has.
+Refuse any unassign on a Completed or Failed task, with an error
+naming the state and pointing at "create a new task if the work
+needs redoing."
 
-Adds test_can_execute_command_rejects_leading_whitespace, which
-covers the three whitespace forms and the rm -fr variants, and
-confirms a safe command with leading whitespace still passes.
+Also change the return type from Result<()> to Result<TaskFinish>,
+matching complete_task and fail_task. The three transition methods
+now share one convention: Transitioned { from } when state changed,
+AlreadyInState when the call was a no-op. The previous Result<()>
+made a no-op indistinguishable from a real transition, so a
+caller that wanted to log "task moved back to Pending" had no way
+to know it should.
+
+Adds three tests: unassign on a Completed task errors and leaves
+the load at 0 and the status Completed; unassign on an InProgress
+task reports Transitioned { from: InProgress }, releases the slot,
+and empties the assignments map; unassign on a Pending task reports
+AlreadyInState and changes nothing.
 MSG
 
 git add -A

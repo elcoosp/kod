@@ -214,28 +214,66 @@ impl TaskCoordinator {
         Ok(TaskFinish::Transitioned { from })
     }
 
-    /// Unassign a pending task without marking it complete or failed —
-    /// useful when a re-plan moves the work to a different agent.
-    /// Releases the load slot for the previous assignee.
-    pub async fn unassign_task(&self, task_id: &TaskId) -> Result<()> {
-        let assigned_to = {
+    /// Unassign a task without marking it complete or failed — useful
+    /// when a re-plan moves the work to a different agent. Releases
+    /// the load slot for the previous assignee and returns the task to
+    /// Pending.
+    ///
+    /// Returns [`TaskFinish::Transitioned`] when the task moved from
+    /// InProgress (or Blocked) to Pending, and
+    /// [`TaskFinish::AlreadyInState`] when the task was already
+    /// Pending and no state changed — the same shape
+    /// [`TaskCoordinator::complete_task`] and [`TaskCoordinator::fail_task`]
+    /// use, so a caller does not have to switch conventions between
+    /// the three terminal transitions.
+    ///
+    /// Refuses to unassign a task that has already reached a terminal
+    /// state. `complete_task` and `fail_task` do not clear
+    /// `assigned_to` when the task finishes (the field is left as the
+    /// historical record of who did the work), so the previous
+    /// implementation — which unconditionally took `assigned_to` and
+    /// decremented the load — would decrement a second time on any
+    /// already-finished task and reset its status to Pending. The
+    /// load counter drifted negative-by-one and the task appeared to
+    /// need doing again. Terminal is terminal; a caller that needs to
+    /// redo the work creates a new task.
+    pub async fn unassign_task(&self, task_id: &TaskId) -> Result<TaskFinish> {
+        let (from, was_assigned) = {
             let mut tasks = self.tasks.write().await;
             let task = tasks.get_mut(task_id).ok_or_else(|| {
                 KodError::InvalidState(format!("Task {} not found", task_id))
             })?;
-            let prev = task.assigned_to.take();
+            let from = task.status;
+            if matches!(from, TaskStatus::Completed | TaskStatus::Failed) {
+                return Err(KodError::InvalidState(format!(
+                    "Task {} is already {:?}; refusing to unassign. Create a new task \
+                     if the work needs redoing.",
+                    task_id, from
+                )));
+            }
+            if from == TaskStatus::Pending {
+                return Ok(TaskFinish::AlreadyInState);
+            }
+            let was_assigned = task.assigned_to.take().is_some();
             task.status = TaskStatus::Pending;
-            prev
+            (from, was_assigned)
         };
-        if let Some(agent_id) = assigned_to {
+        if was_assigned
+            && let Some(prev_assignee) = self
+                .assignments
+                .read()
+                .await
+                .get(task_id)
+                .map(|a| a.agent_id.clone())
+        {
             let mut load = self.agent_load.write().await;
-            if let Some(slot) = load.get_mut(&agent_id) {
+            if let Some(slot) = load.get_mut(&prev_assignee) {
                 *slot = slot.saturating_sub(1);
             }
         }
         let mut assignments = self.assignments.write().await;
         assignments.remove(task_id);
-        Ok(())
+        Ok(TaskFinish::Transitioned { from })
     }
 
     /// Snapshot of pending + in-progress tasks and their assignees —
@@ -443,6 +481,88 @@ mod tests {
             }
         );
         assert_eq!(coord.task_status(&t_id).await, Some(TaskStatus::Completed));
+    }
+
+    /// unassign_task must refuse a task that has already reached a
+    /// terminal state. Regression: the previous implementation took
+    /// assigned_to unconditionally, decremented the assignee's load
+    /// counter a second time (the first decrement was at
+    /// complete_task), and reset the task to Pending — corrupting the
+    /// load accounting and resurrecting finished work.
+    #[tokio::test]
+    async fn test_unassign_refuses_terminal_task() {
+        let coord = TaskCoordinator::new();
+        let agent = AgentId::new();
+        let t = task("done");
+        let t_id = t.id.clone();
+        coord.register_task(t).await.unwrap();
+        coord.assign_task(&t_id, &agent).await.unwrap();
+
+        coord.complete_task(&t_id).await.unwrap();
+        assert_eq!(coord.agent_load(&agent).await, 0);
+
+        let err = coord.unassign_task(&t_id).await.unwrap_err();
+        match err {
+            KodError::InvalidState(msg) => {
+                assert!(
+                    msg.contains("Completed"),
+                    "error should name the status: {msg}"
+                );
+            }
+            other => panic!("expected InvalidState, got {other:?}"),
+        }
+        // Load stayed at 0 — no second decrement.
+        assert_eq!(coord.agent_load(&agent).await, 0);
+        // Status stayed Completed — no resurrection.
+        assert_eq!(
+            coord.task_status(&t_id).await,
+            Some(TaskStatus::Completed)
+        );
+    }
+
+    /// unassign_task on an InProgress task returns Transitioned and
+    /// releases the load slot.
+    #[tokio::test]
+    async fn test_unassign_in_progress_releases_load() {
+        let coord = TaskCoordinator::new();
+        let agent = AgentId::new();
+        let t = task("re-plan");
+        let t_id = t.id.clone();
+        coord.register_task(t).await.unwrap();
+        coord.assign_task(&t_id, &agent).await.unwrap();
+        assert_eq!(coord.agent_load(&agent).await, 1);
+
+        let outcome = coord.unassign_task(&t_id).await.unwrap();
+        assert_eq!(
+            outcome,
+            TaskFinish::Transitioned {
+                from: TaskStatus::InProgress
+            }
+        );
+        assert_eq!(coord.agent_load(&agent).await, 0);
+        assert_eq!(
+            coord.task_status(&t_id).await,
+            Some(TaskStatus::Pending)
+        );
+        assert!(coord.all_assignments().await.is_empty());
+    }
+
+    /// unassign_task on a Pending task reports AlreadyInState and
+    /// changes nothing. A caller that races a re-plan sees exactly
+    /// that, without having to unwind.
+    #[tokio::test]
+    async fn test_unassign_pending_is_no_op() {
+        let coord = TaskCoordinator::new();
+        let t = task("untouched");
+        let t_id = t.id.clone();
+        coord.register_task(t).await.unwrap();
+
+        let outcome = coord.unassign_task(&t_id).await.unwrap();
+        assert_eq!(outcome, TaskFinish::AlreadyInState);
+        assert_eq!(
+            coord.task_status(&t_id).await,
+            Some(TaskStatus::Pending)
+        );
     }
 
     #[tokio::test]
