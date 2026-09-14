@@ -316,20 +316,41 @@ impl Tool for WriteFileTool {
         // is to give up, because it has no tool for creating
         // directories. Idempotent and cheap: `create_dir_all` on an
         // existing tree is a no-op.
-        if let Some(parent) = resolved.parent() {
-            std::fs::create_dir_all(parent).map_err(KodError::Io)?;
+        //
+        // Failures come back as Ok(ToolResult::Error(...)) rather than
+        // Err(KodError::Io): every one of them is a "the write could
+        // not be done, here is why, here is what to check" — the shape
+        // the model should reason about — rather than "the tool itself
+        // broke." Same shape the read_file fix uses, via the same
+        // describe_path_error helper. The engine treats both shapes
+        // the same when it renders the tool result block, so the
+        // observable difference is only in the type system; the
+        // consistent shape is what lets a future caller distinguish
+        // model-facing errors from tool-level failures without
+        // inspecting the message text.
+        if let Some(parent) = resolved.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            return Ok(ToolResult::Error(describe_path_error(parent, &e)));
         }
 
         if append {
-            let mut file = std::fs::OpenOptions::new()
+            let mut file = match std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&resolved)
-                .map_err(KodError::Io)?;
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
+                }
+            };
             use std::io::Write;
-            write!(file, "{}", content).map_err(KodError::Io)?;
-        } else {
-            std::fs::write(&resolved, content).map_err(KodError::Io)?;
+            if let Err(e) = write!(file, "{}", content) {
+                return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
+            }
+        } else if let Err(e) = std::fs::write(&resolved, content) {
+            return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
         }
 
         Ok(ToolResult::Success(serde_json::json!({
@@ -1061,6 +1082,38 @@ mod tests {
     /// from_utf8_lossy, so the model saw a wall of U+FFFD characters
     /// and had no way to know the file was a PNG, an ELF, or a
     /// UTF-16 text file.
+    /// Writing under a path whose parent is a file (not a directory)
+    /// must return Ok(ToolResult::Error(...)) with a message the model
+    /// can act on — the same shape read_file uses for directories and
+    /// missing files. Regression: the previous code propagated
+    /// KodError::Io, forcing callers to handle two shapes for the same
+    /// class of "the model asked for something that cannot work."
+    #[tokio::test]
+    async fn test_write_file_parent_is_a_file_reports_error() {
+        let temp = tempfile::TempDir::new().unwrap();
+        // A file named "blocker" — the write target below has it as a
+        // parent directory, which create_dir_all will reject.
+        std::fs::write(temp.path().join("blocker"), "not a dir").unwrap();
+
+        let ctx = full_context(temp.path());
+        let tool = WriteFileTool::new();
+        let params = serde_json::json!({
+            "path": "blocker/child.txt",
+            "content": "hello"
+        });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Error(msg) => {
+                assert!(
+                    msg.contains("blocker"),
+                    "error should name the path: {msg}"
+                );
+            }
+            other => panic!("expected ToolResult::Error, got {:?}", other),
+        }
+    }
+
     #[tokio::test]
     async fn read_file_detects_binary_content() {
         let temp = tempfile::TempDir::new().unwrap();

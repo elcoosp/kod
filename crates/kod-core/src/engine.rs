@@ -471,18 +471,31 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
 
     // list_files: {path, files:[...]} → count + names.
     if let Some(files) = v.get("files").and_then(|f| f.as_array()) {
-        let dir = v
+        // The tool returns each entry as an absolute path (it
+        // canonicalizes before walking), and the header shows the
+        // *shortened* path (`…/subdir`) for readability. The previous
+        // code stored only the shortened form and then tried to strip
+        // it from each absolute entry — which never matched, so the
+        // row showed full absolute paths for every entry. Keep both
+        // forms: `dir_full` for the strip, `dir_short` for the header.
+        let dir_full = v
             .get("path")
             .and_then(|p| p.as_str())
-            .map(shorten_path)
-            .unwrap_or_default();
+            .unwrap_or("");
+        let dir_short = if dir_full.is_empty() {
+            String::new()
+        } else {
+            shorten_path(dir_full)
+        };
         let shown: Vec<String> = files
             .iter()
             .take(TOOL_RESULT_LINES)
             .filter_map(|f| f.as_str())
             .map(|f| {
                 // Strip the listed dir prefix; bare names scan fastest.
-                let bare = f.strip_prefix(dir.as_str()).unwrap_or(f);
+                // Match against the full path (`dir_full`), not the
+                // shortened header form.
+                let bare = f.strip_prefix(dir_full).unwrap_or(f);
                 let bare = bare.trim_start_matches('/');
                 if bare.is_empty() {
                     f.to_string()
@@ -496,7 +509,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             "{} entr{} in {}:",
             files.len(),
             if files.len() == 1 { "y" } else { "ies" },
-            if dir.is_empty() { name } else { &dir }
+            if dir_short.is_empty() { name } else { &dir_short }
         );
         if !shown.is_empty() {
             out.push('\n');
@@ -2295,6 +2308,33 @@ mod tests {
         );
         assert!(block.contains("alpha.txt"), "got: {block}");
         assert!(block.contains("beta.txt"), "got: {block}");
+
+        // Regression: the previous code computed the header's shortened
+        // directory (`…/last-two-segments`) and then tried to strip that
+        // from each *absolute* entry, which never matched — every entry
+        // rendered as its full path. `· alpha.txt` (not `· /private/…`)
+        // is the shape the summary is supposed to produce.
+        let summary = summarize_tool_result(
+            "list_files",
+            &ToolResult::Success(serde_json::json!({
+                "path": "/tmp/kod-test-dir",
+                "path_kind": "directory",
+                "files": [
+                    "/tmp/kod-test-dir/alpha.txt",
+                    "/tmp/kod-test-dir/beta.txt",
+                ],
+                "total": 2,
+                "truncated": false,
+            })),
+        );
+        assert!(
+            summary.contains("· alpha.txt"),
+            "entries should be stripped to bare names: {summary}"
+        );
+        assert!(
+            !summary.contains("/tmp/kod-test-dir/alpha.txt"),
+            "absolute path must not appear in the summary: {summary}"
+        );
     }
 
     /// summarize_success must surface the tool's truncation flags so

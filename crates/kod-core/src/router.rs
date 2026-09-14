@@ -315,20 +315,35 @@ impl TaskRouter {
         // 1. Classify the task
         let task_type = self.classify_task(input).await?;
 
-        // 2. Build context (placeholder - would integrate with memory_manager)
+        // 2. Retrieve memory when the caller did not supply any.
+        //
+        // The flag computed below and the context passed to
+        // `build_context` must see the *same* retrieval, or
+        // `memory_used` reports on a different run than the prompt
+        // did. The previous layout had the retrieval inside
+        // `build_prompt` (a different method) and the flag here with
+        // the caller's `None` — so the flag was always false,
+        // regardless of what memory actually contributed.
+        let memory_context = match memory_context {
+            Some(c) => Some(c),
+            None => match &self.memory_manager {
+                Some(manager) => Some(manager.retrieve_context(input).await?),
+                None => None,
+            },
+        };
+
+        // 3. Build context
         let _context = self
             .build_context(input, &memory_context, &task_type)
             .await?;
 
-        // 3. Find relevant skills
+        // 4. Find relevant skills
         let skills_used = self.find_relevant_skills(input).await?;
 
-        // Did memory actually contribute to this prompt? The flag used
-        // to be `memory_context.is_some()`, which is true whenever the
-        // router has a manager — i.e. always, since enable_memory
-        // defaults on. The observable meaning to a caller is "at least
-        // one memory entry was included", and that is what this
-        // reports.
+        // Did memory actually contribute to this prompt? True iff at
+        // least one entry was retrieved. The previous value —
+        // `memory_context.is_some()` — was true whenever the router
+        // had a manager, i.e. always since `enable_memory` defaults on.
         let memory_used = memory_context
             .as_ref()
             .map(|c| {
