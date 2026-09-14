@@ -46,6 +46,16 @@ pub struct TuiLoop {
     /// corrupt file falls back to the built-in defaults. Tests override
     /// it via [`TuiLoop::set_keybindings`].
     keybindings: std::collections::HashMap<char, KeyAction>,
+    /// Whether this loop reads and writes `~/.kod/tui_history.json`.
+    ///
+    /// Set to true only by [`TuiLoop::run`] — the production entry
+    /// point. Tests drive `handle_event`/`dispatch_prompt` directly
+    /// without calling `run`, so they neither touch the user's real
+    /// history file nor observe a stale one. The load/persist helpers
+    /// on `KodApp` exist and are correct; they simply had no caller
+    /// before this — the doc comment on the persistence module
+    /// promised cross-restart history that did not happen.
+    persist_history: bool,
 }
 
 impl TuiLoop {
@@ -58,6 +68,7 @@ impl TuiLoop {
             llm_config: None,
             gen_task: None,
             keybindings: load_bindings(),
+            persist_history: false,
         }
     }
 
@@ -272,6 +283,17 @@ impl TuiLoop {
         });
 
         self.init_engine(model).await?;
+
+        // Load persisted prompt history and arm the save path.
+        // KodApp::load_persistent_history reads
+        // ~/.kod/tui_history.json (or KOD_TUI_STATE_DIR) best-effort —
+        // a missing or corrupt file just means an empty history. The
+        // matching persist_history_entry runs from dispatch_prompt
+        // below, gated on the persist_history flag so tests do not
+        // touch the real file.
+        self.app.load_persistent_history();
+        self.persist_history = true;
+
         self.init_terminal().await?;
         let result = self.main_loop().await;
 
@@ -500,11 +522,21 @@ impl TuiLoop {
 
         self.app.submit_input();
 
-        // Remember the prompt so /retry (and the `r` key) can resend it
-        // after a failure. The previous code only set last_prompt from
-        // retry_generation itself, so last_prompt() was always None on
-        // first use and /retry always answered 'Nothing to retry'.
+        // Remember the prompt for /retry (and the `r` key). The previous
+        // code only set last_prompt from retry_generation itself, so
+        // last_prompt() was always None on first use and /retry always
+        // answered 'Nothing to retry'.
         self.app.set_last_prompt(&input);
+
+        // Append the raw prompt to the cross-session history file, so
+        // Up-arrow in the next session recalls what was typed this one.
+        // Skipped in tests (persist_history is only true after run()),
+        // and skipped for slash commands by living below the earlier
+        // `input.trim_start().starts_with('/')` early return — a
+        // recalled `/help` in the history would be noise next time.
+        if self.persist_history {
+            self.app.persist_history_entry(&input);
+        }
 
         // Without an engine (e.g. in tests) the message is recorded and
         // nothing else happens.
