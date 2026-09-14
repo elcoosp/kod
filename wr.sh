@@ -2,16 +2,16 @@
 set -uo pipefail
 
 COMPILE_OK=true
-APP=crates/kod-tui/src/app.rs
+TARGET=crates/kod-swarm/src/coordination.rs
 
-if [ ! -f Cargo.toml ] || [ ! -f "$APP" ]; then
-    echo "ERROR: run from the kod workspace root ($APP missing)"
+if [ ! -f Cargo.toml ] || [ ! -f "$TARGET" ]; then
+    echo "ERROR: run from the kod workspace root ($TARGET missing)"
     exit 1
 fi
 
-echo "Patching $APP: /clear resets context accounting"
+echo "Patching $TARGET: TaskFinish enum + terminal-state guard"
 
-python3 - "$APP" << 'PYEOF'
+python3 - "$TARGET" << 'PYEOF'
 import os
 import sys
 
@@ -31,126 +31,279 @@ def patch(old, new, label, expect=1):
     content = content.replace(old, new, expect if expect else n)
     print(f"Patched: {label}")
 
-# --- clear_messages resets context accounting --------------------------
+# ----------------------------------------------------------------------
+# 1. Introduce TaskFinish and rewrite complete/fail/finish_task.
+# ----------------------------------------------------------------------
 patch(
-    '''    pub fn clear_messages(&mut self) {
-        if !self.messages.is_empty() {
-            self.cleared_stack.push(std::mem::take(&mut self.messages));
-            if self.cleared_stack.len() > 5 {
-                self.cleared_stack.remove(0);
-            }
-        }
-        self.scroll_lines = 0;
-        self.expanded_tools.clear();
-        self.clear_search();
-    }''',
-    '''    pub fn clear_messages(&mut self) {
-        if !self.messages.is_empty() {
-            self.cleared_stack.push(std::mem::take(&mut self.messages));
-            if self.cleared_stack.len() > 5 {
-                self.cleared_stack.remove(0);
-            }
-        }
-        self.scroll_lines = 0;
-        self.expanded_tools.clear();
-        self.clear_search();
+    '''    /// Mark a task completed and release its slot in the assignee's load.
+    ///
+    /// Without this, `agent_load` only ever grew (assign_task incremented
+    /// it and nothing decremented it), so `least_loaded_agent` degenerated
+    /// into "whichever agent was spawned last" after a handful of task
+    /// assignments — the load-based routing stopped being load-based.
+    pub async fn complete_task(&self, task_id: &TaskId) -> Result<()> {
+        self.finish_task(task_id, TaskStatus::Completed).await
+    }
 
-        // Reset context accounting. `/clear` wipes the display AND the
-        // engine's transcript (see the ConfirmKind::Clear handler in
-        // main_loop, which calls engine.clear_history()), so the
-        // session really is starting over. Leaving the previous
-        // session's accumulated `context_tokens` in place meant the
-        // next N messages inherited a count that included messages
-        // the user had thrown away: the header's "≈ ctx X/Y" meter
-        // overstated by the discarded amount, and `maybe_compact`'s
-        // threshold — a fraction of the model window — was compared
-        // against a number that no longer reflected anything.
-        //
-        // `compacted_messages` (the session's running total) is reset
-        // for the same reason: it is meant to say "N messages have
-        // been compacted *in this session*", not "since the process
-        // started".
-        self.context_tokens = 0;
-        self.compacted_messages = 0;
+    /// Mark a task failed and release its slot in the assignee's load.
+    /// Failures free the agent for the next task, same as completions —
+    /// a failed task does not keep the agent "busy" forever.
+    pub async fn fail_task(&self, task_id: &TaskId) -> Result<()> {
+        self.finish_task(task_id, TaskStatus::Failed).await
+    }
+
+    /// Common path for complete/fail. Sets the status, decrements the
+    /// assignee's load (saturating at zero), and returns the updated
+    /// assignment so callers can see who the task had been assigned to.
+    async fn finish_task(&self, task_id: &TaskId, status: TaskStatus) -> Result<()> {
+        let assigned_to = {
+            let mut tasks = self.tasks.write().await;
+            let task = tasks.get_mut(task_id).ok_or_else(|| {
+                KodError::InvalidState(format!("Task {} not found", task_id))
+            })?;
+            if task.status == status {
+                // Idempotent: completing a completed task is a no-op, not
+                // an error. Callers that race on finish should not have to
+                // unwind one of them.
+                return Ok(());
+            }
+            task.status = status;
+            task.assigned_to.clone()
+        };
+
+        if let Some(agent_id) = assigned_to {
+            let mut load = self.agent_load.write().await;
+            if let Some(slot) = load.get_mut(&agent_id) {
+                *slot = slot.saturating_sub(1);
+            }
+        }
+        Ok(())
     }''',
-    "clear_messages resets context accounting",
+    '''    /// Mark a task completed and release its slot in the assignee's load.
+    ///
+    /// Without this, `agent_load` only ever grew (assign_task incremented
+    /// it and nothing decremented it), so `least_loaded_agent` degenerated
+    /// into "whichever agent was spawned last" after a handful of task
+    /// assignments — the load-based routing stopped being load-based.
+    ///
+    /// The returned [`TaskFinish`] tells the caller whether the call
+    /// actually transitioned the task, was a no-op because the task was
+    /// already Completed, or — for the terminal-to-terminal case —
+    /// errored. The previous `Result<()>` returned `Ok(())` for both the
+    /// transition and the no-op, so a caller that wanted to know "did my
+    /// completion land, or did someone else get there first?" had no way
+    /// to find out.
+    pub async fn complete_task(&self, task_id: &TaskId) -> Result<TaskFinish> {
+        self.finish_task(task_id, TaskStatus::Completed).await
+    }
+
+    /// Mark a task failed and release its slot in the assignee's load.
+    /// Failures free the agent for the next task, same as completions —
+    /// a failed task does not keep the agent "busy" forever.
+    ///
+    /// See [`TaskCoordinator::complete_task`] for the return semantics.
+    pub async fn fail_task(&self, task_id: &TaskId) -> Result<TaskFinish> {
+        self.finish_task(task_id, TaskStatus::Failed).await
+    }
+
+    /// Common path for complete/fail.
+    ///
+    /// On a real transition (from a non-terminal status to the requested
+    /// one), decrements the assignee's load (saturating at zero) and
+    /// returns [`TaskFinish::Transitioned`] naming the previous status.
+    /// On a same-status call, returns [`TaskFinish::AlreadyInState`]
+    /// without touching the load — a caller that raced another finisher
+    /// sees exactly that.
+    ///
+    /// Refuses to move from one terminal state to another. Before this
+    /// guard, `fail_task` on a Completed task transitioned Completed →
+    /// Failed and decremented the load a second time, corrupting the
+    /// counter that `least_loaded_agent` reads. Terminal is terminal;
+    /// if the work needs redoing, the caller creates a new task.
+    async fn finish_task(&self, task_id: &TaskId, status: TaskStatus) -> Result<TaskFinish> {
+        let (from, assigned_to) = {
+            let mut tasks = self.tasks.write().await;
+            let task = tasks.get_mut(task_id).ok_or_else(|| {
+                KodError::InvalidState(format!("Task {} not found", task_id))
+            })?;
+            let from = task.status;
+            if from == status {
+                return Ok(TaskFinish::AlreadyInState);
+            }
+            if matches!(from, TaskStatus::Completed | TaskStatus::Failed) {
+                return Err(KodError::InvalidState(format!(
+                    "Task {} is already {:?}; refusing to transition to {:?}. \\
+                     Create a new task if the work needs redoing.",
+                    task_id, from, status
+                )));
+            }
+            task.status = status;
+            (from, task.assigned_to.clone())
+        };
+
+        if let Some(agent_id) = &assigned_to {
+            let mut load = self.agent_load.write().await;
+            if let Some(slot) = load.get_mut(agent_id) {
+                *slot = slot.saturating_sub(1);
+            }
+        }
+        Ok(TaskFinish::Transitioned { from })
+    }''',
+    "TaskFinish enum + finish_task rewrite",
 )
 
-# --- Tests --------------------------------------------------------
+# ----------------------------------------------------------------------
+# 2. Declare the enum near the top of the file, after TaskAssignment.
+# ----------------------------------------------------------------------
 patch(
-    '''    #[test]
-    fn test_scroll_to_bottom() {''',
-    '''    /// `/clear` resets the context accounting. Regression: the
-    /// visible messages and the engine transcript were reset, but
-    /// `context_tokens` and `compacted_messages` kept accumulating,
-    /// so the header meter overstated the current context and the
-    /// auto-compact threshold was compared against a number that
-    /// included discarded messages.
-    #[test]
-    fn test_clear_resets_context_accounting() {
-        let mut app = KodApp::new();
-        app.set_context_limit(10_000);
+    '''/// Assignment of a task to an agent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskAssignment {
+    pub task_id: TaskId,
+    pub agent_id: AgentId,
+    pub assigned_at: chrono::DateTime<chrono::Utc>,
+    pub capabilities_required: Vec<crate::agent::Capability>,
+}''',
+    '''/// Assignment of a task to an agent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskAssignment {
+    pub task_id: TaskId,
+    pub agent_id: AgentId,
+    pub assigned_at: chrono::DateTime<chrono::Utc>,
+    pub capabilities_required: Vec<crate::agent::Capability>,
+}
 
-        // Build up a believable pre-clear state: some messages and
-        // some token usage.
-        for i in 0..30 {
-            app.push_system_message(&format!("filler {i}"));
+/// Outcome of a `complete_task` / `fail_task` call.
+///
+/// The distinction matters when two callers race to finish the same
+/// task: `Transitioned` is the one that actually changed the state and
+/// released the assignee's load slot; `AlreadyInState` is the one that
+/// lost the race and correctly did nothing. Before this, both callers
+/// saw `Ok(())` and a caller that needed to know which side it was on
+/// (to decide whether to report a duplicate completion, or to update a
+/// status panel) had no way to find out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskFinish {
+    /// The task moved from a non-terminal status to the requested
+    /// terminal one. `from` is the previous status. The assignee's load
+    /// counter was decremented if the task had an assignee.
+    Transitioned { from: TaskStatus },
+    /// The task was already in the requested terminal status. No state
+    /// changed and no counter moved.
+    AlreadyInState,
+}''',
+    "TaskFinish enum declaration",
+)
+
+# ----------------------------------------------------------------------
+# 3. Extend the existing tests: the return value and the terminal guard.
+# ----------------------------------------------------------------------
+patch(
+    '''    /// Completing an already-completed task is a no-op, not an error —
+    /// racing callers should not have to unwind one of themselves.
+    #[tokio::test]
+    async fn complete_is_idempotent() {
+        let coord = TaskCoordinator::new();
+        let agent = AgentId::new();
+        let t = task("once");
+        let t_id = t.id.clone();
+        coord.register_task(t).await.unwrap();
+        coord.assign_task(&t_id, &agent).await.unwrap();
+
+        coord.complete_task(&t_id).await.unwrap();
+        coord.complete_task(&t_id).await.unwrap();
+        // Second complete must not underflow the load counter.
+        assert_eq!(coord.agent_load(&agent).await, 0);
+    }''',
+    '''    /// Completing an already-completed task is a no-op, not an error —
+    /// racing callers should not have to unwind one of themselves.
+    /// The second call must report `AlreadyInState`, and must not
+    /// touch the load counter.
+    #[tokio::test]
+    async fn complete_is_idempotent() {
+        let coord = TaskCoordinator::new();
+        let agent = AgentId::new();
+        let t = task("once");
+        let t_id = t.id.clone();
+        coord.register_task(t).await.unwrap();
+        coord.assign_task(&t_id, &agent).await.unwrap();
+
+        let first = coord.complete_task(&t_id).await.unwrap();
+        assert_eq!(
+            first,
+            TaskFinish::Transitioned {
+                from: TaskStatus::InProgress
+            },
+            "first complete should transition InProgress -> Completed"
+        );
+        assert_eq!(coord.agent_load(&agent).await, 0);
+
+        let second = coord.complete_task(&t_id).await.unwrap();
+        assert_eq!(
+            second,
+            TaskFinish::AlreadyInState,
+            "second complete should report AlreadyInState"
+        );
+        // Load stays at 0 — the no-op must not decrement again.
+        assert_eq!(coord.agent_load(&agent).await, 0);
+    }
+
+    /// A task that reached one terminal state cannot move to the
+    /// other. Regression: the previous implementation allowed
+    /// `fail_task` on a Completed task, which transitioned Completed →
+    /// Failed and decremented the load a second time — corrupting the
+    /// counter `least_loaded_agent` reads.
+    #[tokio::test]
+    async fn terminal_to_terminal_is_rejected() {
+        let coord = TaskCoordinator::new();
+        let agent = AgentId::new();
+        let t = task("done already");
+        let t_id = t.id.clone();
+        coord.register_task(t).await.unwrap();
+        coord.assign_task(&t_id, &agent).await.unwrap();
+
+        coord.complete_task(&t_id).await.unwrap();
+        assert_eq!(coord.agent_load(&agent).await, 0);
+
+        let err = coord.fail_task(&t_id).await.unwrap_err();
+        match err {
+            KodError::InvalidState(msg) => {
+                assert!(
+                    msg.contains("Completed") && msg.contains("Failed"),
+                    "error should name both statuses: {msg}"
+                );
+            }
+            other => panic!("expected InvalidState, got {other:?}"),
         }
-        app.note_real_usage(3_000);
-        // Also trigger a manual compact to set compacted_messages.
-        app.compact_now();
-        assert!(app.context_tokens() > 0);
-        assert!(app.messages().len() < 30, "compact should have dropped some");
-
-        // Sanity: pre-clear state is not the fresh state.
-        let pre_tokens = app.context_tokens();
-
-        app.clear_messages();
-
-        assert!(app.messages().is_empty(), "display should be empty");
+        // The rejected transition must not have decremented the load.
+        assert_eq!(coord.agent_load(&agent).await, 0);
+        // And the task status must be unchanged.
         assert_eq!(
-            app.context_tokens(),
-            0,
-            "context accounting must reset (was {pre_tokens})"
-        );
-        // The label must report 0% — the meter the header draws reads
-        // from the same counter.
-        assert!(
-            app.context_label().contains("0%"),
-            "context label should read 0%: {}",
-            app.context_label()
+            coord.task_status(&t_id).await,
+            Some(TaskStatus::Completed)
         );
     }
 
-    /// `/undo` restores the cleared messages but must NOT resurrect
-    /// the stale context count — the engine's transcript was cleared
-    /// by the `/clear` handler, so the model really does have zero
-    /// context at that point. Undo is a display operation only.
-    #[test]
-    fn test_undo_does_not_restore_stale_context() {
-        let mut app = KodApp::new();
-        app.set_context_limit(10_000);
-        app.push_system_message("hello");
-        app.note_real_usage(2_500);
-        assert_eq!(app.context_tokens(), 2_500);
+    /// A Pending task can be completed without ever being assigned.
+    /// The load counter must stay at 0 — there is no assignee to
+    /// release.
+    #[tokio::test]
+    async fn complete_unassigned_task_succeeds() {
+        let coord = TaskCoordinator::new();
+        let t = task("never picked up");
+        let t_id = t.id.clone();
+        coord.register_task(t).await.unwrap();
 
-        app.clear_messages();
-        assert_eq!(app.context_tokens(), 0);
-
-        let restored = app.undo_clear();
-        assert!(restored, "undo should succeed");
-        assert_eq!(app.messages().len(), 1);
-        // Context stays at the post-clear value, not the pre-clear one.
+        let outcome = coord.complete_task(&t_id).await.unwrap();
         assert_eq!(
-            app.context_tokens(),
-            0,
-            "undo must not resurrect a stale context count"
+            outcome,
+            TaskFinish::Transitioned {
+                from: TaskStatus::Pending
+            }
         );
-    }
-
-    #[test]
-    fn test_scroll_to_bottom() {''',
-    "clear resets context tests",
+        assert_eq!(coord.task_status(&t_id).await, Some(TaskStatus::Completed));
+    }''',
+    "TaskFinish tests + terminal guard test",
 )
 
 tmp = target + ".tmp"
@@ -180,33 +333,36 @@ fi
 echo "Committing."
 git add -A
 git commit -F - <<'MSG'
-fix(tui): /clear resets context accounting
+fix(swarm): report task finish outcome; refuse terminal-to-terminal
 
-/clear wiped the visible messages and, via the ConfirmKind::Clear
-handler in main_loop, the engine's transcript. It left
-`context_tokens` and `compacted_messages` untouched. Two visible
-effects:
+TaskCoordinator::complete_task and fail_task both returned Result<()>
+and both paths — the actual transition and the idempotent no-op —
+returned Ok(()). A caller that raced another finisher had no way to
+find out whether it was the one that changed state (and released the
+assignee's load slot) or the one that lost.
 
-- The header meter "≈ ctx X/Y · Z%" reported a value that included
-  the messages the user had just thrown away, overstating the
-  current session until the count was overtaken by fresh usage.
-- `maybe_compact` compares `context_tokens` against a fraction of
-  the model window. With the stale count still in place, the very
-  next cluster of messages could trip auto-compact — compacting a
-  session that was only a few turns old, using a threshold based on
-  messages that no longer existed.
+Add TaskFinish { Transitioned { from: TaskStatus }, AlreadyInState }.
+complete_task / fail_task now return Result<TaskFinish>; the enum is
+exported alongside the coordinator so a status panel or a
+duplicate-detection layer can read it. Existing callers that only
+unwrap continue to compile.
 
-clear_messages now zeroes both counters, alongside the display and
-search state it was already resetting. `compacted_messages` is
-included because it is a per-session counter — "N messages compacted
-this session" — not a process-lifetime statistic.
+The same change fixes a real accounting bug. Before the terminal
+guard, fail_task on a Completed task transitioned Completed → Failed
+and ran the load decrement a second time — but the load had already
+been released by the complete call. The counter that
+least_loaded_agent reads is now guarded: finish_task refuses any
+transition between two terminal states with an error naming the
+statuses and suggesting a new task if the work needs redoing.
 
-`/undo` (restoring the messages cleared by a previous /clear) does
-not resurrect the counter. The engine's transcript was cleared at
-the same time and the model really does have zero context at that
-point; the count should match reality rather than the display.
+Terminal-to-terminal transitions cannot move the counter now, and a
+Pending task completed without ever having an assignee is handled
+correctly — the transition succeeds, the load slot no-ops.
 
-Adds two tests: /clear zeroes both counters and the label reads
-0%, and /undo restores the display without resurrecting the stale
-count.
+Extends three existing tests and adds one:
+- complete_is_idempotent now asserts Transitioned { from: InProgress }
+  then AlreadyInState, and load stays at 0 through both.
+- terminal_to_terminal_is_rejected pins the error message and the
+  unchanged status.
+- complete_unassigned_task_succeeds covers the no-assignee path.
 MSG

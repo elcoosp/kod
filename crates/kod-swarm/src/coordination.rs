@@ -42,6 +42,26 @@ pub struct TaskAssignment {
     pub capabilities_required: Vec<crate::agent::Capability>,
 }
 
+/// Outcome of a `complete_task` / `fail_task` call.
+///
+/// The distinction matters when two callers race to finish the same
+/// task: `Transitioned` is the one that actually changed the state and
+/// released the assignee's load slot; `AlreadyInState` is the one that
+/// lost the race and correctly did nothing. Before this, both callers
+/// saw `Ok(())` and a caller that needed to know which side it was on
+/// (to decide whether to report a duplicate completion, or to update a
+/// status panel) had no way to find out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskFinish {
+    /// The task moved from a non-terminal status to the requested
+    /// terminal one. `from` is the previous status. The assignee's load
+    /// counter was decremented if the task had an assignee.
+    Transitioned { from: TaskStatus },
+    /// The task was already in the requested terminal status. No state
+    /// changed and no counter moved.
+    AlreadyInState,
+}
+
 /// Coordinator for task distribution among agents
 #[derive(Clone, Default)]
 pub struct TaskCoordinator {
@@ -129,43 +149,69 @@ impl TaskCoordinator {
     /// it and nothing decremented it), so `least_loaded_agent` degenerated
     /// into "whichever agent was spawned last" after a handful of task
     /// assignments — the load-based routing stopped being load-based.
-    pub async fn complete_task(&self, task_id: &TaskId) -> Result<()> {
+    ///
+    /// The returned [`TaskFinish`] tells the caller whether the call
+    /// actually transitioned the task, was a no-op because the task was
+    /// already Completed, or — for the terminal-to-terminal case —
+    /// errored. The previous `Result<()>` returned `Ok(())` for both the
+    /// transition and the no-op, so a caller that wanted to know "did my
+    /// completion land, or did someone else get there first?" had no way
+    /// to find out.
+    pub async fn complete_task(&self, task_id: &TaskId) -> Result<TaskFinish> {
         self.finish_task(task_id, TaskStatus::Completed).await
     }
 
     /// Mark a task failed and release its slot in the assignee's load.
     /// Failures free the agent for the next task, same as completions —
     /// a failed task does not keep the agent "busy" forever.
-    pub async fn fail_task(&self, task_id: &TaskId) -> Result<()> {
+    ///
+    /// See [`TaskCoordinator::complete_task`] for the return semantics.
+    pub async fn fail_task(&self, task_id: &TaskId) -> Result<TaskFinish> {
         self.finish_task(task_id, TaskStatus::Failed).await
     }
 
-    /// Common path for complete/fail. Sets the status, decrements the
-    /// assignee's load (saturating at zero), and returns the updated
-    /// assignment so callers can see who the task had been assigned to.
-    async fn finish_task(&self, task_id: &TaskId, status: TaskStatus) -> Result<()> {
-        let assigned_to = {
+    /// Common path for complete/fail.
+    ///
+    /// On a real transition (from a non-terminal status to the requested
+    /// one), decrements the assignee's load (saturating at zero) and
+    /// returns [`TaskFinish::Transitioned`] naming the previous status.
+    /// On a same-status call, returns [`TaskFinish::AlreadyInState`]
+    /// without touching the load — a caller that raced another finisher
+    /// sees exactly that.
+    ///
+    /// Refuses to move from one terminal state to another. Before this
+    /// guard, `fail_task` on a Completed task transitioned Completed →
+    /// Failed and decremented the load a second time, corrupting the
+    /// counter that `least_loaded_agent` reads. Terminal is terminal;
+    /// if the work needs redoing, the caller creates a new task.
+    async fn finish_task(&self, task_id: &TaskId, status: TaskStatus) -> Result<TaskFinish> {
+        let (from, assigned_to) = {
             let mut tasks = self.tasks.write().await;
             let task = tasks.get_mut(task_id).ok_or_else(|| {
                 KodError::InvalidState(format!("Task {} not found", task_id))
             })?;
-            if task.status == status {
-                // Idempotent: completing a completed task is a no-op, not
-                // an error. Callers that race on finish should not have to
-                // unwind one of them.
-                return Ok(());
+            let from = task.status;
+            if from == status {
+                return Ok(TaskFinish::AlreadyInState);
+            }
+            if matches!(from, TaskStatus::Completed | TaskStatus::Failed) {
+                return Err(KodError::InvalidState(format!(
+                    "Task {} is already {:?}; refusing to transition to {:?}. \
+                     Create a new task if the work needs redoing.",
+                    task_id, from, status
+                )));
             }
             task.status = status;
-            task.assigned_to.clone()
+            (from, task.assigned_to.clone())
         };
 
-        if let Some(agent_id) = assigned_to {
+        if let Some(agent_id) = &assigned_to {
             let mut load = self.agent_load.write().await;
-            if let Some(slot) = load.get_mut(&agent_id) {
+            if let Some(slot) = load.get_mut(agent_id) {
                 *slot = slot.saturating_sub(1);
             }
         }
-        Ok(())
+        Ok(TaskFinish::Transitioned { from })
     }
 
     /// Unassign a pending task without marking it complete or failed —
@@ -312,6 +358,8 @@ mod tests {
 
     /// Completing an already-completed task is a no-op, not an error —
     /// racing callers should not have to unwind one of themselves.
+    /// The second call must report `AlreadyInState`, and must not
+    /// touch the load counter.
     #[tokio::test]
     async fn complete_is_idempotent() {
         let coord = TaskCoordinator::new();
@@ -321,10 +369,80 @@ mod tests {
         coord.register_task(t).await.unwrap();
         coord.assign_task(&t_id, &agent).await.unwrap();
 
-        coord.complete_task(&t_id).await.unwrap();
-        coord.complete_task(&t_id).await.unwrap();
-        // Second complete must not underflow the load counter.
+        let first = coord.complete_task(&t_id).await.unwrap();
+        assert_eq!(
+            first,
+            TaskFinish::Transitioned {
+                from: TaskStatus::InProgress
+            },
+            "first complete should transition InProgress -> Completed"
+        );
         assert_eq!(coord.agent_load(&agent).await, 0);
+
+        let second = coord.complete_task(&t_id).await.unwrap();
+        assert_eq!(
+            second,
+            TaskFinish::AlreadyInState,
+            "second complete should report AlreadyInState"
+        );
+        // Load stays at 0 — the no-op must not decrement again.
+        assert_eq!(coord.agent_load(&agent).await, 0);
+    }
+
+    /// A task that reached one terminal state cannot move to the
+    /// other. Regression: the previous implementation allowed
+    /// `fail_task` on a Completed task, which transitioned Completed →
+    /// Failed and decremented the load a second time — corrupting the
+    /// counter `least_loaded_agent` reads.
+    #[tokio::test]
+    async fn terminal_to_terminal_is_rejected() {
+        let coord = TaskCoordinator::new();
+        let agent = AgentId::new();
+        let t = task("done already");
+        let t_id = t.id.clone();
+        coord.register_task(t).await.unwrap();
+        coord.assign_task(&t_id, &agent).await.unwrap();
+
+        coord.complete_task(&t_id).await.unwrap();
+        assert_eq!(coord.agent_load(&agent).await, 0);
+
+        let err = coord.fail_task(&t_id).await.unwrap_err();
+        match err {
+            KodError::InvalidState(msg) => {
+                assert!(
+                    msg.contains("Completed") && msg.contains("Failed"),
+                    "error should name both statuses: {msg}"
+                );
+            }
+            other => panic!("expected InvalidState, got {other:?}"),
+        }
+        // The rejected transition must not have decremented the load.
+        assert_eq!(coord.agent_load(&agent).await, 0);
+        // And the task status must be unchanged.
+        assert_eq!(
+            coord.task_status(&t_id).await,
+            Some(TaskStatus::Completed)
+        );
+    }
+
+    /// A Pending task can be completed without ever being assigned.
+    /// The load counter must stay at 0 — there is no assignee to
+    /// release.
+    #[tokio::test]
+    async fn complete_unassigned_task_succeeds() {
+        let coord = TaskCoordinator::new();
+        let t = task("never picked up");
+        let t_id = t.id.clone();
+        coord.register_task(t).await.unwrap();
+
+        let outcome = coord.complete_task(&t_id).await.unwrap();
+        assert_eq!(
+            outcome,
+            TaskFinish::Transitioned {
+                from: TaskStatus::Pending
+            }
+        );
+        assert_eq!(coord.task_status(&t_id).await, Some(TaskStatus::Completed));
     }
 
     #[tokio::test]
