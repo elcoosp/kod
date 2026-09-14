@@ -458,9 +458,13 @@ impl Tool for ListFilesTool {
         let resolved = context.resolve_path(path)?;
         context.can_read(&resolved)?;
 
+        // Per-entry cap before the count cap. A single 8 KB generated
+        // path would otherwise dominate the JSON and push every later
+        // entry past the engine's prompt cap — the model would see one
+        // path and no count.
         let mut files: Vec<String> = gitaware_walk(&resolved, recursive)
             .into_iter()
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| truncate_entry(&p.to_string_lossy(), MAX_ENTRY_BYTES))
             .collect();
 
         files.sort();
@@ -486,6 +490,34 @@ impl Tool for ListFilesTool {
 const MAX_LIST_ENTRIES: usize = 5000;
 /// Cap for grep matches for the same reason.
 const MAX_GREP_MATCHES: usize = 500;
+
+/// Per-entry length cap, in bytes, for both `list_files` path entries and
+/// `grep` result lines. The workspace has generated paths and generated
+/// line content in the wild (a bundler output file with 8 KB of inline
+/// JSON on one line). A single entry that long dominates the tool's own
+/// count cap and forces the engine's downstream prompt cap to discard
+/// every later entry — the model then sees one long path and nothing
+/// else. Truncating each entry keeps the count and lets the downstream
+/// cap do its normal work.
+///
+/// 1 KB is generous for a path (typical: 40–120 bytes) and for a line of
+/// code (typical: 20–200 bytes) while bounded enough that 5000 entries
+/// cannot exceed ~5 MB even in the pathological case.
+const MAX_ENTRY_BYTES: usize = 1024;
+
+/// Truncate a UTF-8 string to at most `max` bytes at a char boundary,
+/// appending an ellipsis when the string was cut. Local to this module
+/// to avoid a cross-crate dependency on the engine's helper.
+fn truncate_entry(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
+}
 
 /// Walk `root` honoring `.gitignore`/`.ignore`/`.git/info/exclude` (plus
 /// global git excludes), keeping dotfiles visible but always pruning `.git`.
@@ -644,10 +676,17 @@ impl Tool for GrepTool {
             };
             for (line_num, line) in content.lines().enumerate() {
                 if regex.is_match(line) {
+                    // Cap the matched text per entry. A generated
+                    // bundler output file with 8 KB of inline JSON
+                    // on one line would otherwise produce a single
+                    // 8 KB match and blow the model's prompt budget
+                    // for the whole call. The `file` field is left
+                    // untouched — paths are already short, and the
+                    // model needs the real path to open the file.
                     results.push(serde_json::json!({
                         "file": file_path.to_string_lossy().to_string(),
                         "line": line_num + 1,
-                        "text": line.trim(),
+                        "text": truncate_entry(line.trim(), MAX_ENTRY_BYTES),
                     }));
                     if results.len() >= MAX_GREP_MATCHES {
                         break;
