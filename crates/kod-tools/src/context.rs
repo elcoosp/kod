@@ -237,11 +237,43 @@ impl ToolContext {
         Ok(())
     }
 
-    /// Match a path against a glob pattern
+    /// Does `path` fall under `pattern`?
+    ///
+    /// A pattern matches the path it names *and* anything below it.
+    /// The previous implementation only built `pattern/**`, so
+    /// `/tmp/allowed/file.txt` matched the entry `/tmp/allowed` but
+    /// `/tmp/allowed` itself did not — the directory could not be
+    /// listed or read by the user who had just allowed it, only its
+    /// contents could. The same gap reversed on the forbidden side: a
+    /// forbidden directory was itself readable, and only its children
+    /// were blocked.
+    ///
+    /// Patterns containing `*`, `?`, or `[` are honored verbatim: a
+    /// user who wrote `/tmp/*` meant exactly that set, and appending
+    /// `/**` would broaden it to `/tmp/*/**` and match unrelated
+    /// paths. Everything else gets both the literal pattern and
+    /// `pattern/**`.
+    ///
+    /// Failure to compile either glob returns `false` — a bad pattern
+    /// matches nothing, so a permission that names an invalid glob
+    /// does not silently allow or forbid everything.
     fn matches_pattern(path: &Path, pattern: &str) -> bool {
-        let glob = format!("{}/**", pattern);
-        match globset::Glob::new(&glob) {
-            Ok(glob) => glob.compile_matcher().is_match(path),
+        let has_wildcard =
+            pattern.contains('*') || pattern.contains('?') || pattern.contains('[');
+        let mut builder = globset::GlobSetBuilder::new();
+        match globset::Glob::new(pattern) {
+            Ok(g) => {
+                builder.add(g);
+            }
+            Err(_) => return false,
+        }
+        if !has_wildcard
+            && let Ok(g) = globset::Glob::new(&format!("{}/**", pattern))
+        {
+            builder.add(g);
+        }
+        match builder.build() {
+            Ok(set) => set.is_match(path),
             Err(_) => false,
         }
     }
@@ -364,13 +396,57 @@ mod tests {
         };
         let context = ToolContext::new("/tmp").with_permissions(perms);
 
-        // Allowed path
+        // Child of an allowed directory: allowed.
         let result = context.can_read(Path::new("/tmp/allowed/test.txt"));
         assert!(result.is_ok());
 
-        // Forbidden path
+        // The allowed directory itself: allowed. Regression: the
+        // previous matches_pattern only built `pattern/**`, so the
+        // directory named by an allowed_paths entry did not match
+        // that entry — a user who allowed a directory could read its
+        // children but not the directory.
+        let result = context.can_read(Path::new("/tmp/allowed"));
+        assert!(
+            result.is_ok(),
+            "allowed directory itself must be readable: {result:?}"
+        );
+
+        // Child of a forbidden directory: forbidden.
         let result = context.can_read(Path::new("/tmp/allowed/forbidden/secret.txt"));
         assert!(result.is_err());
+
+        // The forbidden directory itself: forbidden. Regression: the
+        // same gap in the other direction — a forbidden directory was
+        // readable, only its contents were blocked.
+        let result = context.can_read(Path::new("/tmp/allowed/forbidden"));
+        assert!(
+            result.is_err(),
+            "forbidden directory itself must be rejected: {result:?}"
+        );
+    }
+
+    /// A pattern with a wildcard is honored verbatim — the fix must
+    /// not broaden `/tmp/*` to `/tmp/*/**` and match unrelated paths.
+    #[test]
+    fn test_wildcard_pattern_is_verbatim() {
+        let perms = ToolPermissions {
+            read_files: true,
+            allowed_paths: vec!["/tmp/*".to_string()],
+            ..Default::default()
+        };
+        let context = ToolContext::new("/").with_permissions(perms);
+
+        // `/tmp/anything` matches `/tmp/*`.
+        assert!(context.can_read(Path::new("/tmp/anything")).is_ok());
+        // `/tmp/anything/deeper` does not match `/tmp/*` under
+        // globset's default separator handling — `*` is a single
+        // path segment.
+        assert!(
+            context.can_read(Path::new("/tmp/anything/deeper")).is_err(),
+            "wildcard must not be silently broadened to match nested paths"
+        );
+        // And it definitely does not match unrelated paths.
+        assert!(context.can_read(Path::new("/var/log")).is_err());
     }
 
     #[test]
