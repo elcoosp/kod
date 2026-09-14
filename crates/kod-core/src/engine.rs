@@ -1388,14 +1388,41 @@ impl KodEngine {
         }
     }
 
-    /// Run maintenance tasks
+    /// Run maintenance tasks.
+    ///
+    /// **Does nothing today.** The comment this replaces listed three
+    /// intentions — compact memory, release expired locks, refresh the
+    /// skill cache — none of which are implemented. A caller that
+    /// reads the method name and doc and expects compaction is going
+    /// to be surprised: the call returns `Ok(())`, leaves state
+    /// untouched, and (because the body only logs at debug level)
+    /// looks successful from the outside.
+    ///
+    /// Making it a no-op-with-a-doc is deliberate rather than
+    /// implementing one of the three inline:
+    ///
+    /// - Memory compaction: `MemoryManager` has no `compact` method
+    ///   today. Adding one and calling it here would be a feature, not
+    ///   a fix, and the semantics (what to compact, when, how to
+    ///   coordinate with in-flight retrievals) deserve a design
+    ///   pass.
+    /// - Lock cleanup: `SharedWorkspace` releases locks in `Drop`,
+    ///   so there is nothing to sweep. Expired-lock GC would only
+    ///   matter if a holder leaked its guard across a panic, which
+    ///   is a separate concern.
+    /// - Skill cache refresh: the loader already hot-reloads via
+    ///   `notify`. A manual sweep has no work to do.
+    ///
+    /// The method is retained because a caller (a hypothetical
+    /// long-running daemon, a future `/maintenance` slash command)
+    /// might want a named entry point that returns `Ok(())` so the
+    /// call site compiles. If any of the three is implemented later,
+    /// this doc should be deleted, not adjusted.
+    ///
+    /// The `tracing::debug!` line was removed: it implied activity
+    /// where there is none. A caller that wants to know maintenance
+    /// ran can log around the call.
     pub async fn run_maintenance(&self) -> Result<()> {
-        // Perform periodic maintenance
-        // - Compact memory
-        // - Clean up expired locks
-        // - Update skill cache
-
-        tracing::debug!("Running engine maintenance");
         Ok(())
     }
 
@@ -1860,6 +1887,43 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, KodError::InvalidState(_)), "got {err:?}");
+    }
+
+    /// `run_maintenance` is documented as a no-op. This test pins
+    /// that: it must return Ok without changing engine state. If
+    /// someone implements one of the three intended behaviors later,
+    /// this test should be replaced with one that asserts the new
+    /// behavior — not deleted, and not silently kept passing while
+    /// the doc still says "does nothing."
+    #[tokio::test]
+    async fn test_run_maintenance_is_no_op() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        // Seed some history so "did maintenance do anything" is a
+        // meaningful question.
+        engine.seed_turn(true, "one").await;
+        engine.seed_turn(false, "two").await;
+
+        // Call maintenance twice: once before compaction, once after a
+        // manual compact. Neither call should change history.
+        engine.run_maintenance().await.unwrap();
+        let rendered_before = engine.render_history().await;
+        engine.run_maintenance().await.unwrap();
+        let rendered_after = engine.render_history().await;
+        assert_eq!(
+            rendered_before, rendered_after,
+            "run_maintenance must not touch history"
+        );
     }
 
     #[test]

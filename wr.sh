@@ -3,16 +3,8 @@ set -uo pipefail
 
 ENGINE=crates/kod-core/src/engine.rs
 
-echo "=== Diagnostic: current tool-loop exhaustion handling ==="
-grep -n "TOOL_ROUNDS_EXHAUSTED\|MAX_TOOL_ROUNDS\|tool-round limit" "$ENGINE" || echo "  no exhaustion note present"
-
-echo
-echo "=== Current run_collected_loop tail ==="
-awk '/async fn run_collected_loop/,/^    \}$/' "$ENGINE" | tail -30
-
-echo
-echo "=== Current run_streaming_loop tail ==="
-awk '/async fn run_streaming_loop/,/^    \}$/' "$ENGINE" | tail -35
+echo "=== Current run_maintenance ==="
+awk '/pub async fn run_maintenance/,/^    \}$/' "$ENGINE" | head -20
 
 echo
 echo "Patching $ENGINE"
@@ -25,134 +17,112 @@ target = sys.argv[1]
 with open(target, "r") as f:
     src = f.read()
 
-def patch(old, new, label, expect=1):
-    global src
-    n = src.count(old)
-    if n == 0:
-        print(f"  SKIP (anchor absent): {label}")
-        return False
-    if expect and n != expect:
-        print(f"  ERROR: expected {expect} occurrence(s) of {label}, found {n}")
+old = '''    /// Run maintenance tasks
+    pub async fn run_maintenance(&self) -> Result<()> {
+        // Perform periodic maintenance
+        // - Compact memory
+        // - Clean up expired locks
+        // - Update skill cache
+
+        tracing::debug!("Running engine maintenance");
+        Ok(())
+    }'''
+
+new = '''    /// Run maintenance tasks.
+    ///
+    /// **Does nothing today.** The comment this replaces listed three
+    /// intentions — compact memory, release expired locks, refresh the
+    /// skill cache — none of which are implemented. A caller that
+    /// reads the method name and doc and expects compaction is going
+    /// to be surprised: the call returns `Ok(())`, leaves state
+    /// untouched, and (because the body only logs at debug level)
+    /// looks successful from the outside.
+    ///
+    /// Making it a no-op-with-a-doc is deliberate rather than
+    /// implementing one of the three inline:
+    ///
+    /// - Memory compaction: `MemoryManager` has no `compact` method
+    ///   today. Adding one and calling it here would be a feature, not
+    ///   a fix, and the semantics (what to compact, when, how to
+    ///   coordinate with in-flight retrievals) deserve a design
+    ///   pass.
+    /// - Lock cleanup: `SharedWorkspace` releases locks in `Drop`,
+    ///   so there is nothing to sweep. Expired-lock GC would only
+    ///   matter if a holder leaked its guard across a panic, which
+    ///   is a separate concern.
+    /// - Skill cache refresh: the loader already hot-reloads via
+    ///   `notify`. A manual sweep has no work to do.
+    ///
+    /// The method is retained because a caller (a hypothetical
+    /// long-running daemon, a future `/maintenance` slash command)
+    /// might want a named entry point that returns `Ok(())` so the
+    /// call site compiles. If any of the three is implemented later,
+    /// this doc should be deleted, not adjusted.
+    ///
+    /// The `tracing::debug!` line was removed: it implied activity
+    /// where there is none. A caller that wants to know maintenance
+    /// ran can log around the call.
+    pub async fn run_maintenance(&self) -> Result<()> {
+        Ok(())
+    }'''
+
+n = src.count(old)
+if n != 1:
+    print(f"ERROR: expected 1 occurrence of run_maintenance, found {n}")
+    sys.exit(2)
+src = src.replace(old, new, 1)
+
+# Add a test pinning the no-op behavior so a future implementer sees
+# it and knows to update the doc + the test together.
+if "test_run_maintenance_is_no_op" not in src:
+    anchor = '''    #[test]
+    fn test_tool_done_marker_roundtrip() {'''
+    if anchor not in src:
+        print("ERROR: test anchor not found")
         sys.exit(2)
-    src = src.replace(old, new, expect if expect else n)
-    print(f"  patched: {label}")
-    return True
+    new_test = '''    /// `run_maintenance` is documented as a no-op. This test pins
+    /// that: it must return Ok without changing engine state. If
+    /// someone implements one of the three intended behaviors later,
+    /// this test should be replaced with one that asserts the new
+    /// behavior — not deleted, and not silently kept passing while
+    /// the doc still says "does nothing."
+    #[tokio::test]
+    async fn test_run_maintenance_is_no_op() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
 
-# ----------------------------------------------------------------------
-# 1. Add the exhausted-note constant next to MAX_TOOL_ROUNDS.
-# ----------------------------------------------------------------------
-if "TOOL_ROUNDS_EXHAUSTED_NOTE" not in src:
-    patch(
-        '''/// Max agentic tool rounds per `process()` call before forcing a
-/// summary. A single agentic pass typically uses 3–15 rounds for a
-/// non-trivial task; 40 is a generous safety margin that catches a
-/// runaway loop (a small model that keeps re-calling `read_file` on
-/// the same path, unable to recognize it is done) well before the
-/// user has waited minutes for nothing.
-const MAX_TOOL_ROUNDS: usize = 40;''',
-        '''/// Max agentic tool rounds per `process()` call before forcing a
-/// summary. A single agentic pass typically uses 3–15 rounds for a
-/// non-trivial task; 40 is a generous safety margin that catches a
-/// runaway loop (a small model that keeps re-calling `read_file` on
-/// the same path, unable to recognize it is done) well before the
-/// user has waited minutes for nothing.
-const MAX_TOOL_ROUNDS: usize = 40;
+        // Seed some history so "did maintenance do anything" is a
+        // meaningful question.
+        engine.seed_turn(true, "one").await;
+        engine.seed_turn(false, "two").await;
 
-/// Notice appended to the conversation when the tool loop hits
-/// [`MAX_TOOL_ROUNDS`] without a text-only reply. The loop calls the
-/// provider one more time afterwards to request a summary; this note
-/// is what steers that summary toward "what got done and what
-/// remains" instead of "the model answers as if nothing unusual
-/// happened." Without it the last tool-result block is the only
-/// context for the summary, and a small model tends to summarize
-/// that one result rather than the whole run.
-const TOOL_ROUNDS_EXHAUSTED_NOTE: &str =
-    "\\n\\n[tool-round limit reached — no further tool calls will run this turn. \\
-     Summarize what has been done so far and what remains.]";''',
-        "TOOL_ROUNDS_EXHAUSTED_NOTE constant",
-    )
-
-# ----------------------------------------------------------------------
-# 2. run_collected_loop: append the note after the loop if we exited
-#    on the round cap (empty final_text + tool_calls present).
-# ----------------------------------------------------------------------
-patch(
-    '''                    let section = self.run_tool_calls(&calls).await;
-                    tool_calls.extend(calls);
-                    tool_results.extend(section.results);
-                    pending.push_str(&format!("\\n\\n{}", section.prompt_block));
-                    self.apply_steers(pending).await;
-                }
-            }
-        }
-        Ok((final_text, tool_calls, tool_results, last_usage))
+        // Call maintenance twice: once before compaction, once after a
+        // manual compact. Neither call should change history.
+        engine.run_maintenance().await.unwrap();
+        let rendered_before = engine.render_history().await;
+        engine.run_maintenance().await.unwrap();
+        let rendered_after = engine.render_history().await;
+        assert_eq!(
+            rendered_before, rendered_after,
+            "run_maintenance must not touch history"
+        );
     }
 
-    /// Append queued steer notes to the running conversation (each once).''',
-    '''                    let section = self.run_tool_calls(&calls).await;
-                    tool_calls.extend(calls);
-                    tool_results.extend(section.results);
-                    pending.push_str(&format!("\\n\\n{}", section.prompt_block));
-                    self.apply_steers(pending).await;
-                }
-            }
-        }
-        // Exited on the round cap rather than a text-only reply. Tell
-        // the transcript — the caller asks the model for a summary
-        // after this returns, and this note is what makes that
-        // summary "what got done" rather than a recap of the last
-        // tool result.
-        if final_text.trim().is_empty() && !tool_calls.is_empty() {
-            pending.push_str(TOOL_ROUNDS_EXHAUSTED_NOTE);
-        }
-        Ok((final_text, tool_calls, tool_results, last_usage))
-    }
-
-    /// Append queued steer notes to the running conversation (each once).''',
-    "collected loop exhausted note",
-)
-
-# ----------------------------------------------------------------------
-# 3. run_streaming_loop: same, plus a visible notice on the chunk
-#    stream so the TUI can render it.
-# ----------------------------------------------------------------------
-patch(
-    '''            tool_calls.extend(calls);
-            tool_results.extend(section.results);
-            pending.push_str(&format!("\\n\\n{}", section.prompt_block));
-            self.apply_steers(pending).await;
-            // Tool is done, result reinjected — next provider call is pure
-            // LLM thinking, not tool execution. Tell the UI to drop the
-            // "tool: …" line so a slow model doesn't look like a stuck tool.
-            let _ = chunk_tx.send(thinking_marker()).await;
-        }
-        Ok((final_text, tool_calls, tool_results, last_usage))
-    }''',
-    '''            tool_calls.extend(calls);
-            tool_results.extend(section.results);
-            pending.push_str(&format!("\\n\\n{}", section.prompt_block));
-            self.apply_steers(pending).await;
-            // Tool is done, result reinjected — next provider call is pure
-            // LLM thinking, not tool execution. Tell the UI to drop the
-            // "tool: …" line so a slow model doesn't look like a stuck tool.
-            let _ = chunk_tx.send(thinking_marker()).await;
-        }
-        // Exited on the round cap (empty text + tool calls present).
-        // Append the note for the model, and send a visible line down
-        // the chunk stream so the user sees why generation stopped
-        // short of a final answer.
-        if final_text.trim().is_empty() && !tool_calls.is_empty() {
-            pending.push_str(TOOL_ROUNDS_EXHAUSTED_NOTE);
-            let _ = chunk_tx
-                .send(format!(
-                    "\\n\\n[tool-round limit ({MAX_TOOL_ROUNDS}) reached — summarising progress]\\n"
-                ))
-                .await;
-        }
-        Ok((final_text, tool_calls, tool_results, last_usage))
-    }''',
-    "streaming loop exhausted note + stream notice",
-)
+    #[test]
+    fn test_tool_done_marker_roundtrip() {'''
+    src = src.replace(anchor, new_test, 1)
+    print("  added test_run_maintenance_is_no_op")
+else:
+    print("  test already present")
 
 tmp = target + ".tmp"
 with open(tmp, "w") as f:
@@ -174,35 +144,33 @@ if ! cargo check --workspace --all-targets 2>&1 | tail -15; then
 fi
 
 cat > /tmp/kod_commit_msg.txt <<'MSG'
-feat(core): announce tool-round-limit exhaustion
+docs(core): be honest that run_maintenance does nothing
 
-MAX_TOOL_ROUNDS (now 40) is a safety valve against a runaway
-agentic loop — a small model that keeps re-calling read_file on the
-same path, unable to recognize it is done. The loop exits cleanly
-at the cap, but silently: the caller then asks the model for a
-summary, and the model sees only the last tool-result block as
-context. The result is a plausible-looking final answer that has
-nothing to do with what actually happened over the previous 40
-rounds.
+run_maintenance had a three-item to-do list in a comment and
+returned Ok(()) without executing any of it:
 
-Add TOOL_ROUNDS_EXHAUSTED_NOTE, appended to the transcript when the
-loop exits on the cap (final text empty, tool calls present). The
-note tells the model "no further tool calls will run this turn —
-summarize what has been done so far and what remains," which
-steers the follow-up summary toward a run-level recap rather than a
-recap of the last round.
+  // Perform periodic maintenance
+  // - Compact memory
+  // - Clean up expired locks
+  // - Update skill cache
 
-In the streaming path, also send a one-line notice down the chunk
-channel:
+A caller reading the name and doc and expecting compaction is going
+to be surprised: the call succeeds, leaves state untouched, and
+logs at debug level (so it looks successful from the outside).
 
-  [tool-round limit (40) reached — summarising progress]
+Replace the comment with a doc block that states the method is a
+no-op today, explains why each of the three items is deferred (each
+needs a design pass; none is a bug fix), and names the conditions
+under which the doc should be deleted rather than adjusted. Remove
+the tracing::debug! line — it implied activity where there is none,
+and a caller that wants a log can wrap the call.
 
-so the TUI renders a system line alongside the model's summary.
-Without it, the user sees tool calls stop and a summary appear
-with no explanation of why generation didn't reach a final answer —
-indistinguishable from a normal completion.
-
-No public API change.
+Add test_run_maintenance_is_no_op: seeds history, calls
+run_maintenance twice, asserts render_history is byte-identical
+before and after. If one of the three behaviors is implemented
+later, this test should be replaced with one that asserts the new
+behavior, not deleted and not kept passing while the doc still says
+"does nothing."
 MSG
 
 git add -A
