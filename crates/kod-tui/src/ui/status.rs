@@ -43,15 +43,19 @@ impl StatusWidget {
             return;
         }
 
-        // 2. Search mode shows the live query + match count. The label
-        // is built in KodApp::search_status_label so the widget cannot
-        // disagree with the app about what "0 matches" means. (The
-        // previous widget read (0, 0) from search_position and
-        // rendered "no matches" even when no search had been run.)
-        if app.is_searching() {
+        // 2. Search mode shows the live query + match count. The
+        // label is built in KodApp::search_status_label, which is
+        // non-empty for every state where the search bar should be
+        // visible — including "editing, empty query" (`/search` just
+        // opened, user has not typed yet). The previous guard
+        // (`is_searching()`) excluded the editing state, which is why
+        // `/search` with no argument used to render no feedback at
+        // all.
+        let search_label = app.search_status_label();
+        if !search_label.is_empty() {
             Widget::render(
                 Line::from(vec![Span::styled(
-                    format!("{} ", app.search_status_label()),
+                    format!("{} ", search_label),
                     Style::default()
                         .fg(theme.accent)
                         .add_modifier(Modifier::BOLD),

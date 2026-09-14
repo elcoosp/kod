@@ -871,23 +871,14 @@ impl TuiLoop {
                 let rest: String = parts.collect::<Vec<_>>().join(" ");
                 let rest = rest.trim();
                 if rest.is_empty() {
-                    // No query yet. Previously this called
-                    // `begin_search`, which sets `search_query =
-                    // Some("")` — but nothing routes further typing
-                    // into that query (`search_type` has no caller),
-                    // and `is_searching()` returns false for the
-                    // empty string, so the status bar showed the idle
-                    // hint and Escape did not clear the phantom
-                    // search. The user typed `/search`, saw no
-                    // change, and had to type `/search <text>` to
-                    // recover.
-                    //
-                    // Prefill the input with the command plus a
-                    // space and switch to Insert mode, so the user's
-                    // next keystrokes land where they belong. Same
-                    // shape as the `f` keybinding (SearchPrefix).
-                    self.app.set_input("/search ".to_string());
-                    self.app.set_input_mode(InputMode::Insert);
+                    // Open the type-ahead search bar. From here the
+                    // user's keystrokes go into the query (see
+                    // `handle_key`'s `is_editing_search` branch),
+                    // Enter commits, Escape clears. This is the
+                    // design `begin_search` was originally written
+                    // for; the previous workaround (prefill the input
+                    // with "/search ") is gone.
+                    self.app.begin_search();
                 } else {
                     let n = self.app.set_search(rest);
                     self.app.push_system_message(&format!(
@@ -1121,6 +1112,45 @@ impl TuiLoop {
 
     /// Handle key events
     async fn handle_key(&mut self, key: KeyCode) -> Result<()> {
+        // Type-ahead search: while the bar is open and being edited,
+        // every printable character, Backspace, and Escape belongs to
+        // the query, not the input box. This check runs before the
+        // yes/no intercept below so a search started while a confirm
+        // is pending still types into the query — the user can see
+        // what they are typing.
+        if self.app.is_editing_search() {
+            match key {
+                KeyCode::Char(c) => {
+                    self.app.search_type(c);
+                    return Ok(());
+                }
+                KeyCode::Backspace => {
+                    self.app.search_backspace();
+                    return Ok(());
+                }
+                KeyCode::Escape | KeyCode::CtrlC => {
+                    self.app.clear_search();
+                    self.app.push_system_message("Search cleared.");
+                    return Ok(());
+                }
+                KeyCode::Enter => {
+                    // Commit: leave the query in place, drop out of
+                    // editing so n/N navigate. If the query is empty,
+                    // there is nothing to commit — clear instead.
+                    if self.app.search_query_text().is_empty() {
+                        self.app.clear_search();
+                    } else {
+                        self.app.commit_search();
+                    }
+                    return Ok(());
+                }
+                _ => {
+                    // Other keys fall through to normal handling so
+                    // the user can still scroll (PgUp/PgDn), quit, etc.
+                }
+            }
+        }
+
         // Intercept yes/no when a destructive action is pending (q, /clear).
         if self.app.pending_confirm().is_some() {
             match key {
@@ -1281,8 +1311,10 @@ impl TuiLoop {
                 });
             }
             KeyAction::SearchPrefix => {
-                self.app.set_input("/search ".to_string());
-                self.app.set_input_mode(InputMode::Insert);
+                // Same as `/search` with no argument: open the bar
+                // and let the user's next keystroke be the first
+                // character of the query.
+                self.app.begin_search();
             }
             KeyAction::CopyLast => {
                 if self.app.copy_last_to_clipboard() {
@@ -1745,32 +1777,33 @@ mod tests {
         assert!(!tui.app().is_generating());
     }
 
-    /// `/search` with no argument must prefill the input with the
-    /// command plus a space and switch to Insert mode, so the user's
-    /// next keystroke becomes part of the query. Regression: the
-    /// previous handler called `begin_search`, which set
-    /// `search_query = Some("")` — a state no keystroke could reach
-    /// (no `search_type` caller, `is_searching()` false for the empty
-    /// string), so the command appeared to do nothing.
+    /// `/search` with no argument opens the type-ahead search bar: the
+    /// app enters the editing state with an empty query, and the next
+    /// keystroke is a character of the query (see `handle_key`). This
+    /// replaces the earlier workaround that prefilled the input box
+    /// with "/search " — the bar is the design the command was meant
+    /// to have.
     #[tokio::test]
-    async fn test_search_no_arg_prefills_input() {
+    async fn test_search_no_arg_opens_type_ahead_bar() {
         let mut tui = TuiLoop::new();
         tui.handle_command("/search").await.unwrap();
-        assert_eq!(
-            tui.app().input(),
-            "/search ",
-            "no-arg /search must prefill the input"
-        );
-        assert_eq!(
-            tui.app().input_mode(),
-            &InputMode::Insert,
-            "no-arg /search must switch to Insert mode"
-        );
-        // The phantom-search state must not exist.
+
         assert!(
-            !tui.app().is_searching(),
-            "no-arg /search must not enter a search state"
+            tui.app().is_editing_search(),
+            "no-arg /search must open the search bar"
         );
+        assert_eq!(tui.app().search_query_text(), "");
+        // The input box is untouched — the user's next keystroke goes
+        // into the query, not the input.
+        assert_eq!(tui.app().input(), "");
+
+        // Type a query and confirm it landed in the search, not the
+        // input.
+        tui.handle_event(Event::Key(KeyCode::Char('x')))
+            .await
+            .unwrap();
+        assert_eq!(tui.app().search_query_text(), "x");
+        assert_eq!(tui.app().input(), "");
     }
 
     /// `/search <text>` still works as before: finds matches and

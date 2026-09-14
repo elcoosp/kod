@@ -238,9 +238,22 @@ pub struct KodApp {
     /// Destructive action waiting for y/n.
     pending_confirm: Option<ConfirmKind>,
 
-    /// Active chat search (`/search <text>`, `n`/`N` to jump).
+    /// Active chat search. `Some(q)` means the search bar has state;
+    /// `q` may be empty (the bar is open, the user has not typed yet).
+    /// See `search_editing` for the "typing into the bar" flag.
     search_query: Option<String>,
     search_index: usize,
+    /// True while the search bar is open and the user is typing into
+    /// it: every printable character goes into the query instead of
+    /// the input box, Backspace edits the query, and Enter commits
+    /// (drops `search_editing`, leaving `search_query` in place so
+    /// `n`/`N` navigate). Escape always clears the search outright.
+    ///
+    /// Separate from `search_query.is_some()` because a committed
+    /// search also has a query but is not being edited — the
+    /// distinction is what lets `n` append a character to a query
+    /// being typed and mean "next match" once typing is done.
+    search_editing: bool,
 
     /// Tool message ids unfolded to their full output (Enter toggles).
     expanded_tools: HashSet<MessageId>,
@@ -310,6 +323,7 @@ impl KodApp {
             pending_confirm: None,
             search_query: None,
             search_index: 0,
+            search_editing: false,
             expanded_tools: HashSet::new(),
             show_tools: true,
             phase: GenPhase::Idle,
@@ -658,6 +672,7 @@ impl KodApp {
     pub fn clear_search(&mut self) {
         self.search_query = None;
         self.search_index = 0;
+        self.search_editing = false;
     }
 
     pub fn search_query(&self) -> Option<&str> {
@@ -2189,28 +2204,34 @@ impl KodApp {
         self.should_quit = quit;
     }
 
-    /// Enter search mode with an empty query.
+    /// Open the type-ahead search bar with an empty query.
     ///
-    /// **Not currently reachable from any command.** It was the
-    /// intended entry point for a type-ahead search bar — the status
-    /// widget was to render an editor here and `search_type` was to
-    /// feed keystrokes into the query — but the widget only shows the
-    /// search bar when `is_searching()` is true, and `is_searching()`
-    /// is false for the empty query this sets. `search_type` has no
-    /// caller either. The `/search` command handler now prefills the
-    /// input box and switches to Insert mode instead.
-    ///
-    /// Kept as a public method so a future type-ahead implementation
-    /// has a starting point. If you wire it up, also make
-    /// `is_searching()` true while the query is being edited (or add
-    /// a distinct `is_editing_search()`), or the widget will keep
-    /// rendering the idle hint — the exact mismatch that made this
-    /// unreachable in the first place.
+    /// While the bar is open, `handle_key` routes printable characters
+    /// and Backspace into the query (see `is_editing_search`), Enter
+    /// commits (leaving the query navigable with `n`/`N`), and Escape
+    /// clears the search outright. This is the state `/search` with no
+    /// argument opens.
     pub fn begin_search(&mut self) {
-        if self.search_query.as_deref().is_none() {
-            self.search_query = Some(String::new());
-        }
+        self.search_query = Some(String::new());
         self.search_index = 0;
+        self.search_editing = true;
+    }
+
+    /// True while the search bar is open and the user is typing into
+    /// it. Distinct from `is_searching()` (which requires a non-empty
+    /// query): during editing there are no matches yet and no
+    /// match-position to report, but the bar is on screen and every
+    /// keystroke is the user's query.
+    pub fn is_editing_search(&self) -> bool {
+        self.search_editing && self.search_query.is_some()
+    }
+
+    /// Leave the editing state without dropping the query: the search
+    /// remains active (`is_searching()` is unchanged), but typing
+    /// stops going into the query, and `n`/`N` navigate matches.
+    /// Enter calls this.
+    pub fn commit_search(&mut self) {
+        self.search_editing = false;
     }
 
     /// Type into the active search (appended to the query).
@@ -2900,6 +2921,46 @@ mod tests {
             app.context_tokens() > after_prompt,
             "estimate must accumulate when no real usage arrives"
         );
+    }
+
+    /// The type-ahead search states: begin_search opens the bar with
+    /// an empty query, typing appends, Enter commits (query stays,
+    /// editing stops), Escape/clear_search drops everything.
+    #[test]
+    fn test_type_ahead_search_state_transitions() {
+        let mut app = KodApp::new();
+        assert!(!app.is_editing_search());
+        assert!(!app.is_searching());
+
+        // Open the bar.
+        app.begin_search();
+        assert!(app.is_editing_search(), "begin_search must enter editing");
+        assert_eq!(app.search_query_text(), "");
+        assert_eq!(app.search_status(), SearchStatus::Editing);
+
+        // Typing appends.
+        app.search_type('h');
+        app.search_type('i');
+        assert_eq!(app.search_query_text(), "hi");
+        assert!(app.is_editing_search());
+
+        // Add a matching message so the search finds something.
+        app.push_system_message("a hit for hi");
+        // Re-run the search against the new message set.
+        let _ = app.set_search("hi");
+
+        // Commit: query stays, editing ends, is_searching() is true.
+        app.commit_search();
+        assert!(!app.is_editing_search());
+        assert!(app.is_searching());
+        assert_eq!(app.search_query_text(), "hi");
+
+        // Clear: everything goes away.
+        app.clear_search();
+        assert!(!app.is_editing_search());
+        assert!(!app.is_searching());
+        assert_eq!(app.search_query_text(), "");
+        assert_eq!(app.search_status(), SearchStatus::Inactive);
     }
 
     /// `search_status` must distinguish the states the old

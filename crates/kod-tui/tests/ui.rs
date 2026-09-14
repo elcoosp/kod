@@ -309,6 +309,47 @@ fn test_tool_message_renders_header_row() {
     assert!(text.contains("3 entries"), "tool body missing: {text}");
 }
 
+/// While the search bar is being edited, printable characters go
+/// into the query — not into the input box, and not into the normal
+/// mode keybinding dispatch. This is the type-ahead contract the
+/// `/search` command relies on.
+#[tokio::test]
+async fn test_typing_into_search_bar_edits_query() {
+    use kod_tui::{Event, KeyCode, TuiLoop};
+
+    let mut tui = TuiLoop::new();
+    // Open the search bar (equivalent to running /search with no arg).
+    tui.app_mut().begin_search();
+    assert!(tui.app().is_editing_search());
+
+    // Type a query.
+    for c in ['f', 'o', 'o'] {
+        tui.handle_event(Event::Key(KeyCode::Char(c))).await.unwrap();
+    }
+    assert_eq!(tui.app().search_query_text(), "foo");
+    // Input box still empty — the characters went to the query, not
+    // the input.
+    assert_eq!(tui.app().input(), "");
+
+    // Backspace edits the query.
+    tui.handle_event(Event::Key(KeyCode::Backspace))
+        .await
+        .unwrap();
+    assert_eq!(tui.app().search_query_text(), "fo");
+
+    // Enter commits: query stays, editing ends.
+    tui.handle_event(Event::Key(KeyCode::Enter)).await.unwrap();
+    assert!(!tui.app().is_editing_search());
+    assert_eq!(tui.app().search_query_text(), "fo");
+
+    // Escape clears.
+    tui.handle_event(Event::Key(KeyCode::Escape))
+        .await
+        .unwrap();
+    assert!(!tui.app().is_searching());
+    assert_eq!(tui.app().search_query_text(), "");
+}
+
 /// With an active search targeting an early message, the chat widget
 /// must scroll that message into view — not stay pinned to the live
 /// bottom where the user happened to be before searching.
