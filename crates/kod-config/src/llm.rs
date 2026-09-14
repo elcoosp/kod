@@ -71,18 +71,52 @@ impl LlmConfig {
             self.temperature = 2.0;
         }
 
-        // Context window: the codebase's own caps (`render_history`'s
-        // MAX_HISTORY_CHARS, the TUI meter's floor, per-tool prompt
-        // caps) all assume a positive window. 0 means "unknown" to some
-        // users, but every consumer here treats it as "0 tokens
-        // available", which then silently discards every memory and
-        // history entry. Clamp to the default.
+        // Context window. Three downstream floors have to be
+        // consistent with this value, or the session behaves
+        // incoherently:
+        //
+        //   - `KodApp::set_context_limit` floors the meter at 1000
+        //     tokens.
+        //   - `KodEngine::set_history_budget` floors the rendered
+        //     history at `MIN_HISTORY_CHAR_BUDGET = 4000` chars
+        //     (~1000 tokens at 4 chars/token), and the TUI passes
+        //     `context_window * 3`.
+        //   - `KodApp::maybe_compact` fires when the accumulated
+        //     token estimate exceeds 4/5 of the (floored) window.
+        //
+        // A user who writes `context_window = 500` gets a meter that
+        // says 1000, a history budget that clamps to 4000 chars, and
+        // an auto-compact threshold based on 1000 — three numbers that
+        // all pretend the window is bigger than the user set, and the
+        // history budget alone already overshoots the window. The
+        // session works but its accounting lies.
+        //
+        // Clamp to a coherent minimum instead of letting the incoherent
+        // case run. The floor is 2000 tokens: high enough that
+        // `2000 * 3 = 6000` chars of history clears the engine's 4000
+        // char floor with headroom, and the meter's 4/5 threshold
+        // (1600 tokens) leaves room for the prompt scaffolding and a
+        // tool result or two before compaction fires.
+        //
+        // 0 is treated separately: a config file that predates the
+        // field, or a user who wrote `context_window = 0` meaning
+        // "unknown, use the default", gets `LlmConfig::default()`'s
+        // 8192 rather than the floor.
+        const MIN_CONTEXT_WINDOW: usize = 2_000;
         if self.context_window == 0 {
             tracing::warn!(
                 "llm.context_window is 0; falling back to {}",
                 LlmConfig::default().context_window
             );
             self.context_window = LlmConfig::default().context_window;
+        } else if self.context_window < MIN_CONTEXT_WINDOW {
+            tracing::warn!(
+                value = self.context_window,
+                floor = MIN_CONTEXT_WINDOW,
+                "llm.context_window is below the coherent minimum; clamping to {}",
+                MIN_CONTEXT_WINDOW
+            );
+            self.context_window = MIN_CONTEXT_WINDOW;
         }
 
         // max_tokens == 0 is worse than context_window == 0 — some
@@ -223,6 +257,56 @@ mod tests {
         c.validate();
         assert_eq!(c.context_window, LlmConfig::default().context_window);
         assert_eq!(c.max_tokens, LlmConfig::default().max_tokens);
+    }
+
+    /// A `context_window` below the coherent floor must be clamped up,
+    /// not passed through. Regression: a window of 500 produced an
+    /// incoherent session where the meter's floor (1000), the history
+    /// budget's floor (4000 chars ≈ 1000 tokens), and the auto-compact
+    /// threshold (4/5 of the floored window) all disagreed about how
+    /// much room the model had.
+    #[test]
+    fn test_validate_clamps_tiny_context_window() {
+        let mut c = LlmConfig {
+            context_window: 500,
+            ..LlmConfig::default()
+        };
+        c.validate();
+        assert_eq!(
+            c.context_window, 2_000,
+            "tiny window must clamp to the coherent floor"
+        );
+
+        // Boundary: 1999 clamps, 2000 does not.
+        let mut c = LlmConfig {
+            context_window: 1_999,
+            ..LlmConfig::default()
+        };
+        c.validate();
+        assert_eq!(c.context_window, 2_000);
+
+        let mut c = LlmConfig {
+            context_window: 2_000,
+            ..LlmConfig::default()
+        };
+        c.validate();
+        assert_eq!(c.context_window, 2_000);
+
+        // Above the floor is honored.
+        let mut c = LlmConfig {
+            context_window: 131_072,
+            ..LlmConfig::default()
+        };
+        c.validate();
+        assert_eq!(c.context_window, 131_072);
+
+        // 0 is a special case that maps to the default, not the floor.
+        let mut c = LlmConfig {
+            context_window: 0,
+            ..LlmConfig::default()
+        };
+        c.validate();
+        assert_eq!(c.context_window, LlmConfig::default().context_window);
     }
 
     #[test]

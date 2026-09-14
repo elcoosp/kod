@@ -27,6 +27,12 @@ pub struct OpenAICompatProvider {
     /// `reqwest::Client` on every `list_models()` — each one spins up
     /// its own pool and a background task, all of which are dropped as
     /// soon as the response lands.
+    ///
+    /// The client is tied to `base_url` + `api_key`, not to the model,
+    /// so [`OpenAICompatProvider::with_model`] carries the existing
+    /// client forward rather than building a new one. A `/model` switch
+    /// in the TUI (or any other model change) now keeps the warm TCP
+    /// and TLS state, which is what makes back-to-back switches cheap.
     client: reqwest::Client,
 }
 
@@ -78,9 +84,37 @@ impl OpenAICompatProvider {
         )
     }
 
-    /// Switch models, keeping the same endpoint and credentials.
+    /// Switch models, keeping the same endpoint, credentials, and
+    /// HTTP client.
+    ///
+    /// The client is bound to `base_url` and `api_key` — which do not
+    /// change on a model switch — so it is carried forward instead of
+    /// rebuilt. A `with_api_key` call would construct a fresh
+    /// `reqwest::Client` (connection pool + TLS session cache + a
+    /// background runtime), throw away the warm one, and force the
+    /// next request to establish new TCP and TLS state for no reason.
+    /// The TUI's `/model` switch is the common caller; back-to-back
+    /// switches are now cheap.
     pub fn with_model(self, model: impl Into<String>) -> Result<Self> {
-        Self::with_api_key(&self.base_url, model, self.api_key.clone())
+        let model = model.into();
+        // Build a new inner OpenAICompatible (that struct holds the
+        // model), but reuse the fields that do not depend on it.
+        let inner = OpenAICompatible::new(
+            OpenAICompatibleConfig::new(&self.api_key, &model)
+                .with_base_url(&self.base_url)
+                .with_provider_name("openai-compatible"),
+        )
+        .map_err(adk_err)?;
+        Ok(Self {
+            inner,
+            model,
+            base_url: self.base_url,
+            api_key: self.api_key,
+            // Reuse the existing client. reqwest::Client is Clone
+            // (it wraps an Arc internally), so this is an atomic
+            // increment, not a rebuild.
+            client: self.client,
+        })
     }
 
     /// The normalized API root (`.../v1`).
