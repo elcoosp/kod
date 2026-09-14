@@ -23,6 +23,18 @@ use tokio::sync::RwLock;
 /// the same path, unable to recognize it is done) well before the
 /// user has waited minutes for nothing.
 const MAX_TOOL_ROUNDS: usize = 40;
+
+/// Notice appended to the conversation when the tool loop hits
+/// [`MAX_TOOL_ROUNDS`] without a text-only reply. The loop calls the
+/// provider one more time afterwards to request a summary; this note
+/// is what steers that summary toward "what got done and what
+/// remains" instead of "the model answers as if nothing unusual
+/// happened." Without it the last tool-result block is the only
+/// context for the summary, and a small model tends to summarize
+/// that one result rather than the whole run.
+const TOOL_ROUNDS_EXHAUSTED_NOTE: &str =
+    "\n\n[tool-round limit reached — no further tool calls will run this turn. \
+     Summarize what has been done so far and what remains.]";
 /// Max turns of the `/goal` loop before it stops and reports progress.
 const MAX_GOAL_TURNS: usize = 6;
 
@@ -1082,6 +1094,14 @@ impl KodEngine {
                 }
             }
         }
+        // Exited on the round cap rather than a text-only reply. Tell
+        // the transcript — the caller asks the model for a summary
+        // after this returns, and this note is what makes that
+        // summary "what got done" rather than a recap of the last
+        // tool result.
+        if final_text.trim().is_empty() && !tool_calls.is_empty() {
+            pending.push_str(TOOL_ROUNDS_EXHAUSTED_NOTE);
+        }
         Ok((final_text, tool_calls, tool_results, last_usage))
     }
 
@@ -1159,6 +1179,18 @@ impl KodEngine {
             // LLM thinking, not tool execution. Tell the UI to drop the
             // "tool: …" line so a slow model doesn't look like a stuck tool.
             let _ = chunk_tx.send(thinking_marker()).await;
+        }
+        // Exited on the round cap (empty text + tool calls present).
+        // Append the note for the model, and send a visible line down
+        // the chunk stream so the user sees why generation stopped
+        // short of a final answer.
+        if final_text.trim().is_empty() && !tool_calls.is_empty() {
+            pending.push_str(TOOL_ROUNDS_EXHAUSTED_NOTE);
+            let _ = chunk_tx
+                .send(format!(
+                    "\n\n[tool-round limit ({MAX_TOOL_ROUNDS}) reached — summarising progress]\n"
+                ))
+                .await;
         }
         Ok((final_text, tool_calls, tool_results, last_usage))
     }
