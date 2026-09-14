@@ -164,6 +164,60 @@ impl SharedWorkspace {
             });
         }
 
+        // Final-component symlink check.
+        //
+        // `canonicalize` above resolves any symlink whose target
+        // exists — including one at the final component pointing
+        // outside the workspace, which the containment check catches.
+        // The case it does not catch is a *dangling* symlink: the
+        // initial canonicalize fails on a target that does not exist,
+        // the fallback canonicalizes the deepest existing ancestor
+        // (inside the workspace) and re-appends the leaf, and the
+        // resulting lexical path passes containment while an OS-level
+        // operation would follow the symlink to a target outside.
+        //
+        // Refuse a dangling leaf symlink. Resolving its target would
+        // require recursively following read_link chains and produces
+        // a destination whose containment cannot be verified; the
+        // safe answer is "no." A symlink whose target exists is
+        // unaffected — canonicalize resolves it, and the lock is
+        // taken on the target's canonical form (which is the right
+        // semantics for coordination: two agents reaching the same
+        // file via two symlinks must take the same lock).
+        if let Ok(meta) = std::fs::symlink_metadata(&canonical)
+            && meta.file_type().is_symlink()
+        {
+            match std::fs::canonicalize(&canonical) {
+                Ok(target) => {
+                    // Should be unreachable given the flow above, but
+                    // cheap insurance in case the fallback path was
+                    // taken for any other reason.
+                    if !target.starts_with(&root_canonical) {
+                        return Err(KodError::PermissionDenied {
+                            action: "access".to_string(),
+                            reason: format!(
+                                "Path is a symlink whose target escapes the \
+                                 workspace: {} -> {}",
+                                path.display(),
+                                target.display()
+                            ),
+                        });
+                    }
+                }
+                Err(_) => {
+                    return Err(KodError::PermissionDenied {
+                        action: "access".to_string(),
+                        reason: format!(
+                            "Path is a dangling symlink: {}. Refusing to lock \
+                             or resolve — the target does not exist and cannot \
+                             be verified as inside the workspace.",
+                            canonical.display()
+                        ),
+                    });
+                }
+            }
+        }
+
         Ok(canonical)
     }
 
@@ -220,6 +274,58 @@ mod tests {
     }
 
     /// An absolute path outside the workspace is rejected.
+    /// A dangling symlink inside the workspace must be rejected.
+    /// Regression: the fallback canonicalized the deepest existing
+    /// ancestor (inside the workspace) and re-appended the leaf, so
+    /// the lexical path passed containment while an OS-level write
+    /// would have followed the symlink to a target outside.
+    #[cfg(unix)]
+    #[test]
+    fn test_resolve_path_rejects_dangling_symlink() {
+        let (_tmp, ws) = ws();
+        let link = ws.root().join("dangling");
+        std::os::unix::fs::symlink("/nonexistent-kod-swarm-test", &link).unwrap();
+
+        let result = ws.resolve_path(std::path::Path::new("dangling"));
+        assert!(
+            result.is_err(),
+            "dangling symlink must be rejected: {result:?}"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("dangling") || msg.contains("symlink"),
+            "error should name the problem: {msg}"
+        );
+    }
+
+    /// A symlink whose target exists inside the workspace still
+    /// resolves, and resolves to the *target* form — so two agents
+    /// reaching the same file via different symlinks take the same
+    /// lock.
+    #[cfg(unix)]
+    #[test]
+    fn test_resolve_path_accepts_symlink_to_inside_file() {
+        let (_tmp, ws) = ws();
+        std::fs::write(ws.root().join("real.txt"), "x").unwrap();
+        std::os::unix::fs::symlink(
+            ws.root().join("real.txt"),
+            ws.root().join("link.txt"),
+        )
+        .unwrap();
+
+        let via_link = ws
+            .resolve_path(std::path::Path::new("link.txt"))
+            .expect("symlink to inside file must resolve");
+        let via_real = ws
+            .resolve_path(std::path::Path::new("real.txt"))
+            .expect("real file must resolve");
+        assert_eq!(
+            via_link, via_real,
+            "both paths must resolve to the same canonical form \
+             (the lock key)"
+        );
+    }
+
     #[test]
     fn test_resolve_path_rejects_absolute_outside_root() {
         let (_tmp, ws) = ws();
