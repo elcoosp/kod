@@ -868,7 +868,23 @@ impl TuiLoop {
                 let rest: String = parts.collect::<Vec<_>>().join(" ");
                 let rest = rest.trim();
                 if rest.is_empty() {
-                    self.app.begin_search();
+                    // No query yet. Previously this called
+                    // `begin_search`, which sets `search_query =
+                    // Some("")` — but nothing routes further typing
+                    // into that query (`search_type` has no caller),
+                    // and `is_searching()` returns false for the
+                    // empty string, so the status bar showed the idle
+                    // hint and Escape did not clear the phantom
+                    // search. The user typed `/search`, saw no
+                    // change, and had to type `/search <text>` to
+                    // recover.
+                    //
+                    // Prefill the input with the command plus a
+                    // space and switch to Insert mode, so the user's
+                    // next keystrokes land where they belong. Same
+                    // shape as the `f` keybinding (SearchPrefix).
+                    self.app.set_input("/search ".to_string());
+                    self.app.set_input_mode(InputMode::Insert);
                 } else {
                     let n = self.app.set_search(rest);
                     self.app.push_system_message(&format!(
@@ -1707,6 +1723,51 @@ mod tests {
         tui.app_mut().begin_generation();
         tui.handle_command("/cancel").await.unwrap();
         assert!(!tui.app().is_generating());
+    }
+
+    /// `/search` with no argument must prefill the input with the
+    /// command plus a space and switch to Insert mode, so the user's
+    /// next keystroke becomes part of the query. Regression: the
+    /// previous handler called `begin_search`, which set
+    /// `search_query = Some("")` — a state no keystroke could reach
+    /// (no `search_type` caller, `is_searching()` false for the empty
+    /// string), so the command appeared to do nothing.
+    #[tokio::test]
+    async fn test_search_no_arg_prefills_input() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/search").await.unwrap();
+        assert_eq!(
+            tui.app().input(),
+            "/search ",
+            "no-arg /search must prefill the input"
+        );
+        assert_eq!(
+            tui.app().input_mode(),
+            &InputMode::Insert,
+            "no-arg /search must switch to Insert mode"
+        );
+        // The phantom-search state must not exist.
+        assert!(
+            !tui.app().is_searching(),
+            "no-arg /search must not enter a search state"
+        );
+    }
+
+    /// `/search <text>` still works as before: finds matches and
+    /// reports the count.
+    #[tokio::test]
+    async fn test_search_with_arg_still_works() {
+        let mut tui = TuiLoop::new();
+        for i in 0..3 {
+            tui.app_mut().push_system_message(&format!("needle {i}"));
+        }
+        tui.handle_command("/search needle").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("3 match"),
+            "expected 3 matches: {}",
+            last.content
+        );
     }
 
     /// Dispatching a plain prompt must record it as `last_prompt`, so

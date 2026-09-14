@@ -2189,8 +2189,23 @@ impl KodApp {
         self.should_quit = quit;
     }
 
-    /// Enter search mode (status bar shows the editor, `/` typed here).
-    /// `query` starts the search immediately; empty query just opens the bar.
+    /// Enter search mode with an empty query.
+    ///
+    /// **Not currently reachable from any command.** It was the
+    /// intended entry point for a type-ahead search bar — the status
+    /// widget was to render an editor here and `search_type` was to
+    /// feed keystrokes into the query — but the widget only shows the
+    /// search bar when `is_searching()` is true, and `is_searching()`
+    /// is false for the empty query this sets. `search_type` has no
+    /// caller either. The `/search` command handler now prefills the
+    /// input box and switches to Insert mode instead.
+    ///
+    /// Kept as a public method so a future type-ahead implementation
+    /// has a starting point. If you wire it up, also make
+    /// `is_searching()` true while the query is being edited (or add
+    /// a distinct `is_editing_search()`), or the widget will keep
+    /// rendering the idle hint — the exact mismatch that made this
+    /// unreachable in the first place.
     pub fn begin_search(&mut self) {
         if self.search_query.as_deref().is_none() {
             self.search_query = Some(String::new());
