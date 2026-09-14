@@ -688,12 +688,18 @@ impl TuiLoop {
                     self.app.push_system_message(&format!(
                         "Goal set: {rest}\nEvery prompt now works turn by turn until GOAL MET. Esc cancels; /steer redirects; /goal clear stops."
                     ));
-                    // Start working immediately: reload the goal as the next
-                    // prompt and queue an Enter behind this command, so the
-                    // loop picks it up and dispatches without extra keystrokes.
+                    // Start working immediately: the goal itself becomes
+                    // the first prompt. Call dispatch_prompt directly
+                    // instead of pushing a synthetic Enter into the event
+                    // queue — the previous approach relied on Enter's
+                    // Insert-mode binding and could misfire if the user
+                    // changed keybindings or was mid-typing.
+                    //
+                    // Box::pin breaks the dispatch → handle_command →
+                    // (goal arm) → dispatch recursion the same way
+                    // retry_generation does.
                     self.app.set_input(rest.to_string());
-                    self.app.set_input_mode(InputMode::Insert);
-                    self.event_handler.push_event(Event::Key(KeyCode::Enter));
+                    Box::pin(self.dispatch_prompt()).await?;
                 }
             }
             "/compact" => {
@@ -1172,13 +1178,20 @@ mod tests {
         let mut tui = TuiLoop::new();
         tui.handle_command("/goal ship the fix").await.unwrap();
         assert_eq!(tui.app().goal(), Some("ship the fix"));
-        // Setting a goal also queues its first prompt: input prefilled,
-        // Insert mode on, so the queued Enter dispatches without keystrokes.
-        assert_eq!(tui.app().input(), "ship the fix");
-        assert!(matches!(
-            tui.app().input_mode(),
-            crate::app::InputMode::Insert
-        ));
+        // Setting a goal dispatches it as the first prompt immediately.
+        // Without a live engine (this test has none) dispatch_prompt
+        // records the user message and returns without generating.
+        // The input box is cleared by submit_input, and the goal text
+        // appears in the chat as a user message.
+        assert_eq!(tui.app().input(), "");
+        let user_msg = tui
+            .app()
+            .messages()
+            .iter()
+            .find(|m| m.role == kod_types::MessageRole::User)
+            .expect("goal text should be recorded as a user message");
+        assert_eq!(user_msg.content, "ship the fix");
+
         tui.handle_command("/goal").await.unwrap();
         let last = tui.app().messages().last().unwrap();
         assert!(
