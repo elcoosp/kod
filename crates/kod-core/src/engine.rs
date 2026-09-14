@@ -109,6 +109,23 @@ pub fn is_thinking_marker(chunk: &str) -> bool {
     chunk == THINKING_MARKER
 }
 
+/// Truncate a UTF-8 string to at most `max` bytes, rounding down to the
+/// nearest char boundary. Returns the input unchanged when it already
+/// fits. Use this instead of `&s[..max]` — the raw slice panics when
+/// `max` lands mid-codepoint, which any non-ASCII tool output can hit
+/// (a file containing "café", an error message with an em-dash, any
+/// emoji in a directory listing).
+pub(crate) fn truncate_chars(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// One-line brief for a tool call: `execute_command cargo test …`,
 /// `read_file path=…`. Used for the live "running" indicator.
 pub fn format_call_brief(name: &str, args: &serde_json::Value) -> String {
@@ -117,7 +134,7 @@ pub fn format_call_brief(name: &str, args: &serde_json::Value) -> String {
             // Multi-line shell snippets read as their first line only.
             let first = cmd.lines().next().unwrap_or(cmd).trim();
             let short = if first.len() > 100 {
-                format!("{}…", &first[..100])
+                format!("{}…", truncate_chars(first, 100))
             } else {
                 first.to_string()
             };
@@ -139,7 +156,7 @@ pub fn format_call_brief(name: &str, args: &serde_json::Value) -> String {
                     _ => continue,
                 };
                 let short = if s.len() > 80 {
-                    format!("{}…", &s[..80])
+                    format!("{}…", truncate_chars(&s, 80))
                 } else {
                     s
                 };
@@ -154,7 +171,7 @@ pub fn format_call_brief(name: &str, args: &serde_json::Value) -> String {
         return name.to_string();
     }
     let short = if raw.len() > 80 {
-        format!("{}...", &raw[..80])
+        format!("{}...", truncate_chars(&raw, 80))
     } else {
         raw
     };
@@ -179,7 +196,7 @@ pub fn format_tool_header(name: &str, args: &serde_json::Value) -> String {
                     _ => continue,
                 };
                 let short = if s.len() > 60 {
-                    format!("{}…", &s[..60])
+                    format!("{}…", truncate_chars(&s, 60))
                 } else {
                     s
                 };
@@ -968,18 +985,33 @@ impl KodEngine {
                 Err(e) => ToolResult::Error(e.to_string()),
             };
             let rendered = match &result {
+                // list_files raw JSON is one quoted path per entry; a repo
+                // with a target/ dir produces 40k+ entries and the model
+                // sees 4000 bytes of quoted paths ending in "[truncated
+                // 1523k chars]" — no count, no sense of scale.
+                // summarize_tool_result renders "4852 entries in src/:
+                // · main.rs · lib.rs … and 4840 more", which is what the
+                // model can actually reason about. read_file and grep
+                // keep their raw payloads — the model needs the content
+                // and the (file, line, text) tuples, not a preview.
+                ToolResult::Success(_) if call.tool_name == "list_files" => {
+                    summarize_tool_result(&call.tool_name, &result)
+                }
                 ToolResult::Success(v) => v.to_string(),
                 ToolResult::Error(e) => format!("error: {e}"),
                 ToolResult::RequiresConfirmation { description, .. } => {
                     format!("requires confirmation (auto-skipped in TUI): {description}")
                 }
             };
-            // Cap huge outputs (directory dumps) so context survives.
-            let rendered = if rendered.len() > 4000 {
+            // Cap huge outputs so context survives. Slicing must be
+            // char-boundary aware — the old `&rendered[..4000]` panicked
+            // whenever byte 4000 landed inside a multibyte codepoint
+            // (any file containing non-ASCII text).
+            let rendered = if rendered.len() > 8000 {
                 format!(
-                    "{}… [truncated {} chars]",
-                    &rendered[..4000],
-                    rendered.len() - 4000
+                    "{}… [truncated {} bytes]",
+                    truncate_chars(&rendered, 8000),
+                    rendered.len() - truncate_chars(&rendered, 8000).len()
                 )
             } else {
                 rendered
@@ -1243,6 +1275,71 @@ mod tests {
         assert_eq!(format_duration_ms(1000), "1.0s");
         assert_eq!(format_duration_ms(1500), "1.5s");
         assert_eq!(format_duration_ms(65_000), "1m05s");
+    }
+
+    #[test]
+    fn test_truncate_chars_respects_boundaries() {
+        // "café": the é is two UTF-8 bytes. Asking for a byte offset
+        // mid-codepoint must round down to the previous boundary.
+        let s = "café au lait";
+        assert_eq!(truncate_chars(s, 100), s);
+        assert_eq!(truncate_chars(s, 3), "caf");
+        // 4 bytes lands between 0xc3 and 0xa9 — mid-é. Round down to 3.
+        assert_eq!(truncate_chars(s, 4), "caf");
+        // 5 bytes ends exactly after the é.
+        assert_eq!(truncate_chars(s, 5), "café");
+        // Degenerate: max 0 returns the empty string.
+        assert_eq!(truncate_chars(s, 0), "");
+    }
+
+    #[test]
+    fn test_truncate_does_not_panic_mid_multibyte() {
+        // Reproduce the exact panic the old `&rendered[..4000]` could
+        // hit: 3999 ASCII bytes, then a 2-byte 'é' so that byte offset
+        // 4000 is the middle of the codepoint.
+        let mut s = "a".repeat(3999);
+        s.push('é');
+        s.push_str("tail");
+        assert_eq!(s.len(), 3999 + 2 + 4);
+        // Must not panic.
+        let cut = truncate_chars(&s, 4000);
+        assert_eq!(cut.len(), 3999, "rounded down to the boundary before é");
+        assert!(cut.is_char_boundary(cut.len()));
+    }
+
+    /// list_files routes through summarize_tool_result so the model
+    /// sees "N entries in …" instead of a truncated quoted-path dump.
+    #[tokio::test]
+    async fn test_run_tool_calls_summarizes_list_files() {
+        use tempfile::TempDir;
+        let temp = TempDir::new().unwrap();
+        // Two files; the summary should name both and say "2 entries".
+        std::fs::write(temp.path().join("alpha.txt"), "").unwrap();
+        std::fs::write(temp.path().join("beta.txt"), "").unwrap();
+
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        let calls = vec![ToolCall {
+            tool_name: "list_files".to_string(),
+            arguments: serde_json::json!({ "path": "." }),
+        }];
+        let round = engine.run_tool_calls(&calls).await;
+        assert_eq!(round.results.len(), 1);
+        let block = &round.prompt_block;
+        assert!(
+            block.contains("2 entr"),
+            "list_files summary missing count: {block}"
+        );
+        assert!(block.contains("alpha.txt"), "got: {block}");
+        assert!(block.contains("beta.txt"), "got: {block}");
     }
 
     #[test]
