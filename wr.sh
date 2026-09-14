@@ -2,16 +2,16 @@
 set -uo pipefail
 
 COMPILE_OK=true
-LOOP=crates/kod-tui/src/main_loop.rs
+TARGET=crates/kod-core/src/engine.rs
 
-if [ ! -f Cargo.toml ] || [ ! -f "$LOOP" ]; then
-    echo "ERROR: run from the kod workspace root ($LOOP missing)"
+if [ ! -f Cargo.toml ] || [ ! -f "$TARGET" ]; then
+    echo "ERROR: run from the kod workspace root ($TARGET missing)"
     exit 1
 fi
 
-echo "Wiring persistent prompt history into TuiLoop"
+echo "Patching $TARGET: line-anchored GOAL MET detection"
 
-python3 - "$LOOP" << 'PYEOF'
+python3 - "$TARGET" << 'PYEOF'
 import os
 import sys
 
@@ -31,106 +31,110 @@ def patch(old, new, label, expect=1):
     content = content.replace(old, new, expect if expect else n)
     print(f"Patched: {label}")
 
-# ======================================================================
-# 1. TuiLoop struct: add persist_history flag.
-# ======================================================================
+# --- 1. Add a helper next to the other marker helpers ----------------
 patch(
-    '''    /// Char → action map for normal-mode single-key commands. Loaded at
-    /// construction from `~/.config/kod/tui_keys.toml` and a project-
-    /// local `.kod-keys.toml` (see [`crate::keybindings`]); a missing or
-    /// corrupt file falls back to the built-in defaults. Tests override
-    /// it via [`TuiLoop::set_keybindings`].
-    keybindings: std::collections::HashMap<char, KeyAction>,
-}''',
-    '''    /// Char → action map for normal-mode single-key commands. Loaded at
-    /// construction from `~/.config/kod/tui_keys.toml` and a project-
-    /// local `.kod-keys.toml` (see [`crate::keybindings`]); a missing or
-    /// corrupt file falls back to the built-in defaults. Tests override
-    /// it via [`TuiLoop::set_keybindings`].
-    keybindings: std::collections::HashMap<char, KeyAction>,
-    /// Whether this loop reads and writes `~/.kod/tui_history.json`.
-    ///
-    /// Set to true only by [`TuiLoop::run`] — the production entry
-    /// point. Tests drive `handle_event`/`dispatch_prompt` directly
-    /// without calling `run`, so they neither touch the user's real
-    /// history file nor observe a stale one. The load/persist helpers
-    /// on `KodApp` exist and are correct; they simply had no caller
-    /// before this — the doc comment on the persistence module
-    /// promised cross-restart history that did not happen.
-    persist_history: bool,
-}''',
-    "TuiLoop persist_history field",
+    '''/// Truncate a UTF-8 string to at most `max` bytes, rounding down to the
+/// nearest char boundary. Returns the input unchanged when it already
+/// fits. Use this instead of `&s[..max]` — the raw slice panics when
+/// `max` lands mid-codepoint, which any non-ASCII tool output can hit
+/// (a file containing "café", an error message with an em-dash, any
+/// emoji in a directory listing).
+pub(crate) fn truncate_chars(s: &str, max: usize) -> &str {''',
+    '''/// Does this reply declare the goal met?
+///
+/// The goal prompt instructs the model to "end your reply with a line
+/// containing exactly GOAL MET". The check that used to stand here was
+/// `final_text.to_uppercase().contains("GOAL MET")` — a substring test
+/// that fired on "I have not reached GOAL MET yet" and on "I cannot
+/// determine if the GOAL MET criteria are satisfied", stopping the
+/// loop with a false success and hiding the model's actual progress.
+///
+/// Anchor on the last non-empty line instead. Trim and strip the same
+/// decorations a model often adds (`**GOAL MET**`, `GOAL MET.`,
+/// `— GOAL MET`, `> GOAL MET`), then compare case-insensitively to
+/// `GOAL MET`. A reply that only mentions the phrase mid-paragraph is
+/// not a completion signal.
+pub(crate) fn reply_declares_goal_met(text: &str) -> bool {
+    let last_line = text
+        .lines()
+        .rev()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty());
+    let Some(line) = last_line else {
+        return false;
+    };
+    // Strip surrounding emphasis and leading quote / list markers.
+    let stripped: String = line
+        .trim_matches(|c: char| {
+            c.is_whitespace() || c == '*' || c == '`' || c == '>' || c == '-'
+        })
+        .trim_start_matches(|c: char| c.is_whitespace() || c == '—' || c == ':')
+        .trim_end_matches(|c: char| c.is_whitespace() || c == '.' || c == '!' || c == ':')
+        .to_string();
+    stripped.eq_ignore_ascii_case("GOAL MET")
+}
+
+/// Truncate a UTF-8 string to at most `max` bytes, rounding down to the
+/// nearest char boundary. Returns the input unchanged when it already
+/// fits. Use this instead of `&s[..max]` — the raw slice panics when
+/// `max` lands mid-codepoint, which any non-ASCII tool output can hit
+/// (a file containing "café", an error message with an em-dash, any
+/// emoji in a directory listing).
+pub(crate) fn truncate_chars(s: &str, max: usize) -> &str {''',
+    "reply_declares_goal_met helper",
 )
 
-# ======================================================================
-# 2. TuiLoop::new: init to false.
-# ======================================================================
+# --- 2. Use the helper in process_goal_streaming --------------------
 patch(
-    '''            gen_task: None,
-            keybindings: load_bindings(),
-        }
-    }''',
-    '''            gen_task: None,
-            keybindings: load_bindings(),
-            persist_history: false,
-        }
-    }''',
-    "TuiLoop::new init",
+    '''                if final_text.to_uppercase().contains("GOAL MET") {
+                    break;
+                }''',
+    '''                if reply_declares_goal_met(&final_text) {
+                    break;
+                }''',
+    "process_goal_streaming uses anchored check",
 )
 
-# ======================================================================
-# 3. TuiLoop::run: load history and arm persistence.
-# ======================================================================
+# --- 3. Tests -------------------------------------------------------
 patch(
-    '''        self.init_engine(model).await?;
-        self.init_terminal().await?;
-        let result = self.main_loop().await;''',
-    '''        self.init_engine(model).await?;
+    '''    /// set_provider must complete promptly even while a streaming''',
+    '''    /// `reply_declares_goal_met` must fire on the completion form and
+    /// NOT fire on a mention of the phrase mid-reply. Regression: the
+    /// previous substring check stopped the loop on "I have NOT
+    /// reached GOAL MET".
+    #[test]
+    fn test_reply_declares_goal_met() {
+        // The prompt's contract: last line is exactly GOAL MET.
+        assert!(reply_declares_goal_met("Here is the summary.\\nGOAL MET"));
+        // A model that capitalizes differently on the last line is
+        // still a completion — the check is case-insensitive.
+        assert!(reply_declares_goal_met("done\\ngoal met"));
+        // Trailing punctuation and emphasis are tolerated.
+        assert!(reply_declares_goal_met("…\\nGOAL MET."));
+        assert!(reply_declares_goal_met("…\\n**GOAL MET**"));
+        assert!(reply_declares_goal_met("…\\n— GOAL MET"));
+        // Trailing blank lines after the marker are fine.
+        assert!(reply_declares_goal_met("GOAL MET\\n\\n"));
 
-        // Load persisted prompt history and arm the save path.
-        // KodApp::load_persistent_history reads
-        // ~/.kod/tui_history.json (or KOD_TUI_STATE_DIR) best-effort —
-        // a missing or corrupt file just means an empty history. The
-        // matching persist_history_entry runs from dispatch_prompt
-        // below, gated on the persist_history flag so tests do not
-        // touch the real file.
-        self.app.load_persistent_history();
-        self.persist_history = true;
+        // A false promise does NOT declare success.
+        assert!(!reply_declares_goal_met(
+            "I have not reached GOAL MET yet, but I'm close."
+        ));
+        // The phrase on a non-final line is not a signal.
+        assert!(!reply_declares_goal_met(
+            "GOAL MET is what I'd say if done.\\nBut I need one more turn."
+        ));
+        // A question about the criteria is not a completion.
+        assert!(!reply_declares_goal_met(
+            "Should I reply GOAL MET now, or keep working?"
+        ));
+        // Empty input is not a completion.
+        assert!(!reply_declares_goal_met(""));
+        assert!(!reply_declares_goal_met("   \\n\\n"));
+    }
 
-        self.init_terminal().await?;
-        let result = self.main_loop().await;''',
-    "run() loads history and arms persist",
-)
-
-# ======================================================================
-# 4. dispatch_prompt: persist after a successful submit.
-# ======================================================================
-patch(
-    '''        self.app.submit_input();
-
-        // Remember the prompt so /retry (and the `r` key) can resend it
-        // after a failure. The previous code only set last_prompt from
-        // retry_generation itself, so last_prompt() was always None on
-        // first use and /retry always answered 'Nothing to retry'.
-        self.app.set_last_prompt(&input);''',
-    '''        self.app.submit_input();
-
-        // Remember the prompt for /retry (and the `r` key). The previous
-        // code only set last_prompt from retry_generation itself, so
-        // last_prompt() was always None on first use and /retry always
-        // answered 'Nothing to retry'.
-        self.app.set_last_prompt(&input);
-
-        // Append the raw prompt to the cross-session history file, so
-        // Up-arrow in the next session recalls what was typed this one.
-        // Skipped in tests (persist_history is only true after run()),
-        // and skipped for slash commands by living below the earlier
-        // `input.trim_start().starts_with('/')` early return — a
-        // recalled `/help` in the history would be noise next time.
-        if self.persist_history {
-            self.app.persist_history_entry(&input);
-        }''',
-    "dispatch_prompt persists plain prompts",
+    /// set_provider must complete promptly even while a streaming''',
+    "reply_declares_goal_met tests",
 )
 
 tmp = target + ".tmp"
@@ -160,30 +164,35 @@ fi
 echo "Committing."
 git add -A
 git commit -F - <<'MSG'
-fix(tui): load and persist prompt history across sessions
+fix(core): anchor GOAL MET detection to the last line
 
-KodApp::load_persistent_history and KodApp::persist_history_entry
-existed, were documented as the cross-restart mechanism in the
-module-level comment, and had no callers. TuiLoop::new never loaded
-the file and dispatch_prompt never wrote it, so every restart lost
-the Up-arrow history and ~/.kod/tui_history.json was either absent
-or frozen at whatever version an earlier build had written.
+The goal loop decided the model was done with
+`final_text.to_uppercase().contains("GOAL MET")` — a substring test
+over the entire reply. It fired on
 
-Wire it up:
+  "I have not reached GOAL MET yet, but I'm close."
 
-- TuiLoop gains a `persist_history: bool` field, initialised false
-  in `new()`. Tests drive handle_event/dispatch_prompt directly and
-  must not touch the user's real history file — they never set the
-  flag, so the save path is inert for them.
-- TuiLoop::run sets `persist_history = true` after init_engine and
-  calls `self.app.load_persistent_history()` in the same block.
-  Loading is best-effort (missing or corrupt file = empty history),
-  matching the rest of the persistence code.
-- dispatch_prompt calls `persist_history_entry` after submit_input
-  when the flag is set. The call sits below the slash-command early
-  return, so `/model X` and friends do not enter the persisted
-  history — a recalled slash command from a previous session is
-  noise, not something a user wants to press Up to find.
+and stopped the loop with a false success. It fired on
 
-No public API change; one new private field.
+  "Should I reply GOAL MET now, or keep working?"
+
+and abandoned a run that was still making progress. And it fired on
+any mention of the phrase mid-paragraph, so a model writing a
+summary that quoted the criterion ended the loop with nothing done.
+
+The goal prompt already tells the model what the completion form
+is: "end your reply with a line containing exactly GOAL MET". Match
+that contract instead of scanning the text.
+
+Add reply_declares_goal_met(text): take the last non-blank line,
+strip surrounding whitespace, emphasis (** **, backticks), quote and
+list markers (>), a leading em-dash or colon, and trailing
+punctuation (. ! :), then compare case-insensitively to GOAL MET.
+Anything else — including the phrase earlier in the reply, negated,
+or in a question — does not declare success.
+
+The test covers the acceptance and rejection forms and pins them;
+the loop call site is a one-line swap.
+
+No public API change beyond the new pub(crate) helper.
 MSG
