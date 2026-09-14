@@ -43,22 +43,15 @@ impl StatusWidget {
             return;
         }
 
-        // 2. Search mode shows the live query + match count.
+        // 2. Search mode shows the live query + match count. The label
+        // is built in KodApp::search_status_label so the widget cannot
+        // disagree with the app about what "0 matches" means. (The
+        // previous widget read (0, 0) from search_position and
+        // rendered "no matches" even when no search had been run.)
         if app.is_searching() {
-            let (idx, total) = app.search_position();
-            let label = if total == 0 {
-                format!(" /{} — no matches (Esc exits) ", app.search_query_text())
-            } else {
-                format!(
-                    " /{} — {}/{} (n next · N prev · Esc exits) ",
-                    app.search_query_text(),
-                    idx + 1,
-                    total
-                )
-            };
             Widget::render(
                 Line::from(vec![Span::styled(
-                    label,
+                    format!("{} ", app.search_status_label()),
                     Style::default()
                         .fg(theme.accent)
                         .add_modifier(Modifier::BOLD),

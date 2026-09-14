@@ -165,15 +165,29 @@ impl AgentSwarm {
         self.agents.read().await.keys().cloned().collect()
     }
 
-    /// Find agents with a specific capability
+    /// Find agents with a specific capability.
+    ///
+    /// Results are sorted by agent name so a caller selecting "the first
+    /// agent with capability X" gets the same answer across calls. The
+    /// previous implementation collected directly from the underlying
+    /// `HashMap`, so the order varied between runs (HashMap iteration
+    /// order is unspecified and depends on insertion history and the
+    /// random state seed). Anything that leaned on "first" — a
+    /// dispatcher picking an agent, a status panel rendering a list,
+    /// a test asserting a specific agent was chosen — was
+    /// nondeterministic.
+    ///
+    /// Sorts on name, not id: names are stable and human-meaningful,
+    /// and two agents with the same name cannot coexist in a swarm.
     pub async fn find_agents_with_capability(&self, capability: Capability) -> Vec<AgentId> {
-        self.agents
-            .read()
-            .await
+        let agents = self.agents.read().await;
+        let mut hits: Vec<(String, AgentId)> = agents
             .values()
             .filter(|a| a.has_capability(&capability))
-            .map(|a| a.id().clone())
-            .collect()
+            .map(|a| (a.name().to_string(), a.id().clone()))
+            .collect();
+        hits.sort_by(|a, b| a.0.cmp(&b.0));
+        hits.into_iter().map(|(_, id)| id).collect()
     }
 
     /// Convenience: does this swarm contain the given agent?

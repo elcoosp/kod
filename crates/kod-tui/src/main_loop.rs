@@ -28,7 +28,7 @@ use std::time::Duration;
 /// `test_slash_help_lists_every_command` — adding a command to
 /// `SLASH_COMMANDS` without updating this string fails the test, so
 /// the help output and the `/` autocomplete cannot drift apart.
-const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/quit — quit kod\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
+const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/quit — quit kod\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
 
 /// Main TUI application loop
 pub struct TuiLoop {
@@ -880,6 +880,23 @@ impl TuiLoop {
                         .push_system_message("Restored last cleared messages.");
                 } else {
                     self.app.push_system_message("Nothing to undo.");
+                }
+            }
+            "/edit" => {
+                // Same behaviour as the `e` keybinding: load the last
+                // user message into the input box for editing. The
+                // completion popup advertised /edit before this arm
+                // existed, so picking it fell through to "Unknown
+                // command: /edit" — a small lie caught by
+                // test_slash_help_lists_every_command.
+                if self.app.edit_last_message() {
+                    self.app.set_input_mode(InputMode::Insert);
+                    self.app.push_system_message(
+                        "Loaded your last message for editing — press Enter to resend.",
+                    );
+                } else {
+                    self.app
+                        .push_system_message("Nothing to edit — no previous prompt.");
                 }
             }
             "/debug" => match parts.next() {

@@ -14,7 +14,7 @@ pub mod ui;
 
 pub use app::{
     AppMode, CompletionKind, ConfirmKind, GenPhase, InputMode, KodApp, Message, SLASH_COMMANDS,
-    SlashCommand,
+    SearchStatus, SlashCommand,
 };
 pub use event::{Event, EventHandler, EventPriority, KeyCode};
 pub use main_loop::TuiLoop;

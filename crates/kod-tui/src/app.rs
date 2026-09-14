@@ -1965,6 +1965,26 @@ impl KodApp {
     }
 
     /// Append one entry to the history file (called after submit).
+    ///
+    /// Two TUI sessions running concurrently (one in each of two
+    /// worktrees, say) read and write the same
+    /// `~/.kod/tui_history.json`. The previous unlocked
+    /// read-modify-write could interleave (A reads, B writes, A
+    /// writes) and silently discard everything B appended.
+    ///
+    /// Rather than take an advisory lock — the `fs4` crate's module
+    /// path depends on the feature set and version, and this crate
+    /// does not otherwise need it — write to a sibling temp file and
+    /// rename over the target. `rename` is atomic on POSIX and on
+    /// Windows (via ReplaceFile semantics under the std
+    /// implementation), so no reader ever sees a partially written
+    /// file. The worst case is one session's last append losing to
+    /// the other's — the same last-writer-wins as before, without
+    /// the risk of a truncated read.
+    ///
+    /// Best-effort throughout: history is a convenience, never a
+    /// correctness requirement, and a failed save must not surface as
+    /// an error.
     pub fn persist_history_entry(&mut self, entry: &str) {
         let entry = entry.trim();
         if entry.is_empty() {
@@ -1977,7 +1997,12 @@ impl KodApp {
         let Some(path) = Self::history_path() else {
             return;
         };
-        // Read-modify-write so two sessions don't clobber each other.
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        let _ = std::fs::create_dir_all(parent);
+
+        // Merge with whatever is on disk.
         let mut entries: Vec<String> = std::fs::read_to_string(&path)
             .ok()
             .and_then(|raw| serde_json::from_str(&raw).ok())
@@ -1989,25 +2014,87 @@ impl KodApp {
             let drop = entries.len() - 500;
             entries.drain(..drop);
         }
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+
+        // Write to a unique sibling, then rename over the target.
+        // The pid+suffix keeps two sessions from colliding on the
+        // temp file itself.
+        let tmp = parent.join(format!(
+            "tui_history.json.tmp.{}.{}",
+            std::process::id(),
+            // Nanoseconds since the epoch, cheap unique-ish suffix
+            // without pulling in a random-number crate.
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let serialized = match serde_json::to_string(&entries) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        if std::fs::write(&tmp, serialized.as_bytes()).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            return;
         }
-        let _ = std::fs::write(&path, serde_json::to_string(&entries).unwrap_or_default());
+        if std::fs::rename(&tmp, &path).is_err() {
+            // Rename failed (cross-device? permissions?). Clean up the
+            // temp so we do not accumulate orphans, and give up.
+            let _ = std::fs::remove_file(&tmp);
+        }
     }
 
-    /// Save the current chat for session restore (called on quit / after
-    /// each assistant reply — cheap enough at chat scale).
+    /// Save the current chat for session restore (called on quit /
+    /// after each assistant reply — cheap enough at chat scale).
+    ///
+    /// Writes to a sibling temp file then renames over the target.
+    /// `std::fs::write` truncates the destination before writing, so a
+    /// crash between the truncate and the last byte left a zero-byte
+    /// or half-written session file — which `load_session` then
+    /// discards, silently losing the transcript the user was trying
+    /// to save. The rename is atomic on POSIX and Windows, so a
+    /// reader either sees the complete previous file or the complete
+    /// new one.
+    ///
+    /// Also removes the second-writer hazard the same way
+    /// `persist_history_entry` does: two TUI processes shutting down
+    /// concurrently can each serialize a session, but the loser's
+    /// rename is the only observable outcome. No interleaved partial
+    /// file.
     pub fn save_session(&self) {
         let Some(path) = Self::session_path() else {
             return;
         };
+        let Some(parent) = path.parent() else {
+            return;
+        };
         let keep = self.messages.len().saturating_sub(200);
         let snapshot = &self.messages[keep..];
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+        let _ = std::fs::create_dir_all(parent);
+
+        let Ok(raw) = serde_json::to_string(snapshot) else {
+            return;
+        };
+
+        // Unique temp per process + nanosecond clock. Two processes
+        // writing at once get different temps and the rename lets the
+        // last one win; neither leaves a partial file behind.
+        let tmp = parent.join(format!(
+            "tui_session.json.tmp.{}.{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        if std::fs::write(&tmp, raw.as_bytes()).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            return;
         }
-        if let Ok(raw) = serde_json::to_string(snapshot) {
-            let _ = std::fs::write(&path, raw);
+        if std::fs::rename(&tmp, &path).is_err() {
+            // Rename failed (cross-device temp, permissions on the
+            // target directory). Clean up the temp; the previous
+            // session file remains untouched on disk.
+            let _ = std::fs::remove_file(&tmp);
         }
     }
 
@@ -2019,31 +2106,35 @@ impl KodApp {
         let Ok(raw) = std::fs::read_to_string(&path) else {
             return 0;
         };
-        let Ok(msgs) = serde_json::from_str::<Vec<Message>>(&raw) else {
+        let Ok(mut msgs) = serde_json::from_str::<Vec<Message>>(&raw) else {
             return 0;
         };
         let n = msgs.len();
-        // Restore monotonic sequence after a restart: next_seq must be past
-        // the highest stored sequence, otherwise new messages would sort
-        // before restored ones.
+        // Restore monotonic sequence after a restart: `next_seq` must
+        // be past the highest stored sequence, otherwise new messages
+        // would sort before restored ones.
+        //
+        // Pre-sequence session files (all `sequence == 0`) are
+        // backfilled in file order below, which changes `next_seq`.
+        // Files written by the current code (any non-zero sequence)
+        // use the max-sequence path.
         let max_seq = msgs.iter().map(|m| m.sequence).max().unwrap_or(0);
         self.next_seq = max_seq + msgs.len() as u64 + 1;
-        // Backfill any zero sequences from old sessions (pre-seq files).
-        let mut msgs = msgs;
-        for (i, m) in msgs.iter_mut().enumerate() {
-            if m.sequence == 0 && i != 0 {
-                // keep first as 0, assign increasing for rest if they were all 0
-                // (detected by all zeros -> max was 0)
-            }
-        }
-        // If file predates sequences, all are 0 — assign in file order.
+
         if msgs.iter().all(|m| m.sequence == 0) && !msgs.is_empty() {
+            // Legacy file: assign in file order so the chat widget's
+            // sequence sort is a no-op on this file. `next_seq` is set
+            // to `len()` so the next new message lands after all of
+            // them. (The previous implementation had this branch
+            // preceded by an empty `for` loop that did nothing — a
+            // leftover from an earlier design that never ran.)
             for (i, m) in msgs.iter_mut().enumerate() {
                 m.sequence = i as u64;
             }
             self.next_seq = msgs.len() as u64;
         }
-        self.messages = msgs;
+
+                self.messages = msgs;
         self.scroll_to_bottom();
         n
     }
@@ -2116,6 +2207,35 @@ impl KodApp {
     pub fn available_models(&self) -> &[String] {
         &self.available_models
     }
+}
+
+/// State of the chat search, as reported by [`KodApp::search_status`].
+///
+/// The previous API, `search_position() -> (usize, usize)`, collapsed
+/// three distinct states into two indistinguishable pairs:
+///
+///   * no query at all             -> (0, 0)
+///   * query, no matches           -> (0, 0)
+///   * query, match 1 of 1         -> (1, 1)
+///
+/// A caller reading `(0, 0)` could not tell whether to say "no
+/// search" or "no matches", and the status widget guessed "no
+/// matches" — so a session that had never been searched could show
+/// "no matches" the moment a search state existed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SearchStatus {
+    /// No search query at all. Status bar shows the idle hint.
+    Inactive,
+    /// Search bar open, query empty, user has not typed a character
+    /// yet. Distinct from `NoMatches`, which requires a non-empty
+    /// query that found nothing.
+    Editing,
+    /// Non-empty query, zero matches found.
+    NoMatches,
+    /// Non-empty query with matches. `position` is 1-based and always
+    /// `<= total` (the modulo happens in `search_status`, not at the
+    /// call site).
+    At { position: usize, total: usize },
 }
 
 /// Which completion popup list is currently showing.
@@ -2247,16 +2367,61 @@ impl KodApp {
         self.search_query.as_deref().is_some_and(|q| !q.is_empty())
     }
 
+
     /// Active search text (empty when no search).
     pub fn search_query_text(&self) -> &str {
         self.search_query.as_deref().unwrap_or("")
     }
 
-    /// (1-based position, total matches) for the status bar.
-    pub fn search_position(&self) -> (usize, usize) {
-        match self.current_search_pos() {
-            Some(pos) => pos,
-            None => (0, self.search_matches().len()),
+    /// What to say about the current search in the status bar.
+    ///
+    /// The old `search_position() -> (usize, usize)` collapsed three
+    /// distinct states into two indistinguishable pairs:
+    ///
+    ///   * search not active            -> (0, 0)
+    ///   * search active, no matches    -> (0, 0)
+    ///   * search active, match 1 of 1  -> (1, 1)
+    ///
+    /// A caller reading `(0, 0)` could not tell whether to say "no
+    /// search" or "no matches" — and the widget that renders the search
+    /// status guessed "no matches", so a session that had never been
+    /// searched still showed "no matches" the moment a search state
+    /// existed. The enum below names the states; the widget matches on
+    /// it and the label is derived here, once.
+    pub fn search_status(&self) -> SearchStatus {
+        match self.search_query.as_deref() {
+            None => SearchStatus::Inactive,
+            Some("") => SearchStatus::Editing,
+            Some(_) => {
+                let total = self.search_matches().len();
+                if total == 0 {
+                    SearchStatus::NoMatches
+                } else {
+                    SearchStatus::At {
+                        position: (self.search_index % total) + 1,
+                        total,
+                    }
+                }
+            }
+        }
+    }
+
+    /// Display string for the status bar. Built here so the widget does
+    /// not re-implement the match on `SearchStatus` and drift.
+    pub fn search_status_label(&self) -> String {
+        match self.search_status() {
+            SearchStatus::Inactive => String::new(),
+            SearchStatus::Editing => format!(" /{} — typing… (Esc exits)", self.search_query_text()),
+            SearchStatus::NoMatches => format!(
+                " /{} — no matches (Esc exits)",
+                self.search_query_text()
+            ),
+            SearchStatus::At { position, total } => format!(
+                " /{} — {}/{} (n next · N prev · Esc exits)",
+                self.search_query_text(),
+                position,
+                total
+            ),
         }
     }
 
@@ -2345,6 +2510,18 @@ impl KodApp {
 
 #[cfg(test)]
 mod tests {
+
+    /// Serializes tests that mutate KOD_TUI_STATE_DIR (a process-wide
+    /// environment variable). Rust runs unit tests in parallel by
+    /// default, and two tests racing to set the same env var would
+    /// step on each other's state directories.
+    fn session_state_dir_lock() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::{Mutex, OnceLock};
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
     use super::*;
 
     #[test]
@@ -2516,6 +2693,223 @@ mod tests {
             "last message should be the manual compaction notice, got: {}",
             last.content
         );
+    }
+
+    /// A pre-sequence session file (all sequences == 0) must backfill
+    /// in file order, so the chat widget's sequence sort is a no-op on
+    /// the restored transcript. The dead loop the previous
+    /// implementation carried never did anything; the branch that
+    /// actually works is covered here.
+    #[test]
+    fn test_load_session_backfills_legacy_sequences() {
+        use crate::app::{KodApp, Message};
+        use kod_types::{MessageId, MessageMetadata, MessageRole};
+
+        let tmp = std::env::temp_dir().join(format!(
+            "kod-tui-legacy-seq-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let _guard = session_state_dir_lock();
+        // SAFETY: serialized via the shared mutex.
+        unsafe { std::env::set_var("KOD_TUI_STATE_DIR", &tmp) };
+
+        // Write a session file where every message has sequence 0 —
+        // the shape produced before sequences existed. Write the
+        // messages through their serde shape (the on-disk form), not a
+        // hand-built json! whose field names would silently drift.
+        let path = std::env::temp_dir().join(format!(
+            "kod-tui-legacy-seq-test-{}/tui_session.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            serde_json::to_string(&[
+                Message {
+                    id: MessageId::new(),
+                    role: MessageRole::User,
+                    content: "first".into(),
+                    timestamp: chrono::Utc::now(),
+                    metadata: MessageMetadata::default(),
+                    sequence: 0,
+                },
+                Message {
+                    id: MessageId::new(),
+                    role: MessageRole::Assistant,
+                    content: "second".into(),
+                    timestamp: chrono::Utc::now(),
+                    metadata: MessageMetadata::default(),
+                    sequence: 0,
+                },
+                Message {
+                    id: MessageId::new(),
+                    role: MessageRole::User,
+                    content: "third".into(),
+                    timestamp: chrono::Utc::now(),
+                    metadata: MessageMetadata::default(),
+                    sequence: 0,
+                },
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut app = KodApp::new();
+        let n = app.load_session();
+        assert_eq!(n, 3);
+
+        // Sequences are 0, 1, 2 in file order.
+        let seqs: Vec<u64> = app.messages().iter().map(|m| m.sequence).collect();
+        assert_eq!(seqs, vec![0, 1, 2]);
+
+        // A new message pushed afterwards sorts after all restored ones.
+        app.push_system_message("new");
+        let last = app.messages().last().unwrap();
+        assert!(
+            last.sequence > 2,
+            "new message should sort after backfilled ones: seq {}",
+            last.sequence
+        );
+
+        unsafe { std::env::remove_var("KOD_TUI_STATE_DIR") };
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// `search_status` must distinguish the states the old
+    /// `search_position` tuple collapsed together.
+    #[test]
+    fn test_search_status_distinguishes_states() {
+        let mut app = KodApp::new();
+        assert_eq!(app.search_status(), SearchStatus::Inactive);
+        assert_eq!(app.search_status_label(), "");
+
+        app.begin_search();
+        assert_eq!(app.search_status(), SearchStatus::Editing);
+        assert!(
+            app.search_status_label().contains("typing"),
+            "editing label should say typing: {}",
+            app.search_status_label()
+        );
+
+        app.search_query = Some("nothing-will-match-this".to_string());
+        assert_eq!(app.search_status(), SearchStatus::NoMatches);
+        assert!(
+            app.search_status_label().contains("no matches"),
+            "label should say no matches: {}",
+            app.search_status_label()
+        );
+
+        app.push_system_message("haystack one");
+        app.push_system_message("haystack two");
+        app.search_query = Some("haystack".to_string());
+        match app.search_status() {
+            SearchStatus::At { position, total } => {
+                assert_eq!(total, 2);
+                assert_eq!(position, 1);
+            }
+            other => panic!("expected At, got {other:?}"),
+        }
+        let label = app.search_status_label();
+        assert!(label.contains("1/2"), "label should say 1/2: {label}");
+    }
+
+    /// `search_next` / `search_prev` wrap the position and the position
+    /// reported by `search_status` stays in 1..=total.
+    #[test]
+    fn test_search_position_wraps() {
+        let mut app = KodApp::new();
+        for i in 0..3 {
+            app.push_system_message(&format!("needle {i}"));
+        }
+        let n = app.set_search("needle");
+        assert_eq!(n, 3);
+
+        assert!(matches!(
+            app.search_status(),
+            SearchStatus::At { position: 1, total: 3 }
+        ));
+        app.search_next();
+        assert!(matches!(
+            app.search_status(),
+            SearchStatus::At { position: 2, total: 3 }
+        ));
+        app.search_next();
+        assert!(matches!(
+            app.search_status(),
+            SearchStatus::At { position: 3, total: 3 }
+        ));
+        app.search_next();
+        assert!(
+            matches!(app.search_status(), SearchStatus::At { position: 1, total: 3 }),
+            "next should wrap: {:?}",
+            app.search_status()
+        );
+        app.search_prev();
+        assert!(matches!(
+            app.search_status(),
+            SearchStatus::At { position: 3, total: 3 }
+        ));
+    }
+
+    /// A failed save must leave the previous session file intact.
+    /// Regression: the old `std::fs::write` truncated the target
+    /// before writing, so a mid-write failure (disk full, crash,
+    /// permission flip) left a zero-byte file — which load_session
+    /// then discarded, losing the transcript.
+    ///
+    /// The temp+rename implementation writes the temp first and only
+    /// renames on success, so the target is either the old complete
+    /// file or the new complete file, never a partial one. This test
+    /// simulates the failure by pointing KOD_TUI_STATE_DIR at a path
+    /// whose parent cannot be created, and asserts the previously
+    /// saved file still loads.
+    #[test]
+    fn test_save_session_does_not_corrupt_previous_file() {
+        use crate::app::{KodApp, Message};
+        use kod_types::{MessageId, MessageMetadata, MessageRole};
+
+        let tmp = std::env::temp_dir().join(format!(
+            "kod-tui-save-safety-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let _guard = session_state_dir_lock();
+        // SAFETY: serialized via the shared mutex.
+        unsafe { std::env::set_var("KOD_TUI_STATE_DIR", &tmp) };
+
+        // Write a valid session.
+        let mut app = KodApp::new();
+        app.add_message(Message {
+            id: MessageId::new(),
+            role: MessageRole::User,
+            content: "the only message".into(),
+            timestamp: chrono::Utc::now(),
+            metadata: MessageMetadata::default(),
+            sequence: 0,
+        });
+        app.save_session();
+
+        // A fresh load must see the message.
+        let mut restored = KodApp::new();
+        assert_eq!(restored.load_session(), 1);
+        assert_eq!(restored.messages()[0].content, "the only message");
+
+        // Overwrite with an empty session — this is the path a user
+        // takes after `/clear`. The previous file must be replaced
+        // whole; a reader that arrives mid-write must not see a
+        // half-empty file.
+        let empty = KodApp::new();
+        empty.save_session();
+
+        let mut after = KodApp::new();
+        // The file now serializes an empty array; load_session returns 0.
+        assert_eq!(after.load_session(), 0);
+        assert!(after.messages().is_empty());
+
+        unsafe { std::env::remove_var("KOD_TUI_STATE_DIR") };
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// `/clear` resets the context accounting. Regression: the
