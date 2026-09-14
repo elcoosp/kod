@@ -1515,7 +1515,12 @@ impl KodApp {
             self.compacted_messages,
             self.context_label()
         );
-        self.messages.push(Message {
+        // Route through add_message so the notice gets a monotonic
+        // sequence. Pushing directly with `sequence: 0` made the chat
+        // widget (which sorts by sequence) render the notice at the
+        // very top of the transcript, above the messages it had just
+        // compacted — the exact opposite of where it belongs.
+        self.add_message(Message {
             id: MessageId::new(),
             role: MessageRole::System,
             content: note,
@@ -1523,10 +1528,14 @@ impl KodApp {
             metadata: MessageMetadata::default(),
             sequence: 0,
         });
-        self.scroll_to_bottom();
     }
 
     /// Manual `/compact`: same as auto but on demand.
+    ///
+    /// Both branches already went through `push_system_message` (which
+    /// calls `add_message`), so the notice has always had a correct
+    /// sequence — kept here as the counterpart to `maybe_compact`, and
+    /// to make it obvious that both paths must go through `add_message`.
     pub fn compact_now(&mut self) {
         if self.messages.len() <= 21 {
             self.push_system_message(&format!("Nothing to compact · {}", self.context_label()));
@@ -2368,6 +2377,65 @@ mod tests {
 
         app.note_real_usage(500);
         assert_eq!(app.context_tokens(), 500);
+    }
+
+    /// Auto-compact must append its notice at the end of the transcript,
+    /// not sort it to the top. The chat widget sorts by `sequence`, and
+    /// the old `maybe_compact` pushed a message with `sequence: 0`,
+    /// which sorted before every user message in the session.
+    #[test]
+    fn test_auto_compact_notice_sorts_after_compacted_messages() {
+        let mut app = KodApp::new();
+        // Force the auto-compact threshold with a tiny context window.
+        app.set_context_limit(1_000);
+
+        // Add enough messages to cross the 4/5 threshold AND exceed the
+        // 21-message guard that protects against compacting an empty or
+        // short session.
+        for i in 0..30 {
+            app.push_system_message(&format!("filler {i}"));
+        }
+        // Push token usage past 4/5 of 1000 = 800.
+        app.note_real_usage(900);
+
+        // The notice must be the last message by sequence.
+        let last = app.messages().last().expect("at least one message");
+        let last_seq = last.sequence;
+        assert_eq!(last.role, MessageRole::System);
+        assert!(
+            last.content.contains("Auto-compacted"),
+            "last message should be the compaction notice, got: {}",
+            last.content
+        );
+
+        // And no other message has a sequence greater than it (trivially
+        // true) or equal-and-later-positioned at the same sequence.
+        for m in app.messages().iter().take(app.messages().len() - 1) {
+            assert!(
+                m.sequence < last_seq,
+                "a message sorts after the compaction notice: seq {} vs {}",
+                m.sequence,
+                last_seq
+            );
+        }
+    }
+
+    /// The manual `/compact` path must also leave its notice at the end.
+    #[test]
+    fn test_manual_compact_notice_sorts_after() {
+        let mut app = KodApp::new();
+        for i in 0..30 {
+            app.push_system_message(&format!("filler {i}"));
+        }
+        app.compact_now();
+
+        let last = app.messages().last().expect("at least one message");
+        assert_eq!(last.role, MessageRole::System);
+        assert!(
+            last.content.contains("Compacted"),
+            "last message should be the manual compaction notice, got: {}",
+            last.content
+        );
     }
 
     #[test]
