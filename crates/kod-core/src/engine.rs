@@ -356,6 +356,27 @@ pub fn summarize_tool_result(name: &str, result: &ToolResult) -> String {
 }
 
 fn summarize_success(name: &str, v: &serde_json::Value) -> String {
+    // Binary read_file: no text preview, just a name-and-size line.
+    // The model sees the hex preview through the tool-result feedback
+    // block; the chat row is a one-liner.
+    if name == "read_file"
+        && v.get("binary").and_then(|b| b.as_bool()).unwrap_or(false)
+    {
+        let path = v
+            .get("path")
+            .and_then(|p| p.as_str())
+            .map(shorten_path)
+            .unwrap_or_else(|| name.to_string());
+        let size = v
+            .get("size_bytes")
+            .and_then(|s| s.as_u64())
+            .unwrap_or(0);
+        return format!(
+            "{} · binary ({} bytes) — not shown as text",
+            path, size
+        );
+    }
+
     // read_file: path + size + short preview only. The full content still
     // reaches the model through the tool-result feedback block — the chat
     // row stays lean while the agent loses nothing.
@@ -2090,6 +2111,22 @@ mod tests {
         assert!(
             read.contains("(truncated)"),
             "read_file truncation not surfaced: {read}"
+        );
+
+        // read_file binary result: one-line summary, no text preview.
+        let bin = summarize_tool_result(
+            "read_file",
+            &ToolResult::Success(serde_json::json!({
+                "path": "/a/img.png",
+                "binary": true,
+                "size_bytes": 4096,
+                "truncated": false,
+                "preview_hex": "89 50 4e 47 0d 0a 1a 0a"
+            })),
+        );
+        assert!(
+            bin.contains("binary (4096 bytes) — not shown as text"),
+            "binary summary shape: {bin}"
         );
 
         // read_file without the flag: no marker.

@@ -93,6 +93,11 @@ impl Tool for ReadFileTool {
         let resolved = context.resolve_path(path)?;
         context.can_read(&resolved)?;
 
+        // Total size from metadata (the byte cap below can hide it).
+        let total_size = std::fs::metadata(&resolved)
+            .map(|m| m.len())
+            .unwrap_or(0);
+
         // Read with a hard byte cap instead of `read_to_string`, so a
         // huge file (log, generated lock file, binary) can't exhaust
         // memory before the engine's prompt-side truncation kicks in.
@@ -107,6 +112,45 @@ impl Tool for ReadFileTool {
         if truncated {
             buf.truncate(MAX_READ_BYTES);
         }
+
+        // Detect binary content before treating the bytes as text. A
+        // NUL byte in the first 1 KB is the standard heuristic for
+        // "not text" (git, file(1), ripgrep). The previous code fed
+        // the bytes through `from_utf8_lossy`, so a PNG or compiled
+        // object came back to the model as a wall of U+FFFD
+        // replacement characters, or a short prefix ending at the
+        // first invalid sequence — with no indication that the content
+        // was anything other than a text file the user had asked about.
+        //
+        // A UTF-16 file also has NUL bytes (each ASCII char is
+        // `XX 00`), and would land here. That is not a regression:
+        // the previous behavior decoded UTF-16 as mojibake too,
+        // because the crate treats everything as UTF-8. Returning the
+        // honest "binary, here is a hex preview" is at least useful
+        // for identifying what the file is; if UTF-16 support is
+        // wanted, it belongs in a `file(1)`-style encoding probe that
+        // this tool does not yet have.
+        let probe_len = buf.len().min(1024);
+        let looks_binary = buf[..probe_len].contains(&0u8);
+        if looks_binary {
+            // 64 bytes is enough for a magic number (`\x89PNG\r\n\x1a\n`,
+            // `\x7fELF`, `PK\x03\x04`) and any short ASCII banner the
+            // model might use to identify the format.
+            let preview_len = buf.len().min(64);
+            let preview_hex: String = buf[..preview_len]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            return Ok(ToolResult::Success(serde_json::json!({
+                "path": resolved.to_string_lossy().to_string(),
+                "binary": true,
+                "size_bytes": total_size,
+                "truncated": truncated,
+                "preview_hex": preview_hex,
+            })));
+        }
+
         // Truncation may have landed mid-UTF-8; drop the trailing
         // incomplete char instead of returning invalid bytes.
         let content = match std::str::from_utf8(&buf) {
@@ -118,6 +162,7 @@ impl Tool for ReadFileTool {
             "path": resolved.to_string_lossy().to_string(),
             "content": content,
             "truncated": truncated,
+            "binary": false,
         })))
     }
 }
@@ -894,6 +939,90 @@ mod tests {
                 assert_eq!(v["truncated"], true);
                 let body = v["content"].as_str().unwrap();
                 assert_eq!(body.len(), MAX_READ_BYTES);
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    /// A file with NUL bytes in the first 1 KB must be returned as
+    /// binary (flag + hex preview), not decoded as UTF-8 lossy.
+    /// Regression: the previous code passed the bytes through
+    /// from_utf8_lossy, so the model saw a wall of U+FFFD characters
+    /// and had no way to know the file was a PNG, an ELF, or a
+    /// UTF-16 text file.
+    #[tokio::test]
+    async fn read_file_detects_binary_content() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("img.png");
+        // PNG magic + a few NUL-containing bytes.
+        let bytes: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+            0x00, 0x00, 0x00, 0x0D, // IHDR length
+            0x49, 0x48, 0x44, 0x52, // "IHDR"
+        ];
+        std::fs::write(&path, &bytes).unwrap();
+
+        let ctx = full_context(temp.path());
+        let tool = ReadFileTool::new();
+        let params = serde_json::json!({ "path": "img.png" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["binary"], true, "binary flag should be set");
+                assert_eq!(v["size_bytes"], bytes.len() as u64);
+                assert!(v.get("content").is_none(), "no text content field");
+                let hex = v["preview_hex"].as_str().unwrap();
+                assert!(
+                    hex.starts_with("89 50 4e 47"),
+                    "hex preview should start with the PNG signature: {hex}"
+                );
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    /// A plain text file must be returned as text with binary: false.
+    #[tokio::test]
+    async fn read_file_text_file_reports_not_binary() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("code.rs"), "fn main() {}\n").unwrap();
+
+        let ctx = full_context(temp.path());
+        let tool = ReadFileTool::new();
+        let params = serde_json::json!({ "path": "code.rs" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["binary"], false);
+                assert_eq!(v["content"], "fn main() {}\n");
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    /// A UTF-8 file with non-ASCII content (accented letters, emoji)
+    /// must NOT be misclassified as binary. The heuristic is NUL
+    /// bytes, not "any non-ASCII".
+    #[tokio::test]
+    async fn read_file_multibyte_utf8_is_not_binary() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            temp.path().join("accented.txt"),
+            "café au lait — un été\n",
+        )
+        .unwrap();
+
+        let ctx = full_context(temp.path());
+        let tool = ReadFileTool::new();
+        let params = serde_json::json!({ "path": "accented.txt" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["binary"], false);
+                assert!(v["content"].as_str().unwrap().contains("café"));
             }
             other => panic!("expected success, got {:?}", other),
         }
