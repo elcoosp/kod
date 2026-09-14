@@ -419,6 +419,22 @@ impl TuiLoop {
             Event::ResponseComplete(text) => {
                 self.gen_task = None;
                 self.app.finish_response(&text);
+                // Snapshot the transcript after every completed turn.
+                // The doc on KodApp::save_session has always claimed
+                // "called on quit / after each assistant reply", but
+                // only the quit path was wired — a crash mid-session
+                // lost every turn since startup, not just the current
+                // one. The write is atomic (temp + rename), so
+                // persisting this often is safe; the cost is one small
+                // JSON write per turn, negligible next to the model
+                // call that just finished.
+                //
+                // Gated on persist_history so tests, which never call
+                // TuiLoop::run, do not touch the user's real
+                // ~/.kod/tui_session.json.
+                if self.persist_history {
+                    self.app.save_session();
+                }
             }
             Event::TokenUsage(total) => {
                 self.app.note_real_usage(total);
@@ -439,6 +455,13 @@ impl TuiLoop {
             Event::Cancelled => {
                 self.gen_task = None;
                 self.app.cancel_generation();
+                // Cancelled turns are still worth persisting — the
+                // partial assistant reply is kept (see
+                // KodApp::cancel_generation), and the rest of the
+                // session is unchanged. Same gate as ResponseComplete.
+                if self.persist_history {
+                    self.app.save_session();
+                }
             }
             Event::ToolCompleted(tool_name, result) => {
                 // Tool row first, then whatever streamed during the call:
@@ -486,6 +509,13 @@ impl TuiLoop {
             Event::Error(error) => {
                 self.gen_task = None;
                 self.app.fail_generation(&error);
+                // A failed turn appends a system message and settles
+                // any running tool rows. Persist so a restart resumes
+                // from the recorded error rather than the state
+                // before it.
+                if self.persist_history {
+                    self.app.save_session();
+                }
             }
             _ => {}
         }

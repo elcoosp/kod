@@ -8,7 +8,7 @@ if [ ! -f Cargo.toml ] || [ ! -f "$LOOP" ]; then
     exit 1
 fi
 
-echo "Patching $LOOP: implement /edit; add it to SLASH_HELP"
+echo "Patching $LOOP: save the session after each completed turn"
 
 python3 - "$LOOP" << 'PYEOF'
 import os
@@ -31,54 +31,79 @@ def patch(old, new, label, expect=1):
     print(f"Patched: {label}")
 
 # ----------------------------------------------------------------------
-# 1. Add /edit to SLASH_HELP, right after /undo (its conceptual
-#    neighbour — both touch the previous message).
+# 1. ResponseComplete: save after finish_response, gated on the same
+#    persist_history flag that governs history persistence. Tests do
+#    not set that flag, so they never touch the real session file.
 # ----------------------------------------------------------------------
 patch(
-    '\\n/undo — restore last /clear\\n/model',
-    '\\n/undo — restore last /clear\\n/edit — load your last message back into the input for editing (also `e`)\\n/model',
-    "SLASH_HELP adds /edit",
+    '''            Event::ResponseComplete(text) => {
+                self.gen_task = None;
+                self.app.finish_response(&text);
+            }''',
+    '''            Event::ResponseComplete(text) => {
+                self.gen_task = None;
+                self.app.finish_response(&text);
+                // Snapshot the transcript after every completed turn.
+                // The doc on KodApp::save_session has always claimed
+                // "called on quit / after each assistant reply", but
+                // only the quit path was wired — a crash mid-session
+                // lost every turn since startup, not just the current
+                // one. The write is atomic (temp + rename), so
+                // persisting this often is safe; the cost is one small
+                // JSON write per turn, negligible next to the model
+                // call that just finished.
+                //
+                // Gated on persist_history so tests, which never call
+                // TuiLoop::run, do not touch the user's real
+                // ~/.kod/tui_session.json.
+                if self.persist_history {
+                    self.app.save_session();
+                }
+            }''',
+    "save_session after ResponseComplete",
 )
 
 # ----------------------------------------------------------------------
-# 2. Add the /edit handler in handle_command. Anchored after /undo,
-#    whose arm is unique and short.
+# 2. Cancelled and Error also terminate a turn. A user who hits Esc
+#    halfway through a long generation still wants the partial answer
+#    and everything before it to survive a crash. Save there too.
 # ----------------------------------------------------------------------
 patch(
-    '''            "/undo" => {
-                if self.app.undo_clear() {
-                    self.app
-                        .push_system_message("Restored last cleared messages.");
-                } else {
-                    self.app.push_system_message("Nothing to undo.");
+    '''            Event::Cancelled => {
+                self.gen_task = None;
+                self.app.cancel_generation();
+            }''',
+    '''            Event::Cancelled => {
+                self.gen_task = None;
+                self.app.cancel_generation();
+                // Cancelled turns are still worth persisting — the
+                // partial assistant reply is kept (see
+                // KodApp::cancel_generation), and the rest of the
+                // session is unchanged. Same gate as ResponseComplete.
+                if self.persist_history {
+                    self.app.save_session();
                 }
             }''',
-    '''            "/undo" => {
-                if self.app.undo_clear() {
-                    self.app
-                        .push_system_message("Restored last cleared messages.");
-                } else {
-                    self.app.push_system_message("Nothing to undo.");
-                }
-            }
-            "/edit" => {
-                // Same behaviour as the `e` keybinding: load the last
-                // user message into the input box for editing. The
-                // completion popup advertised /edit before this arm
-                // existed, so picking it fell through to "Unknown
-                // command: /edit" — a small lie caught by
-                // test_slash_help_lists_every_command.
-                if self.app.edit_last_message() {
-                    self.app.set_input_mode(InputMode::Insert);
-                    self.app.push_system_message(
-                        "Loaded your last message for editing — press Enter to resend.",
-                    );
-                } else {
-                    self.app
-                        .push_system_message("Nothing to edit — no previous prompt.");
+    "save_session after Cancelled",
+)
+
+patch(
+    '''            Event::Error(error) => {
+                self.gen_task = None;
+                self.app.fail_generation(&error);
+            }''',
+    '''            Event::Error(error) => {
+                self.gen_task = None;
+                self.app.fail_generation(&error);
+                // A failed turn appends a system message and settles
+                // any running tool rows. Persist so a restart resumes
+                // from the recorded error rather than the state
+                // before it.
+                if self.persist_history {
+                    self.app.save_session();
                 }
             }''',
-    "handle_command /edit arm",
+    "save_session after Error",
 )
 
 tmp = target + ".tmp"
@@ -94,9 +119,9 @@ if [ $? -ne 0 ]; then
 fi
 
 echo
-echo "cargo test -p kod-tui --lib --quiet 2>&1 | tail -15"
-if ! cargo test -p kod-tui --lib --quiet 2>&1 | tail -15; then
-    echo "kod-tui lib tests failed"
+echo "cargo check --workspace --all-targets 2>&1 | tail -20"
+if ! cargo check --workspace --all-targets 2>&1 | tail -20; then
+    echo "Compilation failed"
     exit 1
 fi
 
@@ -111,23 +136,32 @@ echo
 echo "Committing."
 git add -A
 git commit -F - <<'MSG'
-fix(tui): implement /edit and document it; unblock the help invariant
+fix(tui): persist the session after every turn, not just on quit
 
-SLASH_COMMANDS has advertised /edit (with the hint "edit your last
-message again") since the autocomplete was introduced, but
-handle_command had no /edit arm — picking it from the popup fell
-through to "Unknown command: /edit". The behaviour exists (the `e`
-keybinding calls edit_last_message and enters Insert mode); the
-slash form simply had no implementation.
+KodApp::save_session's doc comment promised "called on quit / after
+each assistant reply", but only TuiLoop::run wired the quit side.
+A crash, a terminal killed by the OS, or a `pkill` from another
+shell mid-session lost every turn since the process started — not
+the current turn, the entire conversation. The user had a chat
+they could see on screen, no file on disk that matched it, and no
+way to recover.
 
-test_slash_help_lists_every_command, added earlier this session,
-caught the drift: SLASH_HELP did not mention /edit either, so the
-test failed on the missing entry. That is the second direction the
-test covers — "each SLASH_COMMANDS entry appears in SLASH_HELP" —
-doing its job.
+Save after every terminal event of the agentic loop:
 
-Add the /edit arm to handle_command (edit_last_message + Insert
-mode + a confirmation message; "Nothing to edit" when the history
-is empty), and add the /edit line to SLASH_HELP, next to /undo —
-its closest neighbour.
+  * ResponseComplete — the normal end of a turn.
+  * Cancelled        — a partial reply was kept and the rest of the
+                       session is unchanged; it should survive too.
+  * Error            — a system message was appended and any running
+                       tool row settled; a restart should resume from
+                       that state, not the previous one.
+
+All three are gated on the same `persist_history` flag that governs
+prompt-history writes: it is set to true only by TuiLoop::run, so
+tests that drive handle_event directly still never touch the user's
+real ~/.kod/tui_session.json.
+
+The cost is one small JSON write per turn. The write is
+temp-file-plus-rename (see the earlier save_session fix), so it
+cannot corrupt an existing session file if the process dies
+mid-write.
 MSG
