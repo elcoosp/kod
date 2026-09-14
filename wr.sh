@@ -2,166 +2,99 @@
 set -uo pipefail
 
 TOOLS=crates/kod-tools/src/tools.rs
+ENGINE=crates/kod-core/src/engine.rs
 
-if [ ! -f Cargo.toml ] || [ ! -f "$TOOLS" ]; then
-    echo "ERROR: run from the kod workspace root ($TOOLS missing)"
-    exit 1
-fi
+for f in "$TOOLS" "$ENGINE"; do
+    if [ ! -f "$f" ]; then
+        echo "ERROR: missing $f"
+        exit 1
+    fi
+done
 
-echo "Patching $TOOLS: structured errors for directory / permission / not-found"
-
-python3 - "$TOOLS" << 'PYEOF'
+python3 - "$TOOLS" "$ENGINE" << 'PYEOF'
 import os
 import sys
 
-target = sys.argv[1]
-with open(target, "r") as f:
-    src = f.read()
+tools, engine = sys.argv[1], sys.argv[2]
 
-def patch(old, new, label, expect=1):
-    global src
-    n = src.count(old)
-    if n == 0:
-        print(f"  MISS: {label}")
-        return False
-    if expect and n != expect:
-        print(f"  ERROR: expected {expect} occurrence(s) of {label}, found {n}")
-        sys.exit(2)
-    src = src.replace(old, new, expect if expect else n)
-    print(f"  patched: {label}")
-    return True
+def read(p):
+    with open(p, "r") as f:
+        return f.read()
 
-# ----------------------------------------------------------------------
-# 1. Add a helper that classifies an io::Error on a resolved path into
-#    a structured tool-appropriate response.
-# ----------------------------------------------------------------------
-patch(
-    '''/// Read up to `cap` bytes from an async reader. Returns the bytes read
-/// and whether the source had more (reading hit the cap).''',
-    '''/// Map a path-level IO error into a message the model can act on.
-///
-/// The default Display of std::io::Error on a directory read is
-/// "Is a directory (os error 21)" — technically accurate, but it does
-/// not tell the model what to do next. Same for the bare "No such file
-/// or directory" and "Permission denied". Return a short label plus a
-/// one-line suggestion, so the model recovers instead of giving up or
-/// (worse) re-issuing the same call.
-fn describe_path_error(path: &std::path::Path, err: &std::io::Error) -> String {
-    let kind = err.kind();
-    let p = path.display();
-    match kind {
-        std::io::ErrorKind::NotFound => format!(
-            "not found: {p}. Check the path — a typo or a directory you have \\
-             not listed yet is the common cause.",
-        ),
-        std::io::ErrorKind::PermissionDenied => format!(
-            "permission denied: {p}. The process does not have read access.",
-        ),
-        std::io::ErrorKind::IsADirectory => format!(
-            "is a directory, not a file: {p}. Use list_files to see its \\
-             contents, or read a specific file inside it.",
-        ),
-        _ => {
-            // Windows reports directory reads as "other"; check metadata
-            // to give the same advice.
-            if path.is_dir() {
-                format!(
-                    "is a directory, not a file: {p}. Use list_files to see \\
-                     its contents, or read a specific file inside it.",
-                )
-            } else {
-                format!("{}: {p}", err)
-            }
-        }
-    }
-}
+def write(p, s):
+    tmp = p + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(s)
+    os.replace(tmp, p)
 
-/// Read up to `cap` bytes from an async reader. Returns the bytes read
-/// and whether the source had more (reading hit the cap).''',
-    "describe_path_error helper",
-)
+# ======================================================================
+# 1. tools.rs: insert tests before the final `}` of the file (which
+#    closes `mod tests`). Only if not already present.
+# ======================================================================
+src = read(tools)
 
-# ----------------------------------------------------------------------
-# 2. Apply it at the open site in read_file.
-# ----------------------------------------------------------------------
-patch(
-    '''        // Read with a hard byte cap instead of `read_to_string`, so a
-        // huge file (log, generated lock file, binary) can't exhaust
-        // memory before the engine's prompt-side truncation kicks in.
-        use std::io::Read as _;
-        let mut file = std::fs::File::open(&resolved).map_err(KodError::Io)?;''',
-    '''        // Reject directories up front with a structured message. The
-        // downstream open would fail with "Is a directory" (or a
-        // Windows-specific "other" error), which the model cannot
-        // distinguish from a missing file or a permission problem. A
-        // clear "is a directory — use list_files" is the recovery the
-        // model actually needs.
-        if resolved.is_dir() {
-            return Ok(ToolResult::Error(describe_path_error(
-                &resolved,
-                &std::io::Error::new(
-                    std::io::ErrorKind::IsADirectory,
-                    "is a directory",
-                ),
-            )));
-        }
-
-        // Read with a hard byte cap instead of `read_to_string`, so a
-        // huge file (log, generated lock file, binary) can't exhaust
-        // memory before the engine's prompt-side truncation kicks in.
-        use std::io::Read as _;
-        let mut file = std::fs::File::open(&resolved).map_err(|e| {
-            KodError::Io(std::io::Error::new(e.kind(), describe_path_error(&resolved, &e)))
-        })?;''',
-    "read_file directory guard + open error",
-)
-
-# ----------------------------------------------------------------------
-# 3. Tests.
-# ----------------------------------------------------------------------
-if "read_file_directory_returns_actionable_error" not in src:
-    anchor = '''    #[tokio::test]
-    async fn read_file_small_file_is_not_truncated() {'''
-    if anchor not in src:
-        print("  ERROR: test anchor not found")
-        sys.exit(2)
-    new_tests = '''    /// read_file on a directory must return an error message the
-    /// model can act on ("use list_files"), not a raw "Is a directory"
-    /// IO error that it cannot distinguish from "file not found".
+if "list_files_on_file_reports_file_kind" in src:
+    print("  tools.rs: tests already present")
+else:
+    new_tests = '''
+    /// list_files on a file must return path_kind: "file" with a
+    /// single-entry list, not the ambiguous empty-directory shape.
+    /// Regression: the walker rooted at a file yielded nothing, so the
+    /// result was indistinguishable from an empty directory.
     #[tokio::test]
-    async fn read_file_directory_returns_actionable_error() {
+    async fn list_files_on_file_reports_file_kind() {
         let temp = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir_all(temp.path().join("subdir")).unwrap();
-        std::fs::write(temp.path().join("subdir/x.txt"), "x").unwrap();
+        std::fs::write(temp.path().join("single.txt"), "content").unwrap();
 
         let ctx = full_context(temp.path());
-        let tool = ReadFileTool::new();
-        let params = serde_json::json!({ "path": "subdir" });
+        let tool = ListFilesTool::new();
+        let params = serde_json::json!({ "path": "single.txt" });
         let result = tool.execute(&params, &ctx).await.unwrap();
 
         match result {
-            ToolResult::Error(msg) => {
-                assert!(
-                    msg.contains("is a directory"),
-                    "message should name the problem: {msg}"
-                );
-                assert!(
-                    msg.contains("list_files"),
-                    "message should suggest the fix: {msg}"
-                );
+            ToolResult::Success(v) => {
+                assert_eq!(v["path_kind"], "file");
+                let files = v["files"].as_array().unwrap();
+                assert_eq!(files.len(), 1, "single-entry list expected");
+                assert!(files[0].as_str().unwrap().ends_with("single.txt"));
+                assert_eq!(v["total"], 1);
+                assert_eq!(v["truncated"], false);
             }
-            other => panic!("expected ToolResult::Error, got {:?}", other),
+            other => panic!("expected success, got {:?}", other),
         }
     }
 
-    /// read_file on a missing path must say so, and the message must
-    /// suggest checking the path rather than re-running the same call.
+    /// list_files on a directory still reports directory and its
+    /// entries, unchanged.
     #[tokio::test]
-    async fn read_file_missing_returns_actionable_error() {
+    async fn list_files_on_directory_reports_directory_kind() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("a.txt"), "").unwrap();
+        std::fs::write(temp.path().join("b.txt"), "").unwrap();
+
+        let ctx = full_context(temp.path());
+        let tool = ListFilesTool::new();
+        let params = serde_json::json!({ "path": "." });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["path_kind"], "directory");
+                assert_eq!(v["files"].as_array().unwrap().len(), 2);
+                assert_eq!(v["total"], 2);
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    /// list_files on a missing path returns a structured error naming
+    /// the path, not an empty result.
+    #[tokio::test]
+    async fn list_files_missing_path_errors() {
         let temp = tempfile::TempDir::new().unwrap();
         let ctx = full_context(temp.path());
-        let tool = ReadFileTool::new();
-        let params = serde_json::json!({ "path": "nope.txt" });
+        let tool = ListFilesTool::new();
+        let params = serde_json::json!({ "path": "does-not-exist" });
         let result = tool.execute(&params, &ctx).await.unwrap();
 
         match result {
@@ -170,27 +103,60 @@ if "read_file_directory_returns_actionable_error" not in src:
                     msg.contains("not found"),
                     "message should say not-found: {msg}"
                 );
-                assert!(
-                    msg.contains("nope.txt"),
-                    "message should name the path: {msg}"
-                );
+                assert!(msg.contains("does-not-exist"));
             }
             other => panic!("expected ToolResult::Error, got {:?}", other),
         }
     }
+'''
 
-    #[tokio::test]
-    async fn read_file_small_file_is_not_truncated() {'''
-    src = src.replace(anchor, new_tests, 1)
-    print("  added directory + missing-path tests")
+    # Find the final closing brace: last occurrence of "\n}\n" or
+    # trailing "}\n" at column 0. Prefer the file's final "}\n".
+    stripped = src.rstrip()
+    if not stripped.endswith("}"):
+        print("  ERROR: file does not end with `}`")
+        sys.exit(2)
+    # Find the position of that final `}`.
+    idx = stripped.rfind("}")
+    # Insert before it: [..idx] + new_tests + ["}\n"..restored trailing].
+    src = stripped[:idx] + new_tests + "\n}\n"
+    write(tools, src)
+    print("  tools.rs: inserted path_kind tests")
+
+# ======================================================================
+# 2. engine.rs: extend the summarize test with the file-branch.
+# ======================================================================
+src = read(engine)
+
+if "is a file, not a directory" in src:
+    print("  engine.rs: summarize test already extended")
 else:
-    print("  tests already present")
+    anchor = "        // read_file binary result: one-line summary, no text preview."
+    if anchor not in src:
+        print("  ERROR: engine.rs summarize test anchor not found")
+        sys.exit(2)
+    addition = '''        // list_files on a file: reports "is a file", not "1 entry".
+        let lf_file = summarize_tool_result(
+            "list_files",
+            &ToolResult::Success(serde_json::json!({
+                "path": "/a/single.txt",
+                "path_kind": "file",
+                "files": ["/a/single.txt"],
+                "total": 1,
+                "truncated": false
+            })),
+        );
+        assert!(
+            lf_file.contains("is a file, not a directory"),
+            "file-shaped list_files summary: {lf_file}"
+        );
 
-tmp = target + ".tmp"
-with open(tmp, "w") as f:
-    f.write(src)
-os.replace(tmp, target)
-print("Wrote", target)
+'''
+    src = src.replace(anchor, addition + anchor, 1)
+    write(engine, src)
+    print("  engine.rs: extended summarize test")
+
+print("Done.")
 PYEOF
 
 if [ $? -ne 0 ]; then
@@ -209,32 +175,19 @@ echo
 echo "Committing."
 git add -A
 git commit -F - <<'MSG'
-fix(tools): structured read_file errors for directory / missing paths
+test(tools,core): cover list_files file/directory/missing discriminator
 
-read_file on a directory returned a raw IO error propagated through
-KodError::Io, whose Display is "Is a directory (os error 21)" on
-Unix and a platform-specific "other" error on Windows. The model saw
-a string it could not act on: no hint that the target was a
-directory (as opposed to missing, unreadable, or a symlink loop), no
-suggestion to use list_files instead, nothing to reason about.
+Adds three tests in kod-tools for the list_files path_kind work
+that landed in the previous commit: a file target reports
+path_kind "file" with a single-entry list; a directory target
+reports "directory" with its entries (unchanged behavior); a
+missing target returns a structured error naming the path.
 
-Add describe_path_error(path, err) that classifies the common
-path-level IO error kinds (NotFound, PermissionDenied,
-IsADirectory) into a short label plus a one-line recovery hint, and
-route read_file's directory check and file-open failure through it.
+Extends the engine's summarize test with the file-shaped
+list_files case: "path · is a file, not a directory" rather than
+the count form, which would read as if the call had worked.
 
-The directory check runs before the open, so the model gets a
-uniform message on both platforms rather than the Unix "Is a
-directory" versus Windows "other" split. Missing paths now say
-"not found: PATH. Check the path — a typo or a directory you have
-not listed yet is the common cause.", which points at the two real
-causes instead of re-issuing the same call.
-
-The behaviour of every other read_file path is unchanged: the file
-opens, the size is read, the binary probe runs, the content is
-returned.
-
-Adds two tests: a directory target produces "is a directory" and
-"list_files" in the message; a missing target produces "not found"
-and names the path.
+(Insertion uses the file's final brace rather than a named-test
+anchor, so this lands regardless of how earlier edits reordered
+the module.)
 MSG

@@ -589,10 +589,39 @@ impl Tool for ListFilesTool {
         let resolved = context.resolve_path(path)?;
         context.can_read(&resolved)?;
 
-        // Per-entry cap before the count cap. A single 8 KB generated
-        // path would otherwise dominate the JSON and push every later
-        // entry past the engine's prompt cap — the model would see one
-        // path and no count.
+        // Distinguish file / directory / missing. The previous
+        // implementation called `gitaware_walk` unconditionally, so a
+        // file target produced `{"files": [], "total": 0}` — the exact
+        // shape an empty directory produces. The model could not tell
+        // "you gave me a file" (a caller mistake worth naming) from
+        // "this directory is empty" (a legitimate result).
+        //
+        // All three cases return Success so the model sees a structured
+        // answer rather than a forced error path. The `path_kind` field
+        // names the state; the file case returns a single-entry list
+        // because "what files are at this path?" has an obvious answer
+        // for a file.
+        if !resolved.exists() {
+            return Ok(ToolResult::Error(describe_path_error(
+                &resolved,
+                &std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
+            )));
+        }
+        if resolved.is_file() {
+            let entry = truncate_entry(
+                &resolved.to_string_lossy(),
+                MAX_ENTRY_BYTES,
+            );
+            return Ok(ToolResult::Success(serde_json::json!({
+                "path": resolved.to_string_lossy().to_string(),
+                "path_kind": "file",
+                "files": [entry],
+                "total": 1,
+                "truncated": false,
+            })));
+        }
+
+        // Directory branch: the pre-existing behavior.
         let mut files: Vec<String> = gitaware_walk(&resolved, recursive)
             .into_iter()
             .map(|p| truncate_entry(&p.to_string_lossy(), MAX_ENTRY_BYTES))
@@ -608,6 +637,7 @@ impl Tool for ListFilesTool {
 
         Ok(ToolResult::Success(serde_json::json!({
             "path": resolved.to_string_lossy().to_string(),
+            "path_kind": "directory",
             "files": files,
             "total": total,
             "truncated": truncated,
@@ -1370,4 +1400,77 @@ mod tests {
             other => panic!("expected ToolResult::Error, got {:?}", other),
         }
     }
+
+    /// list_files on a file must return path_kind: "file" with a
+    /// single-entry list, not the ambiguous empty-directory shape.
+    /// Regression: the walker rooted at a file yielded nothing, so the
+    /// result was indistinguishable from an empty directory.
+    #[tokio::test]
+    async fn list_files_on_file_reports_file_kind() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("single.txt"), "content").unwrap();
+
+        let ctx = full_context(temp.path());
+        let tool = ListFilesTool::new();
+        let params = serde_json::json!({ "path": "single.txt" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["path_kind"], "file");
+                let files = v["files"].as_array().unwrap();
+                assert_eq!(files.len(), 1, "single-entry list expected");
+                assert!(files[0].as_str().unwrap().ends_with("single.txt"));
+                assert_eq!(v["total"], 1);
+                assert_eq!(v["truncated"], false);
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    /// list_files on a directory still reports directory and its
+    /// entries, unchanged.
+    #[tokio::test]
+    async fn list_files_on_directory_reports_directory_kind() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("a.txt"), "").unwrap();
+        std::fs::write(temp.path().join("b.txt"), "").unwrap();
+
+        let ctx = full_context(temp.path());
+        let tool = ListFilesTool::new();
+        let params = serde_json::json!({ "path": "." });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["path_kind"], "directory");
+                assert_eq!(v["files"].as_array().unwrap().len(), 2);
+                assert_eq!(v["total"], 2);
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    /// list_files on a missing path returns a structured error naming
+    /// the path, not an empty result.
+    #[tokio::test]
+    async fn list_files_missing_path_errors() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let ctx = full_context(temp.path());
+        let tool = ListFilesTool::new();
+        let params = serde_json::json!({ "path": "does-not-exist" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Error(msg) => {
+                assert!(
+                    msg.contains("not found"),
+                    "message should say not-found: {msg}"
+                );
+                assert!(msg.contains("does-not-exist"));
+            }
+            other => panic!("expected ToolResult::Error, got {:?}", other),
+        }
+    }
+
 }

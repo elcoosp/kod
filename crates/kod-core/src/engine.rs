@@ -417,6 +417,18 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
         }
         return out;
     }
+    // list_files on a file: report "is a file", not "1 entry in …".
+    if name == "list_files"
+        && v.get("path_kind").and_then(|k| k.as_str()) == Some("file")
+    {
+        let path = v
+            .get("path")
+            .and_then(|p| p.as_str())
+            .map(shorten_path)
+            .unwrap_or_else(|| name.to_string());
+        return format!("{} · is a file, not a directory", path);
+    }
+
     // list_files: {path, files:[...]} → count + names.
     if let Some(files) = v.get("files").and_then(|f| f.as_array()) {
         let dir = v
