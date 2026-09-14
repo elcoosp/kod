@@ -26,14 +26,14 @@ run_with_timeout() {
 
 COMPILE_OK=true
 INCOMPLETE=false
-TARGET=crates/kod-cli/src/commands.rs
+TARGET=crates/kod-core/src/engine.rs
 
 if [ ! -f Cargo.toml ] || [ ! -f "$TARGET" ]; then
     echo "ERROR: run from the kod workspace root ($TARGET missing)"
     exit 1
 fi
 
-echo "Patching $TARGET: stream tokens to stdout in run_chat"
+echo "Patching $TARGET: char-boundary-safe truncation in record_turn"
 
 python3 - "$TARGET" << 'PYEOF'
 import os
@@ -43,148 +43,119 @@ target = sys.argv[1]
 with open(target, "r") as f:
     content = f.read()
 
-old = '''    println!(
-        "KOD Chat (model: {}) - Type 'quit' or Ctrl+C to exit",
-        model_name
-    );
-    println!();
+def patch(old, new, label, expect=1):
+    global content
+    n = content.count(old)
+    if n == 0:
+        print(f"ERROR: old snippet not found: {label}")
+        sys.exit(2)
+    if expect and n != expect:
+        print(f"ERROR: expected {expect} occurrence(s) of {label}, found {n}")
+        sys.exit(2)
+    content = content.replace(old, new, expect if expect else n)
+    print(f"Patched: {label}")
 
-    let stdin = io::stdin();
-    let mut input = String::new();
-    print!("> ");
-    let _ = io::stdout().flush();
-
-    while let Ok(bytes) = stdin.lock().read_line(&mut input) {
-        if bytes == 0 {
-            break;
+# --- 1. record_turn: use truncate_chars, and mark the cut char-aware ---
+patch(
+    '''    /// Remember one turn, truncating long texts and keeping only the most
+    /// recent [`MAX_HISTORY_TURNS`] turns.
+    async fn record_turn(&self, user: bool, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
         }
-        let input_line = input.trim();
-        if input_line.is_empty() {
-            print!("> ");
-            let _ = io::stdout().flush();
-            continue;
+        let short = if text.len() > MAX_TURN_CHARS {
+            format!("{}… [truncated]", &text[..MAX_TURN_CHARS])
+        } else {
+            text.to_string()
+        };
+        let mut history = self.history.write().await;
+        history.push(HistoryTurn { user, text: short });
+        let excess = history.len().saturating_sub(MAX_HISTORY_TURNS);
+        if excess > 0 {
+            history.drain(..excess);
         }
-        if input_line == "quit" || input_line == "exit" {
-            break;
+    }''',
+    '''    /// Remember one turn, truncating long texts and keeping only the most
+    /// recent [`MAX_HISTORY_TURNS`] turns.
+    ///
+    /// Uses [`truncate_chars`] rather than a raw byte slice. `&text[..N]`
+    /// panics when N lands inside a multibyte codepoint, which every
+    /// non-ASCII turn (a prompt in Japanese, an answer quoting "café",
+    /// any emoji) can hit — and the panic took down the whole agentic
+    /// loop on the *second* turn, since record_turn runs on both sides
+    /// of every prompt.
+    async fn record_turn(&self, user: bool, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
         }
-
-        let response = engine.process(input_line).await?;
-
-        if let Some(text) = response.text {
-            println!();
-            println!("{}", text);
-            println!();
+        let short = if text.len() > MAX_TURN_CHARS {
+            format!("{}… [truncated]", truncate_chars(text, MAX_TURN_CHARS))
+        } else {
+            text.to_string()
+        };
+        let mut history = self.history.write().await;
+        history.push(HistoryTurn { user, text: short });
+        let excess = history.len().saturating_sub(MAX_HISTORY_TURNS);
+        if excess > 0 {
+            history.drain(..excess);
         }
+    }''',
+    "record_turn uses truncate_chars",
+)
 
-        input.clear();
-        print!("> ");
-        let _ = io::stdout().flush();
+# --- 2. Regression test in the existing tests module -------------------
+patch(
+    '''    #[test]
+    fn test_truncate_does_not_panic_mid_multibyte() {''',
+    '''    /// record_turn runs on both sides of every prompt. A turn longer
+    /// than MAX_TURN_CHARS whose 1500th byte falls inside a multibyte
+    /// codepoint used to panic and abort the whole loop.
+    #[tokio::test]
+    async fn test_record_turn_does_not_panic_mid_multibyte() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        // 1499 ASCII bytes, then 'é' (2 bytes) so byte offset 1500 is
+        // the middle of the codepoint, then more content to exceed the
+        // cap. MAX_TURN_CHARS is 1500.
+        let mut prompt = "a".repeat(1499);
+        prompt.push('é');
+        prompt.push_str(&"x".repeat(100));
+        assert!(prompt.len() > 1500);
+        assert!(!prompt.is_char_boundary(1500));
+
+        // Must not panic. The stored text ends at the last safe boundary
+        // before the é, with the truncation marker appended.
+        engine.record_turn(true, &prompt).await;
+
+        let rendered = engine.render_history().await;
+        assert!(rendered.contains("User:"), "history should carry the turn");
+        assert!(
+            rendered.contains("[truncated]"),
+            "history should mark truncation"
+        );
     }
 
-    // Shutdown
-    engine.shutdown().await?;
-
-    Ok(())
-}'''
-
-new = '''    println!(
-        "KOD Chat (model: {}) - Type 'quit' or Ctrl+C to exit",
-        model_name
-    );
-    println!();
-
-    let stdin = io::stdin();
-    let mut input = String::new();
-
-    loop {
-        print!("> ");
-        let _ = io::stdout().flush();
-        input.clear();
-
-        match stdin.lock().read_line(&mut input) {
-            Ok(0) => break, // EOF (Ctrl+D)
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("Input error: {}", e);
-                break;
-            }
-        }
-
-        let input_line = input.trim();
-        if input_line.is_empty() {
-            continue;
-        }
-        if input_line == "quit" || input_line == "exit" {
-            break;
-        }
-
-        // Stream tokens as they arrive. The engine's chunk channel also
-        // carries `\\0kod-*` markers (tool start / args / done / thinking)
-        // that the TUI uses to render its running indicator — the CLI has
-        // no such indicator, so it drops them. If nothing streamed (a
-        // tool-only reply whose summary is empty, or a provider whose
-        // default stream_with_tools emits no Text), fall back to the
-        // response's full text.
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
-        let pump = tokio::spawn(async move {
-            let mut streamed_any = false;
-            while let Some(chunk) = rx.recv().await {
-                if kod_core::engine::parse_tool_start(&chunk).is_some()
-                    || kod_core::engine::parse_tool_args(&chunk).is_some()
-                    || kod_core::engine::parse_tool_done(&chunk).is_some()
-                    || kod_core::engine::is_thinking_marker(&chunk)
-                {
-                    continue;
-                }
-                print!("{}", chunk);
-                let _ = io::stdout().flush();
-                streamed_any = true;
-            }
-            streamed_any
-        });
-
-        let result = engine.process_streaming(input_line, &tx).await;
-        drop(tx);
-        let streamed_any = pump.await.unwrap_or(false);
-
-        match result {
-            Ok(resp) => {
-                if streamed_any {
-                    // Stream already printed the answer; finish the line
-                    // and leave one blank line before the next prompt.
-                    println!();
-                    println!();
-                } else if let Some(text) = resp.text
-                    && !text.trim().is_empty()
-                {
-                    println!();
-                    println!("{}", text);
-                    println!();
-                }
-            }
-            Err(e) => {
-                eprintln!("Error: {}", e);
-            }
-        }
-    }
-
-    // Shutdown
-    engine.shutdown().await?;
-
-    Ok(())
-}'''
-
-n = content.count(old)
-if n != 1:
-    print(f"ERROR: expected 1 occurrence of the run_chat loop, found {n}")
-    sys.exit(2)
-content = content.replace(old, new, 1)
+    #[test]
+    fn test_truncate_does_not_panic_mid_multibyte() {''',
+    "record_turn regression test",
+)
 
 tmp = target + ".tmp"
 with open(tmp, "w") as f:
     f.write(content)
 os.replace(tmp, target)
-print("Patched", target)
+print("Wrote", target)
 PYEOF
 
 if [ $? -ne 0 ]; then
@@ -203,9 +174,9 @@ if [ "$INCOMPLETE" = true ] || [ "$COMPILE_OK" = false ]; then
     exit 1
 fi
 
-echo "Running kod-cli tests (120s wall clock)"
-if ! run_with_timeout 120 cargo test -p kod-cli 2>&1; then
-    echo "kod-cli tests failed or hung. Paste the full output for a surgical fix."
+echo "Running kod-core tests (180s wall clock)"
+if ! run_with_timeout 180 cargo test -p kod-core 2>&1; then
+    echo "kod-core tests failed or hung. Paste the full output for a surgical fix."
     exit 1
 fi
 
@@ -223,24 +194,17 @@ fi
 
 echo "All checks passed. Committing."
 git add -A
-git commit -m "feat(cli): stream tokens live in \`kod chat\`
+git commit -m "fix(core): char-boundary-safe truncation in record_turn
 
-\`kod chat\` awaited engine.process() and printed the whole reply at
-once. For a 500-token answer, that meant several seconds of a frozen
-prompt while the model generated — the same behaviour that made the
-TUI feel sluggish before it learned to stream.
+The truncate_chars helper landed for run_tool_calls but record_turn
+still used the raw byte slice '&text[..MAX_TURN_CHARS]'. That panics
+the moment byte 1500 lands inside a multibyte codepoint, and
+record_turn runs on both sides of every prompt — so any turn
+containing non-ASCII past the 1500-byte mark aborted the agentic
+loop mid-session. Same class of bug we already fixed once; this is
+the second occurrence.
 
-Route the chat loop through engine.process_streaming instead. A
-background pump drains the chunk channel, prints each text chunk
-immediately, and drops the engine's \\0kod-* control markers (tool
-start / args / done / thinking) — those exist for the TUI's running
-indicator, which the CLI does not render.
-
-The pump reports whether it printed anything. When nothing streamed
-(the summary was empty, or a provider whose default stream_with_tools
-never emits Text), the loop falls back to the response's full text.
-Otherwise the response text is skipped, since it was already shown.
-
-Engine errors no longer abort the whole REPL — a failed prompt prints
-its error and returns to the \`>\` prompt, so the user can try again
-without losing the session."
+Route record_turn through truncate_chars and add a regression test
+that builds a 1599-byte prompt with a 2-byte 'é' at offset 1499, so
+1500 is not a char boundary, and asserts record_turn completes and
+the history records the turn with a truncation marker."

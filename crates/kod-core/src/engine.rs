@@ -1156,13 +1156,20 @@ impl KodEngine {
 
     /// Remember one turn, truncating long texts and keeping only the most
     /// recent [`MAX_HISTORY_TURNS`] turns.
+    ///
+    /// Uses [`truncate_chars`] rather than a raw byte slice. `&text[..N]`
+    /// panics when N lands inside a multibyte codepoint, which every
+    /// non-ASCII turn (a prompt in Japanese, an answer quoting "café",
+    /// any emoji) can hit — and the panic took down the whole agentic
+    /// loop on the *second* turn, since record_turn runs on both sides
+    /// of every prompt.
     async fn record_turn(&self, user: bool, text: &str) {
         let text = text.trim();
         if text.is_empty() {
             return;
         }
         let short = if text.len() > MAX_TURN_CHARS {
-            format!("{}… [truncated]", &text[..MAX_TURN_CHARS])
+            format!("{}… [truncated]", truncate_chars(text, MAX_TURN_CHARS))
         } else {
             text.to_string()
         };
@@ -1425,6 +1432,43 @@ mod tests {
         assert_eq!(truncate_chars(s, 5), "café");
         // Degenerate: max 0 returns the empty string.
         assert_eq!(truncate_chars(s, 0), "");
+    }
+
+    /// record_turn runs on both sides of every prompt. A turn longer
+    /// than MAX_TURN_CHARS whose 1500th byte falls inside a multibyte
+    /// codepoint used to panic and abort the whole loop.
+    #[tokio::test]
+    async fn test_record_turn_does_not_panic_mid_multibyte() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        // 1499 ASCII bytes, then 'é' (2 bytes) so byte offset 1500 is
+        // the middle of the codepoint, then more content to exceed the
+        // cap. MAX_TURN_CHARS is 1500.
+        let mut prompt = "a".repeat(1499);
+        prompt.push('é');
+        prompt.push_str(&"x".repeat(100));
+        assert!(prompt.len() > 1500);
+        assert!(!prompt.is_char_boundary(1500));
+
+        // Must not panic. The stored text ends at the last safe boundary
+        // before the é, with the truncation marker appended.
+        engine.record_turn(true, &prompt).await;
+
+        let rendered = engine.render_history().await;
+        assert!(rendered.contains("User:"), "history should carry the turn");
+        assert!(
+            rendered.contains("[truncated]"),
+            "history should mark truncation"
+        );
     }
 
     #[test]
