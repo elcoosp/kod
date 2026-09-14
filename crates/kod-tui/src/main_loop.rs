@@ -3,6 +3,7 @@
 use crate::{
     app::{AppMode, ConfirmKind, InputMode, KodApp},
     event::{Event, EventHandler, KeyCode},
+    keybindings::{KeyAction, load_bindings},
     theme::Theme,
     ui::{
         AgentPanelWidget, ChatWidget, CompletionsWidget, HeaderWidget, HelpWidget, InputWidget,
@@ -35,6 +36,12 @@ pub struct TuiLoop {
     /// Background generation task. Kept so Esc / Ctrl+C / `/cancel` can
     /// abort it; cleared when the response (or error) lands.
     gen_task: Option<tokio::task::JoinHandle<()>>,
+    /// Char → action map for normal-mode single-key commands. Loaded at
+    /// construction from `~/.config/kod/tui_keys.toml` and a project-
+    /// local `.kod-keys.toml` (see [`crate::keybindings`]); a missing or
+    /// corrupt file falls back to the built-in defaults. Tests override
+    /// it via [`TuiLoop::set_keybindings`].
+    keybindings: std::collections::HashMap<char, KeyAction>,
 }
 
 impl TuiLoop {
@@ -46,7 +53,14 @@ impl TuiLoop {
             engine: None,
             llm_config: None,
             gen_task: None,
+            keybindings: load_bindings(),
         }
+    }
+
+    /// Replace the active keybinding map. Used by tests; production
+    /// callers load the map once in [`TuiLoop::new`].
+    pub fn set_keybindings(&mut self, bindings: std::collections::HashMap<char, KeyAction>) {
+        self.keybindings = bindings;
     }
 
     /// Set up the engine with the OpenAI-compatible provider
@@ -909,58 +923,25 @@ impl TuiLoop {
         }
     }
 
-    /// Handle keys in normal mode
+    /// Handle keys in normal mode.
+    ///
+    /// Single-character keys are looked up in the user's binding map
+    /// (loaded from `~/.config/kod/tui_keys.toml` or a project-local
+    /// `.kod-keys.toml`; see [`crate::keybindings`]). A bound character
+    /// dispatches through [`TuiLoop::dispatch_key_action`]. Unbound
+    /// characters fall through to the small set of fixed controls:
+    /// `r` retry, `o` expand the newest tool row, `n`/`N` step through
+    /// chat-search matches. Non-character keys (Escape, Ctrl+C, Tab,
+    /// F1, arrows, Home/End, PgUp/PgDn) keep their fixed behaviour.
     async fn handle_normal_mode_key(&mut self, key: KeyCode) -> Result<()> {
-        // Touch keybindings module so it stays wired (configurable bindings)
-        let _ = crate::keybindings::default_bindings();
+        if let KeyCode::Char(c) = key
+            && let Some(action) = self.keybindings.get(&c).copied()
+        {
+            return self.dispatch_key_action(action).await;
+        }
         match key {
-            KeyCode::Char('i') | KeyCode::Char('I') => {
-                self.app.set_input_mode(InputMode::Insert);
-            }
-            KeyCode::Char('q') => {
-                if self.app.is_generating() {
-                    self.app.request_confirm(ConfirmKind::Quit);
-                } else {
-                    self.app.quit();
-                }
-            }
-            KeyCode::Char('j') => self.app.scroll_down(1),
-            KeyCode::Char('k') => self.app.scroll_up(1),
-            KeyCode::Char('g') => self.app.scroll_to_top(),
-            KeyCode::Char('G') => self.app.scroll_to_bottom(),
-            KeyCode::Char('e') => {
-                self.app.edit_last_message();
-                self.app.set_input_mode(InputMode::Insert);
-            }
-            KeyCode::Char('u') => {
-                if self.app.undo_clear() {
-                    self.app
-                        .push_system_message("Restored last cleared messages.");
-                } else {
-                    self.app.push_system_message("Nothing to undo.");
-                }
-            }
-            KeyCode::Char('t') => {
-                let on = self.app.toggle_show_tools();
-                self.app.push_system_message(if on {
-                    "Tool outputs shown."
-                } else {
-                    "Tool outputs hidden."
-                });
-            }
-            KeyCode::Char('f') => {
-                self.app.set_input("/search ".to_string());
-                self.app.set_input_mode(InputMode::Insert);
-            }
-            KeyCode::Char('y') => {
-                if self.app.copy_last_to_clipboard() {
-                    self.app
-                        .push_system_message("Copied last assistant reply to clipboard.");
-                } else {
-                    self.app
-                        .push_system_message("Nothing to copy — no assistant reply yet.");
-                }
-            }
+            // Fixed single-char fallbacks not exposed through the
+            // configurable binding set.
             KeyCode::Char('r') => {
                 self.retry_generation().await?;
             }
@@ -1002,14 +983,8 @@ impl TuiLoop {
                 AppMode::AgentPanel => self.app.set_mode(AppMode::Normal),
                 _ => self.app.set_mode(AppMode::Normal),
             },
-            KeyCode::Char('h') | KeyCode::Char('?') => {
-                self.app.toggle_help();
-            }
             KeyCode::F(1) => {
                 self.app.toggle_help();
-            }
-            KeyCode::Char('a') => {
-                self.app.set_mode(AppMode::AgentPanel);
             }
             KeyCode::Up => {
                 self.app.scroll_up(1);
@@ -1032,6 +1007,64 @@ impl TuiLoop {
             _ => {}
         }
 
+        Ok(())
+    }
+
+    /// Dispatch one configurable keybinding action.
+    ///
+    /// The behaviour bodies are identical to what the old hardcoded
+    /// match arms did; extracting them lets the binding table and the
+    /// code path share one implementation.
+    async fn dispatch_key_action(&mut self, action: KeyAction) -> Result<()> {
+        match action {
+            KeyAction::Insert => self.app.set_input_mode(InputMode::Insert),
+            KeyAction::Quit => {
+                if self.app.is_generating() {
+                    self.app.request_confirm(ConfirmKind::Quit);
+                } else {
+                    self.app.quit();
+                }
+            }
+            KeyAction::Help => self.app.toggle_help(),
+            KeyAction::Panel => self.app.set_mode(AppMode::AgentPanel),
+            KeyAction::ScrollUp => self.app.scroll_up(1),
+            KeyAction::ScrollDown => self.app.scroll_down(1),
+            KeyAction::Top => self.app.scroll_to_top(),
+            KeyAction::Bottom => self.app.scroll_to_bottom(),
+            KeyAction::EditLast => {
+                self.app.edit_last_message();
+                self.app.set_input_mode(InputMode::Insert);
+            }
+            KeyAction::Undo => {
+                if self.app.undo_clear() {
+                    self.app
+                        .push_system_message("Restored last cleared messages.");
+                } else {
+                    self.app.push_system_message("Nothing to undo.");
+                }
+            }
+            KeyAction::ToggleTools => {
+                let on = self.app.toggle_show_tools();
+                self.app.push_system_message(if on {
+                    "Tool outputs shown."
+                } else {
+                    "Tool outputs hidden."
+                });
+            }
+            KeyAction::SearchPrefix => {
+                self.app.set_input("/search ".to_string());
+                self.app.set_input_mode(InputMode::Insert);
+            }
+            KeyAction::CopyLast => {
+                if self.app.copy_last_to_clipboard() {
+                    self.app
+                        .push_system_message("Copied last assistant reply to clipboard.");
+                } else {
+                    self.app
+                        .push_system_message("Nothing to copy — no assistant reply yet.");
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1187,6 +1220,66 @@ mod tests {
 
         tui.handle_event(Event::Key(KeyCode::Escape)).await.unwrap();
         assert_eq!(tui.app().input_mode(), &InputMode::Normal);
+    }
+
+    /// The default binding set must keep 'i' as insert, so a fresh
+    /// install behaves as documented.
+    #[tokio::test]
+    async fn test_default_keybinding_insert_fires() {
+        let mut tui = TuiLoop::new();
+        tui.handle_event(Event::Key(KeyCode::Char('i')))
+            .await
+            .unwrap();
+        assert_eq!(tui.app().input_mode(), &InputMode::Insert);
+    }
+
+    /// A user-supplied binding for a previously-unbound key must fire.
+    #[tokio::test]
+    async fn test_custom_keybinding_is_honored() {
+        use crate::keybindings::KeyAction;
+        use std::collections::HashMap;
+
+        let mut tui = TuiLoop::new();
+        let mut b = HashMap::new();
+        b.insert('w', KeyAction::Insert);
+        tui.set_keybindings(b);
+
+        // 'w' is not in the defaults; only the custom binding should
+        // make it enter insert mode.
+        tui.handle_event(Event::Key(KeyCode::Char('w')))
+            .await
+            .unwrap();
+        assert_eq!(tui.app().input_mode(), &InputMode::Insert);
+    }
+
+    /// Replacing the default binding for an action with a different key
+    /// must disable the old key. Regression: the previous implementation
+    /// hardcoded the character arms, so a rebind would silently keep the
+    /// old key working and the new key would never fire.
+    #[tokio::test]
+    async fn test_rebinding_replaces_default() {
+        use crate::keybindings::KeyAction;
+        use std::collections::HashMap;
+
+        let mut tui = TuiLoop::new();
+        let mut b = HashMap::new();
+        // Map insert to 'w' only — 'i' must no longer trigger it.
+        b.insert('w', KeyAction::Insert);
+        tui.set_keybindings(b);
+
+        tui.handle_event(Event::Key(KeyCode::Char('i')))
+            .await
+            .unwrap();
+        assert_eq!(
+            tui.app().input_mode(),
+            &InputMode::Normal,
+            "rebound 'i' should no longer enter insert mode"
+        );
+
+        tui.handle_event(Event::Key(KeyCode::Char('w')))
+            .await
+            .unwrap();
+        assert_eq!(tui.app().input_mode(), &InputMode::Insert);
     }
 
     #[tokio::test]

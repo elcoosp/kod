@@ -38,6 +38,10 @@ pub enum KeyAction {
 pub fn default_bindings() -> HashMap<char, KeyAction> {
     [
         ('i', KeyAction::Insert),
+        // 'I' is a legacy alias for insert (the pre-configurable TUI
+        // accepted both); keep it in the default set so a user can
+        // rebind or remove it, rather than hardcoding it downstream.
+        ('I', KeyAction::Insert),
         ('q', KeyAction::Quit),
         ('h', KeyAction::Help),
         ('?', KeyAction::Help),
