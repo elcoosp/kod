@@ -11,6 +11,20 @@ use kod_types::{MemoryContext, ToolCall, ToolResult};
 use std::path::PathBuf;
 use std::time::Instant;
 
+/// Truncate a UTF-8 string to at most `max` bytes at a char boundary.
+/// Local to this module so the router does not need a public dependency
+/// on `kod_core::engine`'s helper.
+fn truncate_chars(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Types of tasks that can be routed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TaskType {
@@ -424,19 +438,64 @@ impl TaskRouter {
             if !matches.is_empty() {
                 prompt.push_str("## Relevant Skills\n\n");
                 for skill_match in matches.iter().take(self.config.max_skills_per_query) {
+                    let skill = &skill_match.skill;
                     // Tell the agent where the skill lives so it can read
                     // reference files with the correct absolute path instead of
                     // guessing relative to the project root.
-                    let base_dir = skill_match
-                        .skill
+                    let base_dir = skill
                         .path
                         .parent()
                         .map(|p| p.display().to_string())
                         .unwrap_or_else(|| ".".to_string());
                     prompt.push_str(&format!(
                         "### {}\nSkill location: {}\n\n{}\n\n",
-                        skill_match.skill.metadata.name, base_dir, skill_match.skill.instructions
+                        skill.metadata.name, base_dir, skill.instructions
                     ));
+
+                    // The parser splits a skill file into instructions,
+                    // examples, and constraints. Only the instructions
+                    // section was being injected, so a skill whose value
+                    // lives in its worked examples (code-review's
+                    // <example> blocks, python-testing's parametrize
+                    // sample) arrived at the model as bare prose — the
+                    // model had no way to reproduce the skill author's
+                    // intent. Append the examples and constraints too.
+                    //
+                    // These are secondary; cap them so a verbose skill
+                    // cannot dominate the prompt. The instructions are
+                    // the primary content and stay uncapped.
+                    const MAX_SKILL_EXAMPLES: usize = 5;
+                    const MAX_EXAMPLE_CHARS: usize = 1_500;
+                    if !skill.examples.is_empty() {
+                        prompt.push_str("Examples:\n\n");
+                        for ex in skill.examples.iter().take(MAX_SKILL_EXAMPLES) {
+                            if !ex.input.trim().is_empty() {
+                                prompt.push_str(&format!("Input: {}\n", ex.input.trim()));
+                            }
+                            let out = ex.output.trim();
+                            let shown = if out.len() > MAX_EXAMPLE_CHARS {
+                                format!("{}…", truncate_chars(out, MAX_EXAMPLE_CHARS))
+                            } else {
+                                out.to_string()
+                            };
+                            prompt.push_str(&format!("Output:\n{}\n\n", shown));
+                        }
+                        let extra = skill.examples.len().saturating_sub(MAX_SKILL_EXAMPLES);
+                        if extra > 0 {
+                            prompt.push_str(&format!(
+                                "…and {} more example(s) in the skill file.\n\n",
+                                extra
+                            ));
+                        }
+                    }
+                    if let Some(constraints) = &skill.constraints
+                        && !constraints.trim().is_empty()
+                    {
+                        prompt.push_str(&format!(
+                            "Constraints:\n{}\n\n",
+                            constraints.trim()
+                        ));
+                    }
                 }
             }
         }
@@ -617,9 +676,12 @@ mod tests {
                     requirements: Vec::new(),
                     triggers: Vec::new(),
                 },
-                instructions: String::new(),
-                examples: Vec::new(),
-                constraints: None,
+                instructions: "Do design well.".to_string(),
+                examples: vec![kod_types::SkillExample {
+                    input: "make a login form".to_string(),
+                    output: "Use a single column with a labeled email field.".to_string(),
+                }],
+                constraints: Some("Never use more than two fonts.".to_string()),
                 content: String::new(),
                 path: temp_dir.path().to_path_buf(),
             })
@@ -643,6 +705,22 @@ mod tests {
         assert!(
             with_skill.contains("what can you do?"),
             "history not carried: {with_skill}"
+        );
+        // The examples and constraints the parser extracted must reach
+        // the prompt. Regression: build_prompt only injected the
+        // instructions section, so skills whose value is in their
+        // worked examples arrived at the model as bare prose.
+        assert!(
+            with_skill.contains("make a login form"),
+            "example input missing from prompt: {with_skill}"
+        );
+        assert!(
+            with_skill.contains("labeled email field"),
+            "example output missing from prompt: {with_skill}"
+        );
+        assert!(
+            with_skill.contains("Never use more than two fonts"),
+            "constraints missing from prompt: {with_skill}"
         );
     }
 }
