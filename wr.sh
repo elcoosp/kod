@@ -26,210 +26,130 @@ run_with_timeout() {
 
 COMPILE_OK=true
 INCOMPLETE=false
-CARGO=crates/kod-core/Cargo.toml
-TARGET=crates/kod-core/src/engine.rs
+TARGET=.github/workflows/ci.yml
 
-for f in "$CARGO" "$TARGET"; do
-    if [ ! -f "$f" ]; then
-        echo "ERROR: missing $f — run from the kod workspace root"
-        exit 1
-    fi
-done
+if [ ! -f Cargo.toml ] || [ ! -f "$TARGET" ]; then
+    echo "ERROR: run from the kod workspace root ($TARGET missing)"
+    exit 1
+fi
 
-echo "Adding proptest dev-dep to kod-core and property tests to engine.rs"
+echo "Patching $TARGET: add a live-model job against a real Ollama server"
 
-python3 - "$CARGO" "$TARGET" << 'PYEOF'
+python3 - "$TARGET" << 'PYEOF'
 import os
 import sys
 
-cargo, target = sys.argv[1], sys.argv[2]
-
-def patch(path, old, new, label, expect=1):
-    with open(path, "r") as f:
-        content = f.read()
-    n = content.count(old)
-    if n == 0:
-        print(f"ERROR: old snippet not found in {path}: {label}")
-        sys.exit(2)
-    if expect and n != expect:
-        print(f"ERROR: expected {expect} occurrence(s) of {label} in {path}, found {n}")
-        sys.exit(2)
-    patched = content.replace(old, new, expect if expect else n)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(patched)
-    os.replace(tmp, path)
-    print(f"Patched {path}: {label}")
-
-# --- 1. kod-core Cargo.toml: add proptest to dev-deps ------------------
-patch(
-    cargo,
-    '''[dev-dependencies]
-rstest = { workspace = true }''',
-    '''[dev-dependencies]
-proptest = { workspace = true }
-rstest = { workspace = true }''',
-    "proptest dev-dep",
-)
-
-# --- 2. engine.rs: append a property-test module -----------------------
-# Keep the existing `#[cfg(test)] mod tests` intact; add a sibling
-# module so proptest-generated cases don't slow the hand-written suite.
+target = sys.argv[1]
 with open(target, "r") as f:
     content = f.read()
 
-if "mod prop_tests" in content:
-    print("Skipped: prop_tests already present")
-else:
-    content += '''
-
-#[cfg(test)]
-mod prop_tests {
-    //! Property tests for the \\0kod-* marker protocol.
-    //!
-    //! The four markers (`tool_start_marker`, `tool_args_marker`,
-    //! `tool_done_marker`, `THINKING_MARKER`) form a small wire protocol
-    //! between the engine and the TUI: the engine builds a string, sends
-    //! it down an mpsc channel, and the TUI parses it back. The protocol
-    //! relies on an out-of-band NUL sentinel, which no ordinary text will
-    //! contain — but tool output does sometimes contain NUL bytes, and
-    //! any future marker field could accidentally carry one.
-    //!
-    //! `tool_done_marker` is documented as sanitizing embedded NULs to
-    //! spaces before encoding, so its round-trip is only identity on
-    //! NUL-free inputs. `tool_start_marker` and `tool_args_marker` do not
-    //! sanitize, so their properties only hold for NUL-free inputs.
-    //!
-    //! These tests assert:
-    //!   1. Round-trips are identity on the domain where they are defined.
-    //!   2. `parse_tool_done` never drops a well-formed completion, and
-    //!      never accepts a truncated one (a wrong parse is worse than a
-    //!      drop: the TUI would show a stale tool row).
-    //!   3. `truncate_chars` always yields a char-boundary-respecting
-    //!      prefix.
-    //!   4. `format_tool_header` and `format_call_brief` never panic on
-    //!      arbitrary JSON, since the model supplies the arguments.
-
-    use super::*;
-    use proptest::prelude::*;
-
-    /// Regex strategy that never emits NUL: the marker protocol cannot
-    /// represent an embedded NUL, and the engine-side builders are the
-    /// only sanctioned place that substitutes one for a space.
-    fn no_nul() -> impl Strategy<Value = String> {
-        ".{0,300}".prop_filter("NUL-free", |s| !s.contains('\\0'))
-    }
-
-    proptest! {
-        /// tool_start_marker / parse_tool_start round-trip on NUL-free input.
-        #[test]
-        fn prop_tool_start_roundtrip(name in no_nul().prop_filter("non-empty", |s| !s.is_empty())) {
-            let chunk = tool_start_marker(&name);
-            let parsed = parse_tool_start(&chunk)
-                .expect("marker built by tool_start_marker must parse");
-            prop_assert_eq!(parsed, name.as_str());
-        }
-
-        /// tool_args_marker / parse_tool_args round-trip on NUL-free input.
-        #[test]
-        fn prop_tool_args_roundtrip(display in no_nul()) {
-            let chunk = tool_args_marker(&display);
-            let parsed = parse_tool_args(&chunk)
-                .expect("marker built by tool_args_marker must parse");
-            prop_assert_eq!(parsed, display.as_str());
-        }
-
-        /// tool_done_marker / parse_tool_done round-trip. The builder
-        /// sanitizes NUL to space, so the round-trip target is the
-        /// sanitized form, not the raw inputs.
-        #[test]
-        fn prop_tool_done_roundtrip(
-            header in ".{0,200}",
-            summary in ".{0,500}",
-            ms in any::<u64>(),
-        ) {
-            let header_sanitized = header.replace('\\0', " ");
-            let summary_sanitized = summary.replace('\\0', " ");
-            let chunk = tool_done_marker(&header, &summary, ms);
-            let (h, s, m) = parse_tool_done(&chunk)
-                .expect("marker built by tool_done_marker must parse");
-            prop_assert_eq!(h, header_sanitized.as_str());
-            prop_assert_eq!(s, summary_sanitized.as_str());
-            prop_assert_eq!(m, ms);
-        }
-
-        /// Any chunk the engine might send that is *not* a well-formed
-        /// done-marker must not parse as one. This is what keeps the TUI
-        /// from misreading streamed text as a control frame.
-        #[test]
-        fn prop_arbitrary_text_is_not_a_done_marker(s in ".{0,400}") {
-            // Only assert that a non-marker does not accidentally parse
-            // as a marker with a mismatched shape. If it parses, the
-            // returned tuple must contain the exact payload.
-            if let Some((h, s_, m)) = parse_tool_done(&s) {
-                prop_assert!(s.starts_with(TOOL_DONE_MARKER));
-                prop_assert!(h.len() + s_.len() <= s.len());
-                // Duration must round-trip through u64 parsing, or be
-                // the documented degradation to 0.
-                if let Ok(parsed) = s.splitn(3, '\\0').nth(2).unwrap_or("").parse::<u64>() {
-                    prop_assert_eq!(m, parsed);
-                } else {
-                    prop_assert_eq!(m, 0);
-                }
-            }
-        }
-
-        /// truncate_chars(s, max) is always a char-boundary prefix of s
-        /// no longer than max bytes. The whole reason the helper exists
-        /// is that &s[..max] panics on multibyte input.
-        #[test]
-        fn prop_truncate_chars_is_a_safe_prefix(
-            s in ".{0,2000}",
-            max in 0usize..2000,
-        ) {
-            let out = truncate_chars(&s, max);
-            prop_assert!(out.len() <= max);
-            prop_assert!(s.is_char_boundary(out.len()));
-            prop_assert!(s.starts_with(out));
-        }
-
-        /// format_tool_header must never panic: the model supplies the
-        /// arguments, and it can put anything in them.
-        #[test]
-        fn prop_format_tool_header_never_panics(
-            name in no_nul().prop_filter("non-empty", |s| !s.is_empty()),
-            path in ".{0,500}",
-            pattern in ".{0,500}",
-        ) {
-            let args = serde_json::json!({
-                "path": path,
-                "pattern": pattern,
-            });
-            let _ = format_tool_header(&name, &args);
-        }
-
-        /// format_call_brief must never panic on arbitrary arguments.
-        #[test]
-        fn prop_format_call_brief_never_panics(
-            name in no_nul().prop_filter("non-empty", |s| !s.is_empty()),
-            command in ".{0,1000}",
-        ) {
-            // Two shapes the two branches of format_call_brief handle:
-            // execute_command with a "command" key, and a generic tool
-            // with a "path" key.
-            let args_cmd = serde_json::json!({ "command": command });
-            let _ = format_call_brief(&name, &args_cmd);
-            let args_path = serde_json::json!({ "path": command });
-            let _ = format_call_brief(&name, &args_path);
-        }
-    }
-}
+old = '''  benchmark:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
 '''
-    with open(target, "w") as f:
-        f.write(content)
-    print("Appended prop_tests module to engine.rs")
 
-print("All patches applied.")
+new = '''  # Runs the #[ignore]-gated tests that exercise the product against a
+  # real OpenAI-compatible server. Without this job, the ignored tests
+  # never execute anywhere and a regression in the streaming loop,
+  # tool-call assembly, or list_models ships without a signal.
+  #
+  # Uses the smallest reliable Ollama model (qwen2.5:0.5b, ~350 MB) so
+  # pull time stays under a minute on a warm cache. The Ollama setup is
+  # the standard installer rather than a marketplace action: the
+  # installer is stable, and the actions in that space have had flaky
+  # releases.
+  live-model:
+    name: Live model (Ollama)
+    runs-on: ubuntu-latest
+    # Skip on PRs from forks that can't install services; run on every
+    # push to main/develop and on PRs from the same repo.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-live-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-live-
+
+    - name: Install Ollama
+      run: |
+        curl -fsSL https://ollama.com/install.sh | sh
+        ollama --version
+
+    - name: Start Ollama
+      run: |
+        # The systemd unit the installer ships does not run in the
+        # Actions sandbox, so start the server directly and wait for
+        # /api/tags to answer.
+        nohup ollama serve > /tmp/ollama.log 2>&1 &
+        for i in $(seq 1 30); do
+          if curl -sf http://localhost:11434/api/tags > /dev/null; then
+            echo "Ollama is up after ${i}s"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "Ollama did not start within 30s; log follows:" >&2
+        cat /tmp/ollama.log >&2
+        exit 1
+
+    - name: Pull tiny model
+      run: ollama pull qwen2.5:0.5b
+
+    - name: Run live provider tests
+      env:
+        KOD_TEST_MODEL: qwen2.5:0.5b
+      run: cargo test -p kod-provider-openai -- --ignored --nocapture
+
+    - name: Run live TUI round-trip test
+      env:
+        KOD_TEST_MODEL: qwen2.5:0.5b
+        KOD_TEST_DB: /tmp/kod-test.redb
+      run: |
+        # The TUI's live test needs a kod config pointing at localhost.
+        # Write a minimal one into the config directory the CLI reads.
+        mkdir -p "$HOME/.config/kod"
+        cat > "$HOME/.config/kod/config.toml" <<'CFG'
+        [llm]
+        provider = "OpenAICompatible"
+        model = "qwen2.5:0.5b"
+        base_url = "http://localhost:11434"
+        context_window = 8192
+        max_tokens = 512
+        temperature = 0.2
+        timeout_secs = 120
+        CFG
+        cargo test -p kod-tui --test main_loop -- --ignored --nocapture
+
+  benchmark:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+'''
+
+n = content.count(old)
+if n != 1:
+    print(f"ERROR: expected 1 occurrence of the benchmark job, found {n}")
+    sys.exit(2)
+content = content.replace(old, new, 1)
+
+tmp = target + ".tmp"
+with open(tmp, "w") as f:
+    f.write(content)
+os.replace(tmp, target)
+print("Patched", target)
 PYEOF
 
 if [ $? -ne 0 ]; then
@@ -237,7 +157,23 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "Checking compilation"
+echo "Validating YAML syntax"
+python3 - << 'PYEOF'
+import sys
+try:
+    import yaml  # type: ignore
+except ImportError:
+    print("PyYAML not installed; skipping strict validation.")
+    sys.exit(0)
+with open(".github/workflows/ci.yml") as f:
+    data = yaml.safe_load(f)
+jobs = data.get("jobs", {})
+assert "live-model" in jobs, "live-model job missing"
+assert "test" in jobs and "security" in jobs and "coverage" in jobs and "benchmark" in jobs
+print("YAML parses; jobs:", ", ".join(sorted(jobs.keys())))
+PYEOF
+
+echo "Checking compilation (workflow change should not affect it, but keep the gate)"
 if ! cargo check --workspace 2>&1; then
     echo "Compilation failed – will skip commit"
     COMPILE_OK=false
@@ -245,18 +181,6 @@ fi
 
 if [ "$INCOMPLETE" = true ] || [ "$COMPILE_OK" = false ]; then
     echo "Skipping tests and commit due to incomplete files or compilation errors"
-    exit 1
-fi
-
-echo "Running kod-core property tests (180s wall clock)"
-if ! run_with_timeout 180 cargo test -p kod-core prop_tests 2>&1; then
-    echo "Property tests failed or hung. Paste the full output for a surgical fix."
-    exit 1
-fi
-
-echo "Running full kod-core tests (180s wall clock)"
-if ! run_with_timeout 180 cargo test -p kod-core 2>&1; then
-    echo "kod-core tests failed or hung. Paste the full output for a surgical fix."
     exit 1
 fi
 
@@ -274,32 +198,23 @@ fi
 
 echo "All checks passed. Committing."
 git add -A
-git commit -m "test(core): property-test the \\0kod-* marker protocol
+git commit -m "ci: run the ignored live-model tests against a real Ollama server
 
-The four control markers (tool_start_marker, tool_args_marker,
-tool_done_marker, THINKING_MARKER) form a small wire protocol
-between the engine and the TUI: the engine builds a string, sends
-it down an mpsc channel, and the TUI parses it back. Until now the
-only tests were hand-picked inputs from the original code review.
-The protocol relies on an out-of-band NUL sentinel; tool output
-occasionally contains NUL bytes, and any future marker field could
-accidentally carry one.
+The provider crate's only end-to-end test (test_live_list_models) and
+the TUI's only end-to-end test (test_live_prompt_roundtrip) are
+#[ignore]-gated, and no CI job ran them. A regression in the OpenAI-
+compatible path, the streaming loop, or the tool-call assembly could
+ship without any signal.
 
-Add seven proptest properties under a new prop_tests module:
+Add a live-model job that:
+- installs Ollama via the official installer,
+- starts the server and waits for /api/tags,
+- pulls qwen2.5:0.5b (~350 MB, under a minute on warm cache),
+- runs 'cargo test -p kod-provider-openai -- --ignored' with
+  KOD_TEST_MODEL set,
+- writes a minimal config pointing at localhost and runs the TUI's
+  ignored round-trip test.
 
-- tool_start_marker / parse_tool_start round-trip on NUL-free input.
-- tool_args_marker / parse_tool_args round-trip on NUL-free input.
-- tool_done_marker / parse_tool_done round-trip, with the documented
-  NUL-to-space sanitization applied to the expected payload.
-- Arbitrary text does not accidentally parse as a done-marker: when
-  parse_tool_done returns Some, the parsed fields and duration must
-  be consistent with the input.
-- truncate_chars always returns a char-boundary prefix no longer
-  than the requested max — the property that motivates the helper.
-- format_tool_header and format_call_brief never panic on arbitrary
-  JSON, since the model supplies the arguments.
-
-proptest was already a workspace dep but not wired into any crate;
-add it to kod-core's dev-deps. The property module is a sibling of
-the existing #[cfg(test)] mod tests, so the hand-written suite's
-runtime is unchanged."
+The job runs on push to main/develop and on same-repo PRs (skips
+fork PRs, which cannot install services). Uses the stable installer
+rather than a marketplace action — those have been flaky."

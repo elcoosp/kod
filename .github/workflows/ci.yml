@@ -90,6 +90,90 @@ jobs:
         flags: unittests
         name: codecov-umbrella
 
+  # Runs the #[ignore]-gated tests that exercise the product against a
+  # real OpenAI-compatible server. Without this job, the ignored tests
+  # never execute anywhere and a regression in the streaming loop,
+  # tool-call assembly, or list_models ships without a signal.
+  #
+  # Uses the smallest reliable Ollama model (qwen2.5:0.5b, ~350 MB) so
+  # pull time stays under a minute on a warm cache. The Ollama setup is
+  # the standard installer rather than a marketplace action: the
+  # installer is stable, and the actions in that space have had flaky
+  # releases.
+  live-model:
+    name: Live model (Ollama)
+    runs-on: ubuntu-latest
+    # Skip on PRs from forks that can't install services; run on every
+    # push to main/develop and on PRs from the same repo.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-live-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-live-
+
+    - name: Install Ollama
+      run: |
+        curl -fsSL https://ollama.com/install.sh | sh
+        ollama --version
+
+    - name: Start Ollama
+      run: |
+        # The systemd unit the installer ships does not run in the
+        # Actions sandbox, so start the server directly and wait for
+        # /api/tags to answer.
+        nohup ollama serve > /tmp/ollama.log 2>&1 &
+        for i in $(seq 1 30); do
+          if curl -sf http://localhost:11434/api/tags > /dev/null; then
+            echo "Ollama is up after ${i}s"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "Ollama did not start within 30s; log follows:" >&2
+        cat /tmp/ollama.log >&2
+        exit 1
+
+    - name: Pull tiny model
+      run: ollama pull qwen2.5:0.5b
+
+    - name: Run live provider tests
+      env:
+        KOD_TEST_MODEL: qwen2.5:0.5b
+      run: cargo test -p kod-provider-openai -- --ignored --nocapture
+
+    - name: Run live TUI round-trip test
+      env:
+        KOD_TEST_MODEL: qwen2.5:0.5b
+        KOD_TEST_DB: /tmp/kod-test.redb
+      run: |
+        # The TUI's live test needs a kod config pointing at localhost.
+        # Write a minimal one into the config directory the CLI reads.
+        mkdir -p "$HOME/.config/kod"
+        cat > "$HOME/.config/kod/config.toml" <<'CFG'
+        [llm]
+        provider = "OpenAICompatible"
+        model = "qwen2.5:0.5b"
+        base_url = "http://localhost:11434"
+        context_window = 8192
+        max_tokens = 512
+        temperature = 0.2
+        timeout_secs = 120
+        CFG
+        cargo test -p kod-tui --test main_loop -- --ignored --nocapture
+
   benchmark:
     name: Benchmarks
     runs-on: ubuntu-latest
