@@ -1,274 +1,257 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-TOOLS=crates/kod-tools/src/tools.rs
 ENGINE=crates/kod-core/src/engine.rs
 
-for f in "$TOOLS" "$ENGINE"; do
-    if [ ! -f "$f" ]; then
-        echo "ERROR: missing $f"
-        exit 1
-    fi
-done
+echo "=== Diagnostic: no-provider fallbacks in engine.rs ==="
+grep -n "No provider\|fall back to router\|no_provider_error" "$ENGINE" || echo "  none found"
 
-python3 - "$TOOLS" "$ENGINE" << 'PYEOF'
+echo
+echo "=== Diagnostic: MAX_TOOL_ROUNDS ==="
+grep -n "MAX_TOOL_ROUNDS" "$ENGINE" | head -5
+
+echo
+echo "=== Diagnostic: ground_prompt block name ==="
+grep -n "## Tool result" "$ENGINE"
+
+echo
+echo "Patching $ENGINE"
+
+python3 - "$ENGINE" << 'PYEOF'
 import os
 import sys
 
-tools, engine = sys.argv[1], sys.argv[2]
+target = sys.argv[1]
+with open(target, "r") as f:
+    src = f.read()
 
-def read(p):
-    with open(p, "r") as f:
-        return f.read()
-
-def write(p, s):
-    tmp = p + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(s)
-    os.replace(tmp, p)
-
-src = read(tools)
-
-tests = [
-    ("read_file_detects_binary_content", '''
-    /// A file with NUL bytes in the first 1 KB must be returned as
-    /// binary (flag + hex preview), not decoded as UTF-8 lossy.
-    #[tokio::test]
-    async fn read_file_detects_binary_content() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let path = temp.path().join("img.png");
-        let bytes: Vec<u8> = vec![
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-            0x00, 0x00, 0x00, 0x0D,
-            0x49, 0x48, 0x44, 0x52,
-        ];
-        std::fs::write(&path, &bytes).unwrap();
-
-        let ctx = full_context(temp.path());
-        let tool = ReadFileTool::new();
-        let params = serde_json::json!({ "path": "img.png" });
-        let result = tool.execute(&params, &ctx).await.unwrap();
-
-        match result {
-            ToolResult::Success(v) => {
-                assert_eq!(v["binary"], true);
-                assert_eq!(v["size_bytes"], bytes.len() as u64);
-                assert!(v.get("content").is_none(), "no text content field");
-                let hex = v["preview_hex"].as_str().unwrap();
-                assert!(
-                    hex.starts_with("89 50 4e 47"),
-                    "hex preview should start with the PNG signature: {hex}"
-                );
-            }
-            other => panic!("expected success, got {:?}", other),
-        }
-    }
-'''),
-    ("read_file_text_file_reports_not_binary", '''
-    /// A plain text file must be returned as text with binary: false.
-    #[tokio::test]
-    async fn read_file_text_file_reports_not_binary() {
-        let temp = tempfile::TempDir::new().unwrap();
-        std::fs::write(temp.path().join("code.rs"), "fn main() {}\\n").unwrap();
-
-        let ctx = full_context(temp.path());
-        let tool = ReadFileTool::new();
-        let params = serde_json::json!({ "path": "code.rs" });
-        let result = tool.execute(&params, &ctx).await.unwrap();
-
-        match result {
-            ToolResult::Success(v) => {
-                assert_eq!(v["binary"], false);
-                assert_eq!(v["content"], "fn main() {}\\n");
-            }
-            other => panic!("expected success, got {:?}", other),
-        }
-    }
-'''),
-    ("read_file_multibyte_utf8_is_not_binary", '''
-    /// A UTF-8 file with non-ASCII content must NOT be misclassified
-    /// as binary. The heuristic is NUL bytes, not "any non-ASCII".
-    #[tokio::test]
-    async fn read_file_multibyte_utf8_is_not_binary() {
-        let temp = tempfile::TempDir::new().unwrap();
-        std::fs::write(
-            temp.path().join("accented.txt"),
-            "café au lait — un été\\n",
-        )
-        .unwrap();
-
-        let ctx = full_context(temp.path());
-        let tool = ReadFileTool::new();
-        let params = serde_json::json!({ "path": "accented.txt" });
-        let result = tool.execute(&params, &ctx).await.unwrap();
-
-        match result {
-            ToolResult::Success(v) => {
-                assert_eq!(v["binary"], false);
-                assert!(v["content"].as_str().unwrap().contains("café"));
-            }
-            other => panic!("expected success, got {:?}", other),
-        }
-    }
-'''),
-    ("read_file_directory_returns_actionable_error", '''
-    /// read_file on a directory must return an actionable error, not a
-    /// raw "Is a directory" that the model cannot distinguish from a
-    /// missing file or a permission problem.
-    #[tokio::test]
-    async fn read_file_directory_returns_actionable_error() {
-        let temp = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir_all(temp.path().join("subdir")).unwrap();
-        std::fs::write(temp.path().join("subdir/x.txt"), "x").unwrap();
-
-        let ctx = full_context(temp.path());
-        let tool = ReadFileTool::new();
-        let params = serde_json::json!({ "path": "subdir" });
-        let result = tool.execute(&params, &ctx).await.unwrap();
-
-        match result {
-            ToolResult::Error(msg) => {
-                assert!(msg.contains("is a directory"), "message: {msg}");
-                assert!(msg.contains("list_files"), "message: {msg}");
-            }
-            other => panic!("expected ToolResult::Error, got {:?}", other),
-        }
-    }
-'''),
-    ("read_file_missing_returns_actionable_error", '''
-    /// read_file on a missing path must say so, with a suggestion
-    /// rather than a re-run of the same failing call.
-    #[tokio::test]
-    async fn read_file_missing_returns_actionable_error() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let ctx = full_context(temp.path());
-        let tool = ReadFileTool::new();
-        let params = serde_json::json!({ "path": "nope.txt" });
-        let result = tool.execute(&params, &ctx).await.unwrap();
-
-        match result {
-            ToolResult::Error(msg) => {
-                assert!(msg.contains("not found"), "message: {msg}");
-                assert!(msg.contains("nope.txt"), "message: {msg}");
-            }
-            other => panic!("expected ToolResult::Error, got {:?}", other),
-        }
-    }
-'''),
-    ("list_files_on_file_reports_file_kind", '''
-    /// list_files on a file must return path_kind: "file" with a
-    /// single-entry list, not the ambiguous empty-directory shape.
-    #[tokio::test]
-    async fn list_files_on_file_reports_file_kind() {
-        let temp = tempfile::TempDir::new().unwrap();
-        std::fs::write(temp.path().join("single.txt"), "content").unwrap();
-
-        let ctx = full_context(temp.path());
-        let tool = ListFilesTool::new();
-        let params = serde_json::json!({ "path": "single.txt" });
-        let result = tool.execute(&params, &ctx).await.unwrap();
-
-        match result {
-            ToolResult::Success(v) => {
-                assert_eq!(v["path_kind"], "file");
-                let files = v["files"].as_array().unwrap();
-                assert_eq!(files.len(), 1);
-                assert!(files[0].as_str().unwrap().ends_with("single.txt"));
-                assert_eq!(v["total"], 1);
-            }
-            other => panic!("expected success, got {:?}", other),
-        }
-    }
-'''),
-    ("list_files_on_directory_reports_directory_kind", '''
-    /// list_files on a directory still reports directory and its
-    /// entries, unchanged.
-    #[tokio::test]
-    async fn list_files_on_directory_reports_directory_kind() {
-        let temp = tempfile::TempDir::new().unwrap();
-        std::fs::write(temp.path().join("a.txt"), "").unwrap();
-        std::fs::write(temp.path().join("b.txt"), "").unwrap();
-
-        let ctx = full_context(temp.path());
-        let tool = ListFilesTool::new();
-        let params = serde_json::json!({ "path": "." });
-        let result = tool.execute(&params, &ctx).await.unwrap();
-
-        match result {
-            ToolResult::Success(v) => {
-                assert_eq!(v["path_kind"], "directory");
-                assert_eq!(v["files"].as_array().unwrap().len(), 2);
-                assert_eq!(v["total"], 2);
-            }
-            other => panic!("expected success, got {:?}", other),
-        }
-    }
-'''),
-    ("list_files_missing_path_errors", '''
-    /// list_files on a missing path returns a structured error.
-    #[tokio::test]
-    async fn list_files_missing_path_errors() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let ctx = full_context(temp.path());
-        let tool = ListFilesTool::new();
-        let params = serde_json::json!({ "path": "does-not-exist" });
-        let result = tool.execute(&params, &ctx).await.unwrap();
-
-        match result {
-            ToolResult::Error(msg) => {
-                assert!(msg.contains("not found"), "message: {msg}");
-                assert!(msg.contains("does-not-exist"), "message: {msg}");
-            }
-            other => panic!("expected ToolResult::Error, got {:?}", other),
-        }
-    }
-'''),
-]
-
-missing = [(m, b) for (m, b) in tests if m not in src]
-print(f"Missing in tools.rs: {len(missing)}")
-for m, _ in missing:
-    print(f"  - {m}")
-
-if missing:
-    stripped = src.rstrip()
-    if not stripped.endswith("}"):
-        print("ERROR: tools.rs does not end with `}`")
+def patch(old, new, label, expect=1):
+    global src
+    n = src.count(old)
+    if n == 0:
+        print(f"  SKIP (anchor absent): {label}")
+        return False
+    if expect and n != expect:
+        print(f"  ERROR: expected {expect} occurrence(s) of {label}, found {n}")
         sys.exit(2)
-    idx = stripped.rfind("}")
-    body = "\n".join(b for _, b in missing)
-    write(tools, stripped[:idx] + body + "\n}\n")
-    print("Inserted tests into tools.rs")
-else:
-    print("tools.rs: nothing to insert")
+    src = src.replace(old, new, expect if expect else n)
+    print(f"  patched: {label}")
+    return True
 
-src = read(engine)
-if "is a file, not a directory" in src:
-    print("engine.rs: summarize test already covers the file branch")
+# ----------------------------------------------------------------------
+# 1. Add no_provider_error helper. Place it right after set_provider.
+# ----------------------------------------------------------------------
+if "fn no_provider_error()" not in src:
+    patch(
+        '''    /// Set the LLM provider
+    pub async fn set_provider(&self, provider: Arc<dyn LlmProvider>) {
+        *self.provider.write().await = Some(provider);
+    }''',
+        '''    /// Set the LLM provider
+    pub async fn set_provider(&self, provider: Arc<dyn LlmProvider>) {
+        *self.provider.write().await = Some(provider);
+    }
+
+    /// Error for a `process*` call made before a provider is installed.
+    ///
+    /// The router has a set of placeholder handlers that return
+    /// strings like "Processing simple task: …". Those exist so the
+    /// router's own unit tests can exercise the classification path
+    /// without a provider, and they are fine in that role. As a
+    /// user-visible answer from the engine, though, they are worse
+    /// than an error: the call looks like it succeeded, the reply
+    /// advertises no fix, and the operator has to guess that the
+    /// engine was never wired to a model.
+    ///
+    /// Callers that do want the placeholder behavior (the router's
+    /// own tests) use `TaskRouter` directly. The engine tells the
+    /// truth.
+    fn no_provider_error() -> KodError {
+        KodError::InvalidState(
+            "No LLM provider configured. Install one with \\
+             `engine.set_provider(Arc::new(provider))` before calling \\
+             process — kod-cli and kod-tui do this automatically from \\
+             ~/.config/kod/config.toml."
+                .to_string(),
+        )
+    }''',
+        "no_provider_error helper",
+    )
 else:
-    anchor = "        // read_file binary result: one-line summary, no text preview."
+    print("  no_provider_error already present")
+
+# ----------------------------------------------------------------------
+# 2. process() fallback → error.
+# ----------------------------------------------------------------------
+patch(
+    '''        // No provider — fall back to router's built-in handlers
+        let response = self.router.process_input(input).await?;
+        Ok(response)
+    }
+
+    /// Process user input, streaming text chunks live to `chunk_tx`.''',
+    '''        // No provider. Reject rather than return the router's
+        // placeholder text — see `no_provider_error`.
+        Err(Self::no_provider_error())
+    }
+
+    /// Process user input, streaming text chunks live to `chunk_tx`.''',
+    "process() no-provider path",
+)
+
+# ----------------------------------------------------------------------
+# 3. process_streaming() fallback → error. Anchor on the
+#    distinguishing nearby doc comment.
+# ----------------------------------------------------------------------
+patch(
+    '''        let response = self.router.process_input(input).await?;
+        Ok(response)
+    }
+
+    /// Work toward `goal` across turns until the model declares it met.''',
+    '''        Err(Self::no_provider_error())
+    }
+
+    /// Work toward `goal` across turns until the model declares it met.''',
+    "process_streaming() no-provider path",
+)
+
+# ----------------------------------------------------------------------
+# 4. process_goal_streaming() fallback → error.
+# ----------------------------------------------------------------------
+patch(
+    '''        let response = self.router.process_input(input).await?;
+        Ok(response)
+    }
+
+    /// Collected (non-streaming) agentic loop used by [`process`].''',
+    '''        Err(Self::no_provider_error())
+    }
+
+    /// Collected (non-streaming) agentic loop used by [`process`].''',
+    "process_goal_streaming() no-provider path",
+)
+
+# ----------------------------------------------------------------------
+# 5. Fix the "## Tool result" / "## Tool results" mismatch in the
+#    grounding prompt.
+# ----------------------------------------------------------------------
+patch(
+    '''Call them when you need facts from this machine instead of guessing. Tool outputs return as `## Tool result` blocks — then answer the user.\\n",''',
+    '''Call them when you need facts from this machine instead of guessing. Tool outputs return as `## Tool results` blocks — then answer the user.\\n",''',
+    "## Tool results (plural) in ground_prompt",
+)
+
+# ----------------------------------------------------------------------
+# 6. Reduce MAX_TOOL_ROUNDS from 150 to 40.
+# ----------------------------------------------------------------------
+patch(
+    '''/// Max agentic tool rounds per `process()` call before forcing a summary.
+const MAX_TOOL_ROUNDS: usize = 150;''',
+    '''/// Max agentic tool rounds per `process()` call before forcing a
+/// summary. A single agentic pass typically uses 3–15 rounds for a
+/// non-trivial task; 40 is a generous safety margin that catches a
+/// runaway loop (a small model that keeps re-calling `read_file` on
+/// the same path, unable to recognize it is done) well before the
+/// user has waited minutes for nothing.
+const MAX_TOOL_ROUNDS: usize = 40;''',
+    "MAX_TOOL_ROUNDS 150 -> 40",
+)
+
+# ----------------------------------------------------------------------
+# 7. Tests: no-provider rejection at all three entry points.
+# ----------------------------------------------------------------------
+if "test_process_without_provider_errors" not in src:
+    anchor = '''    #[test]
+    fn test_tool_done_marker_roundtrip() {'''
     if anchor not in src:
-        print("WARN: engine.rs summarize-test anchor absent; skipping")
-    else:
-        addition = '''        // list_files on a file: reports "is a file", not "1 entry".
-        let lf_file = summarize_tool_result(
-            "list_files",
-            &ToolResult::Success(serde_json::json!({
-                "path": "/a/single.txt",
-                "path_kind": "file",
-                "files": ["/a/single.txt"],
-                "total": 1,
-                "truncated": false
-            })),
-        );
-        assert!(
-            lf_file.contains("is a file, not a directory"),
-            "file-shaped list_files summary: {lf_file}"
-        );
+        print("  ERROR: test anchor not found")
+        sys.exit(2)
+    new_tests = '''    /// All three process* entry points must reject a call made
+    /// before a provider is installed. Regression: the previous
+    /// fallback routed through the router's placeholder handlers and
+    /// returned "Processing simple task: …" — a plausible-looking
+    /// answer that hid the missing setup.
+    #[tokio::test]
+    async fn test_process_without_provider_errors() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
 
-'''
-        write(engine, src.replace(anchor, addition + anchor, 1))
-        print("Extended summarize test in engine.rs")
+        let err = engine.process("hello?").await.unwrap_err();
+        match err {
+            KodError::InvalidState(msg) => assert!(
+                msg.contains("No LLM provider"),
+                "error should name the missing provider: {msg}"
+            ),
+            other => panic!("expected InvalidState, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_streaming_without_provider_errors() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(4);
+        let err = engine
+            .process_streaming("hello?", &tx)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, KodError::InvalidState(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn test_process_goal_streaming_without_provider_errors() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(4);
+        let err = engine
+            .process_goal_streaming("work on it", "finish the task", &tx)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, KodError::InvalidState(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn test_tool_done_marker_roundtrip() {'''
+    src = src.replace(anchor, new_tests, 1)
+    print("  added no-provider tests")
+else:
+    print("  no-provider tests already present")
+
+tmp = target + ".tmp"
+with open(tmp, "w") as f:
+    f.write(src)
+os.replace(tmp, target)
+print("Wrote", target)
 PYEOF
 
 if [ $? -ne 0 ]; then
@@ -284,29 +267,32 @@ if ! cargo check --workspace --all-targets 2>&1 | tail -15; then
 fi
 
 cat > /tmp/kod_commit_msg.txt <<'MSG'
-test(tools,core): add missing tests for binary detection and path errors
+fix(core): reject process* calls made without a provider; small fixes
 
-Several tests that accompanied the binary-detection and
-structured-path-error work never landed — earlier script runs
-aborted before their write step, or their anchors no longer
-matched the file. This commit inserts whichever are missing,
-gated on presence so a re-run duplicates nothing:
+Three small honesty fixes on the engine's front door.
 
-  read_file_detects_binary_content
-  read_file_text_file_reports_not_binary
-  read_file_multibyte_utf8_is_not_binary
-  read_file_directory_returns_actionable_error
-  read_file_missing_returns_actionable_error
-  list_files_on_file_reports_file_kind
-  list_files_on_directory_reports_directory_kind
-  list_files_missing_path_errors
+1. process, process_streaming, and process_goal_streaming each fell
+   through to TaskRouter::process_input when no provider was set.
+   That path returns placeholder strings like "Processing simple
+   task: <input>", which the engine then handed to the caller as if
+   it were a successful answer. The placeholder handlers exist so
+   the router's own unit tests can exercise classification without
+   a provider; as a user-visible engine reply, they hid the missing
+   setup and advertised no fix. Reject with InvalidState and a
+   message that names the step the caller forgot.
 
-Plus the engine summarize-test extension for the file-shaped
-list_files case.
+2. ground_prompt told the model to look for `## Tool result`
+   blocks; run_tool_calls emits `## Tool results` (plural). A model
+   reading the grounding text and then looking for the singular
+   header never found it. Fix the spelling.
 
-Insertion uses the file's final closing brace as the anchor rather
-than a named test, so this lands regardless of how earlier edits
-reordered the tests module.
+3. MAX_TOOL_ROUNDS was 150 — three orders of magnitude more than
+   the 3–15 rounds a real agentic pass uses, and the loop exited
+   silently at the cap. Reduce to 40, which still catches a runaway
+   loop well before the user has waited minutes for nothing.
+
+Adds three tests, one per process* entry point, asserting the
+InvalidState error and its "No LLM provider" phrasing.
 MSG
 
 git add -A

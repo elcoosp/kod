@@ -16,8 +16,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
-/// Max agentic tool rounds per `process()` call before forcing a summary.
-const MAX_TOOL_ROUNDS: usize = 150;
+/// Max agentic tool rounds per `process()` call before forcing a
+/// summary. A single agentic pass typically uses 3–15 rounds for a
+/// non-trivial task; 40 is a generous safety margin that catches a
+/// runaway loop (a small model that keeps re-calling `read_file` on
+/// the same path, unable to recognize it is done) well before the
+/// user has waited minutes for nothing.
+const MAX_TOOL_ROUNDS: usize = 40;
 /// Max turns of the `/goal` loop before it stops and reports progress.
 const MAX_GOAL_TURNS: usize = 6;
 
@@ -708,6 +713,30 @@ impl KodEngine {
         *self.provider.write().await = Some(provider);
     }
 
+    /// Error for a `process*` call made before a provider is installed.
+    ///
+    /// The router has a set of placeholder handlers that return
+    /// strings like "Processing simple task: …". Those exist so the
+    /// router's own unit tests can exercise the classification path
+    /// without a provider, and they are fine in that role. As a
+    /// user-visible answer from the engine, though, they are worse
+    /// than an error: the call looks like it succeeded, the reply
+    /// advertises no fix, and the operator has to guess that the
+    /// engine was never wired to a model.
+    ///
+    /// Callers that do want the placeholder behavior (the router's
+    /// own tests) use `TaskRouter` directly. The engine tells the
+    /// truth.
+    fn no_provider_error() -> KodError {
+        KodError::InvalidState(
+            "No LLM provider configured. Install one with \
+             `engine.set_provider(Arc::new(provider))` before calling \
+             process — kod-cli and kod-tui do this automatically from \
+             ~/.config/kod/config.toml."
+                .to_string(),
+        )
+    }
+
     /// List available models from the provider, if one is set.
     pub async fn list_models(&self) -> Vec<String> {
         let provider = self.provider.read().await;
@@ -826,9 +855,9 @@ impl KodEngine {
             });
         }
 
-        // No provider — fall back to router's built-in handlers
-        let response = self.router.process_input(input).await?;
-        Ok(response)
+        // No provider. Reject rather than return the router's
+        // placeholder text — see `no_provider_error`.
+        Err(Self::no_provider_error())
     }
 
     /// Process user input, streaming text chunks live to `chunk_tx`.
@@ -895,8 +924,7 @@ impl KodEngine {
             });
         }
 
-        let response = self.router.process_input(input).await?;
-        Ok(response)
+        Err(Self::no_provider_error())
     }
 
     /// Work toward `goal` across turns until the model declares it met.
@@ -992,8 +1020,7 @@ impl KodEngine {
             });
         }
 
-        let response = self.router.process_input(input).await?;
-        Ok(response)
+        Err(Self::no_provider_error())
     }
 
     /// Collected (non-streaming) agentic loop used by [`process`].
@@ -1221,7 +1248,7 @@ impl KodEngine {
                 .map(|d| format!("- {}: {}", d.name, d.description))
                 .collect();
             prompt.push_str(&format!(
-                "\n## Tool use\n\nYou have these tools (function calls, rooted at the working directory above):\n{}\nCall them when you need facts from this machine instead of guessing. Tool outputs return as `## Tool result` blocks — then answer the user.\n",
+                "\n## Tool use\n\nYou have these tools (function calls, rooted at the working directory above):\n{}\nCall them when you need facts from this machine instead of guessing. Tool outputs return as `## Tool results` blocks — then answer the user.\n",
                 names.join("\n")
             ));
         }
@@ -1728,6 +1755,79 @@ mod tests {
         );
 
         let _ = gen_task.await;
+    }
+
+    /// All three process* entry points must reject a call made
+    /// before a provider is installed. Regression: the previous
+    /// fallback routed through the router's placeholder handlers and
+    /// returned "Processing simple task: …" — a plausible-looking
+    /// answer that hid the missing setup.
+    #[tokio::test]
+    async fn test_process_without_provider_errors() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        let err = engine.process("hello?").await.unwrap_err();
+        match err {
+            KodError::InvalidState(msg) => assert!(
+                msg.contains("No LLM provider"),
+                "error should name the missing provider: {msg}"
+            ),
+            other => panic!("expected InvalidState, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_streaming_without_provider_errors() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(4);
+        let err = engine
+            .process_streaming("hello?", &tx)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, KodError::InvalidState(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn test_process_goal_streaming_without_provider_errors() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(4);
+        let err = engine
+            .process_goal_streaming("work on it", "finish the task", &tx)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, KodError::InvalidState(_)), "got {err:?}");
     }
 
     #[test]
