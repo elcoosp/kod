@@ -489,6 +489,12 @@ impl TuiLoop {
 
         self.app.submit_input();
 
+        // Remember the prompt so /retry (and the `r` key) can resend it
+        // after a failure. The previous code only set last_prompt from
+        // retry_generation itself, so last_prompt() was always None on
+        // first use and /retry always answered 'Nothing to retry'.
+        self.app.set_last_prompt(&input);
+
         // Without an engine (e.g. in tests) the message is recorded and
         // nothing else happens.
         let Some(engine) = self.engine.clone() else {
@@ -630,12 +636,12 @@ impl TuiLoop {
                 return Ok(());
             }
         };
-        // Set input to the last prompt, then dispatch as a normal submit.
-        self.app.set_input(prompt.clone());
-        self.app.set_last_prompt(&prompt);
-        // Box::pin to break the dispatch → handle_command → retry → dispatch
-        // recursive future cycle (Rust requires indirection for recursive
-        // async fns).
+        // Restore into the input box and dispatch again. No need to
+        // re-set last_prompt: dispatch_prompt overwrites it with the
+        // same text on the way through.
+        self.app.set_input(prompt);
+        // Box::pin breaks the dispatch → handle_command → retry →
+        // dispatch recursive future cycle (Rust requires indirection).
         Box::pin(self.dispatch_prompt()).await
     }
 
@@ -665,9 +671,7 @@ impl TuiLoop {
             }
             "/model" => match parts.next() {
                 Some(name) => self.switch_model(name).await?,
-                None => {
-                    self.app.push_system_message("Usage: /model <name>");
-                }
+                None => self.show_and_refresh_models().await?,
             },
             "/skills" => {
                 let details: Vec<(String, String)> = if let Some(engine) = &self.engine {
@@ -883,23 +887,89 @@ impl TuiLoop {
     }
 
     /// Swap the engine's provider to another model on the same endpoint.
+    ///
+    /// Warns (does not block) when the name is not in the list the
+    /// provider last reported. The switch always succeeds — the
+    /// provider constructor never fails on a name it does not
+    /// recognize, and the list can be stale (a model pulled after the
+    /// TUI started). But the previous behavior always printed
+    /// "Switched model to X" as if it had succeeded, and the first
+    /// prompt afterwards failed with an opaque "model not found".
+    /// Naming the mismatch at switch time lets the user correct it
+    /// before wasting a prompt.
     async fn switch_model(&mut self, name: &str) -> Result<()> {
         let (Some(engine), Some(config)) = (self.engine.clone(), self.llm_config.clone()) else {
             self.app.push_system_message("Engine not initialized");
             return Ok(());
         };
+        // available_models() is empty before the first list_models
+        // call or when list_models failed — treat that as "unknown,
+        // do not warn" rather than "no model is valid".
+        let available = self.app.available_models();
+        let unknown = !available.is_empty() && !available.iter().any(|m| m == name);
+
         match OpenAICompatProvider::from_config(&config, Some(name)) {
             Ok(provider) => {
                 engine.set_provider(Arc::new(provider)).await;
                 self.app.set_model_name(name);
-                self.app
-                    .push_system_message(&format!("Switched model to {}", name));
+                if unknown {
+                    self.app.push_system_message(&format!(
+                        "Switched to '{}' — not in the server's last model list. \
+                         If the next prompt fails, run `/model` (no args) to see what the \
+                         server has, or `ollama pull {}` to fetch it.",
+                        name, name
+                    ));
+                } else {
+                    self.app.push_system_message(&format!("Switched model to {}", name));
+                }
             }
             Err(e) => {
                 self.app
                     .push_system_message(&format!("Could not switch model: {}", e));
             }
         }
+        Ok(())
+    }
+
+    /// Fetch the current model list from the engine's provider, refresh
+    /// `KodApp::available_models` (so the next `/model` completion is
+    /// accurate), and print the list to chat.
+    ///
+    /// Calling this before `switch_model` is the natural recovery when
+    /// a user has pulled a new model with `ollama pull` after the TUI
+    /// started: the cached list is stale and `/model <new>` would warn
+    /// spuriously.
+    async fn show_and_refresh_models(&mut self) -> Result<()> {
+        let Some(engine) = &self.engine else {
+            self.app.push_system_message("Engine not initialized");
+            return Ok(());
+        };
+        let models = engine.list_models().await;
+        if models.is_empty() {
+            self.app.push_system_message(
+                "No models reported by the provider. Is the server running? \
+                 For Ollama: `ollama serve`, then `/retry`.",
+            );
+            return Ok(());
+        }
+        self.app.set_available_models(models.clone());
+        let current = self.app.model_name().to_string();
+        let mut lines: Vec<String> = models
+            .iter()
+            .map(|m| {
+                if m == &current {
+                    format!("- {m}  (current)")
+                } else {
+                    format!("- {m}")
+                }
+            })
+            .collect();
+        lines.sort();
+        self.app.push_system_message(&format!(
+            "Models ({}):\n{}\n\nSwitch with: /model <name>",
+            models.len(),
+            lines.join("\n")
+        ));
         Ok(())
     }
 
@@ -1406,6 +1476,75 @@ mod tests {
         tui.app_mut().begin_generation();
         tui.handle_command("/cancel").await.unwrap();
         assert!(!tui.app().is_generating());
+    }
+
+    /// Dispatching a plain prompt must record it as `last_prompt`, so
+    /// `/retry` and the `r` key have something to resend. Regression:
+    /// before this, last_prompt was only set by retry_generation
+    /// itself — a chicken-and-egg that made /retry a no-op.
+    #[tokio::test]
+    async fn test_retry_prompt_is_recorded_on_dispatch() {
+        let mut tui = TuiLoop::new();
+        tui.app_mut().set_input_mode(InputMode::Insert);
+        tui.app_mut().set_input("hello there".to_string());
+        // dispatch_prompt with no engine records the message and returns.
+        tui.handle_event(Event::Key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(
+            tui.app().last_prompt(),
+            Some("hello there"),
+            "last_prompt must be set by dispatch_prompt"
+        );
+    }
+
+    /// Slash commands must not become the retry target: /retry should
+    /// resend a user prompt, not re-run a /command.
+    #[tokio::test]
+    async fn test_slash_commands_do_not_become_retry_target() {
+        let mut tui = TuiLoop::new();
+        tui.app_mut().set_input_mode(InputMode::Insert);
+        tui.app_mut().set_input("real prompt".to_string());
+        tui.handle_event(Event::Key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(tui.app().last_prompt(), Some("real prompt"));
+
+        tui.app_mut().set_input("/help".to_string());
+        tui.handle_event(Event::Key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(
+            tui.app().last_prompt(),
+            Some("real prompt"),
+            "/help should not become the retry target"
+        );
+    }
+
+    /// `/model` with no argument must route to show_and_refresh_models.
+    /// Without an engine the handler reports that clearly rather than
+    /// printing the old "Usage: /model <name>".
+    #[tokio::test]
+    async fn test_model_with_no_args_lists_or_reports_engine_missing() {
+        let mut tui = TuiLoop::new();
+        tui.app_mut()
+            .set_available_models(vec!["qwen2.5:0.5b".to_string()]);
+        tui.handle_command("/model").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("Engine not initialized"),
+            "got: {}",
+            last.content
+        );
+    }
+
+    /// available_models() reports what was last set. Pins the shape
+    /// switch_model relies on: an empty list means 'unknown' (do not
+    /// warn), a non-empty list is what validation compares against.
+    #[tokio::test]
+    async fn test_available_models_accessor_roundtrips() {
+        let mut tui = TuiLoop::new();
+        assert!(tui.app().available_models().is_empty());
+        tui.app_mut()
+            .set_available_models(vec!["a".to_string(), "b".to_string()]);
+        let got = tui.app().available_models();
+        assert_eq!(got.len(), 2);
+        assert!(got.contains(&"a".to_string()));
+        assert!(got.contains(&"b".to_string()));
     }
 
     #[tokio::test]

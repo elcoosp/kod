@@ -2039,6 +2039,16 @@ impl KodApp {
     pub fn set_available_models(&mut self, models: Vec<String>) {
         self.available_models = models;
     }
+
+    /// The models the provider last reported. Empty when no list has
+    /// been fetched yet (engine not initialized, list_models failed).
+    /// Callers that want to validate a `/model <name>` request must
+    /// treat empty as "unknown — do not warn" rather than "no models
+    /// exist", because an empty list is also what a cold provider
+    /// returns before the first list_models call.
+    pub fn available_models(&self) -> &[String] {
+        &self.available_models
+    }
 }
 
 /// Which completion popup list is currently showing.

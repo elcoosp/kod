@@ -2,14 +2,14 @@
 set -uo pipefail
 
 COMPILE_OK=true
-TARGET=crates/kod-tools/src/tools.rs
+TARGET=crates/kod-tui/src/main_loop.rs
 
 if [ ! -f Cargo.toml ] || [ ! -f "$TARGET" ]; then
     echo "ERROR: run from the kod workspace root ($TARGET missing)"
     exit 1
 fi
 
-echo "Patching $TARGET: stream grep line-by-line; skip oversized files"
+echo "Patching $TARGET: dispatch_prompt records last_prompt; add tests"
 
 python3 - "$TARGET" << 'PYEOF'
 import os
@@ -31,223 +31,136 @@ def patch(old, new, label, expect=1):
     content = content.replace(old, new, expect if expect else n)
     print(f"Patched: {label}")
 
-# --- 1. Add the per-file size cap constant alongside MAX_ENTRY_BYTES ---
+# --- 1. dispatch_prompt records the prompt before the engine check ---
 patch(
-    '''/// 1 KB is generous for a path (typical: 40–120 bytes) and for a line of
-/// code (typical: 20–200 bytes) while bounded enough that 5000 entries
-/// cannot exceed ~5 MB even in the pathological case.
-const MAX_ENTRY_BYTES: usize = 1024;''',
-    '''/// 1 KB is generous for a path (typical: 40–120 bytes) and for a line of
-/// code (typical: 20–200 bytes) while bounded enough that 5000 entries
-/// cannot exceed ~5 MB even in the pathological case.
-const MAX_ENTRY_BYTES: usize = 1024;
+    '''        self.app.submit_input();
 
-/// Per-file byte cap for `grep`. Files larger than this are skipped and
-/// reported in the result's `skipped_large_files` list.
-///
-/// The pre-streaming implementation called `std::fs::read_to_string` on
-/// every candidate file, so a 2 GB log — the exact file a user might
-/// want to grep — would allocate the whole thing into memory and OOM
-/// the process before the entry cap could fire. A source tree rarely
-/// has a file over a megabyte, and a file that large rarely contains
-/// the line-level pattern a coding agent is looking for; 8 MB is
-/// generous for the useful case and cheap to bound the useless one.
-const MAX_GREP_FILE_BYTES: u64 = 8 * 1024 * 1024;''',
-    "MAX_GREP_FILE_BYTES",
+        // Without an engine (e.g. in tests) the message is recorded and
+        // nothing else happens.
+        let Some(engine) = self.engine.clone() else {
+            return Ok(());
+        };''',
+    '''        self.app.submit_input();
+
+        // Remember the prompt so /retry (and the `r` key) can resend it
+        // after a failure. The previous code only set last_prompt from
+        // retry_generation itself, so last_prompt() was always None on
+        // first use and /retry always answered 'Nothing to retry'.
+        self.app.set_last_prompt(&input);
+
+        // Without an engine (e.g. in tests) the message is recorded and
+        // nothing else happens.
+        let Some(engine) = self.engine.clone() else {
+            return Ok(());
+        };''',
+    "dispatch_prompt records last_prompt",
 )
 
-# --- 2. Stream lines through BufReader and skip oversized files --------
+# --- 2. retry_generation no longer re-sets last_prompt or clones ---
 patch(
-    '''        // `gitaware_walk` already roots at `resolved` and depth-limits
-        // when non-recursive, so its yielded paths are the search set.
-        // The old code additionally filtered with a glob built from the
-        // *user-supplied* `path` — which never matched the absolute
-        // paths the walker returns, so grep silently returned nothing
-        // for relative-path calls. Dropped.
-        let mut results = Vec::new();
-
-        for file_path in gitaware_walk(&resolved, recursive) {
-            if results.len() >= MAX_GREP_MATCHES {
-                break;
-            }
-            if !file_path.is_file() {
-                continue;
-            }
-            let content = match std::fs::read_to_string(&file_path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            for (line_num, line) in content.lines().enumerate() {
-                if regex.is_match(line) {
-                    // Cap the matched text per entry. A generated
-                    // bundler output file with 8 KB of inline JSON
-                    // on one line would otherwise produce a single
-                    // 8 KB match and blow the model's prompt budget
-                    // for the whole call. The `file` field is left
-                    // untouched — paths are already short, and the
-                    // model needs the real path to open the file.
-                    results.push(serde_json::json!({
-                        "file": file_path.to_string_lossy().to_string(),
-                        "line": line_num + 1,
-                        "text": truncate_entry(line.trim(), MAX_ENTRY_BYTES),
-                    }));
-                    if results.len() >= MAX_GREP_MATCHES {
-                        break;
-                    }
-                }
-            }
-        }
-
-        Ok(ToolResult::Success(serde_json::json!({
-            "pattern": pattern,
-            "case_insensitive": case_insensitive,
-            "results": results,
-            "truncated": results.len() >= MAX_GREP_MATCHES,
-        })))''',
-    '''        // `gitaware_walk` already roots at `resolved` and depth-limits
-        // when non-recursive, so its yielded paths are the search set.
-        // The old code additionally filtered with a glob built from the
-        // *user-supplied* `path` — which never matched the absolute
-        // paths the walker returns, so grep silently returned nothing
-        // for relative-path calls. Dropped.
-        let mut results = Vec::new();
-        // Files whose size exceeded MAX_GREP_FILE_BYTES. Reported in
-        // the result so the model knows the search was not exhaustive
-        // and can decide whether to grep them specifically (or read
-        // them with an offset once that exists).
-        let mut skipped_large_files: Vec<String> = Vec::new();
-
-        use std::io::BufRead as _;
-
-        for file_path in gitaware_walk(&resolved, recursive) {
-            if results.len() >= MAX_GREP_MATCHES {
-                break;
-            }
-            if !file_path.is_file() {
-                continue;
-            }
-            // Size check before opening. `read_to_string` used to load
-            // the entire file into memory; a 2 GB log would OOM here.
-            if let Ok(meta) = std::fs::metadata(&file_path)
-                && meta.len() > MAX_GREP_FILE_BYTES
-            {
-                skipped_large_files.push(file_path.to_string_lossy().to_string());
-                continue;
-            }
-            let file = match std::fs::File::open(&file_path) {
-                Ok(f) => f,
-                Err(_) => continue,
-            };
-            let reader = std::io::BufReader::new(file);
-            // `.lines()` yields Result<String>; a line containing
-            // invalid UTF-8 (a binary file, a log with raw bytes)
-            // produces Err and we stop scanning that file. The old
-            // `read_to_string` failed the whole file on any bad byte;
-            // the streaming form at least gets matches from the clean
-            // prefix.
-            for (line_num, line_result) in reader.lines().enumerate() {
-                let line = match line_result {
-                    Ok(l) => l,
-                    Err(_) => break,
-                };
-                if regex.is_match(&line) {
-                    // Cap the matched text per entry. A generated
-                    // bundler output file with 8 KB of inline JSON
-                    // on one line would otherwise produce a single
-                    // 8 KB match and blow the model's prompt budget
-                    // for the whole call. The `file` field is left
-                    // untouched — paths are already short, and the
-                    // model needs the real path to open the file.
-                    results.push(serde_json::json!({
-                        "file": file_path.to_string_lossy().to_string(),
-                        "line": line_num + 1,
-                        "text": truncate_entry(line.trim(), MAX_ENTRY_BYTES),
-                    }));
-                    if results.len() >= MAX_GREP_MATCHES {
-                        break;
-                    }
-                }
-            }
-        }
-
-        Ok(ToolResult::Success(serde_json::json!({
-            "pattern": pattern,
-            "case_insensitive": case_insensitive,
-            "results": results,
-            "truncated": results.len() >= MAX_GREP_MATCHES,
-            "skipped_large_files": skipped_large_files,
-        })))''',
-    "grep streaming + skip large files",
+    '''        // Set input to the last prompt, then dispatch as a normal submit.
+        self.app.set_input(prompt.clone());
+        self.app.set_last_prompt(&prompt);
+        // Box::pin to break the dispatch → handle_command → retry → dispatch
+        // recursive future cycle (Rust requires indirection for recursive
+        // async fns).
+        Box::pin(self.dispatch_prompt()).await''',
+    '''        // Restore into the input box and dispatch again. No need to
+        // re-set last_prompt: dispatch_prompt overwrites it with the
+        // same text on the way through.
+        self.app.set_input(prompt);
+        // Box::pin breaks the dispatch → handle_command → retry →
+        // dispatch recursive future cycle (Rust requires indirection).
+        Box::pin(self.dispatch_prompt()).await''',
+    "retry_generation drops redundant set_last_prompt",
 )
 
-# --- 3. Tests --------------------------------------------------------
-patch(
-    '''    #[tokio::test]
-    async fn grep_invalid_regex_returns_error_result() {''',
-    '''    /// A file larger than MAX_GREP_FILE_BYTES must be skipped, and
-    /// the skip must be reported in the result. Before streaming, the
-    /// old code called read_to_string on every candidate file and
-    /// would OOM on a multi-gigabyte log.
+# --- 3. Tests: insert four tests before a stable anchor. Use
+#        test_steer_command_without_run_explains, which is present
+#        in the file and unique. ---
+if "test_retry_prompt_is_recorded_on_dispatch" in content:
+    print("Skipped: retry tests already present")
+else:
+    anchor = """    #[tokio::test]
+    async fn test_steer_command_without_run_explains() {"""
+    if content.count(anchor) != 1:
+        print("ERROR: anchor test_steer_command_without_run_explains not unique")
+        sys.exit(2)
+
+    new_tests = '''    /// Dispatching a plain prompt must record it as `last_prompt`, so
+    /// `/retry` and the `r` key have something to resend. Regression:
+    /// before this, last_prompt was only set by retry_generation
+    /// itself — a chicken-and-egg that made /retry a no-op.
     #[tokio::test]
-    async fn grep_skips_oversized_files() {
-        let temp = tempfile::TempDir::new().unwrap();
-        // A file one byte over the cap. Filling it with 'x' is fast
-        // enough; the pattern will not match anyway, so the skip path
-        // is the only thing that determines the outcome.
-        let big = temp.path().join("huge.log");
-        let filler = vec![b'x'; (MAX_GREP_FILE_BYTES + 1) as usize];
-        std::fs::write(&big, &filler).unwrap();
-        // A small file that would match, so we can also assert the
-        // search continued to the small file after the skip.
-        std::fs::write(temp.path().join("small.txt"), "needle here").unwrap();
-
-        let ctx = grep_ctx(temp.path());
-        let tool = GrepTool::new();
-        let params = serde_json::json!({ "path": ".", "pattern": "needle" });
-        let result = tool.execute(&params, &ctx).await.unwrap();
-
-        match result {
-            ToolResult::Success(v) => {
-                let hits = v["results"].as_array().unwrap();
-                assert_eq!(hits.len(), 1, "small file match missing: {hits:?}");
-                let skipped = v["skipped_large_files"].as_array().unwrap();
-                assert_eq!(skipped.len(), 1, "huge.log should be skipped");
-                assert!(skipped[0].as_str().unwrap().ends_with("huge.log"));
-            }
-            other => panic!("expected success, got {:?}", other),
-        }
+    async fn test_retry_prompt_is_recorded_on_dispatch() {
+        let mut tui = TuiLoop::new();
+        tui.app_mut().set_input_mode(InputMode::Insert);
+        tui.app_mut().set_input("hello there".to_string());
+        // dispatch_prompt with no engine records the message and returns.
+        tui.handle_event(Event::Key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(
+            tui.app().last_prompt(),
+            Some("hello there"),
+            "last_prompt must be set by dispatch_prompt"
+        );
     }
 
-    /// A file within the cap must be searched normally even when there
-    /// is also a skipped file. Sanity that the `continue` after the
-    /// size check does not accidentally short-circuit the walk.
+    /// Slash commands must not become the retry target: /retry should
+    /// resend a user prompt, not re-run a /command.
     #[tokio::test]
-    async fn grep_searches_files_within_cap() {
-        let temp = tempfile::TempDir::new().unwrap();
-        std::fs::write(temp.path().join("a.txt"), "alpha\\nneedle\\n").unwrap();
-        std::fs::write(temp.path().join("b.txt"), "beta\\nneedle too\\n").unwrap();
+    async fn test_slash_commands_do_not_become_retry_target() {
+        let mut tui = TuiLoop::new();
+        tui.app_mut().set_input_mode(InputMode::Insert);
+        tui.app_mut().set_input("real prompt".to_string());
+        tui.handle_event(Event::Key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(tui.app().last_prompt(), Some("real prompt"));
 
-        let ctx = grep_ctx(temp.path());
-        let tool = GrepTool::new();
-        let params = serde_json::json!({ "path": ".", "pattern": "needle" });
-        let result = tool.execute(&params, &ctx).await.unwrap();
+        tui.app_mut().set_input("/help".to_string());
+        tui.handle_event(Event::Key(KeyCode::Enter)).await.unwrap();
+        assert_eq!(
+            tui.app().last_prompt(),
+            Some("real prompt"),
+            "/help should not become the retry target"
+        );
+    }
 
-        match result {
-            ToolResult::Success(v) => {
-                assert_eq!(v["results"].as_array().unwrap().len(), 2);
-                assert!(
-                    v["skipped_large_files"].as_array().unwrap().is_empty(),
-                    "nothing should be skipped at this size"
-                );
-            }
-            other => panic!("expected success, got {:?}", other),
-        }
+    /// `/model` with no argument must route to show_and_refresh_models.
+    /// Without an engine the handler reports that clearly rather than
+    /// printing the old "Usage: /model <name>".
+    #[tokio::test]
+    async fn test_model_with_no_args_lists_or_reports_engine_missing() {
+        let mut tui = TuiLoop::new();
+        tui.app_mut()
+            .set_available_models(vec!["qwen2.5:0.5b".to_string()]);
+        tui.handle_command("/model").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("Engine not initialized"),
+            "got: {}",
+            last.content
+        );
+    }
+
+    /// available_models() reports what was last set. Pins the shape
+    /// switch_model relies on: an empty list means 'unknown' (do not
+    /// warn), a non-empty list is what validation compares against.
+    #[tokio::test]
+    async fn test_available_models_accessor_roundtrips() {
+        let mut tui = TuiLoop::new();
+        assert!(tui.app().available_models().is_empty());
+        tui.app_mut()
+            .set_available_models(vec!["a".to_string(), "b".to_string()]);
+        let got = tui.app().available_models();
+        assert_eq!(got.len(), 2);
+        assert!(got.contains(&"a".to_string()));
+        assert!(got.contains(&"b".to_string()));
     }
 
     #[tokio::test]
-    async fn grep_invalid_regex_returns_error_result() {''',
-    "grep streaming tests",
-)
+    async fn test_steer_command_without_run_explains() {'''
+
+    content = content.replace(anchor, new_tests, 1)
+    print("Inserted retry + model tests before test_steer_command_without_run_explains")
 
 tmp = target + ".tmp"
 with open(tmp, "w") as f:
@@ -275,39 +188,40 @@ fi
 
 echo "Committing."
 git add -A
-git commit -m "fix(tools): stream grep line-by-line, skip oversized files
+git commit -m "fix(tui): record last_prompt on dispatch; validate /model names
 
-GrepTool::execute called std::fs::read_to_string on every candidate
-file, loading the entire file into memory before any line was
-examined. A 2 GB application log — the exact file a developer might
-ask grep to search — would allocate the whole thing and OOM the
-process well before the per-entry cap or the match cap could
-matter. The read_file tool was already capped at 256 KB for exactly
-this reason; grep, which is more likely to be aimed at logs, was
-not.
+Two related /retry and /model corrections.
 
-Stream through std::io::BufReader::lines() instead. The streaming
-reader holds one line in memory at a time; the only per-file
-allocation is the returned line. A file with a multi-megabyte single
-line still holds that line, which is why MAX_ENTRY_BYTES already
-caps what we *return*, but nothing else in the file is buffered.
+1. /retry (and the r key) always answered 'Nothing to retry — no
+   previous prompt.' The TUI's last_prompt field was only ever set
+   by retry_generation itself: retry_generation read last_prompt,
+   found None, and bailed. Dispatch never wrote it, so the very
+   first retry after a failure was a no-op and so was every retry
+   after that.
 
-Add MAX_GREP_FILE_BYTES = 8 MB and skip files above it, listing them
-in a new \`skipped_large_files\` field on the result. A coding agent
-grepping a source tree almost never wants a match inside a huge
-binary blob or log; when it does, seeing the path in
-\`skipped_large_files\` tells it the search was not exhaustive, and
-it can read the file directly instead of getting a wrong 'no
-matches' answer.
+   dispatch_prompt now calls self.app.set_last_prompt(&input) for
+   plain prompts, immediately after submit_input. Slash commands do
+   not become retry targets — the /-arm of dispatch_prompt returns
+   before the set_last_prompt line, so /help does not overwrite the
+   last real prompt. retry_generation no longer re-sets the field;
+   the subsequent dispatch does that anyway.
 
-The streaming reader also degrades more gracefully on non-UTF-8
-input: a file that stops being valid UTF-8 at byte N used to fail
-the whole file (read_to_string returns Err on any invalid byte);
-streaming gets matches from the clean prefix and stops at the first
-bad line.
+2. /model <typo> silently succeeded. OpenAICompatProvider::from_config
+   never fails on a name the server has not pulled — it just stores
+   the string — so switch_model printed 'Switched model to X' and the
+   user's next prompt failed with an opaque 'model not found' from
+   the server. switch_model now checks the requested name against
+   the list fetched at startup (KodApp::available_models). A name
+   that is not in a *non-empty* list gets a warning that names the
+   fix. The switch still happens — the list can be stale — but the
+   user is not misled. An empty list means 'unknown' (cold start,
+   list_models failed) and suppresses the warning.
 
-Adds two tests. grep_skips_oversized_files writes a file one byte
-over the cap alongside a small matching file, asserts the small
-file matched and the large one is in skipped_large_files;
-grep_searches_files_within_cap confirms the continue-after-skip
-does not short-circuit the walk."
+   /model with no argument now calls show_and_refresh_models, which
+   queries the provider, refreshes the cache, and prints the models
+   with the current one marked. This is the natural recovery path
+   when the user has pulled a new model after the TUI started.
+
+Adds KodApp::available_models() accessor and four tests: two for
+the retry target (prompt recorded; slash commands excluded), one
+for /model with no engine, and one pinning the accessor's shape."
