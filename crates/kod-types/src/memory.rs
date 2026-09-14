@@ -8,8 +8,6 @@ use time::OffsetDateTime;
 pub enum MemoryType {
     ShortTerm,
     LongTerm,
-    Episodic,
-    Semantic,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,25 +31,7 @@ pub struct MemoryMetadata {
 pub struct MemoryContext {
     pub working_memory: Vec<MemoryEntry>,
     pub long_term: Vec<MemoryEntry>,
-    pub episodic: Vec<EpisodicMemory>,
     pub total_tokens: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EpisodicMemory {
-    pub id: MemoryId,
-    pub content: String,
-    pub embedding: Vec<f32>,
-    pub task_type: String,
-    pub outcome: Outcome,
-    pub timestamp: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Outcome {
-    Success,
-    Partial,
-    Failure,
 }
 
 #[cfg(test)]

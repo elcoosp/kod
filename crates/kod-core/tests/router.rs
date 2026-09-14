@@ -145,7 +145,6 @@ async fn test_route_with_context() {
     let memory_context = MemoryContext {
         working_memory: vec![],
         long_term: vec![],
-        episodic: vec![],
         total_tokens: 100,
     };
 

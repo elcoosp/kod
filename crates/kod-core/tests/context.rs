@@ -16,7 +16,6 @@ fn test_context_builder() {
     let memory_context = MemoryContext {
         working_memory: vec![],
         long_term: vec![],
-        episodic: vec![],
         total_tokens: 0,
     };
 

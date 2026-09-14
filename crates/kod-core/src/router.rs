@@ -484,7 +484,6 @@ impl TaskRouter {
             .map(|c| {
                 !c.working_memory.is_empty()
                     || !c.long_term.is_empty()
-                    || !c.episodic.is_empty()
             })
             .unwrap_or(false);
 

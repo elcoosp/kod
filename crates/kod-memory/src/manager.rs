@@ -3,11 +3,9 @@
 //! Coordinates short-term, long-term, and episodic memory
 //! to provide a single API for storing and retrieving context.
 
-use crate::{episodic::EpisodicMemory, long_term::LongTermMemory, short_term::ShortTermMemory};
+use crate::{long_term::LongTermMemory, short_term::ShortTermMemory};
 use kod_error::{KodError, Result};
-use kod_types::{
-    EpisodicMemory as EpisodicMemoryType, MemoryContext, MemoryEntry, MemoryId, MemoryType, Outcome,
-};
+use kod_types::{MemoryContext, MemoryEntry, MemoryId, MemoryType, };
 use std::path::PathBuf;
 use time::OffsetDateTime;
 
@@ -24,7 +22,6 @@ pub struct CompactionReport {
 pub struct MemoryManager {
     short_term: ShortTermMemory,
     long_term: LongTermMemory,
-    episodic: EpisodicMemory,
     context_window: usize,
 }
 
@@ -36,7 +33,6 @@ impl MemoryManager {
         Ok(Self {
             short_term: ShortTermMemory::new(short_term_capacity),
             long_term,
-            episodic: EpisodicMemory::new(),
             context_window: 4096, // Default context window
         })
     }
@@ -83,38 +79,6 @@ impl MemoryManager {
                 };
                 self.long_term.store(entry).await?;
             }
-            MemoryType::Episodic => {
-                // `embedding` is reserved for a real embedding model
-                // (fastembed is already in the workspace deps but not
-                // wired up yet). Until then, episodic retrieval is
-                // keyword-based — see `retrieve_context` — and the field
-                // stays empty rather than being filled with a placeholder
-                // that would silently make `find_similar` and
-                // `semantic_search` return arbitrary results on the
-                // caller's behalf.
-                let episode = EpisodicMemoryType {
-                    id: id.clone(),
-                    content: content.to_string(),
-                    embedding: Vec::new(),
-                    task_type: "general".to_string(),
-                    outcome: Outcome::Success,
-                    timestamp: OffsetDateTime::now_utc(),
-                };
-                self.episodic.store(episode).await?;
-            }
-            MemoryType::Semantic => {
-                // Semantic memory would be stored differently (graph DB)
-                // For now, treat as long-term
-                let entry = MemoryEntry {
-                    id: id.clone(),
-                    memory_type,
-                    content: content.to_string(),
-                    timestamp: OffsetDateTime::now_utc(),
-                    relevance: 0.9,
-                    metadata: Default::default(),
-                };
-                self.long_term.store(entry).await?;
-            }
         }
 
         Ok(id)
@@ -148,7 +112,7 @@ impl MemoryManager {
                     Err(KodError::MemoryStorage("Entry not found".to_string()))
                 }
             }
-            MemoryType::LongTerm | MemoryType::Semantic => {
+            MemoryType::LongTerm => {
                 if let Some(mut entry) = self.long_term.get(id).await? {
                     entry.content = content.to_string();
                     self.long_term.store(entry).await?;
@@ -156,13 +120,6 @@ impl MemoryManager {
                 } else {
                     Err(KodError::MemoryStorage("Entry not found".to_string()))
                 }
-            }
-            MemoryType::Episodic => {
-                // Episodic memory update would need embedding regeneration
-                // For now, return error
-                Err(KodError::MemoryStorage(
-                    "Episodic memory update not supported".to_string(),
-                ))
             }
         }
     }
@@ -174,11 +131,7 @@ impl MemoryManager {
                 self.short_term.remove(id);
                 Ok(())
             }
-            MemoryType::LongTerm | MemoryType::Semantic => self.long_term.remove(id).await,
-            MemoryType::Episodic => {
-                self.episodic.remove(id).await?;
-                Ok(())
-            }
+            MemoryType::LongTerm => self.long_term.remove(id).await,
         }
     }
 
@@ -211,21 +164,12 @@ impl MemoryManager {
     ///   on content — it is *not* embedding-based today, because the
     ///   manager does not yet compute real embeddings. When a real
     ///   embedding model is wired in, this method should switch to
-    ///   `EpisodicMemory::find_similar`.
     pub async fn retrieve_context(&self, query: &str) -> Result<MemoryContext> {
         let mut context = MemoryContext {
             working_memory: self.short_term.get_recent(10),
             long_term: self.search_long_term_relevant(query).await?,
             ..Default::default()
         };
-
-        // Get similar episodic memories
-        let all_episodic = self.episodic.get_all().await?;
-        let query_lower = query.to_lowercase();
-        context.episodic = all_episodic
-            .into_iter()
-            .filter(|e| e.content.to_lowercase().contains(&query_lower))
-            .collect();
 
         // Limit total context size
         self.limit_context_size(&mut context);
@@ -323,16 +267,11 @@ impl MemoryManager {
         self.long_term.get_all().await
     }
 
-    /// Get all episodic memories
-    pub async fn get_all_episodic(&self) -> Result<Vec<EpisodicMemoryType>> {
-        self.episodic.get_all().await
-    }
 
     /// Clear all memories
     pub async fn clear_all(&self) -> Result<()> {
         self.short_term.clear();
         self.long_term.clear().await?;
-        self.episodic.clear().await?;
         Ok(())
     }
 
@@ -370,18 +309,6 @@ impl MemoryManager {
             }
         }
         context.long_term = long_term;
-
-        // Limit episodic (previously uncapped — could blow the window)
-        let mut episodic = Vec::new();
-        for entry in context.episodic.drain(..) {
-            total_chars += entry.content.len();
-            if total_chars <= max_chars {
-                episodic.push(entry);
-            } else {
-                break;
-            }
-        }
-        context.episodic = episodic;
     }
 }
 
