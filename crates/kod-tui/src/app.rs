@@ -209,6 +209,21 @@ pub struct KodApp {
     /// Rough session token accounting (1 token ≈ 4 chars over prompts +
     /// replies). Drives the context meter and auto-compact.
     context_tokens: usize,
+    /// Set when the provider has reported real token usage for the
+    /// current turn. Once set, the char-based estimate stops
+    /// contributing to `context_tokens` until the next
+    /// `begin_generation`.
+    ///
+    /// The provider's `usage` totals are authoritative and already
+    /// include every token the model saw (prompt + completion). The
+    /// estimate that `note_usage` accumulates from
+    /// `note_prompt` / `flush_streamed_text` / `finish_response` also
+    /// runs across the same turn. Without this flag the two stacked:
+    /// TokenUsage arrived, replaced the estimate with the real total,
+    /// and then finish_response immediately added the assistant's
+    /// chars/4 on top — over-reporting the context by roughly the
+    /// reply length every turn.
+    turn_has_real_usage: bool,
     context_limit: usize,
     compacted_messages: usize,
 
@@ -286,6 +301,7 @@ impl KodApp {
             available_models: Vec::new(),
 
             context_tokens: 0,
+            turn_has_real_usage: false,
             context_limit: DEFAULT_CONTEXT_LIMIT,
             compacted_messages: 0,
             loaded_skills: Vec::new(),
@@ -1233,6 +1249,9 @@ impl KodApp {
         self.spinner_started = Some(Instant::now());
         self.stream_flushed_bubble = false;
         self.last_error = None;
+        // New turn: no real usage seen yet, so the char estimate
+        // contributes until (or unless) the provider reports a total.
+        self.turn_has_real_usage = false;
         self.set_phase(GenPhase::Connecting);
         self.start_response_stream();
     }
@@ -1317,6 +1336,9 @@ impl KodApp {
     /// Record a generation failure: clears the thinking indicator and
     /// surfaces an actionable error as a system message.
     pub fn fail_generation(&mut self, error: &str) {
+        // Same rationale as cancel_generation: settle the flag so the
+        // next turn does not inherit "real usage seen" from this one.
+        self.turn_has_real_usage = false;
         self.is_streaming = false;
         self.current_response.clear();
         self.generating = false;
@@ -1399,6 +1421,10 @@ impl KodApp {
     /// text already streamed as a partial assistant reply, then announces
     /// the cancel so the stop is visible — not a silent stall.
     pub fn cancel_generation(&mut self) {
+        // The turn is over; a subsequent prompt must see a fresh
+        // turn state even if begin_generation is not called before
+        // next note_prompt. begin_generation resets this again.
+        self.turn_has_real_usage = false;
         let partial = Self::trim_blank_lines(&self.current_response);
         self.is_streaming = false;
         self.current_response.clear();
@@ -1506,6 +1532,12 @@ impl KodApp {
     pub fn note_real_usage(&mut self, total_tokens: usize) {
         if total_tokens > 0 {
             self.context_tokens = total_tokens;
+            // Once real usage has arrived, the char estimate must stop
+            // contributing for the rest of the turn. The provider's
+            // total already covers prompt + completion, so any
+            // subsequent `note_usage` from `finish_response` /
+            // `flush_streamed_text` would double-count the reply.
+            self.turn_has_real_usage = true;
         }
         self.maybe_compact();
     }
@@ -1526,6 +1558,11 @@ impl KodApp {
     }
 
     fn note_usage(&mut self, chars: usize) {
+        // Suppressed once real usage for this turn has been recorded.
+        // See `turn_has_real_usage` for the double-count this avoids.
+        if self.turn_has_real_usage {
+            return;
+        }
         self.context_tokens = self
             .context_tokens
             .saturating_add(Self::estimate_tokens(chars));
@@ -2774,6 +2811,61 @@ mod tests {
 
         unsafe { std::env::remove_var("KOD_TUI_STATE_DIR") };
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Real token usage replaces the char estimate, and subsequent
+    /// estimate calls in the same turn must not stack on top of it.
+    /// Regression: TokenUsage arrives before ResponseComplete in the
+    /// event queue; finish_response then called note_usage, adding
+    /// the reply's chars/4 to a total that already included the
+    /// completion — every turn over-reported by roughly the reply
+    /// length.
+    #[test]
+    fn test_real_usage_suppresses_further_estimates() {
+        let mut app = KodApp::new();
+        app.set_context_limit(100_000);
+
+        // New turn: estimate-only until real usage arrives.
+        app.begin_generation();
+        app.note_prompt(&"x".repeat(4_000)); // ≈ 1_000 estimate
+        assert!(app.context_tokens() >= 1_000);
+        let after_prompt = app.context_tokens();
+
+        // Provider reports the real total (already includes the
+        // completion). Replaces the estimate.
+        app.note_real_usage(1_500);
+        assert_eq!(app.context_tokens(), 1_500);
+
+        // finish_response adds the reply's chars/4 via note_usage;
+        // gated by the flag, it must be a no-op.
+        let reply = "y".repeat(2_000); // would be +500 if applied
+        app.finish_response(&reply);
+        assert_eq!(
+            app.context_tokens(),
+            1_500,
+            "post-usage estimate must not stack (was {} before reply, {} after)",
+            after_prompt,
+            app.context_tokens(),
+        );
+    }
+
+    /// A turn where the provider reports no usage must fall back to
+    /// the char estimate, unchanged from before.
+    #[test]
+    fn test_estimate_still_works_without_real_usage() {
+        let mut app = KodApp::new();
+        app.set_context_limit(100_000);
+
+        app.begin_generation();
+        app.note_prompt(&"x".repeat(4_000)); // ≈ 1_000
+        let after_prompt = app.context_tokens();
+        assert!(after_prompt >= 1_000);
+
+        app.finish_response(&"y".repeat(4_000)); // ≈ +1_000
+        assert!(
+            app.context_tokens() > after_prompt,
+            "estimate must accumulate when no real usage arrives"
+        );
     }
 
     /// `search_status` must distinguish the states the old
