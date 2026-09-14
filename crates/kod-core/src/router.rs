@@ -163,6 +163,21 @@ impl TaskRouter {
 
         let input_lower = input.to_lowercase();
 
+        // Priority order (first match wins):
+        //   1. Debugging   -- most specific failure vocabulary
+        //   2. CodeMod     -- surgical action verbs
+        //   3. Complex     -- broad planning verbs; a "design/build" request
+        //                     that also mentions tests is still Complex
+        //   4. Research    -- "investigate/find/search"; outranks docs because
+        //                     "research the docs" is a research task
+        //   5. Testing     -- specific testing verbs
+        //   6. Documentation -- "document/readme/comment"; weakest signal
+        //                       (comments show up in code snippets)
+        //   7. Simple      -- default
+        // Whole-word matching (not substring): "prefix" does not match
+        // "fix", "remove" does not match "move", "testify" does not match
+        // "test".
+
         // 1. Debugging
         if ["debug", "error", "traceback", "panic", "exception"]
             .iter()
@@ -183,37 +198,7 @@ impl TaskRouter {
             return Ok(TaskType::CodeModification);
         }
 
-        // 3. Testing
-        if ["test", "tests", "testing", "verify"]
-            .iter()
-            .copied()
-            .any(|w| contains_word(&input_lower, w))
-        {
-            return Ok(TaskType::Testing);
-        }
-
-        // 4. Documentation
-        if [
-            "document", "documentation", "docs", "readme", "comment", "comments",
-        ]
-        .iter()
-        .copied()
-        .any(|w| contains_word(&input_lower, w))
-        {
-            return Ok(TaskType::Documentation);
-        }
-
-        // 5. Research
-        if ["research", "find", "search", "investigate", "look up"]
-            .iter()
-            .copied()
-            .any(|w| contains_word(&input_lower, w))
-        {
-            return Ok(TaskType::Research);
-        }
-
-        // 6. Complex — broad planning verbs, checked LAST so specific
-        //    intents win.
+        // 3. Complex -- broad planning verbs.
         if [
             "design",
             "architect",
@@ -228,6 +213,35 @@ impl TaskRouter {
         .any(|w| contains_word(&input_lower, w))
         {
             return Ok(TaskType::Complex);
+        }
+
+        // 4. Research
+        if ["research", "find", "search", "investigate", "look up"]
+            .iter()
+            .copied()
+            .any(|w| contains_word(&input_lower, w))
+        {
+            return Ok(TaskType::Research);
+        }
+
+        // 5. Testing
+        if ["test", "tests", "testing", "verify"]
+            .iter()
+            .copied()
+            .any(|w| contains_word(&input_lower, w))
+        {
+            return Ok(TaskType::Testing);
+        }
+
+        // 6. Documentation
+        if [
+            "document", "documentation", "docs", "readme", "comment", "comments",
+        ]
+        .iter()
+        .copied()
+        .any(|w| contains_word(&input_lower, w))
+        {
+            return Ok(TaskType::Documentation);
         }
 
         // Default to simple

@@ -3,200 +3,131 @@ set -uo pipefail
 
 COMPILE_OK=true
 INCOMPLETE=false
-CTX=crates/kod-tools/src/context.rs
-TOOLS=crates/kod-tools/src/tools.rs
+TARGET=crates/kod-core/src/router.rs
 
-if [ ! -f Cargo.toml ] || [ ! -f "$CTX" ] || [ ! -f "$TOOLS" ]; then
-    echo "ERROR: run from the kod workspace root ($CTX or $TOOLS missing)"
+if [ ! -f Cargo.toml ] || [ ! -f "$TARGET" ]; then
+    echo "ERROR: run from the kod workspace root ($TARGET missing)"
     exit 1
 fi
 
-echo "Patching $CTX and $TOOLS: enforce working-dir containment in resolve_path"
+echo "Diagnosing current classify_task ordering in $TARGET"
+echo "Failing tests expected:"
+echo "  test_classify_multi_step -> Complex (currently Testing)"
+echo "  test_classify_research   -> Research (currently Documentation)"
+echo "Fixing: move Complex before Testing, move Research before Documentation"
 
-python3 - "$CTX" "$TOOLS" << 'PYEOF'
+python3 - "$TARGET" << 'PYEOF'
 import os
 import sys
 
-ctx_path, tools_path = sys.argv[1], sys.argv[2]
+target = sys.argv[1]
 
-def patch(path, old, new, label, count=1):
-    with open(path, "r") as f:
-        content = f.read()
-    n = content.count(old)
-    if n == 0:
-        print(f"ERROR: old snippet not found in {path}: {label}")
-        sys.exit(2)
-    if count == 1 and n != 1:
-        print(f"ERROR: expected 1 occurrence of {label} in {path}, found {n}")
-        sys.exit(2)
-    patched = content.replace(old, new, count)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(patched)
-    os.replace(tmp, path)
-    print(f"Patched {path}: {label} ({n} occurrence(s))")
-
-# --- Patch 1: resolve_path method in context.rs --------------------------
-old_resolve = '''    /// Resolve a path relative to working directory
-    pub fn resolve_path(&self, path: &str) -> PathBuf {
-        let path = Path::new(path);
-
-        if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            self.working_dir.join(path)
-        }
-    }'''
-
-new_resolve = '''    /// Resolve `path` relative to the working directory, canonicalize it,
-    /// and refuse anything that escapes the working directory.
-    ///
-    /// This is the single choke point where traversal is blocked. Even if
-    /// `allowed_paths` is empty (which `is_path_allowed` treats as "allow
-    /// everything"), a request like `read_file { "path": "../../etc/passwd" }`
-    /// is rejected here because the canonical form lands outside
-    /// `working_dir`.
-    ///
-    /// Files that do not exist yet (e.g. the target of a `write_file`
-    /// creating a new file) are resolved by canonicalizing the deepest
-    /// existing ancestor and re-appending the rest, so creation still
-    /// works while traversal stays blocked.
-    pub fn resolve_path(&self, path: &str) -> Result<PathBuf> {
-        let raw = Path::new(path);
-        let joined = if raw.is_absolute() {
-            raw.to_path_buf()
-        } else {
-            self.working_dir.join(raw)
-        };
-
-        let canonical = match std::fs::canonicalize(&joined) {
-            Ok(c) => c,
-            Err(_) => {
-                let parent = joined.parent().ok_or_else(|| KodError::InvalidParameters {
-                    reason: format!("Path has no parent: {}", joined.display()),
-                })?;
-                let name = joined.file_name().ok_or_else(|| KodError::InvalidParameters {
-                    reason: format!("Path has no file name: {}", joined.display()),
-                })?;
-                let canon_parent = std::fs::canonicalize(parent).map_err(KodError::Io)?;
-                canon_parent.join(name)
-            }
-        };
-
-        let root = std::fs::canonicalize(&self.working_dir).map_err(KodError::Io)?;
-        if !canonical.starts_with(&root) {
-            return Err(KodError::PermissionDenied {
-                action: "resolve path".to_string(),
-                reason: format!(
-                    "Path escapes the working directory: {} -> {}",
-                    path,
-                    canonical.display()
-                ),
-            });
-        }
-
-        Ok(canonical)
-    }'''
-
-patch(ctx_path, old_resolve, new_resolve, "resolve_path method")
-
-# --- Patch 2: test_resolve_path in context.rs ----------------------------
-old_test = '''    #[test]
-    fn test_resolve_path() {
-        let context = ToolContext::new("/tmp");
-
-        let resolved = context.resolve_path("/abs/path");
-        assert_eq!(resolved, PathBuf::from("/abs/path"));
-
-        let resolved = context.resolve_path("relative/path");
-        assert_eq!(resolved, PathBuf::from("/tmp/relative/path"));
-    }'''
-
-new_test = '''    #[test]
-    fn test_resolve_path() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let root = temp_dir.path().canonicalize().unwrap();
-        std::fs::create_dir_all(root.join("subdir")).unwrap();
-        std::fs::write(root.join("file.txt"), "x").unwrap();
-
-        let context = ToolContext::new(&root);
-
-        // Existing relative file resolves to a canonical path inside root.
-        let resolved = context.resolve_path("file.txt").unwrap();
-        assert!(resolved.starts_with(&root), "got {}", resolved.display());
-        assert!(resolved.ends_with("file.txt"));
-
-        // Existing subdir path also resolves.
-        let resolved = context.resolve_path("subdir").unwrap();
-        assert!(resolved.starts_with(&root), "got {}", resolved.display());
-        assert!(resolved.ends_with("subdir"));
-
-        // Non-existent file inside: allowed (write_file create path).
-        let resolved = context.resolve_path("new_file.txt").unwrap();
-        assert!(resolved.starts_with(&root), "got {}", resolved.display());
-        assert!(resolved.ends_with("new_file.txt"));
-    }'''
-
-patch(ctx_path, old_test, new_test, "test_resolve_path")
-
-# --- Patch 3: append traversal rejection test to context.rs tests --------
-old_tail = '''        // Forbidden path
-        let result = context.can_read(Path::new("/tmp/allowed/forbidden/secret.txt"));
-        assert!(result.is_err());
-    }
-}'''
-
-new_tail = '''        // Forbidden path
-        let result = context.can_read(Path::new("/tmp/allowed/forbidden/secret.txt"));
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_resolve_path_rejects_traversal() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let root = temp_dir.path().canonicalize().unwrap();
-        std::fs::write(root.join("inside.txt"), "ok").unwrap();
-
-        let context = ToolContext::new(&root);
-
-        // A `..` climb must not escape the working directory.
-        let escape = format!("{}/../outside.txt", root.display());
-        let result = context.resolve_path(&escape);
-        assert!(
-            result.is_err(),
-            "expected traversal rejection, got {:?}",
-            result
-        );
-
-        // An absolute path outside the working directory must be rejected.
-        let result = context.resolve_path("/etc/passwd");
-        assert!(result.is_err(), "expected /etc/passwd rejection, got {:?}", result);
-
-        // Legitimate inside path still works.
-        let ok = context.resolve_path("inside.txt").unwrap();
-        assert!(ok.starts_with(&root));
-    }
-}'''
-
-patch(ctx_path, old_tail, new_tail, "traversal rejection test")
-
-# --- Patch 4: add `?` at all 5 resolve_path call sites in tools.rs -------
-old_call = "let resolved = context.resolve_path(path);"
-new_call = "let resolved = context.resolve_path(path)?;"
-with open(tools_path, "r") as f:
+with open(target, "r") as f:
     content = f.read()
-n = content.count(old_call)
-if n != 5:
-    print(f"ERROR: expected 5 resolve_path call sites in {tools_path}, found {n}")
+
+start_marker = "        // 1. Debugging"
+end_marker = "        // Default to simple"
+
+start = content.find(start_marker)
+if start == -1:
+    print("ERROR: start marker not found (// 1. Debugging)")
     sys.exit(2)
-patched = content.replace(old_call, new_call)
-tmp = tools_path + ".tmp"
+
+end = content.find(end_marker, start)
+if end == -1:
+    print("ERROR: end marker not found (// Default to simple)")
+    sys.exit(2)
+
+new_block = '''        // Priority order (first match wins):
+        //   1. Debugging   -- most specific failure vocabulary
+        //   2. CodeMod     -- surgical action verbs
+        //   3. Complex     -- broad planning verbs; a "design/build" request
+        //                     that also mentions tests is still Complex
+        //   4. Research    -- "investigate/find/search"; outranks docs because
+        //                     "research the docs" is a research task
+        //   5. Testing     -- specific testing verbs
+        //   6. Documentation -- "document/readme/comment"; weakest signal
+        //                       (comments show up in code snippets)
+        //   7. Simple      -- default
+        // Whole-word matching (not substring): "prefix" does not match
+        // "fix", "remove" does not match "move", "testify" does not match
+        // "test".
+
+        // 1. Debugging
+        if ["debug", "error", "traceback", "panic", "exception"]
+            .iter()
+            .copied()
+            .any(|w| contains_word(&input_lower, w))
+        {
+            return Ok(TaskType::Debugging);
+        }
+
+        // 2. Code modification
+        if [
+            "refactor", "fix", "rename", "move", "extract", "inline", "modify", "update",
+        ]
+        .iter()
+        .copied()
+        .any(|w| contains_word(&input_lower, w))
+        {
+            return Ok(TaskType::CodeModification);
+        }
+
+        // 3. Complex -- broad planning verbs.
+        if [
+            "design",
+            "architect",
+            "implement",
+            "create",
+            "build",
+            "complete",
+            "analyze",
+        ]
+        .iter()
+        .copied()
+        .any(|w| contains_word(&input_lower, w))
+        {
+            return Ok(TaskType::Complex);
+        }
+
+        // 4. Research
+        if ["research", "find", "search", "investigate", "look up"]
+            .iter()
+            .copied()
+            .any(|w| contains_word(&input_lower, w))
+        {
+            return Ok(TaskType::Research);
+        }
+
+        // 5. Testing
+        if ["test", "tests", "testing", "verify"]
+            .iter()
+            .copied()
+            .any(|w| contains_word(&input_lower, w))
+        {
+            return Ok(TaskType::Testing);
+        }
+
+        // 6. Documentation
+        if [
+            "document", "documentation", "docs", "readme", "comment", "comments",
+        ]
+        .iter()
+        .copied()
+        .any(|w| contains_word(&input_lower, w))
+        {
+            return Ok(TaskType::Documentation);
+        }
+
+'''
+
+patched = content[:start] + new_block + content[end:]
+
+tmp = target + ".tmp"
 with open(tmp, "w") as f:
     f.write(patched)
-os.replace(tmp, tools_path)
-print(f"Patched {tools_path}: 5 resolve_path call sites now propagate errors")
-
-print("All patches applied.")
+os.replace(tmp, target)
+print("Reordered classify_task priority chain:", target)
 PYEOF
 
 if [ $? -ne 0 ]; then
@@ -215,30 +146,38 @@ if [ "$INCOMPLETE" = true ] || [ "$COMPILE_OK" = false ]; then
     exit 1
 fi
 
-echo "Running tests"
-cargo test -p kod-tools
-if [ $? -eq 0 ]; then
-    echo "All tests passed. Committing."
-    git add -A
-    git commit -m "fix(tools): reject path traversal in ToolContext::resolve_path
-
-ToolContext::resolve_path previously did a plain working_dir.join(path)
-with no canonicalization. is_path_allowed then returned Ok(true)
-whenever allowed_paths was empty, which is exactly what KodEngine
-configures. Net effect: read_file { path: '../../etc/passwd' } and
-write_file { path: '../../../tmp/x' } succeeded regardless of the
-sandbox flags.
-
-resolve_path now canonicalizes the target (falling back to
-canonicalizing the parent for files that do not exist yet, so
-write_file create still works) and refuses anything whose canonical
-form does not start with the canonical working directory.
-
-All five built-in tools (read_file, write_file, list_files, grep,
-file_info) propagate the new Result. Adds two tests: relative and
-absolute in-root paths succeed, traversal and absolute out-of-root
-paths are rejected."
-else
-    echo "Tests failed. Fix errors then run the next script."
+echo "Running router tests only first"
+if ! cargo test -p kod-core --test router 2>&1; then
+    echo "Router tests failed. Paste the full output to get a surgical fix."
     exit 1
 fi
+
+echo "Running full workspace tests"
+if ! cargo test --workspace 2>&1; then
+    echo "Workspace tests failed. Paste the full output to get a surgical fix."
+    exit 1
+fi
+
+echo "All tests passed. Committing."
+git add -A
+git commit -m "fix(router): order classification so multi-step and research win correctly
+
+The previous reorder (specific intents before the broad Complex
+bucket) broke two tests whose inputs deliberately contain keywords
+from two categories at once:
+
+  test_classify_multi_step: 'design/build ... test ...' expected
+  Complex but got Testing, because Testing was checked before
+  Complex.
+
+  test_classify_research: 'research ... docs ...' expected Research
+  but got Documentation, because Documentation was checked before
+  Research.
+
+Correct priority (verified by the existing tests):
+  Debugging > CodeModification > Complex > Research > Testing
+  > Documentation > Simple
+
+Whole-word matching is kept from the previous patch: 'prefix' no
+longer matches 'fix', 'remove' no longer matches 'move', 'testify'
+no longer matches 'test'."
