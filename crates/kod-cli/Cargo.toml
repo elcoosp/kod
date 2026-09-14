@@ -26,6 +26,10 @@ tokio = { workspace = true }
 tempfile = "3.8"
 kod-config = { path = "../kod-config" }
 toml = { workspace = true }
+async-trait = "0.1"
+futures = { workspace = true }
+kod-provider = { path = "../kod-provider" }
+kod-types = { path = "../kod-types" }
 
 [build-dependencies]
 chrono = { workspace = true }

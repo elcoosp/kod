@@ -168,6 +168,66 @@ async fn test_engine_lifecycle() {
     assert!(!engine.is_running().await);
 }
 
+/// A provider that returns a fixed reply without touching the network.
+///
+/// `KodEngine::process` requires an installed provider — the earlier
+/// fallback to the router's placeholder text was replaced with an
+/// explicit `InvalidState` error (see the engine's `no_provider_error`
+/// doc). This provider exists so an integration test can exercise the
+/// full engine path (prompt build → provider call → response) without
+/// depending on a live model server.
+struct NoOpProvider {
+    reply: String,
+}
+
+#[async_trait::async_trait]
+impl kod_provider::LlmProvider for NoOpProvider {
+    fn name(&self) -> &str {
+        "no-op"
+    }
+
+    async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+        Ok(vec!["no-op".to_string()])
+    }
+
+    async fn generate(
+        &self,
+        _prompt: &str,
+        _options: &kod_provider::GenerationOptions,
+    ) -> kod_error::Result<String> {
+        Ok(self.reply.clone())
+    }
+
+    async fn generate_with_tools(
+        &self,
+        _prompt: &str,
+        _tools: &[kod_types::ToolDefinition],
+        _options: &kod_provider::GenerationOptions,
+    ) -> kod_error::Result<kod_provider::GenerationResponse> {
+        // Return Text, not ToolCalls: the test drives a single round
+        // and asserts the reply text lands. A ToolCalls response would
+        // need a tool registry entry to satisfy the loop.
+        Ok(kod_provider::GenerationResponse::Text {
+            content: self.reply.clone(),
+            usage: None,
+        })
+    }
+
+    fn stream(
+        &self,
+        _prompt: &str,
+        _options: &kod_provider::GenerationOptions,
+    ) -> std::pin::Pin<
+        Box<
+            dyn futures::Stream<Item = kod_error::Result<kod_provider::StreamChunk>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(futures::stream::empty())
+    }
+}
+
 #[tokio::test]
 async fn test_engine_process_input() {
     let env = TestEnvironment::new();
@@ -187,10 +247,58 @@ async fn test_engine_process_input() {
 
     engine.start().await.unwrap();
 
-    // Process a simple input
+    // Install a no-op provider. Without one the engine rejects the
+    // call — see the `no_provider_error` doc in kod-core. This test
+    // exercises the real processing path with a canned reply.
+    engine
+        .set_provider(std::sync::Arc::new(NoOpProvider {
+            reply: "I can help with code.".to_string(),
+        }))
+        .await;
+
+    // Process a simple input.
     let response = engine.process("Hello, what can you do?").await.unwrap();
-    assert!(response.text.is_some());
     assert_eq!(response.task_type, kod_core::router::TaskType::Simple);
+    assert_eq!(
+        response.text.as_deref(),
+        Some("I can help with code."),
+        "provider reply must reach the response"
+    );
+
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_engine_rejects_prompt_without_provider() {
+    // The complementary test: with no provider installed, `process`
+    // must reject the call rather than return a placeholder. This is
+    // the behavior the no-provider fix introduced; pinning it here
+    // means a future revert to the fallback fails loudly.
+    let env = TestEnvironment::new();
+    let db_path = env.working_dir.join("test.redb");
+
+    let engine = kod_core::engine::KodEngine::new(
+        kod_core::router::RouterConfig {
+            context_window: 8192,
+            enable_swarm: false,
+            enable_memory: false,
+            max_skills_per_query: 3,
+            working_dir: env.working_dir.clone(),
+        },
+        db_path,
+    )
+    .unwrap();
+    engine.start().await.unwrap();
+
+    let err = engine.process("Hello?").await.unwrap_err();
+    assert!(
+        matches!(err, kod_error::KodError::InvalidState(_)),
+        "expected InvalidState, got {err:?}"
+    );
+    assert!(
+        err.to_string().contains("No LLM provider"),
+        "error should name the missing provider: {err}"
+    );
 
     engine.shutdown().await.unwrap();
 }
