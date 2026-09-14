@@ -7,6 +7,14 @@
 
 ---
 
+> **Note — this is a design draft, not a description of the current code.**
+> It describes a larger system than the workspace implements today. Sections
+> on agent swarms, LSP integration, debugger integration, and episodic or
+> semantic memory describe features that are planned or aspirational, not
+> built. For what the code actually does, read `ARCHITECTURE.md`; for how to
+> run and extend it, read `TESTING.md`. This file is kept as a design
+> reference for the larger shape KOD could take.
+
 ## 🎯 1. Executive Summary
 
 KOD is a terminal-native, high-performance AI coding agent harness built in Rust. It combines:
@@ -872,6 +880,9 @@ pub struct EpisodicMemory {
 
 ---
 
+_[§7 "Agent Swarm Specification" was removed in a prior revision — the
+`kod-swarm` crate was deleted from the workspace. The section's content
+is preserved in git history if a swarm design is revisited.]_
 
 ## 🔧 8. Tool Calling Specification (`kod-tools`)
 
