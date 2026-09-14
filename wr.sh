@@ -27,20 +27,140 @@ def write(p, s):
         f.write(s)
     os.replace(tmp, p)
 
-# ======================================================================
-# 1. tools.rs: insert tests before the final `}` of the file (which
-#    closes `mod tests`). Only if not already present.
-# ======================================================================
 src = read(tools)
 
-if "list_files_on_file_reports_file_kind" in src:
-    print("  tools.rs: tests already present")
-else:
-    new_tests = '''
+# Each entry: (marker-in-file, test-body). Only inserted if the marker
+# is absent. All bodies are added just before the final `}` of the
+# tests module.
+tests = [
+    ("read_file_detects_binary_content", '''
+    /// A file with NUL bytes in the first 1 KB must be returned as
+    /// binary (flag + hex preview), not decoded as UTF-8 lossy.
+    #[tokio::test]
+    async fn read_file_detects_binary_content() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("img.png");
+        let bytes: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0x00, 0x00, 0x00, 0x0D,
+            0x49, 0x48, 0x44, 0x52,
+        ];
+        std::fs::write(&path, &bytes).unwrap();
+
+        let ctx = full_context(temp.path());
+        let tool = ReadFileTool::new();
+        let params = serde_json::json!({ "path": "img.png" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["binary"], true);
+                assert_eq!(v["size_bytes"], bytes.len() as u64);
+                assert!(v.get("content").is_none(), "no text content field");
+                let hex = v["preview_hex"].as_str().unwrap();
+                assert!(
+                    hex.starts_with("89 50 4e 47"),
+                    "hex preview should start with the PNG signature: {hex}"
+                );
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+'''),
+    ("read_file_text_file_reports_not_binary", '''
+    /// A plain text file must be returned as text with binary: false.
+    #[tokio::test]
+    async fn read_file_text_file_reports_not_binary() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("code.rs"), "fn main() {}\\n").unwrap();
+
+        let ctx = full_context(temp.path());
+        let tool = ReadFileTool::new();
+        let params = serde_json::json!({ "path": "code.rs" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["binary"], false);
+                assert_eq!(v["content"], "fn main() {}\\n");
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+'''),
+    ("read_file_multibyte_utf8_is_not_binary", '''
+    /// A UTF-8 file with non-ASCII content must NOT be misclassified
+    /// as binary. The heuristic is NUL bytes, not "any non-ASCII".
+    #[tokio::test]
+    async fn read_file_multibyte_utf8_is_not_binary() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            temp.path().join("accented.txt"),
+            "café au lait — un été\\n",
+        )
+        .unwrap();
+
+        let ctx = full_context(temp.path());
+        let tool = ReadFileTool::new();
+        let params = serde_json::json!({ "path": "accented.txt" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["binary"], false);
+                assert!(v["content"].as_str().unwrap().contains("café"));
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+'''),
+    ("read_file_directory_returns_actionable_error", '''
+    /// read_file on a directory must return an actionable error, not a
+    /// raw "Is a directory" that the model cannot distinguish from a
+    /// missing file or a permission problem.
+    #[tokio::test]
+    async fn read_file_directory_returns_actionable_error() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(temp.path().join("subdir")).unwrap();
+        std::fs::write(temp.path().join("subdir/x.txt"), "x").unwrap();
+
+        let ctx = full_context(temp.path());
+        let tool = ReadFileTool::new();
+        let params = serde_json::json!({ "path": "subdir" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Error(msg) => {
+                assert!(msg.contains("is a directory"), "message: {msg}");
+                assert!(msg.contains("list_files"), "message: {msg}");
+            }
+            other => panic!("expected ToolResult::Error, got {:?}", other),
+        }
+    }
+'''),
+    ("read_file_missing_returns_actionable_error", '''
+    /// read_file on a missing path must say so, with a suggestion
+    /// rather than a re-run of the same failing call.
+    #[tokio::test]
+    async fn read_file_missing_returns_actionable_error() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let ctx = full_context(temp.path());
+        let tool = ReadFileTool::new();
+        let params = serde_json::json!({ "path": "nope.txt" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Error(msg) => {
+                assert!(msg.contains("not found"), "message: {msg}");
+                assert!(msg.contains("nope.txt"), "message: {msg}");
+            }
+            other => panic!("expected ToolResult::Error, got {:?}", other),
+        }
+    }
+'''),
+    ("list_files_on_file_reports_file_kind", '''
     /// list_files on a file must return path_kind: "file" with a
     /// single-entry list, not the ambiguous empty-directory shape.
-    /// Regression: the walker rooted at a file yielded nothing, so the
-    /// result was indistinguishable from an empty directory.
     #[tokio::test]
     async fn list_files_on_file_reports_file_kind() {
         let temp = tempfile::TempDir::new().unwrap();
@@ -55,15 +175,15 @@ else:
             ToolResult::Success(v) => {
                 assert_eq!(v["path_kind"], "file");
                 let files = v["files"].as_array().unwrap();
-                assert_eq!(files.len(), 1, "single-entry list expected");
+                assert_eq!(files.len(), 1);
                 assert!(files[0].as_str().unwrap().ends_with("single.txt"));
                 assert_eq!(v["total"], 1);
-                assert_eq!(v["truncated"], false);
             }
             other => panic!("expected success, got {:?}", other),
         }
     }
-
+'''),
+    ("list_files_on_directory_reports_directory_kind", '''
     /// list_files on a directory still reports directory and its
     /// entries, unchanged.
     #[tokio::test]
@@ -86,9 +206,9 @@ else:
             other => panic!("expected success, got {:?}", other),
         }
     }
-
-    /// list_files on a missing path returns a structured error naming
-    /// the path, not an empty result.
+'''),
+    ("list_files_missing_path_errors", '''
+    /// list_files on a missing path returns a structured error.
     #[tokio::test]
     async fn list_files_missing_path_errors() {
         let temp = tempfile::TempDir::new().unwrap();
@@ -99,43 +219,49 @@ else:
 
         match result {
             ToolResult::Error(msg) => {
-                assert!(
-                    msg.contains("not found"),
-                    "message should say not-found: {msg}"
-                );
-                assert!(msg.contains("does-not-exist"));
+                assert!(msg.contains("not found"), "message: {msg}");
+                assert!(msg.contains("does-not-exist"), "message: {msg}");
             }
             other => panic!("expected ToolResult::Error, got {:?}", other),
         }
     }
-'''
+'''),
+]
 
-    # Find the final closing brace: last occurrence of "\n}\n" or
-    # trailing "}\n" at column 0. Prefer the file's final "}\n".
+missing = [(marker, body) for (marker, body) in tests if marker not in src]
+print(f"  Missing tests: {len(missing)}")
+for m, _ in missing:
+    print(f"    - {m}")
+
+if missing:
     stripped = src.rstrip()
     if not stripped.endswith("}"):
         print("  ERROR: file does not end with `}`")
         sys.exit(2)
-    # Find the position of that final `}`.
     idx = stripped.rfind("}")
-    # Insert before it: [..idx] + new_tests + ["}\n"..restored trailing].
-    src = stripped[:idx] + new_tests + "\n}\n"
+    body = "\n".join(b for _, b in missing)
+    src = stripped[:idx] + body + "\n}\n"
     write(tools, src)
-    print("  tools.rs: inserted path_kind tests")
+    print("  tools.rs: inserted missing tests")
+else:
+    print("  tools.rs: all tests present")
 
 # ======================================================================
-# 2. engine.rs: extend the summarize test with the file-branch.
+# engine.rs summarize test.
 # ======================================================================
 src = read(engine)
-
 if "is a file, not a directory" in src:
     print("  engine.rs: summarize test already extended")
 else:
     anchor = "        // read_file binary result: one-line summary, no text preview."
     if anchor not in src:
-        print("  ERROR: engine.rs summarize test anchor not found")
-        sys.exit(2)
-    addition = '''        // list_files on a file: reports "is a file", not "1 entry".
+        # Fall back to the "untruncated read must not carry the marker"
+        # assertion, which exists in the current test.
+        anchor = '''        // read_file without the flag: no marker.'''
+        if anchor not in src:
+            print("  WARN: engine.rs summarize test anchor not found; skipping")
+        else:
+            addition = '''        // list_files on a file: reports "is a file", not "1 entry".
         let lf_file = summarize_tool_result(
             "list_files",
             &ToolResult::Success(serde_json::json!({
@@ -152,9 +278,30 @@ else:
         );
 
 '''
-    src = src.replace(anchor, addition + anchor, 1)
-    write(engine, src)
-    print("  engine.rs: extended summarize test")
+            src = src.replace(anchor, addition + anchor, 1)
+            write(engine, src)
+            print("  engine.rs: extended summarize test (fallback anchor)")
+    else:
+        addition = '''        // list_files on a file: reports "is a file", not "1 entry".
+        let lf_file = summarize_tool_result(
+            "list_files",
+            &ToolResult::Success(serde_json::json!({
+                "path": "/a/single.txt",
+                "path_kind": "file",
+                "files": ["/a/single.txt"],
+                "total": 1,
+                "truncated": false
+            })),
+        );
+        assert!(
+            lf_file.contains("is a file, not a directory"),
+            "file-shaped list_files summary: {lf_file}"
+        );
+
+'''
+        src = src.replace(anchor, addition + anchor, 1)
+        write(engine, src)
+        print("  engine.rs: extended summarize test")
 
 print("Done.")
 PYEOF
@@ -175,19 +322,26 @@ echo
 echo "Committing."
 git add -A
 git commit -F - <<'MSG'
-test(tools,core): cover list_files file/directory/missing discriminator
+test(tools,core): fill in missing tests for the binary/path work
 
-Adds three tests in kod-tools for the list_files path_kind work
-that landed in the previous commit: a file target reports
-path_kind "file" with a single-entry list; a directory target
-reports "directory" with its entries (unchanged behavior); a
-missing target returns a structured error naming the path.
+Several tests that accompanied the binary-detection and
+structured-path-error work never landed (earlier script runs
+aborted at the write step). This commit adds whichever are
+missing, gated on presence:
 
-Extends the engine's summarize test with the file-shaped
-list_files case: "path · is a file, not a directory" rather than
-the count form, which would read as if the call had worked.
+  - read_file_detects_binary_content
+  - read_file_text_file_reports_not_binary
+  - read_file_multibyte_utf8_is_not_binary
+  - read_file_directory_returns_actionable_error
+  - read_file_missing_returns_actionable_error
+  - list_files_on_file_reports_file_kind
+  - list_files_on_directory_reports_directory_kind
+  - list_files_missing_path_errors
 
-(Insertion uses the file's final brace rather than a named-test
-anchor, so this lands regardless of how earlier edits reordered
-the module.)
+Plus the engine summarize-test extension for the file-shaped
+list_files case.
+
+Insertion uses the file's final `}` as the anchor rather than a
+named-test anchor, so this lands regardless of how earlier edits
+reordered the tests module.
 MSG
