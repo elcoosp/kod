@@ -256,6 +256,29 @@ pub(crate) fn truncate_chars(s: &str, max: usize) -> &str {
     &s[..end]
 }
 
+/// Append a round's text to the accumulated final text, inserting a
+/// blank-line separator when this is not the first non-empty round.
+///
+/// Within one `process*` call the agentic loop can produce text in
+/// more than one round: the model writes a sentence, calls a tool,
+/// then writes a follow-up. Each round's text went into the same
+/// `final_text` and, without a separator, the caller saw
+/// "Let me check.Here is the answer." — two sentences jammed into
+/// one. The TUI side-stepped the visible join because it flushes
+/// each round into its own bubble (see `flush_streamed_text`), but a
+/// non-streaming caller (the returned `final_text`) or a stream
+/// consumer that does not track round boundaries saw the run-together
+/// text.
+fn append_round_text(buf: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    if !buf.is_empty() {
+        buf.push_str("\n\n");
+    }
+    buf.push_str(text);
+}
+
 /// One-line brief for a tool call: `execute_command cargo test …`,
 /// `read_file path=…`. Used for the live "running" indicator.
 pub fn format_call_brief(name: &str, args: &serde_json::Value) -> String {
@@ -1062,7 +1085,7 @@ impl KodEngine {
             {
                 GenerationResponse::Text { content, usage } => {
                     last_usage = usage.or(last_usage);
-                    final_text.push_str(&content);
+                    append_round_text(&mut final_text, &content);
                     break;
                 }
                 GenerationResponse::ToolCalls { calls, usage } => {
@@ -1082,7 +1105,7 @@ impl KodEngine {
                     usage,
                 } => {
                     last_usage = usage.or(last_usage);
-                    final_text.push_str(&content);
+                    append_round_text(&mut final_text, &content);
                     if calls.is_empty() {
                         break;
                     }
@@ -1141,7 +1164,7 @@ impl KodEngine {
                 .stream_round(provider, pending, definitions, options, chunk_tx)
                 .await?;
             last_usage = usage.or(last_usage);
-            final_text.push_str(&text);
+            append_round_text(&mut final_text, &text);
             if calls.is_empty() {
                 break;
             }
@@ -1175,6 +1198,16 @@ impl KodEngine {
             tool_results.extend(section.results);
             pending.push_str(&format!("\n\n{}", section.prompt_block));
             self.apply_steers(pending).await;
+            // If we have already produced text this turn, emit a
+            // blank-line separator into the chunk stream before the
+            // next round. A consumer that prints chunks straight
+            // through (the CLI's `kod chat`) would otherwise see the
+            // two rounds' text jammed into one sentence. The TUI
+            // trims leading blank lines on flush (see
+            // `trim_blank_lines`), so this is a no-op for it.
+            if !final_text.is_empty() {
+                let _ = chunk_tx.send("\n\n".to_string()).await; // kod-round-separator
+            }
             // Tool is done, result reinjected — next provider call is pure
             // LLM thinking, not tool execution. Tell the UI to drop the
             // "tool: …" line so a slow model doesn't look like a stuck tool.
@@ -1963,6 +1996,36 @@ mod tests {
         assert_eq!(format_duration_ms(1000), "1.0s");
         assert_eq!(format_duration_ms(1500), "1.5s");
         assert_eq!(format_duration_ms(65_000), "1m05s");
+    }
+
+    /// A single turn's agentic loop can produce text in more than one
+    /// round (model says something, calls a tool, then says more).
+    /// `append_round_text` must insert a blank-line separator between
+    /// non-empty rounds so the accumulated `final_text` does not read
+    /// as "Let me check.Here is the answer."
+    #[test]
+    fn test_append_round_text_separates_rounds() {
+        let mut buf = String::new();
+        // First round: no separator.
+        append_round_text(&mut buf, "first");
+        assert_eq!(buf, "first");
+        // Second round: blank-line separator.
+        append_round_text(&mut buf, "second");
+        assert_eq!(buf, "first\n\nsecond");
+        // Empty text is ignored — no separator for a round that
+        // produced nothing.
+        append_round_text(&mut buf, "");
+        assert_eq!(buf, "first\n\nsecond");
+        // Third round: separator again.
+        append_round_text(&mut buf, "third");
+        assert_eq!(buf, "first\n\nsecond\n\nthird");
+        // Empty buffer + empty text: stays empty.
+        let mut empty = String::new();
+        append_round_text(&mut empty, "");
+        assert_eq!(empty, "");
+        // Empty buffer + first text: no leading separator.
+        append_round_text(&mut empty, "one");
+        assert_eq!(empty, "one");
     }
 
     #[test]
