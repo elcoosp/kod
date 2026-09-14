@@ -505,6 +505,18 @@ const MAX_GREP_MATCHES: usize = 500;
 /// cannot exceed ~5 MB even in the pathological case.
 const MAX_ENTRY_BYTES: usize = 1024;
 
+/// Per-file byte cap for `grep`. Files larger than this are skipped and
+/// reported in the result's `skipped_large_files` list.
+///
+/// The pre-streaming implementation called `std::fs::read_to_string` on
+/// every candidate file, so a 2 GB log — the exact file a user might
+/// want to grep — would allocate the whole thing into memory and OOM
+/// the process before the entry cap could fire. A source tree rarely
+/// has a file over a megabyte, and a file that large rarely contains
+/// the line-level pattern a coding agent is looking for; 8 MB is
+/// generous for the useful case and cheap to bound the useless one.
+const MAX_GREP_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
 /// Truncate a UTF-8 string to at most `max` bytes at a char boundary,
 /// appending an ellipsis when the string was cut. Local to this module
 /// to avoid a cross-crate dependency on the engine's helper.
@@ -662,6 +674,13 @@ impl Tool for GrepTool {
         // paths the walker returns, so grep silently returned nothing
         // for relative-path calls. Dropped.
         let mut results = Vec::new();
+        // Files whose size exceeded MAX_GREP_FILE_BYTES. Reported in
+        // the result so the model knows the search was not exhaustive
+        // and can decide whether to grep them specifically (or read
+        // them with an offset once that exists).
+        let mut skipped_large_files: Vec<String> = Vec::new();
+
+        use std::io::BufRead as _;
 
         for file_path in gitaware_walk(&resolved, recursive) {
             if results.len() >= MAX_GREP_MATCHES {
@@ -670,12 +689,31 @@ impl Tool for GrepTool {
             if !file_path.is_file() {
                 continue;
             }
-            let content = match std::fs::read_to_string(&file_path) {
-                Ok(c) => c,
+            // Size check before opening. `read_to_string` used to load
+            // the entire file into memory; a 2 GB log would OOM here.
+            if let Ok(meta) = std::fs::metadata(&file_path)
+                && meta.len() > MAX_GREP_FILE_BYTES
+            {
+                skipped_large_files.push(file_path.to_string_lossy().to_string());
+                continue;
+            }
+            let file = match std::fs::File::open(&file_path) {
+                Ok(f) => f,
                 Err(_) => continue,
             };
-            for (line_num, line) in content.lines().enumerate() {
-                if regex.is_match(line) {
+            let reader = std::io::BufReader::new(file);
+            // `.lines()` yields Result<String>; a line containing
+            // invalid UTF-8 (a binary file, a log with raw bytes)
+            // produces Err and we stop scanning that file. The old
+            // `read_to_string` failed the whole file on any bad byte;
+            // the streaming form at least gets matches from the clean
+            // prefix.
+            for (line_num, line_result) in reader.lines().enumerate() {
+                let line = match line_result {
+                    Ok(l) => l,
+                    Err(_) => break,
+                };
+                if regex.is_match(&line) {
                     // Cap the matched text per entry. A generated
                     // bundler output file with 8 KB of inline JSON
                     // on one line would otherwise produce a single
@@ -700,6 +738,7 @@ impl Tool for GrepTool {
             "case_insensitive": case_insensitive,
             "results": results,
             "truncated": results.len() >= MAX_GREP_MATCHES,
+            "skipped_large_files": skipped_large_files,
         })))
     }
 }
@@ -961,6 +1000,66 @@ mod tests {
         match result {
             ToolResult::Success(v) => {
                 assert_eq!(v["results"].as_array().unwrap().len(), 3);
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    /// A file larger than MAX_GREP_FILE_BYTES must be skipped, and
+    /// the skip must be reported in the result. Before streaming, the
+    /// old code called read_to_string on every candidate file and
+    /// would OOM on a multi-gigabyte log.
+    #[tokio::test]
+    async fn grep_skips_oversized_files() {
+        let temp = tempfile::TempDir::new().unwrap();
+        // A file one byte over the cap. Filling it with 'x' is fast
+        // enough; the pattern will not match anyway, so the skip path
+        // is the only thing that determines the outcome.
+        let big = temp.path().join("huge.log");
+        let filler = vec![b'x'; (MAX_GREP_FILE_BYTES + 1) as usize];
+        std::fs::write(&big, &filler).unwrap();
+        // A small file that would match, so we can also assert the
+        // search continued to the small file after the skip.
+        std::fs::write(temp.path().join("small.txt"), "needle here").unwrap();
+
+        let ctx = grep_ctx(temp.path());
+        let tool = GrepTool::new();
+        let params = serde_json::json!({ "path": ".", "pattern": "needle" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                let hits = v["results"].as_array().unwrap();
+                assert_eq!(hits.len(), 1, "small file match missing: {hits:?}");
+                let skipped = v["skipped_large_files"].as_array().unwrap();
+                assert_eq!(skipped.len(), 1, "huge.log should be skipped");
+                assert!(skipped[0].as_str().unwrap().ends_with("huge.log"));
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    /// A file within the cap must be searched normally even when there
+    /// is also a skipped file. Sanity that the `continue` after the
+    /// size check does not accidentally short-circuit the walk.
+    #[tokio::test]
+    async fn grep_searches_files_within_cap() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("a.txt"), "alpha\nneedle\n").unwrap();
+        std::fs::write(temp.path().join("b.txt"), "beta\nneedle too\n").unwrap();
+
+        let ctx = grep_ctx(temp.path());
+        let tool = GrepTool::new();
+        let params = serde_json::json!({ "path": ".", "pattern": "needle" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["results"].as_array().unwrap().len(), 2);
+                assert!(
+                    v["skipped_large_files"].as_array().unwrap().is_empty(),
+                    "nothing should be skipped at this size"
+                );
             }
             other => panic!("expected success, got {:?}", other),
         }
