@@ -26,47 +26,133 @@ run_with_timeout() {
 
 COMPILE_OK=true
 INCOMPLETE=false
-CARGO=crates/kod-config/Cargo.toml
+TOOLS=crates/kod-tools/src/tools.rs
+CTX=crates/kod-tools/src/context.rs
 
-if [ ! -f Cargo.toml ] || [ ! -f "$CARGO" ]; then
-    echo "ERROR: run from the kod workspace root ($CARGO missing)"
-    exit 1
-fi
+for f in "$TOOLS" "$CTX"; do
+    if [ ! -f "$f" ]; then
+        echo "ERROR: missing $f — run from the kod workspace root"
+        exit 1
+    fi
+done
 
-echo "Adding tracing dep to kod-config (used by load_default's warn! calls)"
+echo "Patching $TOOLS (shell selection) and $CTX (dangerous-command list)"
 
-python3 - "$CARGO" << 'PYEOF'
+python3 - "$TOOLS" "$CTX" << 'PYEOF'
 import os
 import sys
 
-cargo = sys.argv[1]
-with open(cargo, "r") as f:
-    content = f.read()
+tools, ctx = sys.argv[1], sys.argv[2]
 
-old = '''[dependencies]
-serde = { workspace = true }
-toml = { workspace = true }
-dirs = { workspace = true }
-kod-error = { path = "../kod-error" }'''
+def patch(path, old, new, label, expect=1):
+    with open(path, "r") as f:
+        content = f.read()
+    n = content.count(old)
+    if n == 0:
+        print(f"ERROR: old snippet not found in {path}: {label}")
+        sys.exit(2)
+    if expect and n != expect:
+        print(f"ERROR: expected {expect} occurrence(s) of {label} in {path}, found {n}")
+        sys.exit(2)
+    patched = content.replace(old, new, expect if expect else n)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(patched)
+    os.replace(tmp, path)
+    print(f"Patched {path}: {label}")
 
-new = '''[dependencies]
-serde = { workspace = true }
-toml = { workspace = true }
-dirs = { workspace = true }
-tracing = { workspace = true }
-kod-error = { path = "../kod-error" }'''
+# --- 1. tools.rs: description mentions which shell runs ----------------
+patch(
+    tools,
+    '''                description: "Execute a shell command".to_string(),''',
+    '''                description: "Execute a shell command via `sh -c` on Unix and `cmd /C` on Windows. The command runs in the working directory and inherits no shell aliases or profile; write POSIX syntax on Unix and cmd.exe syntax on Windows.".to_string(),''',
+    "execute_command description",
+)
 
-n = content.count(old)
-if n != 1:
-    print(f"ERROR: expected 1 occurrence of [dependencies] block, found {n}")
-    sys.exit(2)
-content = content.replace(old, new, 1)
+# --- 2. tools.rs: pick the shell via cfg!(windows) ---------------------
+patch(
+    tools,
+    '''        context.can_execute_command(command)?;
 
-tmp = cargo + ".tmp"
-with open(tmp, "w") as f:
-    f.write(content)
-os.replace(tmp, cargo)
-print("Patched", cargo)
+        // Spawn with piped stdio so each stream is capped independently
+        // and the child is killed the moment output runs away.
+        let mut child = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .stdin(std::process::Stdio::null())''',
+    '''        context.can_execute_command(command)?;
+
+        // Pick the platform shell. The previous code hard-coded `sh -c`,
+        // which silently broke the x86_64-pc-windows-msvc release target
+        // CI builds: spawn succeeded, `sh` was not found, and the caller
+        // saw a generic "no such file or directory" with no hint that
+        // the tool had chosen the wrong interpreter.
+        //
+        // `cmd /C` is the closest Windows analogue of `sh -c`: it runs
+        // the command and exits. Neither shell loads a user profile, so
+        // aliases and rc files are not in scope.
+        let (shell, shell_flag) = if cfg!(windows) {
+            ("cmd", "/C")
+        } else {
+            ("sh", "-c")
+        };
+
+        // Spawn with piped stdio so each stream is capped independently
+        // and the child is killed the moment output runs away.
+        let mut child = tokio::process::Command::new(shell)
+            .arg(shell_flag)
+            .arg(command)
+            .stdin(std::process::Stdio::null())''',
+    "execute_command shell selection",
+)
+
+# --- 3. context.rs: expand the dangerous-command list ------------------
+patch(
+    ctx,
+    '''        // Check for dangerous commands
+        let dangerous_patterns = ["rm -rf", "sudo", "chmod 777", "> /dev/sda"];
+        for pattern in &dangerous_patterns {
+            if command.starts_with(pattern) {
+                return Err(KodError::PermissionDenied {
+                    action: "execute".to_string(),
+                    reason: format!("Dangerous command pattern detected: {}", pattern),
+                });
+            }
+        }''',
+    '''        // Refuse a small set of unambiguously destructive commands.
+        // These run through `sh -c` / `cmd /C`, so both shells' worst
+        // offenders are listed. The check is a guardrail, not a sandbox:
+        // `true; rm -rf /` slips past `starts_with`, and that is
+        // acceptable — the real defense is that the whole tool is
+        // behind ToolPermissions::execute_commands and the default is
+        // off. This just stops the accidental "delete everything"
+        // command from a model that read the wrong directory.
+        let dangerous_patterns: &[&str] = &[
+            // POSIX
+            "rm -rf",
+            "sudo",
+            "chmod 777",
+            "mkfs",
+            "> /dev/sda",
+            "> /dev/disk",
+            // cmd.exe
+            "format ",
+            "del /f /q /s",
+            "rd /s /q",
+            "rmdir /s /q",
+        ];
+        for pattern in dangerous_patterns {
+            if command.starts_with(pattern) {
+                return Err(KodError::PermissionDenied {
+                    action: "execute".to_string(),
+                    reason: format!("Dangerous command pattern detected: {}", pattern),
+                });
+            }
+        }''',
+    "dangerous-command list",
+)
+
+print("All patches applied.")
 PYEOF
 
 if [ $? -ne 0 ]; then
@@ -85,9 +171,9 @@ if [ "$INCOMPLETE" = true ] || [ "$COMPILE_OK" = false ]; then
     exit 1
 fi
 
-echo "Running kod-config tests"
-if ! run_with_timeout 60 cargo test -p kod-config 2>&1; then
-    echo "kod-config tests failed or hung. Paste the full output for a surgical fix."
+echo "Running kod-tools tests (120s wall clock)"
+if ! run_with_timeout 120 cargo test -p kod-tools 2>&1; then
+    echo "kod-tools tests failed or hung. Paste the full output for a surgical fix."
     exit 1
 fi
 
@@ -105,9 +191,20 @@ fi
 
 echo "All checks passed. Committing."
 git add -A
-git commit -m "fix(config): add tracing dependency for load_default warnings
+git commit -m "fix(tools): use cmd /C on Windows in execute_command
 
-load_default's fallback branches use tracing::warn!, but kod-config
-did not depend on tracing. Add tracing = { workspace = true } to the
-crate's [dependencies]. tracing is already a workspace dep used by
-every crate above kod-config, so this adds no new transitive cost."
+execute_command hard-coded sh -c. On the x86_64-pc-windows-msvc
+target that CI builds, this spawned a process, failed to find sh,
+and returned a generic 'no such file or directory' with no hint
+that the tool had picked the wrong interpreter. Every Windows
+release build was shipping a tool that could never succeed.
+
+Select the shell at runtime via cfg!(windows): cmd /C on Windows,
+sh -c elsewhere. Update the tool description to say which shell
+runs.
+
+Expand the dangerous-command guard in ToolContext::can_execute_command
+with the cmd.exe equivalents (format, del /f /q /s, rd /s /q,
+rmdir /s /q) so the refusal list is meaningful on both platforms.
+The check is documented as a guardrail, not a sandbox — the real
+defense is ToolPermissions::execute_commands being off by default."

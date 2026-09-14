@@ -160,9 +160,29 @@ impl ToolContext {
             });
         }
 
-        // Check for dangerous commands
-        let dangerous_patterns = ["rm -rf", "sudo", "chmod 777", "> /dev/sda"];
-        for pattern in &dangerous_patterns {
+        // Refuse a small set of unambiguously destructive commands.
+        // These run through `sh -c` / `cmd /C`, so both shells' worst
+        // offenders are listed. The check is a guardrail, not a sandbox:
+        // `true; rm -rf /` slips past `starts_with`, and that is
+        // acceptable — the real defense is that the whole tool is
+        // behind ToolPermissions::execute_commands and the default is
+        // off. This just stops the accidental "delete everything"
+        // command from a model that read the wrong directory.
+        let dangerous_patterns: &[&str] = &[
+            // POSIX
+            "rm -rf",
+            "sudo",
+            "chmod 777",
+            "mkfs",
+            "> /dev/sda",
+            "> /dev/disk",
+            // cmd.exe
+            "format ",
+            "del /f /q /s",
+            "rd /s /q",
+            "rmdir /s /q",
+        ];
+        for pattern in dangerous_patterns {
             if command.starts_with(pattern) {
                 return Err(KodError::PermissionDenied {
                     action: "execute".to_string(),

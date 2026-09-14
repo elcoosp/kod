@@ -225,7 +225,7 @@ impl ExecuteCommandTool {
             definition: ToolDefinition {
                 id: ToolId::new(),
                 name: "execute_command".to_string(),
-                description: "Execute a shell command".to_string(),
+                description: "Execute a shell command via `sh -c` on Unix and `cmd /C` on Windows. The command runs in the working directory and inherits no shell aliases or profile; write POSIX syntax on Unix and cmd.exe syntax on Windows.".to_string(),
                 category: ToolCategory::System,
                 parameters_schema: serde_json::json!({
                     "type": "object",
@@ -272,10 +272,25 @@ impl Tool for ExecuteCommandTool {
 
         context.can_execute_command(command)?;
 
+        // Pick the platform shell. The previous code hard-coded `sh -c`,
+        // which silently broke the x86_64-pc-windows-msvc release target
+        // CI builds: spawn succeeded, `sh` was not found, and the caller
+        // saw a generic "no such file or directory" with no hint that
+        // the tool had chosen the wrong interpreter.
+        //
+        // `cmd /C` is the closest Windows analogue of `sh -c`: it runs
+        // the command and exits. Neither shell loads a user profile, so
+        // aliases and rc files are not in scope.
+        let (shell, shell_flag) = if cfg!(windows) {
+            ("cmd", "/C")
+        } else {
+            ("sh", "-c")
+        };
+
         // Spawn with piped stdio so each stream is capped independently
         // and the child is killed the moment output runs away.
-        let mut child = tokio::process::Command::new("sh")
-            .arg("-c")
+        let mut child = tokio::process::Command::new(shell)
+            .arg(shell_flag)
             .arg(command)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
