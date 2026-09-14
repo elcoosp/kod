@@ -6,7 +6,6 @@
 use kod_error::Result;
 use kod_memory::manager::MemoryManager;
 use kod_skills::matcher::SkillMatcher;
-use kod_swarm::swarm::AgentSwarm;
 use kod_types::{MemoryContext, ToolCall, ToolResult};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -41,7 +40,6 @@ pub enum TaskType {
 /// Configuration for the task router
 #[derive(Debug, Clone)]
 pub struct RouterConfig {
-    pub enable_swarm: bool,
     pub enable_memory: bool,
     pub max_skills_per_query: usize,
     pub working_dir: PathBuf,
@@ -59,7 +57,6 @@ pub struct RouterConfig {
 impl Default for RouterConfig {
     fn default() -> Self {
         Self {
-            enable_swarm: true,
             enable_memory: true,
             max_skills_per_query: 3,
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
@@ -72,6 +69,10 @@ impl Default for RouterConfig {
 #[derive(Debug, Clone)]
 pub struct TaskResponse {
     pub task_type: TaskType,
+    /// Model-generated reply text. `None` when produced by
+    /// [`TaskRouter::process_input`] — the router classifies and
+    /// describes, it does not generate. The engine fills this with
+    /// the provider's reply.
     pub text: Option<String>,
     pub tool_calls: Vec<ToolCall>,
     pub tool_results: Vec<ToolResult>,
@@ -80,22 +81,6 @@ pub struct TaskResponse {
     pub skills_used: Vec<String>,
     /// True iff at least one memory entry was included in the prompt.
     pub memory_used: bool,
-    /// True iff the swarm handled part of this task.
-    ///
-    /// Always `false` today. The swarm is registered in the router
-    /// (when `enable_swarm` is set) but `handle_complex` returns a
-    /// placeholder string rather than routing the task to any agent —
-    /// so nothing has ever been dispatched through the swarm, and the
-    /// field cannot honestly be `true`. The field is kept so the
-    /// response shape is stable for the swarm-dispatch implementation,
-    /// but it does not currently carry a signal.
-    ///
-    /// The previous computation — `matches!(task_type, Complex) &&
-    /// self.swarm.is_some()` — was the same kind of tautology that
-    /// `memory_used` used to be: a fact about the router's inputs
-    /// (how it classified the task, whether it owns a swarm object)
-    /// dressed up as a fact about what happened.
-    pub swarm_used: bool,
     /// Wall-clock time from `process_input` entry to response.
     pub execution_time_ms: u64,
     /// Token usage the provider reported, when it did.
@@ -105,10 +90,8 @@ pub struct TaskResponse {
 /// Main task router that coordinates all subsystems
 pub struct TaskRouter {
     config: RouterConfig,
-    #[allow(dead_code)]
     memory_manager: Option<MemoryManager>,
     skill_matcher: Option<SkillMatcher>,
-    swarm: Option<AgentSwarm>,
 }
 
 impl TaskRouter {
@@ -129,18 +112,54 @@ impl TaskRouter {
 
         let skill_matcher = Some(SkillMatcher::new());
 
-        let swarm = if config.enable_swarm {
-            Some(AgentSwarm::new(config.working_dir.clone()))
-        } else {
-            None
-        };
 
         Ok(Self {
             config,
             memory_manager,
             skill_matcher,
-            swarm,
         })
+    }
+
+    /// Store one turn's text in short-term memory.
+    ///
+    /// The engine calls this after recording a turn, so the working
+    /// set the next prompt retrieves through `retrieve_context`
+    /// reflects the current session. Short-term is the right layer:
+    /// it is FIFO-bounded, evicts at capacity, and needs no fact
+    /// extraction to be useful.
+    ///
+    /// Not written to long-term or episodic:
+    ///   - Long-term holds durable facts. Deciding what deserves to
+    ///     persist requires an extraction pass (an LLM call) that
+    ///     this method does not do. Auto-writing every turn would
+    ///     make the long-term store indistinguishable from the
+    ///     transcript it is supposed to summarise.
+    ///   - Episodic holds embeddings. The manager writes them empty
+    ///     today (fastembed is not wired), so a write there would be
+    ///     inert. It gains a write path with the embedding work.
+    ///
+    /// Best-effort: a store failure logs a warning and returns
+    /// `Ok(())` — losing a session turn from the working set is not a
+    /// reason to fail a completed prompt. A manager that is not
+    /// configured (`enable_memory: false`) is a silent no-op, which
+    /// is what a test that disabled memory expects.
+    pub async fn store_short_term(&self, content: &str) -> Result<()> {
+        let Some(manager) = &self.memory_manager else {
+            return Ok(());
+        };
+        if content.trim().is_empty() {
+            return Ok(());
+        }
+        if let Err(e) = manager
+            .store(kod_types::MemoryType::ShortTerm, content)
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                "could not store turn in short-term memory"
+            );
+        }
+        Ok(())
     }
 
     /// Load skills from a directory (matcher uses interior mutability,
@@ -157,6 +176,27 @@ impl TaskRouter {
         }
 
         Ok(count)
+    }
+
+    /// Number of entries currently in short-term memory (0 when
+    /// memory is disabled). Read-only; used by the engine's tests and
+    /// by any future status display that wants to show working-set
+    /// size.
+    pub async fn get_all_short_term_len(&self) -> usize {
+        match &self.memory_manager {
+            Some(m) => m.get_all_short_term().len(),
+            None => 0,
+        }
+    }
+
+    /// Clear short-term memory. Called by `KodEngine::clear_history`
+    /// so `/clear` forgets the session's turns in both stores (see
+    /// that method's doc for the reasoning). Long-term memory is
+    /// untouched.
+    pub async fn clear_short_term_memory(&self) {
+        if let Some(m) = &self.memory_manager {
+            m.clear_short_term();
+        }
     }
 
     /// Names of all loaded skills (for `/skills` listing).
@@ -353,32 +393,33 @@ impl TaskRouter {
             })
             .unwrap_or(false);
 
-        // 4. Route to appropriate handler
-        let response = match task_type {
-            TaskType::Simple => self.handle_simple(input).await?,
-            TaskType::CodeModification => self.handle_code_modification(input).await?,
-            TaskType::Debugging => self.handle_debugging(input).await?,
-            TaskType::Research => self.handle_research(input).await?,
-            TaskType::Testing => self.handle_testing(input).await?,
-            TaskType::Documentation => self.handle_documentation(input).await?,
-            TaskType::Complex | TaskType::MultiStep => self.handle_complex(input).await?,
-        };
+        // 4. The router does not generate text.
+        //
+        // The seven handlers this replaces returned placeholder
+        // strings ("Processing simple task: …"). They existed so the
+        // router could stand alone — before the engine owned
+        // generation — and were the last remaining path where the
+        // router answered a prompt itself. The engine's process*
+        // methods now override `text` with the model's reply, so a
+        // placeholder `text` here was dead weight that could leak to
+        // a caller that used the router directly.
+        //
+        // The router now describes the task — type, skills, memory —
+        // and leaves generation to whoever called it.
 
         // 5. Record execution time
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
         Ok(TaskResponse {
             task_type,
-            text: response.text,
-            tool_calls: response.tool_calls,
-            tool_results: response.tool_results,
+            // The router classifies; it does not generate. `text` is
+            // None here and the caller (the engine) fills it in after
+            // calling the provider.
+            text: None,
+            tool_calls: Vec::new(),
+            tool_results: Vec::new(),
             skills_used,
             memory_used,
-            // No dispatch path uses the swarm today: `handle_complex`
-            // returns a placeholder string, and nothing else consults
-            // the router's `swarm` field for work routing. Report the
-            // honest answer — the swarm did not handle this task.
-            swarm_used: false,
             execution_time_ms,
             usage: None,
         })
@@ -605,86 +646,6 @@ impl TaskRouter {
         }
     }
 
-    /// Handle simple tasks (direct LLM call)
-    async fn handle_simple(&self, input: &str) -> Result<HandlerResponse> {
-        Ok(HandlerResponse {
-            text: Some(format!("Processing simple task: {}", input)),
-            tool_calls: Vec::new(),
-            tool_results: Vec::new(),
-        })
-    }
-
-    /// Handle code modification tasks
-    async fn handle_code_modification(&self, input: &str) -> Result<HandlerResponse> {
-        Ok(HandlerResponse {
-            text: Some(format!("Processing code modification: {}", input)),
-            tool_calls: Vec::new(),
-            tool_results: Vec::new(),
-        })
-    }
-
-    /// Handle debugging tasks
-    async fn handle_debugging(&self, input: &str) -> Result<HandlerResponse> {
-        Ok(HandlerResponse {
-            text: Some(format!("Processing debugging task: {}", input)),
-            tool_calls: Vec::new(),
-            tool_results: Vec::new(),
-        })
-    }
-
-    /// Handle research tasks
-    async fn handle_research(&self, input: &str) -> Result<HandlerResponse> {
-        Ok(HandlerResponse {
-            text: Some(format!("Processing research task: {}", input)),
-            tool_calls: Vec::new(),
-            tool_results: Vec::new(),
-        })
-    }
-
-    /// Handle testing tasks
-    async fn handle_testing(&self, input: &str) -> Result<HandlerResponse> {
-        Ok(HandlerResponse {
-            text: Some(format!("Processing testing task: {}", input)),
-            tool_calls: Vec::new(),
-            tool_results: Vec::new(),
-        })
-    }
-
-    /// Handle documentation tasks
-    async fn handle_documentation(&self, input: &str) -> Result<HandlerResponse> {
-        Ok(HandlerResponse {
-            text: Some(format!("Processing documentation task: {}", input)),
-            tool_calls: Vec::new(),
-            tool_results: Vec::new(),
-        })
-    }
-
-    /// Handle complex tasks (may use swarm)
-    async fn handle_complex(&self, input: &str) -> Result<HandlerResponse> {
-        if self.swarm.is_some() {
-            // Use swarm coordination
-            // In a full implementation, this would delegate to the swarm
-            Ok(HandlerResponse {
-                text: Some(format!(
-                    "Complex task received for swarm coordination: {}",
-                    input
-                )),
-                tool_calls: Vec::new(),
-                tool_results: Vec::new(),
-            })
-        } else {
-            // Fallback to simple processing
-            self.handle_simple(input).await
-        }
-    }
-}
-
-/// Internal response from task handlers
-#[derive(Debug, Clone)]
-struct HandlerResponse {
-    text: Option<String>,
-    tool_calls: Vec<ToolCall>,
-    tool_results: Vec<ToolResult>,
 }
 
 #[cfg(test)]
@@ -732,7 +693,6 @@ mod tests {
         let router = TaskRouter::new(
             RouterConfig {
                 enable_memory: true,
-                enable_swarm: false,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
                 context_window: 8192,
@@ -795,7 +755,6 @@ mod tests {
         let router = TaskRouter::new(
             RouterConfig {
                 enable_memory: true,
-                enable_swarm: false,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
                 context_window: 8192,
@@ -841,7 +800,6 @@ mod tests {
         let router = TaskRouter::new(
             RouterConfig {
                 enable_memory: true,
-                enable_swarm: false,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
                 context_window: 131_072,

@@ -126,9 +126,14 @@ async fn test_route_simple_task() {
 
     let response = router.process_input("What is Rust?").await.unwrap();
 
-    // Should route to LLM without tools
-    assert!(response.text.is_some());
+    // The router classifies and describes; it does not generate.
+    // `text` is None here — the caller (the engine) fills it with the
+    // provider's reply. Regression: the router used to return a
+    // placeholder string ("Processing simple task: …"), which leaked
+    // to any caller using the router directly.
+    assert!(response.text.is_none(), "router must not fabricate reply text");
     assert!(response.tool_calls.is_empty());
+    assert!(response.tool_results.is_empty());
     assert_eq!(response.task_type, TaskType::Simple);
 }
 
@@ -149,7 +154,13 @@ async fn test_route_with_context() {
         .await
         .unwrap();
 
-    assert!(response.text.is_some());
+    // Same contract as test_route_simple_task: the router classifies
+    // and reports what context it saw, it does not generate text.
+    assert!(response.text.is_none());
+    assert_eq!(response.task_type, TaskType::Simple);
+    // An empty memory context contributes nothing, so `memory_used`
+    // is false even though a context was passed in.
+    assert!(!response.memory_used);
 }
 
 #[tokio::test]
@@ -159,7 +170,6 @@ async fn test_router_configuration() {
 
     let config = RouterConfig {
         context_window: 8192,
-        enable_swarm: false,
         max_skills_per_query: 2,
         enable_memory: false,
         working_dir: temp_dir.path().to_path_buf(),

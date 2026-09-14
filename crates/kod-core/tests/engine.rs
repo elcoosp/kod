@@ -62,17 +62,6 @@ async fn test_engine_with_provider() {
 }
 
 #[tokio::test]
-async fn test_engine_maintenance() {
-    let (engine, _temp) = create_test_engine();
-
-    // Run maintenance
-    let result = engine.run_maintenance().await;
-
-    // Should complete without error
-    assert!(result.is_ok());
-}
-
-#[tokio::test]
 async fn test_engine_shutdown() {
     let (engine, _temp) = create_test_engine();
 
@@ -97,7 +86,6 @@ async fn test_seed_turn_feeds_history() {
         context_window: 8192,
         working_dir: tmp.path().to_path_buf(),
         enable_memory: false,
-        enable_swarm: false,
         max_skills_per_query: 3,
     };
     let _ = PathBuf::from("unused");

@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineConfig {
     pub working_dir: PathBuf,
-    pub enable_swarm: bool,
     pub enable_memory: bool,
     pub enable_skills: bool,
     pub max_skills_per_query: usize,
@@ -22,7 +21,6 @@ impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            enable_swarm: true,
             enable_memory: true,
             enable_skills: true,
             max_skills_per_query: 3,
@@ -36,7 +34,6 @@ impl EngineConfig {
     pub fn from_kod_config(config: &KodConfig, working_dir: &Path) -> Self {
         Self {
             working_dir: working_dir.to_path_buf(),
-            enable_swarm: true, // From swarm config
             enable_memory: config.memory.enable_semantic_search,
             enable_skills: true,
             max_skills_per_query: config.skills.max_skills_per_query,
@@ -65,7 +62,6 @@ mod tests {
     #[test]
     fn test_config_creation() {
         let config = EngineConfig::default();
-        assert!(config.enable_swarm);
         assert!(config.enable_memory);
     }
 }

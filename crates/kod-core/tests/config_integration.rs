@@ -17,7 +17,7 @@ fn test_engine_config_from_kod_config() {
     let engine_config = EngineConfig::from_kod_config(&kod_config, temp_dir.path());
 
     assert_eq!(engine_config.working_dir, temp_dir.path().to_path_buf());
-    assert!(engine_config.enable_swarm);
+    assert!(engine_config.enable_memory);
     assert!(engine_config.enable_memory);
 }
 
@@ -25,7 +25,7 @@ fn test_engine_config_from_kod_config() {
 fn test_engine_config_defaults() {
     let config = EngineConfig::default();
 
-    assert!(config.enable_swarm);
+    assert!(config.enable_memory);
     assert!(config.enable_memory);
     assert_eq!(config.max_skills_per_query, 3);
 }
@@ -37,5 +37,5 @@ fn test_config_serialization() {
     let json = serde_json::to_string(&config).unwrap();
     let deserialized: EngineConfig = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(config.enable_swarm, deserialized.enable_swarm);
+    assert_eq!(config.enable_memory, deserialized.enable_memory);
 }

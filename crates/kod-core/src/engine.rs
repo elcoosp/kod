@@ -1,6 +1,6 @@
 //! Main KOD engine - orchestrates all subsystems.
 //!
-//! Coordinates the task router, LLM providers, skills, memory, and swarm
+//! Coordinates the task router, LLM providers, skills, and memory
 //! to process user requests end-to-end.
 
 use crate::router::{RouterConfig, TaskResponse, TaskRouter};
@@ -858,7 +858,7 @@ impl KodEngine {
             // Build the full prompt using the router's context builder
             let task_type = response.task_type;
             let history = self.render_history().await;
-            self.record_turn(true, input).await;
+            self.remember_turn(true, input).await;
             let prompt = self
                 .router
                 .build_prompt(input, &task_type, &history)
@@ -889,7 +889,7 @@ impl KodEngine {
             } else {
                 final_text
             };
-            self.record_turn(false, &final_text).await;
+            self.remember_turn(false, &final_text).await;
 
             return Ok(TaskResponse {
                 task_type: response.task_type,
@@ -898,7 +898,6 @@ impl KodEngine {
                 tool_results,
                 skills_used: response.skills_used,
                 memory_used: response.memory_used,
-                swarm_used: response.swarm_used,
                 execution_time_ms: response.execution_time_ms,
                 usage,
             });
@@ -934,7 +933,7 @@ impl KodEngine {
             let response = self.router.process_input(input).await?;
             let task_type = response.task_type;
             let history = self.render_history().await;
-            self.record_turn(true, input).await;
+            self.remember_turn(true, input).await;
             let prompt = self
                 .router
                 .build_prompt(input, &task_type, &history)
@@ -958,7 +957,7 @@ impl KodEngine {
             } else {
                 final_text
             };
-            self.record_turn(false, &final_text).await;
+            self.remember_turn(false, &final_text).await;
 
             return Ok(TaskResponse {
                 task_type: response.task_type,
@@ -967,7 +966,6 @@ impl KodEngine {
                 tool_results,
                 skills_used: response.skills_used,
                 memory_used: response.memory_used,
-                swarm_used: response.swarm_used,
                 execution_time_ms: response.execution_time_ms,
                 usage,
             });
@@ -1005,7 +1003,7 @@ impl KodEngine {
             let response = self.router.process_input(input).await?;
             let task_type = response.task_type;
             let history = self.render_history().await;
-            self.record_turn(true, input).await;
+            self.remember_turn(true, input).await;
             let prompt = self
                 .router
                 .build_prompt(input, &task_type, &history)
@@ -1054,7 +1052,7 @@ impl KodEngine {
                     all_text.push_str("\n\n(Goal loop stopped after maximum turns — progress above. Refine with /goal or /steer.)");
                 }
             }
-            self.record_turn(false, &all_text).await;
+            self.remember_turn(false, &all_text).await;
 
             return Ok(TaskResponse {
                 task_type: response.task_type,
@@ -1063,7 +1061,6 @@ impl KodEngine {
                 tool_results,
                 skills_used: response.skills_used,
                 memory_used: response.memory_used,
-                swarm_used: response.swarm_used,
                 execution_time_ms: response.execution_time_ms,
                 usage: last_usage,
             });
@@ -1435,44 +1432,6 @@ impl KodEngine {
         }
     }
 
-    /// Run maintenance tasks.
-    ///
-    /// **Does nothing today.** The comment this replaces listed three
-    /// intentions — compact memory, release expired locks, refresh the
-    /// skill cache — none of which are implemented. A caller that
-    /// reads the method name and doc and expects compaction is going
-    /// to be surprised: the call returns `Ok(())`, leaves state
-    /// untouched, and (because the body only logs at debug level)
-    /// looks successful from the outside.
-    ///
-    /// Making it a no-op-with-a-doc is deliberate rather than
-    /// implementing one of the three inline:
-    ///
-    /// - Memory compaction: `MemoryManager` has no `compact` method
-    ///   today. Adding one and calling it here would be a feature, not
-    ///   a fix, and the semantics (what to compact, when, how to
-    ///   coordinate with in-flight retrievals) deserve a design
-    ///   pass.
-    /// - Lock cleanup: `SharedWorkspace` releases locks in `Drop`,
-    ///   so there is nothing to sweep. Expired-lock GC would only
-    ///   matter if a holder leaked its guard across a panic, which
-    ///   is a separate concern.
-    /// - Skill cache refresh: the loader already hot-reloads via
-    ///   `notify`. A manual sweep has no work to do.
-    ///
-    /// The method is retained because a caller (a hypothetical
-    /// long-running daemon, a future `/maintenance` slash command)
-    /// might want a named entry point that returns `Ok(())` so the
-    /// call site compiles. If any of the three is implemented later,
-    /// this doc should be deleted, not adjusted.
-    ///
-    /// The `tracing::debug!` line was removed: it implied activity
-    /// where there is none. A caller that wants to know maintenance
-    /// ran can log around the call.
-    pub async fn run_maintenance(&self) -> Result<()> {
-        Ok(())
-    }
-
     /// Shutdown the engine
     pub async fn shutdown(&self) -> Result<()> {
         let mut running = self.is_running.write().await;
@@ -1576,6 +1535,38 @@ impl KodEngine {
         std::mem::take(&mut *self.steer_queue.write().await)
     }
 
+    /// Record one turn in the engine's transcript AND store it in
+    /// short-term memory. The two are separate stores with different
+    /// lifetimes:
+    ///
+    ///   - The transcript (`record_turn`) is the model-visible
+    ///     conversation, rendered into every prompt under
+    ///     `## Conversation so far`, capped by the history budget.
+    ///   - Short-term memory (`TaskRouter::store_short_term`) is the
+    ///     retrieval-side working set, read by `retrieve_context`
+    ///     under `## Current Context`, capped by the memory manager's
+    ///     own short-term capacity.
+    ///
+    /// Both are written from here so a caller that records a turn
+    /// cannot forget to store it, and vice versa. The memory write is
+    /// best-effort and a no-op when memory is disabled; a memory
+    /// failure must not lose the transcript entry, and it does not —
+    /// `record_turn` runs first and is infallible.
+    ///
+    /// See `TaskRouter::store_short_term` for the reasoning about why
+    /// only short-term is written (not long-term or episodic).
+    async fn remember_turn(&self, user: bool, text: &str) {
+        self.record_turn(user, text).await;
+        // The memory layer stores user and assistant turns
+        // indistinguishably — the role is a transcript concept, not a
+        // memory one. A caller that needs "who said this" has the
+        // transcript.
+        // Best-effort: `store_short_term` already swallows errors
+        // internally, but the Result return is part of the public
+        // shape; discard it explicitly.
+        let _ = self.router.store_short_term(text).await;
+    }
+
     /// Remember one turn, truncating long texts and keeping only the most
     /// recent [`MAX_HISTORY_TURNS`] turns.
     ///
@@ -1650,10 +1641,28 @@ impl KodEngine {
         self.record_turn(user, text).await;
     }
 
-    /// Forget the transcript (`/clear`). Display messages are cleared
-    /// separately by the TUI — this is the model's copy.
+    /// Forget the session (`/clear`).
+    ///
+    /// Two stores are cleared:
+    ///
+    ///   - The transcript (the model-visible conversation rendered
+    ///     under `## Conversation so far`).
+    ///   - Short-term memory (the working set rendered under
+    ///     `## Current Context` by the router's `retrieve_context`).
+    ///
+    /// Both hold the session's turns. Clearing only the transcript
+    /// would leave the previous turns retrievable through memory, so
+    /// the next prompt would still mention text the user asked to
+    /// forget. Long-term memory is untouched: it holds durable facts
+    /// whose lifetime the user did not ask to end, and every
+    /// `/clear` deleting a user's long-term facts would be
+    /// surprising.
+    ///
+    /// Returns nothing; failure to clear memory is logged inside the
+    /// router and does not fail the clear.
     pub async fn clear_history(&self) {
         self.history.write().await.clear();
+        self.router.clear_short_term_memory().await;
     }
 
     /// Keep only the last `max_turns` turns (`/compact`). Used by the TUI
@@ -1818,7 +1827,6 @@ mod tests {
             context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
-            enable_swarm: false,
             max_skills_per_query: 3,
         };
         let engine = Arc::new(KodEngine::new(cfg, db_path).unwrap());
@@ -1876,7 +1884,6 @@ mod tests {
             context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
-            enable_swarm: false,
             max_skills_per_query: 3,
         };
         let engine = KodEngine::new(cfg, db_path).unwrap();
@@ -1900,7 +1907,6 @@ mod tests {
             context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
-            enable_swarm: false,
             max_skills_per_query: 3,
         };
         let engine = KodEngine::new(cfg, db_path).unwrap();
@@ -1922,7 +1928,6 @@ mod tests {
             context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
-            enable_swarm: false,
             max_skills_per_query: 3,
         };
         let engine = KodEngine::new(cfg, db_path).unwrap();
@@ -1936,40 +1941,70 @@ mod tests {
         assert!(matches!(err, KodError::InvalidState(_)), "got {err:?}");
     }
 
-    /// `run_maintenance` is documented as a no-op. This test pins
-    /// that: it must return Ok without changing engine state. If
-    /// someone implements one of the three intended behaviors later,
-    /// this test should be replaced with one that asserts the new
-    /// behavior — not deleted, and not silently kept passing while
-    /// the doc still says "does nothing."
+    /// `remember_turn` must write the turn to both the transcript and
+    /// short-term memory. Regression: nothing in the engine ever
+    /// called `MemoryManager::store`, so the memory subsystem was
+    /// read-only from the engine's perspective — retrieve_context
+    /// returned whatever a caller had stored externally, never a
+    /// session turn.
     #[tokio::test]
-    async fn test_run_maintenance_is_no_op() {
+    async fn test_remember_turn_writes_short_term_memory() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
             working_dir: temp.path().to_path_buf(),
-            enable_memory: false,
-            enable_swarm: false,
+            enable_memory: true,
             max_skills_per_query: 3,
+            ..Default::default()
         };
         let engine = KodEngine::new(cfg, db_path).unwrap();
         engine.start().await.unwrap();
 
-        // Seed some history so "did maintenance do anything" is a
-        // meaningful question.
-        engine.seed_turn(true, "one").await;
-        engine.seed_turn(false, "two").await;
-
-        // Call maintenance twice: once before compaction, once after a
-        // manual compact. Neither call should change history.
-        engine.run_maintenance().await.unwrap();
-        let rendered_before = engine.render_history().await;
-        engine.run_maintenance().await.unwrap();
-        let rendered_after = engine.render_history().await;
         assert_eq!(
-            rendered_before, rendered_after,
-            "run_maintenance must not touch history"
+            engine.router().get_all_short_term_len().await,
+            0,
+            "short-term memory starts empty"
+        );
+
+        engine.remember_turn(true, "the user asked about rust").await;
+        engine
+            .remember_turn(false, "the assistant answered with an example")
+            .await;
+
+        assert_eq!(
+            engine.router().get_all_short_term_len().await,
+            2,
+            "both turns must land in short-term memory"
+        );
+
+        // The transcript received the same turns.
+        let history = engine.render_history().await;
+        assert!(history.contains("the user asked about rust"));
+        assert!(history.contains("the assistant answered with an example"));
+    }
+
+    /// A turn with only whitespace must not create a memory entry —
+    /// the router's `store_short_term` drops empty content.
+    #[tokio::test]
+    async fn test_remember_turn_skips_empty_text() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: true,
+            max_skills_per_query: 3,
+            ..Default::default()
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        engine.remember_turn(true, "   \n\t  ").await;
+        assert_eq!(
+            engine.router().get_all_short_term_len().await,
+            0,
+            "whitespace-only text must not be stored"
         );
     }
 
@@ -2119,7 +2154,6 @@ mod tests {
             context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
-            enable_swarm: false,
             max_skills_per_query: 3,
         };
         let engine = KodEngine::new(cfg, db_path).unwrap();
@@ -2157,7 +2191,6 @@ mod tests {
             context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
-            enable_swarm: false,
             max_skills_per_query: 3,
         };
         let engine = KodEngine::new(cfg, db_path).unwrap();
@@ -2185,7 +2218,6 @@ mod tests {
             context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
-            enable_swarm: false,
             max_skills_per_query: 3,
         };
         let engine = KodEngine::new(cfg, db_path).unwrap();
@@ -2228,7 +2260,6 @@ mod tests {
             context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
-            enable_swarm: false,
             max_skills_per_query: 3,
         };
         let engine = KodEngine::new(cfg, db_path).unwrap();
@@ -2290,7 +2321,6 @@ mod tests {
             context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
-            enable_swarm: false,
             max_skills_per_query: 3,
         };
         let engine = KodEngine::new(cfg, db_path).unwrap();
@@ -2600,7 +2630,6 @@ mod tests {
             context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
-            enable_swarm: false,
             max_skills_per_query: 3,
         };
         let engine = KodEngine::new(cfg, db_path).unwrap();
@@ -2654,7 +2683,6 @@ mod tests {
             context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
-            enable_swarm: false,
             max_skills_per_query: 3,
         };
         let engine = KodEngine::new(cfg, db_path).unwrap();

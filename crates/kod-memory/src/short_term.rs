@@ -74,6 +74,38 @@ impl ShortTermMemory {
         }
     }
 
+    /// Keep only the most recent `target` entries, dropping older
+    /// ones. Returns the number of entries removed.
+    ///
+    /// The store path already evicts the *oldest* entry one at a time
+    /// when capacity is exceeded — enough for correctness, thrashy at
+    /// the boundary. This method lets a caller trim further ahead of a
+    /// burst so the working set sits below the cap and `store`'s own
+    /// eviction does not fire on the next write.
+    ///
+    /// `target` is clamped to `capacity`: retaining more than the
+    /// in-memory limit would fight `store`'s eviction, which is
+    /// hard-capped at `capacity`.
+    pub fn retain_recent(&self, target: usize) -> usize {
+        let target = target.min(self.capacity);
+        let mut entries = self.entries.write();
+        if entries.len() <= target {
+            return 0;
+        }
+        let drop = entries.len() - target;
+        entries.drain(..drop);
+        // Rebuild the index rather than patch positions in place:
+        // correct even when the dropped range is most of the vec, and
+        // not slower — the vec is already in hand and the map is one
+        // insert per retained entry.
+        let mut index = self.index.write();
+        index.clear();
+        for (i, entry) in entries.iter().enumerate() {
+            index.insert(entry.id.clone(), i);
+        }
+        drop
+    }
+
     /// Get the N most recent entries
     pub fn get_recent(&self, count: usize) -> Vec<MemoryEntry> {
         let entries = self.entries.read();
@@ -166,6 +198,52 @@ mod tests {
 
         let retrieved = memory.get(&entry.id);
         assert!(retrieved.is_some());
+    }
+
+    #[test]
+    fn test_retain_recent_keeps_newest() {
+        let memory = ShortTermMemory::new(10);
+        for i in 0..10 {
+            memory.store(create_entry(&format!("entry-{i}")));
+        }
+        let removed = memory.retain_recent(4);
+        assert_eq!(removed, 6);
+        assert_eq!(memory.len(), 4);
+
+        // The retained entries are the *newest*: entry-6 through
+        // entry-9, in order.
+        let all = memory.get_all();
+        assert_eq!(all[0].content, "entry-6");
+        assert_eq!(all[3].content, "entry-9");
+
+        // Index is consistent — get() finds the retained entries by
+        // id after the rebuild.
+        let id0 = all[0].id.clone();
+        let got = memory.get(&id0).expect("retained entry must be gettable");
+        assert_eq!(got.content, "entry-6");
+    }
+
+    #[test]
+    fn test_retain_recent_no_op_when_under_target() {
+        let memory = ShortTermMemory::new(10);
+        for i in 0..3 {
+            memory.store(create_entry(&format!("entry-{i}")));
+        }
+        let removed = memory.retain_recent(5);
+        assert_eq!(removed, 0);
+        assert_eq!(memory.len(), 3);
+    }
+
+    #[test]
+    fn test_retain_recent_clamps_to_capacity() {
+        let memory = ShortTermMemory::new(5);
+        for i in 0..5 {
+            memory.store(create_entry(&format!("entry-{i}")));
+        }
+        // Target above capacity: capped, nothing dropped.
+        let removed = memory.retain_recent(100);
+        assert_eq!(removed, 0);
+        assert_eq!(memory.len(), 5);
     }
 
     #[test]

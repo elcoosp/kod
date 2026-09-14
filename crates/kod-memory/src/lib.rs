@@ -36,5 +36,5 @@ pub mod short_term;
 pub use context::{Context, ContextBuilder};
 pub use episodic::EpisodicMemory;
 pub use long_term::LongTermMemory;
-pub use manager::MemoryManager;
+pub use manager::{CompactionReport, MemoryManager};
 pub use short_term::ShortTermMemory;

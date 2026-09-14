@@ -11,6 +11,15 @@ use kod_types::{
 use std::path::PathBuf;
 use time::OffsetDateTime;
 
+/// Result of a [`MemoryManager::compact`] call: how many entries
+/// were dropped from each layer. A single struct rather than a tuple
+/// because more layers may grow a compaction path later.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CompactionReport {
+    /// Entries dropped from short-term memory.
+    pub short_term_removed: usize,
+}
+
 /// Unified memory manager
 pub struct MemoryManager {
     short_term: ShortTermMemory,
@@ -52,6 +61,16 @@ impl MemoryManager {
                     metadata: Default::default(),
                 };
                 self.short_term.store(entry);
+                // Compact down to 80% once the cap is reached, so the
+                // next 20% of writes do not each evict exactly one.
+                // This is the "compaction where it belongs" hook: the
+                // store path knows when the boundary was crossed, and
+                // trimming here keeps the working set below it.
+                let cap = self.short_term.capacity();
+                if cap > 0 && self.short_term.len() >= cap {
+                    let target = cap * 4 / 5;
+                    self.compact(target);
+                }
             }
             MemoryType::LongTerm => {
                 let entry = MemoryEntry {
@@ -278,6 +297,22 @@ impl MemoryManager {
         Ok(scored.into_iter().take(20).map(|(_, e)| e).collect())
     }
 
+    /// Proactively trim short-term memory to `target` entries,
+    /// leaving headroom below capacity. Returns how many entries were
+    /// dropped.
+    ///
+    /// `store` already evicts the oldest entry when capacity is
+    /// exceeded; this method is for callers (and for `store` itself,
+    /// see the short-term branch) that want to compact further ahead
+    /// of the next write so the working set sits below the boundary.
+    /// `target` is clamped to the capacity.
+    pub fn compact(&self, target: usize) -> CompactionReport {
+        let removed = self.short_term.retain_recent(target);
+        CompactionReport {
+            short_term_removed: removed,
+        }
+    }
+
     /// Get all short-term memories
     pub fn get_all_short_term(&self) -> Vec<MemoryEntry> {
         self.short_term.get_all()
@@ -439,6 +474,68 @@ mod tests {
             "short words must not match: {:?}",
             ctx.long_term.iter().map(|e| &e.content).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn test_compact_reports_zero_on_empty() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.redb");
+        let manager = MemoryManager::new(db_path, 10).unwrap();
+        let report = manager.compact(5);
+        assert_eq!(report.short_term_removed, 0);
+        assert_eq!(manager.get_all_short_term().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_store_auto_compacts_at_capacity() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.redb");
+        let manager = MemoryManager::new(db_path, 10).unwrap();
+
+        // Fill to capacity (10) and add one more. The store path
+        // compacts to 80% (8) the moment capacity is reached, then the
+        // extra store lands, giving 9.
+        for i in 0..11 {
+            manager
+                .store(MemoryType::ShortTerm, &format!("turn {i}"))
+                .await
+                .unwrap();
+        }
+        let len = manager.get_all_short_term().len();
+        assert!(
+            len <= 10,
+            "short-term must not exceed capacity, got {len}"
+        );
+        assert!(
+            len < 10,
+            "store should have compacted below capacity, got {len}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_compact_trims_short_term_and_reports() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.redb");
+        let manager = MemoryManager::new(db_path, 20).unwrap();
+        for i in 0..20 {
+            manager
+                .store(MemoryType::ShortTerm, &format!("entry {i}"))
+                .await
+                .unwrap();
+        }
+
+        // Direct compaction to 5.
+        let report = manager.compact(5);
+        assert!(
+            report.short_term_removed > 0,
+            "compaction from >5 to 5 must report removals, got {report:?}"
+        );
+        assert_eq!(manager.get_all_short_term().len(), 5);
+
+        // The retained entries are the newest: entry 15 through 19.
+        let all = manager.get_all_short_term();
+        assert_eq!(all[0].content, "entry 15");
+        assert_eq!(all[4].content, "entry 19");
     }
 
     #[tokio::test]
