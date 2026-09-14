@@ -204,8 +204,15 @@ impl TuiLoop {
         .map_err(|e| KodError::Internal(format!("Failed to enter alternate screen: {e}")))?;
 
         let backend = CrosstermBackend::new(std::io::stdout());
-        let terminal = Terminal::new(backend)
+        let mut terminal = Terminal::new(backend)
             .map_err(|e| KodError::Internal(format!("Failed to create terminal: {}", e)))?;
+
+        // Hide the terminal's own cursor. InputWidget draws an inline
+        // `▌` at the current position, and leaving the real cursor
+        // visible produced two carets on screen — one at the input
+        // box and one wherever ratatui last placed the hardware cursor.
+        // `restore_terminal` calls `show_cursor` on the way out.
+        let _ = terminal.hide_cursor();
 
         self.terminal = Some(terminal);
 
@@ -1211,16 +1218,12 @@ impl TuiLoop {
                 self.app.reset_completion();
             }
             KeyCode::Delete => {
-                if self.app.cursor_position() < self.app.input().len() {
-                    let pos = self.app.cursor_position();
-                    self.app.set_input({
-                        let mut s = self.app.input().to_string();
-                        if let Some((idx, ch)) = s[pos..].char_indices().next() {
-                            s.drain(pos..idx + ch.len_utf8());
-                        }
-                        s
-                    });
-                }
+                // Uses the in-place delete method so the cursor stays
+                // where it was. The previous implementation called
+                // `set_input`, which resets `cursor_position` to the end
+                // of the input — a visible jump on every Delete press.
+                self.app.delete_at_cursor();
+                self.app.reset_completion();
             }
             KeyCode::CtrlU => {
                 self.app.delete_to_line_start();
@@ -1303,6 +1306,42 @@ mod tests {
 
         tui.handle_event(Event::Key(KeyCode::Escape)).await.unwrap();
         assert_eq!(tui.app().input_mode(), &InputMode::Normal);
+    }
+
+    /// Delete key (insert mode) must remove the character under the
+    /// cursor and leave the cursor where it was. Regression: the
+    /// previous implementation routed through `set_input`, which snaps
+    /// `cursor_position` to the end of the input.
+    #[tokio::test]
+    async fn test_delete_preserves_cursor_position() {
+        let mut tui = TuiLoop::new();
+        tui.app_mut().set_input_mode(InputMode::Insert);
+        tui.app_mut().set_input("hello world".to_string());
+        // Cursor is at end after set_input; move left to sit on 'w'.
+        for _ in 0..5 {
+            tui.handle_event(Event::Key(KeyCode::Left)).await.unwrap();
+        }
+        assert_eq!(tui.app().cursor_position(), 6);
+
+        tui.handle_event(Event::Key(KeyCode::Delete)).await.unwrap();
+        assert_eq!(tui.app().input(), "hello orld");
+        assert_eq!(
+            tui.app().cursor_position(),
+            6,
+            "cursor must stay put after Delete, not jump to end"
+        );
+    }
+
+    /// Backspace still removes the character before the cursor and
+    /// moves the cursor left by one — pin against future changes.
+    #[tokio::test]
+    async fn test_backspace_still_moves_cursor_left() {
+        let mut tui = TuiLoop::new();
+        tui.app_mut().set_input_mode(InputMode::Insert);
+        tui.app_mut().set_input("hello".to_string());
+        tui.handle_event(Event::Key(KeyCode::Backspace)).await.unwrap();
+        assert_eq!(tui.app().input(), "hell");
+        assert_eq!(tui.app().cursor_position(), 4);
     }
 
     /// The default binding set must keep 'i' as insert, so a fresh

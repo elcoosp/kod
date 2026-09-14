@@ -424,6 +424,27 @@ impl KodApp {
         }
     }
 
+    /// Delete the character under the cursor (Delete key), leaving
+    /// `cursor_position` where it was.
+    ///
+    /// The TUI used to route the Delete key through `set_input`, which
+    /// resets `cursor_position` to `input.len()`. That was observable:
+    /// placing the cursor mid-word and pressing Delete jumped the caret
+    /// to the end of the line. This method edits in place like
+    /// `backspace` does, and walks forward to the next char boundary so
+    /// a non-ASCII character is removed whole.
+    pub fn delete_at_cursor(&mut self) {
+        let pos = self.cursor_position;
+        if pos >= self.input.len() {
+            return;
+        }
+        let mut end = pos + 1;
+        while end < self.input.len() && !self.input.is_char_boundary(end) {
+            end += 1;
+        }
+        self.input.drain(pos..end);
+    }
+
     /// Remove the message currently being edited from history tracking so
     /// Up/Down starts over (used after `/edit` loads an old message).
     pub fn reset_history_index(&mut self) {
