@@ -2,259 +2,162 @@
 set -uo pipefail
 
 COMPILE_OK=true
-TOOLS=crates/kod-tools/src/tools.rs
-ENGINE=crates/kod-core/src/engine.rs
+APP=crates/kod-tui/src/app.rs
 
-for f in "$TOOLS" "$ENGINE"; do
-    if [ ! -f "$f" ]; then
-        echo "ERROR: missing $f"
-        exit 1
-    fi
-done
+if [ ! -f Cargo.toml ] || [ ! -f "$APP" ]; then
+    echo "ERROR: run from the kod workspace root ($APP missing)"
+    exit 1
+fi
 
-echo "Reporting timeout explicitly; deleting dead code; summing in chat"
+echo "Patching $APP: /clear resets context accounting"
 
-python3 - "$TOOLS" "$ENGINE" << 'PYEOF'
+python3 - "$APP" << 'PYEOF'
 import os
 import sys
 
-tools, engine = sys.argv[1], sys.argv[2]
+target = sys.argv[1]
+with open(target, "r") as f:
+    content = f.read()
 
-def patch(path, old, new, label, expect=1):
-    with open(path, "r") as f:
-        content = f.read()
+def patch(old, new, label, expect=1):
+    global content
     n = content.count(old)
     if n == 0:
-        print(f"ERROR: old snippet not found in {path}: {label}")
+        print(f"ERROR: old snippet not found: {label}")
         sys.exit(2)
     if expect and n != expect:
-        print(f"ERROR: expected {expect} occurrence(s) of {label} in {path}, found {n}")
+        print(f"ERROR: expected {expect} occurrence(s) of {label}, found {n}")
         sys.exit(2)
-    patched = content.replace(old, new, expect if expect else n)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(patched)
-    os.replace(tmp, path)
-    print(f"Patched {path}: {label}")
+    content = content.replace(old, new, expect if expect else n)
+    print(f"Patched: {label}")
 
-# ======================================================================
-# 1. tools.rs: capture the timeout value and delete the empty branch
-# ======================================================================
+# --- clear_messages resets context accounting --------------------------
 patch(
-    tools,
-    '''        let timeout = tokio::time::sleep(std::time::Duration::from_secs(
-            context.timeout_secs.max(1),
-        ));
-        tokio::pin!(timeout);
-        let mut timed_out = false;
-
-        loop {
-            if stdout_res.is_some() && stderr_res.is_some() {
-                break;
+    '''    pub fn clear_messages(&mut self) {
+        if !self.messages.is_empty() {
+            self.cleared_stack.push(std::mem::take(&mut self.messages));
+            if self.cleared_stack.len() > 5 {
+                self.cleared_stack.remove(0);
             }
-            if timed_out {
-                // Child was killed; drain the reads to EOF and exit.
-                // The other branch below will still fire because the
-                // child's death closes its pipe ends.
-            }
-            tokio::select! {''',
-    '''        let effective_timeout_secs = context.timeout_secs.max(1);
-        let timeout =
-            tokio::time::sleep(std::time::Duration::from_secs(effective_timeout_secs));
-        tokio::pin!(timeout);
-        let mut timed_out = false;
-
-        loop {
-            if stdout_res.is_some() && stderr_res.is_some() {
-                break;
-            }
-            // No timed_out handling here: when the timeout branch fires
-            // we call start_kill, the child dies, and the child's death
-            // closes its pipe ends — so the two read arms complete on
-            // their own and the loop exits through the top-of-loop
-            // check above. (The previous version carried an empty
-            // `if timed_out {}` block whose only content was a comment
-            // explaining that fact.)
-            tokio::select! {''',
-    "remove dead if timed_out block; capture timeout secs",
-)
-
-# ======================================================================
-# 2. tools.rs: report timed_out + effective_timeout_secs
-# ======================================================================
-patch(
-    tools,
-    '''        Ok(ToolResult::Success(serde_json::json!({
-            "stdout": String::from_utf8_lossy(&stdout_bytes).to_string(),
-            "stderr": String::from_utf8_lossy(&stderr_bytes).to_string(),
-            "exit_code": status.code().unwrap_or(-1),
-            "exit_signal": exit_signal,
-            "stdout_truncated": stdout_truncated,
-            "stderr_truncated": stderr_truncated,
-        })))''',
-    '''        Ok(ToolResult::Success(serde_json::json!({
-            "stdout": String::from_utf8_lossy(&stdout_bytes).to_string(),
-            "stderr": String::from_utf8_lossy(&stderr_bytes).to_string(),
-            "exit_code": status.code().unwrap_or(-1),
-            "exit_signal": exit_signal,
-            "stdout_truncated": stdout_truncated,
-            "stderr_truncated": stderr_truncated,
-            // Explicit, not inferred. The timeout kill and the
-            // output-cap kill both surface as a signal, and the
-            // summariser needs to distinguish them: an `exit_signal`
-            // alone says "killed", but not why. A timeout is user
-            // action-required (raise the timeout, or run in the
-            // background); a cap kill means the command was too
-            // chatty and the partial output is still representative.
-            "timed_out": timed_out,
-            "timeout_secs": effective_timeout_secs,
-        })))''',
-    "report timed_out + timeout_secs",
-)
-
-# ======================================================================
-# 3. engine.rs: summarize timeout vs cap kill vs signal
-# ======================================================================
-patch(
-    engine,
-    '''        if stdout_trunc || stderr_trunc {
-            // Only say "killed" when the tool actually reports a
-            // signal. Previously this inferred "killed" from
-            // `exit_code != 0`, so a `grep` with no matches (exit 1)
-            // whose stdout happened to be truncated was labelled
-            // "command was killed" — a small lie the reader has no way
-            // to detect. The tool now reports `exit_signal` explicitly
-            // on Unix; Windows omits it (no exit signals in the same
-            // sense), and the label is simply omitted there.
-            let killed = v
-                .get("exit_signal")
-                .and_then(|s| s.as_i64())
-                .is_some();
-            out.push_str(&format!(
-                "\\n[output truncated at cap{}]",
-                if killed { " — command was killed" } else { "" }
-            ));
-        }''',
-    '''        // Explain why the output stops, when it did.
-        //
-        // Three separate things can end a command early, and each
-        // needs a distinct message:
-        //
-        //   * timed_out: the tool killed the child at
-        //     `context.timeout_secs` because it was still running.
-        //     User action is required — raise the timeout or run in
-        //     the background.
-        //   * stdout_truncated / stderr_truncated: the child wrote
-        //     more than MAX_CMD_OUTPUT_BYTES on one stream, and the
-        //     tool killed it to keep memory bounded. The partial
-        //     output is still representative; no action required.
-        //   * exit_signal (without either of the above): the child
-        //     died of an external signal — a SIGKILL from the OS, a
-        //     container OOM, a `kill -9` from another shell. Rare but
-        //     worth surfacing; the previous code silently treated a
-        //     small-output signal-kill as a normal exit, so a command
-        //     killed by the OOM killer looked like it had completed
-        //     with partial output.
-        let timed_out = v
-            .get("timed_out")
-            .and_then(|t| t.as_bool())
-            .unwrap_or(false);
-        let timeout_secs = v
-            .get("timeout_secs")
-            .and_then(|n| n.as_u64())
-            .unwrap_or(0);
-        let truncated = stdout_trunc || stderr_trunc;
-        let signalled = v
-            .get("exit_signal")
-            .and_then(|s| s.as_i64())
-            .is_some();
-
-        if timed_out {
-            out.push_str(&format!(
-                "\\n[command timed out after {}s — killed]",
-                timeout_secs
-            ));
         }
-        if truncated {
-            out.push_str("\\n[output truncated at cap");
-            if signalled && !timed_out {
-                // Both the timeout branch and the cap branch call
-                // start_kill; getting here with a signal and no
-                // timeout means the cap branch fired.
-                out.push_str(" — command was killed");
+        self.scroll_lines = 0;
+        self.expanded_tools.clear();
+        self.clear_search();
+    }''',
+    '''    pub fn clear_messages(&mut self) {
+        if !self.messages.is_empty() {
+            self.cleared_stack.push(std::mem::take(&mut self.messages));
+            if self.cleared_stack.len() > 5 {
+                self.cleared_stack.remove(0);
             }
-            out.push(']');
-        } else if signalled && !timed_out {
-            out.push_str("\\n[command was killed by a signal (exit_signal reported)]");
-        }''',
-    "summarize timeout vs cap vs signal",
+        }
+        self.scroll_lines = 0;
+        self.expanded_tools.clear();
+        self.clear_search();
+
+        // Reset context accounting. `/clear` wipes the display AND the
+        // engine's transcript (see the ConfirmKind::Clear handler in
+        // main_loop, which calls engine.clear_history()), so the
+        // session really is starting over. Leaving the previous
+        // session's accumulated `context_tokens` in place meant the
+        // next N messages inherited a count that included messages
+        // the user had thrown away: the header's "≈ ctx X/Y" meter
+        // overstated by the discarded amount, and `maybe_compact`'s
+        // threshold — a fraction of the model window — was compared
+        // against a number that no longer reflected anything.
+        //
+        // `compacted_messages` (the session's running total) is reset
+        // for the same reason: it is meant to say "N messages have
+        // been compacted *in this session*", not "since the process
+        // started".
+        self.context_tokens = 0;
+        self.compacted_messages = 0;
+    }''',
+    "clear_messages resets context accounting",
 )
 
-# ======================================================================
-# 4. engine.rs: extend the existing test with the timeout case
-# ======================================================================
+# --- Tests --------------------------------------------------------
 patch(
-    engine,
-    '''        assert!(
-            !exec_nonzero_not_killed.contains("killed"),
-            "non-zero exit is not 'killed': {exec_nonzero_not_killed}"
-        );
-    }''',
-    '''        assert!(
-            !exec_nonzero_not_killed.contains("killed"),
-            "non-zero exit is not 'killed': {exec_nonzero_not_killed}"
-        );
+    '''    #[test]
+    fn test_scroll_to_bottom() {''',
+    '''    /// `/clear` resets the context accounting. Regression: the
+    /// visible messages and the engine transcript were reset, but
+    /// `context_tokens` and `compacted_messages` kept accumulating,
+    /// so the header meter overstated the current context and the
+    /// auto-compact threshold was compared against a number that
+    /// included discarded messages.
+    #[test]
+    fn test_clear_resets_context_accounting() {
+        let mut app = KodApp::new();
+        app.set_context_limit(10_000);
 
-        // Regression: a timeout with small output used to be silently
-        // treated as a normal exit, because the old summariser only
-        // looked at the truncation flags. The user saw a partial
-        // `cargo build` transcript and assumed it had finished.
-        let exec_timeout = summarize_tool_result(
-            "execute_command",
-            &ToolResult::Success(serde_json::json!({
-                "stdout": "Compiling foo\\n",
-                "stderr": "",
-                "exit_code": -1,
-                "exit_signal": 9,
-                "stdout_truncated": false,
-                "stderr_truncated": false,
-                "timed_out": true,
-                "timeout_secs": 30
-            })),
-        );
-        assert!(
-            exec_timeout.contains("timed out after 30s"),
-            "timeout must be named: {exec_timeout}"
-        );
-        assert!(
-            exec_timeout.contains("killed"),
-            "timeout should say killed: {exec_timeout}"
-        );
+        // Build up a believable pre-clear state: some messages and
+        // some token usage.
+        for i in 0..30 {
+            app.push_system_message(&format!("filler {i}"));
+        }
+        app.note_real_usage(3_000);
+        // Also trigger a manual compact to set compacted_messages.
+        app.compact_now();
+        assert!(app.context_tokens() > 0);
+        assert!(app.messages().len() < 30, "compact should have dropped some");
 
-        // A kill by a signal with neither timeout nor truncation is
-        // still worth a one-liner. Rare, but silent is worse.
-        let exec_signalled = summarize_tool_result(
-            "execute_command",
-            &ToolResult::Success(serde_json::json!({
-                "stdout": "partial output\\n",
-                "stderr": "",
-                "exit_code": -1,
-                "exit_signal": 9,
-                "stdout_truncated": false,
-                "stderr_truncated": false,
-                "timed_out": false,
-                "timeout_secs": 30
-            })),
+        // Sanity: pre-clear state is not the fresh state.
+        let pre_tokens = app.context_tokens();
+
+        app.clear_messages();
+
+        assert!(app.messages().is_empty(), "display should be empty");
+        assert_eq!(
+            app.context_tokens(),
+            0,
+            "context accounting must reset (was {pre_tokens})"
         );
+        // The label must report 0% — the meter the header draws reads
+        // from the same counter.
         assert!(
-            exec_signalled.contains("killed by a signal"),
-            "external signal must be named: {exec_signalled}"
+            app.context_label().contains("0%"),
+            "context label should read 0%: {}",
+            app.context_label()
         );
-    }''',
-    "timeout + signal summarize tests",
+    }
+
+    /// `/undo` restores the cleared messages but must NOT resurrect
+    /// the stale context count — the engine's transcript was cleared
+    /// by the `/clear` handler, so the model really does have zero
+    /// context at that point. Undo is a display operation only.
+    #[test]
+    fn test_undo_does_not_restore_stale_context() {
+        let mut app = KodApp::new();
+        app.set_context_limit(10_000);
+        app.push_system_message("hello");
+        app.note_real_usage(2_500);
+        assert_eq!(app.context_tokens(), 2_500);
+
+        app.clear_messages();
+        assert_eq!(app.context_tokens(), 0);
+
+        let restored = app.undo_clear();
+        assert!(restored, "undo should succeed");
+        assert_eq!(app.messages().len(), 1);
+        // Context stays at the post-clear value, not the pre-clear one.
+        assert_eq!(
+            app.context_tokens(),
+            0,
+            "undo must not resurrect a stale context count"
+        );
+    }
+
+    #[test]
+    fn test_scroll_to_bottom() {''',
+    "clear resets context tests",
 )
 
-print("All patches applied.")
+tmp = target + ".tmp"
+with open(tmp, "w") as f:
+    f.write(content)
+os.replace(tmp, target)
+print("Wrote", target)
 PYEOF
 
 if [ $? -ne 0 ]; then
@@ -277,50 +180,33 @@ fi
 echo "Committing."
 git add -A
 git commit -F - <<'MSG'
-fix(tools,core): name timeouts and external signal-kills in chat
+fix(tui): /clear resets context accounting
 
-execute_command can end a command in three distinct ways, and only
-one of them was visible in the summary.
+/clear wiped the visible messages and, via the ConfirmKind::Clear
+handler in main_loop, the engine's transcript. It left
+`context_tokens` and `compacted_messages` untouched. Two visible
+effects:
 
-- Timeout. When the command is still running at
-  `context.timeout_secs`, the tool sends SIGKILL. The command stops
-  mid-output, the exit status reports a signal, and the exit code is
-  -1. Previously this path left no marker in the summary unless the
-  partial output also happened to exceed MAX_CMD_OUTPUT_BYTES, so a
-  `cargo build` killed at 30s with 10 KB of output rendered as if it
-  had finished. A user reading the transcript assumed the build was
-  complete.
+- The header meter "≈ ctx X/Y · Z%" reported a value that included
+  the messages the user had just thrown away, overstating the
+  current session until the count was overtaken by fresh usage.
+- `maybe_compact` compares `context_tokens` against a fraction of
+  the model window. With the stale count still in place, the very
+  next cluster of messages could trip auto-compact — compacting a
+  session that was only a few turns old, using a threshold based on
+  messages that no longer existed.
 
-- Output cap. The child writes more than MAX_CMD_OUTPUT_BYTES on a
-  stream and is killed to keep memory bounded. The existing
-  "output truncated at cap — command was killed" marker covers this,
-  and it is correct.
+clear_messages now zeroes both counters, alongside the display and
+search state it was already resetting. `compacted_messages` is
+included because it is a per-session counter — "N messages compacted
+this session" — not a process-lifetime statistic.
 
-- External signal. The child was SIGKILLed by something outside the
-  tool: a container OOM, a `kill -9` from another shell. The
-  previous code only reported the signal when the output was also
-  truncated, so a small-output OOM kill was silently read as normal
-  completion.
+`/undo` (restoring the messages cleared by a previous /clear) does
+not resurrect the counter. The engine's transcript was cleared at
+the same time and the model really does have zero context at that
+point; the count should match reality rather than the display.
 
-ExecuteCommandTool now reports `timed_out: bool` and
-`timeout_secs: u64` alongside the existing `exit_signal`. The
-distinction is not inferable from `exit_signal` alone — both the
-timeout branch and the cap branch send SIGKILL — so the tool states
-which one fired rather than asking the summariser to guess.
-
-summarize_success now emits:
-
-  [command timed out after 30s — killed]
-  [output truncated at cap — command was killed]
-  [command was killed by a signal (exit_signal reported)]
-
-as appropriate, and nothing when the command exited normally. The
-empty `if timed_out { /* comment only */ }` block in the select loop
-is deleted; it explained an invariant that the top-of-loop check
-already enforces.
-
-Tests extended: a timeout with small output names the timeout;
-a signal-kill with no truncation and no timeout is named; the
-existing signal-and-truncation case still labels as killed; the
-non-zero-exit case (grep returning 1) still does not.
+Adds two tests: /clear zeroes both counters and the label reads
+0%, and /undo restores the display without resurrecting the stale
+count.
 MSG

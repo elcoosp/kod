@@ -564,6 +564,24 @@ impl KodApp {
         self.scroll_lines = 0;
         self.expanded_tools.clear();
         self.clear_search();
+
+        // Reset context accounting. `/clear` wipes the display AND the
+        // engine's transcript (see the ConfirmKind::Clear handler in
+        // main_loop, which calls engine.clear_history()), so the
+        // session really is starting over. Leaving the previous
+        // session's accumulated `context_tokens` in place meant the
+        // next N messages inherited a count that included messages
+        // the user had thrown away: the header's "≈ ctx X/Y" meter
+        // overstated by the discarded amount, and `maybe_compact`'s
+        // threshold — a fraction of the model window — was compared
+        // against a number that no longer reflected anything.
+        //
+        // `compacted_messages` (the session's running total) is reset
+        // for the same reason: it is meant to say "N messages have
+        // been compacted *in this session*", not "since the process
+        // started".
+        self.context_tokens = 0;
+        self.compacted_messages = 0;
     }
 
     /// Restore the most recently cleared chat. False when nothing is stashed.
@@ -2497,6 +2515,74 @@ mod tests {
             last.content.contains("Compacted"),
             "last message should be the manual compaction notice, got: {}",
             last.content
+        );
+    }
+
+    /// `/clear` resets the context accounting. Regression: the
+    /// visible messages and the engine transcript were reset, but
+    /// `context_tokens` and `compacted_messages` kept accumulating,
+    /// so the header meter overstated the current context and the
+    /// auto-compact threshold was compared against a number that
+    /// included discarded messages.
+    #[test]
+    fn test_clear_resets_context_accounting() {
+        let mut app = KodApp::new();
+        app.set_context_limit(10_000);
+
+        // Build up a believable pre-clear state: some messages and
+        // some token usage.
+        for i in 0..30 {
+            app.push_system_message(&format!("filler {i}"));
+        }
+        app.note_real_usage(3_000);
+        // Also trigger a manual compact to set compacted_messages.
+        app.compact_now();
+        assert!(app.context_tokens() > 0);
+        assert!(app.messages().len() < 30, "compact should have dropped some");
+
+        // Sanity: pre-clear state is not the fresh state.
+        let pre_tokens = app.context_tokens();
+
+        app.clear_messages();
+
+        assert!(app.messages().is_empty(), "display should be empty");
+        assert_eq!(
+            app.context_tokens(),
+            0,
+            "context accounting must reset (was {pre_tokens})"
+        );
+        // The label must report 0% — the meter the header draws reads
+        // from the same counter.
+        assert!(
+            app.context_label().contains("0%"),
+            "context label should read 0%: {}",
+            app.context_label()
+        );
+    }
+
+    /// `/undo` restores the cleared messages but must NOT resurrect
+    /// the stale context count — the engine's transcript was cleared
+    /// by the `/clear` handler, so the model really does have zero
+    /// context at that point. Undo is a display operation only.
+    #[test]
+    fn test_undo_does_not_restore_stale_context() {
+        let mut app = KodApp::new();
+        app.set_context_limit(10_000);
+        app.push_system_message("hello");
+        app.note_real_usage(2_500);
+        assert_eq!(app.context_tokens(), 2_500);
+
+        app.clear_messages();
+        assert_eq!(app.context_tokens(), 0);
+
+        let restored = app.undo_clear();
+        assert!(restored, "undo should succeed");
+        assert_eq!(app.messages().len(), 1);
+        // Context stays at the post-clear value, not the pre-clear one.
+        assert_eq!(
+            app.context_tokens(),
+            0,
+            "undo must not resurrect a stale context count"
         );
     }
 
