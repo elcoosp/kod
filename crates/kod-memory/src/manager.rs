@@ -186,7 +186,8 @@ impl MemoryManager {
     /// Retrieve context for a query.
     ///
     /// - Working memory is the most recent short-term entries (recency).
-    /// - Long-term memory is filtered by redb-backed substring search.
+    /// - Long-term memory is matched by word overlap — see
+    ///   [`MemoryManager::search_long_term_relevant`].
     /// - Episodic memory is filtered by case-insensitive substring match
     ///   on content — it is *not* embedding-based today, because the
     ///   manager does not yet compute real embeddings. When a real
@@ -195,7 +196,7 @@ impl MemoryManager {
     pub async fn retrieve_context(&self, query: &str) -> Result<MemoryContext> {
         let mut context = MemoryContext {
             working_memory: self.short_term.get_recent(10),
-            long_term: self.long_term.search(query).await?,
+            long_term: self.search_long_term_relevant(query).await?,
             ..Default::default()
         };
 
@@ -211,6 +212,70 @@ impl MemoryManager {
         self.limit_context_size(&mut context);
 
         Ok(context)
+    }
+
+    /// Retrieve long-term entries that share content words with `query`.
+    ///
+    /// The previous retrieve path called `long_term.search(query)`,
+    /// which is a whole-query substring test: an entry matched only if
+    /// its content literally contained the user's entire prompt. Real
+    /// prompts are sentences ("tell me about the project"); real
+    /// memory entries are short facts ("The user's project is called
+    /// KOD"). The strict substring matched nothing, so the memory
+    /// layer contributed nothing to any prompt — indistinguishable
+    /// from a disconnected manager. This method is the retrieval half
+    /// of the fix that wired the manager into `build_prompt`.
+    ///
+    /// Words of four or more characters, lowercased and deduplicated,
+    /// form the query's content-word set. An entry scores by how many
+    /// of those words its lowercased content contains; entries with
+    /// zero overlap are dropped. The top 20 are returned, ties broken
+    /// by the entry's own `relevance` so a fact explicitly marked
+    /// important keeps its edge.
+    ///
+    /// Four characters is the shortest length that is unlikely to be
+    /// an article, preposition, or pronoun — "the", "and", "is",
+    /// "you" are all three or fewer. The filter is deliberately crude;
+    /// a proper stopword list and stemming belong with the embedding
+    /// work that will replace this heuristic.
+    async fn search_long_term_relevant(&self, query: &str) -> Result<Vec<MemoryEntry>> {
+        let words: Vec<String> = {
+            let mut seen = std::collections::HashSet::new();
+            query
+                .to_lowercase()
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| w.len() >= 4)
+                .filter(|w| seen.insert(w.to_string()))
+                .map(|w| w.to_string())
+                .collect()
+        };
+        if words.is_empty() {
+            return Ok(Vec::new());
+        }
+        let all = self.long_term.get_all().await?;
+        let mut scored: Vec<(usize, MemoryEntry)> = all
+            .into_iter()
+            .filter_map(|entry| {
+                let lower = entry.content.to_lowercase();
+                let hits = words
+                    .iter()
+                    .filter(|w| lower.contains(w.as_str()))
+                    .count();
+                if hits > 0 {
+                    Some((hits, entry))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        scored.sort_by(|a, b| {
+            b.0.cmp(&a.0).then_with(|| {
+                b.1.relevance
+                    .partial_cmp(&a.1.relevance)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+        });
+        Ok(scored.into_iter().take(20).map(|(_, e)| e).collect())
     }
 
     /// Get all short-term memories
@@ -289,6 +354,92 @@ impl MemoryManager {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// `retrieve_context` on a natural-language prompt must pull a
+    /// long-term fact that shares content words with it. Regression:
+    /// the previous whole-query substring search matched only when the
+    /// user's entire prompt appeared verbatim inside a memory entry —
+    /// which never happened in practice, so long-term memory
+    /// contributed nothing to any prompt.
+    #[tokio::test]
+    async fn test_retrieve_context_matches_by_word_overlap() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.redb");
+        let manager = MemoryManager::new(db_path, 100).unwrap();
+
+        manager
+            .store(
+                MemoryType::LongTerm,
+                "The user's project is called KOD.",
+            )
+            .await
+            .unwrap();
+        manager
+            .store(MemoryType::LongTerm, "The user prefers dark mode.")
+            .await
+            .unwrap();
+        manager
+            .store(
+                MemoryType::LongTerm,
+                "The build uses Cargo and rustc.",
+            )
+            .await
+            .unwrap();
+
+        // The prompt shares only "project" with the first fact. The
+        // other two share no content word with it.
+        let ctx = manager
+            .retrieve_context("tell me about the project")
+            .await
+            .unwrap();
+        assert_eq!(
+            ctx.long_term.len(),
+            1,
+            "expected exactly one match, got {:?}",
+            ctx.long_term.iter().map(|e| &e.content).collect::<Vec<_>>()
+        );
+        assert!(ctx.long_term[0].content.contains("KOD"));
+
+        // A query with two hits across two facts returns both, ranked
+        // by hit count.
+        let ctx = manager
+            .retrieve_context("does the project use dark mode?")
+            .await
+            .unwrap();
+        // "project" hits fact 1, "dark" and "mode" hit fact 2. Both
+        // included; the ordering is by hit count so fact 2 is first.
+        assert_eq!(ctx.long_term.len(), 2);
+        assert!(ctx.long_term[0].content.contains("dark mode"));
+
+        // A query with no content-word overlap returns nothing.
+        let ctx = manager
+            .retrieve_context("xyzzy plugh")
+            .await
+            .unwrap();
+        assert!(ctx.long_term.is_empty());
+    }
+
+    /// Short words (<= 3 chars) are filtered out, so a prompt made
+    /// entirely of stopwords returns no long-term memory rather than
+    /// matching every entry.
+    #[tokio::test]
+    async fn test_retrieve_context_ignores_short_words() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.redb");
+        let manager = MemoryManager::new(db_path, 100).unwrap();
+
+        manager
+            .store(MemoryType::LongTerm, "Any old fact.")
+            .await
+            .unwrap();
+
+        let ctx = manager.retrieve_context("the and you").await.unwrap();
+        assert!(
+            ctx.long_term.is_empty(),
+            "short words must not match: {:?}",
+            ctx.long_term.iter().map(|e| &e.content).collect::<Vec<_>>()
+        );
+    }
 
     #[tokio::test]
     async fn test_manager_basic_operations() {

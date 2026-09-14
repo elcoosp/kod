@@ -75,10 +75,30 @@ pub struct TaskResponse {
     pub text: Option<String>,
     pub tool_calls: Vec<ToolCall>,
     pub tool_results: Vec<ToolResult>,
+    /// Names of the skills whose instructions were injected into the
+    /// prompt. Empty when no skill matched.
     pub skills_used: Vec<String>,
+    /// True iff at least one memory entry was included in the prompt.
     pub memory_used: bool,
+    /// True iff the swarm handled part of this task.
+    ///
+    /// Always `false` today. The swarm is registered in the router
+    /// (when `enable_swarm` is set) but `handle_complex` returns a
+    /// placeholder string rather than routing the task to any agent —
+    /// so nothing has ever been dispatched through the swarm, and the
+    /// field cannot honestly be `true`. The field is kept so the
+    /// response shape is stable for the swarm-dispatch implementation,
+    /// but it does not currently carry a signal.
+    ///
+    /// The previous computation — `matches!(task_type, Complex) &&
+    /// self.swarm.is_some()` — was the same kind of tautology that
+    /// `memory_used` used to be: a fact about the router's inputs
+    /// (how it classified the task, whether it owns a swarm object)
+    /// dressed up as a fact about what happened.
     pub swarm_used: bool,
+    /// Wall-clock time from `process_input` entry to response.
     pub execution_time_ms: u64,
+    /// Token usage the provider reported, when it did.
     pub usage: Option<kod_provider::TokenUsage>,
 }
 
@@ -303,6 +323,21 @@ impl TaskRouter {
         // 3. Find relevant skills
         let skills_used = self.find_relevant_skills(input).await?;
 
+        // Did memory actually contribute to this prompt? The flag used
+        // to be `memory_context.is_some()`, which is true whenever the
+        // router has a manager — i.e. always, since enable_memory
+        // defaults on. The observable meaning to a caller is "at least
+        // one memory entry was included", and that is what this
+        // reports.
+        let memory_used = memory_context
+            .as_ref()
+            .map(|c| {
+                !c.working_memory.is_empty()
+                    || !c.long_term.is_empty()
+                    || !c.episodic.is_empty()
+            })
+            .unwrap_or(false);
+
         // 4. Route to appropriate handler
         let response = match task_type {
             TaskType::Simple => self.handle_simple(input).await?,
@@ -323,9 +358,12 @@ impl TaskRouter {
             tool_calls: response.tool_calls,
             tool_results: response.tool_results,
             skills_used,
-            memory_used: memory_context.is_some(),
-            swarm_used: matches!(task_type, TaskType::Complex | TaskType::MultiStep)
-                && self.swarm.is_some(),
+            memory_used,
+            // No dispatch path uses the swarm today: `handle_complex`
+            // returns a placeholder string, and nothing else consults
+            // the router's `swarm` field for work routing. Report the
+            // honest answer — the swarm did not handle this task.
+            swarm_used: false,
             execution_time_ms,
             usage: None,
         })
@@ -664,6 +702,66 @@ mod tests {
                 .await
                 .unwrap(),
             TaskType::Research
+        );
+    }
+
+    /// `TaskResponse::memory_used` must be true only when a memory
+    /// entry actually reached the prompt. Regression: it was set to
+    /// `memory_context.is_some()`, which is true whenever a manager
+    /// exists — always, since enable_memory defaults on — so the flag
+    /// reported "memory infrastructure present", not "memory used".
+    #[tokio::test]
+    async fn test_memory_used_flag_reflects_contribution() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.redb");
+        let router = TaskRouter::new(
+            RouterConfig {
+                enable_memory: true,
+                enable_swarm: false,
+                max_skills_per_query: 3,
+                working_dir: temp_dir.path().to_path_buf(),
+                context_window: 8192,
+            },
+            db_path,
+        )
+        .unwrap();
+
+        // Fresh manager: no entries, so the flag is false even though
+        // the manager is present.
+        let resp = router
+            .process_input("what is the meaning of life?")
+            .await
+            .unwrap();
+        assert!(
+            !resp.memory_used,
+            "empty memory must not report as used"
+        );
+
+        // Add a fact whose content shares a content word with the
+        // next prompt, and confirm the flag flips.
+        let manager = router.memory_manager.as_ref().unwrap();
+        manager
+            .store(kod_types::MemoryType::LongTerm, "The project is called KOD.")
+            .await
+            .unwrap();
+        let resp = router
+            .process_input("tell me about the project")
+            .await
+            .unwrap();
+        assert!(
+            resp.memory_used,
+            "a matching memory entry must report as used"
+        );
+
+        // A prompt sharing no content word with the stored fact must
+        // leave the flag false.
+        let resp = router
+            .process_input("xyzzy plugh frobnicate")
+            .await
+            .unwrap();
+        assert!(
+            !resp.memory_used,
+            "non-matching prompt must not report as used"
         );
     }
 
