@@ -195,6 +195,18 @@ impl Tool for WriteFileTool {
         let resolved = context.resolve_path(path)?;
         context.can_write(&resolved)?;
 
+        // Create parent directories if the target is in a new tree.
+        // The model frequently writes to a fresh path — a new module
+        // under `src/handlers/`, a first skill file under
+        // `~/.agents/skills/` — and `std::fs::write` fails with ENOENT
+        // when the parent does not exist. The model's natural response
+        // is to give up, because it has no tool for creating
+        // directories. Idempotent and cheap: `create_dir_all` on an
+        // existing tree is a no-op.
+        if let Some(parent) = resolved.parent() {
+            std::fs::create_dir_all(parent).map_err(KodError::Io)?;
+        }
+
         if append {
             let mut file = std::fs::OpenOptions::new()
                 .create(true)

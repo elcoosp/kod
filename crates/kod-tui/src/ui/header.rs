@@ -62,12 +62,24 @@ impl HeaderWidget {
             Style::default().fg(theme.dim),
         ));
 
-        let goal = match app.goal_progress() {
-            Some((done, total)) => format!(" ◉ {done}/{total}"),
-            None => String::new(),
-        };
-        if !goal.is_empty() {
-            spans.push(Span::styled(goal, Style::default().fg(Color::Magenta)));
+        // Show the active goal text, not a fake counter. The previous
+        // header rendered `◉ 0/1` whenever a goal was set — the goal
+        // loop runs turns inside `process_goal_streaming` and the TUI
+        // has no visibility into them, so the `0/1` never changed.
+        // Rendering the actual goal text is useful (a glance tells you
+        // what the session is working toward) and honest.
+        if let Some(goal) = app.goal() {
+            const MAX_GOAL_DISPLAY_CHARS: usize = 40;
+            let shown = if goal.chars().count() > MAX_GOAL_DISPLAY_CHARS {
+                let truncated: String = goal.chars().take(MAX_GOAL_DISPLAY_CHARS).collect();
+                format!("{truncated}…")
+            } else {
+                goal.to_string()
+            };
+            spans.push(Span::styled(
+                format!(" ◉ {shown}"),
+                Style::default().fg(Color::Magenta),
+            ));
         }
 
         let line = Line::from(spans);

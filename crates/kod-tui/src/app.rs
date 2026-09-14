@@ -690,10 +690,13 @@ impl KodApp {
         &self.phase
     }
 
-    /// (done, total) if a `/goal` is active, else None.
-    pub fn goal_progress(&self) -> Option<(usize, usize)> {
-        self.goal.as_ref().map(|_| (0, 1))
-    }
+    // NOTE: the previous `goal_progress() -> Option<(usize, usize)>`
+    // returned a fixed `Some((0, 1))` whenever a goal was set, because
+    // the goal loop runs entirely inside `KodEngine::process_goal_
+    // streaming` and does not report per-turn progress back to the
+    // TUI. Rather than keep a fake counter, the header now renders the
+    // goal text (see `KodApp::goal`). If per-turn progress is ever
+    // plumbed through, this method should return real numbers.
 
     fn set_phase(&mut self, phase: GenPhase) {
         self.phase = phase;

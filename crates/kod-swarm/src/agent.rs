@@ -149,6 +149,16 @@ impl Agent {
         &self.model
     }
 
+    /// The full model configuration this agent was built with —
+    /// provider, temperature, max_tokens, and the config-file model
+    /// name. `model()` returns the resolved name (which
+    /// `with_model` can override); this accessor exposes the rest.
+    /// Used by status panels and by callers that need to clone an
+    /// agent's settings.
+    pub fn model_config(&self) -> &ModelConfig {
+        &self.model_config
+    }
+
     /// Get max context tokens
     pub fn max_context_tokens(&self) -> usize {
         self.max_context_tokens
