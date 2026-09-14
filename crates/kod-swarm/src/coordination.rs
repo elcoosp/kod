@@ -68,12 +68,41 @@ impl TaskCoordinator {
         Ok(())
     }
 
-    /// Assign a task to an agent
+    /// Assign a task to an agent.
+    ///
+    /// Rejects three cases that the previous implementation allowed
+    /// and that silently corrupted the load counters:
+    ///
+    /// - The task is already Completed or Failed. Assigning finished
+    ///   work created a new InProgress assignment and incremented a
+    ///   load counter that nothing would decrement for the new agent,
+    ///   because finish_task only decrements for the assignee recorded
+    ///   at completion time.
+    /// - The task is already InProgress. Reassigning mid-flight left
+    ///   the original agent's load inflated forever — its slot was
+    ///   released only on complete/fail, which no longer matched the
+    ///   task it held.
+    /// - The task is Blocked. Blocked work must be unblocked (or
+    ///   unassigned) before it can be picked up again.
+    ///
+    /// Callers who want to move in-progress work to a different agent
+    /// should `unassign_task` first, which releases the current
+    /// assignee's load and returns the task to Pending.
     pub async fn assign_task(&self, task_id: &TaskId, agent_id: &AgentId) -> Result<()> {
         let mut tasks = self.tasks.write().await;
         let task = tasks
             .get_mut(task_id)
             .ok_or_else(|| KodError::InvalidState(format!("Task {} not found", task_id)))?;
+        match task.status {
+            TaskStatus::Pending => {}
+            other => {
+                return Err(KodError::InvalidState(format!(
+                    "Task {} cannot be assigned: status is {:?}. \
+                     Unassign first to move in-progress work, or use a new task.",
+                    task_id, other
+                )));
+            }
+        }
         task.assigned_to = Some(agent_id.clone());
         task.status = TaskStatus::InProgress;
         drop(tasks);

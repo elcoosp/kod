@@ -137,9 +137,16 @@ impl Agent {
         self.capabilities.iter().cloned().collect()
     }
 
-    /// Get model name
+    /// Get model name.
+    ///
+    /// Returns the resolved name, which is what `AgentBuilder::with_model`
+    /// overrides. The previous implementation read
+    /// `model_config.model_name`, i.e. the builder's ModelConfig
+    /// default, so `Agent::new("x").with_model("qwen").build().model()`
+    /// returned the *default* ("codellama:13b") instead of "qwen" —
+    /// the override was stored on the `model` field but never read.
     pub fn model(&self) -> &str {
-        &self.model_config.model_name
+        &self.model
     }
 
     /// Get max context tokens
