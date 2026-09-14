@@ -155,6 +155,19 @@ impl AgentCommunicationHub {
         history.remove(agent_id);
     }
 
+    /// Send `content` from `from` to `to`.
+    ///
+    /// On success the message is appended to **both** the sender's and
+    /// the recipient's history. `get_agent_history(&a)` therefore
+    /// returns every message `a` participated in, sent or received —
+    /// not just the messages addressed to `a`. That is the useful
+    /// reading for a debug panel ("show me everything this agent said
+    /// and heard") and the intended one; it is documented here because
+    /// the method name alone suggests "inbox."
+    ///
+    /// Use [`AgentCommunicationHub::get_sent_history`] or
+    /// [`AgentCommunicationHub::get_received_history`] when the
+    /// distinction matters.
     pub async fn send_direct(
         &self,
         from: &AgentId,
@@ -193,6 +206,12 @@ impl AgentCommunicationHub {
         }
     }
 
+    /// Broadcast `content` from `from` to every other online agent.
+    ///
+    /// The message is appended to the sender's history once and to
+    /// each recipient's history once — same as
+    /// [`AgentCommunicationHub::send_direct`], per-recipient. See that
+    /// method's doc for the semantics of `get_agent_history`.
     pub async fn broadcast(&self, from: &AgentId, content: MessageContent) -> Result<()> {
         let agents = self.agents.read().await;
         if !agents.contains_key(from) {
@@ -263,6 +282,24 @@ impl AgentCommunicationHub {
         }
     }
 
+    /// Every message `agent_id` participated in, oldest first —
+    /// whether `agent_id` sent it, received it directly, or received
+    /// it via broadcast.
+    ///
+    /// The method name reads as "inbox" and the previous lack of a
+    /// doc let that reading stand. It is not an inbox: a message from
+    /// A to B is recorded in both A's and B's history (see
+    /// [`AgentCommunicationHub::send_direct`]), so this returns the
+    /// agent's full conversation as an observer would see it.
+    ///
+    /// Use [`AgentCommunicationHub::get_sent_history`] or
+    /// [`AgentCommunicationHub::get_received_history`] when only one
+    /// side of the participation matters.
+    ///
+    /// Returns an empty vec for an unregistered agent. The history
+    /// entry is dropped at [`AgentCommunicationHub::unregister_agent`]
+    /// time, so an ID that names a retired agent and an ID that was
+    /// never registered are both empty.
     pub async fn get_agent_history(&self, agent_id: &AgentId) -> Vec<SwarmMessage> {
         self.history
             .read()
@@ -270,6 +307,31 @@ impl AgentCommunicationHub {
             .get(agent_id)
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// Messages `agent_id` sent, oldest first.
+    ///
+    /// Filters [`AgentCommunicationHub::get_agent_history`] by
+    /// `message.from == agent_id`. Useful for a caller that wants to
+    /// show "what this agent has said" without interleaving what it
+    /// heard.
+    pub async fn get_sent_history(&self, agent_id: &AgentId) -> Vec<SwarmMessage> {
+        self.get_agent_history(agent_id)
+            .await
+            .into_iter()
+            .filter(|m| m.from == *agent_id)
+            .collect()
+    }
+
+    /// Messages `agent_id` received, oldest first — that is, every
+    /// message in its history that it did not itself send. Includes
+    /// direct messages and broadcasts that reached it.
+    pub async fn get_received_history(&self, agent_id: &AgentId) -> Vec<SwarmMessage> {
+        self.get_agent_history(agent_id)
+            .await
+            .into_iter()
+            .filter(|m| m.from != *agent_id)
+            .collect()
     }
 
     async fn record_message(&self, agent_id: &AgentId, message: &SwarmMessage) {
@@ -416,6 +478,65 @@ mod tests {
         }
 
         drain.abort();
+    }
+
+    /// `get_sent_history` and `get_received_history` partition
+    /// `get_agent_history` by direction: for any agent, sent +
+    /// received == full history, and each is the correct subset.
+    #[tokio::test]
+    async fn test_get_sent_and_received_split_history() {
+        let hub = AgentCommunicationHub::new();
+        let a = AgentId::new();
+        let b = AgentId::new();
+        hub.register_agent(a.clone()).await.unwrap();
+        hub.register_agent(b.clone()).await.unwrap();
+
+        let _rx_b = hub.get_agent_receiver(&b).await.unwrap();
+
+        // A -> B twice, B -> A once. A's full history is 3; sent is 2,
+        // received is 1. B's is the mirror.
+        for text in ["one", "two"] {
+            hub.send_direct(
+                &a,
+                &b,
+                MessageContent::ResultDelivery {
+                    result: text.to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        hub.send_direct(
+            &b,
+            &a,
+            MessageContent::ResultDelivery {
+                result: "reply".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let a_all = hub.get_agent_history(&a).await;
+        let a_sent = hub.get_sent_history(&a).await;
+        let a_recv = hub.get_received_history(&a).await;
+        assert_eq!(a_all.len(), 3, "A participated in 3 messages");
+        assert_eq!(a_sent.len(), 2, "A sent 2");
+        assert_eq!(a_recv.len(), 1, "A received 1");
+        assert_eq!(a_sent.len() + a_recv.len(), a_all.len());
+        // Every sent message has from == a.
+        for m in &a_sent {
+            assert_eq!(m.from, a);
+        }
+        for m in &a_recv {
+            assert_ne!(m.from, a);
+        }
+
+        let b_all = hub.get_agent_history(&b).await;
+        let b_sent = hub.get_sent_history(&b).await;
+        let b_recv = hub.get_received_history(&b).await;
+        assert_eq!(b_all.len(), 3);
+        assert_eq!(b_sent.len(), 1, "B sent 1");
+        assert_eq!(b_recv.len(), 2, "B received 2");
     }
 
     /// The sender should not receive their own broadcast.

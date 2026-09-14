@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-AGENT=crates/kod-swarm/src/agent.rs
+COMM=crates/kod-swarm/src/communication.rs
 
-echo "=== Current start/stop bodies ==="
-awk '/pub async fn start\(/,/^    \}$/' "$AGENT" | head -35
+echo "=== Current get_agent_history + record_message ==="
+awk '/pub async fn get_agent_history/,/^    \}$/' "$COMM" | head -15
 echo "---"
-awk '/pub async fn stop\(/,/^    \}$/' "$AGENT" | head -35
+awk '/async fn record_message/,/^    \}$/' "$COMM" | head -15
 
 echo
-echo "=== All sleeps in agent.rs ==="
-grep -n "sleep\|Duration" "$AGENT"
+echo "Patching $COMM"
 
-echo
-echo "Patching $AGENT"
-
-python3 - "$AGENT" << 'PYEOF'
+python3 - "$COMM" << 'PYEOF'
 import os
 import sys
 
@@ -37,127 +33,189 @@ def patch(old, new, label, expect=1):
     return True
 
 # ----------------------------------------------------------------------
-# 1. start(): remove the fake init sleep.
+# 1. Document what send_direct and broadcast do to each side's history.
 # ----------------------------------------------------------------------
 patch(
-    '''        self.state
-            .send(AgentState::Starting)
-            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
-
-        // Simulate initialization
-        tokio::time::sleep(Duration::from_millis(10)).await;
-
-        self.state
-            .send(AgentState::Running)
-            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
-
-        self.record_heartbeat();
-
-        Ok(())''',
-    '''        // No work happens between Starting and Running today: the
-        // agent has no real initialization step. The previous
-        // `tokio::time::sleep(Duration::from_millis(10))` labelled
-        // "Simulate initialization" was pure waste — every call paid
-        // 10 ms of wall clock and every test that drove an agent
-        // through its lifecycle paid it too.
-        //
-        // If a real initialization step is added later (registering
-        // with a coordination service, opening a per-agent socket),
-        // put its actual await here. The `Starting` state remains in
-        // the enum so a caller that subscribes before calling start
-        // can observe the transition; today the transition is
-        // instantaneous, which is the honest description of the work.
-        self.state
-            .send(AgentState::Starting)
-            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
-
-        self.state
-            .send(AgentState::Running)
-            .map_err(|e| KodError::InvalidState(format!("Failed to update state: {:?}", e)))?;
-
-        self.record_heartbeat();
-
-        Ok(())''',
-    "start(): remove fake init sleep",
+    '''    pub async fn send_direct(
+        &self,
+        from: &AgentId,
+        to: &AgentId,
+        content: MessageContent,
+    ) -> Result<()> {''',
+    '''    /// Send `content` from `from` to `to`.
+    ///
+    /// On success the message is appended to **both** the sender's and
+    /// the recipient's history. `get_agent_history(&a)` therefore
+    /// returns every message `a` participated in, sent or received —
+    /// not just the messages addressed to `a`. That is the useful
+    /// reading for a debug panel ("show me everything this agent said
+    /// and heard") and the intended one; it is documented here because
+    /// the method name alone suggests "inbox."
+    ///
+    /// Use [`AgentCommunicationHub::get_sent_history`] or
+    /// [`AgentCommunicationHub::get_received_history`] when the
+    /// distinction matters.
+    pub async fn send_direct(
+        &self,
+        from: &AgentId,
+        to: &AgentId,
+        content: MessageContent,
+    ) -> Result<()> {''',
+    "send_direct: document dual recording",
 )
 
 # ----------------------------------------------------------------------
-# 2. stop(): remove the fake cleanup sleep.
+# 2. Same for broadcast.
 # ----------------------------------------------------------------------
 patch(
-    '''                self.state.send(AgentState::Stopping).map_err(|e| {
-                    KodError::InvalidState(format!("Failed to update state: {:?}", e))
-                })?;
-
-                // Cleanup
-                tokio::time::sleep(Duration::from_millis(10)).await;
-
-                self.state.send(AgentState::Stopped).map_err(|e| {
-                    KodError::InvalidState(format!("Failed to update state: {:?}", e))
-                })?;''',
-    '''                // Same reasoning as start(): no work happens between
-                // Stopping and Stopped today. The previous
-                // `tokio::time::sleep(Duration::from_millis(10))` with
-                // a "Cleanup" comment was a placeholder for work that
-                // does not exist. Add the real await here if a
-                // shutdown step is added; today the transition is
-                // instantaneous.
-                self.state.send(AgentState::Stopping).map_err(|e| {
-                    KodError::InvalidState(format!("Failed to update state: {:?}", e))
-                })?;
-
-                self.state.send(AgentState::Stopped).map_err(|e| {
-                    KodError::InvalidState(format!("Failed to update state: {:?}", e))
-                })?;''',
-    "stop(): remove fake cleanup sleep",
+    '''    pub async fn broadcast(&self, from: &AgentId, content: MessageContent) -> Result<()> {''',
+    '''    /// Broadcast `content` from `from` to every other online agent.
+    ///
+    /// The message is appended to the sender's history once and to
+    /// each recipient's history once — same as
+    /// [`AgentCommunicationHub::send_direct`], per-recipient. See that
+    /// method's doc for the semantics of `get_agent_history`.
+    pub async fn broadcast(&self, from: &AgentId, content: MessageContent) -> Result<()> {''',
+    "broadcast: document per-recipient recording",
 )
 
 # ----------------------------------------------------------------------
-# 3. Tests: start/stop complete quickly.
+# 3. Rewrite get_agent_history doc + add the two convenience
+#    accessors. Anchor on the existing method body.
 # ----------------------------------------------------------------------
-if "test_start_stop_are_not_sleep_bound" not in src:
-    anchor = '''    #[test]
-    fn test_capabilities() {'''
+patch(
+    '''    pub async fn get_agent_history(&self, agent_id: &AgentId) -> Vec<SwarmMessage> {
+        self.history
+            .read()
+            .await
+            .get(agent_id)
+            .cloned()
+            .unwrap_or_default()
+    }''',
+    '''    /// Every message `agent_id` participated in, oldest first —
+    /// whether `agent_id` sent it, received it directly, or received
+    /// it via broadcast.
+    ///
+    /// The method name reads as "inbox" and the previous lack of a
+    /// doc let that reading stand. It is not an inbox: a message from
+    /// A to B is recorded in both A's and B's history (see
+    /// [`AgentCommunicationHub::send_direct`]), so this returns the
+    /// agent's full conversation as an observer would see it.
+    ///
+    /// Use [`AgentCommunicationHub::get_sent_history`] or
+    /// [`AgentCommunicationHub::get_received_history`] when only one
+    /// side of the participation matters.
+    ///
+    /// Returns an empty vec for an unregistered agent. The history
+    /// entry is dropped at [`AgentCommunicationHub::unregister_agent`]
+    /// time, so an ID that names a retired agent and an ID that was
+    /// never registered are both empty.
+    pub async fn get_agent_history(&self, agent_id: &AgentId) -> Vec<SwarmMessage> {
+        self.history
+            .read()
+            .await
+            .get(agent_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Messages `agent_id` sent, oldest first.
+    ///
+    /// Filters [`AgentCommunicationHub::get_agent_history`] by
+    /// `message.from == agent_id`. Useful for a caller that wants to
+    /// show "what this agent has said" without interleaving what it
+    /// heard.
+    pub async fn get_sent_history(&self, agent_id: &AgentId) -> Vec<SwarmMessage> {
+        self.get_agent_history(agent_id)
+            .await
+            .into_iter()
+            .filter(|m| m.from == *agent_id)
+            .collect()
+    }
+
+    /// Messages `agent_id` received, oldest first — that is, every
+    /// message in its history that it did not itself send. Includes
+    /// direct messages and broadcasts that reached it.
+    pub async fn get_received_history(&self, agent_id: &AgentId) -> Vec<SwarmMessage> {
+        self.get_agent_history(agent_id)
+            .await
+            .into_iter()
+            .filter(|m| m.from != *agent_id)
+            .collect()
+    }''',
+    "get_agent_history doc + sent/received accessors",
+)
+
+# ----------------------------------------------------------------------
+# 4. Tests. Anchor on the existing broadcast tests.
+# ----------------------------------------------------------------------
+if "test_get_sent_and_received_split_history" not in src:
+    anchor = '''    /// The sender should not receive their own broadcast.'''
     if anchor not in src:
         print("  ERROR: test anchor not found")
         sys.exit(2)
-    new_test = '''    /// start() and stop() must not contain artificial delays. They
-    /// used to sleep 10 ms each, which added up across a swarm of
-    /// agents and made lifecycle tests pay for a wall-clock cost that
-    /// did no real work. The bound below is generous (100 ms) so a
-    /// busy CI machine does not flake; the assertions fail loudly if
-    /// a "Simulate initialization" sleep ever returns.
+    new_test = '''    /// `get_sent_history` and `get_received_history` partition
+    /// `get_agent_history` by direction: for any agent, sent +
+    /// received == full history, and each is the correct subset.
     #[tokio::test]
-    async fn test_start_stop_are_not_sleep_bound() {
-        use std::time::{Duration, Instant};
+    async fn test_get_sent_and_received_split_history() {
+        let hub = AgentCommunicationHub::new();
+        let a = AgentId::new();
+        let b = AgentId::new();
+        hub.register_agent(a.clone()).await.unwrap();
+        hub.register_agent(b.clone()).await.unwrap();
 
-        let agent = Agent::new("no-sleep").build();
-        let budget = Duration::from_millis(100);
+        let _rx_b = hub.get_agent_receiver(&b).await.unwrap();
 
-        let t0 = Instant::now();
-        agent.start().await.unwrap();
-        let start_elapsed = t0.elapsed();
-        assert!(
-            start_elapsed < budget,
-            "start() took {start_elapsed:?} — expected under {budget:?}"
-        );
+        // A -> B twice, B -> A once. A's full history is 3; sent is 2,
+        // received is 1. B's is the mirror.
+        for text in ["one", "two"] {
+            hub.send_direct(
+                &a,
+                &b,
+                MessageContent::ResultDelivery {
+                    result: text.to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        hub.send_direct(
+            &b,
+            &a,
+            MessageContent::ResultDelivery {
+                result: "reply".to_string(),
+            },
+        )
+        .await
+        .unwrap();
 
-        let t0 = Instant::now();
-        agent.stop().await.unwrap();
-        let stop_elapsed = t0.elapsed();
-        assert!(
-            stop_elapsed < budget,
-            "stop() took {stop_elapsed:?} — expected under {budget:?}"
-        );
+        let a_all = hub.get_agent_history(&a).await;
+        let a_sent = hub.get_sent_history(&a).await;
+        let a_recv = hub.get_received_history(&a).await;
+        assert_eq!(a_all.len(), 3, "A participated in 3 messages");
+        assert_eq!(a_sent.len(), 2, "A sent 2");
+        assert_eq!(a_recv.len(), 1, "A received 1");
+        assert_eq!(a_sent.len() + a_recv.len(), a_all.len());
+        // Every sent message has from == a.
+        for m in &a_sent {
+            assert_eq!(m.from, a);
+        }
+        for m in &a_recv {
+            assert_ne!(m.from, a);
+        }
 
-        // State machine is unchanged: Idle -> Running -> Stopped.
-        assert_eq!(agent.state(), AgentState::Stopped);
+        let b_all = hub.get_agent_history(&b).await;
+        let b_sent = hub.get_sent_history(&b).await;
+        let b_recv = hub.get_received_history(&b).await;
+        assert_eq!(b_all.len(), 3);
+        assert_eq!(b_sent.len(), 1, "B sent 1");
+        assert_eq!(b_recv.len(), 2, "B received 2");
     }
 
-    #[test]
-    fn test_capabilities() {'''
+    /// The sender should not receive their own broadcast.'''
     src = src.replace(anchor, new_test, 1)
-    print("  added test_start_stop_are_not_sleep_bound")
+    print("  added test_get_sent_and_received_split_history")
 else:
     print("  test already present")
 
@@ -174,10 +232,6 @@ if [ $? -ne 0 ]; then
 fi
 
 echo
-echo "=== Post-state: remaining sleeps in agent.rs ==="
-grep -n "sleep\|Duration" "$AGENT"
-
-echo
 echo "cargo check --workspace --all-targets 2>&1 | tail -15"
 if ! cargo check --workspace --all-targets 2>&1 | tail -15; then
     echo "Compilation failed"
@@ -185,27 +239,31 @@ if ! cargo check --workspace --all-targets 2>&1 | tail -15; then
 fi
 
 cat > /tmp/kod_commit_msg.txt <<'MSG'
-fix(swarm): drop the fake init/cleanup sleeps from Agent::start and stop
+docs(swarm): clarify history direction; add sent/received accessors
 
-Agent::start awaited `tokio::time::sleep(Duration::from_millis(10))`
-with the comment "Simulate initialization"; Agent::stop awaited the
-same with the comment "Cleanup". Nothing runs during either wait —
-the agent has no initialization work and no shutdown work today.
-Every start and stop paid 10 ms of wall clock, and every test that
-drove an agent through a lifecycle (agent.rs tests, swarm.rs tests,
-communication.rs tests) paid it too.
+AgentCommunicationHub::get_agent_history returns every message an
+agent participated in — sent, received directly, or received via
+broadcast. The name reads as "inbox" and the previous absence of a
+doc let that misreading stand: a caller looking for the messages
+addressed to an agent got a transcript that also contained
+everything the agent itself had said.
 
-Remove both sleeps. The state transitions happen synchronously
-through the watch channel, which is the honest description of the
-work. The Starting and Stopping intermediate states remain in the
-enum so a watcher that subscribes before calling start/stop can
-still observe them if a real async step is ever added; the comment
-in each method names where such a step would go.
+Document the semantics on get_agent_history, send_direct, and
+broadcast. Add two convenience accessors:
 
-Adds test_start_stop_are_not_sleep_bound: a start + stop cycle must
-complete in under 100 ms total, and the state machine ends Stopped.
-The bound is generous (a busy CI machine should not flake) but
-fails loudly if the fake sleeps come back.
+  get_sent_history(&a)      messages with from == a
+  get_received_history(&a)  messages with from != a
+
+A caller that wants the inbox reads get_received_history; a debug
+panel that wants "everything this agent said and heard" keeps
+get_agent_history.
+
+Adds test_get_sent_and_received_split_history: three messages
+between two agents (A->B twice, B->A once), asserts the split is
+2/1 for A and 1/2 for B, that sent + received == full history, and
+that every message in each subset has the correct from field. No
+behavior change; the new accessors are thin filters over the
+existing method.
 MSG
 
 git add -A
