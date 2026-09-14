@@ -159,6 +159,7 @@ fn benchmark_task_classification(c: &mut Criterion) {
 
     let router = TaskRouter::new(
         RouterConfig {
+            context_window: 8192,
             enable_swarm: false,
             enable_memory: false,
             max_skills_per_query: 3,
@@ -205,6 +206,7 @@ fn benchmark_task_processing(c: &mut Criterion) {
 
     let router = TaskRouter::new(
         RouterConfig {
+            context_window: 8192,
             enable_swarm: false,
             enable_memory: false,
             max_skills_per_query: 3,

@@ -1538,6 +1538,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
+            context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             enable_swarm: false,
@@ -1698,6 +1699,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
+            context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             enable_swarm: false,
@@ -1735,6 +1737,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
+            context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             enable_swarm: false,
@@ -1762,6 +1765,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
+            context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             enable_swarm: false,
@@ -1804,6 +1808,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
+            context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             enable_swarm: false,
@@ -1865,6 +1870,7 @@ mod tests {
 
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
+            context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             enable_swarm: false,
@@ -2060,6 +2066,7 @@ mod tests {
         let db_path = temp.path().join("test.redb");
 
         let cfg = RouterConfig {
+            context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             enable_swarm: false,
@@ -2113,6 +2120,7 @@ mod tests {
 
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
+            context_window: 8192,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             enable_swarm: false,

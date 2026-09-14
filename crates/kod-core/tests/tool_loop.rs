@@ -73,6 +73,7 @@ async fn test_engine_tool_loop_lists_working_dir() {
     std::fs::write(temp_dir.path().join("marker.txt"), "x").unwrap();
 
     let config = RouterConfig {
+        context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
     };
@@ -106,6 +107,7 @@ async fn test_process_streaming_delivers_chunks_and_tool_marker() {
     std::fs::write(temp_dir.path().join("marker.txt"), "x").unwrap();
 
     let config = RouterConfig {
+        context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
     };
@@ -241,6 +243,7 @@ impl LlmProvider for CapturingProvider {
 async fn test_steer_note_reaches_next_round() {
     let temp_dir = TempDir::new().unwrap();
     let config = RouterConfig {
+        context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
     };
@@ -271,6 +274,7 @@ async fn test_steer_note_reaches_next_round() {
 async fn test_cancel_stops_process() {
     let temp_dir = TempDir::new().unwrap();
     let config = RouterConfig {
+        context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
     };
@@ -356,6 +360,7 @@ async fn test_goal_loop_stops_at_goal_met() {
 
     let temp_dir = TempDir::new().unwrap();
     let config = RouterConfig {
+        context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
     };
@@ -406,6 +411,7 @@ async fn test_skill_details_lists_descriptions() {
     .unwrap();
 
     let config = RouterConfig {
+        context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
     };
@@ -428,6 +434,7 @@ async fn test_second_turn_sees_first_turn_history() {
     // after a compact). The second prompt must contain turn one's text.
     let temp_dir = TempDir::new().unwrap();
     let config = RouterConfig {
+        context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
     };

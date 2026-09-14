@@ -7,6 +7,7 @@ fn create_test_engine() -> (KodEngine, TempDir) {
     let db_path = temp_dir.path().join("test.redb");
 
     let config = RouterConfig {
+        context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
     };
@@ -44,6 +45,7 @@ async fn test_engine_with_provider() {
     let db_path = temp_dir.path().join("test.redb");
 
     let config = RouterConfig {
+        context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
     };
@@ -92,6 +94,7 @@ async fn test_seed_turn_feeds_history() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.redb");
     let cfg = RouterConfig {
+        context_window: 8192,
         working_dir: tmp.path().to_path_buf(),
         enable_memory: false,
         enable_swarm: false,

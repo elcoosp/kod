@@ -67,6 +67,7 @@ async fn test_task_routers_config() {
 
     let router = kod_core::router::TaskRouter::new(
         kod_core::router::RouterConfig {
+            context_window: 8192,
             enable_swarm: false,
             enable_memory: true,
             max_skills_per_query: 3,
@@ -87,6 +88,7 @@ async fn test_task_classification_full() {
 
     let router = kod_core::router::TaskRouter::new(
         kod_core::router::RouterConfig {
+            context_window: 8192,
             enable_swarm: false,
             enable_memory: false,
             max_skills_per_query: 3,
@@ -144,6 +146,7 @@ async fn test_engine_lifecycle() {
 
     let engine = kod_core::engine::KodEngine::new(
         kod_core::router::RouterConfig {
+            context_window: 8192,
             enable_swarm: false,
             enable_memory: false,
             max_skills_per_query: 3,
@@ -172,6 +175,7 @@ async fn test_engine_process_input() {
 
     let engine = kod_core::engine::KodEngine::new(
         kod_core::router::RouterConfig {
+            context_window: 8192,
             enable_swarm: false,
             enable_memory: false,
             max_skills_per_query: 3,

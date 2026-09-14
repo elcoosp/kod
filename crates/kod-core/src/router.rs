@@ -45,6 +45,15 @@ pub struct RouterConfig {
     pub enable_memory: bool,
     pub max_skills_per_query: usize,
     pub working_dir: PathBuf,
+    /// The model's context window, in tokens. Used to size the memory
+    /// manager's per-prompt context budget so a long-running session
+    /// does not silently drop memory entries that would comfortably fit
+    /// a large model. Callers that build the router from `LlmConfig`
+    /// should pass `llm.context_window`. Defaults to `8192` — the same
+    /// value `LlmConfig::default()` uses — so a caller that ignores
+    /// the field still gets a sane memory budget rather than the
+    /// `MemoryManager`'s own 4096 hardcode.
+    pub context_window: usize,
 }
 
 impl Default for RouterConfig {
@@ -54,6 +63,7 @@ impl Default for RouterConfig {
             enable_memory: true,
             max_skills_per_query: 3,
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            context_window: 8192,
         }
     }
 }
@@ -85,7 +95,14 @@ impl TaskRouter {
     /// Create a new task router
     pub fn new(config: RouterConfig, db_path: PathBuf) -> Result<Self> {
         let memory_manager = if config.enable_memory {
-            Some(MemoryManager::new(db_path, 100)?)
+            // The manager's own default is a fixed 4096-token budget.
+            // Set it from the model's actual context window so the
+            // retrieve-side cap does not throw away memory entries that
+            // would have fit — the failure mode is invisible (memory
+            // silently under-populates rather than erroring).
+            let mut manager = MemoryManager::new(db_path, 100)?;
+            manager.set_context_window(config.context_window.max(1_000));
+            Some(manager)
         } else {
             None
         };
@@ -400,7 +417,22 @@ impl TaskRouter {
              instructions, answer directly from that context — do not call tools to look it up. \
              Prefer calling tools over guessing, and summarize results in plain text.\n\n",
         );
-        prompt.push_str(&self.build_context(input, &None, task_type).await?);
+        // Retrieve memory context. Before this, the router constructed
+        // a `MemoryManager` and marked the field `#[allow(dead_code)]`:
+        // nothing wrote to memory, nothing read from it, and
+        // `build_prompt` passed a hardcoded `&None`. The whole memory
+        // layer was inert. Reading here closes half the loop — anything
+        // stored in long-term memory (or short-term, if a caller
+        // populates it) now reaches the prompt.
+        //
+        // `retrieve_context` on an empty manager is cheap: a redb
+        // substring scan over an empty table and a short-term recency
+        // slice, both no-ops for a fresh session.
+        let memory_context = match &self.memory_manager {
+            Some(manager) => Some(manager.retrieve_context(input).await?),
+            None => None,
+        };
+        prompt.push_str(&self.build_context(input, &memory_context, task_type).await?);
 
         // Skill knowledge, two layers: the full name+description inventory is
         // always present (so "which skills do you have?" is answerable), and
@@ -632,6 +664,93 @@ mod tests {
                 .await
                 .unwrap(),
             TaskType::Research
+        );
+    }
+
+    /// `build_prompt` must consult the memory manager. Regression:
+    /// the router built a MemoryManager and marked the field
+    /// `#[allow(dead_code)]`; `build_context` was always called with
+    /// `&None`, so anything stored in memory — including long-term
+    /// facts written via `MemoryManager::store` — never reached the
+    /// prompt.
+    #[tokio::test]
+    async fn test_build_prompt_includes_memory_context() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.redb");
+
+        // enable_memory on so the router constructs a MemoryManager.
+        let router = TaskRouter::new(
+            RouterConfig {
+                enable_memory: true,
+                enable_swarm: false,
+                max_skills_per_query: 3,
+                working_dir: temp_dir.path().to_path_buf(),
+                context_window: 8192,
+            },
+            db_path,
+        )
+        .unwrap();
+
+        // Store a durable fact directly through the manager. This is
+        // the shape a future "remember this" tool would use.
+        let manager = router.memory_manager.as_ref().expect("memory enabled");
+        manager
+            .store(
+                kod_types::MemoryType::LongTerm,
+                "The user's project is called KOD.",
+            )
+            .await
+            .unwrap();
+
+        // A prompt whose input contains the search term must pull the
+        // fact into the memory context block.
+        let prompt = router
+            .build_prompt(
+                "tell me about the project",
+                &TaskType::Simple,
+                "(start of conversation)",
+            )
+            .await
+            .unwrap();
+        assert!(
+            prompt.contains("KOD"),
+            "long-term memory entry missing from prompt:\n{prompt}"
+        );
+    }
+
+    /// RouterConfig::context_window must reach the memory manager so its
+    /// token budget is the model's window, not the manager's own 4096
+    /// hardcode.
+    #[tokio::test]
+    async fn test_router_config_context_window_reaches_manager() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.redb");
+        let router = TaskRouter::new(
+            RouterConfig {
+                enable_memory: true,
+                enable_swarm: false,
+                max_skills_per_query: 3,
+                working_dir: temp_dir.path().to_path_buf(),
+                context_window: 131_072,
+            },
+            db_path,
+        )
+        .unwrap();
+
+        let manager = router.memory_manager.as_ref().unwrap();
+        for i in 0..20 {
+            manager
+                .store(
+                    kod_types::MemoryType::LongTerm,
+                    &format!("fact-{i}-{}", "x".repeat(400)),
+                )
+                .await
+                .unwrap();
+        }
+        let ctx = manager.retrieve_context("fact").await.unwrap();
+        assert!(
+            !ctx.long_term.is_empty(),
+            "large window should have kept memory entries"
         );
     }
 

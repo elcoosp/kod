@@ -36,6 +36,7 @@ You are a Rust coding expert. Help with idiomatic Rust code.
     std::fs::write(skills_dir.join("rust.md"), skill_content).unwrap();
 
     let config = RouterConfig {
+        context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         enable_swarm: false, // Disable for testing
         enable_memory: true,

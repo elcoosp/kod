@@ -91,7 +91,13 @@ impl TuiLoop {
             .unwrap_or_else(|_| home.join(".kod").join("data").join("kod.redb"));
         let _ = std::fs::create_dir_all(db_path.parent().unwrap());
 
-        let router_config = RouterConfig::default();
+        // Propagate the model's context window to the router so its
+        // memory manager sizes its own budget from the same number the
+        // engine uses for history.
+        let router_config = RouterConfig {
+            context_window: config.llm.context_window,
+            ..RouterConfig::default()
+        };
         let engine = KodEngine::new(router_config, db_path)?;
         engine.set_history_budget(history_budget);
 

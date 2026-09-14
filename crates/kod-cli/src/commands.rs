@@ -183,7 +183,12 @@ pub async fn run_chat(model: Option<String>, _temperature: f32, _interactive: bo
     // Create engine. Derive the history budget from the model's window
     // (≈3 chars/token) so a small-model user is safe and a large-model
     // user gets useful recall; the engine clamps below its floor.
-    let router_config = RouterConfig::default();
+    // RouterConfig carries the token window itself so the memory manager
+    // sizes its own budget from the same source.
+    let router_config = RouterConfig {
+        context_window: config.llm.context_window,
+        ..RouterConfig::default()
+    };
     let engine = KodEngine::new(router_config, db_path)?;
     engine.set_history_budget(config.llm.context_window.saturating_mul(3));
 
@@ -299,7 +304,10 @@ pub async fn run_agent(name: String, goal: String, model: Option<String>) -> Res
         .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
     let db_path = home.join(".kod").join("data").join("kod.redb");
 
-    let router_config = RouterConfig::default();
+    let router_config = RouterConfig {
+        context_window: config.llm.context_window,
+        ..RouterConfig::default()
+    };
     let engine = KodEngine::new(router_config, db_path)?;
     engine.set_history_budget(config.llm.context_window.saturating_mul(3));
 

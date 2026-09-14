@@ -158,6 +158,7 @@ async fn test_router_configuration() {
     let db_path = temp_dir.path().join("test.redb");
 
     let config = RouterConfig {
+        context_window: 8192,
         enable_swarm: false,
         max_skills_per_query: 2,
         enable_memory: false,
