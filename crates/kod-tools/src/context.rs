@@ -161,16 +161,34 @@ impl ToolContext {
         }
 
         // Refuse a small set of unambiguously destructive commands.
+        //
         // These run through `sh -c` / `cmd /C`, so both shells' worst
         // offenders are listed. The check is a guardrail, not a sandbox:
-        // `true; rm -rf /` slips past `starts_with`, and that is
+        // `true; rm -rf /` slips past the prefix test, and that is
         // acceptable — the real defense is that the whole tool is
-        // behind ToolPermissions::execute_commands and the default is
-        // off. This just stops the accidental "delete everything"
+        // behind `ToolPermissions::execute_commands`, which is off by
+        // default. This stops the accidental "delete everything"
         // command from a model that read the wrong directory.
+        //
+        // Trim leading whitespace before matching. The previous
+        // `command.starts_with(pattern)` check was defeated by a
+        // single leading space — `"  rm -rf /"` passed. A leading tab
+        // or newline did too. Trimming does not turn this into a
+        // sandbox; it removes a footgun that would have let an
+        // accidental destructive command through the one layer of
+        // defense that exists.
+        //
+        // Note about `sudo`: it can precede any of the other patterns
+        // (`sudo rm -rf /`). Listing it as its own prefix is
+        // deliberate — `sudo` on its own is the shape that matters
+        // most; the pattern check does not scan for `sudo` mid-string,
+        // matching the guardrail-not-sandbox contract above.
+        let trimmed = command.trim_start();
         let dangerous_patterns: &[&str] = &[
             // POSIX
             "rm -rf",
+            "rm -fr",
+            "rm -r -f",
             "sudo",
             "chmod 777",
             "mkfs",
@@ -183,10 +201,13 @@ impl ToolContext {
             "rmdir /s /q",
         ];
         for pattern in dangerous_patterns {
-            if command.starts_with(pattern) {
+            if trimmed.starts_with(pattern) {
                 return Err(KodError::PermissionDenied {
                     action: "execute".to_string(),
-                    reason: format!("Dangerous command pattern detected: {}", pattern),
+                    reason: format!(
+                        "Dangerous command pattern detected: {}",
+                        pattern
+                    ),
                 });
             }
         }
@@ -229,6 +250,45 @@ impl ToolContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The dangerous-command guardrail must fire on a leading-space
+    /// command. Regression: the previous check used the raw string
+    /// with `starts_with`, so `"  rm -rf /"` — a single space — passed
+    /// the one layer of defense the tool has.
+    #[test]
+    fn test_can_execute_command_rejects_leading_whitespace() {
+        let perms = ToolPermissions {
+            execute_commands: true,
+            ..Default::default()
+        };
+        let ctx = ToolContext::new("/tmp").with_permissions(perms);
+
+        // Baseline: no leading whitespace -> rejected.
+        assert!(ctx.can_execute_command("rm -rf /").is_err());
+        // Leading space -> must also be rejected.
+        assert!(
+            ctx.can_execute_command("  rm -rf /").is_err(),
+            "leading space must not defeat the guardrail"
+        );
+        // Leading tab.
+        assert!(
+            ctx.can_execute_command("\trm -rf /").is_err(),
+            "leading tab must not defeat the guardrail"
+        );
+        // Leading newline.
+        assert!(
+            ctx.can_execute_command("\nrm -rf /").is_err(),
+            "leading newline must not defeat the guardrail"
+        );
+
+        // rm -fr and rm -r -f are the same operation.
+        assert!(ctx.can_execute_command("rm -fr /").is_err());
+        assert!(ctx.can_execute_command("rm -r -f /").is_err());
+
+        // A safe command still passes.
+        assert!(ctx.can_execute_command("ls -la").is_ok());
+        assert!(ctx.can_execute_command("  cargo test").is_ok());
+    }
 
     #[test]
     fn test_context_creation() {
