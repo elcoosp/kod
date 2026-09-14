@@ -331,3 +331,72 @@ fn session_state_dir_lock() -> std::sync::MutexGuard<'static, ()> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
+
+
+/// Friendly-error coverage: each branch of KodApp::friendly_error must
+/// fire on the phrasing OpenAI-compatible servers actually produce,
+/// and the raw error text must always be preserved.
+#[test]
+fn test_friendly_error_advice() {
+    use kod_tui::app::KodApp;
+
+    // 1. Model not found — advice should name `ollama pull`.
+    let m = KodApp::friendly_error(
+        "provider error: model `codellama:13b` not found",
+        0,
+    );
+    assert!(m.contains("Error:"), "raw text preserved: {m}");
+    assert!(m.contains("ollama pull"), "model advice missing: {m}");
+
+    // 2. Context length — advice should name /compact.
+    let m = KodApp::friendly_error(
+        "400 Bad Request: maximum context length is 8192 tokens",
+        0,
+    );
+    assert!(m.contains("/compact"), "context advice missing: {m}");
+
+    // 3. Malformed tool call — advice should mention tool calling.
+    let m = KodApp::friendly_error(
+        "provider error: invalid tool call: expected value at line 1",
+        0,
+    );
+    assert!(
+        m.contains("tool call") && m.contains("tool calling"),
+        "tool-parse advice missing: {m}"
+    );
+
+    // 4. Connectivity — advice should mention ollama serve.
+    let m = KodApp::friendly_error(
+        "connection refused: 127.0.0.1:11434",
+        0,
+    );
+    assert!(m.contains("ollama serve"), "connection advice missing: {m}");
+
+    // 5. Auth — advice should mention api_key.
+    let m = KodApp::friendly_error("401 Unauthorized", 0);
+    assert!(m.contains("api_key"), "auth advice missing: {m}");
+
+    // 6. Timeout — advice should mention /retry.
+    let m = KodApp::friendly_error("request timed out after 300s", 0);
+    assert!(m.contains("/retry"), "timeout advice missing: {m}");
+
+    // 7. Unknown error — raw text preserved, no advice appended.
+    let m = KodApp::friendly_error("something else went wrong", 0);
+    assert_eq!(m, "Error: something else went wrong");
+
+    // 8. fail_count >= 2 appends the offline-mode footer to any branch.
+    let m = KodApp::friendly_error("connection refused", 3);
+    assert!(m.contains("offline mode"), "offline footer missing: {m}");
+
+    // 9. Specific-branch precedence: a message containing both
+    // "model not found" and "404" should pick the model-not-found
+    // advice, not the endpoint-not-found one.
+    let m = KodApp::friendly_error(
+        "404 Not Found: model not found in registry",
+        0,
+    );
+    assert!(
+        m.contains("ollama pull"),
+        "model-not-found should win over 404: {m}"
+    );
+}

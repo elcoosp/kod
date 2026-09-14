@@ -1256,9 +1256,37 @@ impl KodApp {
 
     /// Turn a raw provider/transport error into something the user can act
     /// on. The original text is always kept — advice is appended.
+    ///
+    /// Ordering matters: "model not found" is often reported by OpenAI-
+    /// compatible servers as a 404, and context-length errors sometimes
+    /// arrive wrapped in a `400` or `422`. Match the most specific
+    /// phrasing first.
     pub fn friendly_error(error: &str, fail_count: usize) -> String {
         let lower = error.to_lowercase();
-        let advice = if lower.contains("connection refused")
+        let advice = if lower.contains("model not found")
+            || lower.contains("model `")
+            || lower.contains("unknown model")
+            || lower.contains("no such model")
+            || lower.contains("model does not exist")
+        {
+            // The most common first-run mistake: config or `/model <name>`
+            // names a model the server has never pulled. The fix is one
+            // command, so name it.
+            " The model named in the config or `/model` is not on the server.              Pull it first (e.g. `ollama pull codellama:13b`), or run `/model <name>`              with a model the server already has."
+        } else if lower.contains("context length")
+            || lower.contains("context window")
+            || lower.contains("too many tokens")
+            || lower.contains("maximum context")
+            || lower.contains("exceeds the maximum")
+        {
+            " The prompt exceeded the model's context window. Run `/compact` to trim              the session, or start a fresh chat with `/clear`."
+        } else if (lower.contains("json") && lower.contains("parse"))
+            || lower.contains("invalid tool")
+            || lower.contains("malformed function")
+            || lower.contains("tool_call")
+        {
+            " The model returned a tool call that could not be parsed. Retrying              usually helps — if it persists, the model may not support tool calling              at all (try a larger or newer model, or a codellama/qwen2.5-coder build)."
+        } else if lower.contains("connection refused")
             || lower.contains("connection reset")
             || lower.contains("failed to connect")
             || lower.contains("connection closed")
