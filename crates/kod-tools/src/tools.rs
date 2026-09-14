@@ -156,9 +156,21 @@ impl Tool for ReadFileTool {
         // huge file (log, generated lock file, binary) can't exhaust
         // memory before the engine's prompt-side truncation kicks in.
         use std::io::Read as _;
-        let mut file = std::fs::File::open(&resolved).map_err(|e| {
-            KodError::Io(std::io::Error::new(e.kind(), describe_path_error(&resolved, &e)))
-        })?;
+        // Missing files are a model mistake, not a tool-level I/O
+        // failure. Return them as Ok(ToolResult::Error(...)) so the
+        // message reaches the model as the tool's answer, matching
+        // the directory case above. The previous code propagated
+        // KodError::Io, which the engine turns into `error: <msg>` in
+        // the tool result block — same content, but a different shape
+        // in the type system, and inconsistent with how directories
+        // were handled. One shape for "the model should reason about
+        // this," one shape for "the tool itself failed."
+        let mut file = match std::fs::File::open(&resolved) {
+            Ok(f) => f,
+            Err(e) => {
+                return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
+            }
+        };
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
         file.by_ref()
             .take(MAX_READ_BYTES as u64 + 1)

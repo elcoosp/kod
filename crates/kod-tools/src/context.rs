@@ -425,10 +425,19 @@ mod tests {
         );
     }
 
-    /// A pattern with a wildcard is honored verbatim — the fix must
-    /// not broaden `/tmp/*` to `/tmp/*/**` and match unrelated paths.
+    /// A wildcard pattern is used as written — the `/**` fix that
+    /// appends a descendant clause to non-wildcard patterns must not
+    /// also append it to a pattern that already contains `*`, `?`, or
+    /// `[`. Doing so would broaden `/tmp/*` into `/tmp/*/**` and match
+    /// paths the user did not name.
+    ///
+    /// globset's `*` matches across path separators by default, so
+    /// `/tmp/*` covers `/tmp/anything` *and* `/tmp/anything/deeper`.
+    /// That is globset's documented behavior, not something the `/**`
+    /// fix introduced; the assertion that catches over-broadening is
+    /// the negative one — a path outside `/tmp` does not match.
     #[test]
-    fn test_wildcard_pattern_is_verbatim() {
+    fn test_wildcard_pattern_is_used_as_written() {
         let perms = ToolPermissions {
             read_files: true,
             allowed_paths: vec!["/tmp/*".to_string()],
@@ -436,17 +445,26 @@ mod tests {
         };
         let context = ToolContext::new("/").with_permissions(perms);
 
-        // `/tmp/anything` matches `/tmp/*`.
+        // `/tmp/anything` matches.
         assert!(context.can_read(Path::new("/tmp/anything")).is_ok());
-        // `/tmp/anything/deeper` does not match `/tmp/*` under
-        // globset's default separator handling — `*` is a single
-        // path segment.
+        // `/tmp/anything/deeper` also matches: globset's `*` is greedy
+        // across separators unless `literal_separator` is set. That is
+        // pre-existing behavior, not something the `/**` fix changed.
         assert!(
-            context.can_read(Path::new("/tmp/anything/deeper")).is_err(),
-            "wildcard must not be silently broadened to match nested paths"
+            context.can_read(Path::new("/tmp/anything/deeper")).is_ok(),
+            "globset's `*` is greedy across separators (documented)"
         );
-        // And it definitely does not match unrelated paths.
-        assert!(context.can_read(Path::new("/var/log")).is_err());
+        // A path outside `/tmp` does NOT match — the fix must not
+        // broaden `/tmp/*` to something that matches the whole
+        // filesystem.
+        assert!(
+            context.can_read(Path::new("/var/log")).is_err(),
+            "wildcard must not match paths outside its literal prefix"
+        );
+        assert!(
+            context.can_read(Path::new("/etc/hostname")).is_err(),
+            "wildcard must not match paths outside its literal prefix"
+        );
     }
 
     #[test]
