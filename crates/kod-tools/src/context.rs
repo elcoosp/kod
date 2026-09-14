@@ -39,15 +39,54 @@ impl ToolContext {
         self
     }
 
-    /// Resolve a path relative to working directory
-    pub fn resolve_path(&self, path: &str) -> PathBuf {
-        let path = Path::new(path);
-
-        if path.is_absolute() {
-            path.to_path_buf()
+    /// Resolve `path` relative to the working directory, canonicalize it,
+    /// and refuse anything that escapes the working directory.
+    ///
+    /// This is the single choke point where traversal is blocked. Even if
+    /// `allowed_paths` is empty (which `is_path_allowed` treats as "allow
+    /// everything"), a request like `read_file { "path": "../../etc/passwd" }`
+    /// is rejected here because the canonical form lands outside
+    /// `working_dir`.
+    ///
+    /// Files that do not exist yet (e.g. the target of a `write_file`
+    /// creating a new file) are resolved by canonicalizing the deepest
+    /// existing ancestor and re-appending the rest, so creation still
+    /// works while traversal stays blocked.
+    pub fn resolve_path(&self, path: &str) -> Result<PathBuf> {
+        let raw = Path::new(path);
+        let joined = if raw.is_absolute() {
+            raw.to_path_buf()
         } else {
-            self.working_dir.join(path)
+            self.working_dir.join(raw)
+        };
+
+        let canonical = match std::fs::canonicalize(&joined) {
+            Ok(c) => c,
+            Err(_) => {
+                let parent = joined.parent().ok_or_else(|| KodError::InvalidParameters {
+                    reason: format!("Path has no parent: {}", joined.display()),
+                })?;
+                let name = joined.file_name().ok_or_else(|| KodError::InvalidParameters {
+                    reason: format!("Path has no file name: {}", joined.display()),
+                })?;
+                let canon_parent = std::fs::canonicalize(parent).map_err(KodError::Io)?;
+                canon_parent.join(name)
+            }
+        };
+
+        let root = std::fs::canonicalize(&self.working_dir).map_err(KodError::Io)?;
+        if !canonical.starts_with(&root) {
+            return Err(KodError::PermissionDenied {
+                action: "resolve path".to_string(),
+                reason: format!(
+                    "Path escapes the working directory: {} -> {}",
+                    path,
+                    canonical.display()
+                ),
+            });
         }
+
+        Ok(canonical)
     }
 
     /// Check if path is allowed by permissions
@@ -180,13 +219,27 @@ mod tests {
 
     #[test]
     fn test_resolve_path() {
-        let context = ToolContext::new("/tmp");
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let root = temp_dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("subdir")).unwrap();
+        std::fs::write(root.join("file.txt"), "x").unwrap();
 
-        let resolved = context.resolve_path("/abs/path");
-        assert_eq!(resolved, PathBuf::from("/abs/path"));
+        let context = ToolContext::new(&root);
 
-        let resolved = context.resolve_path("relative/path");
-        assert_eq!(resolved, PathBuf::from("/tmp/relative/path"));
+        // Existing relative file resolves to a canonical path inside root.
+        let resolved = context.resolve_path("file.txt").unwrap();
+        assert!(resolved.starts_with(&root), "got {}", resolved.display());
+        assert!(resolved.ends_with("file.txt"));
+
+        // Existing subdir path also resolves.
+        let resolved = context.resolve_path("subdir").unwrap();
+        assert!(resolved.starts_with(&root), "got {}", resolved.display());
+        assert!(resolved.ends_with("subdir"));
+
+        // Non-existent file inside: allowed (write_file create path).
+        let resolved = context.resolve_path("new_file.txt").unwrap();
+        assert!(resolved.starts_with(&root), "got {}", resolved.display());
+        assert!(resolved.ends_with("new_file.txt"));
     }
 
     #[test]
@@ -238,5 +291,31 @@ mod tests {
         // Forbidden path
         let result = context.can_read(Path::new("/tmp/allowed/forbidden/secret.txt"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_path_rejects_traversal() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let root = temp_dir.path().canonicalize().unwrap();
+        std::fs::write(root.join("inside.txt"), "ok").unwrap();
+
+        let context = ToolContext::new(&root);
+
+        // A `..` climb must not escape the working directory.
+        let escape = format!("{}/../outside.txt", root.display());
+        let result = context.resolve_path(&escape);
+        assert!(
+            result.is_err(),
+            "expected traversal rejection, got {:?}",
+            result
+        );
+
+        // An absolute path outside the working directory must be rejected.
+        let result = context.resolve_path("/etc/passwd");
+        assert!(result.is_err(), "expected /etc/passwd rejection, got {:?}", result);
+
+        // Legitimate inside path still works.
+        let ok = context.resolve_path("inside.txt").unwrap();
+        assert!(ok.starts_with(&root));
     }
 }

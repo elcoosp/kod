@@ -36,3 +36,5 @@ dev: build
 # Install the CLI binary
 install:
     cargo install --path crates/kod-cli
+wr:
+    watchexec -w ./wr.sh --clear -r "./wr.sh"

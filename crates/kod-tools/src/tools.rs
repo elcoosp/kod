@@ -61,7 +61,7 @@ impl Tool for ReadFileTool {
                 reason: "Missing 'path' parameter".to_string(),
             })?;
 
-        let resolved = context.resolve_path(path);
+        let resolved = context.resolve_path(path)?;
         context.can_read(&resolved)?;
 
         let content = std::fs::read_to_string(&resolved).map_err(KodError::Io)?;
@@ -143,7 +143,7 @@ impl Tool for WriteFileTool {
             })?;
         let append = params["append"].as_bool().unwrap_or(false);
 
-        let resolved = context.resolve_path(path);
+        let resolved = context.resolve_path(path)?;
         context.can_write(&resolved)?;
 
         if append {
@@ -299,7 +299,7 @@ impl Tool for ListFilesTool {
             })?;
         let recursive = params["recursive"].as_bool().unwrap_or(false);
 
-        let resolved = context.resolve_path(path);
+        let resolved = context.resolve_path(path)?;
         context.can_read(&resolved)?;
 
         let mut files: Vec<String> = gitaware_walk(&resolved, recursive)
@@ -430,7 +430,7 @@ impl Tool for GrepTool {
             })?;
         let recursive = params["recursive"].as_bool().unwrap_or(false);
 
-        let resolved = context.resolve_path(path);
+        let resolved = context.resolve_path(path)?;
         context.can_read(&resolved)?;
 
         let glob = if recursive {
@@ -541,7 +541,7 @@ impl Tool for FileInfoTool {
                 reason: "Missing 'path' parameter".to_string(),
             })?;
 
-        let resolved = context.resolve_path(path);
+        let resolved = context.resolve_path(path)?;
         context.can_read(&resolved)?;
 
         let metadata = std::fs::metadata(&resolved).map_err(KodError::Io)?;

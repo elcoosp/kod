@@ -124,67 +124,110 @@ impl TaskRouter {
         }
     }
 
-    /// Classify a task based on its content
+    /// Classify a task based on its content.
+    ///
+    /// Order matters: specific intents (debugging, code-mod, testing,
+    /// docs, research) are checked before broad planning verbs (design,
+    /// implement, create, build). Without this ordering, a request like
+    /// "test the create function" was misclassified as Complex because
+    /// "create" matched first; "debug the created function" was likewise
+    /// Complex instead of Debugging.
+    ///
+    /// Matching is whole-word, not substring: "prefix" no longer matches
+    /// "fix", "remove" no longer matches "move", "testify" no longer
+    /// matches "test".
     pub async fn classify_task(&self, input: &str) -> Result<TaskType> {
-        let input_lower = input.to_lowercase();
-
-        // Complex task detection (checked early to catch broad planning terms)
-        if input_lower.contains("design")
-            || input_lower.contains("architect")
-            || input_lower.contains("implement")
-            || input_lower.contains("create")
-            || input_lower.contains("build")
-            || input_lower.contains("complete")
-            || input_lower.contains("analyze")
-        {
-            return Ok(TaskType::Complex);
+        // Case-insensitive whole-word substring test.
+        fn contains_word(haystack: &str, needle: &str) -> bool {
+            if needle.is_empty() {
+                return false;
+            }
+            let mut start = 0;
+            while let Some(rel) = haystack[start..].find(needle) {
+                let abs = start + rel;
+                let before_ok = abs == 0
+                    || !haystack.as_bytes()[abs - 1].is_ascii_alphanumeric();
+                let after_idx = abs + needle.len();
+                let after_ok = after_idx >= haystack.len()
+                    || !haystack.as_bytes()[after_idx].is_ascii_alphanumeric();
+                if before_ok && after_ok {
+                    return true;
+                }
+                start = abs + 1;
+                if start >= haystack.len() {
+                    break;
+                }
+            }
+            false
         }
 
-        // Debugging detection
-        if input_lower.contains("debug")
-            || input_lower.contains("error")
-            || input_lower.contains("traceback")
-            || input_lower.contains("panic")
-            || input_lower.contains("exception")
+        let input_lower = input.to_lowercase();
+
+        // 1. Debugging
+        if ["debug", "error", "traceback", "panic", "exception"]
+            .iter()
+            .copied()
+            .any(|w| contains_word(&input_lower, w))
         {
             return Ok(TaskType::Debugging);
         }
 
-        // Code modification detection
-        if input_lower.contains("refactor")
-            || input_lower.contains("fix")
-            || input_lower.contains("rename")
-            || input_lower.contains("move")
-            || input_lower.contains("extract")
-            || input_lower.contains("inline")
-            || input_lower.contains("modify")
-            || input_lower.contains("update")
+        // 2. Code modification
+        if [
+            "refactor", "fix", "rename", "move", "extract", "inline", "modify", "update",
+        ]
+        .iter()
+        .copied()
+        .any(|w| contains_word(&input_lower, w))
         {
             return Ok(TaskType::CodeModification);
         }
 
-        // Testing detection
-        if input_lower.contains("test") || input_lower.contains("verify") {
+        // 3. Testing
+        if ["test", "tests", "testing", "verify"]
+            .iter()
+            .copied()
+            .any(|w| contains_word(&input_lower, w))
+        {
             return Ok(TaskType::Testing);
         }
 
-        // Research detection
-        if input_lower.contains("research")
-            || input_lower.contains("find")
-            || input_lower.contains("search")
-            || input_lower.contains("look up")
-            || input_lower.contains("investigate")
+        // 4. Documentation
+        if [
+            "document", "documentation", "docs", "readme", "comment", "comments",
+        ]
+        .iter()
+        .copied()
+        .any(|w| contains_word(&input_lower, w))
+        {
+            return Ok(TaskType::Documentation);
+        }
+
+        // 5. Research
+        if ["research", "find", "search", "investigate", "look up"]
+            .iter()
+            .copied()
+            .any(|w| contains_word(&input_lower, w))
         {
             return Ok(TaskType::Research);
         }
 
-        // Documentation detection
-        if input_lower.contains("document")
-            || input_lower.contains("docs")
-            || input_lower.contains("readme")
-            || input_lower.contains("comment")
+        // 6. Complex — broad planning verbs, checked LAST so specific
+        //    intents win.
+        if [
+            "design",
+            "architect",
+            "implement",
+            "create",
+            "build",
+            "complete",
+            "analyze",
+        ]
+        .iter()
+        .copied()
+        .any(|w| contains_word(&input_lower, w))
         {
-            return Ok(TaskType::Documentation);
+            return Ok(TaskType::Complex);
         }
 
         // Default to simple
