@@ -1,6 +1,6 @@
 //! Memory manager - unified interface for all memory types.
 //!
-//! Coordinates short-term, long-term, and episodic memory
+//! Coordinates short-term and long-term memory
 //! to provide a single API for storing and retrieving context.
 
 use crate::{long_term::LongTermMemory, short_term::ShortTermMemory};
@@ -160,10 +160,6 @@ impl MemoryManager {
     /// - Working memory is the most recent short-term entries (recency).
     /// - Long-term memory is matched by word overlap — see
     ///   [`MemoryManager::search_long_term_relevant`].
-    /// - Episodic memory is filtered by case-insensitive substring match
-    ///   on content — it is *not* embedding-based today, because the
-    ///   manager does not yet compute real embeddings. When a real
-    ///   embedding model is wired in, this method should switch to
     pub async fn retrieve_context(&self, query: &str) -> Result<MemoryContext> {
         let mut context = MemoryContext {
             working_memory: self.short_term.get_recent(10),

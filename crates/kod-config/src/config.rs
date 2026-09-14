@@ -1,20 +1,19 @@
 //! Main configuration for KOD.
 
-use crate::{LlmConfig, MemoryConfig, SkillsConfig, SwarmConfig};
+use crate::{LlmConfig, MemoryConfig, SkillsConfig};
 use kod_error::{KodError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 // `#[serde(default)]` at the container level: a config.toml that omits
-// a section entirely (e.g. no `[swarm]`) fills that section from
-// KodConfig::default() instead of failing with "missing field swarm".
+// a section entirely (e.g. no `[memory]`) fills that section from
+// KodConfig::default() instead of failing with "missing field memory".
 // This is the common hand-edited config shape — write the block you
 // care about, leave the rest out.
 #[serde(default)]
 pub struct KodConfig {
     pub llm: LlmConfig,
-    pub swarm: SwarmConfig,
     pub memory: MemoryConfig,
     pub skills: SkillsConfig,
     pub performance: PerformanceConfig,
@@ -214,7 +213,6 @@ mod tests {
     fn test_default_config() {
         let config = KodConfig::default();
         assert_eq!(config.llm.model, "codellama:13b");
-        assert_eq!(config.swarm.max_agents, 5);
     }
 
     #[test]
@@ -265,7 +263,7 @@ mod tests {
     /// A config.toml with only a subset of sections (or a subset of
     /// fields within a section) must parse. Before `#[serde(default)]`
     /// at container level, a file containing only `[llm]` failed with
-    /// "missing field `swarm`", and a file containing only `[llm]
+    /// "missing field `memory`", and a file containing only `[llm]
     /// model = "…"` additionally failed with "missing field
     /// `provider`". Both are the common hand-edited shape.
     #[test]
@@ -273,7 +271,6 @@ mod tests {
         // Empty file: every field defaults.
         let cfg: KodConfig = toml::from_str("").unwrap();
         assert_eq!(cfg.llm.model, "codellama:13b");
-        assert_eq!(cfg.swarm.max_agents, 5);
         assert_eq!(cfg.memory.short_term_capacity, 100);
         assert_eq!(cfg.skills.max_skills_per_query, 3);
         assert_eq!(cfg.performance.max_memory_mb, 150);
@@ -287,7 +284,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cfg.llm.model, "llama3.1");
-        assert_eq!(cfg.swarm.max_agents, 5);
         assert_eq!(cfg.memory.short_term_capacity, 100);
 
         // A single field inside a section: siblings default.
@@ -314,7 +310,7 @@ mod tests {
     /// A config.toml with only a subset of sections (or a subset of
     /// fields within a section) must parse. Before `#[serde(default)]`
     /// at container level, a file containing only `[llm]` failed with
-    /// "missing field `swarm`", and a file containing only `[llm]
+    /// "missing field `memory`", and a file containing only `[llm]
     /// model = "…"` additionally failed with "missing field
     /// `provider`". Both are the common hand-edited shape.
     #[test]

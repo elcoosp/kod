@@ -1,4 +1,4 @@
-use kod_config::{KodConfig, LlmConfig, MemoryConfig, SkillsConfig, SwarmConfig};
+use kod_config::{KodConfig, LlmConfig, MemoryConfig, SkillsConfig};
 use kod_core::config::EngineConfig;
 use tempfile::TempDir;
 
@@ -8,7 +8,6 @@ fn test_engine_config_from_kod_config() {
 
     let kod_config = KodConfig {
         llm: LlmConfig::default(),
-        swarm: SwarmConfig::default(),
         memory: MemoryConfig::default(),
         skills: SkillsConfig::default(),
         ..Default::default()
@@ -18,14 +17,12 @@ fn test_engine_config_from_kod_config() {
 
     assert_eq!(engine_config.working_dir, temp_dir.path().to_path_buf());
     assert!(engine_config.enable_memory);
-    assert!(engine_config.enable_memory);
 }
 
 #[test]
 fn test_engine_config_defaults() {
     let config = EngineConfig::default();
 
-    assert!(config.enable_memory);
     assert!(config.enable_memory);
     assert_eq!(config.max_skills_per_query, 3);
 }

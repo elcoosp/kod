@@ -51,7 +51,7 @@ The KOD workspace is organized into 12 crates:
 crates/
   kod-types/          -- Core types (IDs, messages, tools, skills, memory)
   kod-error/          -- Error types (KodError)
-  kod-config/         -- Configuration (KodConfig, LLM, Swarm, Memory, Skills)
+  kod-config/         -- Configuration (KodConfig, LLM, Memory, Skills)
   kod-provider/       -- Provider traits (LlmProvider trait, GenerationOptions)
   kod-provider-openai/ -- OpenAI-compatible LLM provider (Ollama, LM Studio, MLX, vLLM)
   kod-skills/         -- Skill loading, parsing, matching, hot-reload watcher
@@ -349,7 +349,7 @@ cargo test -p kod-core --test context    # EngineContext builder, prompt generat
 - `engine.set_provider(Arc<dyn LlmProvider>)` -- inject an LLM provider
 - `engine.router() -> &TaskRouter`
 - `engine.run_maintenance()` / `engine.load_skills(&path)`
-- `RouterConfig` fields: `working_dir`, `enable_swarm`, `enable_memory`, `max_skills_per_query`
+- `RouterConfig` fields: `working_dir`, `enable_memory`, `max_skills_per_query`, `context_window`
 - `TaskRouter::new(config, db_path)` -- create router (also creates `MemoryManager` if `enable_memory`)
 - `router.classify_task(&input) -> Result<TaskType>` -- keyword-based classification
 - `router.process_input(&input) -> Result<TaskResponse>`
@@ -368,7 +368,7 @@ cargo test -p kod-core --test context    # EngineContext builder, prompt generat
 - **Documentation**: "document", "docs", "readme", "comment"
 - Default: `Simple`
 
-**TaskResponse fields:** `task_type`, `text: Option<String>`, `tool_calls`, `tool_results`, `skills_used`, `memory_used`, `swarm_used`, `execution_time_ms`
+**TaskResponse fields:** `task_type`, `text: Option<String>`, `tool_calls`, `tool_results`, `skills_used`, `memory_used`, `execution_time_ms`
 
 **Test files:**
 - `engine.rs` -- engine creation, process, provider setup, maintenance, shutdown
@@ -445,7 +445,7 @@ Running KOD test suite...
 **In-process test APIs used in integration tests:**
 - `kod_core::engine::KodEngine::new(RouterConfig, db_path)`
 - `kod_core::router::TaskRouter::new(RouterConfig, db_path)`
-- `kod_core::router::RouterConfig { working_dir, enable_swarm, enable_memory, max_skills_per_query }`
+- `kod_core::router::RouterConfig { working_dir, enable_memory, max_skills_per_query, context_window }`
 - `kod_config::KodConfig::default()` / `KodConfig::load_from(path)` / `KodConfig::load_default()`
 - `kod_skills::SkillLoader::new(&skills_dir)` + `loader.load_all()`
 - `kod_skills::SkillMatcher::new()` + `matcher.add_skill(skill)` + `matcher.find_relevant_skills(query)`
@@ -496,7 +496,7 @@ cargo bench --workspace
 cargo bench -- skill_loading      # Loading 10/50/100/500 skills
 cargo bench -- skill_matching     # Matching against 10/50/100 skills
 cargo bench -- memory_operations  # short_term_store, short_term_retrieve
-cargo bench -- agent_operations   # agent_creation, swarm_creation
+cargo bench -- agent_operations   # agent_creation
 cargo bench -- task_classification # classify various input strings
 cargo bench -- task_processing   # process_input for different task types
 ```
@@ -508,7 +508,7 @@ cargo bench -- task_processing   # process_input for different task types
 | `skill_loading`      | `load_skills` (10, 50, 100, 500 skills)                                   |
 | `skill_matching`     | `match_skills` (10, 50, 100 skills)                                       |
 | `memory_operations`  | `short_term_store`, `short_term_retrieve`                                 |
-| `agent_operations`   | `agent_creation`, `swarm_creation`                                        |
+| `agent_operations`   | `agent_creation`                                                          |
 | `task_classification`| `classify` (Simple, CodeModification, Debugging, Research, Testing, Docs, Complex) |
 | `task_processing`    | `process` (simple, code_mod, debug, research)                             |
 
@@ -538,7 +538,6 @@ let temp_dir = TempDir::new().unwrap();
 let db_path = temp_dir.path().join("test.redb");
 let config = RouterConfig {
     working_dir: temp_dir.path().to_path_buf(),
-    enable_swarm: false,
     enable_memory: true,
     max_skills_per_query: 3,
 };
@@ -609,7 +608,7 @@ cargo test --workspace -- --last-failed
 ```
 
 ### Ollama not reachable:
-Tests that create a `TaskRouter` with `enable_memory: false` and `enable_swarm: false` do not require Ollama. Tests that call `engine.process()` without a provider will get a router-built response (text like "Processing simple task: ...").
+Tests that create a `TaskRouter` with `enable_memory: false` do not require Ollama. Tests that call `engine.process()` without a provider installed get `InvalidState("No LLM provider configured…")` — install a no-op provider to exercise the pipeline.
 
 ```bash
 # Skip tests that need external services

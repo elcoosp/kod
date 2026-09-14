@@ -195,19 +195,37 @@ impl LlmProvider for OpenAICompatProvider {
     }
 
     async fn list_models(&self) -> Result<Vec<String>> {
+        let url = format!("{}/models", self.base_url);
         let response = self
             .client
-            .get(format!("{}/models", self.base_url))
+            .get(&url)
             .bearer_auth(&self.api_key)
             .send()
             .await
-            .map_err(|e| KodError::Provider(format!("list models request failed: {e}")))?;
+            .map_err(|e| {
+                // Include the URL. A misconfigured `base_url` (missing
+                // `/v1`, wrong port, http vs https) is the most common
+                // cause of this failure, and the raw transport error
+                // — "connection refused" — does not say *what* it
+                // tried to reach. The message a user reads in the TUI
+                // now names the endpoint so the config file is the
+                // obvious next place to look.
+                KodError::Provider(format!(
+                    "could not reach the model server at {url}: {e}"
+                ))
+            })?;
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
+            // Trim the body: an HTML error page from a wrong port is
+            // hundreds of lines, and the first few carry the meaning.
+            let body_short = if body.len() > 400 {
+                format!("{}…", &body[..body.floor_char_boundary(400)])
+            } else {
+                body
+            };
             return Err(KodError::Provider(format!(
-                "list models failed with status {}: {}",
-                status, body
+                "list models failed: {url} returned {status}: {body_short}"
             )));
         }
         let body: serde_json::Value = response

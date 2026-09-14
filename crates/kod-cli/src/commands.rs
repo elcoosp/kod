@@ -411,48 +411,74 @@ pub async fn run_config_display() -> Result<()> {
     println!("  Max Tokens: {}", config.llm.max_tokens);
     println!("  Temperature: {}", config.llm.temperature);
     println!();
-    println!("Swarm:");
-    println!("  Max Agents: {}", config.swarm.max_agents);
-    println!("  Default Mode: {:?}", config.swarm.default_mode);
-    println!();
     println!("Memory:");
     println!(
         "  Short-Term Capacity: {}",
         config.memory.short_term_capacity
     );
-    // Effective path, not the raw Option. `Long-Term DB Path: None`
-    // was technically the config value but told the user nothing —
-    // the engine opens `~/.kod/data/kod.redb` in that case, and a
-    // user inspecting their setup needs to see where the file
-    // actually lives.
-    match config.memory_db_path() {
-        Ok(p) => println!("  Long-Term DB Path: {}", p.display()),
-        Err(_) => println!("  Long-Term DB Path: (could not determine)"),
-    }
-    println!();
-    println!("Skills:");
-    // Same reasoning: `Skills Directory: default` said nothing. Show
-    // the directories discovery actually scans, marking which exist
-    // and which do not — the same list `kod skills` loads from.
-    match config.skills_dirs() {
-        Ok(dirs) => {
-            if dirs.is_empty() {
-                println!("  Skills Directories: (none)");
-            } else {
-                println!("  Skills Directories:");
-                for d in &dirs {
-                    let marker = if d.is_dir() { "✓" } else { "·" };
-                    println!("    {} {}", marker, d.display());
-                }
-                println!("    (✓ = exists and is scanned, · = not present)");
-            }
-        }
-        Err(_) => println!("  Skills Directories: (could not determine)"),
-    }
     println!(
         "  Max Skills Per Query: {}",
         config.skills.max_skills_per_query
     );
+
+    // Every path KOD reads or writes, in one place.
+    //
+    // The three subsystems do not agree on a root directory: config
+    // uses the platform-native location (dirs::config_dir, e.g.
+    // ~/Library/Application Support/kod on macOS, ~/.config/kod on
+    // Linux); the memory database and TUI session state use ~/.kod/;
+    // skill discovery checks four conventions including the
+    // Claude-style ~/.agents/skills. Rather than re-home any of them
+    // — each choice is defensible, and moving a directory breaks
+    // existing installs — name them here, once, so a user asking
+    // "where does KOD put things?" does not have to know which
+    // subsystem follows which convention.
+    println!();
+    println!("Paths:");
+
+    // Config file.
+    match KodConfig::config_dir() {
+        Ok(dir) => {
+            let p = dir.join("config.toml");
+            let mark = if p.exists() { "✓" } else { "·" };
+            println!("  {} config:  {}", mark, p.display());
+        }
+        Err(_) => println!("  · config:  (could not determine)"),
+    }
+
+    // Memory database.
+    match config.memory_db_path() {
+        Ok(p) => {
+            let mark = if p.exists() { "✓" } else { "·" };
+            println!("  {} memory:  {}", mark, p.display());
+        }
+        Err(_) => println!("  · memory:  (could not determine)"),
+    }
+
+    // TUI session + history (opt-in — they exist only after a TUI run).
+    if let Some(p) = kod_tui::app::KodApp::session_path() {
+        let mark = if p.exists() { "✓" } else { "·" };
+        println!("  {} session: {}", mark, p.display());
+    }
+    if let Some(p) = kod_tui::app::KodApp::history_path() {
+        let mark = if p.exists() { "✓" } else { "·" };
+        println!("  {} history: {}", mark, p.display());
+    }
+
+    // Skills directories — one line each, marked the same way. The
+    // label is first-match-wins order used by discovery, so a user
+    // reading the list sees the shadowing rules.
+    match config.skills_dirs() {
+        Ok(dirs) => {
+            for (i, d) in dirs.iter().enumerate() {
+                let mark = if d.is_dir() { "✓" } else { "·" };
+                let label = if i == 0 { "skills: " } else { "        " };
+                println!("  {} {}{}", mark, label, d.display());
+            }
+        }
+        Err(_) => println!("  · skills:  (could not determine)"),
+    }
+    println!("  (✓ = exists, · = not present; skills are scanned top to bottom)");
 
     Ok(())
 }

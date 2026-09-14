@@ -1,4 +1,4 @@
-//! Memory system for multi-layer storage (short-term, long-term, episodic).
+//! Memory system for multi-layer storage (short-term and long-term).
 //!
 //! This crate provides different memory backends with a unified interface
 //! for storing and retrieving context.
