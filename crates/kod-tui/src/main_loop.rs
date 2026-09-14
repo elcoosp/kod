@@ -22,8 +22,13 @@ use std::io::Stdout;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Help text for the `/help` command
-const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/model <name> — switch model\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/quit — quit kod\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k scroll · wheel scrolls · q quit · j/k scroll · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
+/// Help text for the `/help` command.
+///
+/// Kept in sync with `kod_tui::app::SLASH_COMMANDS` by
+/// `test_slash_help_lists_every_command` — adding a command to
+/// `SLASH_COMMANDS` without updating this string fails the test, so
+/// the help output and the `/` autocomplete cannot drift apart.
+const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/quit — quit kod\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
 
 /// Main TUI application loop
 pub struct TuiLoop {
@@ -1313,6 +1318,57 @@ mod tests {
 
         tui.handle_event(Event::Key(KeyCode::Escape)).await.unwrap();
         assert_eq!(tui.app().input_mode(), &InputMode::Normal);
+    }
+
+    /// Every entry in `SLASH_COMMANDS` must appear in `SLASH_HELP`, so
+    /// adding a command to the autocomplete without documenting it
+    /// fails this test. The previous SLASH_HELP was missing `/debug`
+    /// for several commits — this pins the invariant.
+    #[test]
+    fn test_slash_help_lists_every_command() {
+        use crate::app::SLASH_COMMANDS;
+        let help = SLASH_HELP;
+        for cmd in SLASH_COMMANDS {
+            assert!(
+                help.contains(cmd.name),
+                "SLASH_COMMANDS entry {:?} is not mentioned in SLASH_HELP",
+                cmd.name
+            );
+        }
+        // Every `/`-leading token inside SLASH_HELP should also be a
+        // known command, so a typo'd name does not linger. Split on
+        // whitespace, keep tokens starting with '/', strip trailing
+        // punctuation from each. Compare against the SLASH_COMMANDS set.
+        let known: std::collections::HashSet<&'static str> =
+            SLASH_COMMANDS.iter().map(|c| c.name).collect();
+        for token in help.split_whitespace() {
+            let trimmed = token.trim_end_matches(|c: char| {
+                !c.is_ascii_alphanumeric() && c != '/' && c != '-'
+            });
+            if trimmed.starts_with('/') && trimmed.len() > 1 {
+                assert!(
+                    known.contains(trimmed),
+                    "SLASH_HELP mentions {:?} which is not in SLASH_COMMANDS",
+                    trimmed
+                );
+            }
+        }
+    }
+
+    /// The idle hint line must name `f` as the search key, matching the
+    /// default keybinding, and must not claim `/` starts a search.
+    #[tokio::test]
+    async fn test_idle_hint_names_search_key_correctly() {
+        let tui = TuiLoop::new();
+        let hint = tui.app().hint_line();
+        assert!(
+            hint.contains("f search"),
+            "hint should name the f key for search: {hint}"
+        );
+        assert!(
+            !hint.contains("/ search"),
+            "hint should not claim / starts a search: {hint}"
+        );
     }
 
     /// `/theme light` must actually change the palette and report the

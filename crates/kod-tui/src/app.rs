@@ -2209,7 +2209,10 @@ impl KodApp {
         } else if self.generating {
             "Esc cancel · /steer redirect · ? help".to_string()
         } else {
-            "i type · / command · j/k scroll · t tools · / search · ? help · q quit".to_string()
+            // `/ search` used to sit here, but the search key is `f`
+            // (SearchPrefix); `/` opens the command slot. Name the
+            // actual key so the hint is not a small lie.
+            "i type · / command · j/k scroll · t tools · f search · ? help · q quit".to_string()
         }
     }
 

@@ -2,23 +2,23 @@
 set -uo pipefail
 
 COMPILE_OK=true
-APP=crates/kod-tui/src/app.rs
 LOOP=crates/kod-tui/src/main_loop.rs
+APP=crates/kod-tui/src/app.rs
 
-for f in "$APP" "$LOOP"; do
+for f in "$LOOP" "$APP"; do
     if [ ! -f "$f" ]; then
         echo "ERROR: missing $f — run from the kod workspace root"
         exit 1
     fi
 done
 
-echo "Fixing /theme unknown-name lie; theme hint in help text"
+echo "Fixing /help text; hint_line search key; invariant test"
 
-python3 - "$APP" "$LOOP" << 'PYEOF'
+python3 - "$LOOP" "$APP" << 'PYEOF'
 import os
 import sys
 
-app, loop = sys.argv[1], sys.argv[2]
+loop, app = sys.argv[1], sys.argv[2]
 
 def patch(path, old, new, label, expect=1):
     with open(path, "r") as f:
@@ -38,166 +38,98 @@ def patch(path, old, new, label, expect=1):
     print(f"Patched {path}: {label}")
 
 # ========================================================================
-# 1. KodApp::set_theme returns the previous name, not needed; add a
-#    try_set_theme that reports whether a name matched a real theme.
+# 1. SLASH_HELP: add /debug, /model no-arg hint, fix duplicate "j/k scroll"
+# ========================================================================
+patch(
+    loop,
+    '''/// Help text for the `/help` command
+const SLASH_HELP: &str = "Commands:\\n/help — show this help\\n/clear — clear chat (asks confirm)\\n/undo — restore last /clear\\n/model <name> — switch model\\n/skills — list loaded skills\\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\\n/steer <instruction> — redirect the running prompt after its current tool call\\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\\n/compact — compact session history now\\n/retry — resend the last prompt\\n/search [<text>] — search chat (n/N next/prev, Esc clears)\\n/copy — copy last assistant reply to clipboard (also `y`)\\n/theme [dark|light] — cycle or set theme\\n/tools — toggle tool-output visibility (also `t`)\\n/quit — quit kod\\n\\nWhile a prompt runs, typing + Enter steers it (same as /steer).\\nKeys: i insert · j/k scroll · wheel scrolls · q quit · j/k scroll · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";''',
+    '''/// Help text for the `/help` command.
+///
+/// Kept in sync with `kod_tui::app::SLASH_COMMANDS` by
+/// `test_slash_help_lists_every_command` — adding a command to
+/// `SLASH_COMMANDS` without updating this string fails the test, so
+/// the help output and the `/` autocomplete cannot drift apart.
+const SLASH_HELP: &str = "Commands:\\n/help — show this help\\n/clear — clear chat (asks confirm)\\n/undo — restore last /clear\\n/model [<name>] — switch model; no argument lists the server's models\\n/skills — list loaded skills\\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\\n/steer <instruction> — redirect the running prompt after its current tool call\\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\\n/compact — compact session history now\\n/retry — resend the last prompt (also `r`)\\n/search [<text>] — search chat (n/N next/prev, Esc clears)\\n/copy — copy last assistant reply to clipboard (also `y`)\\n/theme [dark|light] — cycle or set theme\\n/tools — toggle tool-output visibility (also `t`)\\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\\n/quit — quit kod\\n\\nWhile a prompt runs, typing + Enter steers it (same as /steer).\\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";''',
+    "SLASH_HELP update",
+)
+
+# ========================================================================
+# 2. app.rs hint_line: "/ search" is wrong; the search key is `f`
 # ========================================================================
 patch(
     app,
-    '''    pub fn theme(&self) -> &Theme {
-        &self.theme
-    }
+    '''        } else {
+            "i type · / command · j/k scroll · t tools · / search · ? help · q quit".to_string()
+        }''',
+    '''        } else {
+            // `/ search` used to sit here, but the search key is `f`
+            // (SearchPrefix); `/` opens the command slot. Name the
+            // actual key so the hint is not a small lie.
+            "i type · / command · j/k scroll · t tools · f search · ? help · q quit".to_string()
+        }''',
+    "hint_line search key",
+)
 
-    pub fn set_theme(&mut self, theme: Theme) {
-        self.theme = theme;
-    }''',
-    '''    pub fn theme(&self) -> &Theme {
-        &self.theme
-    }
-
-    pub fn set_theme(&mut self, theme: Theme) {
-        self.theme = theme;
-    }
-
-    /// Set the theme by name, returning `true` if the name matches a
-    /// built-in theme (currently `dark` and `light`) and `false`
-    /// otherwise. On `false` the theme is set to dark — the same
-    /// fallback `Theme::from_name` has always applied — but the caller
-    /// can now tell the user that the name was not recognized instead
-    /// of printing a transition into a theme that does not exist.
-    ///
-    /// Previously, `/theme neon` printed "Theme dark → neon" while the
-    /// palette was in fact dark; a small lie, but the whole point of
-    /// a theme command is to see what you typed take effect.
-    pub fn try_set_theme(&mut self, name: &str) -> bool {
-        let lower = name.trim().to_ascii_lowercase();
-        match lower.as_str() {
-            "dark" => {
-                self.theme = Theme::dark();
-                true
-            }
-            "light" => {
-                self.theme = Theme::light();
-                true
-            }
-            _ => {
-                self.theme = Theme::dark();
-                false
+# ========================================================================
+# 3. Invariant test in main_loop.rs
+# ========================================================================
+patch(
+    loop,
+    '''    /// `/theme light` must actually change the palette and report the''',
+    '''    /// Every entry in `SLASH_COMMANDS` must appear in `SLASH_HELP`, so
+    /// adding a command to the autocomplete without documenting it
+    /// fails this test. The previous SLASH_HELP was missing `/debug`
+    /// for several commits — this pins the invariant.
+    #[test]
+    fn test_slash_help_lists_every_command() {
+        use crate::app::SLASH_COMMANDS;
+        let help = SLASH_HELP;
+        for cmd in SLASH_COMMANDS {
+            assert!(
+                help.contains(cmd.name),
+                "SLASH_COMMANDS entry {:?} is not mentioned in SLASH_HELP",
+                cmd.name
+            );
+        }
+        // Every `/`-leading token inside SLASH_HELP should also be a
+        // known command, so a typo'd name does not linger. Split on
+        // whitespace, keep tokens starting with '/', strip trailing
+        // punctuation from each. Compare against the SLASH_COMMANDS set.
+        let known: std::collections::HashSet<&'static str> =
+            SLASH_COMMANDS.iter().map(|c| c.name).collect();
+        for token in help.split_whitespace() {
+            let trimmed = token.trim_end_matches(|c: char| {
+                !c.is_ascii_alphanumeric() && c != '/' && c != '-'
+            });
+            if trimmed.starts_with('/') && trimmed.len() > 1 {
+                assert!(
+                    known.contains(trimmed),
+                    "SLASH_HELP mentions {:?} which is not in SLASH_COMMANDS",
+                    trimmed
+                );
             }
         }
-    }''',
-    "try_set_theme",
-)
-
-# ========================================================================
-# 2. /theme handler uses try_set_theme and reports unknowns honestly.
-# ========================================================================
-patch(
-    loop,
-    '''            "/theme" => match parts.next() {
-                Some(name) => {
-                    let next = Theme::from_name(name);
-                    let prev = self.app.theme_name().to_string();
-                    self.app.set_theme(next);
-                    self.app
-                        .push_system_message(&format!("Theme {prev} → {}", name));
-                }
-                None => {
-                    let cur = self.app.theme_name().to_string();
-                    let next = self.app.cycle_theme();
-                    self.app
-                        .push_system_message(&format!("Theme {cur} → {next}"));
-                }
-            },''',
-    '''            "/theme" => match parts.next() {
-                Some(name) => {
-                    let prev = self.app.theme_name().to_string();
-                    let known = self.app.try_set_theme(name);
-                    if known {
-                        self.app
-                            .push_system_message(&format!("Theme {prev} → {name}"));
-                    } else {
-                        self.app.push_system_message(&format!(
-                            "Unknown theme '{}'. Known themes: dark, light. \\
-                             Fell back to dark. (Custom themes come from ~/.config/kod/theme.toml \\
-                             or a project-local .kod-theme.toml.)",
-                            name
-                        ));
-                    }
-                }
-                None => {
-                    let cur = self.app.theme_name().to_string();
-                    let next = self.app.cycle_theme();
-                    self.app
-                        .push_system_message(&format!("Theme {cur} → {next}"));
-                }
-            },''',
-    "/theme honest about unknown names",
-)
-
-# ========================================================================
-# 3. /theme handler no longer needs Theme directly — check imports.
-# ========================================================================
-# Theme is still used by cycle_theme indirectly; but main_loop imports
-# Theme only for /theme. Verify by searching the file after edit.
-with open(loop, "r") as f:
-    loop_src = f.read()
-if "Theme::" not in loop_src and "use crate::{" in loop_src and "    theme::Theme," in loop_src:
-    patch(
-        loop,
-        "    theme::Theme,\n",
-        "",
-        "drop unused Theme import",
-    )
-    print("Removed unused `use crate::theme::Theme` from main_loop")
-else:
-    print("Theme import still needed somewhere; leaving it")
-
-# ========================================================================
-# 4. Test: unknown theme reports accurately; known theme applies.
-# ========================================================================
-patch(
-    loop,
-    '''    /// Delete key (insert mode) must remove the character under the''',
-    '''    /// `/theme light` must actually change the palette and report the
-    /// transition.
-    #[tokio::test]
-    async fn test_theme_known_name_applies() {
-        let mut tui = TuiLoop::new();
-        tui.handle_command("/theme light").await.unwrap();
-        assert_eq!(tui.app().theme_name(), "light");
-        let last = tui.app().messages().last().unwrap();
-        assert!(last.content.contains("→ light"), "got: {}", last.content);
     }
 
-    /// `/theme neon` must not claim to have switched to a theme that
-    /// does not exist. Regression: the previous handler printed
-    /// "Theme dark → neon" while the palette fell back to dark.
+    /// The idle hint line must name `f` as the search key, matching the
+    /// default keybinding, and must not claim `/` starts a search.
     #[tokio::test]
-    async fn test_theme_unknown_name_reports_fallback() {
-        let mut tui = TuiLoop::new();
-        tui.handle_command("/theme neon").await.unwrap();
-        // Palette fell back to dark.
-        assert_eq!(tui.app().theme_name(), "dark");
-        let last = tui.app().messages().last().unwrap();
+    async fn test_idle_hint_names_search_key_correctly() {
+        let tui = TuiLoop::new();
+        let hint = tui.app().hint_line();
         assert!(
-            last.content.contains("Unknown theme"),
-            "expected an 'Unknown theme' message, got: {}",
-            last.content
+            hint.contains("f search"),
+            "hint should name the f key for search: {hint}"
         );
         assert!(
-            last.content.contains("dark, light"),
-            "should name the known themes: {}",
-            last.content
-        );
-        assert!(
-            !last.content.contains("→ neon"),
-            "must not lie about switching to 'neon': {}",
-            last.content
+            !hint.contains("/ search"),
+            "hint should not claim / starts a search: {hint}"
         );
     }
 
-    /// Delete key (insert mode) must remove the character under the''',
-    "theme tests",
+    /// `/theme light` must actually change the palette and report the''',
+    "help invariant tests",
 )
 
 print("All patches applied.")
@@ -222,26 +154,25 @@ fi
 
 echo "Committing."
 git add -A
-git commit -m "fix(tui): /theme stops lying about unknown names
+git commit -m "fix(tui): sync /help with the actual command set; correct hint
 
-/theme neon printed 'Theme dark → neon' while the palette silently
-fell back to dark — Theme::from_name returns dark for anything it
-does not recognize. A small lie, but the whole point of a theme
-command is to see what you typed take effect; a user typing /theme
-neon now learns the name was rejected instead of wondering why the
-colors did not change.
+Three small honesty fixes on user-facing text.
 
-Add KodApp::try_set_theme(name) -> bool, which reports whether the
-name matched one of the built-in themes (dark, light) before
-applying. The /theme handler uses it: on a match it prints the
-transition; on a miss it prints the fallback, the known names, and
-where custom themes live (~/.config/kod/theme.toml or a project
-.kod-theme.toml, both of which Theme::load already reads — that
-line was missing from every user-facing hint).
+1. SLASH_HELP was missing /debug (which the autocomplete already
+   advertised) and did not mention that /model with no argument
+   lists the server's models. It also repeated 'j/k scroll' in the
+   Keys line — a copy-paste slip that pushed the phrase back where
+   'wheel scrolls' already covered it. Rewritten to include every
+   current command and to fix the Keys line.
 
-`/theme` with no argument still cycles dark ↔ light and always
-succeeds; only the explicit-name path can now be 'unknown'.
+2. The idle hint line said '/ search', but '/' opens the command
+   slot; the search key is 'f' (SearchPrefix). A user following the
+   hint pressed '/' and got a command input. Fixed to 'f search'.
 
-Adds two tests: /theme light applies and reports the transition,
-/theme neon reports the fallback and does not print a transition
-into a theme that does not exist."
+3. Added test_slash_help_lists_every_command, which asserts each
+   entry in SLASH_COMMANDS appears in SLASH_HELP and, in the other
+   direction, each '/'-leading token in SLASH_HELP is a known
+   command. Adding a command to the autocomplete without updating
+   the help now fails the test — the exact drift that let /debug sit
+   undocumented. Also asserts the hint line names 'f' as search and
+   does not mention '/ search'."
