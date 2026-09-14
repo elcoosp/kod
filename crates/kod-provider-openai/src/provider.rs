@@ -20,6 +20,14 @@ pub struct OpenAICompatProvider {
     model: String,
     base_url: String,
     api_key: String,
+    /// Shared HTTP client for the small set of requests kod issues
+    /// directly (currently `GET /v1/models`). Built once per provider so
+    /// the connection pool, TLS session cache, and background runtime
+    /// are reused across calls. The previous code constructed a fresh
+    /// `reqwest::Client` on every `list_models()` — each one spins up
+    /// its own pool and a background task, all of which are dropped as
+    /// soon as the response lands.
+    client: reqwest::Client,
 }
 
 impl OpenAICompatProvider {
@@ -43,11 +51,19 @@ impl OpenAICompatProvider {
                 .with_provider_name("openai-compatible"),
         )
         .map_err(adk_err)?;
+        // One client per provider. A rustls-backed reqwest client
+        // carries a connection pool and a TLS session cache that are
+        // worth keeping warm; the pool is also what makes back-to-back
+        // `/model` switches cheap.
+        let client = reqwest::Client::builder()
+            .build()
+            .map_err(|e| KodError::Provider(format!("could not build http client: {e}")))?;
         Ok(Self {
             inner,
             model,
             base_url,
             api_key,
+            client,
         })
     }
 
@@ -145,7 +161,8 @@ impl LlmProvider for OpenAICompatProvider {
     }
 
     async fn list_models(&self) -> Result<Vec<String>> {
-        let response = reqwest::Client::new()
+        let response = self
+            .client
             .get(format!("{}/models", self.base_url))
             .bearer_auth(&self.api_key)
             .send()

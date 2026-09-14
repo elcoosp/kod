@@ -293,6 +293,12 @@ mod tests {
         assert!(cfg.skills.enable_hot_reload);
     }
 
+    /// A config.toml with only a subset of sections (or a subset of
+    /// fields within a section) must parse. Before `#[serde(default)]`
+    /// at container level, a file containing only `[llm]` failed with
+    /// "missing field `swarm`", and a file containing only `[llm]
+    /// model = "…"` additionally failed with "missing field
+    /// `provider`". Both are the common hand-edited shape.
     #[test]
     fn test_corrupt_file_yields_error_from_load_from() {
         let temp_dir = tempfile::tempdir().unwrap();

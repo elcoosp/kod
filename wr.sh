@@ -3,14 +3,14 @@ set -uo pipefail
 
 COMPILE_OK=true
 INCOMPLETE=false
-TARGET=crates/kod-core/src/engine.rs
+TARGET=crates/kod-provider-openai/src/provider.rs
 
 if [ ! -f Cargo.toml ] || [ ! -f "$TARGET" ]; then
     echo "ERROR: run from the kod workspace root ($TARGET missing)"
     exit 1
 fi
 
-echo "Patching $TARGET: derive mid-codepoint offset from MAX_TURN_CHARS"
+echo "Patching $TARGET: reuse one reqwest::Client across list_models calls"
 
 python3 - "$TARGET" << 'PYEOF'
 import os
@@ -20,94 +20,103 @@ target = sys.argv[1]
 with open(target, "r") as f:
     content = f.read()
 
-old = '''    /// record_turn runs on both sides of every prompt. A turn longer
-    /// than MAX_TURN_CHARS whose 1500th byte falls inside a multibyte
-    /// codepoint used to panic and abort the whole loop.
-    #[tokio::test]
-    async fn test_record_turn_does_not_panic_mid_multibyte() {
-        let temp = TempDir::new().unwrap();
-        let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig {
-            working_dir: temp.path().to_path_buf(),
-            enable_memory: false,
-            enable_swarm: false,
-            max_skills_per_query: 3,
-        };
-        let engine = KodEngine::new(cfg, db_path).unwrap();
-        engine.start().await.unwrap();
+def patch(old, new, label, expect=1):
+    global content
+    n = content.count(old)
+    if n == 0:
+        print(f"ERROR: old snippet not found: {label}")
+        sys.exit(2)
+    if expect and n != expect:
+        print(f"ERROR: expected {expect} occurrence(s) of {label}, found {n}")
+        sys.exit(2)
+    content = content.replace(old, new, expect if expect else n)
+    print(f"Patched: {label}")
 
-        // 1499 ASCII bytes, then 'é' (2 bytes) so byte offset 1500 is
-        // the middle of the codepoint, then more content to exceed the
-        // cap. MAX_TURN_CHARS is 1500.
-        let mut prompt = "a".repeat(1499);
-        prompt.push('é');
-        prompt.push_str(&"x".repeat(100));
-        assert!(prompt.len() > 1500);
-        assert!(!prompt.is_char_boundary(1500));
+# --- 1. Add `client` field ------------------------------------------------
+patch(
+    '''/// Adapter that implements kod's [`LlmProvider`] for any OpenAI-compatible endpoint.
+pub struct OpenAICompatProvider {
+    inner: OpenAICompatible,
+    model: String,
+    base_url: String,
+    api_key: String,
+}''',
+    '''/// Adapter that implements kod's [`LlmProvider`] for any OpenAI-compatible endpoint.
+pub struct OpenAICompatProvider {
+    inner: OpenAICompatible,
+    model: String,
+    base_url: String,
+    api_key: String,
+    /// Shared HTTP client for the small set of requests kod issues
+    /// directly (currently `GET /v1/models`). Built once per provider so
+    /// the connection pool, TLS session cache, and background runtime
+    /// are reused across calls. The previous code constructed a fresh
+    /// `reqwest::Client` on every `list_models()` — each one spins up
+    /// its own pool and a background task, all of which are dropped as
+    /// soon as the response lands.
+    client: reqwest::Client,
+}''',
+    "client field",
+)
 
-        // Must not panic. The stored text ends at the last safe boundary
-        // before the é, with the truncation marker appended.
-        engine.record_turn(true, &prompt).await;
+# --- 2. Construct it in with_api_key -------------------------------------
+patch(
+    '''        let inner = OpenAICompatible::new(
+            OpenAICompatibleConfig::new(&api_key, &model)
+                .with_base_url(&base_url)
+                .with_provider_name("openai-compatible"),
+        )
+        .map_err(adk_err)?;
+        Ok(Self {
+            inner,
+            model,
+            base_url,
+            api_key,
+        })
+    }''',
+    '''        let inner = OpenAICompatible::new(
+            OpenAICompatibleConfig::new(&api_key, &model)
+                .with_base_url(&base_url)
+                .with_provider_name("openai-compatible"),
+        )
+        .map_err(adk_err)?;
+        // One client per provider. A rustls-backed reqwest client
+        // carries a connection pool and a TLS session cache that are
+        // worth keeping warm; the pool is also what makes back-to-back
+        // `/model` switches cheap.
+        let client = reqwest::Client::builder()
+            .build()
+            .map_err(|e| KodError::Provider(format!("could not build http client: {e}")))?;
+        Ok(Self {
+            inner,
+            model,
+            base_url,
+            api_key,
+            client,
+        })
+    }''',
+    "client construction",
+)
 
-        let rendered = engine.render_history().await;
-        assert!(rendered.contains("User:"), "history should carry the turn");
-        assert!(
-            rendered.contains("[truncated]"),
-            "history should mark truncation"
-        );
-    }'''
-
-new = '''    /// record_turn runs on both sides of every prompt. A turn longer
-    /// than MAX_TURN_CHARS whose boundary byte falls inside a multibyte
-    /// codepoint used to panic and abort the whole loop.
-    ///
-    /// The boundary offset is derived from `MAX_TURN_CHARS` rather than
-    /// hardcoded, so raising the cap in the future does not silently
-    /// turn this test into a no-op.
-    #[tokio::test]
-    async fn test_record_turn_does_not_panic_mid_multibyte() {
-        let temp = TempDir::new().unwrap();
-        let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig {
-            working_dir: temp.path().to_path_buf(),
-            enable_memory: false,
-            enable_swarm: false,
-            max_skills_per_query: 3,
-        };
-        let engine = KodEngine::new(cfg, db_path).unwrap();
-        engine.start().await.unwrap();
-
-        // MAX_TURN_CHARS - 1 ASCII bytes, then 'é' (2 bytes) so byte
-        // offset MAX_TURN_CHARS is the middle of the codepoint, then
-        // enough extra content to exceed the cap and force truncation.
-        let mut prompt = "a".repeat(MAX_TURN_CHARS - 1);
-        prompt.push('é');
-        prompt.push_str(&"x".repeat(100));
-        assert!(prompt.len() > MAX_TURN_CHARS);
-        assert!(
-            !prompt.is_char_boundary(MAX_TURN_CHARS),
-            "the test must place the cap inside the é codepoint; \\
-             MAX_TURN_CHARS={} fell on a boundary",
-            MAX_TURN_CHARS
-        );
-
-        // Must not panic. The stored text ends at the last safe boundary
-        // before the é, with the truncation marker appended.
-        engine.record_turn(true, &prompt).await;
-
-        let rendered = engine.render_history().await;
-        assert!(rendered.contains("User:"), "history should carry the turn");
-        assert!(
-            rendered.contains("[truncated]"),
-            "history should mark truncation"
-        );
-    }'''
-
-n = content.count(old)
-if n != 1:
-    print(f"ERROR: expected 1 occurrence of the test, found {n}")
-    sys.exit(2)
-content = content.replace(old, new, 1)
+# --- 3. Use the field in list_models ------------------------------------
+patch(
+    '''    async fn list_models(&self) -> Result<Vec<String>> {
+        let response = reqwest::Client::new()
+            .get(format!("{}/models", self.base_url))
+            .bearer_auth(&self.api_key)
+            .send()
+            .await
+            .map_err(|e| KodError::Provider(format!("list models request failed: {e}")))?;''',
+    '''    async fn list_models(&self) -> Result<Vec<String>> {
+        let response = self
+            .client
+            .get(format!("{}/models", self.base_url))
+            .bearer_auth(&self.api_key)
+            .send()
+            .await
+            .map_err(|e| KodError::Provider(format!("list models request failed: {e}")))?;''',
+    "list_models reuses client",
+)
 
 tmp = target + ".tmp"
 with open(tmp, "w") as f:
@@ -132,9 +141,9 @@ if [ "$INCOMPLETE" = true ] || [ "$COMPILE_OK" = false ]; then
     exit 1
 fi
 
-echo "Running kod-core tests"
-if ! cargo test -p kod-core 2>&1; then
-    echo "kod-core tests failed. Paste the full output for a surgical fix."
+echo "Running provider tests"
+if ! cargo test -p kod-provider-openai 2>&1; then
+    echo "provider tests failed. Paste the full output for a surgical fix."
     exit 1
 fi
 
@@ -152,17 +161,27 @@ fi
 
 echo "All checks passed. Committing."
 git add -A
-git commit -m "test(core): derive record_turn boundary from MAX_TURN_CHARS
+git commit -m "perf(provider): reuse one reqwest::Client across list_models calls
 
-test_record_turn_does_not_panic_mid_multibyte hardcoded byte offset
-1500, which was MAX_TURN_CHARS when the test was written. The
-history-budget change bumped MAX_TURN_CHARS to 4000, so the test's
-1601-byte prompt no longer exceeded the cap, record_turn skipped
-truncation, and the '[truncated]' assertion failed — a false
-negative that looked like a real regression.
+OpenAICompatProvider::list_models built a fresh reqwest::Client on
+every call:
 
-Place the mid-codepoint byte at MAX_TURN_CHARS - 1 and assert
-!is_char_boundary(MAX_TURN_CHARS), so the test tracks whichever
-value the cap holds and cannot silently become a no-op on the next
-bump. The explicit is_char_boundary assertion also names the case
-that would make the test meaningless."
+    reqwest::Client::new()
+        .get(format!(\"{}/models\", self.base_url))
+        ...
+
+Each Client::new spins up a connection pool, a TLS session cache,
+and a background runtime task. All of that is dropped as soon as
+the response lands, so every /model completion in the TUI and every
+list_models call elsewhere paid the full setup cost and left the
+OS-level resources to be reclaimed. It also meant back-to-back
+calls (a /model autocomplete burst, a startup probe right after a
+switch) could not reuse a warm TCP/TLS connection.
+
+Add a `client: reqwest::Client` field, built once in
+with_api_key via Client::builder().build(). list_models now uses
+self.client.
+
+No behavior change for callers; the struct gains one field. The
+adk-backed generate/stream paths already go through
+OpenAICompatible and are unaffected."
