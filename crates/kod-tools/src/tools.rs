@@ -338,9 +338,9 @@ impl Tool for ExecuteCommandTool {
         let mut stdout_res: Option<std::io::Result<(Vec<u8>, bool)>> = None;
         let mut stderr_res: Option<std::io::Result<(Vec<u8>, bool)>> = None;
 
-        let timeout = tokio::time::sleep(std::time::Duration::from_secs(
-            context.timeout_secs.max(1),
-        ));
+        let effective_timeout_secs = context.timeout_secs.max(1);
+        let timeout =
+            tokio::time::sleep(std::time::Duration::from_secs(effective_timeout_secs));
         tokio::pin!(timeout);
         let mut timed_out = false;
 
@@ -348,11 +348,13 @@ impl Tool for ExecuteCommandTool {
             if stdout_res.is_some() && stderr_res.is_some() {
                 break;
             }
-            if timed_out {
-                // Child was killed; drain the reads to EOF and exit.
-                // The other branch below will still fire because the
-                // child's death closes its pipe ends.
-            }
+            // No timed_out handling here: when the timeout branch fires
+            // we call start_kill, the child dies, and the child's death
+            // closes its pipe ends — so the two read arms complete on
+            // their own and the loop exits through the top-of-loop
+            // check above. (The previous version carried an empty
+            // `if timed_out {}` block whose only content was a comment
+            // explaining that fact.)
             tokio::select! {
                 r = &mut stdout_fut, if stdout_res.is_none() && !timed_out => {
                     let over_cap = matches!(&r, Ok((_, true)));
@@ -409,6 +411,15 @@ impl Tool for ExecuteCommandTool {
             "exit_signal": exit_signal,
             "stdout_truncated": stdout_truncated,
             "stderr_truncated": stderr_truncated,
+            // Explicit, not inferred. The timeout kill and the
+            // output-cap kill both surface as a signal, and the
+            // summariser needs to distinguish them: an `exit_signal`
+            // alone says "killed", but not why. A timeout is user
+            // action-required (raise the timeout, or run in the
+            // background); a cap kill means the command was too
+            // chatty and the partial output is still representative.
+            "timed_out": timed_out,
+            "timeout_secs": effective_timeout_secs,
         })))
     }
 }

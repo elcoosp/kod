@@ -7,12 +7,12 @@ ENGINE=crates/kod-core/src/engine.rs
 
 for f in "$TOOLS" "$ENGINE"; do
     if [ ! -f "$f" ]; then
-        echo "ERROR: missing $f — run from the kod workspace root"
+        echo "ERROR: missing $f"
         exit 1
     fi
 done
 
-echo "Reporting exit signal on Unix; capping grep skipped_large_files"
+echo "Reporting timeout explicitly; deleting dead code; summing in chat"
 
 python3 - "$TOOLS" "$ENGINE" << 'PYEOF'
 import os
@@ -38,145 +38,53 @@ def patch(path, old, new, label, expect=1):
     print(f"Patched {path}: {label}")
 
 # ======================================================================
-# 1. tools.rs: cap skipped_large_files
+# 1. tools.rs: capture the timeout value and delete the empty branch
 # ======================================================================
 patch(
     tools,
-    '''/// Per-file byte cap for `grep`. Files larger than this are skipped and
-/// reported in the result's `skipped_large_files` list.
-///
-/// The pre-streaming implementation called `std::fs::read_to_string` on
-/// every candidate file, so a 2 GB log — the exact file a user might
-/// want to grep — would allocate the whole thing into memory and OOM
-/// the process before the entry cap could fire. A source tree rarely
-/// has a file over a megabyte, and a file that large rarely contains
-/// the line-level pattern a coding agent is looking for; 8 MB is
-/// generous for the useful case and cheap to bound the useless one.
-const MAX_GREP_FILE_BYTES: u64 = 8 * 1024 * 1024;''',
-    '''/// Per-file byte cap for `grep`. Files larger than this are skipped and
-/// reported in the result's `skipped_large_files` list.
-///
-/// The pre-streaming implementation called `std::fs::read_to_string` on
-/// every candidate file, so a 2 GB log — the exact file a user might
-/// want to grep — would allocate the whole thing into memory and OOM
-/// the process before the entry cap could fire. A source tree rarely
-/// has a file over a megabyte, and a file that large rarely contains
-/// the line-level pattern a coding agent is looking for; 8 MB is
-/// generous for the useful case and cheap to bound the useless one.
-const MAX_GREP_FILE_BYTES: u64 = 8 * 1024 * 1024;
+    '''        let timeout = tokio::time::sleep(std::time::Duration::from_secs(
+            context.timeout_secs.max(1),
+        ));
+        tokio::pin!(timeout);
+        let mut timed_out = false;
 
-/// Cap on the `skipped_large_files` list returned with a grep result.
-/// A repo with a build tree full of large artifacts (a `target/` that
-/// .gitignore does not cover, a vendored dataset, a `node_modules/`
-/// with binary blobs) can have hundreds of files over
-/// [`MAX_GREP_FILE_BYTES`]. Listing every one of them would reproduce
-/// the exact problem the size cap was meant to solve — a tool result
-/// dominated by paths. 50 is enough to answer "which files were too
-/// big?" for the common case; `skipped_large_files_total` carries the
-/// real count when more were skipped.
-const MAX_SKIPPED_LARGE_FILES: usize = 50;''',
-    "MAX_SKIPPED_LARGE_FILES constant",
+        loop {
+            if stdout_res.is_some() && stderr_res.is_some() {
+                break;
+            }
+            if timed_out {
+                // Child was killed; drain the reads to EOF and exit.
+                // The other branch below will still fire because the
+                // child's death closes its pipe ends.
+            }
+            tokio::select! {''',
+    '''        let effective_timeout_secs = context.timeout_secs.max(1);
+        let timeout =
+            tokio::time::sleep(std::time::Duration::from_secs(effective_timeout_secs));
+        tokio::pin!(timeout);
+        let mut timed_out = false;
+
+        loop {
+            if stdout_res.is_some() && stderr_res.is_some() {
+                break;
+            }
+            // No timed_out handling here: when the timeout branch fires
+            // we call start_kill, the child dies, and the child's death
+            // closes its pipe ends — so the two read arms complete on
+            // their own and the loop exits through the top-of-loop
+            // check above. (The previous version carried an empty
+            // `if timed_out {}` block whose only content was a comment
+            // explaining that fact.)
+            tokio::select! {''',
+    "remove dead if timed_out block; capture timeout secs",
 )
 
 # ======================================================================
-# 2. tools.rs: use the cap in the grep execute body
+# 2. tools.rs: report timed_out + effective_timeout_secs
 # ======================================================================
-patch(
-    tools,
-    '''        let mut results = Vec::new();
-        // Files whose size exceeded MAX_GREP_FILE_BYTES. Reported in
-        // the result so the model knows the search was not exhaustive
-        // and can decide whether to grep them specifically (or read
-        // them with an offset once that exists).
-        let mut skipped_large_files: Vec<String> = Vec::new();''',
-    '''        let mut results = Vec::new();
-        // Files whose size exceeded MAX_GREP_FILE_BYTES. Reported in
-        // the result so the model knows the search was not exhaustive
-        // and can decide whether to grep them specifically. Capped at
-        // MAX_SKIPPED_LARGE_FILES with the true count in
-        // `skipped_large_files_total` — an uncapped list would turn
-        // into the very "tool result dominated by paths" problem the
-        // size limit exists to prevent.
-        let mut skipped_large_files: Vec<String> = Vec::new();
-        let mut skipped_large_total: usize = 0;''',
-    "grep skipped_large_total counter",
-)
-
-patch(
-    tools,
-    '''            if let Ok(meta) = std::fs::metadata(&file_path)
-                && meta.len() > MAX_GREP_FILE_BYTES
-            {
-                skipped_large_files.push(file_path.to_string_lossy().to_string());
-                continue;
-            }''',
-    '''            if let Ok(meta) = std::fs::metadata(&file_path)
-                && meta.len() > MAX_GREP_FILE_BYTES
-            {
-                skipped_large_total += 1;
-                if skipped_large_files.len() < MAX_SKIPPED_LARGE_FILES {
-                    skipped_large_files.push(file_path.to_string_lossy().to_string());
-                }
-                continue;
-            }''',
-    "grep counts every skip, lists the first 50",
-)
-
 patch(
     tools,
     '''        Ok(ToolResult::Success(serde_json::json!({
-            "pattern": pattern,
-            "case_insensitive": case_insensitive,
-            "results": results,
-            "truncated": results.len() >= MAX_GREP_MATCHES,
-            "skipped_large_files": skipped_large_files,
-        })))''',
-    '''        Ok(ToolResult::Success(serde_json::json!({
-            "pattern": pattern,
-            "case_insensitive": case_insensitive,
-            "results": results,
-            "truncated": results.len() >= MAX_GREP_MATCHES,
-            "skipped_large_files": skipped_large_files,
-            "skipped_large_files_total": skipped_large_total,
-        })))''',
-    "grep reports skipped total",
-)
-
-# ======================================================================
-# 3. tools.rs: expose exit signal on Unix
-# ======================================================================
-patch(
-    tools,
-    '''        let status = child.wait().await.map_err(KodError::Io)?;
-
-        Ok(ToolResult::Success(serde_json::json!({
-            "stdout": String::from_utf8_lossy(&stdout_bytes).to_string(),
-            "stderr": String::from_utf8_lossy(&stderr_bytes).to_string(),
-            "exit_code": status.code().unwrap_or(-1),
-            "stdout_truncated": stdout_truncated,
-            "stderr_truncated": stderr_truncated,
-        })))''',
-    '''        let status = child.wait().await.map_err(KodError::Io)?;
-
-        // On Unix, distinguish "exited with code N" from "killed by
-        // signal N". A process terminated by the truncation path's
-        // start_kill() reports a signal, not an exit code; a process
-        // that finished on its own — even with a non-zero exit, like
-        // `grep` returning 1 for no matches — reports a code. The
-        // downstream summariser used to infer "killed" from
-        // `exit_code != 0`, which mislabelled every `grep` result
-        // whose output happened to be truncated. Reporting the signal
-        // directly removes the guess. Windows does not have exit
-        // signals in the same sense; the field is omitted there.
-        #[cfg(unix)]
-        let exit_signal: Option<i32> = {
-            use std::os::unix::process::ExitStatusExt;
-            status.signal()
-        };
-        #[cfg(not(unix))]
-        let exit_signal: Option<i32> = None;
-
-        Ok(ToolResult::Success(serde_json::json!({
             "stdout": String::from_utf8_lossy(&stdout_bytes).to_string(),
             "stderr": String::from_utf8_lossy(&stderr_bytes).to_string(),
             "exit_code": status.code().unwrap_or(-1),
@@ -184,24 +92,31 @@ patch(
             "stdout_truncated": stdout_truncated,
             "stderr_truncated": stderr_truncated,
         })))''',
-    "execute_command reports exit_signal",
+    '''        Ok(ToolResult::Success(serde_json::json!({
+            "stdout": String::from_utf8_lossy(&stdout_bytes).to_string(),
+            "stderr": String::from_utf8_lossy(&stderr_bytes).to_string(),
+            "exit_code": status.code().unwrap_or(-1),
+            "exit_signal": exit_signal,
+            "stdout_truncated": stdout_truncated,
+            "stderr_truncated": stderr_truncated,
+            // Explicit, not inferred. The timeout kill and the
+            // output-cap kill both surface as a signal, and the
+            // summariser needs to distinguish them: an `exit_signal`
+            // alone says "killed", but not why. A timeout is user
+            // action-required (raise the timeout, or run in the
+            // background); a cap kill means the command was too
+            // chatty and the partial output is still representative.
+            "timed_out": timed_out,
+            "timeout_secs": effective_timeout_secs,
+        })))''',
+    "report timed_out + timeout_secs",
 )
 
 # ======================================================================
-# 4. engine.rs: use exit_signal for the killed label
+# 3. engine.rs: summarize timeout vs cap kill vs signal
 # ======================================================================
 patch(
     engine,
-    '''        if stdout_trunc || stderr_trunc {
-            out.push_str(&format!(
-                "\\n[output truncated at cap{}]",
-                if v.get("exit_code").and_then(|c| c.as_i64()).unwrap_or(0) != 0 {
-                    " — command was killed"
-                } else {
-                    ""
-                }
-            ));
-        }''',
     '''        if stdout_trunc || stderr_trunc {
             // Only say "killed" when the tool actually reports a
             // signal. Previously this inferred "killed" from
@@ -220,72 +135,123 @@ patch(
                 if killed { " — command was killed" } else { "" }
             ));
         }''',
-    "summarize uses exit_signal",
+    '''        // Explain why the output stops, when it did.
+        //
+        // Three separate things can end a command early, and each
+        // needs a distinct message:
+        //
+        //   * timed_out: the tool killed the child at
+        //     `context.timeout_secs` because it was still running.
+        //     User action is required — raise the timeout or run in
+        //     the background.
+        //   * stdout_truncated / stderr_truncated: the child wrote
+        //     more than MAX_CMD_OUTPUT_BYTES on one stream, and the
+        //     tool killed it to keep memory bounded. The partial
+        //     output is still representative; no action required.
+        //   * exit_signal (without either of the above): the child
+        //     died of an external signal — a SIGKILL from the OS, a
+        //     container OOM, a `kill -9` from another shell. Rare but
+        //     worth surfacing; the previous code silently treated a
+        //     small-output signal-kill as a normal exit, so a command
+        //     killed by the OOM killer looked like it had completed
+        //     with partial output.
+        let timed_out = v
+            .get("timed_out")
+            .and_then(|t| t.as_bool())
+            .unwrap_or(false);
+        let timeout_secs = v
+            .get("timeout_secs")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0);
+        let truncated = stdout_trunc || stderr_trunc;
+        let signalled = v
+            .get("exit_signal")
+            .and_then(|s| s.as_i64())
+            .is_some();
+
+        if timed_out {
+            out.push_str(&format!(
+                "\\n[command timed out after {}s — killed]",
+                timeout_secs
+            ));
+        }
+        if truncated {
+            out.push_str("\\n[output truncated at cap");
+            if signalled && !timed_out {
+                // Both the timeout branch and the cap branch call
+                // start_kill; getting here with a signal and no
+                // timeout means the cap branch fired.
+                out.push_str(" — command was killed");
+            }
+            out.push(']');
+        } else if signalled && !timed_out {
+            out.push_str("\\n[command was killed by a signal (exit_signal reported)]");
+        }''',
+    "summarize timeout vs cap vs signal",
 )
 
 # ======================================================================
-# 5. engine.rs test: exit_signal drives the killed label
+# 4. engine.rs: extend the existing test with the timeout case
 # ======================================================================
 patch(
     engine,
-    '''        // execute_command killed by the cap: exit code non-zero, label.
-        let exec_killed = summarize_tool_result(
-            "execute_command",
-            &ToolResult::Success(serde_json::json!({
-                "stdout": "y\\n",
-                "stderr": "",
-                "exit_code": -1,
-                "stdout_truncated": true,
-                "stderr_truncated": false
-            })),
-        );
-        assert!(
-            exec_killed.contains("killed"),
-            "killed command must be labelled: {exec_killed}"
-        );
-    }''',
-    '''        // Truncated output with a real signal (killed by us): label.
-        let exec_killed = summarize_tool_result(
-            "execute_command",
-            &ToolResult::Success(serde_json::json!({
-                "stdout": "y\\n",
-                "stderr": "",
-                "exit_code": -1,
-                "exit_signal": 9,
-                "stdout_truncated": true,
-                "stderr_truncated": false
-            })),
-        );
-        assert!(
-            exec_killed.contains("killed"),
-            "signalled command must be labelled: {exec_killed}"
-        );
-
-        // Regression: a normal non-zero exit code with truncated
-        // output must NOT be labelled "killed". `grep` returning 1 for
-        // no matches and a check that happened to exceed the cap is
-        // the exact shape that mislabelled before.
-        let exec_nonzero_not_killed = summarize_tool_result(
-            "execute_command",
-            &ToolResult::Success(serde_json::json!({
-                "stdout": "x\\n",
-                "stderr": "",
-                "exit_code": 1,
-                "exit_signal": null,
-                "stdout_truncated": true,
-                "stderr_truncated": false
-            })),
-        );
-        assert!(
-            exec_nonzero_not_killed.contains("output truncated at cap"),
-            "truncation must still be reported: {exec_nonzero_not_killed}"
-        );
-        assert!(
+    '''        assert!(
             !exec_nonzero_not_killed.contains("killed"),
             "non-zero exit is not 'killed': {exec_nonzero_not_killed}"
         );
     }''',
-    "summarize killed label tests",
+    '''        assert!(
+            !exec_nonzero_not_killed.contains("killed"),
+            "non-zero exit is not 'killed': {exec_nonzero_not_killed}"
+        );
+
+        // Regression: a timeout with small output used to be silently
+        // treated as a normal exit, because the old summariser only
+        // looked at the truncation flags. The user saw a partial
+        // `cargo build` transcript and assumed it had finished.
+        let exec_timeout = summarize_tool_result(
+            "execute_command",
+            &ToolResult::Success(serde_json::json!({
+                "stdout": "Compiling foo\\n",
+                "stderr": "",
+                "exit_code": -1,
+                "exit_signal": 9,
+                "stdout_truncated": false,
+                "stderr_truncated": false,
+                "timed_out": true,
+                "timeout_secs": 30
+            })),
+        );
+        assert!(
+            exec_timeout.contains("timed out after 30s"),
+            "timeout must be named: {exec_timeout}"
+        );
+        assert!(
+            exec_timeout.contains("killed"),
+            "timeout should say killed: {exec_timeout}"
+        );
+
+        // A kill by a signal with neither timeout nor truncation is
+        // still worth a one-liner. Rare, but silent is worse.
+        let exec_signalled = summarize_tool_result(
+            "execute_command",
+            &ToolResult::Success(serde_json::json!({
+                "stdout": "partial output\\n",
+                "stderr": "",
+                "exit_code": -1,
+                "exit_signal": 9,
+                "stdout_truncated": false,
+                "stderr_truncated": false,
+                "timed_out": false,
+                "timeout_secs": 30
+            })),
+        );
+        assert!(
+            exec_signalled.contains("killed by a signal"),
+            "external signal must be named: {exec_signalled}"
+        );
+    }''',
+    "timeout + signal summarize tests",
 )
 
 print("All patches applied.")
@@ -311,36 +277,50 @@ fi
 echo "Committing."
 git add -A
 git commit -F - <<'MSG'
-fix(tools,core): report exit signal; cap grep's skipped-file list
+fix(tools,core): name timeouts and external signal-kills in chat
 
-Two honesty fixes on the tool-result path.
+execute_command can end a command in three distinct ways, and only
+one of them was visible in the summary.
 
-1. summarize_success labelled a truncated command "— command was
-   killed" whenever the exit code was non-zero. Non-zero exit is
-   normal: `grep` returns 1 for no matches, `diff` returns 1 for
-   differences, `test` returns 1 for false. Any such command whose
-   output happened to exceed the 64 KB cap was rendered as if the
-   tool had terminated it, which is misleading and not something the
-   reader can detect.
+- Timeout. When the command is still running at
+  `context.timeout_secs`, the tool sends SIGKILL. The command stops
+  mid-output, the exit status reports a signal, and the exit code is
+  -1. Previously this path left no marker in the summary unless the
+  partial output also happened to exceed MAX_CMD_OUTPUT_BYTES, so a
+  `cargo build` killed at 30s with 10 KB of output rendered as if it
+  had finished. A user reading the transcript assumed the build was
+  complete.
 
-   ExecuteCommandTool now reports `exit_signal` on Unix (from
-   ExitStatusExt::signal()) alongside the existing `exit_code`.
-   Windows omits it — exit signals do not exist in the same sense
-   there. summarize_success labels "killed" only when a signal is
-   present; truncation is reported either way, so the reader still
-   knows the output was cut.
+- Output cap. The child writes more than MAX_CMD_OUTPUT_BYTES on a
+  stream and is killed to keep memory bounded. The existing
+  "output truncated at cap — command was killed" marker covers this,
+  and it is correct.
 
-   Test covers both the signalled case (label present) and the
-   non-zero-exit case (label absent, truncation still stated) — the
-   exact shape that mislabelled before.
+- External signal. The child was SIGKILLed by something outside the
+  tool: a container OOM, a `kill -9` from another shell. The
+  previous code only reported the signal when the output was also
+  truncated, so a small-output OOM kill was silently read as normal
+  completion.
 
-2. grep's `skipped_large_files` accumulated one entry per file over
-   MAX_GREP_FILE_BYTES. A repo with a big target/ tree or a vendored
-   dataset can have hundreds, at which point the "which files were
-   skipped" list becomes the tool result dominated by paths the size
-   cap was meant to prevent. Cap the list at
-   MAX_SKIPPED_LARGE_FILES = 50 and add
-   `skipped_large_files_total` for the true count. Consumers that
-   only care about the fact of the skip read the total; consumers
-   that want a sample read the first 50.
+ExecuteCommandTool now reports `timed_out: bool` and
+`timeout_secs: u64` alongside the existing `exit_signal`. The
+distinction is not inferable from `exit_signal` alone — both the
+timeout branch and the cap branch send SIGKILL — so the tool states
+which one fired rather than asking the summariser to guess.
+
+summarize_success now emits:
+
+  [command timed out after 30s — killed]
+  [output truncated at cap — command was killed]
+  [command was killed by a signal (exit_signal reported)]
+
+as appropriate, and nothing when the command exited normally. The
+empty `if timed_out { /* comment only */ }` block in the select loop
+is deleted; it explained an invariant that the top-of-loop check
+already enforces.
+
+Tests extended: a timeout with small output names the timeout;
+a signal-kill with no truncation and no timeout is named; the
+existing signal-and-truncation case still labels as killed; the
+non-zero-exit case (grep returning 1) still does not.
 MSG

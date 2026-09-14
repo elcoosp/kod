@@ -455,23 +455,57 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             .get("stderr_truncated")
             .and_then(|t| t.as_bool())
             .unwrap_or(false);
-        if stdout_trunc || stderr_trunc {
-            // Only say "killed" when the tool actually reports a
-            // signal. Previously this inferred "killed" from
-            // `exit_code != 0`, so a `grep` with no matches (exit 1)
-            // whose stdout happened to be truncated was labelled
-            // "command was killed" — a small lie the reader has no way
-            // to detect. The tool now reports `exit_signal` explicitly
-            // on Unix; Windows omits it (no exit signals in the same
-            // sense), and the label is simply omitted there.
-            let killed = v
-                .get("exit_signal")
-                .and_then(|s| s.as_i64())
-                .is_some();
+        // Explain why the output stops, when it did.
+        //
+        // Three separate things can end a command early, and each
+        // needs a distinct message:
+        //
+        //   * timed_out: the tool killed the child at
+        //     `context.timeout_secs` because it was still running.
+        //     User action is required — raise the timeout or run in
+        //     the background.
+        //   * stdout_truncated / stderr_truncated: the child wrote
+        //     more than MAX_CMD_OUTPUT_BYTES on one stream, and the
+        //     tool killed it to keep memory bounded. The partial
+        //     output is still representative; no action required.
+        //   * exit_signal (without either of the above): the child
+        //     died of an external signal — a SIGKILL from the OS, a
+        //     container OOM, a `kill -9` from another shell. Rare but
+        //     worth surfacing; the previous code silently treated a
+        //     small-output signal-kill as a normal exit, so a command
+        //     killed by the OOM killer looked like it had completed
+        //     with partial output.
+        let timed_out = v
+            .get("timed_out")
+            .and_then(|t| t.as_bool())
+            .unwrap_or(false);
+        let timeout_secs = v
+            .get("timeout_secs")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0);
+        let truncated = stdout_trunc || stderr_trunc;
+        let signalled = v
+            .get("exit_signal")
+            .and_then(|s| s.as_i64())
+            .is_some();
+
+        if timed_out {
             out.push_str(&format!(
-                "\n[output truncated at cap{}]",
-                if killed { " — command was killed" } else { "" }
+                "\n[command timed out after {}s — killed]",
+                timeout_secs
             ));
+        }
+        if truncated {
+            out.push_str("\n[output truncated at cap");
+            if signalled && !timed_out {
+                // Both the timeout branch and the cap branch call
+                // start_kill; getting here with a signal and no
+                // timeout means the cap branch fired.
+                out.push_str(" — command was killed");
+            }
+            out.push(']');
+        } else if signalled && !timed_out {
+            out.push_str("\n[command was killed by a signal (exit_signal reported)]");
         }
         return if out.is_empty() {
             "(no output)".to_string()
@@ -2131,6 +2165,52 @@ mod tests {
         assert!(
             !exec_nonzero_not_killed.contains("killed"),
             "non-zero exit is not 'killed': {exec_nonzero_not_killed}"
+        );
+
+        // Regression: a timeout with small output used to be silently
+        // treated as a normal exit, because the old summariser only
+        // looked at the truncation flags. The user saw a partial
+        // `cargo build` transcript and assumed it had finished.
+        let exec_timeout = summarize_tool_result(
+            "execute_command",
+            &ToolResult::Success(serde_json::json!({
+                "stdout": "Compiling foo\n",
+                "stderr": "",
+                "exit_code": -1,
+                "exit_signal": 9,
+                "stdout_truncated": false,
+                "stderr_truncated": false,
+                "timed_out": true,
+                "timeout_secs": 30
+            })),
+        );
+        assert!(
+            exec_timeout.contains("timed out after 30s"),
+            "timeout must be named: {exec_timeout}"
+        );
+        assert!(
+            exec_timeout.contains("killed"),
+            "timeout should say killed: {exec_timeout}"
+        );
+
+        // A kill by a signal with neither timeout nor truncation is
+        // still worth a one-liner. Rare, but silent is worse.
+        let exec_signalled = summarize_tool_result(
+            "execute_command",
+            &ToolResult::Success(serde_json::json!({
+                "stdout": "partial output\n",
+                "stderr": "",
+                "exit_code": -1,
+                "exit_signal": 9,
+                "stdout_truncated": false,
+                "stderr_truncated": false,
+                "timed_out": false,
+                "timeout_secs": 30
+            })),
+        );
+        assert!(
+            exec_signalled.contains("killed by a signal"),
+            "external signal must be named: {exec_signalled}"
         );
     }
 
