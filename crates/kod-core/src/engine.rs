@@ -456,13 +456,21 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             .and_then(|t| t.as_bool())
             .unwrap_or(false);
         if stdout_trunc || stderr_trunc {
+            // Only say "killed" when the tool actually reports a
+            // signal. Previously this inferred "killed" from
+            // `exit_code != 0`, so a `grep` with no matches (exit 1)
+            // whose stdout happened to be truncated was labelled
+            // "command was killed" — a small lie the reader has no way
+            // to detect. The tool now reports `exit_signal` explicitly
+            // on Unix; Windows omits it (no exit signals in the same
+            // sense), and the label is simply omitted there.
+            let killed = v
+                .get("exit_signal")
+                .and_then(|s| s.as_i64())
+                .is_some();
             out.push_str(&format!(
                 "\n[output truncated at cap{}]",
-                if v.get("exit_code").and_then(|c| c.as_i64()).unwrap_or(0) != 0 {
-                    " — command was killed"
-                } else {
-                    ""
-                }
+                if killed { " — command was killed" } else { "" }
             ));
         }
         return if out.is_empty() {
@@ -2084,20 +2092,45 @@ mod tests {
             "clean exit must not be labelled killed: {exec}"
         );
 
-        // execute_command killed by the cap: exit code non-zero, label.
+        // Truncated output with a real signal (killed by us): label.
         let exec_killed = summarize_tool_result(
             "execute_command",
             &ToolResult::Success(serde_json::json!({
                 "stdout": "y\n",
                 "stderr": "",
                 "exit_code": -1,
+                "exit_signal": 9,
                 "stdout_truncated": true,
                 "stderr_truncated": false
             })),
         );
         assert!(
             exec_killed.contains("killed"),
-            "killed command must be labelled: {exec_killed}"
+            "signalled command must be labelled: {exec_killed}"
+        );
+
+        // Regression: a normal non-zero exit code with truncated
+        // output must NOT be labelled "killed". `grep` returning 1 for
+        // no matches and a check that happened to exceed the cap is
+        // the exact shape that mislabelled before.
+        let exec_nonzero_not_killed = summarize_tool_result(
+            "execute_command",
+            &ToolResult::Success(serde_json::json!({
+                "stdout": "x\n",
+                "stderr": "",
+                "exit_code": 1,
+                "exit_signal": null,
+                "stdout_truncated": true,
+                "stderr_truncated": false
+            })),
+        );
+        assert!(
+            exec_nonzero_not_killed.contains("output truncated at cap"),
+            "truncation must still be reported: {exec_nonzero_not_killed}"
+        );
+        assert!(
+            !exec_nonzero_not_killed.contains("killed"),
+            "non-zero exit is not 'killed': {exec_nonzero_not_killed}"
         );
     }
 

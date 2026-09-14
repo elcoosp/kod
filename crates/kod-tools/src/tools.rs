@@ -384,10 +384,29 @@ impl Tool for ExecuteCommandTool {
 
         let status = child.wait().await.map_err(KodError::Io)?;
 
+        // On Unix, distinguish "exited with code N" from "killed by
+        // signal N". A process terminated by the truncation path's
+        // start_kill() reports a signal, not an exit code; a process
+        // that finished on its own — even with a non-zero exit, like
+        // `grep` returning 1 for no matches — reports a code. The
+        // downstream summariser used to infer "killed" from
+        // `exit_code != 0`, which mislabelled every `grep` result
+        // whose output happened to be truncated. Reporting the signal
+        // directly removes the guess. Windows does not have exit
+        // signals in the same sense; the field is omitted there.
+        #[cfg(unix)]
+        let exit_signal: Option<i32> = {
+            use std::os::unix::process::ExitStatusExt;
+            status.signal()
+        };
+        #[cfg(not(unix))]
+        let exit_signal: Option<i32> = None;
+
         Ok(ToolResult::Success(serde_json::json!({
             "stdout": String::from_utf8_lossy(&stdout_bytes).to_string(),
             "stderr": String::from_utf8_lossy(&stderr_bytes).to_string(),
             "exit_code": status.code().unwrap_or(-1),
+            "exit_signal": exit_signal,
             "stdout_truncated": stdout_truncated,
             "stderr_truncated": stderr_truncated,
         })))
@@ -516,6 +535,17 @@ const MAX_ENTRY_BYTES: usize = 1024;
 /// the line-level pattern a coding agent is looking for; 8 MB is
 /// generous for the useful case and cheap to bound the useless one.
 const MAX_GREP_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Cap on the `skipped_large_files` list returned with a grep result.
+/// A repo with a build tree full of large artifacts (a `target/` that
+/// .gitignore does not cover, a vendored dataset, a `node_modules/`
+/// with binary blobs) can have hundreds of files over
+/// [`MAX_GREP_FILE_BYTES`]. Listing every one of them would reproduce
+/// the exact problem the size cap was meant to solve — a tool result
+/// dominated by paths. 50 is enough to answer "which files were too
+/// big?" for the common case; `skipped_large_files_total` carries the
+/// real count when more were skipped.
+const MAX_SKIPPED_LARGE_FILES: usize = 50;
 
 /// Truncate a UTF-8 string to at most `max` bytes at a char boundary,
 /// appending an ellipsis when the string was cut. Local to this module
@@ -676,9 +706,13 @@ impl Tool for GrepTool {
         let mut results = Vec::new();
         // Files whose size exceeded MAX_GREP_FILE_BYTES. Reported in
         // the result so the model knows the search was not exhaustive
-        // and can decide whether to grep them specifically (or read
-        // them with an offset once that exists).
+        // and can decide whether to grep them specifically. Capped at
+        // MAX_SKIPPED_LARGE_FILES with the true count in
+        // `skipped_large_files_total` — an uncapped list would turn
+        // into the very "tool result dominated by paths" problem the
+        // size limit exists to prevent.
         let mut skipped_large_files: Vec<String> = Vec::new();
+        let mut skipped_large_total: usize = 0;
 
         use std::io::BufRead as _;
 
@@ -694,7 +728,10 @@ impl Tool for GrepTool {
             if let Ok(meta) = std::fs::metadata(&file_path)
                 && meta.len() > MAX_GREP_FILE_BYTES
             {
-                skipped_large_files.push(file_path.to_string_lossy().to_string());
+                skipped_large_total += 1;
+                if skipped_large_files.len() < MAX_SKIPPED_LARGE_FILES {
+                    skipped_large_files.push(file_path.to_string_lossy().to_string());
+                }
                 continue;
             }
             let file = match std::fs::File::open(&file_path) {
@@ -739,6 +776,7 @@ impl Tool for GrepTool {
             "results": results,
             "truncated": results.len() >= MAX_GREP_MATCHES,
             "skipped_large_files": skipped_large_files,
+            "skipped_large_files_total": skipped_large_total,
         })))
     }
 }
