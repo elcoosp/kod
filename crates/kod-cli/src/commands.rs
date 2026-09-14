@@ -248,16 +248,40 @@ pub async fn run_chat(model: Option<String>, _temperature: f32, _interactive: bo
         // response's full text.
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
         let pump = tokio::spawn(async move {
+            // `streamed_any` counts text chunks, not control markers.
+            // It decides whether the caller still needs to print the
+            // final text: if the reply was already streamed live, the
+            // caller skips the duplicate. A tool notice is not a text
+            // chunk — printing it must not suppress the summary.
             let mut streamed_any = false;
             while let Some(chunk) = rx.recv().await {
+                // Tool-args marker: the engine has assembled a tool
+                // call and knows what it is about to do. Print a
+                // one-line notice so the user sees activity between
+                // two stretches of streamed text rather than an
+                // unexplained pause. Uses the same brief the TUI
+                // shows in its running row (format_call_brief), so
+                // the two surfaces speak the same vocabulary:
+                // `[execute_command cargo test]`,
+                // `[read_file path=src/main.rs]`.
+                if let Some(brief) = kod_core::engine::parse_tool_args(&chunk) {
+                    print!("\n[{brief}]\n");
+                    let _ = io::stdout().flush();
+                    continue;
+                }
+                // Other control markers (tool start, tool done,
+                // thinking) carry information the CLI does not
+                // render. Consume them without printing — the
+                // preceding tool notice already covers the visible
+                // activity, and the model's follow-up text will
+                // arrive as ordinary streamed chunks.
                 if kod_core::engine::parse_tool_start(&chunk).is_some()
-                    || kod_core::engine::parse_tool_args(&chunk).is_some()
                     || kod_core::engine::parse_tool_done(&chunk).is_some()
                     || kod_core::engine::is_thinking_marker(&chunk)
                 {
                     continue;
                 }
-                print!("{}", chunk);
+                print!("{chunk}");
                 let _ = io::stdout().flush();
                 streamed_any = true;
             }
