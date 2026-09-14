@@ -5,7 +5,7 @@ use kod_types::AgentId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::watch;
 
 /// Capabilities that an agent can have
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -102,8 +102,6 @@ pub struct Agent {
     #[allow(dead_code)]
     model: String,
     max_context_tokens: usize,
-    #[allow(dead_code)]
-    mailbox: Option<mpsc::UnboundedReceiver<crate::communication::SwarmMessage>>,
     model_config: ModelConfig,
 }
 
@@ -150,7 +148,7 @@ impl Agent {
     }
 
     /// Start the agent
-    pub async fn start(&mut self) -> Result<()> {
+    pub async fn start(&self) -> Result<()> {
         if self.state() != AgentState::Idle && self.state() != AgentState::Stopped {
             return Err(KodError::InvalidState(format!(
                 "Cannot start agent in state {:?}",
@@ -175,7 +173,7 @@ impl Agent {
     }
 
     /// Pause the agent
-    pub async fn pause(&mut self) -> Result<()> {
+    pub async fn pause(&self) -> Result<()> {
         if self.state() != AgentState::Running {
             return Err(KodError::InvalidState(format!(
                 "Cannot pause agent in state {:?}",
@@ -191,7 +189,7 @@ impl Agent {
     }
 
     /// Resume the agent
-    pub async fn resume(&mut self) -> Result<()> {
+    pub async fn resume(&self) -> Result<()> {
         if self.state() != AgentState::Paused {
             return Err(KodError::InvalidState(format!(
                 "Cannot resume agent in state {:?}",
@@ -209,7 +207,7 @@ impl Agent {
     }
 
     /// Stop the agent
-    pub async fn stop(&mut self) -> Result<()> {
+    pub async fn stop(&self) -> Result<()> {
         match self.state() {
             AgentState::Running | AgentState::Paused | AgentState::Starting => {
                 self.state.send(AgentState::Stopping).map_err(|e| {
@@ -324,7 +322,6 @@ impl AgentBuilder {
             last_heartbeat: parking_lot::Mutex::new(None),
             model,
             max_context_tokens: self.max_context_tokens,
-            mailbox: None,
             model_config: self.model_config,
         }
     }
@@ -336,7 +333,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_lifecycle() {
-        let mut agent = Agent::new("test").build();
+        let agent = Agent::new("test").build();
 
         assert_eq!(agent.state(), AgentState::Idle);
 

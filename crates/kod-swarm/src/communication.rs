@@ -187,6 +187,10 @@ impl AgentCommunicationHub {
             self.record_message(id, &message).await;
         }
 
+        // Deliver to every recipient. `message` is Clone, so each send
+        // gets its own copy. (The previous code moved `message` into
+        // the loop; on a single recipient it happened to compile, but
+        // the intent is a broadcast, not a one-shot.)
         for (_, tx) in recipients {
             tx.send(message.clone())
                 .map_err(|e| KodError::InvalidState(e.to_string()))?;
@@ -241,5 +245,74 @@ impl AgentCommunicationHub {
             .entry(agent_id.clone())
             .or_default()
             .push(message.clone());
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::MessageContent;
+
+    /// Regression: the original broadcast moved `message` into the
+    /// delivery loop, so a swarm with two online recipients other than
+    /// the sender would deliver to at most one of them (the first
+    /// send moved the value; the second could not). This test guards
+    /// the fix: every online recipient other than the sender must
+    /// receive the message.
+    #[tokio::test]
+    async fn broadcast_reaches_every_online_recipient() {
+        let hub = AgentCommunicationHub::new();
+        let sender = AgentId::new();
+        let a = AgentId::new();
+        let b = AgentId::new();
+        hub.register_agent(sender.clone()).await.unwrap();
+        hub.register_agent(a.clone()).await.unwrap();
+        hub.register_agent(b.clone()).await.unwrap();
+
+        // Take receivers before broadcasting so the channels are live.
+        let rx_a = hub.get_agent_receiver(&a).await.unwrap();
+        let rx_b = hub.get_agent_receiver(&b).await.unwrap();
+
+        let content = MessageContent::ResultDelivery {
+            result: "all done".to_string(),
+        };
+        hub.broadcast(&sender, content).await.unwrap();
+
+        let got_a = rx_a.recv().await.expect("agent A should receive");
+        let got_b = rx_b.recv().await.expect("agent B should receive");
+        assert_eq!(got_a.from, sender);
+        assert_eq!(got_b.from, sender);
+    }
+
+    /// The sender should not receive their own broadcast.
+    #[tokio::test]
+    async fn broadcast_does_not_echo_to_sender() {
+        let hub = AgentCommunicationHub::new();
+        let sender = AgentId::new();
+        let peer = AgentId::new();
+        hub.register_agent(sender.clone()).await.unwrap();
+        hub.register_agent(peer.clone()).await.unwrap();
+
+        let rx_sender = hub.get_agent_receiver(&sender).await.unwrap();
+        let _rx_peer = hub.get_agent_receiver(&peer).await.unwrap();
+
+        hub.broadcast(
+            &sender,
+            MessageContent::ResultDelivery {
+                result: "hi".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        // The sender's own receiver should see nothing within a short
+        // window — the broadcast filter excludes the sender.
+        let recv = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            rx_sender.recv(),
+        )
+        .await;
+        assert!(recv.is_err(), "sender should not receive its own broadcast");
     }
 }

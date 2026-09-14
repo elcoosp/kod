@@ -30,7 +30,7 @@ async fn test_agent_builder() {
 
 #[tokio::test]
 async fn test_agent_lifecycle() {
-    let mut agent = Agent::new("worker").build();
+    let agent = Agent::new("worker").build();
 
     // Initial state
     assert_eq!(agent.state(), AgentState::Idle);
@@ -69,7 +69,7 @@ async fn test_agent_capabilities() {
 
 #[tokio::test]
 async fn test_agent_heartbeat() {
-    let mut agent = Agent::new("worker").build();
+    let agent = Agent::new("worker").build();
 
     agent.start().await.unwrap();
 
@@ -92,7 +92,7 @@ async fn test_agent_heartbeat() {
 
 #[tokio::test]
 async fn test_agent_is_idle_timeout() {
-    let mut agent = Agent::new("worker").build();
+    let agent = Agent::new("worker").build();
     agent.start().await.unwrap();
 
     // Fresh heartbeat means not timed out
