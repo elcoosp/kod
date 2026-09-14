@@ -61,8 +61,57 @@ impl Cli {
                 rt.block_on(async { run_tui(model.clone()).await })
             }
             None => {
-                println!("KOD - Terminal-native AI coding agent");
-                println!("Use --help for usage information.");
+                // First-run UX. A bare `kod` invocation is the most common
+                // first experience, and the previous output was one line
+                // ("Use --help for usage information") that gave a new
+                // user nothing to act on. Show the four entry points,
+                // where the config lives, and where skills are read from
+                // — everything a fresh install needs to get moving.
+                println!("KOD — terminal AI coding agent");
+                println!();
+                println!("Getting started:");
+                println!("  kod tui                  interactive session (recommended)");
+                println!("  kod chat                 plain chat REPL");
+                println!("  kod agent -g \"<goal>\"    one-shot agent run");
+                println!("  kod skills               list loaded skills");
+                println!("  kod config               show effective configuration");
+                println!("  kod test                 run self-tests");
+                println!();
+                // Point at the actual paths KodConfig uses, so the
+                // output is accurate on macOS (~/Library/Application
+                // Support/kod/) as well as Linux (~/.config/kod/).
+                match KodConfig::config_dir() {
+                    Ok(dir) => println!("Config:  {}", dir.join("config.toml").display()),
+                    Err(_) => println!("Config:  (could not determine config directory)"),
+                }
+                match KodConfig::load_default() {
+                    Ok(cfg) => match cfg.skills_dirs() {
+                        Ok(dirs) => {
+                            let existing: Vec<String> = dirs
+                                .iter()
+                                .filter(|d| d.is_dir())
+                                .map(|d| d.display().to_string())
+                                .collect();
+                            if existing.is_empty() {
+                                println!(
+                                    "Skills:  none found — put .md skills in {} or {}",
+                                    dirs.first()
+                                        .map(|d| d.display().to_string())
+                                        .unwrap_or_else(|| "~/.kod/skills".to_string()),
+                                    dirs.get(1)
+                                        .map(|d| d.display().to_string())
+                                        .unwrap_or_else(|| "~/.agents/skills".to_string()),
+                                );
+                            } else {
+                                println!("Skills:  {}", existing.join(", "));
+                            }
+                        }
+                        Err(_) => println!("Skills:  (could not determine skills directories)"),
+                    },
+                    Err(_) => println!("Skills:  (config could not be loaded)"),
+                }
+                println!();
+                println!("Run `kod --help` for the full command list.");
                 Ok(())
             }
         }
