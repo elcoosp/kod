@@ -3,6 +3,7 @@
 use crate::{Tool, ToolContext};
 use kod_error::{KodError, Result};
 use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use regex::Regex;
 use serde_json::Value;
 
 /// Byte cap for `read_file`. Files larger than this are truncated at a
@@ -499,7 +500,7 @@ impl GrepTool {
             definition: ToolDefinition {
                 id: ToolId::new(),
                 name: "grep".to_string(),
-                description: "Search for a pattern in files".to_string(),
+                description: "Search file contents with a regular expression. Respects .gitignore (skips target/, node_modules/, .git, …); results cap at 500 matches. Use \\b, \\w, [abc], (a|b), etc. — not PCRE lookarounds.".to_string(),
                 category: ToolCategory::FileSystem,
                 parameters_schema: serde_json::json!({
                     "type": "object",
@@ -510,11 +511,15 @@ impl GrepTool {
                         },
                         "pattern": {
                             "type": "string",
-                            "description": "Pattern to search for"
+                            "description": "Rust `regex` crate pattern. Metacharacters are active; escape them (e.g. \\.) to match literally."
                         },
                         "recursive": {
                             "type": "boolean",
                             "description": "Search recursively"
+                        },
+                        "case_insensitive": {
+                            "type": "boolean",
+                            "description": "Match case-insensitively (default false, matching grep). Set true when the case of the target is unknown."
                         }
                     },
                     "required": ["path", "pattern"]
@@ -557,49 +562,68 @@ impl Tool for GrepTool {
                 reason: "Missing 'pattern' parameter".to_string(),
             })?;
         let recursive = params["recursive"].as_bool().unwrap_or(false);
+        let case_insensitive = params["case_insensitive"].as_bool().unwrap_or(false);
 
         let resolved = context.resolve_path(path)?;
         context.can_read(&resolved)?;
 
-        let glob = if recursive {
-            format!("{}/**", path)
+        // Compile the caller's pattern as a regex. An invalid pattern
+        // becomes a ToolResult::Error so the model sees its own mistake
+        // instead of the whole tool loop stalling.
+        let regex = match Regex::new(pattern) {
+            Ok(r) => r,
+            Err(e) => {
+                return Ok(ToolResult::Error(format!(
+                    "invalid regex {:?}: {}",
+                    pattern, e
+                )));
+            }
+        };
+        // `regex` has no inline (?i) rebuild helper, so recompile with
+        // the case-insensitive flag when requested.
+        let regex = if case_insensitive {
+            let folded = format!("(?i){}", pattern);
+            match Regex::new(&folded) {
+                Ok(r) => r,
+                Err(e) => {
+                    return Ok(ToolResult::Error(format!(
+                        "invalid regex {:?}: {}",
+                        pattern, e
+                    )));
+                }
+            }
         } else {
-            format!("{}/*", path)
+            regex
         };
 
-        let matcher = globset::GlobSetBuilder::new()
-            .add(
-                globset::Glob::new(&glob)
-                    .map_err(|e| KodError::InvalidState(format!("Invalid glob: {}", e)))?,
-            )
-            .build()
-            .map_err(|e| KodError::InvalidState(format!("Invalid globset: {}", e)))?;
-
+        // `gitaware_walk` already roots at `resolved` and depth-limits
+        // when non-recursive, so its yielded paths are the search set.
+        // The old code additionally filtered with a glob built from the
+        // *user-supplied* `path` — which never matched the absolute
+        // paths the walker returns, so grep silently returned nothing
+        // for relative-path calls. Dropped.
         let mut results = Vec::new();
 
         for file_path in gitaware_walk(&resolved, recursive) {
-            if !matcher.is_match(&file_path) {
-                continue;
-            }
-
             if results.len() >= MAX_GREP_MATCHES {
                 break;
             }
-            if file_path.is_file() {
-                let content = match std::fs::read_to_string(&file_path) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-                for (line_num, line) in content.lines().enumerate() {
-                    if line.contains(pattern) {
-                        results.push(serde_json::json!({
-                            "file": file_path.to_string_lossy().to_string(),
-                            "line": line_num + 1,
-                            "text": line.trim(),
-                        }));
-                        if results.len() >= MAX_GREP_MATCHES {
-                            break;
-                        }
+            if !file_path.is_file() {
+                continue;
+            }
+            let content = match std::fs::read_to_string(&file_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            for (line_num, line) in content.lines().enumerate() {
+                if regex.is_match(line) {
+                    results.push(serde_json::json!({
+                        "file": file_path.to_string_lossy().to_string(),
+                        "line": line_num + 1,
+                        "text": line.trim(),
+                    }));
+                    if results.len() >= MAX_GREP_MATCHES {
+                        break;
                     }
                 }
             }
@@ -607,6 +631,7 @@ impl Tool for GrepTool {
 
         Ok(ToolResult::Success(serde_json::json!({
             "pattern": pattern,
+            "case_insensitive": case_insensitive,
             "results": results,
             "truncated": results.len() >= MAX_GREP_MATCHES,
         })))
@@ -779,6 +804,117 @@ mod tests {
                 assert_eq!(v["exit_code"], 0);
             }
             other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    fn grep_ctx(dir: &std::path::Path) -> ToolContext {
+        ToolContext::new(dir).with_permissions(ToolPermissions {
+            read_files: true,
+            ..Default::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn grep_finds_literal_pattern_from_relative_path() {
+        // Regression: the previous implementation built a glob from the
+        // user-supplied relative `path` and matched it against the
+        // absolute paths returned by the walker, so calling grep with
+        // path="." or path="src" silently returned zero matches.
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("a.txt"), "needle\nhay\n").unwrap();
+        std::fs::write(temp.path().join("b.txt"), "hay only\n").unwrap();
+
+        let ctx = grep_ctx(temp.path());
+        let tool = GrepTool::new();
+        let params = serde_json::json!({ "path": ".", "pattern": "needle" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                let hits = v["results"].as_array().unwrap();
+                assert_eq!(hits.len(), 1, "got {:?}", hits);
+                assert_eq!(hits[0]["text"], "needle");
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn grep_treats_pattern_as_regex() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            temp.path().join("code.rs"),
+            "fn main() {}\nfn helper(x: u32) -> u32 { x }\nlet n = 42;\n",
+        )
+        .unwrap();
+
+        let ctx = grep_ctx(temp.path());
+        let tool = GrepTool::new();
+        // Match any `fn <name>(` definition.
+        let params = serde_json::json!({
+            "path": ".",
+            "pattern": r"fn\s+\w+\s*\("
+        });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                let hits = v["results"].as_array().unwrap();
+                assert_eq!(hits.len(), 2, "got {:?}", hits);
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn grep_case_insensitive_flag_works() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("mixed.txt"), "TODO\ntodo\nTodo\n").unwrap();
+
+        let ctx = grep_ctx(temp.path());
+        let tool = GrepTool::new();
+
+        let params = serde_json::json!({
+            "path": ".",
+            "pattern": "todo"
+        });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["results"].as_array().unwrap().len(), 1);
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+
+        let params = serde_json::json!({
+            "path": ".",
+            "pattern": "todo",
+            "case_insensitive": true
+        });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["results"].as_array().unwrap().len(), 3);
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn grep_invalid_regex_returns_error_result() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("a.txt"), "anything").unwrap();
+
+        let ctx = grep_ctx(temp.path());
+        let tool = GrepTool::new();
+        let params = serde_json::json!({ "path": ".", "pattern": "[" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Error(msg) => {
+                assert!(msg.contains("invalid regex"), "got: {msg}");
+            }
+            other => panic!("expected ToolResult::Error, got {:?}", other),
         }
     }
 }

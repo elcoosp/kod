@@ -13,6 +13,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 ignore = { workspace = true }
 globset = { workspace = true }
+regex = { workspace = true }
 fs4 = { workspace = true }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }

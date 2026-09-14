@@ -64,6 +64,7 @@ schemars = "1.2.2"
 walkdir = "2.5.0"
 ignore = "0.4.25"
 globset = "0.4.20"
+regex = "1.13"
 notify = "8.2.0"
 fs4 = "1.1.0"
 

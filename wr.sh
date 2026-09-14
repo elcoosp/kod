@@ -26,23 +26,25 @@ run_with_timeout() {
 
 COMPILE_OK=true
 INCOMPLETE=false
-APP=crates/kod-tui/src/app.rs
-LOOP=crates/kod-tui/src/main_loop.rs
 
-for f in "$APP" "$LOOP"; do
+ROOT_CARGO=Cargo.toml
+TOOLS_CARGO=crates/kod-tools/Cargo.toml
+TOOLS_RS=crates/kod-tools/src/tools.rs
+
+for f in "$ROOT_CARGO" "$TOOLS_CARGO" "$TOOLS_RS"; do
     if [ ! -f "$f" ]; then
         echo "ERROR: missing $f — run from the kod workspace root"
         exit 1
     fi
 done
 
-echo "Fixing 5 clippy lints in kod-tui (app.rs x3, main_loop.rs x2)"
+echo "Adding regex to workspace deps and rewriting GrepTool to actually use it"
 
-python3 - "$APP" "$LOOP" << 'PYEOF'
+python3 - "$ROOT_CARGO" "$TOOLS_CARGO" "$TOOLS_RS" << 'PYEOF'
 import os
 import sys
 
-app, loop = sys.argv[1], sys.argv[2]
+root_cargo, tools_cargo, tools_rs = sys.argv[1], sys.argv[2], sys.argv[3]
 
 def patch(path, old, new, label, expect=1):
     with open(path, "r") as f:
@@ -61,111 +63,414 @@ def patch(path, old, new, label, expect=1):
     os.replace(tmp, path)
     print(f"Patched {path}: {label}")
 
-# --- 1. app.rs: if_same_then_else in friendly_error ---------------------
-# The `else if lower.contains("cancelled by user")` arm and the final
-# `else` both return "". Collapse: drop the redundant arm.
+# --- 1. Root Cargo.toml: add regex to [workspace.dependencies] ----------
 patch(
-    app,
-    '''        } else if lower.contains("timed out")
-            || lower.contains("timeout")
-            || lower.contains("deadline")
-        {
-            " The request timed out — the model may still be loading (first run pulls weights). Wait a minute and `/retry`."
-        } else if lower.contains("cancelled by user") {
-            ""
+    root_cargo,
+    '''globset = "0.4.20"
+notify = "8.2.0"
+fs4 = "1.1.0"''',
+    '''globset = "0.4.20"
+regex = "1.13"
+notify = "8.2.0"
+fs4 = "1.1.0"''',
+    "regex in workspace deps",
+)
+
+# --- 2. kod-tools Cargo.toml: add regex dep -----------------------------
+patch(
+    tools_cargo,
+    '''ignore = { workspace = true }
+globset = { workspace = true }
+fs4 = { workspace = true }''',
+    '''ignore = { workspace = true }
+globset = { workspace = true }
+regex = { workspace = true }
+fs4 = { workspace = true }''',
+    "regex in kod-tools deps",
+)
+
+# --- 3. tools.rs: import regex -----------------------------------------
+patch(
+    tools_rs,
+    '''use crate::{Tool, ToolContext};
+use kod_error::{KodError, Result};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use serde_json::Value;''',
+    '''use crate::{Tool, ToolContext};
+use kod_error::{KodError, Result};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
+use regex::Regex;
+use serde_json::Value;''',
+    "import regex",
+)
+
+# --- 4. tools.rs: update GrepTool description and schema ---------------
+patch(
+    tools_rs,
+    '''            definition: ToolDefinition {
+                id: ToolId::new(),
+                name: "grep".to_string(),
+                description: "Search for a pattern in files".to_string(),
+                category: ToolCategory::FileSystem,
+                parameters_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Directory to search"
+                        },
+                        "pattern": {
+                            "type": "string",
+                            "description": "Pattern to search for"
+                        },
+                        "recursive": {
+                            "type": "boolean",
+                            "description": "Search recursively"
+                        }
+                    },
+                    "required": ["path", "pattern"]
+                }),''',
+    '''            definition: ToolDefinition {
+                id: ToolId::new(),
+                name: "grep".to_string(),
+                description: "Search file contents with a regular expression. Respects .gitignore (skips target/, node_modules/, .git, …); results cap at 500 matches. Use \\\\b, \\\\w, [abc], (a|b), etc. — not PCRE lookarounds.".to_string(),
+                category: ToolCategory::FileSystem,
+                parameters_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Directory to search"
+                        },
+                        "pattern": {
+                            "type": "string",
+                            "description": "Rust `regex` crate pattern. Metacharacters are active; escape them (e.g. \\\\.) to match literally."
+                        },
+                        "recursive": {
+                            "type": "boolean",
+                            "description": "Search recursively"
+                        },
+                        "case_insensitive": {
+                            "type": "boolean",
+                            "description": "Match case-insensitively (default false, matching grep). Set true when the case of the target is unknown."
+                        }
+                    },
+                    "required": ["path", "pattern"]
+                }),''',
+    "GrepTool description and schema",
+)
+
+# --- 5. tools.rs: replace GrepTool::execute body -----------------------
+patch(
+    tools_rs,
+    '''    async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
+        let path = params["path"]
+            .as_str()
+            .ok_or_else(|| KodError::InvalidParameters {
+                reason: "Missing 'path' parameter".to_string(),
+            })?;
+        let pattern = params["pattern"]
+            .as_str()
+            .ok_or_else(|| KodError::InvalidParameters {
+                reason: "Missing 'pattern' parameter".to_string(),
+            })?;
+        let recursive = params["recursive"].as_bool().unwrap_or(false);
+
+        let resolved = context.resolve_path(path)?;
+        context.can_read(&resolved)?;
+
+        let glob = if recursive {
+            format!("{}/**", path)
         } else {
-            ""
-        };''',
-    '''        } else if lower.contains("timed out")
-            || lower.contains("timeout")
-            || lower.contains("deadline")
-        {
-            " The request timed out — the model may still be loading (first run pulls weights). Wait a minute and `/retry`."
+            format!("{}/*", path)
+        };
+
+        let matcher = globset::GlobSetBuilder::new()
+            .add(
+                globset::Glob::new(&glob)
+                    .map_err(|e| KodError::InvalidState(format!("Invalid glob: {}", e)))?,
+            )
+            .build()
+            .map_err(|e| KodError::InvalidState(format!("Invalid globset: {}", e)))?;
+
+        let mut results = Vec::new();
+
+        for file_path in gitaware_walk(&resolved, recursive) {
+            if !matcher.is_match(&file_path) {
+                continue;
+            }
+
+            if results.len() >= MAX_GREP_MATCHES {
+                break;
+            }
+            if file_path.is_file() {
+                let content = match std::fs::read_to_string(&file_path) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                for (line_num, line) in content.lines().enumerate() {
+                    if line.contains(pattern) {
+                        results.push(serde_json::json!({
+                            "file": file_path.to_string_lossy().to_string(),
+                            "line": line_num + 1,
+                            "text": line.trim(),
+                        }));
+                        if results.len() >= MAX_GREP_MATCHES {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(ToolResult::Success(serde_json::json!({
+            "pattern": pattern,
+            "results": results,
+            "truncated": results.len() >= MAX_GREP_MATCHES,
+        })))
+    }''',
+    '''    async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
+        let path = params["path"]
+            .as_str()
+            .ok_or_else(|| KodError::InvalidParameters {
+                reason: "Missing 'path' parameter".to_string(),
+            })?;
+        let pattern = params["pattern"]
+            .as_str()
+            .ok_or_else(|| KodError::InvalidParameters {
+                reason: "Missing 'pattern' parameter".to_string(),
+            })?;
+        let recursive = params["recursive"].as_bool().unwrap_or(false);
+        let case_insensitive = params["case_insensitive"].as_bool().unwrap_or(false);
+
+        let resolved = context.resolve_path(path)?;
+        context.can_read(&resolved)?;
+
+        // Compile the caller's pattern as a regex. An invalid pattern
+        // becomes a ToolResult::Error so the model sees its own mistake
+        // instead of the whole tool loop stalling.
+        let regex = match Regex::new(pattern) {
+            Ok(r) => r,
+            Err(e) => {
+                return Ok(ToolResult::Error(format!(
+                    "invalid regex {:?}: {}",
+                    pattern, e
+                )));
+            }
+        };
+        // `regex` has no inline (?i) rebuild helper, so recompile with
+        // the case-insensitive flag when requested.
+        let regex = if case_insensitive {
+            let folded = format!("(?i){}", pattern);
+            match Regex::new(&folded) {
+                Ok(r) => r,
+                Err(e) => {
+                    return Ok(ToolResult::Error(format!(
+                        "invalid regex {:?}: {}",
+                        pattern, e
+                    )));
+                }
+            }
         } else {
-            // Any other error carries no situational advice. This also
-            // covers "cancelled by user" (which the engine treats as a
-            // normal stop, not a failure) and matches the previous
-            // behavior of returning an empty advice string for both.
-            ""
-        };''',
-    "collapse identical if-same-then-else arms in friendly_error",
-)
+            regex
+        };
 
-# --- 2. app.rs: unnecessary unwrap in spinner() -------------------------
-# `if self.generating && self.spinner_started.is_some()` then
-# `self.spinner_started.unwrap()`. Use if-let to avoid the unwrap.
-patch(
-    app,
-    '''    pub fn spinner(&self) -> &'static str {
-        if self.generating && self.spinner_started.is_some() {
-            let started = self.spinner_started.unwrap();
-            let step = started.elapsed().as_millis() / 100;
-            return SPINNER_FRAMES[(step as usize) % SPINNER_FRAMES.len()];
-        }
-        SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()]
-    }''',
-    '''    pub fn spinner(&self) -> &'static str {
-        if self.generating
-            && let Some(started) = self.spinner_started
-        {
-            let step = started.elapsed().as_millis() / 100;
-            return SPINNER_FRAMES[(step as usize) % SPINNER_FRAMES.len()];
-        }
-        SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()]
-    }''',
-    "if-let on spinner_started",
-)
+        // `gitaware_walk` already roots at `resolved` and depth-limits
+        // when non-recursive, so its yielded paths are the search set.
+        // The old code additionally filtered with a glob built from the
+        // *user-supplied* `path` — which never matched the absolute
+        // paths the walker returns, so grep silently returned nothing
+        // for relative-path calls. Dropped.
+        let mut results = Vec::new();
 
-# --- 3. app.rs: collapsible_if in expand_tilde --------------------------
-# `else if raw == "~" { if let Some(home) = dirs::home_dir() { … } }`
-# collapses into a let-chain on edition 2024.
-patch(
-    app,
-    '''    fn expand_tilde(raw: &str) -> String {
-        if let Some(rest) = raw.strip_prefix("~/") {
-            if let Some(home) = dirs::home_dir() {
-                return format!("{}/{rest}", home.display());
+        for file_path in gitaware_walk(&resolved, recursive) {
+            if results.len() >= MAX_GREP_MATCHES {
+                break;
             }
-        } else if raw == "~" {
-            if let Some(home) = dirs::home_dir() {
-                return home.display().to_string();
+            if !file_path.is_file() {
+                continue;
+            }
+            let content = match std::fs::read_to_string(&file_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            for (line_num, line) in content.lines().enumerate() {
+                if regex.is_match(line) {
+                    results.push(serde_json::json!({
+                        "file": file_path.to_string_lossy().to_string(),
+                        "line": line_num + 1,
+                        "text": line.trim(),
+                    }));
+                    if results.len() >= MAX_GREP_MATCHES {
+                        break;
+                    }
+                }
             }
         }
-        raw.to_string()
+
+        Ok(ToolResult::Success(serde_json::json!({
+            "pattern": pattern,
+            "case_insensitive": case_insensitive,
+            "results": results,
+            "truncated": results.len() >= MAX_GREP_MATCHES,
+        })))
     }''',
-    '''    fn expand_tilde(raw: &str) -> String {
-        if let Some(rest) = raw.strip_prefix("~/") {
-            if let Some(home) = dirs::home_dir() {
-                return format!("{}/{rest}", home.display());
+    "GrepTool::execute regex body",
+)
+
+# --- 6. tools.rs: append grep tests to the inline test module ----------
+old_tail = '''    #[cfg(unix)]
+    #[tokio::test]
+    async fn execute_command_small_output_is_not_truncated() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let ctx = full_context(temp.path());
+        let tool = ExecuteCommandTool::new();
+        let params = serde_json::json!({ "command": "echo hello" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["stdout_truncated"], false);
+                assert_eq!(v["stdout"], "hello\\n");
+                assert_eq!(v["exit_code"], 0);
             }
-        } else if raw == "~"
-            && let Some(home) = dirs::home_dir()
-        {
-            return home.display().to_string();
+            other => panic!("expected success, got {:?}", other),
         }
-        raw.to_string()
-    }''',
-    "collapse collapsible_if in expand_tilde",
-)
+    }
+}'''
 
-# --- 4. main_loop.rs: map_identity on the panic-hook restore ------------
-patch(
-    loop,
-    '''        let default_hook = std::sync::Arc::try_unwrap(default_hook)
-            .map(|h| h)
-            .unwrap_or_else(|_| std::panic::take_hook());''',
-    '''        let default_hook = std::sync::Arc::try_unwrap(default_hook)
-            .unwrap_or_else(|_| std::panic::take_hook());''',
-    "remove map_identity",
-)
+new_tail = '''    #[cfg(unix)]
+    #[tokio::test]
+    async fn execute_command_small_output_is_not_truncated() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let ctx = full_context(temp.path());
+        let tool = ExecuteCommandTool::new();
+        let params = serde_json::json!({ "command": "echo hello" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
 
-# --- 5. main_loop.rs: redundant_pattern_matching on pending_confirm -----
-patch(
-    loop,
-    '''        if let Some(_) = self.app.pending_confirm() {''',
-    '''        if self.app.pending_confirm().is_some() {''',
-    "is_some() in place of if-let Some(_)",
-)
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["stdout_truncated"], false);
+                assert_eq!(v["stdout"], "hello\\n");
+                assert_eq!(v["exit_code"], 0);
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    fn grep_ctx(dir: &std::path::Path) -> ToolContext {
+        ToolContext::new(dir).with_permissions(ToolPermissions {
+            read_files: true,
+            ..Default::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn grep_finds_literal_pattern_from_relative_path() {
+        // Regression: the previous implementation built a glob from the
+        // user-supplied relative `path` and matched it against the
+        // absolute paths returned by the walker, so calling grep with
+        // path="." or path="src" silently returned zero matches.
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("a.txt"), "needle\\nhay\\n").unwrap();
+        std::fs::write(temp.path().join("b.txt"), "hay only\\n").unwrap();
+
+        let ctx = grep_ctx(temp.path());
+        let tool = GrepTool::new();
+        let params = serde_json::json!({ "path": ".", "pattern": "needle" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                let hits = v["results"].as_array().unwrap();
+                assert_eq!(hits.len(), 1, "got {:?}", hits);
+                assert_eq!(hits[0]["text"], "needle");
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn grep_treats_pattern_as_regex() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            temp.path().join("code.rs"),
+            "fn main() {}\\nfn helper(x: u32) -> u32 { x }\\nlet n = 42;\\n",
+        )
+        .unwrap();
+
+        let ctx = grep_ctx(temp.path());
+        let tool = GrepTool::new();
+        // Match any `fn <name>(` definition.
+        let params = serde_json::json!({
+            "path": ".",
+            "pattern": r"fn\\s+\\w+\\s*\\("
+        });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Success(v) => {
+                let hits = v["results"].as_array().unwrap();
+                assert_eq!(hits.len(), 2, "got {:?}", hits);
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn grep_case_insensitive_flag_works() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("mixed.txt"), "TODO\\ntodo\\nTodo\\n").unwrap();
+
+        let ctx = grep_ctx(temp.path());
+        let tool = GrepTool::new();
+
+        let params = serde_json::json!({
+            "path": ".",
+            "pattern": "todo"
+        });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["results"].as_array().unwrap().len(), 1);
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+
+        let params = serde_json::json!({
+            "path": ".",
+            "pattern": "todo",
+            "case_insensitive": true
+        });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["results"].as_array().unwrap().len(), 3);
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn grep_invalid_regex_returns_error_result() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("a.txt"), "anything").unwrap();
+
+        let ctx = grep_ctx(temp.path());
+        let tool = GrepTool::new();
+        let params = serde_json::json!({ "path": ".", "pattern": "[" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+
+        match result {
+            ToolResult::Error(msg) => {
+                assert!(msg.contains("invalid regex"), "got: {msg}");
+            }
+            other => panic!("expected ToolResult::Error, got {:?}", other),
+        }
+    }
+}'''
+
+patch(tools_rs, old_tail, new_tail, "grep tests")
 
 print("All patches applied.")
 PYEOF
@@ -186,15 +491,9 @@ if [ "$INCOMPLETE" = true ] || [ "$COMPILE_OK" = false ]; then
     exit 1
 fi
 
-echo "Running clippy with -D warnings"
-if ! cargo clippy --workspace --all-targets -- -D warnings 2>&1; then
-    echo "Clippy still failing. Paste the full output for a surgical fix."
-    exit 1
-fi
-
-echo "Running kod-tui tests (120s wall clock)"
-if ! run_with_timeout 120 cargo test -p kod-tui 2>&1; then
-    echo "kod-tui tests failed or hung. Paste the full output for a surgical fix."
+echo "Running kod-tools tests (120s wall clock)"
+if ! run_with_timeout 120 cargo test -p kod-tools 2>&1; then
+    echo "kod-tools tests failed or hung. Paste the full output for a surgical fix."
     exit 1
 fi
 
@@ -204,27 +503,36 @@ if ! run_with_timeout 300 cargo test --workspace 2>&1; then
     exit 1
 fi
 
+echo "Running clippy with -D warnings"
+if ! cargo clippy --workspace --all-targets -- -D warnings 2>&1; then
+    echo "Clippy failed. Paste the full output for a surgical fix."
+    exit 1
+fi
+
 echo "All checks passed. Committing."
 git add -A
-git commit -m "style(tui): clear five clippy lints blocking -D warnings
+git commit -m "fix(tools): make grep actually regex, fix broken path filter
 
-kod-tui now compiles clean under clippy -D warnings:
+Two bugs in one tool:
 
-- app.rs friendly_error: the 'cancelled by user' arm returned the
-  same empty string as the final else. Drop the redundant arm and
-  note in the remaining else that cancelled-by-user is a normal
-  stop, not a failure.
+1. The schema described 'pattern' as 'Pattern to search for' but the
+   implementation did a literal substring match (line.contains). A
+   model writing grep { pattern: 'fn \\w+\\(' } got zero hits with no
+   hint that metacharacters were inert. Now compiles the pattern with
+   the regex crate and returns ToolResult::Error on an invalid
+   pattern, so the model sees its own mistake instead of a silent
+   empty result. Adds an optional case_insensitive flag, default
+   false to match grep semantics.
 
-- app.rs spinner: 'if generating && started.is_some()' followed by
-  started.unwrap(). Rewrite as 'if generating && let Some(started)'.
+2. The search set was already produced by gitaware_walk, which is
+   rooted at the resolved path and depth-limited for non-recursive
+   calls. The old code additionally filtered with a glob built from
+   the user-supplied relative path ('src/**') and matched it against
+   the walker's absolute paths ('/abs/cwd/src/main.rs'), so grep
+   returned nothing whenever it was called with a relative path. The
+   redundant glob filter is removed.
 
-- app.rs expand_tilde: nested if-let under 'else if raw == \"~\"'.
-  Collapse into a single let-chain (edition 2024).
-
-- main_loop.rs panic-hook restore: '.map(|h| h)' is the identity.
-  Remove it; Arc::try_unwrap's Ok arm already yields the inner value.
-
-- main_loop.rs pending_confirm: 'if let Some(_) = ...' rewritten as
-  '.is_some()'.
-
-No behavior change."
+Also adds four tests: literal match from a relative path, regex
+metacharacter matching, the case_insensitive flag, and invalid-regex
+error reporting. Workspace deps gain regex = '1.13' (already present
+transitively via globset, so no new compile cost)."
