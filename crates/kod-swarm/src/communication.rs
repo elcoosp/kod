@@ -437,7 +437,7 @@ mod tests {
 
         // Drain b's receiver so its queue does not fill; we only care
         // about history, not delivery.
-        let mut rx_b = hub.get_agent_receiver(&b).await.unwrap();
+        let rx_b = hub.get_agent_receiver(&b).await.unwrap();
         // Spawn a drain task so unbounded sends do not block.
         let drain = tokio::spawn(async move {
             while rx_b.recv().await.is_some() {}
