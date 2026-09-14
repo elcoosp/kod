@@ -9,7 +9,7 @@ if [ ! -f Cargo.toml ] || [ ! -f "$TARGET" ]; then
     exit 1
 fi
 
-echo "Patching $TARGET: tool-result block name; MAX_TOOL_ROUNDS notice"
+echo "Patching $TARGET: JSON-aware cap on tool results fed to the model"
 
 python3 - "$TARGET" << 'PYEOF'
 import os
@@ -31,183 +31,253 @@ def patch(old, new, label, expect=1):
     content = content.replace(old, new, expect if expect else n)
     print(f"Patched: {label}")
 
-# --- 1. Fix the block name mismatch -----------------------------------
+# --- 1. Add cap_rendered_result helper -------------------------------
 patch(
-    '''            prompt.push_str(&format!(
-                "\\n## Tool use\\n\\nYou have these tools (function calls, rooted at the working directory above):\\n{}\\nCall them when you need facts from this machine instead of guessing. Tool outputs return as `## Tool result` blocks — then answer the user.\\n",
-                names.join("\\n")
-            ));''',
-    '''            prompt.push_str(&format!(
-                // The block name matches the actual header emitted by
-                // `run_tool_calls` (`## Tool results`). Telling the model
-                // to look for `## Tool result` — the previous singular
-                // spelling — invited it to miss the results block and
-                // re-call the same tool.
-                "\\n## Tool use\\n\\nYou have these tools (function calls, rooted at the working directory above):\\n{}\\nCall them when you need facts from this machine instead of guessing. Tool outputs return as `## Tool results` blocks — then answer the user.\\n",
-                names.join("\\n")
-            ));''',
-    "## Tool results block name",
-)
+    '''/// Truncate a UTF-8 string to at most `max` bytes, rounding down to the
+/// nearest char boundary. Returns the input unchanged when it already
+/// fits. Use this instead of `&s[..max]` — the raw slice panics when
+/// `max` lands mid-codepoint, which any non-ASCII tool output can hit
+/// (a file containing "café", an error message with an em-dash, any
+/// emoji in a directory listing).
+pub(crate) fn truncate_chars(s: &str, max: usize) -> &str {''',
+    '''/// Bytes of headroom reserved when capping a JSON tool result: enough
+/// room for the surrounding `{"path": "…", "content": "…", "truncated":
+/// …}` scaffolding after we trim the big string fields.
+const JSON_CAP_HEADROOM: usize = 512;
 
-# --- 2. Reduce MAX_TOOL_ROUNDS and add a caller-visible stop notice ---
-patch(
-    '''/// Max agentic tool rounds per `process()` call before forcing a summary.
-const MAX_TOOL_ROUNDS: usize = 150;''',
-    '''/// Max agentic tool rounds per `process()` call before forcing a
-/// summary. A single agentic pass typically uses 3–15 rounds for a
-/// non-trivial task; 40 is a generous safety margin that catches a
-/// runaway loop (a small model that keeps re-calling `read_file` on
-/// the same path, unable to recognize it is done) well before the
-/// user has waited minutes for nothing. When the cap is hit the loop
-/// appends a notice to the transcript so the model — and the user —
-/// can see why generation stopped short of a final answer.
-const MAX_TOOL_ROUNDS: usize = 40;
+/// Fields in a tool-result JSON object that are typically the reason
+/// a rendered result exceeds the prompt cap. Trimmed in place so the
+/// surrounding JSON stays valid.
+const CAPPABLE_FIELDS: [&str; 3] = ["content", "stdout", "stderr"];
 
-/// Appended to the transcript when the tool loop hits
-/// [`MAX_TOOL_ROUNDS`] without a text-only reply. Without it, the
-/// model's next prompt would open with the appearance of a normal
-/// conversation and might keep re-calling tools; with it, the model
-/// is prompted to summarize what it has done so far, and any user
-/// reading the reply sees why the loop stopped short of a final
-/// answer.
-const TOOL_ROUNDS_EXHAUSTED_NOTE: &str =
-    "\\n\\n[tool-round limit reached — no further tool calls will run this turn. \
-     Summarize what has been done so far and what remains.]";''',
-    "MAX_TOOL_ROUNDS 150 -> 40 + exhausted note",
-)
-
-# --- 3. Emit the notice in run_collected_loop -------------------------
-patch(
-    '''            match provider
-                .generate_with_tools(pending, definitions, options)
-                .await?
+/// Cap a rendered `ToolResult::Success` to at most `cap` bytes without
+/// cutting mid-JSON.
+///
+/// The simple byte cut this replaces produced, for a large `read_file`
+/// result:
+///
+///   `{"path": "/foo.rs", "content": "fn main() {\\n    ...
+///    … [truncated 90000 bytes]`
+///
+/// — invalid JSON, with the `"truncated": true` flag past the cut and
+/// therefore unreachable. The model could not tell that the content
+/// was incomplete, and any downstream parser would have rejected the
+/// string outright.
+///
+/// This helper trims the long string fields *inside* the object (with
+/// a per-field marker), re-serializes, and only falls back to a byte
+/// cut if the reserialized form is somehow still over. Non-string
+/// fields (paths, line numbers, flags, error codes) always survive.
+pub(crate) fn cap_rendered_result(result: &ToolResult, cap: usize) -> String {
+    let ToolResult::Success(v) = result else {
+        // Callers route only Success through this helper; the fallback
+        // is defensive.
+        return format!("{result:?}");
+    };
+    let raw = v.to_string();
+    if raw.len() <= cap {
+        return raw;
+    }
+    if let Some(obj) = v.as_object() {
+        let mut trimmed = obj.clone();
+        // Split the budget across the fields that may each need a
+        // marker. Two long fields (read_file's content + nothing;
+        // execute_command's stdout + stderr) is the worst case.
+        let per_field = cap.saturating_sub(JSON_CAP_HEADROOM) / 2;
+        let mut changed = false;
+        for key in CAPPABLE_FIELDS {
+            if let Some(serde_json::Value::String(s)) = trimmed.get_mut(key)
+                && s.len() > per_field
             {
-                GenerationResponse::Text { content, usage } => {
-                    last_usage = usage.or(last_usage);
-                    final_text.push_str(&content);
-                    break;
-                }
-                GenerationResponse::ToolCalls { calls, usage } => {
-                    last_usage = usage.or(last_usage);
-                    if calls.is_empty() {
-                        break;
-                    }
-                    let section = self.run_tool_calls(&calls).await;
-                    tool_calls.extend(calls);
-                    tool_results.extend(section.results);
-                    pending.push_str(&format!("\\n\\n{}", section.prompt_block));
-                    self.apply_steers(pending).await;
-                }
-                GenerationResponse::Mixed {
-                    content,
-                    calls,
-                    usage,
-                } => {
-                    last_usage = usage.or(last_usage);
-                    final_text.push_str(&content);
-                    if calls.is_empty() {
-                        break;
-                    }
-                    let section = self.run_tool_calls(&calls).await;
-                    tool_calls.extend(calls);
-                    tool_results.extend(section.results);
-                    pending.push_str(&format!("\\n\\n{}", section.prompt_block));
-                    self.apply_steers(pending).await;
-                }
+                let removed = s.len() - per_field;
+                *s = format!(
+                    "{}… [truncated {} of {} bytes]",
+                    truncate_chars(s, per_field),
+                    removed,
+                    s.len(),
+                );
+                changed = true;
             }
         }
-        Ok((final_text, tool_calls, tool_results, last_usage))
-    }''',
-    '''            match provider
-                .generate_with_tools(pending, definitions, options)
-                .await?
-            {
-                GenerationResponse::Text { content, usage } => {
-                    last_usage = usage.or(last_usage);
-                    final_text.push_str(&content);
-                    break;
-                }
-                GenerationResponse::ToolCalls { calls, usage } => {
-                    last_usage = usage.or(last_usage);
-                    if calls.is_empty() {
-                        break;
-                    }
-                    let section = self.run_tool_calls(&calls).await;
-                    tool_calls.extend(calls);
-                    tool_results.extend(section.results);
-                    pending.push_str(&format!("\\n\\n{}", section.prompt_block));
-                    self.apply_steers(pending).await;
-                }
-                GenerationResponse::Mixed {
-                    content,
-                    calls,
-                    usage,
-                } => {
-                    last_usage = usage.or(last_usage);
-                    final_text.push_str(&content);
-                    if calls.is_empty() {
-                        break;
-                    }
-                    let section = self.run_tool_calls(&calls).await;
-                    tool_calls.extend(calls);
-                    tool_results.extend(section.results);
-                    pending.push_str(&format!("\\n\\n{}", section.prompt_block));
-                    self.apply_steers(pending).await;
-                }
+        if changed
+            && let Ok(reserialized) = serde_json::to_string(&trimmed)
+        {
+            if reserialized.len() <= cap {
+                return reserialized;
             }
+            return format!(
+                "{}… [truncated {} bytes]",
+                truncate_chars(&reserialized, cap),
+                reserialized.len().saturating_sub(cap),
+            );
         }
-        // If we exited because we ran out of rounds (as opposed to the
-        // model producing a Text reply), tell the transcript. The
-        // caller will ask the model for a summary since final_text is
-        // empty; the note steers that summary toward "what got done".
-        if tool_calls.len() >= MAX_TOOL_ROUNDS && final_text.trim().is_empty() {
-            pending.push_str(TOOL_ROUNDS_EXHAUSTED_NOTE);
-        }
-        Ok((final_text, tool_calls, tool_results, last_usage))
-    }''',
-    "collected loop exhausted note",
+    }
+    format!(
+        "{}… [truncated {} bytes]",
+        truncate_chars(&raw, cap),
+        raw.len().saturating_sub(cap),
+    )
+}
+
+/// Truncate a UTF-8 string to at most `max` bytes, rounding down to the
+/// nearest char boundary. Returns the input unchanged when it already
+/// fits. Use this instead of `&s[..max]` — the raw slice panics when
+/// `max` lands mid-codepoint, which any non-ASCII tool output can hit
+/// (a file containing "café", an error message with an em-dash, any
+/// emoji in a directory listing).
+pub(crate) fn truncate_chars(s: &str, max: usize) -> &str {''',
+    "cap_rendered_result helper",
 )
 
-# --- 4. Emit the notice in run_streaming_loop -------------------------
+# --- 2. Route Success results through the helper --------------------
 patch(
-    '''            tool_calls.extend(calls);
-            tool_results.extend(section.results);
-            pending.push_str(&format!("\\n\\n{}", section.prompt_block));
-            self.apply_steers(pending).await;
-            // Tool is done, result reinjected — next provider call is pure
-            // LLM thinking, not tool execution. Tell the UI to drop the
-            // "tool: …" line so a slow model doesn't look like a stuck tool.
-            let _ = chunk_tx.send(thinking_marker()).await;
-        }
-        Ok((final_text, tool_calls, tool_results, last_usage))
-    }''',
-    '''            tool_calls.extend(calls);
-            tool_results.extend(section.results);
-            pending.push_str(&format!("\\n\\n{}", section.prompt_block));
-            self.apply_steers(pending).await;
-            // Tool is done, result reinjected — next provider call is pure
-            // LLM thinking, not tool execution. Tell the UI to drop the
-            // "tool: …" line so a slow model doesn't look like a stuck tool.
-            let _ = chunk_tx.send(thinking_marker()).await;
-        }
-        // Ran out of rounds without a text-only reply: let the caller's
-        // summary prompt know why, and send a visible notice down the
-        // stream so the TUI can show a system line alongside whatever
-        // summary the model produces.
-        if tool_calls.len() >= MAX_TOOL_ROUNDS && final_text.trim().is_empty() {
-            pending.push_str(TOOL_ROUNDS_EXHAUSTED_NOTE);
-            let _ = chunk_tx
-                .send(format!(
-                    "\\n\\n[tool-round limit ({MAX_TOOL_ROUNDS}) reached — summarising progress]\\n"
-                ))
-                .await;
-        }
-        Ok((final_text, tool_calls, tool_results, last_usage))
-    }''',
-    "streaming loop exhausted note + stream notice",
+    '''            let rendered = match &result {
+                // list_files raw JSON is one quoted path per entry; a repo
+                // with a target/ dir produces 40k+ entries and the model
+                // sees 4000 bytes of quoted paths ending in "[truncated
+                // 1523k chars]" — no count, no sense of scale.
+                // summarize_tool_result renders "4852 entries in src/:
+                // · main.rs · lib.rs … and 4840 more", which is what the
+                // model can actually reason about. read_file and grep
+                // keep their raw payloads — the model needs the content
+                // and the (file, line, text) tuples, not a preview.
+                ToolResult::Success(_) if call.tool_name == "list_files" => {
+                    summarize_tool_result(&call.tool_name, &result)
+                }
+                ToolResult::Success(v) => v.to_string(),
+                ToolResult::Error(e) => format!("error: {e}"),
+                ToolResult::RequiresConfirmation { description, .. } => {
+                    format!("requires confirmation (auto-skipped in TUI): {description}")
+                }
+            };
+            // Cap huge outputs so context survives. Slicing must be
+            // char-boundary aware — the old `&rendered[..4000]` panicked
+            // whenever byte 4000 landed inside a multibyte codepoint
+            // (any file containing non-ASCII text).
+            let rendered = if rendered.len() > 8000 {
+                format!(
+                    "{}… [truncated {} bytes]",
+                    truncate_chars(&rendered, 8000),
+                    rendered.len() - truncate_chars(&rendered, 8000).len()
+                )
+            } else {
+                rendered
+            };''',
+    '''            // Cap for the prompt block the model sees. Byte count, not
+            // tokens, but at the workspace's 4-chars-per-token rule of
+            // thumb this is ≈2k tokens — comfortably under any model's
+            // per-round budget once history, identity, and tools are
+            // added on top.
+            const RENDERED_RESULT_CAP: usize = 8_000;
+            let rendered = match &result {
+                // list_files raw JSON is one quoted path per entry; a repo
+                // with a target/ dir produces 40k+ entries and the model
+                // sees a few KB of quoted paths ending in "[truncated
+                // 1523k chars]" — no count, no sense of scale.
+                // summarize_tool_result renders "4852 entries in src/:
+                // · main.rs · lib.rs … and 4840 more", which is what the
+                // model can actually reason about.
+                ToolResult::Success(_) if call.tool_name == "list_files" => {
+                    summarize_tool_result(&call.tool_name, &result)
+                }
+                // read_file and grep keep their structured payloads —
+                // the model needs the actual content and (file, line,
+                // text) tuples. cap_rendered_result trims the long
+                // string fields *inside* the JSON rather than cutting
+                // the serialized form mid-token, so the model always
+                // gets parseable JSON with every metadata field
+                // (path, line numbers, the `truncated` flag) intact.
+                ToolResult::Success(_) => cap_rendered_result(&result, RENDERED_RESULT_CAP),
+                ToolResult::Error(e) => format!("error: {e}"),
+                ToolResult::RequiresConfirmation { description, .. } => {
+                    format!("requires confirmation (auto-skipped in TUI): {description}")
+                }
+            };''',
+    "run_tool_calls JSON-aware cap",
 )
 
-print("All patches applied.")
+# --- 3. Tests --------------------------------------------------------
+patch(
+    '''    #[test]
+    fn test_summarize_reports_truncation() {''',
+    '''    /// cap_rendered_result must produce valid JSON for an oversized
+    /// result: the model has to be able to parse every metadata field
+    /// even when the content itself is trimmed.
+    #[test]
+    fn test_cap_rendered_result_keeps_json_valid() {
+        // A read_file result whose content is much larger than the cap.
+        let big_content = "x".repeat(50_000);
+        let result = ToolResult::Success(serde_json::json!({
+            "path": "/a/big.rs",
+            "content": big_content,
+            "truncated": false
+        }));
+        let rendered = cap_rendered_result(&result, 8_000);
+        assert!(
+            rendered.len() <= 8_000,
+            "rendered {} bytes > cap 8000",
+            rendered.len()
+        );
+        // The critical assertion: the output must parse as JSON.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&rendered).expect("capped result must be valid JSON");
+        assert_eq!(parsed["path"], "/a/big.rs");
+        assert_eq!(parsed["truncated"], false);
+        let content = parsed["content"].as_str().expect("content is a string");
+        assert!(
+            content.contains("truncated"),
+            "content should carry a per-field truncation marker"
+        );
+    }
+
+    /// A result that already fits the cap is returned unchanged.
+    #[test]
+    fn test_cap_rendered_result_small_is_untouched() {
+        let result = ToolResult::Success(serde_json::json!({
+            "path": "/a/small.rs",
+            "content": "hello\\n",
+            "truncated": false
+        }));
+        let raw = match &result {
+            ToolResult::Success(v) => v.to_string(),
+            _ => unreachable!(),
+        };
+        let rendered = cap_rendered_result(&result, 8_000);
+        assert_eq!(rendered, raw);
+    }
+
+    /// execute_command with both stdout and stderr over the per-field
+    /// budget must still produce valid JSON with all four fields present.
+    #[test]
+    fn test_cap_rendered_result_trims_both_streams() {
+        let result = ToolResult::Success(serde_json::json!({
+            "stdout": "a".repeat(20_000),
+            "stderr": "b".repeat(20_000),
+            "exit_code": 3,
+            "stdout_truncated": false,
+            "stderr_truncated": false
+        }));
+        let rendered = cap_rendered_result(&result, 8_000);
+        assert!(rendered.len() <= 8_000);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&rendered).expect("capped result must be valid JSON");
+        assert_eq!(parsed["exit_code"], 3);
+        assert_eq!(parsed["stdout_truncated"], false);
+        assert_eq!(parsed["stderr_truncated"], false);
+        assert!(parsed["stdout"].as_str().unwrap().contains("truncated"));
+        assert!(parsed["stderr"].as_str().unwrap().contains("truncated"));
+    }
+
+    #[test]
+    fn test_summarize_reports_truncation() {''',
+    "cap_rendered_result tests",
+)
+
+tmp = target + ".tmp"
+with open(tmp, "w") as f:
+    f.write(content)
+os.replace(tmp, target)
+print("Patched", target)
 PYEOF
 
 if [ $? -ne 0 ]; then
@@ -229,31 +299,39 @@ fi
 
 echo "Committing."
 git add -A
-git commit -m "fix(core): correct tool-results block name; announce tool-round limit
+git commit -m "fix(core): JSON-aware cap for tool results fed to the model
 
-Two small fixes in the tool-loop plumbing.
+The 8000-byte prompt cap in run_tool_calls cut the rendered
+ToolResult as a raw byte string. For read_file that string is JSON:
 
-1. ground_prompt told the model: 'Tool outputs return as ## Tool
-   result blocks'. The block that run_tool_calls actually emits is
-   '## Tool results' (plural). A model told to look for a singular
-   header that never appears in the prompt has no way to know the
-   results it just triggered are the very next section — and a small
-   model re-calls the same tool rather than reading the block. Fix
-   the spelling in the grounding text to match the emitter.
+  {\"path\": \"/foo.rs\", \"content\": \"fn main() {\\\\n    ...
 
-2. MAX_TOOL_ROUNDS was 150 — three orders of magnitude more than the
-   3–15 rounds a real agentic pass uses — and when the loop hit the
-   cap it exited silently. The user saw tool calls stop with no
-   explanation, the model's next prompt had the shape of a normal
-   conversation, and the summary prompt could not tell the difference
-   between 'the model finished' and 'we ran out of rounds'.
+After the cut the model saw:
 
-   Reduce the ceiling to 40 (still generous; a runaway loop typically
-   gets there in seconds) and add TOOL_ROUNDS_EXHAUSTED_NOTE, which
-   the loop appends to the transcript and, in the streaming path,
-   sends down the chunk channel as a visible system line. The model's
-   forced summary now opens with explicit context, and the TUI shows
-   a 'tool-round limit (40) reached — summarising progress' row
-   alongside the reply instead of leaving the user guessing.
+  {\"path\": \"/foo.rs\", \"content\": \"fn main() {\\\\n    ...
+  … [truncated 90000 bytes]
 
-No public API change."
+Two problems. First, it is not valid JSON — any downstream parser
+(or a model that tries to re-read the structure) fails. Second, the
+\`truncated\` flag on read_file lives *after* \`content\` in the
+serialized form, so for any file larger than the cap the model never
+saw whether the file itself had been truncated by the reader's own
+256 KB limit or was simply cut by the prompt cap.
+
+Add cap_rendered_result, which:
+- If the serialized form fits the cap, returns it unchanged.
+- Otherwise trims the long string fields (content, stdout, stderr)
+  *inside* the object with a per-field '… [truncated N of M bytes]'
+  marker, and re-serializes. Paths, line numbers, exit codes, and
+  the truncated flags always survive.
+- Falls back to a byte cut only if the reserialized form is somehow
+  still over.
+
+Route every Success result through it, except list_files (which
+already goes through summarize_tool_result — the count-and-names
+form is more useful than a JSON dump).
+
+Adds three tests: a 50 KB read_file stays valid JSON under an 8 KB
+cap and keeps its path + truncated flag; a small result is returned
+unchanged; a two-stream execute_command result over the per-field
+budget stays valid with exit_code and both truncated flags intact."
