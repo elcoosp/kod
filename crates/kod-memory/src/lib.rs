@@ -3,6 +3,16 @@
 //! This crate provides different memory backends with a unified interface
 //! for storing and retrieving context.
 //!
+//! # Current state of the episodic layer
+//!
+//! `EpisodicMemory` exposes a cosine-similarity `find_similar` API, but
+//! the manager does not compute real embeddings yet — `MemoryManager::store`
+//! writes episodic entries with an empty `embedding` vec. Until a real
+//! embedding model is wired in (fastembed is in the workspace deps but
+//! unused in this crate), context retrieval goes through keyword matching
+//! in `MemoryManager::retrieve_context`. Treat the embedding-based API as
+//! a placeholder rather than a working semantic search.
+//!
 //! # Example
 //!
 //! ```rust,no_run

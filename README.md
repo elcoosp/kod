@@ -125,6 +125,20 @@ kod/
 KOD reads its configuration from `~/.kod/config.toml`. The config is auto-generated
 on first run with sensible defaults.
 
+## Skills
+
+Skills are markdown files with YAML front matter. KOD discovers them in
+these directories, in order; later directories shadow earlier ones for
+skills that share a name:
+
+1. `~/.kod/skills` — canonical KOD location
+2. `~/.agents/skills` — Claude-style compatibility
+3. `<project>/.kod/skills` — project-local KOD
+4. `<project>/.agents/skills` — project-local Claude-style
+
+Set `skills.skills_dir` in the config to use a single custom directory
+instead. `kod skills` and `/skills` in the TUI both list the merged set.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.

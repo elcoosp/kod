@@ -142,14 +142,13 @@ pub async fn run_chat(model: Option<String>, _temperature: f32, _interactive: bo
     // Start the engine
     engine.start().await?;
 
-    // Load skills into the engine so the router has skill inventory and instructions
-    let skills_dir = config.skills_dir()?;
-    if skills_dir.exists() {
-        match engine.load_skills(&skills_dir).await {
-            Ok(n) if n > 0 => println!("Loaded {} skills", n),
-            Ok(_) => {}
-            Err(e) => eprintln!("Could not load skills: {}", e),
-        }
+    // Load skills from every standard location so the router has the
+    // same inventory the TUI session sees.
+    let skills_dirs = config.skills_dirs()?;
+    match engine.load_skills_from_dirs(&skills_dirs).await {
+        Ok(n) if n > 0 => println!("Loaded {} skill file(s)", n),
+        Ok(_) => {}
+        Err(e) => eprintln!("Could not load skills: {}", e),
     }
 
     println!(
@@ -229,16 +228,26 @@ pub async fn run_agent(name: String, goal: String, model: Option<String>) -> Res
 /// List available skills
 pub async fn run_skills_list() -> Result<()> {
     let config = KodConfig::load_default()?;
-    let skills_dir = config.skills_dir()?;
+    let skills_dirs = config.skills_dirs()?;
 
-    if !skills_dir.exists() {
-        println!("Skills directory not found: {}", skills_dir.display());
+    let existing: Vec<_> = skills_dirs.iter().filter(|d| d.is_dir()).collect();
+    if existing.is_empty() {
+        println!("No skills directories found. Checked:");
+        for d in &skills_dirs {
+            println!("  {}", d.display());
+        }
         println!("No skills available.");
         return Ok(());
     }
 
-    let mut loader = kod_skills::SkillLoader::new(&skills_dir);
-    let skills = loader.load_all().await?;
+    let skills = kod_skills::load_from_dirs(&skills_dirs).await?;
+    if skills.is_empty() {
+        println!("Skills directories exist but contain no parseable .md skills:");
+        for d in &existing {
+            println!("  {}", d.display());
+        }
+        return Ok(());
+    }
 
     println!("Available skills ({}):", skills.len());
     for skill in &skills {
@@ -319,14 +328,14 @@ pub async fn run_tests() -> Result<()> {
     let provider_name = provider.name();
     println!("  Provider setup: OK (name={})", provider_name);
 
-    // Test 4: Skill loading
-    let skills_dir = config.skills_dir()?;
-    if skills_dir.exists() {
-        let loader = kod_skills::SkillLoader::new(&skills_dir);
-        let count = loader.count().await;
-        println!("  Skill loading: OK ({} skills)", count);
+    // Test 4: Skill loading across all standard directories
+    let skills_dirs = config.skills_dirs()?;
+    let any_dir_exists = skills_dirs.iter().any(|d| d.is_dir());
+    if any_dir_exists {
+        let skills = kod_skills::load_from_dirs(&skills_dirs).await?;
+        println!("  Skill loading: OK ({} skills)", skills.len());
     } else {
-        println!("  Skill loading: SKIPPED (no skills directory)");
+        println!("  Skill loading: SKIPPED (no skills directories exist)");
     }
 
     println!();

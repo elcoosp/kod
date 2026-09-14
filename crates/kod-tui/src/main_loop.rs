@@ -54,6 +54,11 @@ impl TuiLoop {
         let config = KodConfig::load_default()?;
         let model_name = model.unwrap_or_else(|| config.llm.model.clone());
 
+        // Compute skills_dirs before `config.llm` is moved into
+        // self.llm_config below — skills_dirs() borrows &self.config, and
+        // the move would make that borrow illegal.
+        let skills_dirs = config.skills_dirs()?;
+
         // The meter + compaction threshold must use the real window from
         // config (e.g. 8k for a small local model), not DEFAULT_CONTEXT_LIMIT.
         self.app.set_context_limit(config.llm.context_window);
@@ -77,24 +82,14 @@ impl TuiLoop {
         self.llm_config = Some(config.llm);
         self.app.set_model_name(&model_name);
 
-        // Load global + project skills so the session actually sees
-        // ~/.agents/skills (plus a repo-local .agents/skills if present).
+        // Load skills from every location KodConfig knows about. The
+        // same set is used by `kod skills` and `kod chat`, so the TUI
+        // and CLI always agree on the inventory.
         if let Some(engine) = &self.engine {
-            if let Some(home) = dirs::home_dir() {
-                let global = home.join(".agents").join("skills");
-                if global.is_dir() {
-                    match engine.load_skills(&global).await {
-                        Ok(_) => {}
-                        Err(e) => tracing::warn!("Could not load {}: {}", global.display(), e),
-                    }
-                }
-            }
-            let local = std::path::PathBuf::from(".agents").join("skills");
-            if local.is_dir() {
-                match engine.load_skills(&local).await {
-                    Ok(_) => {}
-                    Err(e) => tracing::warn!("Could not load {}: {}", local.display(), e),
-                }
+            match engine.load_skills_from_dirs(&skills_dirs).await {
+                Ok(0) => {}
+                Ok(n) => tracing::info!("Loaded {} skill file(s)", n),
+                Err(e) => tracing::warn!("Could not load skills: {}", e),
             }
             let loaded: Vec<String> = engine.loaded_skill_names().await;
             self.app.set_loaded_skills(loaded);
@@ -212,7 +207,6 @@ impl TuiLoop {
 
         // Restore the original hook before tearing down.
         let default_hook = std::sync::Arc::try_unwrap(default_hook)
-            .map(|h| h)
             .unwrap_or_else(|_| std::panic::take_hook());
         std::panic::set_hook(default_hook);
 
@@ -795,7 +789,7 @@ impl TuiLoop {
     /// Handle key events
     async fn handle_key(&mut self, key: KeyCode) -> Result<()> {
         // Intercept yes/no when a destructive action is pending (q, /clear).
-        if let Some(_) = self.app.pending_confirm() {
+        if self.app.pending_confirm().is_some() {
             match key {
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
                     let kind = self.app.resolve_confirm(true);

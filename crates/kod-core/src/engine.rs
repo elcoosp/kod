@@ -229,31 +229,31 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
     // read_file: path + size + short preview only. The full content still
     // reaches the model through the tool-result feedback block — the chat
     // row stays lean while the agent loses nothing.
-    if name == "read_file" {
-        if let Some(content) = v.get("content").and_then(|s| s.as_str()) {
-            let path = v
-                .get("path")
-                .and_then(|p| p.as_str())
-                .map(shorten_path)
-                .unwrap_or_else(|| name.to_string());
-            let lines = content.lines().count();
-            let mut out = format!(
-                "{} · {} line{} · {} chars",
-                path,
-                lines,
-                if lines == 1 { "" } else { "s" },
-                content.len()
-            );
-            let preview: Vec<&str> = content.lines().take(3).collect();
-            if !preview.is_empty() {
-                out.push('\n');
-                out.push_str(&preview.join("\n"));
-                if lines > preview.len() {
-                    out.push_str("\n…");
-                }
+    if name == "read_file"
+        && let Some(content) = v.get("content").and_then(|s| s.as_str())
+    {
+        let path = v
+            .get("path")
+            .and_then(|p| p.as_str())
+            .map(shorten_path)
+            .unwrap_or_else(|| name.to_string());
+        let lines = content.lines().count();
+        let mut out = format!(
+            "{} · {} line{} · {} chars",
+            path,
+            lines,
+            if lines == 1 { "" } else { "s" },
+            content.len()
+        );
+        let preview: Vec<&str> = content.lines().take(3).collect();
+        if !preview.is_empty() {
+            out.push('\n');
+            out.push_str(&preview.join("\n"));
+            if lines > preview.len() {
+                out.push_str("\n…");
             }
-            return out;
         }
+        return out;
     }
     // list_files: {path, files:[...]} → count + names.
     if let Some(files) = v.get("files").and_then(|f| f.as_array()) {
@@ -912,22 +912,52 @@ impl KodEngine {
     /// Execute one round of model-requested tool calls.
     ///
     /// Failures become `ToolResult::Error` text so the model sees denials
-    /// instead of stalling the loop. Calls run concurrently via `join_all`.
+    /// instead of stalling the loop.
+    ///
+    /// A round containing any mutating tool (`write_files` or
+    /// `execute_commands` in its declared permissions) runs serially in
+    /// caller order, so `[write_file(a), read_file(a)]` cannot race and
+    /// the read is guaranteed to observe the write. All-read-only rounds
+    /// still run concurrently — their results cannot depend on each other
+    /// or on external state they did not observe themselves.
     async fn run_tool_calls(&self, calls: &[ToolCall]) -> ToolRound {
-        let futs: Vec<_> = calls
-            .iter()
-            .map(|call| {
+        let mut any_mutating = false;
+        for call in calls {
+            if let Some(perms) = self.tools.get_permissions(&call.tool_name).await
+                && (perms.write_files || perms.execute_commands)
+            {
+                any_mutating = true;
+                break;
+            }
+        }
+
+        let raw_results: Vec<(Result<ToolResult>, u64)> = if any_mutating {
+            let mut out = Vec::with_capacity(calls.len());
+            for call in calls {
                 let start = std::time::Instant::now();
-                async move {
-                    let res = self
-                        .tools
-                        .execute_tool(&call.tool_name, &call.arguments, &self.tool_context)
-                        .await;
-                    (res, start.elapsed().as_millis() as u64)
-                }
-            })
-            .collect();
-        let raw_results = futures::future::join_all(futs).await;
+                let res = self
+                    .tools
+                    .execute_tool(&call.tool_name, &call.arguments, &self.tool_context)
+                    .await;
+                out.push((res, start.elapsed().as_millis() as u64));
+            }
+            out
+        } else {
+            let futs: Vec<_> = calls
+                .iter()
+                .map(|call| {
+                    let start = std::time::Instant::now();
+                    async move {
+                        let res = self
+                            .tools
+                            .execute_tool(&call.tool_name, &call.arguments, &self.tool_context)
+                            .await;
+                        (res, start.elapsed().as_millis() as u64)
+                    }
+                })
+                .collect();
+            futures::future::join_all(futs).await
+        };
         let mut results = Vec::with_capacity(calls.len());
         let mut elapsed_ms = Vec::with_capacity(calls.len());
         let mut block = String::from("## Tool results\n");
@@ -1010,6 +1040,33 @@ impl KodEngine {
     /// Load skills from a directory into the router's matcher.
     pub async fn load_skills(&self, skills_dir: &std::path::Path) -> Result<usize> {
         self.router.load_skills(skills_dir).await
+    }
+
+    /// Load skills from every directory in `dirs`, skipping any that do
+    /// not exist. Returns the total number of skill files read across all
+    /// directories. Skills sharing a name across directories count once
+    /// in the matcher (later dirs shadow earlier ones) but each file is
+    /// counted here, so the returned number is "files loaded", not
+    /// "distinct skills available" — use [`loaded_skill_names`] for the
+    /// deduplicated set.
+    pub async fn load_skills_from_dirs(&self, dirs: &[std::path::PathBuf]) -> Result<usize> {
+        let mut total = 0;
+        for dir in dirs {
+            if !dir.is_dir() {
+                continue;
+            }
+            match self.load_skills(dir).await {
+                Ok(n) => total += n,
+                Err(e) => {
+                    tracing::warn!(
+                        dir = %dir.display(),
+                        error = %e,
+                        "Could not load skills from directory"
+                    );
+                }
+            }
+        }
+        Ok(total)
     }
 
     /// Names of all loaded skills (for `/skills` listing).
@@ -1209,5 +1266,100 @@ mod tests {
         assert!(read.contains("4 lines"), "got: {read}");
         assert!(read.contains("one\ntwo\nthree"), "got: {read}");
         assert!(!read.contains("four"), "got: {read}");
+    }
+
+    /// A round containing a mutating tool must run serially in caller
+    /// order: the read must observe the write that precedes it in the
+    /// same round. Before the serialization fix, join_all could run the
+    /// read before the write committed, and this test would flake (or
+    /// fail when the file did not exist yet).
+    #[tokio::test]
+    async fn test_run_tool_calls_serializes_mutating_round() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+
+        let cfg = RouterConfig {
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        let calls = vec![
+            ToolCall {
+                tool_name: "write_file".to_string(),
+                arguments: serde_json::json!({
+                    "path": "serialize_probe.txt",
+                    "content": "hello-serial"
+                }),
+            },
+            ToolCall {
+                tool_name: "read_file".to_string(),
+                arguments: serde_json::json!({ "path": "serialize_probe.txt" }),
+            },
+        ];
+
+        let round = engine.run_tool_calls(&calls).await;
+        assert_eq!(round.results.len(), 2);
+
+        // Write must succeed.
+        match &round.results[0] {
+            ToolResult::Success(_) => {}
+            other => panic!("write_file did not succeed: {:?}", other),
+        }
+        // Read must observe the write.
+        match &round.results[1] {
+            ToolResult::Success(v) => {
+                assert_eq!(
+                    v["content"], "hello-serial",
+                    "read did not observe write — round raced: {:?}",
+                    v
+                );
+            }
+            other => panic!("read_file did not succeed: {:?}", other),
+        }
+    }
+
+    /// An all-read-only round is safe to parallelize; this test just
+    /// verifies both results come back, not the execution order.
+    #[tokio::test]
+    async fn test_run_tool_calls_parallelizes_read_only_round() {
+        let temp = TempDir::new().unwrap();
+        std::fs::write(temp.path().join("a.txt"), "AAA").unwrap();
+        std::fs::write(temp.path().join("b.txt"), "BBB").unwrap();
+
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        let calls = vec![
+            ToolCall {
+                tool_name: "read_file".to_string(),
+                arguments: serde_json::json!({ "path": "a.txt" }),
+            },
+            ToolCall {
+                tool_name: "read_file".to_string(),
+                arguments: serde_json::json!({ "path": "b.txt" }),
+            },
+        ];
+        let round = engine.run_tool_calls(&calls).await;
+        assert_eq!(round.results.len(), 2);
+        assert_eq!(round.elapsed_ms.len(), 2);
+        // Order matches caller order regardless of scheduling.
+        match (&round.results[0], &round.results[1]) {
+            (ToolResult::Success(a), ToolResult::Success(b)) => {
+                assert_eq!(a["content"], "AAA");
+                assert_eq!(b["content"], "BBB");
+            }
+            other => panic!("expected two successes, got {:?}", other),
+        }
     }
 }

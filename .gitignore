@@ -7,3 +7,4 @@ Cargo.lock
 .env.local
 *.log
 dump.txt
+wr.sh

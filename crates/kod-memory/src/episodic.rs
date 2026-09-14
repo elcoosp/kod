@@ -37,7 +37,14 @@ impl EpisodicMemory {
         Ok(self.episodes.write().remove(id))
     }
 
-    /// Find similar episodes based on embedding similarity
+    /// Find similar episodes based on embedding similarity.
+    ///
+    /// Requires callers to supply real embeddings. The manager stores
+    /// episodic entries with an empty `embedding` vec today (see
+    /// `MemoryManager::store`), so this method returns arbitrary order
+    /// for those entries — a zero-length embedding has cosine
+    /// similarity 0.0 against everything. Callers that need keyword
+    /// matching should use `MemoryManager::retrieve_context` instead.
     pub async fn find_similar(
         &self,
         query_embedding: &[f32],

@@ -191,6 +191,40 @@ impl SkillLoader {
     }
 }
 
+/// Load all skills from multiple directories, deduplicating by name.
+///
+/// Later directories shadow earlier ones for skills that share a name,
+/// so project-local skills override global ones. Directories that do not
+/// exist are skipped with a warning — an empty home skills dir must not
+/// block a session.
+pub async fn load_from_dirs(
+    dirs: &[std::path::PathBuf],
+) -> Result<Vec<kod_types::Skill>> {
+    use std::collections::HashMap;
+    let mut by_name: HashMap<String, kod_types::Skill> = HashMap::new();
+    for dir in dirs {
+        if !dir.is_dir() {
+            continue;
+        }
+        let mut loader = SkillLoader::new(dir);
+        match loader.load_all().await {
+            Ok(skills) => {
+                for skill in skills {
+                    by_name.insert(skill.metadata.name.clone(), skill);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    dir = %dir.display(),
+                    error = %e,
+                    "Could not load skills from directory"
+                );
+            }
+        }
+    }
+    Ok(by_name.into_values().collect())
+}
+
 /// Handle a watch event (reload or remove skill)
 async fn handle_watch_event(
     event: WatchEvent,

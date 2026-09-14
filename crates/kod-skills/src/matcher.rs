@@ -138,8 +138,16 @@ impl SkillMatcher {
         }
 
         // 4. Name matching (weighty: a directly named skill should win).
+        //
+        // Minimum length guards against short queries ("hi", "ui", "o")
+        // matching every skill whose name happens to contain those letters
+        // ("this-tool", "history-writer", "hint-helper").
         let name_lower = skill.metadata.name.to_lowercase();
-        if query.contains(&name_lower) || name_lower.contains(query) {
+        const MIN_NAME_MATCH_CHARS: usize = 3;
+        let name_hit = name_lower == query
+            || (name_lower.contains(query) && query.len() >= MIN_NAME_MATCH_CHARS)
+            || (query.contains(&name_lower) && name_lower.len() >= MIN_NAME_MATCH_CHARS);
+        if name_hit {
             score += 0.9;
             reasons.push(MatchReason::NameMatch {
                 name: skill.metadata.name.clone(),
@@ -255,7 +263,7 @@ mod tests {
         // single description word. The named one wins big; the others stay
         // below threshold so they don't pollute [skills] used.
         let matcher = SkillMatcher::new();
-        let mut make = |name: &str, desc: &str| {
+        let make = |name: &str, desc: &str| {
             let mut s = create_skill(name, Vec::new());
             s.metadata.description = desc.to_string();
             s
@@ -274,5 +282,38 @@ mod tests {
             .await;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].skill.metadata.name, "ui-ux-designer");
+    }
+
+    #[tokio::test]
+    async fn test_short_query_does_not_match_by_name_substring() {
+        // Regression: with the old substring rule, a 2-char query like
+        // "hi" matched every skill whose name contained those letters
+        // ("this-tool", "history-writer"). Those still score through
+        // tags/triggers/description below threshold, but must NOT get
+        // the 0.9 name-match bonus.
+        let matcher = SkillMatcher::new();
+        matcher
+            .add_skill(create_skill("this-tool", Vec::new()))
+            .await;
+        matcher
+            .add_skill(create_skill("history-writer", Vec::new()))
+            .await;
+        matcher
+            .add_skill(create_skill("hint-helper", Vec::new()))
+            .await;
+
+        let results = matcher.find_relevant_skills("hi").await;
+        assert!(
+            results.is_empty(),
+            "short query produced name matches: {:?}",
+            results
+                .iter()
+                .map(|m| m.skill.metadata.name.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        // A query long enough to be meaningful still matches by name.
+        let results = matcher.find_relevant_skills("use this-tool").await;
+        assert!(!results.is_empty(), "expected a match for 'this-tool'");
     }
 }

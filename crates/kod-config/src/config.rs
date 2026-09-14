@@ -83,15 +83,48 @@ impl KodConfig {
             .ok_or_else(|| KodError::Config("Could not determine config directory".to_string()))
     }
 
-    /// Get the skills directory
+    /// Get the primary skills directory.
+    ///
+    /// Prefer [`KodConfig::skills_dirs`] — this returns only the first
+    /// directory and exists for backwards compatibility with callers
+    /// that predate multi-directory discovery.
     pub fn skills_dir(&self) -> Result<PathBuf> {
+        Ok(self
+            .skills_dirs()?
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| PathBuf::from(".kod/skills")))
+    }
+
+    /// Every directory KOD scans for skills, in load order.
+    ///
+    /// When `skills.skills_dir` is explicitly set in the config, only that
+    /// directory is returned — an explicit choice is not augmented
+    /// silently. Otherwise the standard locations are returned:
+    ///
+    /// 1. `~/.kod/skills`      — canonical KOD location
+    /// 2. `~/.agents/skills`   — Claude-style compatibility
+    /// 3. `<cwd>/.kod/skills`  — project-local KOD
+    /// 4. `<cwd>/.agents/skills` — project-local Claude-style
+    ///
+    /// Later directories shadow earlier ones for skills that share a
+    /// name, so a project-local skill overrides a global one with the
+    /// same name.
+    pub fn skills_dirs(&self) -> Result<Vec<PathBuf>> {
         if let Some(dir) = &self.skills.skills_dir {
-            Ok(PathBuf::from(dir))
-        } else {
-            dirs::home_dir()
-                .map(|h| h.join(".kod").join("skills"))
-                .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))
+            return Ok(vec![PathBuf::from(dir)]);
         }
+        let home = dirs::home_dir()
+            .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
+        let cwd = std::env::current_dir().map_err(|e| {
+            KodError::Config(format!("Could not determine working directory: {}", e))
+        })?;
+        Ok(vec![
+            home.join(".kod").join("skills"),
+            home.join(".agents").join("skills"),
+            cwd.join(".kod").join("skills"),
+            cwd.join(".agents").join("skills"),
+        ])
     }
 }
 

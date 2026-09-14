@@ -50,12 +50,23 @@ pub fn write_clipboard(text: &str) -> bool {
                 return true;
             }
         }
+        // No clipboard tool succeeded on this Linux host.
+        return false;
     }
 
     #[cfg(target_os = "windows")]
     {
+        // Win32 clipboard writing is not implemented yet; callers fall
+        // back to a toast when this returns false.
         let _ = bytes;
+        return false;
     }
 
+    // Unreachable on every supported target (each cfg block above
+    // returns). Kept so the fn still has a tail expression if a future
+    // port adds an OS without adding a block — and to silence the
+    // `unreachable_code` lint that fired on the previous trailing
+    // `false` on macOS.
+    #[allow(unreachable_code)]
     false
 }

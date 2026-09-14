@@ -1276,9 +1276,11 @@ impl KodApp {
             || lower.contains("deadline")
         {
             " The request timed out — the model may still be loading (first run pulls weights). Wait a minute and `/retry`."
-        } else if lower.contains("cancelled by user") {
-            ""
         } else {
+            // Any other error carries no situational advice. This also
+            // covers "cancelled by user" (which the engine treats as a
+            // normal stop, not a failure) and matches the previous
+            // behavior of returning an empty advice string for both.
             ""
         };
         let mut out = format!("Error: {error}");
@@ -1356,8 +1358,9 @@ impl KodApp {
     /// wall-clock time (≈10 fps), so every render advances it even when
     /// `ResponseChunk` traffic starves `Tick` events.
     pub fn spinner(&self) -> &'static str {
-        if self.generating && self.spinner_started.is_some() {
-            let started = self.spinner_started.unwrap();
+        if self.generating
+            && let Some(started) = self.spinner_started
+        {
             let step = started.elapsed().as_millis() / 100;
             return SPINNER_FRAMES[(step as usize) % SPINNER_FRAMES.len()];
         }
@@ -1509,10 +1512,10 @@ impl KodApp {
             if let Some(home) = dirs::home_dir() {
                 return format!("{}/{rest}", home.display());
             }
-        } else if raw == "~" {
-            if let Some(home) = dirs::home_dir() {
-                return home.display().to_string();
-            }
+        } else if raw == "~"
+            && let Some(home) = dirs::home_dir()
+        {
+            return home.display().to_string();
         }
         raw.to_string()
     }

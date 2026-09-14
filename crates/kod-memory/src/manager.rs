@@ -65,13 +65,18 @@ impl MemoryManager {
                 self.long_term.store(entry).await?;
             }
             MemoryType::Episodic => {
-                // For now, use a simple embedding (in production, would use fastembed)
-                let embedding = self.generate_simple_embedding(content);
-
+                // `embedding` is reserved for a real embedding model
+                // (fastembed is already in the workspace deps but not
+                // wired up yet). Until then, episodic retrieval is
+                // keyword-based — see `retrieve_context` — and the field
+                // stays empty rather than being filled with a placeholder
+                // that would silently make `find_similar` and
+                // `semantic_search` return arbitrary results on the
+                // caller's behalf.
                 let episode = EpisodicMemoryType {
                     id: id.clone(),
                     content: content.to_string(),
-                    embedding,
+                    embedding: Vec::new(),
                     task_type: "general".to_string(),
                     outcome: Outcome::Success,
                     timestamp: OffsetDateTime::now_utc(),
@@ -178,7 +183,15 @@ impl MemoryManager {
         Ok(results)
     }
 
-    /// Retrieve context for a query
+    /// Retrieve context for a query.
+    ///
+    /// - Working memory is the most recent short-term entries (recency).
+    /// - Long-term memory is filtered by redb-backed substring search.
+    /// - Episodic memory is filtered by case-insensitive substring match
+    ///   on content — it is *not* embedding-based today, because the
+    ///   manager does not yet compute real embeddings. When a real
+    ///   embedding model is wired in, this method should switch to
+    ///   `EpisodicMemory::find_similar`.
     pub async fn retrieve_context(&self, query: &str) -> Result<MemoryContext> {
         let mut context = MemoryContext {
             working_memory: self.short_term.get_recent(10),
@@ -226,28 +239,6 @@ impl MemoryManager {
     /// Clear short-term memory only
     pub fn clear_short_term(&self) {
         self.short_term.clear();
-    }
-
-    /// Generate a simple embedding (placeholder for fastembed)
-    fn generate_simple_embedding(&self, content: &str) -> Vec<f32> {
-        // Simple hash-based embedding for testing
-        // In production, this would use fastembed
-        let mut embedding = vec![0.0; 128];
-
-        for (i, byte) in content.bytes().enumerate() {
-            let index = (i + byte as usize) % 128;
-            embedding[index] += 1.0;
-        }
-
-        // Normalize
-        let magnitude: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-        if magnitude > 0.0 {
-            for value in embedding.iter_mut() {
-                *value /= magnitude;
-            }
-        }
-
-        embedding
     }
 
     /// Limit context size to fit within context window

@@ -26,7 +26,7 @@ pub mod matcher;
 pub mod parser;
 pub mod watcher;
 
-pub use loader::SkillLoader;
+pub use loader::{SkillLoader, load_from_dirs};
 pub use matcher::SkillMatcher;
 pub use parser::SkillParser;
 pub use watcher::{SkillWatcher, WatchEvent};
