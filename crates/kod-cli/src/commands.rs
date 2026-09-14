@@ -208,34 +208,77 @@ pub async fn run_chat(model: Option<String>, _temperature: f32, _interactive: bo
 
     let stdin = io::stdin();
     let mut input = String::new();
-    print!("> ");
-    let _ = io::stdout().flush();
 
-    while let Ok(bytes) = stdin.lock().read_line(&mut input) {
-        if bytes == 0 {
-            break;
+    loop {
+        print!("> ");
+        let _ = io::stdout().flush();
+        input.clear();
+
+        match stdin.lock().read_line(&mut input) {
+            Ok(0) => break, // EOF (Ctrl+D)
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Input error: {}", e);
+                break;
+            }
         }
+
         let input_line = input.trim();
         if input_line.is_empty() {
-            print!("> ");
-            let _ = io::stdout().flush();
             continue;
         }
         if input_line == "quit" || input_line == "exit" {
             break;
         }
 
-        let response = engine.process(input_line).await?;
+        // Stream tokens as they arrive. The engine's chunk channel also
+        // carries `\0kod-*` markers (tool start / args / done / thinking)
+        // that the TUI uses to render its running indicator — the CLI has
+        // no such indicator, so it drops them. If nothing streamed (a
+        // tool-only reply whose summary is empty, or a provider whose
+        // default stream_with_tools emits no Text), fall back to the
+        // response's full text.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
+        let pump = tokio::spawn(async move {
+            let mut streamed_any = false;
+            while let Some(chunk) = rx.recv().await {
+                if kod_core::engine::parse_tool_start(&chunk).is_some()
+                    || kod_core::engine::parse_tool_args(&chunk).is_some()
+                    || kod_core::engine::parse_tool_done(&chunk).is_some()
+                    || kod_core::engine::is_thinking_marker(&chunk)
+                {
+                    continue;
+                }
+                print!("{}", chunk);
+                let _ = io::stdout().flush();
+                streamed_any = true;
+            }
+            streamed_any
+        });
 
-        if let Some(text) = response.text {
-            println!();
-            println!("{}", text);
-            println!();
+        let result = engine.process_streaming(input_line, &tx).await;
+        drop(tx);
+        let streamed_any = pump.await.unwrap_or(false);
+
+        match result {
+            Ok(resp) => {
+                if streamed_any {
+                    // Stream already printed the answer; finish the line
+                    // and leave one blank line before the next prompt.
+                    println!();
+                    println!();
+                } else if let Some(text) = resp.text
+                    && !text.trim().is_empty()
+                {
+                    println!();
+                    println!("{}", text);
+                    println!();
+                }
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+            }
         }
-
-        input.clear();
-        print!("> ");
-        let _ = io::stdout().flush();
     }
 
     // Shutdown

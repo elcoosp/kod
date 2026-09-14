@@ -33,7 +33,7 @@ if [ ! -f Cargo.toml ] || [ ! -f "$TARGET" ]; then
     exit 1
 fi
 
-echo "Patching $TARGET: proper first-run output when no subcommand is given"
+echo "Patching $TARGET: stream tokens to stdout in run_chat"
 
 python3 - "$TARGET" << 'PYEOF'
 import os
@@ -43,70 +43,140 @@ target = sys.argv[1]
 with open(target, "r") as f:
     content = f.read()
 
-old = '''            None => {
-                println!("KOD - Terminal-native AI coding agent");
-                println!("Use --help for usage information.");
-                Ok(())
-            }'''
+old = '''    println!(
+        "KOD Chat (model: {}) - Type 'quit' or Ctrl+C to exit",
+        model_name
+    );
+    println!();
 
-new = '''            None => {
-                // First-run UX. A bare `kod` invocation is the most common
-                // first experience, and the previous output was one line
-                // ("Use --help for usage information") that gave a new
-                // user nothing to act on. Show the four entry points,
-                // where the config lives, and where skills are read from
-                // — everything a fresh install needs to get moving.
-                println!("KOD — terminal AI coding agent");
-                println!();
-                println!("Getting started:");
-                println!("  kod tui                  interactive session (recommended)");
-                println!("  kod chat                 plain chat REPL");
-                println!("  kod agent -g \\"<goal>\\"    one-shot agent run");
-                println!("  kod skills               list loaded skills");
-                println!("  kod config               show effective configuration");
-                println!("  kod test                 run self-tests");
-                println!();
-                // Point at the actual paths KodConfig uses, so the
-                // output is accurate on macOS (~/Library/Application
-                // Support/kod/) as well as Linux (~/.config/kod/).
-                match KodConfig::config_dir() {
-                    Ok(dir) => println!("Config:  {}", dir.join("config.toml").display()),
-                    Err(_) => println!("Config:  (could not determine config directory)"),
+    let stdin = io::stdin();
+    let mut input = String::new();
+    print!("> ");
+    let _ = io::stdout().flush();
+
+    while let Ok(bytes) = stdin.lock().read_line(&mut input) {
+        if bytes == 0 {
+            break;
+        }
+        let input_line = input.trim();
+        if input_line.is_empty() {
+            print!("> ");
+            let _ = io::stdout().flush();
+            continue;
+        }
+        if input_line == "quit" || input_line == "exit" {
+            break;
+        }
+
+        let response = engine.process(input_line).await?;
+
+        if let Some(text) = response.text {
+            println!();
+            println!("{}", text);
+            println!();
+        }
+
+        input.clear();
+        print!("> ");
+        let _ = io::stdout().flush();
+    }
+
+    // Shutdown
+    engine.shutdown().await?;
+
+    Ok(())
+}'''
+
+new = '''    println!(
+        "KOD Chat (model: {}) - Type 'quit' or Ctrl+C to exit",
+        model_name
+    );
+    println!();
+
+    let stdin = io::stdin();
+    let mut input = String::new();
+
+    loop {
+        print!("> ");
+        let _ = io::stdout().flush();
+        input.clear();
+
+        match stdin.lock().read_line(&mut input) {
+            Ok(0) => break, // EOF (Ctrl+D)
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Input error: {}", e);
+                break;
+            }
+        }
+
+        let input_line = input.trim();
+        if input_line.is_empty() {
+            continue;
+        }
+        if input_line == "quit" || input_line == "exit" {
+            break;
+        }
+
+        // Stream tokens as they arrive. The engine's chunk channel also
+        // carries `\\0kod-*` markers (tool start / args / done / thinking)
+        // that the TUI uses to render its running indicator — the CLI has
+        // no such indicator, so it drops them. If nothing streamed (a
+        // tool-only reply whose summary is empty, or a provider whose
+        // default stream_with_tools emits no Text), fall back to the
+        // response's full text.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
+        let pump = tokio::spawn(async move {
+            let mut streamed_any = false;
+            while let Some(chunk) = rx.recv().await {
+                if kod_core::engine::parse_tool_start(&chunk).is_some()
+                    || kod_core::engine::parse_tool_args(&chunk).is_some()
+                    || kod_core::engine::parse_tool_done(&chunk).is_some()
+                    || kod_core::engine::is_thinking_marker(&chunk)
+                {
+                    continue;
                 }
-                match KodConfig::load_default() {
-                    Ok(cfg) => match cfg.skills_dirs() {
-                        Ok(dirs) => {
-                            let existing: Vec<String> = dirs
-                                .iter()
-                                .filter(|d| d.is_dir())
-                                .map(|d| d.display().to_string())
-                                .collect();
-                            if existing.is_empty() {
-                                println!(
-                                    "Skills:  none found — put .md skills in {} or {}",
-                                    dirs.first()
-                                        .map(|d| d.display().to_string())
-                                        .unwrap_or_else(|| "~/.kod/skills".to_string()),
-                                    dirs.get(1)
-                                        .map(|d| d.display().to_string())
-                                        .unwrap_or_else(|| "~/.agents/skills".to_string()),
-                                );
-                            } else {
-                                println!("Skills:  {}", existing.join(", "));
-                            }
-                        }
-                        Err(_) => println!("Skills:  (could not determine skills directories)"),
-                    },
-                    Err(_) => println!("Skills:  (config could not be loaded)"),
+                print!("{}", chunk);
+                let _ = io::stdout().flush();
+                streamed_any = true;
+            }
+            streamed_any
+        });
+
+        let result = engine.process_streaming(input_line, &tx).await;
+        drop(tx);
+        let streamed_any = pump.await.unwrap_or(false);
+
+        match result {
+            Ok(resp) => {
+                if streamed_any {
+                    // Stream already printed the answer; finish the line
+                    // and leave one blank line before the next prompt.
+                    println!();
+                    println!();
+                } else if let Some(text) = resp.text
+                    && !text.trim().is_empty()
+                {
+                    println!();
+                    println!("{}", text);
+                    println!();
                 }
-                println!();
-                println!("Run `kod --help` for the full command list.");
-                Ok(())
-            }'''
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+            }
+        }
+    }
+
+    // Shutdown
+    engine.shutdown().await?;
+
+    Ok(())
+}'''
 
 n = content.count(old)
 if n != 1:
-    print(f"ERROR: expected 1 occurrence of the None arm, found {n}")
+    print(f"ERROR: expected 1 occurrence of the run_chat loop, found {n}")
     sys.exit(2)
 content = content.replace(old, new, 1)
 
@@ -153,20 +223,24 @@ fi
 
 echo "All checks passed. Committing."
 git add -A
-git commit -m "feat(cli): proper first-run output for a bare \`kod\` invocation
+git commit -m "feat(cli): stream tokens live in \`kod chat\`
 
-Running \`kod\` with no subcommand used to print two lines and exit:
-'KOD - Terminal-native AI coding agent / Use --help for usage
-information.' That is the most common first experience, and it gave
-a new user nothing to act on — no entry points, no paths, no hint
-that a config file might need editing.
+\`kod chat\` awaited engine.process() and printed the whole reply at
+once. For a 500-token answer, that meant several seconds of a frozen
+prompt while the model generated — the same behaviour that made the
+TUI feel sluggish before it learned to stream.
 
-Replace it with a short onboarding block that lists the four main
-commands (tui, chat, agent, skills), the config file path (computed
-from KodConfig::config_dir() so it is correct on macOS as well as
-Linux), and the skills directories KodConfig knows about. When no
-skills directory exists yet, the output tells the user where to put
-them.
+Route the chat loop through engine.process_streaming instead. A
+background pump drains the chunk channel, prints each text chunk
+immediately, and drops the engine's \\0kod-* control markers (tool
+start / args / done / thinking) — those exist for the TUI's running
+indicator, which the CLI does not render.
 
-Uses KodConfig::skills_dirs() so the paths shown match what the TUI
-and \`kod skills\` actually read."
+The pump reports whether it printed anything. When nothing streamed
+(the summary was empty, or a provider whose default stream_with_tools
+never emits Text), the loop falls back to the response's full text.
+Otherwise the response text is skipped, since it was already shown.
+
+Engine errors no longer abort the whole REPL — a failed prompt prints
+its error and returns to the \`>\` prompt, so the user can try again
+without losing the session."
