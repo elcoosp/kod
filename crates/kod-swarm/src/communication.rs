@@ -10,6 +10,21 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 /// Alias for message content type (re-exports AgentMessageContent)
 pub type MessageContent = AgentMessageContent;
 
+/// Maximum messages retained per agent in the hub's history map.
+///
+/// The history is a convenience for `get_agent_history`, not an audit
+/// log. A hub whose agents exchange many messages (a task-decomposition
+/// swarm can easily produce hundreds of `ProgressUpdate` /
+/// `Coordination` frames over a run) grows the map without bound if
+/// nothing drops the oldest entries — the same "unbounded growth in a
+/// long-lived container" shape as the registry. Cap at a value large
+/// enough to cover "what happened recently" and small enough that a
+/// long-running hub does not accumulate stale frames.
+///
+/// The oldest entries are dropped first, matching the natural reading
+/// of `get_agent_history` as "the recent messages".
+const MAX_HISTORY_PER_AGENT: usize = 100;
+
 /// A message with routing information and priority
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwarmMessage {
@@ -117,9 +132,27 @@ impl AgentCommunicationHub {
         Ok(())
     }
 
+    /// Remove an agent from the hub.
+    ///
+    /// Drops the agent's message history along with its channel. The
+    /// previous implementation removed the registration but left the
+    /// `history` map entry in place, so a hub that cycled through
+    /// short-lived agents (the pattern a task-decomposition swarm
+    /// takes: spawn, work, retire, repeat) accumulated one dead
+    /// history per agent indefinitely. `get_agent_history` would also
+    /// keep returning messages for an ID that no longer names a
+    /// registered agent — a stale read with no way for the caller to
+    /// tell "no such agent" from "registered but quiet".
+    ///
+    /// There is no read path for a retired agent's history — the
+    /// registration was the only handle — so dropping it is a lossless
+    /// cleanup.
     pub async fn unregister_agent(&self, agent_id: &AgentId) {
         let mut agents = self.agents.write().await;
         agents.remove(agent_id);
+        drop(agents);
+        let mut history = self.history.write().await;
+        history.remove(agent_id);
     }
 
     pub async fn send_direct(
@@ -241,10 +274,14 @@ impl AgentCommunicationHub {
 
     async fn record_message(&self, agent_id: &AgentId, message: &SwarmMessage) {
         let mut history = self.history.write().await;
-        history
-            .entry(agent_id.clone())
-            .or_default()
-            .push(message.clone());
+        let entry = history.entry(agent_id.clone()).or_default();
+        entry.push(message.clone());
+        // Bound the per-agent history. Oldest-first eviction — see
+        // MAX_HISTORY_PER_AGENT for the reasoning and the value.
+        if entry.len() > MAX_HISTORY_PER_AGENT {
+            let excess = entry.len() - MAX_HISTORY_PER_AGENT;
+            entry.drain(..excess);
+        }
     }
 }
 
@@ -283,6 +320,102 @@ mod tests {
         let got_b = rx_b.recv().await.expect("agent B should receive");
         assert_eq!(got_a.from, sender);
         assert_eq!(got_b.from, sender);
+    }
+
+    /// Unregistering an agent must drop its history alongside its
+    /// registration. Regression: the previous implementation removed
+    /// the agent but left the history entry in place, so a hub that
+    /// cycled short-lived agents accumulated one dead history per
+    /// agent, and `get_agent_history` returned messages for an ID
+    /// that no longer named a registered agent.
+    #[tokio::test]
+    async fn test_unregister_clears_history() {
+        let hub = AgentCommunicationHub::new();
+        let a = AgentId::new();
+        let b = AgentId::new();
+        hub.register_agent(a.clone()).await.unwrap();
+        hub.register_agent(b.clone()).await.unwrap();
+
+        // Take receivers so the channels are live, then send a
+        // message from a to b; both histories record it.
+        let _rx_b = hub.get_agent_receiver(&b).await.unwrap();
+        hub.send_direct(
+            &a,
+            &b,
+            MessageContent::ResultDelivery {
+                result: "done".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(!hub.get_agent_history(&a).await.is_empty());
+        assert!(!hub.get_agent_history(&b).await.is_empty());
+
+        // Retire a. Its history must be gone.
+        hub.unregister_agent(&a).await;
+        assert!(
+            hub.get_agent_history(&a).await.is_empty(),
+            "unregister must drop the agent's history"
+        );
+        // b's history is untouched — it still names a registered
+        // agent.
+        assert!(!hub.get_agent_history(&b).await.is_empty());
+    }
+
+    /// Per-agent history is capped at MAX_HISTORY_PER_AGENT, keeping
+    /// the newest entries.
+    #[tokio::test]
+    async fn test_history_is_capped_per_agent() {
+        let hub = AgentCommunicationHub::new();
+        let a = AgentId::new();
+        let b = AgentId::new();
+        hub.register_agent(a.clone()).await.unwrap();
+        hub.register_agent(b.clone()).await.unwrap();
+
+        // Drain b's receiver so its queue does not fill; we only care
+        // about history, not delivery.
+        let mut rx_b = hub.get_agent_receiver(&b).await.unwrap();
+        // Spawn a drain task so unbounded sends do not block.
+        let drain = tokio::spawn(async move {
+            while rx_b.recv().await.is_some() {}
+        });
+
+        // Send more than the cap. Send from a to b: each message
+        // records in both a's and b's history.
+        let total = MAX_HISTORY_PER_AGENT + 20;
+        for i in 0..total {
+            hub.send_direct(
+                &a,
+                &b,
+                MessageContent::ResultDelivery {
+                    result: format!("m{i}"),
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        // a's history is capped (a is the sender; every send is
+        // recorded under a as well).
+        let a_hist = hub.get_agent_history(&a).await;
+        assert_eq!(
+            a_hist.len(),
+            MAX_HISTORY_PER_AGENT,
+            "sender history should be capped at {}",
+            MAX_HISTORY_PER_AGENT
+        );
+        // The kept entries are the most recent, so the last one is
+        // the most recent send.
+        let last = a_hist.last().unwrap();
+        match &last.content {
+            MessageContent::ResultDelivery { result } => {
+                assert_eq!(result, &format!("m{}", total - 1));
+            }
+            other => panic!("unexpected content: {other:?}"),
+        }
+
+        drain.abort();
     }
 
     /// The sender should not receive their own broadcast.

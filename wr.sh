@@ -1,22 +1,21 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-ROUTER=crates/kod-core/src/router.rs
+TARGET=crates/kod-swarm/src/communication.rs
 
-if [ ! -f Cargo.toml ] || [ ! -f "$ROUTER" ]; then
-    echo "ERROR: run from the kod workspace root ($ROUTER missing)"
+if [ ! -f Cargo.toml ] || [ ! -f "$TARGET" ]; then
+    echo "ERROR: run from the kod workspace root ($TARGET missing)"
     exit 1
 fi
 
-echo "=== Pre-state ==="
-grep -n "memory_used\|swarm_used" "$ROUTER"
+echo "=== Current shape ==="
+grep -n "unregister_agent\|record_message\|fn get_agent_history" "$TARGET"
 
 echo
-echo "Patching router.rs (memory_used + swarm_used together)"
+echo "Patching $TARGET"
 
-python3 - "$ROUTER" << 'PYEOF'
+python3 - "$TARGET" << 'PYEOF'
 import os
-import re
 import sys
 
 target = sys.argv[1]
@@ -37,190 +36,204 @@ def patch(old, new, label, expect=1):
     return True
 
 # ----------------------------------------------------------------------
-# 1. TaskResponse struct doc for swarm_used. Anchor on the struct
-#    definition field list; if already documented, skip.
-# ----------------------------------------------------------------------
-if "Always `false` today. The swarm is registered" not in src:
-    patch(
-        '''    pub skills_used: Vec<String>,
-    pub memory_used: bool,
-    pub swarm_used: bool,
-    pub execution_time_ms: u64,
-    pub usage: Option<kod_provider::TokenUsage>,
-}''',
-        '''    /// Names of the skills whose instructions were injected into the
-    /// prompt. Empty when no skill matched.
-    pub skills_used: Vec<String>,
-    /// True iff at least one memory entry was included in the prompt.
-    pub memory_used: bool,
-    /// True iff the swarm handled part of this task.
-    ///
-    /// Always `false` today. The swarm is registered in the router
-    /// (when `enable_swarm` is set) but `handle_complex` returns a
-    /// placeholder string rather than routing the task to any agent —
-    /// so nothing has ever been dispatched through the swarm, and the
-    /// field cannot honestly be `true`. The field is kept so the
-    /// response shape is stable for the swarm-dispatch implementation,
-    /// but it does not currently carry a signal.
-    ///
-    /// The previous computation — `matches!(task_type, Complex) &&
-    /// self.swarm.is_some()` — was the same kind of tautology that
-    /// `memory_used` used to be: a fact about the router's inputs
-    /// (how it classified the task, whether it owns a swarm object)
-    /// dressed up as a fact about what happened.
-    pub swarm_used: bool,
-    /// Wall-clock time from `process_input` entry to response.
-    pub execution_time_ms: u64,
-    /// Token usage the provider reported, when it did.
-    pub usage: Option<kod_provider::TokenUsage>,
-}''',
-        "TaskResponse field docs",
-    )
-else:
-    print("  TaskResponse doc already present")
-
-# ----------------------------------------------------------------------
-# 2. Insert `let memory_used = ...;` before the `Ok(TaskResponse {`
-#    construction. Anchor on the skills_used line + the construction.
-# ----------------------------------------------------------------------
-if "let memory_used = memory_context" not in src:
-    patch(
-        '''        // 3. Find relevant skills
-        let skills_used = self.find_relevant_skills(input).await?;''',
-        '''        // 3. Find relevant skills
-        let skills_used = self.find_relevant_skills(input).await?;
-
-        // Did memory actually contribute to this prompt? The flag used
-        // to be `memory_context.is_some()`, which is true whenever the
-        // router has a manager — i.e. always, since enable_memory
-        // defaults on. The observable meaning to a caller is "at least
-        // one memory entry was included", and that is what this
-        // reports.
-        let memory_used = memory_context
-            .as_ref()
-            .map(|c| {
-                !c.working_memory.is_empty()
-                    || !c.long_term.is_empty()
-                    || !c.episodic.is_empty()
-            })
-            .unwrap_or(false);''',
-        "compute memory_used",
-    )
-else:
-    print("  memory_used computation already present")
-
-# ----------------------------------------------------------------------
-# 3. Replace the response-construction fields. Anchor on the exact
-#    block; the diagnostic confirmed this shape.
+# 1. Constant + comment near the top of the file (after imports).
 # ----------------------------------------------------------------------
 patch(
-    '''            skills_used,
-            memory_used: memory_context.is_some(),
-            swarm_used: matches!(task_type, TaskType::Complex | TaskType::MultiStep)
-                && self.swarm.is_some(),
-            execution_time_ms,''',
-    '''            skills_used,
-            memory_used,
-            // No dispatch path uses the swarm today: `handle_complex`
-            // returns a placeholder string, and nothing else consults
-            // the router's `swarm` field for work routing. Report the
-            // honest answer — the swarm did not handle this task.
-            swarm_used: false,
-            execution_time_ms,''',
-    "response fields use computed values",
+    '''/// Alias for message content type (re-exports AgentMessageContent)
+pub type MessageContent = AgentMessageContent;''',
+    '''/// Alias for message content type (re-exports AgentMessageContent)
+pub type MessageContent = AgentMessageContent;
+
+/// Maximum messages retained per agent in the hub's history map.
+///
+/// The history is a convenience for `get_agent_history`, not an audit
+/// log. A hub whose agents exchange many messages (a task-decomposition
+/// swarm can easily produce hundreds of `ProgressUpdate` /
+/// `Coordination` frames over a run) grows the map without bound if
+/// nothing drops the oldest entries — the same "unbounded growth in a
+/// long-lived container" shape as the registry. Cap at a value large
+/// enough to cover "what happened recently" and small enough that a
+/// long-running hub does not accumulate stale frames.
+///
+/// The oldest entries are dropped first, matching the natural reading
+/// of `get_agent_history` as "the recent messages".
+const MAX_HISTORY_PER_AGENT: usize = 100;''',
+    "MAX_HISTORY_PER_AGENT constant",
 )
 
 # ----------------------------------------------------------------------
-# 4. Tests. Add both after the existing build_prompt test.
+# 2. unregister_agent also clears the history for that agent.
 # ----------------------------------------------------------------------
-if "test_memory_used_flag_reflects_contribution" not in src:
-    anchor = '''    /// `build_prompt` must consult the memory manager. Regression:'''
+patch(
+    '''    pub async fn unregister_agent(&self, agent_id: &AgentId) {
+        let mut agents = self.agents.write().await;
+        agents.remove(agent_id);
+    }''',
+    '''    /// Remove an agent from the hub.
+    ///
+    /// Drops the agent's message history along with its channel. The
+    /// previous implementation removed the registration but left the
+    /// `history` map entry in place, so a hub that cycled through
+    /// short-lived agents (the pattern a task-decomposition swarm
+    /// takes: spawn, work, retire, repeat) accumulated one dead
+    /// history per agent indefinitely. `get_agent_history` would also
+    /// keep returning messages for an ID that no longer names a
+    /// registered agent — a stale read with no way for the caller to
+    /// tell "no such agent" from "registered but quiet".
+    ///
+    /// There is no read path for a retired agent's history — the
+    /// registration was the only handle — so dropping it is a lossless
+    /// cleanup.
+    pub async fn unregister_agent(&self, agent_id: &AgentId) {
+        let mut agents = self.agents.write().await;
+        agents.remove(agent_id);
+        drop(agents);
+        let mut history = self.history.write().await;
+        history.remove(agent_id);
+    }''',
+    "unregister_agent clears history",
+)
+
+# ----------------------------------------------------------------------
+# 3. Cap history in record_message.
+# ----------------------------------------------------------------------
+patch(
+    '''    async fn record_message(&self, agent_id: &AgentId, message: &SwarmMessage) {
+        let mut history = self.history.write().await;
+        history
+            .entry(agent_id.clone())
+            .or_default()
+            .push(message.clone());
+    }''',
+    '''    async fn record_message(&self, agent_id: &AgentId, message: &SwarmMessage) {
+        let mut history = self.history.write().await;
+        let entry = history.entry(agent_id.clone()).or_default();
+        entry.push(message.clone());
+        // Bound the per-agent history. Oldest-first eviction — see
+        // MAX_HISTORY_PER_AGENT for the reasoning and the value.
+        if entry.len() > MAX_HISTORY_PER_AGENT {
+            let excess = entry.len() - MAX_HISTORY_PER_AGENT;
+            entry.drain(..excess);
+        }
+    }''',
+    "record_message caps history",
+)
+
+# ----------------------------------------------------------------------
+# 4. Tests.
+# ----------------------------------------------------------------------
+if "test_unregister_clears_history" not in src:
+    # The tests module was added earlier in the session; anchor on
+    # the broadcast test that already lives there.
+    anchor = '''    /// The sender should not receive their own broadcast.
+    #[tokio::test]
+    async fn broadcast_does_not_echo_to_sender() {'''
     if anchor not in src:
         print("  ERROR: test anchor not found")
         sys.exit(2)
-    new_tests = '''    /// `TaskResponse::memory_used` must be true only when a memory
-    /// entry actually reached the prompt.
+
+    new_tests = '''    /// Unregistering an agent must drop its history alongside its
+    /// registration. Regression: the previous implementation removed
+    /// the agent but left the history entry in place, so a hub that
+    /// cycled short-lived agents accumulated one dead history per
+    /// agent, and `get_agent_history` returned messages for an ID
+    /// that no longer named a registered agent.
     #[tokio::test]
-    async fn test_memory_used_flag_reflects_contribution() {
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test.redb");
-        let router = TaskRouter::new(
-            RouterConfig {
-                enable_memory: true,
-                enable_swarm: false,
-                max_skills_per_query: 3,
-                working_dir: temp_dir.path().to_path_buf(),
-                context_window: 8192,
+    async fn test_unregister_clears_history() {
+        let hub = AgentCommunicationHub::new();
+        let a = AgentId::new();
+        let b = AgentId::new();
+        hub.register_agent(a.clone()).await.unwrap();
+        hub.register_agent(b.clone()).await.unwrap();
+
+        // Take receivers so the channels are live, then send a
+        // message from a to b; both histories record it.
+        let _rx_b = hub.get_agent_receiver(&b).await.unwrap();
+        hub.send_direct(
+            &a,
+            &b,
+            MessageContent::ResultDelivery {
+                result: "done".to_string(),
             },
-            db_path,
         )
+        .await
         .unwrap();
 
-        // Fresh manager: no entries -> flag false.
-        let resp = router
-            .process_input("what is the meaning of life?")
-            .await
-            .unwrap();
-        assert!(!resp.memory_used, "empty memory must not report as used");
+        assert!(!hub.get_agent_history(&a).await.is_empty());
+        assert!(!hub.get_agent_history(&b).await.is_empty());
 
-        // Add a fact sharing a content word with the next prompt.
-        let manager = router.memory_manager.as_ref().unwrap();
-        manager
-            .store(
-                kod_types::MemoryType::LongTerm,
-                "The project is called KOD.",
+        // Retire a. Its history must be gone.
+        hub.unregister_agent(&a).await;
+        assert!(
+            hub.get_agent_history(&a).await.is_empty(),
+            "unregister must drop the agent's history"
+        );
+        // b's history is untouched — it still names a registered
+        // agent.
+        assert!(!hub.get_agent_history(&b).await.is_empty());
+    }
+
+    /// Per-agent history is capped at MAX_HISTORY_PER_AGENT, keeping
+    /// the newest entries.
+    #[tokio::test]
+    async fn test_history_is_capped_per_agent() {
+        let hub = AgentCommunicationHub::new();
+        let a = AgentId::new();
+        let b = AgentId::new();
+        hub.register_agent(a.clone()).await.unwrap();
+        hub.register_agent(b.clone()).await.unwrap();
+
+        // Drain b's receiver so its queue does not fill; we only care
+        // about history, not delivery.
+        let mut rx_b = hub.get_agent_receiver(&b).await.unwrap();
+        // Spawn a drain task so unbounded sends do not block.
+        let drain = tokio::spawn(async move {
+            while rx_b.recv().await.is_some() {}
+        });
+
+        // Send more than the cap. Send from a to b: each message
+        // records in both a's and b's history.
+        let total = MAX_HISTORY_PER_AGENT + 20;
+        for i in 0..total {
+            hub.send_direct(
+                &a,
+                &b,
+                MessageContent::ResultDelivery {
+                    result: format!("m{i}"),
+                },
             )
             .await
             .unwrap();
-        let resp = router
-            .process_input("tell me about the project")
-            .await
-            .unwrap();
-        assert!(resp.memory_used, "matching entry must report as used");
+        }
 
-        // Non-overlapping prompt -> flag false again.
-        let resp = router
-            .process_input("xyzzy plugh frobnicate")
-            .await
-            .unwrap();
-        assert!(!resp.memory_used, "non-matching prompt must be false");
+        // a's history is capped (a is the sender; every send is
+        // recorded under a as well).
+        let a_hist = hub.get_agent_history(&a).await;
+        assert_eq!(
+            a_hist.len(),
+            MAX_HISTORY_PER_AGENT,
+            "sender history should be capped at {}",
+            MAX_HISTORY_PER_AGENT
+        );
+        // The kept entries are the most recent, so the last one is
+        // the most recent send.
+        let last = a_hist.last().unwrap();
+        match &last.content {
+            MessageContent::ResultDelivery { result } => {
+                assert_eq!(result, &format!("m{}", total - 1));
+            }
+            other => panic!("unexpected content: {other:?}"),
+        }
+
+        drain.abort();
     }
 
-    /// `TaskResponse::swarm_used` must be false regardless of task
-    /// classification or swarm configuration, since nothing dispatches
-    /// to the swarm today.
+    /// The sender should not receive their own broadcast.
     #[tokio::test]
-    async fn test_swarm_used_is_honest() {
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test.redb");
-        let router = TaskRouter::new(
-            RouterConfig {
-                enable_memory: false,
-                enable_swarm: true,
-                max_skills_per_query: 3,
-                working_dir: temp_dir.path().to_path_buf(),
-                context_window: 8192,
-            },
-            db_path,
-        )
-        .unwrap();
+    async fn broadcast_does_not_echo_to_sender() {'''
 
-        // A Complex-classified input on a router with swarm enabled:
-        // the old tautology reported true here.
-        let resp = router
-            .process_input("design a distributed job queue")
-            .await
-            .unwrap();
-        assert_eq!(resp.task_type, TaskType::Complex);
-        assert!(!resp.swarm_used, "swarm_used must be false: no dispatch path");
-
-        let resp = router.process_input("2 + 2").await.unwrap();
-        assert!(!resp.swarm_used);
-    }
-
-    /// `build_prompt` must consult the memory manager. Regression:'''
     src = src.replace(anchor, new_tests, 1)
-    print("  added memory_used + swarm_used tests")
+    print("  added unregister + cap tests")
 else:
     print("  tests already present")
 
@@ -237,12 +250,8 @@ if [ $? -ne 0 ]; then
 fi
 
 echo
-echo "=== Post-state ==="
-grep -n "memory_used\|swarm_used" "$ROUTER" | head -20
-
-echo
-echo "cargo check --workspace --all-targets 2>&1 | tail -12"
-if ! cargo check --workspace --all-targets 2>&1 | tail -12; then
+echo "cargo check --workspace --all-targets 2>&1 | tail -15"
+if ! cargo check --workspace --all-targets 2>&1 | tail -15; then
     echo "Compilation failed"
     exit 1
 fi
@@ -251,34 +260,40 @@ echo
 echo "Committing."
 git add -A
 git commit -F - <<'MSG'
-fix(core): memory_used and swarm_used report facts, not tautologies
+fix(swarm): unregister drops history; cap per-agent history
 
-Both fields on TaskResponse read as observables ("this prompt was
-informed by memory", "the swarm handled this task") but were
-computed from the router's inputs.
+AgentCommunicationHub carried two unbounded-growth bugs in the
+history map.
 
-- memory_used was `memory_context.is_some()`, which is true
-  whenever the router has a manager — always, since enable_memory
-  defaults on. A caller reading the flag saw "yes" for every prompt
-  regardless of whether any entry was retrieved. Compute it from
-  the retrieved context: true iff working_memory, long_term, or
-  episodic is non-empty.
+1. unregister_agent removed the agent from the `agents` map but left
+   its message history in the `history` map. A hub that cycled
+   short-lived agents — the pattern a task-decomposition swarm
+   takes, spawn/work/retire repeatedly — accumulated one dead
+   history per retired agent. Worse, get_agent_history kept
+   returning messages for an ID that no longer named a registered
+   agent, so a caller could not tell "no such agent" from
+   "registered but quiet". Clear the history entry alongside the
+   registration.
 
-- swarm_used was `matches!(task_type, Complex | MultiStep) &&
-  self.swarm.is_some()`. That is "classified as Complex and a
-  swarm object exists" — a fact about the router's configuration.
-  handle_complex returns a placeholder string and does not route to
-  any agent, so no task has ever been dispatched through the
-  swarm; the field could not honestly be true. Set it to false and
-  document the field as a placeholder for the swarm-dispatch
-  implementation.
+2. Even for a registered agent, record_message appended without
+   bound. A long-running hub whose agents exchange many
+   ProgressUpdate / Coordination frames grows the map forever. Add
+   MAX_HISTORY_PER_AGENT = 100 with oldest-first eviction: the
+   entries kept are the most recent, matching the natural reading of
+   `get_agent_history` as "what happened recently". The cap is per
+   agent, so a hub with N registered agents stays bounded at O(N *
+   100).
 
-The struct's doc block now explains what each flag actually means
-so the next reader does not have to reverse-engineer it from the
-computation.
+Both changes are structural — the API signature is unchanged and
+every existing caller keeps working. A caller that wanted to read
+history *after* unregistering an agent is not a use case (the
+registration was the only handle to the ID, and no code in the
+workspace does this).
 
-Adds two tests: test_memory_used_flag_reflects_contribution stores
-a fact, prompts with a matching word, and asserts the flag flips;
-test_swarm_used_is_honest runs a Complex-classified prompt on a
-router with enable_swarm=true and asserts the flag stays false.
+Adds two tests: unregister_clears_history sends a message between
+two agents, confirms both histories are populated, retires one, and
+asserts its history is gone while the other's is untouched;
+history_is_capped_per_agent sends cap+20 messages and asserts the
+sender's history holds exactly the cap, with the most recent
+message last.
 MSG
