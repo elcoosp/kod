@@ -800,6 +800,53 @@ impl TuiLoop {
                     self.app.push_system_message("Nothing to undo.");
                 }
             }
+            "/debug" => match parts.next() {
+                Some("last-prompt") | Some("last_prompt") => {
+                    let Some(engine) = &self.engine else {
+                        self.app.push_system_message("Engine not initialized.");
+                        return Ok(());
+                    };
+                    match engine.last_prompt().await {
+                        Some(prompt) => {
+                            let path = dirs::home_dir()
+                                .map(|h| h.join(".kod").join("last_prompt.txt"));
+                            match path {
+                                Some(p) => {
+                                    if let Some(parent) = p.parent() {
+                                        let _ = std::fs::create_dir_all(parent);
+                                    }
+                                    match std::fs::write(&p, prompt.as_bytes()) {
+                                        Ok(()) => self.app.push_system_message(&format!(
+                                            "Wrote last prompt ({} chars, {} lines) to {}\n\
+                                             Inspect with: cat {}",
+                                            prompt.len(),
+                                            prompt.lines().count(),
+                                            p.display(),
+                                            p.display()
+                                        )),
+                                        Err(e) => self.app.push_system_message(&format!(
+                                            "Could not write {}: {}",
+                                            p.display(),
+                                            e
+                                        )),
+                                    }
+                                }
+                                None => self
+                                    .app
+                                    .push_system_message("Could not determine home directory."),
+                            }
+                        }
+                        None => self
+                            .app
+                            .push_system_message("No prompt has been sent yet this session."),
+                    }
+                }
+                _ => {
+                    self.app.push_system_message(
+                        "Usage: /debug last-prompt — writes the last prompt sent to the model into ~/.kod/last_prompt.txt",
+                    );
+                }
+            },
             _ => {
                 self.app
                     .push_system_message(&format!("Unknown command: {} — try /help", cmd));

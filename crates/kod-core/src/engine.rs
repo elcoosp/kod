@@ -393,6 +393,14 @@ pub struct KodEngine {
     /// [`KodEngine::render_history`]). Survives TUI-side trims/compact —
     /// those only touch display messages, never this.
     history: RwLock<Vec<HistoryTurn>>,
+    /// The grounded prompt handed to the provider on the most recent
+    /// `process*` call. Kept so `/debug last-prompt` can show exactly
+    /// what the model received — environment block, tool inventory,
+    /// skill inventory, rendered history, and user input — which is
+    /// otherwise invisible and the number one source of "why did the
+    /// model answer that?" confusion. Overwritten each call; bounded
+    /// by the prompt builder's own caps.
+    last_prompt: RwLock<Option<String>>,
 }
 
 impl KodEngine {
@@ -421,6 +429,7 @@ impl KodEngine {
             steer_queue: RwLock::new(Vec::new()),
             cancelled: AtomicBool::new(false),
             history: RwLock::new(Vec::new()),
+            last_prompt: RwLock::new(None),
         })
     }
 
@@ -513,6 +522,10 @@ impl KodEngine {
             let definitions = self.tools.get_definitions().await;
             let convo = self.ground_prompt(prompt, &definitions);
 
+            // Snapshot the grounded prompt before the loop mutates it
+            // with tool results. This is what `/debug last-prompt` shows.
+            *self.last_prompt.write().await = Some(convo.clone());
+
             // Agentic loop: generate (with tools) -> execute -> feed back.
             let options = GenerationOptions::default();
             let mut pending = convo;
@@ -580,6 +593,9 @@ impl KodEngine {
                 .await?;
             let definitions = self.tools.get_definitions().await;
             let mut pending = self.ground_prompt(prompt, &definitions);
+
+            // Snapshot the grounded prompt for /debug last-prompt.
+            *self.last_prompt.write().await = Some(pending.clone());
 
             let options = GenerationOptions::default();
             let (final_text, tool_calls, tool_results, usage) = self
@@ -652,6 +668,11 @@ impl KodEngine {
             pending.push_str(&format!(
                 "\n## Goal\n\n{goal}\n\nWork turn by turn toward this goal using tools. Do not ask the user for confirmation — act. When the goal is fully reached, end your reply with a line containing exactly GOAL MET and summarize what was done. If a tool errors, work around it and keep going.\n"
             ));
+
+            // Snapshot includes the goal block — that is what the model
+            // sees on turn 1, which is what users want to inspect when a
+            // goal run misbehaves.
+            *self.last_prompt.write().await = Some(pending.clone());
 
             let options = GenerationOptions::default();
             let mut all_text = String::new();
@@ -1203,6 +1224,14 @@ impl KodEngine {
         out
     }
 
+    /// The grounded prompt the provider received on the most recent
+    /// `process*` call, or `None` if no prompt has been sent yet. Used
+    /// by `/debug last-prompt` so the user can see exactly what the
+    /// model was working from.
+    pub async fn last_prompt(&self) -> Option<String> {
+        self.last_prompt.read().await.clone()
+    }
+
     /// Seed one turn into the model-visible transcript.
     ///
     /// Used by the TUI after restoring a saved session so the model's
@@ -1445,6 +1474,95 @@ mod tests {
         assert_eq!(truncate_chars(s, 5), "café");
         // Degenerate: max 0 returns the empty string.
         assert_eq!(truncate_chars(s, 0), "");
+    }
+
+    /// last_prompt() must return the grounded prompt after a
+    /// successful process_streaming call, so /debug last-prompt has
+    /// something to show. Uses a no-op provider that yields Done
+    /// immediately.
+    #[tokio::test]
+    async fn test_last_prompt_is_captured() {
+        use futures::Stream;
+        use std::pin::Pin;
+
+        struct NopProvider;
+
+        #[async_trait::async_trait]
+        impl LlmProvider for NopProvider {
+            fn name(&self) -> &str {
+                "nop"
+            }
+            async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+                Ok(vec![])
+            }
+            async fn generate(
+                &self,
+                _p: &str,
+                _o: &GenerationOptions,
+            ) -> kod_error::Result<String> {
+                Ok(String::new())
+            }
+            async fn generate_with_tools(
+                &self,
+                _p: &str,
+                _t: &[ToolDefinition],
+                _o: &GenerationOptions,
+            ) -> kod_error::Result<GenerationResponse> {
+                Ok(GenerationResponse::Text {
+                    content: String::new(),
+                    usage: None,
+                })
+            }
+            fn stream(
+                &self,
+                _p: &str,
+                _o: &GenerationOptions,
+            ) -> Pin<Box<dyn Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+            {
+                Box::pin(futures::stream::empty())
+            }
+            fn stream_with_tools<'a>(
+                &'a self,
+                _p: &'a str,
+                _t: &'a [ToolDefinition],
+                _o: &'a GenerationOptions,
+            ) -> Pin<Box<dyn Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+            {
+                Box::pin(futures::stream::once(async { Ok(StreamChunk::Done) }))
+            }
+        }
+
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            enable_swarm: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        // Before any call: no prompt.
+        assert!(engine.last_prompt().await.is_none());
+
+        engine.set_provider(Arc::new(NopProvider)).await;
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(4);
+        let _ = engine.process_streaming("hello from test", &tx).await;
+
+        let prompt = engine
+            .last_prompt()
+            .await
+            .expect("last_prompt must be set after process_streaming");
+        assert!(
+            prompt.contains("hello from test"),
+            "prompt should carry the user input: got {} chars",
+            prompt.len()
+        );
+        assert!(
+            prompt.contains("## Environment"),
+            "prompt should carry the environment grounding block"
+        );
     }
 
     /// record_turn runs on both sides of every prompt. A turn longer

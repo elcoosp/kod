@@ -139,6 +139,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/copy",
         hint: "copy the last assistant reply",
     },
+    SlashCommand {
+        name: "/debug",
+        hint: "diagnostics: /debug last-prompt dumps the last prompt",
+    },
 ];
 
 /// What the generation is currently doing — shown in the header/status so
@@ -1416,10 +1420,23 @@ impl KodApp {
         self.maybe_compact();
     }
 
-    /// Record real token usage from the provider (replaces the estimate when available).
+    /// Record real token usage from the provider.
+    ///
+    /// Real usage is authoritative: the server reports exactly how many
+    /// tokens went through the model on the last call. Replace the
+    /// running char-based estimate rather than taking the max — the
+    /// estimate accumulates across turns and never resets, so `max`
+    /// made the meter monotonically climb across a session even though
+    /// the model's context stays bounded by `render_history` + the
+    /// provider's own window. That mis-report also drove auto-compact
+    /// into firing far earlier than the real threshold.
+    ///
+    /// (The previous implementation used `max`, contradicting its own
+    /// doc comment which said "replaces".)
     pub fn note_real_usage(&mut self, total_tokens: usize) {
-        // Keep the max of estimate vs real so we never under-report mid-stream
-        self.context_tokens = self.context_tokens.max(total_tokens);
+        if total_tokens > 0 {
+            self.context_tokens = total_tokens;
+        }
         self.maybe_compact();
     }
 
@@ -2291,6 +2308,63 @@ mod tests {
             metadata: MessageMetadata::default(),
             sequence: 0,
         });
+    }
+
+    /// Real usage is authoritative and must REPLACE the char-based
+    /// estimate, not be maxed against it. Regression: the running
+    /// estimate accumulates across turns (`note_prompt` for each user
+    /// input, `note_usage` for each streamed response) and never
+    /// resets, so `max(estimate, real)` grew unboundedly. After a
+    /// dozen turns the meter reported a context far larger than the
+    /// model ever saw, and auto-compact fired early because the
+    /// threshold is checked against the same number.
+    #[test]
+    fn test_real_usage_replaces_estimate() {
+        let mut app = KodApp::new();
+        app.set_context_limit(100_000);
+
+        // Turn 1: estimate from a 4000-char prompt then a 2000-char
+        // streamed response. context_tokens ≈ (4000 + 2000) / 4 = 1500.
+        app.note_prompt(&"a".repeat(4000));
+        let est_after_turn_1 = app.context_tokens();
+        assert!(est_after_turn_1 > 0);
+
+        // The provider then reports real usage of 800. It must replace
+        // the estimate, not be maxed against it.
+        app.note_real_usage(800);
+        assert_eq!(
+            app.context_tokens(),
+            800,
+            "real usage should replace the estimate; got {}",
+            app.context_tokens()
+        );
+
+        // Turn 2: estimate grows again, but the next real usage resets.
+        app.note_prompt(&"b".repeat(4000));
+        app.note_real_usage(900);
+        assert_eq!(app.context_tokens(), 900);
+
+        // Sanity: turning off real usage (0 tokens) leaves the previous
+        // value alone rather than zeroing it — providers that omit
+        // usage on a round shouldn't blank the meter.
+        app.note_real_usage(0);
+        assert_eq!(app.context_tokens(), 900);
+    }
+
+    /// Real usage replaces the estimate even when the estimate is
+    /// *smaller*. Prior behavior took the max, so a low real usage
+    /// after a high estimate never brought the meter down.
+    #[test]
+    fn test_real_usage_can_shrink_the_meter() {
+        let mut app = KodApp::new();
+        app.set_context_limit(100_000);
+
+        app.note_prompt(&"x".repeat(40_000)); // ≈ 10_000 tokens
+        let big_estimate = app.context_tokens();
+        assert!(big_estimate >= 10_000);
+
+        app.note_real_usage(500);
+        assert_eq!(app.context_tokens(), 500);
     }
 
     #[test]

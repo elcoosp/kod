@@ -1,4 +1,5 @@
-use kod_tui::app::{InputMode, KodApp, Message};
+use kod_tui::app::{
+    SLASH_COMMANDS,InputMode, KodApp, Message};
 use kod_tui::ui::{AgentPanelWidget, ChatWidget, CompletionsWidget, InputWidget, StatusWidget};
 use kod_types::{MessageId, MessageRole};
 use ratatui::backend::TestBackend;
@@ -169,7 +170,7 @@ fn test_slash_completion_filter_and_accept() {
     app.set_input_mode(InputMode::Insert);
     app.set_input("/".to_string());
     assert!(app.show_completions());
-    assert_eq!(app.completion_candidates().len(), 16);
+    assert_eq!(app.completion_candidates().len(), SLASH_COMMANDS.len());
 
     app.set_input("/mod".to_string());
     let candidates = app.completion_candidates();
