@@ -137,9 +137,12 @@ impl TuiLoop {
             self.app.set_loaded_skills(loaded);
         }
 
-        // Load model list from provider so /model tab-completion is useful.
+        // Load model list from provider so /model tab-completion is
+        // useful. Best-effort: a failure here just means no
+        // completion candidates, which /model (no args) will later
+        // report explicitly when the user asks.
         if let Some(engine) = &self.engine {
-            let models = engine.list_models().await;
+            let models = engine.list_models().await.unwrap_or_default();
             self.app.set_available_models(models);
         }
 
@@ -1070,11 +1073,28 @@ impl TuiLoop {
             self.app.push_system_message("Engine not initialized");
             return Ok(());
         };
-        let models = engine.list_models().await;
+        let models = match engine.list_models().await {
+            Ok(m) => m,
+            Err(e) => {
+                // The provider is set but the request failed. Name the
+                // failure instead of reporting an empty list — the
+                // user's recovery step differs: fix the server, not
+                // "there is nothing to see."
+                self.app.push_system_message(&format!(
+                    "Could not list models from the provider: {e}\n\
+                     Check that the server is running and `base_url` in the \
+                     kod config is correct. For Ollama: `ollama serve`, then \
+                     `/model` again.",
+                ));
+                return Ok(());
+            }
+        };
         if models.is_empty() {
+            // No error, but the server really has zero models.
             self.app.push_system_message(
-                "No models reported by the provider. Is the server running? \
-                 For Ollama: `ollama serve`, then `/retry`.",
+                "The provider is reachable but reports no models. \
+                 Pull one first (e.g. `ollama pull qwen2.5:0.5b`), then \
+                 `/model` again.",
             );
             return Ok(());
         }

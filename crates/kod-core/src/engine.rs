@@ -785,23 +785,24 @@ impl KodEngine {
         )
     }
 
-    /// List available models from the provider, if one is set.
-    pub async fn list_models(&self) -> Vec<String> {
+    /// List available models from the configured provider.
+    ///
+    /// Returns `Ok(vec![])` when no provider is set — there really
+    /// are zero models to list, and an empty list is the correct
+    /// answer. Returns `Err(...)` when a provider *is* set but the
+    /// request to it fails — the answer is unknown (server down, auth
+    /// wrong, endpoint mistyped), and collapsing that into an empty
+    /// vec makes a caller unable to distinguish "the server has no
+    /// models" from "the server is not reachable." The two deserve
+    /// different user-facing messages and different recovery paths.
+    pub async fn list_models(&self) -> Result<Vec<String>> {
         let provider = self.provider.read().await;
-        if let Some(p) = provider.as_ref() {
-            match p.list_models().await {
-                Ok(models) => models,
-                Err(e) => {
-                    tracing::warn!(
-                        error = ?e,
-                        "list models request failed — \
-                         check provider base_url and API key"
-                    );
-                    Vec::new()
-                }
+        match provider.as_ref() {
+            Some(p) => {
+                let models = p.list_models().await?;
+                Ok(models)
             }
-        } else {
-            Vec::new()
+            None => Ok(Vec::new()),
         }
     }
 
