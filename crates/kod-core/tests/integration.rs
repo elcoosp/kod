@@ -4,6 +4,63 @@ use kod_core::{
 };
 use tempfile::TempDir;
 
+/// A provider that returns a canned reply without touching the
+/// network. `KodEngine::process` requires an installed provider — the
+/// earlier fallback to the router's placeholder handlers was replaced
+/// with an explicit `InvalidState` error (see `no_provider_error` in
+/// kod-core/src/engine.rs). This test exercises task classification
+/// through the engine; the classification is computed by the router
+/// regardless of what the provider returns, so a canned reply is
+/// sufficient.
+struct NoOpProvider;
+
+#[async_trait::async_trait]
+impl kod_provider::LlmProvider for NoOpProvider {
+    fn name(&self) -> &str {
+        "no-op"
+    }
+
+    async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+        Ok(vec![])
+    }
+
+    async fn generate(
+        &self,
+        _prompt: &str,
+        _options: &kod_provider::GenerationOptions,
+    ) -> kod_error::Result<String> {
+        Ok("(no-op)".to_string())
+    }
+
+    async fn generate_with_tools(
+        &self,
+        _prompt: &str,
+        _tools: &[kod_types::ToolDefinition],
+        _options: &kod_provider::GenerationOptions,
+    ) -> kod_error::Result<kod_provider::GenerationResponse> {
+        // Text response (not ToolCalls): the engine's agentic loop
+        // exits after a text reply, which is what these tests want.
+        Ok(kod_provider::GenerationResponse::Text {
+            content: "(no-op)".to_string(),
+            usage: None,
+        })
+    }
+
+    fn stream(
+        &self,
+        _prompt: &str,
+        _options: &kod_provider::GenerationOptions,
+    ) -> std::pin::Pin<
+        Box<
+            dyn futures::Stream<Item = kod_error::Result<kod_provider::StreamChunk>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(futures::stream::empty())
+    }
+}
+
 fn create_test_environment() -> (KodEngine, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("memory.redb");
@@ -44,12 +101,27 @@ You are a Rust coding expert. Help with idiomatic Rust code.
     };
 
     let engine = KodEngine::new(config, db_path).unwrap();
+
+    // Install a no-op provider so `engine.process(...)` reaches the
+    // provider-call path rather than rejecting with "No LLM provider
+    // configured." Every test that uses this helper exercises the
+    // full engine pipeline; none of them need a live model.
+    //
+    // `set_provider` is async, so this helper becomes async too.
+    (engine, temp_dir)
+}
+
+async fn create_test_engine() -> (KodEngine, TempDir) {
+    let (engine, temp_dir) = create_test_environment();
+    engine
+        .set_provider(std::sync::Arc::new(NoOpProvider))
+        .await;
     (engine, temp_dir)
 }
 
 #[tokio::test]
 async fn test_full_engine_pipeline() {
-    let (engine, temp_dir) = create_test_environment();
+    let (engine, temp_dir) = create_test_engine().await;
 
     // 1. Start engine
     engine.start().await.unwrap();
