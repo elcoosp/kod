@@ -1,29 +1,25 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-ENGINE=crates/kod-core/src/engine.rs
-LOOP=crates/kod-tui/src/main_loop.rs
+CONFIG=crates/kod-config/src/config.rs
+CLI=crates/kod-cli/src/commands.rs
 
-for f in "$ENGINE" "$LOOP"; do
+for f in "$CONFIG" "$CLI"; do
     if [ ! -f "$f" ]; then
         echo "ERROR: missing $f"
         exit 1
     fi
 done
 
-echo "=== Callers of list_models ==="
-grep -rn "\.list_models()" crates/ | grep -v "/target/"
+echo "=== Pre-state: current DB path display ==="
+grep -n "long_term_db_path\|Skills Directory" "$CLI"
 
 echo
-echo "=== Current KodEngine::list_models ==="
-awk '/pub async fn list_models/,/^    \}$/' "$ENGINE"
-
-echo
-python3 - "$ENGINE" "$LOOP" << 'PYEOF'
+python3 - "$CONFIG" "$CLI" << 'PYEOF'
 import os
 import sys
 
-engine, loop = sys.argv[1], sys.argv[2]
+config, cli = sys.argv[1], sys.argv[2]
 
 def patch(path, old, new, label, expect=1):
     with open(path) as f:
@@ -43,117 +39,101 @@ def patch(path, old, new, label, expect=1):
     return True
 
 # ======================================================================
-# 1. KodEngine::list_models → Result<Vec<String>>.
-#    "No provider" stays Ok(empty) — there really are zero models.
-#    "Provider call failed" becomes Err — the answer is unknown.
+# 1. KodConfig::memory_db_path() — the effective long-term DB path.
 # ======================================================================
 patch(
-    engine,
-    '''    /// List available models from the provider, if one is set.
-    pub async fn list_models(&self) -> Vec<String> {
-        let provider = self.provider.read().await;
-        if let Some(p) = provider.as_ref() {
-            match p.list_models().await {
-                Ok(models) => models,
-                Err(e) => {
-                    tracing::warn!(
-                        error = ?e,
-                        "list models request failed — \\
-                         check provider base_url and API key"
-                    );
-                    Vec::new()
-                }
-            }
-        } else {
-            Vec::new()
-        }
-    }''',
-    '''    /// List available models from the configured provider.
+    config,
+    '''    /// Get the primary skills directory.''',
+    '''    /// The effective long-term memory database path.
     ///
-    /// Returns `Ok(vec![])` when no provider is set — there really
-    /// are zero models to list, and an empty list is the correct
-    /// answer. Returns `Err(...)` when a provider *is* set but the
-    /// request to it fails — the answer is unknown (server down, auth
-    /// wrong, endpoint mistyped), and collapsing that into an empty
-    /// vec makes a caller unable to distinguish "the server has no
-    /// models" from "the server is not reachable." The two deserve
-    /// different user-facing messages and different recovery paths.
-    pub async fn list_models(&self) -> Result<Vec<String>> {
-        let provider = self.provider.read().await;
-        match provider.as_ref() {
-            Some(p) => {
-                let models = p.list_models().await?;
-                Ok(models)
-            }
-            None => Ok(Vec::new()),
+    /// Returns the explicit `memory.long_term_db_path` when set;
+    /// otherwise the default the engine and CLI construct —
+    /// `~/.kod/data/kod.redb`. A caller (the `kod config` display,
+    /// the engine, a future backup command) needs the path that will
+    /// actually be opened, not the raw `Option` in the config file.
+    pub fn memory_db_path(&self) -> Result<PathBuf> {
+        if let Some(explicit) = &self.memory.long_term_db_path {
+            return Ok(PathBuf::from(explicit));
         }
-    }''',
-    "KodEngine::list_models -> Result",
+        dirs::home_dir()
+            .map(|h| h.join(".kod").join("data").join("kod.redb"))
+            .ok_or_else(|| {
+                KodError::Config("Could not determine home directory".to_string())
+            })
+    }
+
+    /// Get the primary skills directory.''',
+    "KodConfig::memory_db_path",
 )
 
 # ======================================================================
-# 2. TUI caller #1 (init_engine): best-effort for the completion cache.
-#    Treat failure the same as empty — nothing to complete against.
+# 2. run_config_display: show effective values.
 # ======================================================================
-patch(
-    loop,
-    '''        // Load model list from provider so /model tab-completion is useful.
-        if let Some(engine) = &self.engine {
-            let models = engine.list_models().await;
-            self.app.set_available_models(models);
-        }''',
-    '''        // Load model list from provider so /model tab-completion is
-        // useful. Best-effort: a failure here just means no
-        // completion candidates, which /model (no args) will later
-        // report explicitly when the user asks.
-        if let Some(engine) = &self.engine {
-            let models = engine.list_models().await.unwrap_or_default();
-            self.app.set_available_models(models);
-        }''',
-    "init_engine: unwrap_or_default",
-)
+old_display = '''    println!("Memory:");
+    println!(
+        "  Short-Term Capacity: {}",
+        config.memory.short_term_capacity
+    );
+    println!("  Long-Term DB Path: {:?}", config.memory.long_term_db_path);
+    println!();
+    println!("Skills:");
+    println!(
+        "  Skills Directory: {}",
+        config
+            .skills
+            .skills_dir
+            .clone()
+            .unwrap_or_else(|| "default".to_string())
+    );
+    println!(
+        "  Max Skills Per Query: {}",
+        config.skills.max_skills_per_query
+    );
 
-# ======================================================================
-# 3. TUI caller #2 (show_and_refresh_models): distinguish the two
-#    states in the message.
-# ======================================================================
-patch(
-    loop,
-    '''        let models = engine.list_models().await;
-        if models.is_empty() {
-            self.app.push_system_message(
-                "No models reported by the provider. Is the server running? \\
-                 For Ollama: `ollama serve`, then `/retry`.",
-            );
-            return Ok(());
-        }''',
-    '''        let models = match engine.list_models().await {
-            Ok(m) => m,
-            Err(e) => {
-                // The provider is set but the request failed. Name the
-                // failure instead of reporting an empty list — the
-                // user's recovery step differs: fix the server, not
-                // "there is nothing to see."
-                self.app.push_system_message(&format!(
-                    "Could not list models from the provider: {e}\\n\\
-                     Check that the server is running and `base_url` in the \\
-                     kod config is correct. For Ollama: `ollama serve`, then \\
-                     `/model` again.",
-                ));
-                return Ok(());
+    Ok(())'''
+
+new_display = '''    println!("Memory:");
+    println!(
+        "  Short-Term Capacity: {}",
+        config.memory.short_term_capacity
+    );
+    // Effective path, not the raw Option. `Long-Term DB Path: None`
+    // was technically the config value but told the user nothing —
+    // the engine opens `~/.kod/data/kod.redb` in that case, and a
+    // user inspecting their setup needs to see where the file
+    // actually lives.
+    match config.memory_db_path() {
+        Ok(p) => println!("  Long-Term DB Path: {}", p.display()),
+        Err(_) => println!("  Long-Term DB Path: (could not determine)"),
+    }
+    println!();
+    println!("Skills:");
+    // Same reasoning: `Skills Directory: default` said nothing. Show
+    // the directories discovery actually scans, marking which exist
+    // and which do not — the same list `kod skills` loads from.
+    match config.skills_dirs() {
+        Ok(dirs) => {
+            if dirs.is_empty() {
+                println!("  Skills Directories: (none)");
+            } else {
+                println!("  Skills Directories:");
+                for d in &dirs {
+                    let marker = if d.is_dir() { "✓" } else { "·" };
+                    println!("    {} {}", marker, d.display());
+                }
+                println!("    (✓ = exists and is scanned, · = not present)");
             }
-        };
-        if models.is_empty() {
-            // No error, but the server really has zero models.
-            self.app.push_system_message(
-                "The provider is reachable but reports no models. \\
-                 Pull one first (e.g. `ollama pull qwen2.5:0.5b`), then \\
-                 `/model` again.",
-            );
-            return Ok(());
-        }''',
-    "show_and_refresh_models: distinguish error from empty",
-)
+        }
+        Err(_) => println!("  Skills Directories: (could not determine)"),
+    }
+    println!(
+        "  Max Skills Per Query: {}",
+        config.skills.max_skills_per_query
+    );
+
+    Ok(())'''
+
+patch(cli, old_display, new_display, "run_config_display: effective values")
 
 print("Done.")
 PYEOF
@@ -164,8 +144,8 @@ if [ $? -ne 0 ]; then
 fi
 
 echo
-echo "cargo check --workspace --all-targets 2>&1 | tail -12"
-if ! cargo check --workspace --all-targets 2>&1 | tail -12; then
+echo "cargo check --workspace --all-targets 2>&1 | tail -8"
+if ! cargo check --workspace --all-targets 2>&1 | tail -8; then
     echo "Compilation failed"
     exit 1
 fi
@@ -177,41 +157,48 @@ if ! cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tail -8; then
     exit 1
 fi
 
+echo
+echo "=== Behaviour check ==="
+cargo build -p kod-cli 2>&1 | tail -2
+./target/debug/kod config 2>&1 | sed -n '/Memory:/,$p'
+
 cat > /tmp/kod_commit_msg.txt <<'MSG'
-feat(core,tui): list_models distinguishes "no models" from "server down"
+feat(cli): kod config shows effective paths, not raw Options
 
-KodEngine::list_models returned Vec<String> and collapsed two
-different outcomes into an empty vector:
+`kod config` printed the raw values from the config file:
 
-  - no provider set (there really are zero models to list);
-  - a provider set whose list_models call failed (the answer is
-    unknown — the server may be down, the auth may be wrong, the
-    endpoint may be mistyped).
+  Memory:
+    Long-Term DB Path: None
+  Skills:
+    Skills Directory: default
 
-A caller could not tell them apart, so the TUI's /model command
-printed "No models reported by the provider. Is the server
-running?" — hedging between the two cases in a single sentence
-because it had no way to know.
+Neither told the user anything. The engine opens
+`~/.kod/data/kod.redb` when long_term_db_path is None, and discovery
+scans the standard skills directories (as `kod skills` itself
+demonstrates) when skills_dir is None. A user inspecting `kod
+config` saw "None" and "default" and had no way to find out where
+either thing actually lives.
 
-Change list_models to Result<Vec<String>>. The distinction the new
-signature makes:
+Show effective values:
 
-  Ok(vec![])  — no provider set, or the server has zero models;
-  Err(...)    — a provider is set and the request failed.
+  Memory:
+    Long-Term DB Path: /Users/…/.kod/data/kod.redb
+  Skills:
+    Skills Directories:
+      ✓ /Users/…/.agents/skills
+      · /Users/…/.kod/skills
+      · <project>/.kod/skills
+      · <project>/.agents/skills
+      (✓ = exists and is scanned, · = not present)
 
-The two TUI callers:
+The ✓/· markers make it obvious at a glance which directories are
+contributing skills — the same list `kod skills` loads from, so the
+two commands cannot disagree about what discovery sees.
 
-  - init_engine (completion cache): unwrap_or_default — best-effort,
-    no completion candidates on failure, which /model later reports.
-
-  - show_and_refresh_models: on Err, say "Could not list models
-    from the provider: <e>" and name the fix (server running,
-    base_url). On Ok(empty), say "The provider is reachable but
-    reports no models — pull one first." Two distinct messages
-    replace the one hedged sentence.
-
-No public API change beyond the return type; the adk-backed
-generate/stream paths are unaffected.
+Adds KodConfig::memory_db_path() -> Result<PathBuf>, the effective
+path resolved the same way the engine resolves it (explicit config
+value, else ~/.kod/data/kod.redb). Used by the display now; a
+future backup or inspect subcommand will want the same value.
 MSG
 
 git add -A

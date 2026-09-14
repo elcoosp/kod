@@ -142,6 +142,24 @@ impl KodConfig {
             .ok_or_else(|| KodError::Config("Could not determine config directory".to_string()))
     }
 
+    /// The effective long-term memory database path.
+    ///
+    /// Returns the explicit `memory.long_term_db_path` when set;
+    /// otherwise the default the engine and CLI construct —
+    /// `~/.kod/data/kod.redb`. A caller (the `kod config` display,
+    /// the engine, a future backup command) needs the path that will
+    /// actually be opened, not the raw `Option` in the config file.
+    pub fn memory_db_path(&self) -> Result<PathBuf> {
+        if let Some(explicit) = &self.memory.long_term_db_path {
+            return Ok(PathBuf::from(explicit));
+        }
+        dirs::home_dir()
+            .map(|h| h.join(".kod").join("data").join("kod.redb"))
+            .ok_or_else(|| {
+                KodError::Config("Could not determine home directory".to_string())
+            })
+    }
+
     /// Get the primary skills directory.
     ///
     /// Prefer [`KodConfig::skills_dirs`] — this returns only the first

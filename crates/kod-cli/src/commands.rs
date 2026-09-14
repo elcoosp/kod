@@ -411,17 +411,35 @@ pub async fn run_config_display() -> Result<()> {
         "  Short-Term Capacity: {}",
         config.memory.short_term_capacity
     );
-    println!("  Long-Term DB Path: {:?}", config.memory.long_term_db_path);
+    // Effective path, not the raw Option. `Long-Term DB Path: None`
+    // was technically the config value but told the user nothing —
+    // the engine opens `~/.kod/data/kod.redb` in that case, and a
+    // user inspecting their setup needs to see where the file
+    // actually lives.
+    match config.memory_db_path() {
+        Ok(p) => println!("  Long-Term DB Path: {}", p.display()),
+        Err(_) => println!("  Long-Term DB Path: (could not determine)"),
+    }
     println!();
     println!("Skills:");
-    println!(
-        "  Skills Directory: {}",
-        config
-            .skills
-            .skills_dir
-            .clone()
-            .unwrap_or_else(|| "default".to_string())
-    );
+    // Same reasoning: `Skills Directory: default` said nothing. Show
+    // the directories discovery actually scans, marking which exist
+    // and which do not — the same list `kod skills` loads from.
+    match config.skills_dirs() {
+        Ok(dirs) => {
+            if dirs.is_empty() {
+                println!("  Skills Directories: (none)");
+            } else {
+                println!("  Skills Directories:");
+                for d in &dirs {
+                    let marker = if d.is_dir() { "✓" } else { "·" };
+                    println!("    {} {}", marker, d.display());
+                }
+                println!("    (✓ = exists and is scanned, · = not present)");
+            }
+        }
+        Err(_) => println!("  Skills Directories: (could not determine)"),
+    }
     println!(
         "  Max Skills Per Query: {}",
         config.skills.max_skills_per_query
@@ -438,10 +456,29 @@ pub async fn run_tests() -> Result<()> {
     let config = KodConfig::load_default()?;
     println!("  Config: OK (model={})", config.llm.model);
 
-    // Test 2: Engine lifecycle
-    let home = dirs::home_dir()
-        .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
-    let db_path = home.join(".kod").join("data").join("test.redb");
+    // Test 2: Engine lifecycle.
+    //
+    // Uses a per-process scratch directory under the OS temp dir
+    // rather than `~/.kod/data/test.redb`. The previous path put a
+    // self-test artifact in the user's production data directory:
+    // two `kod test` invocations concurrently collided on the same
+    // file (redb's database lock would fail the second run), and a
+    // plain diagnostic left `test.redb` behind to accumulate across
+    // runs and confuse anyone inspecting ~/.kod/data.
+    //
+    // A per-pid subdirectory keeps concurrent runs from colliding
+    // and lets us clean up at the end. `std::env::temp_dir` on every
+    // supported platform honors the OS's own temp-location policy;
+    // no new dependency on `tempfile` (a dev-dependency) is needed.
+    let scratch = std::env::temp_dir().join(format!("kod-selftest-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).map_err(|e| {
+        KodError::Internal(format!(
+            "Could not create self-test scratch dir {}: {}",
+            scratch.display(),
+            e
+        ))
+    })?;
+    let db_path = scratch.join("test.redb");
 
     let router_config = RouterConfig::default();
     let engine = KodEngine::new(router_config, db_path)?;
@@ -449,6 +486,11 @@ pub async fn run_tests() -> Result<()> {
     assert!(engine.is_running().await);
     engine.shutdown().await?;
     assert!(!engine.is_running().await);
+    // Engine owns the file; drop the guard before removing the dir.
+    drop(engine);
+    // Best-effort cleanup: a failed removal leaves a temp artifact,
+    // not a corrupted production directory.
+    let _ = std::fs::remove_dir_all(&scratch);
     println!("  Engine lifecycle: OK");
 
     // Test 3: Provider setup
