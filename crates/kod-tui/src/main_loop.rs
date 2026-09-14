@@ -4,7 +4,6 @@ use crate::{
     app::{AppMode, ConfirmKind, InputMode, KodApp},
     event::{Event, EventHandler, KeyCode},
     keybindings::{KeyAction, load_bindings},
-    theme::Theme,
     ui::{
         AgentPanelWidget, ChatWidget, CompletionsWidget, HeaderWidget, HelpWidget, InputWidget,
         StatusWidget,
@@ -809,11 +808,19 @@ impl TuiLoop {
             }
             "/theme" => match parts.next() {
                 Some(name) => {
-                    let next = Theme::from_name(name);
                     let prev = self.app.theme_name().to_string();
-                    self.app.set_theme(next);
-                    self.app
-                        .push_system_message(&format!("Theme {prev} → {}", name));
+                    let known = self.app.try_set_theme(name);
+                    if known {
+                        self.app
+                            .push_system_message(&format!("Theme {prev} → {name}"));
+                    } else {
+                        self.app.push_system_message(&format!(
+                            "Unknown theme '{}'. Known themes: dark, light. \
+                             Fell back to dark. (Custom themes come from ~/.config/kod/theme.toml \
+                             or a project-local .kod-theme.toml.)",
+                            name
+                        ));
+                    }
                 }
                 None => {
                     let cur = self.app.theme_name().to_string();
@@ -1306,6 +1313,44 @@ mod tests {
 
         tui.handle_event(Event::Key(KeyCode::Escape)).await.unwrap();
         assert_eq!(tui.app().input_mode(), &InputMode::Normal);
+    }
+
+    /// `/theme light` must actually change the palette and report the
+    /// transition.
+    #[tokio::test]
+    async fn test_theme_known_name_applies() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/theme light").await.unwrap();
+        assert_eq!(tui.app().theme_name(), "light");
+        let last = tui.app().messages().last().unwrap();
+        assert!(last.content.contains("→ light"), "got: {}", last.content);
+    }
+
+    /// `/theme neon` must not claim to have switched to a theme that
+    /// does not exist. Regression: the previous handler printed
+    /// "Theme dark → neon" while the palette fell back to dark.
+    #[tokio::test]
+    async fn test_theme_unknown_name_reports_fallback() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/theme neon").await.unwrap();
+        // Palette fell back to dark.
+        assert_eq!(tui.app().theme_name(), "dark");
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("Unknown theme"),
+            "expected an 'Unknown theme' message, got: {}",
+            last.content
+        );
+        assert!(
+            last.content.contains("dark, light"),
+            "should name the known themes: {}",
+            last.content
+        );
+        assert!(
+            !last.content.contains("→ neon"),
+            "must not lie about switching to 'neon': {}",
+            last.content
+        );
     }
 
     /// Delete key (insert mode) must remove the character under the

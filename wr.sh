@@ -12,7 +12,7 @@ for f in "$APP" "$LOOP"; do
     fi
 done
 
-echo "Fixing Delete cursor position; hiding the terminal cursor"
+echo "Fixing /theme unknown-name lie; theme hint in help text"
 
 python3 - "$APP" "$LOOP" << 'PYEOF'
 import os
@@ -38,143 +38,166 @@ def patch(path, old, new, label, expect=1):
     print(f"Patched {path}: {label}")
 
 # ========================================================================
-# 1. Add KodApp::delete_at_cursor — Delete key, preserving cursor.
+# 1. KodApp::set_theme returns the previous name, not needed; add a
+#    try_set_theme that reports whether a name matched a real theme.
 # ========================================================================
 patch(
     app,
-    '''    pub fn backspace(&mut self) {
-        if self.cursor_position > 0 {
-            self.move_cursor_left();
-            self.input.remove(self.cursor_position);
-        }
-    }''',
-    '''    pub fn backspace(&mut self) {
-        if self.cursor_position > 0 {
-            self.move_cursor_left();
-            self.input.remove(self.cursor_position);
-        }
+    '''    pub fn theme(&self) -> &Theme {
+        &self.theme
     }
 
-    /// Delete the character under the cursor (Delete key), leaving
-    /// `cursor_position` where it was.
-    ///
-    /// The TUI used to route the Delete key through `set_input`, which
-    /// resets `cursor_position` to `input.len()`. That was observable:
-    /// placing the cursor mid-word and pressing Delete jumped the caret
-    /// to the end of the line. This method edits in place like
-    /// `backspace` does, and walks forward to the next char boundary so
-    /// a non-ASCII character is removed whole.
-    pub fn delete_at_cursor(&mut self) {
-        let pos = self.cursor_position;
-        if pos >= self.input.len() {
-            return;
-        }
-        let mut end = pos + 1;
-        while end < self.input.len() && !self.input.is_char_boundary(end) {
-            end += 1;
-        }
-        self.input.drain(pos..end);
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
     }''',
-    "delete_at_cursor",
-)
+    '''    pub fn theme(&self) -> &Theme {
+        &self.theme
+    }
 
-# ========================================================================
-# 2. TuiLoop: Delete key uses the new method.
-# ========================================================================
-patch(
-    loop,
-    '''            KeyCode::Delete => {
-                if self.app.cursor_position() < self.app.input().len() {
-                    let pos = self.app.cursor_position();
-                    self.app.set_input({
-                        let mut s = self.app.input().to_string();
-                        if let Some((idx, ch)) = s[pos..].char_indices().next() {
-                            s.drain(pos..idx + ch.len_utf8());
-                        }
-                        s
-                    });
-                }
-            }''',
-    '''            KeyCode::Delete => {
-                // Uses the in-place delete method so the cursor stays
-                // where it was. The previous implementation called
-                // `set_input`, which resets `cursor_position` to the end
-                // of the input — a visible jump on every Delete press.
-                self.app.delete_at_cursor();
-                self.app.reset_completion();
-            }''',
-    "Delete key routes to delete_at_cursor",
-)
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
+    }
 
-# ========================================================================
-# 3. Hide the terminal's own cursor.
-# ========================================================================
-patch(
-    loop,
-    '''        let backend = CrosstermBackend::new(std::io::stdout());
-        let terminal = Terminal::new(backend)
-            .map_err(|e| KodError::Internal(format!("Failed to create terminal: {}", e)))?;
-
-        self.terminal = Some(terminal);''',
-    '''        let backend = CrosstermBackend::new(std::io::stdout());
-        let mut terminal = Terminal::new(backend)
-            .map_err(|e| KodError::Internal(format!("Failed to create terminal: {}", e)))?;
-
-        // Hide the terminal's own cursor. InputWidget draws an inline
-        // `▌` at the current position, and leaving the real cursor
-        // visible produced two carets on screen — one at the input
-        // box and one wherever ratatui last placed the hardware cursor.
-        // `restore_terminal` calls `show_cursor` on the way out.
-        let _ = terminal.hide_cursor();
-
-        self.terminal = Some(terminal);''',
-    "hide terminal cursor",
-)
-
-# ========================================================================
-# 4. Test: delete preserves cursor position.
-# ========================================================================
-patch(
-    loop,
-    '''    /// The default binding set must keep 'i' as insert, so a fresh''',
-    '''    /// Delete key (insert mode) must remove the character under the
-    /// cursor and leave the cursor where it was. Regression: the
-    /// previous implementation routed through `set_input`, which snaps
-    /// `cursor_position` to the end of the input.
-    #[tokio::test]
-    async fn test_delete_preserves_cursor_position() {
-        let mut tui = TuiLoop::new();
-        tui.app_mut().set_input_mode(InputMode::Insert);
-        tui.app_mut().set_input("hello world".to_string());
-        // Cursor is at end after set_input; move left to sit on 'w'.
-        for _ in 0..5 {
-            tui.handle_event(Event::Key(KeyCode::Left)).await.unwrap();
+    /// Set the theme by name, returning `true` if the name matches a
+    /// built-in theme (currently `dark` and `light`) and `false`
+    /// otherwise. On `false` the theme is set to dark — the same
+    /// fallback `Theme::from_name` has always applied — but the caller
+    /// can now tell the user that the name was not recognized instead
+    /// of printing a transition into a theme that does not exist.
+    ///
+    /// Previously, `/theme neon` printed "Theme dark → neon" while the
+    /// palette was in fact dark; a small lie, but the whole point of
+    /// a theme command is to see what you typed take effect.
+    pub fn try_set_theme(&mut self, name: &str) -> bool {
+        let lower = name.trim().to_ascii_lowercase();
+        match lower.as_str() {
+            "dark" => {
+                self.theme = Theme::dark();
+                true
+            }
+            "light" => {
+                self.theme = Theme::light();
+                true
+            }
+            _ => {
+                self.theme = Theme::dark();
+                false
+            }
         }
-        assert_eq!(tui.app().cursor_position(), 6);
+    }''',
+    "try_set_theme",
+)
 
-        tui.handle_event(Event::Key(KeyCode::Delete)).await.unwrap();
-        assert_eq!(tui.app().input(), "hello orld");
-        assert_eq!(
-            tui.app().cursor_position(),
-            6,
-            "cursor must stay put after Delete, not jump to end"
+# ========================================================================
+# 2. /theme handler uses try_set_theme and reports unknowns honestly.
+# ========================================================================
+patch(
+    loop,
+    '''            "/theme" => match parts.next() {
+                Some(name) => {
+                    let next = Theme::from_name(name);
+                    let prev = self.app.theme_name().to_string();
+                    self.app.set_theme(next);
+                    self.app
+                        .push_system_message(&format!("Theme {prev} → {}", name));
+                }
+                None => {
+                    let cur = self.app.theme_name().to_string();
+                    let next = self.app.cycle_theme();
+                    self.app
+                        .push_system_message(&format!("Theme {cur} → {next}"));
+                }
+            },''',
+    '''            "/theme" => match parts.next() {
+                Some(name) => {
+                    let prev = self.app.theme_name().to_string();
+                    let known = self.app.try_set_theme(name);
+                    if known {
+                        self.app
+                            .push_system_message(&format!("Theme {prev} → {name}"));
+                    } else {
+                        self.app.push_system_message(&format!(
+                            "Unknown theme '{}'. Known themes: dark, light. \\
+                             Fell back to dark. (Custom themes come from ~/.config/kod/theme.toml \\
+                             or a project-local .kod-theme.toml.)",
+                            name
+                        ));
+                    }
+                }
+                None => {
+                    let cur = self.app.theme_name().to_string();
+                    let next = self.app.cycle_theme();
+                    self.app
+                        .push_system_message(&format!("Theme {cur} → {next}"));
+                }
+            },''',
+    "/theme honest about unknown names",
+)
+
+# ========================================================================
+# 3. /theme handler no longer needs Theme directly — check imports.
+# ========================================================================
+# Theme is still used by cycle_theme indirectly; but main_loop imports
+# Theme only for /theme. Verify by searching the file after edit.
+with open(loop, "r") as f:
+    loop_src = f.read()
+if "Theme::" not in loop_src and "use crate::{" in loop_src and "    theme::Theme," in loop_src:
+    patch(
+        loop,
+        "    theme::Theme,\n",
+        "",
+        "drop unused Theme import",
+    )
+    print("Removed unused `use crate::theme::Theme` from main_loop")
+else:
+    print("Theme import still needed somewhere; leaving it")
+
+# ========================================================================
+# 4. Test: unknown theme reports accurately; known theme applies.
+# ========================================================================
+patch(
+    loop,
+    '''    /// Delete key (insert mode) must remove the character under the''',
+    '''    /// `/theme light` must actually change the palette and report the
+    /// transition.
+    #[tokio::test]
+    async fn test_theme_known_name_applies() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/theme light").await.unwrap();
+        assert_eq!(tui.app().theme_name(), "light");
+        let last = tui.app().messages().last().unwrap();
+        assert!(last.content.contains("→ light"), "got: {}", last.content);
+    }
+
+    /// `/theme neon` must not claim to have switched to a theme that
+    /// does not exist. Regression: the previous handler printed
+    /// "Theme dark → neon" while the palette fell back to dark.
+    #[tokio::test]
+    async fn test_theme_unknown_name_reports_fallback() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/theme neon").await.unwrap();
+        // Palette fell back to dark.
+        assert_eq!(tui.app().theme_name(), "dark");
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("Unknown theme"),
+            "expected an 'Unknown theme' message, got: {}",
+            last.content
+        );
+        assert!(
+            last.content.contains("dark, light"),
+            "should name the known themes: {}",
+            last.content
+        );
+        assert!(
+            !last.content.contains("→ neon"),
+            "must not lie about switching to 'neon': {}",
+            last.content
         );
     }
 
-    /// Backspace still removes the character before the cursor and
-    /// moves the cursor left by one — pin against future changes.
-    #[tokio::test]
-    async fn test_backspace_still_moves_cursor_left() {
-        let mut tui = TuiLoop::new();
-        tui.app_mut().set_input_mode(InputMode::Insert);
-        tui.app_mut().set_input("hello".to_string());
-        tui.handle_event(Event::Key(KeyCode::Backspace)).await.unwrap();
-        assert_eq!(tui.app().input(), "hell");
-        assert_eq!(tui.app().cursor_position(), 4);
-    }
-
-    /// The default binding set must keep 'i' as insert, so a fresh''',
-    "delete cursor tests",
+    /// Delete key (insert mode) must remove the character under the''',
+    "theme tests",
 )
 
 print("All patches applied.")
@@ -199,27 +222,26 @@ fi
 
 echo "Committing."
 git add -A
-git commit -m "fix(tui): Delete preserves cursor; hide the hardware cursor
+git commit -m "fix(tui): /theme stops lying about unknown names
 
-Two input-layer issues.
+/theme neon printed 'Theme dark → neon' while the palette silently
+fell back to dark — Theme::from_name returns dark for anything it
+does not recognize. A small lie, but the whole point of a theme
+command is to see what you typed take effect; a user typing /theme
+neon now learns the name was rejected instead of wondering why the
+colors did not change.
 
-1. Delete in insert mode jumped the cursor to the end of the input.
-   The TUI built a new string and handed it to KodApp::set_input,
-   which resets cursor_position to input.len() as a side effect (a
-   sensible default when replacing the whole line, wrong when
-   deleting under the caret). Add KodApp::delete_at_cursor, which
-   edits in place like backspace does — including walking forward to
-   the next char boundary so a non-ASCII character is removed whole
-   — and route the Delete key through it. Also reset completion on
-   Delete, matching backspace.
+Add KodApp::try_set_theme(name) -> bool, which reports whether the
+name matched one of the built-in themes (dark, light) before
+applying. The /theme handler uses it: on a match it prints the
+transition; on a miss it prints the fallback, the known names, and
+where custom themes live (~/.config/kod/theme.toml or a project
+.kod-theme.toml, both of which Theme::load already reads — that
+line was missing from every user-facing hint).
 
-2. The terminal's own cursor was never hidden. InputWidget draws an
-   inline `▌` at the current position, so the user saw two carets:
-   one at the input box and one wherever ratatui last placed the
-   hardware cursor. init_terminal now calls terminal.hide_cursor()
-   right after construction; restore_terminal's existing
-   show_cursor() puts it back on the way out.
+`/theme` with no argument still cycles dark ↔ light and always
+succeeds; only the explicit-name path can now be 'unknown'.
 
-Adds two tests: Delete leaves the cursor where it was on a mid-word
-press, and Backspace still removes the character before the cursor
-and moves left by one."
+Adds two tests: /theme light applies and reports the transition,
+/theme neon reports the fallback and does not print a transition
+into a theme that does not exist."

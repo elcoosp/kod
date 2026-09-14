@@ -775,6 +775,34 @@ impl KodApp {
         self.theme = theme;
     }
 
+    /// Set the theme by name, returning `true` if the name matches a
+    /// built-in theme (currently `dark` and `light`) and `false`
+    /// otherwise. On `false` the theme is set to dark — the same
+    /// fallback `Theme::from_name` has always applied — but the caller
+    /// can now tell the user that the name was not recognized instead
+    /// of printing a transition into a theme that does not exist.
+    ///
+    /// Previously, `/theme neon` printed "Theme dark → neon" while the
+    /// palette was in fact dark; a small lie, but the whole point of
+    /// a theme command is to see what you typed take effect.
+    pub fn try_set_theme(&mut self, name: &str) -> bool {
+        let lower = name.trim().to_ascii_lowercase();
+        match lower.as_str() {
+            "dark" => {
+                self.theme = Theme::dark();
+                true
+            }
+            "light" => {
+                self.theme = Theme::light();
+                true
+            }
+            _ => {
+                self.theme = Theme::dark();
+                false
+            }
+        }
+    }
+
     /// Cycle dark → light → dark. Returns the new theme name.
     pub fn cycle_theme(&mut self) -> String {
         let next = if self.theme.name == "light" {
