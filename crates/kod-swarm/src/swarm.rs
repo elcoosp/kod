@@ -48,17 +48,72 @@ impl AgentSwarm {
         Ok(())
     }
 
-    /// Remove an agent from the swarm
+    /// Remove an agent from the swarm.
+    ///
+    /// Stops the agent first if it is not already stopped, so anyone
+    /// watching its state channel observes the proper
+    /// Running → Stopping → Stopped transition instead of a channel
+    /// that closes mid-flight. Then unregisters it from the
+    /// communication hub so peers stop addressing it.
     pub async fn remove_agent(&self, agent_id: &AgentId) -> Result<()> {
-        let mut agents = self.agents.write().await;
-        if agents.remove(agent_id).is_none() {
-            return Err(KodError::InvalidState(format!(
-                "Agent {} not in swarm",
-                agent_id
-            )));
+        // Take the agent out under the write lock, but do the stop
+        // outside so a slow stop does not hold the swarm's map.
+        let agent = {
+            let mut agents = self.agents.write().await;
+            match agents.remove(agent_id) {
+                Some(a) => a,
+                None => {
+                    return Err(KodError::InvalidState(format!(
+                        "Agent {} not in swarm",
+                        agent_id
+                    )));
+                }
+            }
+        };
+        // Best-effort graceful stop: an agent that is already stopped
+        // returns Ok; one that is Failed returns an error we do not
+        // want to surface as a removal failure. The important
+        // invariant is that the agent leaves the swarm.
+        if let Err(e) = agent.stop().await {
+            tracing::warn!(
+                agent = %agent_id,
+                error = %e,
+                "stop() during remove_agent did not complete cleanly; \
+                 removing anyway"
+            );
         }
-        drop(agents);
         self.communication.unregister_agent(agent_id).await;
+        Ok(())
+    }
+
+    /// Stop every agent and clear the swarm.
+    ///
+    /// Called during graceful shutdown so a session does not leak
+    /// agents whose state machines were left mid-flight. Best-effort:
+    /// an agent whose stop fails is still removed from the swarm and
+    /// the failure is logged; callers get `Ok(())` as long as the
+    /// swarm ends empty, because a shutdown that refuses to finish
+    /// because one agent misbehaved is worse than a shutdown that
+    /// reports the problem and continues.
+    pub async fn shutdown(&self) -> Result<()> {
+        // Swap the map out so we do not hold the write lock across
+        // each stop's await.
+        let agents: Vec<(AgentId, std::sync::Arc<Agent>)> = {
+            let mut map = self.agents.write().await;
+            map.drain().collect()
+        };
+        let n = agents.len();
+        for (id, agent) in &agents {
+            if let Err(e) = agent.stop().await {
+                tracing::warn!(
+                    agent = %id,
+                    error = %e,
+                    "agent stop failed during swarm shutdown"
+                );
+            }
+            self.communication.unregister_agent(id).await;
+        }
+        tracing::info!(count = n, "agent swarm shut down");
         Ok(())
     }
 
@@ -202,5 +257,85 @@ mod tests {
         let unknown = AgentId::new();
         assert!(swarm.start_agent(&unknown).await.is_err());
         assert!(swarm.stop_agent(&unknown).await.is_err());
+    }
+
+    /// remove_agent on a running agent must leave the agent in the
+    /// Stopped state (so anyone holding a state watcher sees a clean
+    /// transition) and must remove it from the swarm.
+    #[tokio::test]
+    async fn remove_running_agent_stops_it_first() {
+        let swarm = AgentSwarm::new(swarm_root());
+        let agent = Agent::new("leaving").build();
+        let id = agent.id().clone();
+        swarm.add_agent(agent).await.unwrap();
+
+        // Take a handle and a state watcher before removal so we can
+        // observe the pre-removal state and the state transition.
+        let handle = swarm.get_agent(&id).await.unwrap();
+        let mut watcher = handle.watch_state();
+
+        swarm.start_agent(&id).await.unwrap();
+        assert_eq!(handle.state(), AgentState::Running);
+
+        swarm.remove_agent(&id).await.unwrap();
+        assert!(!swarm.contains_agent(&id).await);
+        assert_eq!(
+            handle.state(),
+            AgentState::Stopped,
+            "removed agent should be Stopped, not left Running"
+        );
+
+        // The watcher sees a stop transition rather than a closed
+        // channel. `wait_for` returns the new value the first time the
+        // predicate matches — a Stopped value was set by stop().
+        watcher
+            .wait_for(|s| *s == AgentState::Stopped)
+            .await
+            .expect("state watcher should observe Stopped before the channel closes");
+    }
+
+    /// remove_agent on an idle (never-started) agent still removes it
+    /// cleanly — stop() on Idle is an error per Agent's own state
+    /// machine, and removal must not propagate that as a failure.
+    #[tokio::test]
+    async fn remove_idle_agent_is_best_effort() {
+        let swarm = AgentSwarm::new(swarm_root());
+        let agent = Agent::new("idle").build();
+        let id = agent.id().clone();
+        swarm.add_agent(agent).await.unwrap();
+
+        swarm.remove_agent(&id).await.unwrap();
+        assert!(!swarm.contains_agent(&id).await);
+    }
+
+    /// shutdown stops every agent in the swarm and empties it.
+    #[tokio::test]
+    async fn shutdown_stops_all_agents() {
+        let swarm = AgentSwarm::new(swarm_root());
+        let a = Agent::new("a").build();
+        let b = Agent::new("b").build();
+        let a_id = a.id().clone();
+        let b_id = b.id().clone();
+        swarm.add_agent(a).await.unwrap();
+        swarm.add_agent(b).await.unwrap();
+
+        let a_handle = swarm.get_agent(&a_id).await.unwrap();
+        let b_handle = swarm.get_agent(&b_id).await.unwrap();
+        swarm.start_agent(&a_id).await.unwrap();
+        swarm.start_agent(&b_id).await.unwrap();
+
+        swarm.shutdown().await.unwrap();
+
+        assert!(swarm.list_agents().await.is_empty(), "swarm should be empty");
+        assert_eq!(a_handle.state(), AgentState::Stopped);
+        assert_eq!(b_handle.state(), AgentState::Stopped);
+    }
+
+    /// shutdown on an empty swarm is a no-op, not an error.
+    #[tokio::test]
+    async fn shutdown_on_empty_swarm_is_ok() {
+        let swarm = AgentSwarm::new(swarm_root());
+        swarm.shutdown().await.unwrap();
+        assert!(swarm.list_agents().await.is_empty());
     }
 }
