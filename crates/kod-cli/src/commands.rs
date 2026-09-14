@@ -180,9 +180,12 @@ pub async fn run_chat(model: Option<String>, _temperature: f32, _interactive: bo
         .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
     let db_path = home.join(".kod").join("data").join("kod.redb");
 
-    // Create engine
+    // Create engine. Derive the history budget from the model's window
+    // (≈3 chars/token) so a small-model user is safe and a large-model
+    // user gets useful recall; the engine clamps below its floor.
     let router_config = RouterConfig::default();
     let engine = KodEngine::new(router_config, db_path)?;
+    engine.set_history_budget(config.llm.context_window.saturating_mul(3));
 
     // Set up OpenAI-compatible provider (Ollama /v1, LM Studio, MLX, ...)
     let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
@@ -298,6 +301,7 @@ pub async fn run_agent(name: String, goal: String, model: Option<String>) -> Res
 
     let router_config = RouterConfig::default();
     let engine = KodEngine::new(router_config, db_path)?;
+    engine.set_history_budget(config.llm.context_window.saturating_mul(3));
 
     let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
     engine.set_provider(Arc::new(provider)).await;

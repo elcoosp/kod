@@ -77,6 +77,12 @@ impl TuiLoop {
         // config (e.g. 8k for a small local model), not DEFAULT_CONTEXT_LIMIT.
         self.app.set_context_limit(config.llm.context_window);
 
+        // History budget: roughly three chars per token of the model's
+        // window. The engine clamps anything below its floor, so a tiny
+        // or placeholder context_window cannot produce an engine that
+        // forgets every turn.
+        let history_budget = config.llm.context_window.saturating_mul(3);
+
         let home = dirs::home_dir()
             .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
         // KOD_TEST_DB isolates integration tests from a live session's database.
@@ -87,6 +93,7 @@ impl TuiLoop {
 
         let router_config = RouterConfig::default();
         let engine = KodEngine::new(router_config, db_path)?;
+        engine.set_history_budget(history_budget);
 
         let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
         engine.set_provider(Arc::new(provider)).await;

@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SkillsConfig {
     pub skills_dir: Option<String>,
     pub enable_hot_reload: bool,

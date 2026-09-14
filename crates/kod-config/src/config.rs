@@ -6,6 +6,12 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+// `#[serde(default)]` at the container level: a config.toml that omits
+// a section entirely (e.g. no `[swarm]`) fills that section from
+// KodConfig::default() instead of failing with "missing field swarm".
+// This is the common hand-edited config shape — write the block you
+// care about, leave the rest out.
+#[serde(default)]
 pub struct KodConfig {
     pub llm: LlmConfig,
     pub swarm: SwarmConfig,
@@ -15,6 +21,7 @@ pub struct KodConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PerformanceConfig {
     pub max_memory_mb: usize,
     pub target_response_time_ms: u64,
@@ -68,7 +75,15 @@ impl KodConfig {
 
         if config_path.exists() {
             match Self::load_from(&config_path) {
-                Ok(cfg) => Ok(cfg),
+                Ok(mut cfg) => {
+                    // Soft-validate the loaded config: clamp out-of-range
+                    // values to safe bounds, logging each change. A user
+                    // with `temperature = 2.5` or `context_window = 0`
+                    // gets a working session and a warning, not a silent
+                    // failure three prompts later.
+                    cfg.llm.validate();
+                    Ok(cfg)
+                }
                 Err(e) => {
                     tracing::warn!(
                         path = %config_path.display(),
@@ -229,6 +244,55 @@ mod tests {
     /// contract — that a corrupt file at the default location cannot
     /// take the CLI down — is captured by the CLI integration test
     /// (`test_cli_error_handling`), which sets up the same condition.
+    /// A config.toml with only a subset of sections (or a subset of
+    /// fields within a section) must parse. Before `#[serde(default)]`
+    /// at container level, a file containing only `[llm]` failed with
+    /// "missing field `swarm`", and a file containing only `[llm]
+    /// model = "…"` additionally failed with "missing field
+    /// `provider`". Both are the common hand-edited shape.
+    #[test]
+    fn test_partial_config_uses_defaults() {
+        // Empty file: every field defaults.
+        let cfg: KodConfig = toml::from_str("").unwrap();
+        assert_eq!(cfg.llm.model, "codellama:13b");
+        assert_eq!(cfg.swarm.max_agents, 5);
+        assert_eq!(cfg.memory.short_term_capacity, 100);
+        assert_eq!(cfg.skills.max_skills_per_query, 3);
+        assert_eq!(cfg.performance.max_memory_mb, 150);
+
+        // Only [llm] present: other sections default.
+        let cfg: KodConfig = toml::from_str(
+            r#"
+            [llm]
+            model = "llama3.1"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.llm.model, "llama3.1");
+        assert_eq!(cfg.swarm.max_agents, 5);
+        assert_eq!(cfg.memory.short_term_capacity, 100);
+
+        // A single field inside a section: siblings default.
+        let cfg: KodConfig = toml::from_str(
+            r#"
+            [llm]
+            model = "llama3.1"
+
+            [skills]
+            max_skills_per_query = 7
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.llm.model, "llama3.1");
+        // The other llm fields fall back to their defaults.
+        assert_eq!(cfg.llm.provider, crate::llm::ProviderType::OpenAICompatible);
+        assert_eq!(cfg.llm.temperature, 0.7);
+        assert_eq!(cfg.llm.context_window, 8192);
+        // The set skills field is honored, its siblings default.
+        assert_eq!(cfg.skills.max_skills_per_query, 7);
+        assert!(cfg.skills.enable_hot_reload);
+    }
+
     #[test]
     fn test_corrupt_file_yields_error_from_load_from() {
         let temp_dir = tempfile::tempdir().unwrap();
