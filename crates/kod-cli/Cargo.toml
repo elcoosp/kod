@@ -8,6 +8,7 @@ build = "build.rs"
 
 [dependencies]
 serde = { workspace = true }
+serde_json = { workspace = true }
 clap = { workspace = true }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }

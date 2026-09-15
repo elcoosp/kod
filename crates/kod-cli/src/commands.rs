@@ -68,6 +68,16 @@ impl Cli {
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_tests().await })
             }
+            Some(Command::Map { max_chars }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_map(*max_chars).await })
+            }
+            Some(Command::Replay { path, execute }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_replay(path.clone(), *execute).await })
+            }
             Some(Command::Tui { model }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
@@ -193,6 +203,23 @@ pub enum Command {
 
     /// Run self-tests
     Test,
+
+    /// Print the repository map: top-level symbols per recognized source file.
+    Map {
+        /// Cap the map at this many characters. Defaults to 16000 (~4k tokens).
+        #[arg(long, default_value_t = 16000)]
+        max_chars: usize,
+    },
+
+    /// Re-run every tool call recorded in a session log, without the model.
+    Replay {
+        /// Path to the JSONL session log.
+        path: std::path::PathBuf,
+        /// When false (the default), just print what would run. When true,
+        /// actually execute every recorded tool call.
+        #[arg(long, default_value_t = false)]
+        execute: bool,
+    },
 
     /// Launch the interactive terminal UI
     Tui {
@@ -732,6 +759,123 @@ pub async fn run_tests() -> Result<()> {
     println!();
     println!("All tests passed!");
 
+    Ok(())
+}
+
+/// Print the repository map to stdout: one line per source file, followed
+/// by its top-level symbols. Summary counts go to stderr so stdout can be
+/// piped into a file cleanly.
+pub async fn run_map(max_chars: usize) -> Result<()> {
+    let cwd = std::env::current_dir().map_err(|e| {
+        KodError::Config(format!("Could not determine working directory: {}", e))
+    })?;
+    let map = kod_core::repomap::build_repo_map(&cwd);
+    let rendered = map.render(max_chars);
+    print!("{}", rendered);
+    eprintln!(
+        "{} files, {} symbols, {} chars (budget {})",
+        map.file_count(),
+        map.symbol_count(),
+        rendered.len(),
+        max_chars,
+    );
+    Ok(())
+}
+
+/// Re-run every tool call recorded in a session log.
+///
+/// With `execute = false` (the default) this is a preview: it prints what
+/// would run and touches nothing. With `execute = true`, it builds a bare
+/// engine and calls `run_tool` for each recorded call, printing whether
+/// the fresh result matches the recorded one.
+pub async fn run_replay(path: std::path::PathBuf, execute: bool) -> Result<()> {
+    let entries = kod_core::session_log::read_session(&path)?;
+    let tool_calls: Vec<_> = entries
+        .iter()
+        .filter_map(|e| match e {
+            kod_core::session_log::SessionEntry::ToolCall {
+                tool_name,
+                arguments,
+                result,
+                duration_ms,
+                holder,
+                ..
+            } => Some((
+                tool_name.clone(),
+                arguments.clone(),
+                result.clone(),
+                *duration_ms,
+                holder.clone(),
+            )),
+            #[allow(unreachable_patterns)]
+            _ => None,
+        })
+        .collect();
+
+    if tool_calls.is_empty() {
+        println!(
+            "No tool calls in {}. (Only tool calls are recorded today; LLM calls are not.)",
+            path.display()
+        );
+        return Ok(());
+    }
+
+    if !execute {
+        println!(
+            "{} tool call(s) in {} — dry run. Pass --execute to actually re-run them.\n",
+            tool_calls.len(),
+            path.display()
+        );
+        for (i, (name, args, _result, ms, holder)) in tool_calls.iter().enumerate() {
+            println!("{:>3}. [{}] {} ({})", i + 1, holder, name, args);
+            println!("     took {}ms", ms);
+        }
+        return Ok(());
+    }
+
+    let config = KodConfig::load_default()?;
+    let db_path = config.memory_db_path()?;
+    let router_config = RouterConfig {
+        context_window: config.llm.context_window,
+        ..RouterConfig::default()
+    };
+    let engine = KodEngine::new(router_config, db_path)?;
+    engine.start().await?;
+
+    let mut matched = 0usize;
+    let mut mismatched = 0usize;
+    for (i, (name, args, recorded, _ms, holder)) in tool_calls.iter().enumerate() {
+        println!("\n[{}/{}] [{}] {}", i + 1, tool_calls.len(), holder, name);
+        println!("     args: {}", args);
+        match engine.run_tool(name, args.clone()).await {
+            Ok(result) => {
+                let fresh = match &result {
+                    kod_types::ToolResult::Success(v) => serde_json::json!({ "success": v }),
+                    kod_types::ToolResult::Error(e) => serde_json::json!({ "error": e }),
+                    kod_types::ToolResult::RequiresConfirmation { description, .. } => {
+                        serde_json::json!({ "requires_confirmation": description })
+                    }
+                };
+                if &fresh == recorded {
+                    matched += 1;
+                    println!("     result: matches recorded");
+                } else {
+                    mismatched += 1;
+                    println!("     result: DIFFERS from recorded");
+                    println!("       recorded: {}", recorded);
+                    println!("       fresh:    {}", fresh);
+                }
+            }
+            Err(e) => {
+                mismatched += 1;
+                println!("     error: {}", e);
+            }
+        }
+    }
+
+    engine.shutdown().await?;
+    println!();
+    println!("{} matched, {} differed", matched, mismatched);
     Ok(())
 }
 
