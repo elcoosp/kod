@@ -7,6 +7,7 @@ pub mod config;
 pub mod context;
 pub mod engine;
 pub mod router;
+pub mod session_log;
 pub mod swarm_runner;
 
 pub use config::EngineConfig;

@@ -712,6 +712,10 @@ pub struct KodEngine {
     /// by the prompt builder's own caps.
     /// Same keying as `history`.
     last_prompt: RwLock<HashMap<String, String>>,
+    /// Optional session log. When `Some`, every tool call and its result
+    /// are appended as one JSONL entry, `kod replay`-able. `None` (the
+    /// default) is the right shape for a test or a one-shot command.
+    session_recorder: std::sync::RwLock<Option<std::sync::Arc<crate::session_log::SessionRecorder>>>,
 }
 
 impl KodEngine {
@@ -746,6 +750,7 @@ impl KodEngine {
                 DEFAULT_HISTORY_CHAR_BUDGET,
             ),
             last_prompt: RwLock::new(HashMap::new()),
+            session_recorder: std::sync::RwLock::new(None),
         })
     }
 
@@ -768,6 +773,26 @@ impl KodEngine {
     pub fn history_budget(&self) -> usize {
         self.history_budget
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Install a session log. Every tool call and its result is
+    /// appended to the file the recorder holds. A caller that never
+    /// calls this gets no log.
+    pub fn set_session_recorder(
+        &self,
+        recorder: Arc<crate::session_log::SessionRecorder>,
+    ) {
+        if let Ok(mut slot) = self.session_recorder.write() {
+            *slot = Some(recorder);
+        }
+    }
+
+    /// The session log path, when one is installed.
+    pub fn session_log_path(&self) -> Option<std::path::PathBuf> {
+        self.session_recorder
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|r| r.path().to_path_buf()))
     }
 
     /// Set the LLM provider
@@ -1480,6 +1505,44 @@ impl KodEngine {
                 .collect();
             futures::future::join_all(futs).await
         };
+        // Session log: every tool call and its result as one JSONL line.
+        // Best-effort — a write failure logs and the run continues.
+        if let Ok(guard) = self.session_recorder.read()
+            && let Some(recorder) = guard.as_ref()
+        {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            for (i, call) in calls.iter().enumerate() {
+                let Some((result, ms)) = raw_results.get(i) else {
+                    continue;
+                };
+                let result_json = match result {
+                    Ok(ToolResult::Success(v)) => serde_json::json!({ "success": v }),
+                    Ok(ToolResult::Error(e)) => serde_json::json!({ "error": e }),
+                    Ok(ToolResult::RequiresConfirmation { description, .. }) => {
+                        serde_json::json!({ "requires_confirmation": description })
+                    }
+                    Err(e) => serde_json::json!({ "error": e.to_string() }),
+                };
+                let entry = crate::session_log::SessionEntry::ToolCall {
+                    timestamp_ms: now_ms,
+                    holder: effective_holder.to_string(),
+                    tool_name: call.tool_name.clone(),
+                    arguments: call.arguments.clone(),
+                    duration_ms: *ms,
+                    result: result_json,
+                };
+                if let Err(e) = recorder.record(&entry) {
+                    tracing::warn!(
+                        error = %e,
+                        path = %recorder.path().display(),
+                        "could not append session log entry"
+                    );
+                }
+            }
+        }
         let mut results = Vec::with_capacity(calls.len());
         let mut elapsed_ms = Vec::with_capacity(calls.len());
         let mut block = String::from("## Tool results\n");

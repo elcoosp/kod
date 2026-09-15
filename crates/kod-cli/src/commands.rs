@@ -234,6 +234,24 @@ pub async fn run_chat(model: Option<String>, _temperature: f32, _interactive: bo
     // Start the engine
     engine.start().await?;
 
+    // Session log: every tool call recorded as JSONL, `kod replay`-able.
+    // `KOD_SESSION_LOG` overrides the default path; the default lives
+    // under `~/.kod/sessions/` so a run in a project does not scatter
+    // logs into the project tree.
+    if let Some(path) = std::env::var("KOD_SESSION_LOG")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(kod_core::session_log::default_session_path)
+    {
+        match kod_core::session_log::SessionRecorder::open(path.clone()) {
+            Ok(recorder) => {
+                engine.set_session_recorder(Arc::new(recorder));
+                eprintln!("Session log: {}", path.display());
+            }
+            Err(e) => eprintln!("Could not open session log {}: {}", path.display(), e),
+        }
+    }
+
     // Load skills from every standard location so the router has the
     // same inventory the TUI session sees.
     let skills_dirs = config.skills_dirs()?;
