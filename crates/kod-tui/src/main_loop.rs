@@ -1982,6 +1982,40 @@ mod tests {
         );
     }
 
+    /// `/swarm` with no argument prints the usage line — it must not
+    /// fall through to `dispatch_swarm`, which would fail trying to
+    /// spawn a runner for an empty goal.
+    #[tokio::test]
+    async fn test_swarm_command_no_arg_shows_usage() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/swarm").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("Usage: /swarm"),
+            "expected usage line, got: {}",
+            last.content
+        );
+        // No run started.
+        assert!(!tui.app().is_generating());
+    }
+
+    /// `/swarm <goal>` without an engine reports that rather than
+    /// silently doing nothing. This is the routing test: it proves the
+    /// `/swarm` arm in `handle_command` reaches `dispatch_swarm`, which
+    /// is where the "no engine" check lives.
+    #[tokio::test]
+    async fn test_swarm_command_without_engine_reports() {
+        let mut tui = TuiLoop::new();
+        // TuiLoop::new() has no engine; that is the case this asserts.
+        tui.handle_command("/swarm fix the payment handler").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("Engine not initialized"),
+            "expected engine-missing message, got: {}",
+            last.content
+        );
+    }
+
     /// Dispatching a plain prompt must record it as `last_prompt`, so
     /// `/retry` and the `r` key have something to resend. Regression:
     /// before this, last_prompt was only set by retry_generation
