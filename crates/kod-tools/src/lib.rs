@@ -38,6 +38,7 @@ pub mod patch;
 pub mod path_lock;
 pub mod executor;
 pub mod registry;
+pub mod swarm_tools;
 pub mod tools;
 pub use tools::{
     ExecuteCommandTool, FileInfoTool, GrepTool, ListFilesTool, PatchFileTool, ReadFileTool,
@@ -47,6 +48,7 @@ pub use tools::{
 pub use context::ToolContext;
 pub use path_lock::{LockError, PathLockGuard, PathLockTable};
 pub use executor::ToolExecutor;
+pub use swarm_tools::{SwarmKnowledge, SwarmNoteTool, SwarmReadTool, new_knowledge};
 pub use registry::ToolRegistry;
 
 // Re-export tool trait and result for convenience

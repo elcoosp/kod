@@ -31,10 +31,13 @@ impl Cli {
                 model,
                 temperature,
                 interactive,
+                sandbox,
             }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
-                rt.block_on(async { run_chat(model.clone(), *temperature, *interactive).await })
+                rt.block_on(async {
+                    run_chat(model.clone(), *temperature, *interactive, *sandbox).await
+                })
             }
             Some(Command::Agent { name, goal, model }) => {
                 let rt = tokio::runtime::Runtime::new()
@@ -156,6 +159,13 @@ pub enum Command {
         /// Start interactive REPL
         #[arg(short, long, default_value_t = true)]
         interactive: bool,
+
+        /// Run shell commands through the platform sandbox (`bwrap` on
+        /// Linux, `sandbox-exec` on macOS). Fails loudly if the
+        /// primitive is not available. Recommended when letting the
+        /// agent run unsupervised.
+        #[arg(long, default_value_t = false)]
+        sandbox: bool,
     },
 
     /// Run a multi-agent swarm on a goal: decompose, spawn N agents,
@@ -230,7 +240,12 @@ pub enum Command {
 }
 
 /// Run the chat command
-pub async fn run_chat(model: Option<String>, _temperature: f32, _interactive: bool) -> Result<()> {
+pub async fn run_chat(
+    model: Option<String>,
+    _temperature: f32,
+    _interactive: bool,
+    sandbox: bool,
+) -> Result<()> {
     // Load configuration
     let config = KodConfig::load_default()?;
 
@@ -266,6 +281,14 @@ pub async fn run_chat(model: Option<String>, _temperature: f32, _interactive: bo
     // `KOD_SESSION_LOG` overrides the default path; the default lives
     // under `~/.kod/sessions/` so a run in a project does not scatter
     // logs into the project tree.
+    if sandbox {
+        engine.set_sandbox_mode(kod_tools::context::SandboxMode::Require);
+        // Surface the choice on stderr so the user sees it took effect.
+        // A silent --sandbox that turned out to be unavailable would
+        // only be visible on the first shell command, which is too
+        // late to be useful.
+        eprintln!("Sandbox: required (bwrap on Linux, sandbox-exec on macOS)");
+    }
     if let Some(path) = std::env::var("KOD_SESSION_LOG")
         .ok()
         .map(std::path::PathBuf::from)

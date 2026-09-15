@@ -462,9 +462,33 @@ impl Tool for ExecuteCommandTool {
             ("sh", "-c")
         };
 
+        // When sandbox mode is Require, wrap the shell invocation in the
+        // platform primitive (`bwrap` on Linux, `sandbox-exec` on macOS).
+        // A missing primitive fails the call loudly rather than silently
+        // running un-sandboxed.
+        let sandbox_inv = match crate::context::sandbox_invocation(
+            context.sandbox,
+            &context.working_dir,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(ToolResult::Error(format!(
+                    "sandbox invocation failed: {e}"
+                )));
+            }
+        };
+
         // Spawn with piped stdio so each stream is capped independently
         // and the child is killed the moment output runs away.
-        let mut child = tokio::process::Command::new(shell)
+        let mut spawn = match &sandbox_inv {
+            Some(inv) => {
+                let mut c = tokio::process::Command::new(&inv.program);
+                c.args(&inv.args);
+                c
+            }
+            None => tokio::process::Command::new(shell),
+        };
+        let mut child = spawn
             .arg(shell_flag)
             .arg(command)
             .stdin(std::process::Stdio::null())

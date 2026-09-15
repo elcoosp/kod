@@ -721,6 +721,16 @@ pub struct KodEngine {
     /// `Arc<KodEngine>` by both the CLI and the TUI, so `&mut self`
     /// is unavailable at the call site.
     hooks: std::sync::RwLock<std::sync::Arc<crate::hooks::HookRunner>>,
+    /// Sandbox mode for shell commands. `Disabled` (the default) runs
+    /// under the user's own privileges; `Require` runs through the
+    /// platform primitive and fails loudly if unavailable. `AtomicU8`
+    /// so `set_sandbox_mode` works through `&self` — the engine is
+    /// shared as `Arc<KodEngine>`.
+    sandbox_mode_atomic: std::sync::atomic::AtomicU8,
+    /// Shared key-value blackboard for swarm agents. Every agent
+    /// running under this engine reads and writes the same store
+    /// through the cloned `Arc`.
+    swarm_knowledge: kod_tools::SwarmKnowledge,
 }
 
 impl KodEngine {
@@ -759,6 +769,8 @@ impl KodEngine {
             hooks: std::sync::RwLock::new(std::sync::Arc::new(
                 crate::hooks::HookRunner::disabled(),
             )),
+            sandbox_mode_atomic: std::sync::atomic::AtomicU8::new(0),
+            swarm_knowledge: kod_tools::new_knowledge(),
         })
     }
 
@@ -781,6 +793,27 @@ impl KodEngine {
     pub fn history_budget(&self) -> usize {
         self.history_budget
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Set the sandbox mode for shell commands. `Required` wraps every
+    /// `execute_command` in `bwrap` or `sandbox-exec`; a missing
+    /// primitive fails each such call with a named reason.
+    pub fn set_sandbox_mode(&self, mode: kod_tools::context::SandboxMode) {
+        use std::sync::atomic::Ordering;
+        let v = match mode {
+            kod_tools::context::SandboxMode::Disabled => 0u8,
+            kod_tools::context::SandboxMode::Require => 1u8,
+        };
+        self.sandbox_mode_atomic.store(v, Ordering::Relaxed);
+    }
+
+    /// The current sandbox mode.
+    pub fn sandbox_setting(&self) -> kod_tools::context::SandboxMode {
+        use std::sync::atomic::Ordering;
+        match self.sandbox_mode_atomic.load(Ordering::Relaxed) {
+            1 => kod_tools::context::SandboxMode::Require,
+            _ => kod_tools::context::SandboxMode::Disabled,
+        }
     }
 
     /// Install the shell hooks the engine runs around tool calls. A
@@ -846,6 +879,13 @@ impl KodEngine {
         self.provider.read().await.clone()
     }
 
+    /// The engine's shared swarm blackboard. A caller that wants to
+    /// seed a fact before a swarm runs, or inspect what was recorded
+    /// after, reads and writes this directly.
+    pub fn swarm_knowledge(&self) -> &kod_tools::SwarmKnowledge {
+        &self.swarm_knowledge
+    }
+
     /// The engine's shared per-path lock table. A caller that wants
     /// to hold a lock itself (a test, an embedder coordinating with an
     /// agent) acquires from this table directly.
@@ -909,6 +949,19 @@ impl KodEngine {
         self.tools.register(Box::new(ReadFileTool::new())).await;
         self.tools.register(Box::new(WriteFileTool::new())).await;
         self.tools.register(Box::new(PatchFileTool::new())).await;
+        // Swarm coordination tools. Always registered — they cost one
+        // HashMap. Agents running concurrently under this engine share
+        // the same blackboard through the cloned `Arc`.
+        self.tools
+            .register(Box::new(kod_tools::SwarmNoteTool::new(
+                self.swarm_knowledge.clone(),
+            )))
+            .await;
+        self.tools
+            .register(Box::new(kod_tools::SwarmReadTool::new(
+                self.swarm_knowledge.clone(),
+            )))
+            .await;
         self.tools.register(Box::new(ListFilesTool::new())).await;
         self.tools.register(Box::new(GrepTool::new())).await;
         self.tools.register(Box::new(FileInfoTool::new())).await;
@@ -1479,7 +1532,8 @@ impl KodEngine {
         let tool_context = self
             .tool_context
             .clone()
-            .with_locks(Arc::clone(&self.lock_table), effective_holder);
+            .with_locks(Arc::clone(&self.lock_table), effective_holder)
+            .with_sandbox(self.sandbox_setting());
 
         let mut any_mutating = false;
         for call in calls {
