@@ -34,12 +34,14 @@
 //! ```
 
 pub mod context;
+pub mod patch;
 pub mod path_lock;
 pub mod executor;
 pub mod registry;
 pub mod tools;
 pub use tools::{
-    ExecuteCommandTool, FileInfoTool, GrepTool, ListFilesTool, ReadFileTool, WriteFileTool,
+    ExecuteCommandTool, FileInfoTool, GrepTool, ListFilesTool, PatchFileTool, ReadFileTool,
+    WriteFileTool,
 };
 
 pub use context::ToolContext;

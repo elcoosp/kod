@@ -7,8 +7,8 @@ use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
 use kod_provider::{GenerationOptions, GenerationResponse, LlmProvider, StreamChunk};
 use kod_tools::{
-    ExecuteCommandTool, FileInfoTool, GrepTool, ListFilesTool, PathLockTable, ReadFileTool,
-    ToolContext, ToolRegistry, WriteFileTool,
+    ExecuteCommandTool, FileInfoTool, GrepTool, ListFilesTool, PatchFileTool, PathLockTable,
+    ReadFileTool, ToolContext, ToolRegistry, WriteFileTool,
 };
 use kod_types::{ToolCall, ToolDefinition, ToolPermissions, ToolResult};
 use std::collections::HashMap;
@@ -892,6 +892,7 @@ impl KodEngine {
         // permissions unless explicitly granted in `new()`.
         self.tools.register(Box::new(ReadFileTool::new())).await;
         self.tools.register(Box::new(WriteFileTool::new())).await;
+        self.tools.register(Box::new(PatchFileTool::new())).await;
         self.tools.register(Box::new(ListFilesTool::new())).await;
         self.tools.register(Box::new(GrepTool::new())).await;
         self.tools.register(Box::new(FileInfoTool::new())).await;

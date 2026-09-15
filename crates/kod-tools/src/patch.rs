@@ -13,7 +13,7 @@
 //! mistake instead of silently truncating a file.
 
 use kod_error::{KodError, Result};
-use similar::{ChangeTag, TextDiff};
+use similar::TextDiff;
 
 /// One hunk in a parsed patch.
 #[derive(Debug, Clone)]
@@ -228,31 +228,19 @@ fn parse_range(s: &str) -> Result<(usize, usize)> {
 }
 
 /// Render a unified diff between `old` and `new`.
+///
+/// Delegates to the `similar` crate's `unified_diff()` builder, which
+/// emits correct `@@ -l,n +l,n @@` hunk headers. The previous hand-
+/// rolled implementation wrote `@@ ... @@` group separators without
+/// real hunk headers, so `apply_unified_diff` (which parses those
+/// headers to locate hunks) saw zero hunks and rejected every patch
+/// this function produced. `render_then_apply` is the regression test.
 pub fn render_unified_diff(old: &str, new: &str, path: &str) -> String {
     let diff = TextDiff::from_lines(old, new);
-    let mut out = String::new();
-    out.push_str(&format!("--- a/{path}\n"));
-    out.push_str(&format!("+++ b/{path}\n"));
-    for (i, group) in diff.grouped_ops(3).iter().enumerate() {
-        if i > 0 {
-            out.push_str("@@ ... @@\n");
-        }
-        for op in group {
-            for change in diff.iter_changes(op) {
-                let sign = match change.tag() {
-                    ChangeTag::Delete => "-",
-                    ChangeTag::Insert => "+",
-                    ChangeTag::Equal => " ",
-                };
-                out.push_str(sign);
-                out.push_str(change.value());
-                if !change.value().ends_with('\n') {
-                    out.push('\n');
-                }
-            }
-        }
-    }
-    out
+    diff.unified_diff()
+        .context_radius(3)
+        .header(&format!("a/{path}"), &format!("b/{path}"))
+        .to_string()
 }
 
 #[cfg(test)]

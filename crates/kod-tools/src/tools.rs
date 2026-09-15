@@ -807,6 +807,141 @@ fn gitaware_walk(root: &std::path::Path, recursive: bool) -> Vec<std::path::Path
         .collect()
 }
 
+/// Apply a unified diff to an existing file.
+///
+/// The complement to `write_file`: a 2000-line file needs 2000 lines of
+/// prompt to rewrite, a 10-line patch needs 30. On local models with an
+/// 8k context window that is the difference between "can edit this file"
+/// and "cannot". The patch is also a reviewable artifact, so a caller
+/// can show every pending diff before anything touches disk.
+pub struct PatchFileTool {
+    pub definition: ToolDefinition,
+}
+
+impl PatchFileTool {
+    pub fn new() -> Self {
+        Self {
+            definition: ToolDefinition {
+                id: ToolId::new(),
+                name: "patch_file".to_string(),
+                description: "Apply a unified diff to an existing file. The diff format is `--- a/path`, `+++ b/path`, then one or more `@@ -l,n +l,n @@` hunks with ` ` prefix for context, `-` for removal, `+` for addition. The patch must apply cleanly — a context mismatch is returned as an error with the line and text that failed to match.".to_string(),
+                category: ToolCategory::FileSystem,
+                parameters_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path to the file to patch"
+                        },
+                        "patch": {
+                            "type": "string",
+                            "description": "Unified diff to apply"
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "When true, validate the patch and report the result without writing. Defaults to false."
+                        }
+                    },
+                    "required": ["path", "patch"]
+                }),
+                permissions: ToolPermissions {
+                    read_files: true,
+                    write_files: true,
+                    execute_commands: false,
+                    network_access: false,
+                    git_operations: false,
+                    allowed_paths: Vec::new(),
+                    forbidden_paths: Vec::new(),
+                },
+            },
+        }
+    }
+}
+
+impl Default for PatchFileTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for PatchFileTool {
+    fn definition(&self) -> ToolDefinition {
+        self.definition.clone()
+    }
+
+    async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
+        let path = params["path"]
+            .as_str()
+            .ok_or_else(|| KodError::InvalidParameters {
+                reason: "Missing 'path' parameter".to_string(),
+            })?;
+        let patch = params["patch"]
+            .as_str()
+            .ok_or_else(|| KodError::InvalidParameters {
+                reason: "Missing 'patch' parameter".to_string(),
+            })?;
+        let dry_run = params["dry_run"].as_bool().unwrap_or(false);
+
+        let resolved = context.resolve_path(path)?;
+        context.can_read(&resolved)?;
+        context.can_write(&resolved)?;
+
+        let original = match std::fs::read_to_string(&resolved) {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
+            }
+        };
+
+        let patched = match crate::patch::apply_unified_diff(&original, patch) {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(ToolResult::Error(format!("patch did not apply: {e}")));
+            }
+        };
+
+        if dry_run {
+            return Ok(ToolResult::Success(serde_json::json!({
+                "path": resolved.to_string_lossy().to_string(),
+                "dry_run": true,
+                "applied": true,
+                "old_size": original.len(),
+                "new_size": patched.len(),
+            })));
+        }
+
+        let _lock = match &context.lock_table {
+            Some(table) => match table
+                .acquire(&resolved, &context.holder, context.lock_timeout)
+                .await
+            {
+                Ok(guard) => Some(guard),
+                Err(e) => {
+                    return Ok(ToolResult::Error(format!(
+                        "cannot patch {}: {}",
+                        resolved.display(),
+                        e
+                    )));
+                }
+            },
+            None => None,
+        };
+
+        if let Err(e) = std::fs::write(&resolved, patched.as_bytes()) {
+            return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
+        }
+
+        Ok(ToolResult::Success(serde_json::json!({
+            "path": resolved.to_string_lossy().to_string(),
+            "dry_run": false,
+            "applied": true,
+            "old_size": original.len(),
+            "new_size": patched.len(),
+        })))
+    }
+}
+
 /// Search files for a pattern
 pub struct GrepTool {
     pub definition: ToolDefinition,
