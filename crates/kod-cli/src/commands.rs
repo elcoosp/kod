@@ -257,6 +257,7 @@ pub async fn run_chat(model: Option<String>, _temperature: f32, _interactive: bo
     // Set up OpenAI-compatible provider (Ollama /v1, LM Studio, MLX, ...)
     let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
     engine.set_provider(Arc::new(provider)).await;
+    engine.set_hooks(config.hooks.clone());
 
     // Start the engine
     engine.start().await?;

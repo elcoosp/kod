@@ -120,6 +120,7 @@ impl TuiLoop {
 
         let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
         engine.set_provider(Arc::new(provider)).await;
+        engine.set_hooks(config.hooks.clone());
 
         engine.start().await?;
         self.engine = Some(Arc::new(engine));

@@ -6,6 +6,7 @@
 pub mod config;
 pub mod context;
 pub mod engine;
+pub mod hooks;
 pub mod repomap;
 pub mod router;
 pub mod session_log;

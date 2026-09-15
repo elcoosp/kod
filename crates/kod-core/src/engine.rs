@@ -716,6 +716,11 @@ pub struct KodEngine {
     /// are appended as one JSONL entry, `kod replay`-able. `None` (the
     /// default) is the right shape for a test or a one-shot command.
     session_recorder: std::sync::RwLock<Option<std::sync::Arc<crate::session_log::SessionRecorder>>>,
+    /// Shell hooks around tool execution. `RwLock<Arc<...>>` so
+    /// `set_hooks` works through `&self` — the engine is shared as
+    /// `Arc<KodEngine>` by both the CLI and the TUI, so `&mut self`
+    /// is unavailable at the call site.
+    hooks: std::sync::RwLock<std::sync::Arc<crate::hooks::HookRunner>>,
 }
 
 impl KodEngine {
@@ -751,6 +756,9 @@ impl KodEngine {
             ),
             last_prompt: RwLock::new(HashMap::new()),
             session_recorder: std::sync::RwLock::new(None),
+            hooks: std::sync::RwLock::new(std::sync::Arc::new(
+                crate::hooks::HookRunner::disabled(),
+            )),
         })
     }
 
@@ -773,6 +781,14 @@ impl KodEngine {
     pub fn history_budget(&self) -> usize {
         self.history_budget
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Install the shell hooks the engine runs around tool calls. A
+    /// caller that never calls this gets a disabled runner.
+    pub fn set_hooks(&self, config: kod_config::HooksConfig) {
+        if let Ok(mut guard) = self.hooks.write() {
+            *guard = std::sync::Arc::new(crate::hooks::HookRunner::new(config));
+        }
     }
 
     /// Install a session log. Every tool call and its result is
@@ -1475,9 +1491,37 @@ impl KodEngine {
             }
         }
 
+        // Pre-tool hooks. A failing hook denies only its own call —
+        // sibling calls still complete. When any pre-hook is configured,
+        // the round is forced serial: the hook itself is I/O, so
+        // parallelism buys nothing, and a serial loop keeps the
+        // denial bookkeeping honest.
+        let hook_runner = self.hooks.read().ok().map(|g| g.clone());
+        let mut hook_denied: std::collections::HashMap<usize, String> =
+            std::collections::HashMap::new();
+        if let Some(runner) = hook_runner.as_ref()
+            && runner.is_enabled()
+        {
+            for (i, call) in calls.iter().enumerate() {
+                if let Err(e) = runner.run_pre(call).await {
+                    hook_denied.insert(i, e.to_string());
+                }
+            }
+        }
+        let any_mutating = any_mutating || !hook_denied.is_empty();
+
         let raw_results: Vec<(Result<ToolResult>, u64)> = if any_mutating {
             let mut out = Vec::with_capacity(calls.len());
-            for call in calls {
+            for (i, call) in calls.iter().enumerate() {
+                if let Some(reason) = hook_denied.get(&i) {
+                    out.push((
+                        Ok(ToolResult::Error(format!(
+                            "pre_tool_use hook denied this call: {reason}"
+                        ))),
+                        0,
+                    ));
+                    continue;
+                }
                 let start = std::time::Instant::now();
                 let res = self
                     .tools
@@ -1508,6 +1552,20 @@ impl KodEngine {
         };
         // Session log: every tool call and its result as one JSONL line.
         // Best-effort — a write failure logs and the run continues.
+        // Post-tool hooks. Run for every non-denied call, before the
+        // result reaches the model. Failures are logged by `run_post`,
+        // never propagated — a formatting failure after a successful
+        // write must not turn the write into a failed tool call.
+        if let Some(runner) = hook_runner.as_ref()
+            && runner.is_enabled()
+        {
+            for (i, call) in calls.iter().enumerate() {
+                if hook_denied.contains_key(&i) {
+                    continue;
+                }
+                runner.run_post(call).await;
+            }
+        }
         if let Ok(guard) = self.session_recorder.read()
             && let Some(recorder) = guard.as_ref()
         {

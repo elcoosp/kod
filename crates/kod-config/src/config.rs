@@ -18,6 +18,18 @@ pub struct KodConfig {
     pub skills: SkillsConfig,
     pub swarm: SwarmConfig,
     pub performance: PerformanceConfig,
+    pub hooks: HooksConfig,
+}
+
+/// Shell hooks run around tool execution. See `kod-core`'s `hooks`
+/// module for the runtime side. Disabled by default; a config that
+/// wants them sets `enabled = true` and adds at least one hook.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HooksConfig {
+    pub pre_tool_use: std::collections::HashMap<String, String>,
+    pub post_tool_use: std::collections::HashMap<String, String>,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
