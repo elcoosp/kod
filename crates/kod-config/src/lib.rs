@@ -6,6 +6,6 @@ pub mod swarm;
 
 pub use config::KodConfig;
 pub use llm::LlmConfig;
-pub use memory::MemoryConfig;
+pub use memory::{MemoryConfig, MemoryScope};
 pub use skills::SkillsConfig;
 pub use swarm::SwarmConfig;

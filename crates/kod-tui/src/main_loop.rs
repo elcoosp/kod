@@ -98,12 +98,14 @@ impl TuiLoop {
         // forgets every turn.
         let history_budget = config.llm.context_window.saturating_mul(3);
 
-        let home = dirs::home_dir()
-            .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
-        // KOD_TEST_DB isolates integration tests from a live session's database.
-        let db_path = std::env::var("KOD_TEST_DB")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| home.join(".kod").join("data").join("kod.redb"));
+        // KOD_TEST_DB isolates integration tests from a live session's
+        // database. When unset, the config's `memory.scope` decides:
+        // global `~/.kod/data/kod.redb` (the default) or per-project
+        // `<cwd>/.kod/memory.redb`.
+        let db_path = match std::env::var("KOD_TEST_DB") {
+            Ok(p) => std::path::PathBuf::from(p),
+            Err(_) => config.memory_db_path()?,
+        };
         let _ = std::fs::create_dir_all(db_path.parent().unwrap());
 
         // Propagate the model's context window to the router so its

@@ -144,20 +144,39 @@ impl KodConfig {
 
     /// The effective long-term memory database path.
     ///
-    /// Returns the explicit `memory.long_term_db_path` when set;
-    /// otherwise the default the engine and CLI construct —
-    /// `~/.kod/data/kod.redb`. A caller (the `kod config` display,
-    /// the engine, a future backup command) needs the path that will
-    /// actually be opened, not the raw `Option` in the config file.
+    /// Three cases, in order:
+    ///
+    /// 1. `memory.long_term_db_path` is set: use it. An explicit path is
+    ///    the caller's intent, and no scope should override it.
+    /// 2. `memory.scope = "global"` (the default): `~/.kod/data/kod.redb`.
+    ///    One shared database across every project the user opens.
+    /// 3. `memory.scope = "project"`: `<cwd>/.kod/memory.redb`. One
+    ///    database per project, so a fact learned while working on
+    ///    project A cannot leak into a prompt for project B.
+    ///
+    /// A caller (the `kod config` display, the engine, a future backup
+    /// command) needs the path that will actually be opened, not the
+    /// raw `Option` in the config file.
     pub fn memory_db_path(&self) -> Result<PathBuf> {
         if let Some(explicit) = &self.memory.long_term_db_path {
             return Ok(PathBuf::from(explicit));
         }
-        dirs::home_dir()
-            .map(|h| h.join(".kod").join("data").join("kod.redb"))
-            .ok_or_else(|| {
-                KodError::Config("Could not determine home directory".to_string())
-            })
+        match self.memory.scope {
+            crate::MemoryScope::Global => dirs::home_dir()
+                .map(|h| h.join(".kod").join("data").join("kod.redb"))
+                .ok_or_else(|| {
+                    KodError::Config("Could not determine home directory".to_string())
+                }),
+            crate::MemoryScope::Project => {
+                let cwd = std::env::current_dir().map_err(|e| {
+                    KodError::Config(format!(
+                        "Could not determine working directory for project-scoped memory: {}",
+                        e
+                    ))
+                })?;
+                Ok(cwd.join(".kod").join("memory.redb"))
+            }
+        }
     }
 
     /// Get the primary skills directory.
@@ -306,6 +325,60 @@ mod tests {
         // The set skills field is honored, its siblings default.
         assert_eq!(cfg.skills.max_skills_per_query, 7);
         assert!(cfg.skills.enable_hot_reload);
+    }
+
+    /// `memory.scope = "project"` must produce a path rooted at the
+    /// current working directory, not under the home directory.
+    /// Regression: the previous implementation only knew about
+    /// `~/.kod/data/kod.redb`, so there was no way to scope memory per
+    /// project — a fact learned on project A leaked into project B's
+    /// prompts.
+    #[test]
+    fn test_memory_db_path_respects_project_scope() {
+        let mut cfg = KodConfig::default();
+        cfg.memory.scope = crate::MemoryScope::Project;
+        let path = cfg.memory_db_path().unwrap();
+        let cwd = std::env::current_dir().unwrap();
+        assert!(
+            path.starts_with(&cwd),
+            "project scope must root at cwd, got {}",
+            path.display()
+        );
+        assert!(
+            path.to_string_lossy().ends_with(".kod/memory.redb")
+                || path.to_string_lossy().ends_with(".kod\\memory.redb"),
+            "expected .kod/memory.redb suffix, got {}",
+            path.display()
+        );
+    }
+
+    /// Global scope (the default) keeps the existing behavior:
+    /// `~/.kod/data/kod.redb`.
+    #[test]
+    fn test_memory_db_path_global_scope_under_home() {
+        let cfg = KodConfig::default();
+        assert_eq!(cfg.memory.scope, crate::MemoryScope::Global);
+        let path = cfg.memory_db_path().unwrap();
+        if let Some(home) = dirs::home_dir() {
+            assert!(
+                path.starts_with(&home),
+                "global scope must root at home, got {}",
+                path.display()
+            );
+        }
+        assert!(path.to_string_lossy().contains(".kod"));
+        assert!(path.to_string_lossy().contains("data"));
+    }
+
+    /// An explicit `long_term_db_path` wins over either scope — a user
+    /// who named a specific file meant it.
+    #[test]
+    fn test_memory_db_path_explicit_overrides_scope() {
+        let mut cfg = KodConfig::default();
+        cfg.memory.scope = crate::MemoryScope::Project;
+        cfg.memory.long_term_db_path = Some("/tmp/custom-memory.redb".to_string());
+        let path = cfg.memory_db_path().unwrap();
+        assert_eq!(path, PathBuf::from("/tmp/custom-memory.redb"));
     }
 
     /// A config.toml with only a subset of sections (or a subset of

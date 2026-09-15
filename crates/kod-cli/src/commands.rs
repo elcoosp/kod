@@ -578,6 +578,13 @@ pub async fn run_config_display() -> Result<()> {
         config.memory.short_term_capacity
     );
     println!(
+        "  Scope: {} (project-scoped memory lives at <cwd>/.kod/memory.redb)",
+        match config.memory.scope {
+            kod_config::MemoryScope::Global => "global",
+            kod_config::MemoryScope::Project => "project",
+        }
+    );
+    println!(
         "  Max Skills Per Query: {}",
         config.skills.max_skills_per_query
     );
