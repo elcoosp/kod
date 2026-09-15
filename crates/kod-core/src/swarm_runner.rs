@@ -266,8 +266,14 @@ impl SwarmRunner {
                 // different subtasks must not see each other's turns;
                 // the runner clears the transcript when the run ends.
                 let transcript_key = format!("swarm:{id}");
+                let per_agent_role = capability_for(&subtask.description);
+                let shaped = format!(
+                    "{}{}",
+                    role_preamble(per_agent_role),
+                    subtask.description
+                );
                 let result = engine
-                    .process_streaming_for(&transcript_key, &subtask.description, &tx)
+                    .process_streaming_for(&transcript_key, &shaped, &tx)
                     .await;
                 // Drop the transcript; the merged answer is what the
                 // user keeps, and per-agent histories would otherwise
@@ -707,6 +713,61 @@ fn collect_writes(resp: &crate::router::TaskResponse) -> Vec<String> {
     out
 }
 
+/// Per-role preamble prepended to a subtask description. Each role
+/// gets one job; the preamble says what that job is. A writer that
+/// tries to also test, or a tester that tries to fix, produces worse
+/// output than an agent that stays in its lane.
+fn role_preamble(cap: Capability) -> &'static str {
+    match cap {
+        Capability::Coding => {
+            "You are the WRITER on this subtask. Produce the code (or \
+             configuration) the subtask calls for. Write complete, runnable \
+             files. Do not write tests for your own work — a separate tester \
+             will. Do not run the test suite yourself — that is the tester's \
+             job. Focus on getting the implementation right.\n\n"
+        }
+        Capability::Testing => {
+            "You are the TESTER on this subtask. Write or run tests for the \
+             code the subtask describes. Do not fix the code under test — if \
+             a test fails, report the failure. Do not implement missing \
+             functionality — write the test that would catch its absence and \
+             report.\n\n"
+        }
+        Capability::Documentation => {
+            "You are the DOCUMENTER on this subtask. Write user-facing \
+             documentation — README sections, doc comments, guides — for the \
+             code the subtask describes. Do not change the code.\n\n"
+        }
+        Capability::CodeReview => {
+            "You are the REVIEWER on this subtask. Read the code the subtask \
+             names and report findings: correctness bugs, security issues, \
+             unclear structure, missing error handling. Do not fix what you \
+             find — that is a writer's job. Include file and line references.\n\n"
+        }
+        Capability::Planning => {
+            "You are the PLANNER on this subtask. Produce a concrete plan: \
+             the files to touch, the order to touch them in, the interfaces \
+             between them. Do not write the code — the writers will.\n\n"
+        }
+        Capability::Research => {
+            "You are the RESEARCHER on this subtask. Gather facts and report \
+             them: what exists, what the current state is, what the \
+             constraints are. Do not write or modify code.\n\n"
+        }
+        Capability::Debugging => {
+            "You are the DEBUGGER on this subtask. Find the root cause of the \
+             failure the subtask describes. Reproduce it, isolate it, explain \
+             it. A fix is optional — the diagnosis is the deliverable.\n\n"
+        }
+        Capability::Refactoring => {
+            "You are the REFACTORER on this subtask. Change the structure of \
+             the code the subtask names without changing its behavior. Do not \
+             add features. Do not fix bugs you happen to notice — note them \
+             instead.\n\n"
+        }
+    }
+}
+
 /// Reduce an arbitrary string to a short kebab-case token for an agent
 /// name. Long names would make the labels hard to read in a stream.
 fn sanitize(s: &str) -> String {
@@ -777,6 +838,35 @@ fn parse_subtasks(text: &str, max: usize) -> Option<Vec<Subtask>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_role_preamble_distinct_per_role() {
+        let caps = [
+            Capability::Coding,
+            Capability::Testing,
+            Capability::Documentation,
+            Capability::CodeReview,
+            Capability::Planning,
+            Capability::Research,
+            Capability::Debugging,
+            Capability::Refactoring,
+        ];
+        let mut seen: Vec<&str> = Vec::new();
+        for cap in caps {
+            let p = role_preamble(cap);
+            assert!(!p.is_empty(), "{:?} has an empty preamble", cap);
+            assert!(!seen.contains(&p), "{:?} shares its preamble", cap);
+            seen.push(p);
+        }
+    }
+
+    #[test]
+    fn test_role_preamble_names_the_role() {
+        assert!(role_preamble(Capability::Coding).contains("WRITER"));
+        assert!(role_preamble(Capability::Testing).contains("TESTER"));
+        assert!(role_preamble(Capability::Documentation).contains("DOCUMENTER"));
+        assert!(role_preamble(Capability::CodeReview).contains("REVIEWER"));
+    }
 
     #[test]
     fn sanitize_is_kebab_and_bounded() {

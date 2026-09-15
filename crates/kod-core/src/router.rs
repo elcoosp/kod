@@ -633,11 +633,13 @@ impl TaskRouter {
         // `retrieve_context` on an empty manager is cheap: a redb
         // substring scan over an empty table and a short-term recency
         // slice, both no-ops for a fresh session.
+        prompt.push_str("## Stable prefix (cacheable)\n\n");
         if let Some(map) = self.repo_map_text() {
             prompt.push_str("## Repository map\n\n");
             prompt.push_str(map);
             prompt.push_str("\n\n");
         }
+        prompt.push_str("## Volatile suffix (not cached)\n\n");
         let memory_context = match &self.memory_manager {
             Some(manager) => Some(manager.retrieve_context(input).await?),
             None => None,
