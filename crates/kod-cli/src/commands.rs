@@ -81,6 +81,11 @@ impl Cli {
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_replay(path.clone(), *execute).await })
             }
+            Some(Command::Profile { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_profile(action.clone()).await })
+            }
             Some(Command::Tui { model }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
@@ -142,6 +147,19 @@ impl Cli {
             }
         }
     }
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ProfileAction {
+    /// List the built-in profiles.
+    List,
+    /// Print the effective `[llm]` config from the loaded config file.
+    Show,
+    /// Write a named profile's values into `[llm]` in the config file.
+    Use {
+        /// Profile name (see `kod profile list`).
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -229,6 +247,13 @@ pub enum Command {
         /// actually execute every recorded tool call.
         #[arg(long, default_value_t = false)]
         execute: bool,
+    },
+
+    /// Work with preset model profiles: list, show the effective
+    /// `[llm]` config, or write a named preset into `config.toml`.
+    Profile {
+        #[command(subcommand)]
+        action: ProfileAction,
     },
 
     /// Launch the interactive terminal UI
@@ -901,6 +926,71 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool) -> Result<()> {
     println!();
     println!("{} matched, {} differed", matched, mismatched);
     Ok(())
+}
+
+/// Handle `kod profile list`, `kod profile show`, and
+/// `kod profile use <name>`.
+///
+/// `use` writes the preset's values into `[llm]` in the config file and
+/// saves. It does not touch any other section: `[hooks]`, `[skills]`,
+/// `[memory.scope]` survive the switch.
+pub async fn run_profile(action: ProfileAction) -> Result<()> {
+    match action {
+        ProfileAction::List => {
+            println!("Built-in profiles:\n");
+            for p in kod_config::profiles::PRESETS {
+                println!("  {:<18} {}", p.name, p.description);
+                println!("    model:          {}", p.model);
+                println!("    base_url:       {}", p.base_url);
+                println!("    context_window: {}", p.context_window);
+                if let Some(cmd) = p.install_command {
+                    println!("    install:        {}", cmd);
+                }
+                println!();
+            }
+            println!("Switch with: kod profile use <name>");
+            Ok(())
+        }
+        ProfileAction::Show => {
+            let config = KodConfig::load_default()?;
+            println!("Effective [llm] config:");
+            println!("  provider       = {:?}", config.llm.provider);
+            println!("  model          = \"{}\"", config.llm.model);
+            println!("  base_url       = \"{}\"", config.llm.base_url);
+            println!("  context_window = {}", config.llm.context_window);
+            println!("  max_tokens     = {}", config.llm.max_tokens);
+            println!("  temperature    = {}", config.llm.temperature);
+            println!("  timeout_secs   = {}", config.llm.timeout_secs);
+            Ok(())
+        }
+        ProfileAction::Use { name } => {
+            let profile = kod_config::profiles::by_name(&name).ok_or_else(|| {
+                KodError::Config(format!(
+                    "Unknown profile {:?}. Known profiles: {}",
+                    name,
+                    kod_config::profiles::names_csv()
+                ))
+            })?;
+            let mut config = KodConfig::load_default()?;
+            config.llm.model = profile.model.to_string();
+            config.llm.base_url = profile.base_url.to_string();
+            config.llm.context_window = profile.context_window;
+            config.llm.max_tokens = profile.max_tokens;
+            let dir = KodConfig::config_dir()?;
+            let path = dir.join("config.toml");
+            config.save_to(&path)?;
+            println!("Wrote profile {:?} to {}", name, path.display());
+            println!("  model:          {}", profile.model);
+            println!("  base_url:       {}", profile.base_url);
+            println!("  context_window: {}", profile.context_window);
+            if let Some(cmd) = profile.install_command {
+                println!();
+                println!("Next step (if not already installed):");
+                println!("  {}", cmd);
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Launch the interactive terminal UI
