@@ -5,6 +5,42 @@ A high-performance AI coding agent for the terminal, built with Rust.
 KOD is a multi-crate workspace that provides a full agent harness with skills,
 memory, tool calling, and both CLI and TUI interfaces.
 
+## Why local-first
+
+Your code does not leave your machine.
+
+This is the difference between KOD and every other terminal coding
+agent. Claude Code, Aider, Crush, Goose — they are all designed around
+a cloud model you do not control, on a schedule you do not set, under
+terms that can change without your consent. When a vendor deprecates a
+model or changes a rate limit, your workflow breaks. When the vendor
+has a bad day, your tooling stops.
+
+KOD is built around the opposite assumption:
+
+- **The binary is one Rust program.** No Node runtime, no Python
+  interpreter, no docker compose. `cargo build --release` produces a
+  ~15 MB executable that runs the agent, the tools, the memory store,
+  and the terminal UI.
+- **The model is one you chose.** Ollama, LM Studio, MLX, vLLM, or any
+  OpenAI-compatible endpoint — including OpenAI itself if you want
+  cloud, but only if you want cloud. The default config points at
+  `localhost:11434`.
+- **Memory is on disk, in a file you can inspect.** Long-term memory
+  lives in a `redb` database under `~/.kod/`, or per-project under
+  `<cwd>/.kod/` if you set `memory.scope = "project"`. It is a file,
+  not a tenant in someone else's index.
+- **The tool loop is auditable.** `kod replay <session.jsonl>`
+  re-runs the tool calls a session made, without the model. Every
+  `read_file`, every `write_file`, every `execute_command` — checkable
+  against the codebase at any later commit.
+
+If that matters to you — if "where does my code go when I run this?"
+is a question you want a one-line answer to — KOD is for you. If it
+does not, the cloud agents are fine tools and you should use them.
+
+KOD is not faster. It is not smarter. It is *yours*.
+
 ## Features
 
 - **Skills System**: Markdown-based skills with pattern matching and hot reload
