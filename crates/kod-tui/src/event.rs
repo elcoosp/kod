@@ -128,8 +128,17 @@ pub enum Event {
     AgentMessage(String, String),
     ResponseChunk(String),
     ResponseComplete(String),
-    /// Real token usage from the provider (prompt+completion total)
+    /// Real token usage from the provider (prompt+completion total).
+    /// Drives the context meter; replaced under compaction.
     TokenUsage(usize),
+    /// Per-call usage breakdown for the session-accounting counters.
+    /// Separate from `TokenUsage` because the two track different
+    /// things: the meter is a window snapshot, this is a running total
+    /// that only grows.
+    SessionUsage {
+        prompt_tokens: usize,
+        completion_tokens: usize,
+    },
     /// Post-tool thinking phase (tool result reinjected, LLM reasoning again)
     Thinking,
     Error(String),

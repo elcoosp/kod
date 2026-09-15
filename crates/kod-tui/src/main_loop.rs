@@ -470,6 +470,13 @@ impl TuiLoop {
             Event::TokenUsage(total) => {
                 self.app.note_real_usage(total);
             }
+            Event::SessionUsage {
+                prompt_tokens,
+                completion_tokens,
+            } => {
+                self.app
+                    .note_session_usage(prompt_tokens, completion_tokens);
+            }
             Event::ToolStarted(tool_name) => {
                 // Flush text streamed so far as its own bubble first: the
                 // reply before the call belongs above the tool row, the
@@ -746,6 +753,12 @@ impl TuiLoop {
                         } else {
                             usage.prompt_tokens + usage.completion_tokens
                         };
+                        let _ = event_tx
+                            .send(Event::SessionUsage {
+                                prompt_tokens: usage.prompt_tokens,
+                                completion_tokens: usage.completion_tokens,
+                            })
+                            .await;
                         let _ = event_tx.send(Event::TokenUsage(total)).await;
                     }
                     let _ = event_tx.send(Event::ResponseComplete(text)).await;

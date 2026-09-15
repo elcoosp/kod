@@ -58,6 +58,11 @@ impl HeaderWidget {
         }
 
         spans.push(Span::styled(
+            format!(" {} ", app.accounting_label()),
+            Style::default().fg(theme.dim),
+        ));
+
+        spans.push(Span::styled(
             format!("[{}]", app.theme_name()),
             Style::default().fg(theme.dim),
         ));

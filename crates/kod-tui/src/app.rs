@@ -292,6 +292,14 @@ pub struct KodApp {
     /// start of each swarm run; a running agent appends its chunks to
     /// the chat message whose id is stored here.
     swarm_agents: std::collections::HashMap<kod_types::AgentId, SwarmAgentView>,
+    /// Wall-clock instant the session started.
+    session_started_at: Instant,
+    /// Accumulated input tokens the provider has reported this session.
+    /// Distinct from `context_tokens` (which is a window snapshot and
+    /// shrinks under compaction); this counter only grows.
+    session_input_tokens: usize,
+    /// Accumulated output tokens the provider has reported this session.
+    session_output_tokens: usize,
     should_quit: bool,
     next_seq: u64,
 }
@@ -352,6 +360,9 @@ impl KodApp {
             last_error: None,
 
             swarm_agents: std::collections::HashMap::new(),
+            session_started_at: Instant::now(),
+            session_input_tokens: 0,
+            session_output_tokens: 0,
             should_quit: false,
             next_seq: 0,
         }
@@ -2545,6 +2556,63 @@ impl KodApp {
         } else {
             &self.model_name
         }
+    }
+
+    /// Total input tokens the provider has reported this session.
+    pub fn session_input_tokens(&self) -> usize {
+        self.session_input_tokens
+    }
+
+    /// Total output tokens the provider has reported this session.
+    pub fn session_output_tokens(&self) -> usize {
+        self.session_output_tokens
+    }
+
+    /// Total tokens moved through the model this session.
+    pub fn session_total_tokens(&self) -> usize {
+        self.session_input_tokens
+            .saturating_add(self.session_output_tokens)
+    }
+
+    /// Wall-clock time since the session started.
+    pub fn elapsed_session(&self) -> std::time::Duration {
+        self.session_started_at.elapsed()
+    }
+
+    /// One-line accounting label for the header: `↑1.2k ↓340 · 5m30s`.
+    /// The arrow convention is input/output; the trailing figure is
+    /// wall-clock elapsed since the first prompt.
+    pub fn accounting_label(&self) -> String {
+        let secs = self.elapsed_session().as_secs();
+        let time = if secs < 60 {
+            format!("{secs}s")
+        } else if secs < 3600 {
+            format!("{}m{:02}s", secs / 60, secs % 60)
+        } else {
+            format!("{}h{:02}m", secs / 3600, (secs % 3600) / 60)
+        };
+        format!(
+            "↑{} ↓{} · {}",
+            Self::format_k(self.session_input_tokens),
+            Self::format_k(self.session_output_tokens),
+            time,
+        )
+    }
+
+    /// Record session-wide token usage from a per-call breakdown.
+    /// Separate from `note_real_usage` (window snapshot for the context
+    /// meter): this counter only grows.
+    pub fn note_session_usage(
+        &mut self,
+        prompt_tokens: usize,
+        completion_tokens: usize,
+    ) {
+        self.session_input_tokens = self
+            .session_input_tokens
+            .saturating_add(prompt_tokens);
+        self.session_output_tokens = self
+            .session_output_tokens
+            .saturating_add(completion_tokens);
     }
 
     /// Context-aware hint line for the status bar.
