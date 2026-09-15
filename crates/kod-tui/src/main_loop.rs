@@ -206,6 +206,13 @@ impl TuiLoop {
         Ok(())
     }
 
+    /// Install an already-built engine. `init_engine` does the
+    /// construction from config; this is the injection point for a
+    /// caller (a test, an embedder) that built one itself.
+    pub fn set_engine(&mut self, engine: std::sync::Arc<KodEngine>) {
+        self.engine = Some(engine);
+    }
+
     pub fn is_initialized(&self) -> bool {
         true
     }
@@ -880,7 +887,10 @@ impl TuiLoop {
     }
 
     /// Execute a `/` command (input already recorded as a user message).
-    async fn handle_command(&mut self, input: &str) -> Result<()> {
+    /// Execute a slash command as if the user typed it. Public so an
+    /// embedder (or an integration test) can drive command dispatch
+    /// without going through the event loop.
+    pub async fn handle_command(&mut self, input: &str) -> Result<()> {
         let mut parts = input.split_whitespace();
         let cmd = parts.next().unwrap_or("");
         match cmd {
