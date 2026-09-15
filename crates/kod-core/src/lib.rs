@@ -7,8 +7,12 @@ pub mod config;
 pub mod context;
 pub mod engine;
 pub mod router;
+pub mod swarm_runner;
 
 pub use config::EngineConfig;
 pub use context::{EngineContext, EngineContextBuilder};
 pub use engine::KodEngine;
 pub use router::{RouterConfig, TaskResponse, TaskRouter, TaskType};
+pub use swarm_runner::{
+    AgentOutcome, AgentResult, Subtask, SwarmEvent, SwarmResponse, SwarmRunner,
+};

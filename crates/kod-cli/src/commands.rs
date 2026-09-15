@@ -4,6 +4,7 @@ use clap::Parser;
 use clap::Subcommand;
 use kod_config::KodConfig;
 use kod_core::KodEngine;
+use kod_core::{SwarmEvent, SwarmRunner};
 use kod_core::RouterConfig;
 use kod_error::{KodError, Result};
 use kod_provider::LlmProvider;
@@ -39,6 +40,18 @@ impl Cli {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_agent(name.clone(), goal.clone(), model.clone()).await })
+            }
+            Some(Command::Swarm {
+                goal,
+                agents,
+                model,
+                merge,
+            }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async {
+                    run_swarm(goal.clone(), *agents, model.clone(), *merge).await
+                })
             }
             Some(Command::Skills) => {
                 let rt = tokio::runtime::Runtime::new()
@@ -133,6 +146,28 @@ pub enum Command {
         /// Start interactive REPL
         #[arg(short, long, default_value_t = true)]
         interactive: bool,
+    },
+
+    /// Run a multi-agent swarm on a goal: decompose, spawn N agents,
+    /// run them concurrently, merge the results.
+    Swarm {
+        /// Goal for the swarm
+        #[arg(short, long)]
+        goal: String,
+
+        /// Number of agents. Defaults to `swarm.max_agents` in the
+        /// config; clamped to 2-8 by the runner.
+        #[arg(short = 'n', long)]
+        agents: Option<usize>,
+
+        /// Model to use
+        #[arg(short, long)]
+        model: Option<String>,
+
+        /// Ask the model to synthesize the per-agent results. When
+        /// false, the results are concatenated under their labels.
+        #[arg(long, default_value_t = true)]
+        merge: bool,
     },
 
     /// Run an agent with a specific goal
@@ -325,6 +360,114 @@ pub async fn run_chat(model: Option<String>, _temperature: f32, _interactive: bo
     // Shutdown
     engine.shutdown().await?;
 
+    Ok(())
+}
+
+/// Run a multi-agent swarm on a goal.
+///
+/// Decomposes the goal into N subtasks, spawns one agent per subtask via
+/// `kod-swarm`, runs them concurrently against the engine's agentic loop,
+/// and merges the results. The command prints labeled progress as each
+/// agent works and the merged answer at the end.
+pub async fn run_swarm(
+    goal: String,
+    agents: Option<usize>,
+    model: Option<String>,
+    merge: bool,
+) -> Result<()> {
+    let config = KodConfig::load_default()?;
+    let model_name = model.unwrap_or_else(|| config.llm.model.clone());
+    let n = agents.unwrap_or(config.swarm.max_agents);
+
+    let home = dirs::home_dir()
+        .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
+    let db_path = home.join(".kod").join("data").join("kod.redb");
+    let _ = std::fs::create_dir_all(db_path.parent().unwrap());
+
+    let router_config = RouterConfig {
+        context_window: config.llm.context_window,
+        ..RouterConfig::default()
+    };
+    let engine = KodEngine::new(router_config, db_path)?;
+    engine.set_history_budget(config.llm.context_window.saturating_mul(3));
+
+    let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
+    engine.set_provider(Arc::new(provider)).await;
+
+    engine.start().await?;
+
+    // Skills, same as the single-agent path so a swarm agent sees the
+    // same instructions a single agent would.
+    let skills_dirs = config.skills_dirs()?;
+    match engine.load_skills_from_dirs(&skills_dirs).await {
+        Ok(0) => {}
+        Ok(n) => println!("Loaded {} skill file(s)", n),
+        Err(e) => eprintln!("Could not load skills: {}", e),
+    }
+    if config.skills.enable_hot_reload {
+        for dir in &skills_dirs {
+            if dir.is_dir()
+                && let Err(e) = engine.enable_hot_reload(dir).await
+            {
+                eprintln!("Could not enable skill hot reload for {}: {}", dir.display(), e);
+            }
+        }
+    }
+
+    let engine = Arc::new(engine);
+    let runner = SwarmRunner::new(engine.clone(), n, merge).await?;
+    println!(
+        "Swarm: up to {} agents, merge {}",
+        runner.max_agents(),
+        if merge { "on" } else { "off" },
+    );
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<SwarmEvent>(256);
+    let print_task = tokio::spawn(async move {
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                SwarmEvent::Decomposed(subs) => {
+                    println!("\nDecomposed into {} subtasks:", subs.len());
+                    for (i, s) in subs.iter().enumerate() {
+                        println!("  {}. {} — {}", i + 1, s.name, s.description);
+                    }
+                    println!();
+                }
+                SwarmEvent::AgentStarted { name, subtask, .. } => {
+                    println!("── {} starts on: {}", name, subtask.lines().next().unwrap_or(""));
+                }
+                SwarmEvent::AgentChunk { text, .. } => {
+                    print!("{}", text);
+                    let _ = io::stdout().flush();
+                }
+                SwarmEvent::AgentCompleted { name, .. } => {
+                    println!("\n── {} done\n", name);
+                }
+                SwarmEvent::AgentFailed { name, error, .. } => {
+                    eprintln!("\n── {} failed: {}\n", name, error);
+                }
+                SwarmEvent::Merging => {
+                    println!("\n── merging results ──\n");
+                }
+            }
+        }
+    });
+
+    let result = runner.run(&goal, &tx).await;
+    drop(tx);
+    let _ = print_task.await;
+
+    let resp = result?;
+
+    println!("\n================ merged ================\n");
+    println!("{}", resp.merged);
+    if !resp.merged_by_model {
+        println!(
+            "\n(merged by concatenation — LLM synthesis was disabled or failed)"
+        );
+    }
+
+    engine.shutdown().await?;
     Ok(())
 }
 

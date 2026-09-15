@@ -1,6 +1,6 @@
 //! Main configuration for KOD.
 
-use crate::{LlmConfig, MemoryConfig, SkillsConfig};
+use crate::{LlmConfig, MemoryConfig, SkillsConfig, SwarmConfig};
 use kod_error::{KodError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -16,6 +16,7 @@ pub struct KodConfig {
     pub llm: LlmConfig,
     pub memory: MemoryConfig,
     pub skills: SkillsConfig,
+    pub swarm: SwarmConfig,
     pub performance: PerformanceConfig,
 }
 

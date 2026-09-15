@@ -785,6 +785,17 @@ impl KodEngine {
         )
     }
 
+    /// The provider currently installed, cloned out of its lock.
+    /// `None` when the engine has not been wired to a model.
+    pub async fn provider_arc(&self) -> Option<Arc<dyn LlmProvider>> {
+        self.provider.read().await.clone()
+    }
+
+    /// The working directory tools are rooted at.
+    pub fn working_dir(&self) -> &std::path::Path {
+        &self.working_dir
+    }
+
     /// List available models from the configured provider.
     ///
     /// Returns `Ok(vec![])` when no provider is set — there really
