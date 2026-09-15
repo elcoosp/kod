@@ -7,8 +7,8 @@ use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
 use kod_provider::{GenerationOptions, GenerationResponse, LlmProvider, StreamChunk};
 use kod_tools::{
-    ExecuteCommandTool, FileInfoTool, GrepTool, ListFilesTool, ReadFileTool, ToolContext,
-    ToolRegistry, WriteFileTool,
+    ExecuteCommandTool, FileInfoTool, GrepTool, ListFilesTool, PathLockTable, ReadFileTool,
+    ToolContext, ToolRegistry, WriteFileTool,
 };
 use kod_types::{ToolCall, ToolDefinition, ToolPermissions, ToolResult};
 use std::collections::HashMap;
@@ -685,6 +685,10 @@ pub struct KodEngine {
     is_running: RwLock<bool>,
     tools: Arc<ToolRegistry>,
     tool_context: ToolContext,
+    /// Shared per-path advisory locks. Cloned into every per-call
+    /// tool context the engine derives, so a swarm agent and the
+    /// interactive session contend on the same table.
+    lock_table: Arc<PathLockTable>,
     working_dir: PathBuf,
     /// Steer notes queued while a prompt is running (see [`KodEngine::steer`]).
     steer_queue: RwLock<Vec<String>>,
@@ -725,6 +729,7 @@ impl KodEngine {
                 forbidden_paths: Vec::new(),
             });
         let router = TaskRouter::new(config, db_path)?;
+        let lock_table = Arc::new(PathLockTable::new());
 
         Ok(Self {
             router: Arc::new(router),
@@ -732,6 +737,7 @@ impl KodEngine {
             is_running: RwLock::new(false),
             tools: Arc::new(ToolRegistry::new()),
             tool_context,
+            lock_table,
             working_dir,
             steer_queue: RwLock::new(Vec::new()),
             cancelled: AtomicBool::new(false),
@@ -797,6 +803,13 @@ impl KodEngine {
     /// `None` when the engine has not been wired to a model.
     pub async fn provider_arc(&self) -> Option<Arc<dyn LlmProvider>> {
         self.provider.read().await.clone()
+    }
+
+    /// The engine's shared per-path lock table. A caller that wants
+    /// to hold a lock itself (a test, an embedder coordinating with an
+    /// agent) acquires from this table directly.
+    pub fn path_lock_table(&self) -> Arc<PathLockTable> {
+        Arc::clone(&self.lock_table)
     }
 
     /// The working directory tools are rooted at.
@@ -919,7 +932,7 @@ impl KodEngine {
             let options = GenerationOptions::default();
             let mut pending = convo;
             let (final_text, tool_calls, tool_results, usage) = self
-                .run_collected_loop(provider, &mut pending, &definitions, &options)
+                .run_collected_loop(provider, &mut pending, &definitions, &options, key)
                 .await?;
             // Model only called tools and never wrote back: ask for a summary.
             let final_text = if final_text.trim().is_empty() && !tool_calls.is_empty() {
@@ -998,7 +1011,7 @@ impl KodEngine {
 
             let options = GenerationOptions::default();
             let (final_text, tool_calls, tool_results, usage) = self
-                .run_streaming_loop(provider, &mut pending, &definitions, &options, chunk_tx)
+                .run_streaming_loop(provider, &mut pending, &definitions, &options, chunk_tx, key)
                 .await?;
             let final_text = if final_text.trim().is_empty() && !tool_calls.is_empty() {
                 pending.push_str(
@@ -1100,7 +1113,14 @@ impl KodEngine {
                 }
                 self.apply_steers(&mut pending).await;
                 let (final_text, calls, results, usage) = self
-                    .run_streaming_loop(provider, &mut pending, &definitions, &options, chunk_tx)
+                    .run_streaming_loop(
+                        provider,
+                        &mut pending,
+                        &definitions,
+                        &options,
+                        chunk_tx,
+                        key,
+                    )
                     .await?;
                 last_usage = usage.or(last_usage);
                 if !all_text.is_empty() && !final_text.trim().is_empty() {
@@ -1140,6 +1160,7 @@ impl KodEngine {
         pending: &mut String,
         definitions: &[ToolDefinition],
         options: &GenerationOptions,
+        holder: &str,
     ) -> Result<(
         String,
         Vec<ToolCall>,
@@ -1168,7 +1189,7 @@ impl KodEngine {
                     if calls.is_empty() {
                         break;
                     }
-                    let section = self.run_tool_calls(&calls).await;
+                    let section = self.run_tool_calls(&calls, holder).await;
                     tool_calls.extend(calls);
                     tool_results.extend(section.results);
                     pending.push_str(&format!("\n\n{}", section.prompt_block));
@@ -1184,7 +1205,7 @@ impl KodEngine {
                     if calls.is_empty() {
                         break;
                     }
-                    let section = self.run_tool_calls(&calls).await;
+                    let section = self.run_tool_calls(&calls, holder).await;
                     tool_calls.extend(calls);
                     tool_results.extend(section.results);
                     pending.push_str(&format!("\n\n{}", section.prompt_block));
@@ -1221,6 +1242,7 @@ impl KodEngine {
         definitions: &[ToolDefinition],
         options: &GenerationOptions,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
+        holder: &str,
     ) -> Result<(
         String,
         Vec<ToolCall>,
@@ -1253,7 +1275,7 @@ impl KodEngine {
                     )))
                     .await;
             }
-            let section = self.run_tool_calls(&calls).await;
+            let section = self.run_tool_calls(&calls, holder).await;
             // Each call finished: hand the TUI its completion live (header
             // + summary + wall time) so the "running …" row fills in now,
             // not when the whole loop returns. Markers travel the same
@@ -1406,7 +1428,17 @@ impl KodEngine {
     /// the read is guaranteed to observe the write. All-read-only rounds
     /// still run concurrently — their results cannot depend on each other
     /// or on external state they did not observe themselves.
-    async fn run_tool_calls(&self, calls: &[ToolCall]) -> ToolRound {
+    async fn run_tool_calls(&self, calls: &[ToolCall], holder: &str) -> ToolRound {
+        // Derive a per-call context so the write lock records the
+        // right holder. `holder` is the transcript key for the caller
+        // — `swarm:<agent-id>` for a swarm agent, `session` for the
+        // interactive session — converted to a stable label here.
+        let effective_holder: &str = if holder.is_empty() { "session" } else { holder };
+        let tool_context = self
+            .tool_context
+            .clone()
+            .with_locks(Arc::clone(&self.lock_table), effective_holder);
+
         let mut any_mutating = false;
         for call in calls {
             if let Some(perms) = self.tools.get_permissions(&call.tool_name).await
@@ -1423,7 +1455,7 @@ impl KodEngine {
                 let start = std::time::Instant::now();
                 let res = self
                     .tools
-                    .execute_tool(&call.tool_name, &call.arguments, &self.tool_context)
+                    .execute_tool(&call.tool_name, &call.arguments, &tool_context)
                     .await;
                 out.push((res, start.elapsed().as_millis() as u64));
             }
@@ -1433,10 +1465,14 @@ impl KodEngine {
                 .iter()
                 .map(|call| {
                     let start = std::time::Instant::now();
+                    // `ToolContext` is not `Copy` and the future moves
+                    // it in; clone per call so every future carries its
+                    // own copy into the async block.
+                    let ctx = tool_context.clone();
                     async move {
                         let res = self
                             .tools
-                            .execute_tool(&call.tool_name, &call.arguments, &self.tool_context)
+                            .execute_tool(&call.tool_name, &call.arguments, &ctx)
                             .await;
                         (res, start.elapsed().as_millis() as u64)
                     }
@@ -2407,7 +2443,7 @@ mod tests {
             tool_name: "list_files".to_string(),
             arguments: serde_json::json!({ "path": "." }),
         }];
-        let round = engine.run_tool_calls(&calls).await;
+        let round = engine.run_tool_calls(&calls, "test").await;
         assert_eq!(round.results.len(), 1);
         let block = &round.prompt_block;
         assert!(
@@ -2726,7 +2762,7 @@ mod tests {
             },
         ];
 
-        let round = engine.run_tool_calls(&calls).await;
+        let round = engine.run_tool_calls(&calls, "test").await;
         assert_eq!(round.results.len(), 2);
 
         // Write must succeed.
@@ -2775,7 +2811,7 @@ mod tests {
                 arguments: serde_json::json!({ "path": "b.txt" }),
             },
         ];
-        let round = engine.run_tool_calls(&calls).await;
+        let round = engine.run_tool_calls(&calls, "test").await;
         assert_eq!(round.results.len(), 2);
         assert_eq!(round.elapsed_ms.len(), 2);
         // Order matches caller order regardless of scheduling.

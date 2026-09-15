@@ -308,6 +308,35 @@ impl Tool for WriteFileTool {
         let resolved = context.resolve_path(path)?;
         context.can_write(&resolved)?;
 
+        // Advisory per-path lock, when the context carries a table.
+        // Two writers on the same canonical path serialize here: the
+        // second waits up to `context.lock_timeout`, then fails with a
+        // message the model can act on. Without a table (a bare
+        // context in a unit test, or a caller that never installed
+        // one), the write proceeds unguarded — the behavior every tool
+        // had before this field existed.
+        //
+        // The guard is dropped at the end of the function, after the
+        // write; holding it across the whole body is intentional, so
+        // the parent-directory creation and the file write happen
+        // under the same lock.
+        let _lock = match &context.lock_table {
+            Some(table) => match table
+                .acquire(&resolved, &context.holder, context.lock_timeout)
+                .await
+            {
+                Ok(guard) => Some(guard),
+                Err(e) => {
+                    return Ok(ToolResult::Error(format!(
+                        "cannot write {}: {}",
+                        resolved.display(),
+                        e
+                    )));
+                }
+            },
+            None => None,
+        };
+
         // Create parent directories if the target is in a new tree.
         // The model frequently writes to a fresh path — a new module
         // under `src/handlers/`, a first skill file under

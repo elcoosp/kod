@@ -1,5 +1,6 @@
 //! Tool execution context and permissions.
 
+use crate::path_lock::PathLockTable;
 use kod_error::{KodError, Result};
 use kod_types::ToolPermissions;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,29 @@ pub struct ToolContext {
 
     /// Timeout for execution (in seconds)
     pub timeout_secs: u64,
+
+    /// Per-path advisory locks, shared by every `ToolContext` derived
+    /// from the same engine. A context that has no table (a bare
+    /// `ToolContext::new` in a unit test, or any context built before
+    /// this field existed) writes without coordination — which is the
+    /// right default for a single-writer tool call and the wrong one
+    /// for a swarm, so the engine installs a table explicitly.
+    ///
+    /// See `crate::path_lock` for what the lock does and does not
+    /// cover.
+    pub lock_table: Option<std::sync::Arc<PathLockTable>>,
+
+    /// Identity this context writes under — used as the "holder" string
+    /// on a path lock, so a blocked waiter's error message and any
+    /// debug log can attribute the write. The interactive session uses
+    /// `"session"`; a swarm agent uses `"swarm:<agent-id>"`.
+    pub holder: String,
+
+    /// How long a write waits for a contended path lock before
+    /// failing. Defaults to two seconds, which is generous for a
+    /// well-behaved pair of writers and short enough that a stalled
+    /// agent does not wedge its sibling.
+    pub lock_timeout: std::time::Duration,
 }
 
 impl ToolContext {
@@ -24,7 +48,32 @@ impl ToolContext {
             working_dir: working_dir.into(),
             permissions: ToolPermissions::default(),
             timeout_secs: 30,
+            lock_table: None,
+            holder: "session".to_string(),
+            lock_timeout: std::time::Duration::from_secs(2),
         }
+    }
+
+    /// Install a shared lock table and set the writer identity. The
+    /// engine calls this once and derives every tool context from the
+    /// result, so a swarm agent and the interactive session contend on
+    /// the same table.
+    pub fn with_locks(
+        mut self,
+        table: std::sync::Arc<PathLockTable>,
+        holder: impl Into<String>,
+    ) -> Self {
+        self.lock_table = Some(table);
+        self.holder = holder.into();
+        self
+    }
+
+    /// Override the lock wait. A caller with a tight deadline (a
+    /// bounded shell in a UI) can shorten it; a caller tolerant of a
+    /// slow peer can lengthen it.
+    pub fn with_lock_timeout(mut self, d: std::time::Duration) -> Self {
+        self.lock_timeout = d;
+        self
     }
 
     /// Set permissions

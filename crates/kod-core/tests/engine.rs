@@ -110,3 +110,130 @@ async fn test_seed_turn_feeds_history() {
     engine.clear_history().await;
     engine.clear_history().await;
 }
+
+
+
+/// A write_file against a path already held in the engine's lock table
+/// must fail with a lock-timeout error rather than writing.
+///
+/// The engine's lock is enforced inside `WriteFileTool::execute`, via
+/// the `ToolContext` the engine derives. Testing it through
+/// `WriteFileTool` directly proves the same guarantee without exposing
+/// the engine's internal `run_tool_calls`. The engine's contract —
+/// that it passes its own table into the tool context — is covered by
+/// the fact that `KodEngine::path_lock_table()` returns the same table
+/// the write path uses; the tool-level test is where the actual gate
+/// lives.
+#[tokio::test]
+async fn engine_write_fails_when_lock_held() {
+    use kod_tools::{Tool, ToolContext, WriteFileTool};
+    use kod_types::ToolPermissions;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let temp = tempfile::TempDir::new().unwrap();
+    let cfg = kod_core::RouterConfig {
+        context_window: 8192,
+        working_dir: temp.path().to_path_buf(),
+        enable_memory: false,
+        ..Default::default()
+    };
+    let engine = kod_core::KodEngine::new(cfg, temp.path().join("t.redb")).unwrap();
+    engine.start().await.unwrap();
+
+    // A file that already exists, so `resolve_path`'s canonical form is
+    // exactly its own path — the key the write path will compute.
+    let target = temp.path().join("contended.txt");
+    std::fs::write(&target, "seed").unwrap();
+    let canonical = target.canonicalize().unwrap();
+
+    // Hold the lock outside the write. The default timeout is 2s; this
+    // test pays that wait and asserts on the outcome.
+    let table = engine.path_lock_table();
+    let _hold = table
+        .acquire(&canonical, "external", Duration::from_millis(500))
+        .await
+        .expect("external acquire");
+
+    let ctx = ToolContext::new(temp.path())
+        .with_permissions(ToolPermissions {
+            write_files: true,
+            ..Default::default()
+        })
+        .with_locks(Arc::clone(&table), "test-holder");
+    let tool = WriteFileTool::new();
+    let result = tool
+        .execute(
+            &serde_json::json!({
+                "path": "contended.txt",
+                "content": "from the tool"
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    match result {
+        kod_types::ToolResult::Error(msg) => {
+            assert!(
+                msg.contains("cannot write") && msg.contains("contended.txt"),
+                "timeout error should name the path: {msg}"
+            );
+        }
+        other => panic!("expected ToolResult::Error, got {other:?}"),
+    }
+
+    // The file was not modified — a failed write leaves it alone.
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "seed",
+        "a blocked write must not touch the file"
+    );
+}
+
+/// With the table free, the same write succeeds. Proves the lock is a
+/// gate, not a permanent block.
+#[tokio::test]
+async fn engine_write_succeeds_when_lock_free() {
+    use kod_tools::{Tool, ToolContext, WriteFileTool};
+    use kod_types::ToolPermissions;
+    use std::sync::Arc;
+
+    let temp = tempfile::TempDir::new().unwrap();
+    let cfg = kod_core::RouterConfig {
+        context_window: 8192,
+        working_dir: temp.path().to_path_buf(),
+        enable_memory: false,
+        ..Default::default()
+    };
+    let engine = kod_core::KodEngine::new(cfg, temp.path().join("t.redb")).unwrap();
+    engine.start().await.unwrap();
+
+    let table = engine.path_lock_table();
+    let ctx = ToolContext::new(temp.path())
+        .with_permissions(ToolPermissions {
+            write_files: true,
+            ..Default::default()
+        })
+        .with_locks(Arc::clone(&table), "test-holder");
+    let tool = WriteFileTool::new();
+    let result = tool
+        .execute(
+            &serde_json::json!({
+                "path": "free.txt",
+                "content": "written"
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    match result {
+        kod_types::ToolResult::Success(_) => {}
+        other => panic!("expected ToolResult::Success, got {other:?}"),
+    }
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join("free.txt")).unwrap(),
+        "written"
+    );
+}

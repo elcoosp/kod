@@ -34,6 +34,7 @@
 //! ```
 
 pub mod context;
+pub mod path_lock;
 pub mod executor;
 pub mod registry;
 pub mod tools;
@@ -42,6 +43,7 @@ pub use tools::{
 };
 
 pub use context::ToolContext;
+pub use path_lock::{LockError, PathLockGuard, PathLockTable};
 pub use executor::ToolExecutor;
 pub use registry::ToolRegistry;
 
