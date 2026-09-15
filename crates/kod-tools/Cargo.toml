@@ -16,6 +16,7 @@ ignore = { workspace = true }
 globset = { workspace = true }
 regex = { workspace = true }
 fs4 = { workspace = true }
+similar = { workspace = true }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
 

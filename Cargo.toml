@@ -59,6 +59,9 @@ octocrab = "0.54.1"
 git2 = "0.19"
 chrono = { version = "0.4", features = ["serde"] }
 
+# Diffing
+similar = "2.7"
+
 # Tools & schema
 schemars = "1.2.2"
 walkdir = "2.5.0"
