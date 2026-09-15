@@ -18,6 +18,8 @@ futures = { workspace = true }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
 kod-config = { path = "../kod-config" }
+regex = { workspace = true }
+ignore = { workspace = true }
 kod-provider = { path = "../kod-provider" }
 kod-skills = { path = "../kod-skills" }
 kod-memory = { path = "../kod-memory" }

@@ -103,6 +103,11 @@ pub struct TaskRouter {
     /// because the router is behind an `Arc` and enabling happens
     /// through `&self`.
     skill_watchers: std::sync::Mutex<Vec<kod_skills::SkillWatcher>>,
+    /// Cached repository map, built lazily on first `build_prompt`
+    /// call. `OnceLock` because the map is read-only after
+    /// construction and every prompt would otherwise re-walk the
+    /// repository.
+    repo_map_cache: std::sync::OnceLock<String>,
 }
 
 impl TaskRouter {
@@ -129,6 +134,7 @@ impl TaskRouter {
             memory_manager,
             skill_matcher,
             skill_watchers: std::sync::Mutex::new(Vec::new()),
+            repo_map_cache: std::sync::OnceLock::new(),
         })
     }
 
@@ -589,6 +595,17 @@ impl TaskRouter {
     /// transcript of past turns (`(start of conversation)` on the first
     /// turn) — without it every prompt arrives context-free and the model
     /// opens with "this is a fresh conversation".
+    /// The rendered repository map, built once and cached for the
+    /// router's lifetime. `None` when the working directory has no
+    /// source files to map (an empty project, a non-code directory).
+    fn repo_map_text(&self) -> Option<&str> {
+        let map = self.repo_map_cache.get_or_init(|| {
+            let m = crate::repomap::build_repo_map(&self.config.working_dir);
+            m.render(crate::repomap::DEFAULT_MAP_CHARS)
+        });
+        if map.is_empty() { None } else { Some(map.as_str()) }
+    }
+
     pub async fn build_prompt(
         &self,
         input: &str,
@@ -616,6 +633,11 @@ impl TaskRouter {
         // `retrieve_context` on an empty manager is cheap: a redb
         // substring scan over an empty table and a short-term recency
         // slice, both no-ops for a fresh session.
+        if let Some(map) = self.repo_map_text() {
+            prompt.push_str("## Repository map\n\n");
+            prompt.push_str(map);
+            prompt.push_str("\n\n");
+        }
         let memory_context = match &self.memory_manager {
             Some(manager) => Some(manager.retrieve_context(input).await?),
             None => None,
