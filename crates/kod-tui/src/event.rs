@@ -103,6 +103,28 @@ pub enum Event {
     ToolProgress(String),
     /// A running prompt was cancelled (Esc / Ctrl+C / `/cancel`).
     Cancelled,
+    /// Swarm decompose produced these `(name, description)` subtasks.
+    SwarmDecomposed(Vec<(String, String)>),
+    /// A swarm agent began work.
+    SwarmAgentStarted {
+        id: kod_types::AgentId,
+        name: String,
+        subtask: String,
+    },
+    /// A swarm agent produced a text chunk.
+    SwarmAgentChunk { id: kod_types::AgentId, text: String },
+    /// A swarm agent finished with this result.
+    SwarmAgentCompleted { id: kod_types::AgentId, result: String },
+    /// A swarm agent failed; the others continue.
+    SwarmAgentFailed { id: kod_types::AgentId, error: String },
+    /// Two swarm agents wrote to the same file.
+    SwarmConflict { file: String, agents: Vec<String> },
+    /// All swarm agents done; the runner is calling the merge.
+    SwarmMerging,
+    /// Swarm run complete; this is the merged answer.
+    SwarmComplete(String),
+    /// Swarm run failed before producing an answer.
+    SwarmError(String),
     AgentMessage(String, String),
     ResponseChunk(String),
     ResponseComplete(String),

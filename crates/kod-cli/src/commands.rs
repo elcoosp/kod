@@ -446,6 +446,17 @@ pub async fn run_swarm(
                 SwarmEvent::AgentFailed { name, error, .. } => {
                     eprintln!("\n── {} failed: {}\n", name, error);
                 }
+                SwarmEvent::ConflictDetected { file, agents } => {
+                    // Surface the conflict live so a user watching the
+                    // run sees overlapping work while the merge step
+                    // is still ahead of them, not only in the final
+                    // answer.
+                    eprintln!(
+                        "\n⚠ conflict: {} written by {}\n",
+                        file,
+                        agents.join(", ")
+                    );
+                }
                 SwarmEvent::Merging => {
                     println!("\n── merging results ──\n");
                 }
@@ -458,6 +469,13 @@ pub async fn run_swarm(
     let _ = print_task.await;
 
     let resp = result?;
+
+    if !resp.conflicts.is_empty() {
+        println!("\n{} file conflict(s):", resp.conflicts.len());
+        for c in &resp.conflicts {
+            println!("  ⚠ {} — written by {}", c.file, c.agents.join(", "));
+        }
+    }
 
     println!("\n================ merged ================\n");
     println!("{}", resp.merged);

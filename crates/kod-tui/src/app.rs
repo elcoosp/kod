@@ -33,6 +33,16 @@ pub struct AgentInfo {
     pub current_task: Option<String>,
 }
 
+/// A live swarm agent's chat row: the message that carries its
+/// progress and the running/finished flag. The message id is stable for
+/// the agent's lifetime so chunks append in place rather than spawning
+/// a new row per token.
+#[derive(Debug, Clone)]
+pub struct SwarmAgentView {
+    pub message_id: MessageId,
+    pub finished: bool,
+}
+
 /// Tool execution state
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolExecution {
@@ -106,6 +116,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/compact",
         hint: "compact session history now",
+    },
+    SlashCommand {
+        name: "/swarm",
+        hint: "run N agents on a goal: /swarm <goal>",
     },
     SlashCommand {
         name: "/quit",
@@ -274,6 +288,10 @@ pub struct KodApp {
     /// prompt starts. Chat also gets the friendly (actionable) version.
     last_error: Option<String>,
 
+    /// Live swarm-agent views, keyed by agent id. Cleared at the
+    /// start of each swarm run; a running agent appends its chunks to
+    /// the chat message whose id is stored here.
+    swarm_agents: std::collections::HashMap<kod_types::AgentId, SwarmAgentView>,
     should_quit: bool,
     next_seq: u64,
 }
@@ -333,6 +351,7 @@ impl KodApp {
             show_help: false,
             last_error: None,
 
+            swarm_agents: std::collections::HashMap::new(),
             should_quit: false,
             next_seq: 0,
         }
@@ -1971,6 +1990,121 @@ impl KodApp {
         self.completion_index = 0;
     }
 
+    // ---- Swarm runs ----
+
+    /// Prepare for a new swarm run: clears the live-agent map so a
+    /// previous run's rows are not appended to.
+    pub fn begin_swarm(&mut self) {
+        self.swarm_agents.clear();
+    }
+
+    /// Announce the decompose results as a system line.
+    pub fn swarm_decomposed(&mut self, subtasks: &[(String, String)]) {
+        let mut s = format!("Swarm: {} subtasks\n", subtasks.len());
+        for (i, (name, desc)) in subtasks.iter().enumerate() {
+            let d = desc.lines().next().unwrap_or(desc);
+            s.push_str(&format!("  {}. {} — {}\n", i + 1, name, d));
+        }
+        self.push_system_message(s.trim_end());
+    }
+
+    /// Create a chat row for a starting agent.
+    pub fn swarm_agent_started(
+        &mut self,
+        id: kod_types::AgentId,
+        name: &str,
+        subtask: &str,
+    ) {
+        let header = format!(
+            "{name} — {}",
+            subtask.lines().next().unwrap_or(subtask)
+        );
+        let msg_id = MessageId::new();
+        self.add_message(Message {
+            id: msg_id.clone(),
+            role: MessageRole::Agent(id.clone()),
+            content: header,
+            timestamp: Utc::now(),
+            metadata: MessageMetadata::default(),
+            sequence: 0,
+        });
+        self.swarm_agents.insert(
+            id,
+            SwarmAgentView {
+                message_id: msg_id,
+                finished: false,
+            },
+        );
+    }
+
+    /// Append a text chunk to a live agent's row.
+    pub fn swarm_agent_chunk(&mut self, id: &kod_types::AgentId, text: &str) {
+        let Some(view) = self.swarm_agents.get(id) else {
+            return;
+        };
+        if view.finished {
+            return;
+        }
+        let msg_id = view.message_id.clone();
+        if let Some(msg) = self.messages.iter_mut().find(|m| m.id == msg_id) {
+            msg.content.push_str(text);
+        }
+    }
+
+    /// Replace the live row's trailing buffer with the agent's final
+    /// result. The header stays.
+    pub fn swarm_agent_finished(&mut self, id: &kod_types::AgentId, result: &str) {
+        let Some(view) = self.swarm_agents.get_mut(id) else {
+            return;
+        };
+        let msg_id = view.message_id.clone();
+        if let Some(msg) = self.messages.iter_mut().find(|m| m.id == msg_id) {
+            let header = msg
+                .content
+                .split_once('\n')
+                .map(|(h, _)| h.to_string())
+                .unwrap_or_else(|| msg.content.clone());
+            let body = Self::trim_blank_lines(result);
+            msg.content = if body.is_empty() {
+                header
+            } else {
+                format!("{header}\n{body}")
+            };
+        }
+        view.finished = true;
+    }
+
+    /// Mark a live row as failed and replace its buffer with the error.
+    pub fn swarm_agent_failed(&mut self, id: &kod_types::AgentId, error: &str) {
+        let Some(view) = self.swarm_agents.get_mut(id) else {
+            return;
+        };
+        let msg_id = view.message_id.clone();
+        if let Some(msg) = self.messages.iter_mut().find(|m| m.id == msg_id) {
+            let header = msg
+                .content
+                .split_once('\n')
+                .map(|(h, _)| h.to_string())
+                .unwrap_or_else(|| msg.content.clone());
+            msg.content = format!("{header}\n(failed: {})", error.trim());
+        }
+        view.finished = true;
+    }
+
+    /// Finish the swarm: push the merged answer as an assistant row.
+    pub fn swarm_complete(&mut self, merged: &str) {
+        if !merged.trim().is_empty() {
+            self.push_assistant_message(merged);
+        }
+        self.is_streaming = false;
+        self.current_response.clear();
+        self.generating = false;
+        self.spinner_started = None;
+        self.set_phase(GenPhase::Idle);
+        self.fail_count = 0;
+        self.scroll_to_bottom();
+    }
+
     // Persistence: prompt history + session restore.
     //
     // Prompt history lives in `~/.kod/tui_history.json` (cap 500) and is
@@ -3180,4 +3314,97 @@ mod tests {
         });
         assert!(app.is_scrolled_to_bottom());
     }
+
+    /// The swarm state machine: decompose adds a system line; agent
+    /// start creates a chat row; chunks append to that row; completion
+    /// replaces the trailing buffer; merged answer lands as an
+    /// assistant message.
+    #[test]
+    fn test_swarm_state_machine() {
+        let mut app = KodApp::new();
+        app.begin_swarm();
+        app.begin_generation();
+
+        // Decompose → system line.
+        app.swarm_decomposed(&[
+            ("schema".to_string(), "write the SQL schema".to_string()),
+            ("api".to_string(), "implement the handler".to_string()),
+        ]);
+        let sys = app.messages().last().unwrap();
+        assert_eq!(sys.role, MessageRole::System);
+        assert!(sys.content.contains("2 subtasks"));
+        assert!(sys.content.contains("schema"));
+
+        // Agent start → a chat row keyed by the agent id.
+        let id_a = kod_types::AgentId::new();
+        let id_b = kod_types::AgentId::new();
+        app.swarm_agent_started(id_a.clone(), "agent-1", "write the SQL schema");
+        app.swarm_agent_started(id_b.clone(), "agent-2", "implement the handler");
+        assert_eq!(app.messages().len(), 3, "two system/agent rows after decompose + starts");
+
+        let row_a = app
+            .messages()
+            .iter()
+            .find(|m| matches!(&m.role, MessageRole::Agent(a) if a == &id_a))
+            .expect("agent-1 row");
+        assert!(row_a.content.contains("agent-1"));
+
+        // Chunks append to the right row.
+        app.swarm_agent_chunk(&id_a, "\nworking");
+        app.swarm_agent_chunk(&id_a, " on it");
+        let row_a = app
+            .messages()
+            .iter()
+            .find(|m| matches!(&m.role, MessageRole::Agent(a) if a == &id_a))
+            .unwrap();
+        assert!(row_a.content.contains("working on it"), "got: {}", row_a.content);
+
+        // Chunks after finish are ignored.
+        app.swarm_agent_finished(&id_a, "DONE: schema written");
+        app.swarm_agent_chunk(&id_a, "late noise");
+        let row_a = app
+            .messages()
+            .iter()
+            .find(|m| matches!(&m.role, MessageRole::Agent(a) if a == &id_a))
+            .unwrap();
+        assert!(!row_a.content.contains("late noise"));
+        assert!(row_a.content.contains("DONE: schema written"));
+        assert!(row_a.content.contains("agent-1"), "header preserved: {}", row_a.content);
+
+        // Failure replaces the buffer.
+        app.swarm_agent_failed(&id_b, "boom");
+        let row_b = app
+            .messages()
+            .iter()
+            .find(|m| matches!(&m.role, MessageRole::Agent(a) if a == &id_b))
+            .unwrap();
+        assert!(row_b.content.contains("failed"));
+        assert!(row_b.content.contains("boom"));
+
+        // Swarm complete lands the merged answer as an assistant row and
+        // ends the generation state.
+        assert!(app.is_generating());
+        app.swarm_complete("MERGED: schema + handler + tests");
+        assert!(!app.is_generating());
+        let merged = app.messages().last().unwrap();
+        assert_eq!(merged.role, MessageRole::Assistant);
+        assert!(merged.content.contains("MERGED"));
+    }
+
+    /// `begin_swarm` clears a previous run's live-agent views, so a
+    /// second run does not append to the first run's finished rows.
+    #[test]
+    fn test_begin_swarm_resets_live_views() {
+        let mut app = KodApp::new();
+        app.begin_swarm();
+        let id = kod_types::AgentId::new();
+        app.swarm_agent_started(id.clone(), "agent-1", "first run");
+        // Finish it so the view is marked done, but keep the map entry.
+        app.swarm_agent_finished(&id, "done");
+        assert!(app.swarm_agents.contains_key(&id));
+
+        app.begin_swarm();
+        assert!(app.swarm_agents.is_empty(), "begin_swarm clears the live map");
+    }
+
 }

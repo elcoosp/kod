@@ -28,7 +28,7 @@ use std::time::Duration;
 /// `test_slash_help_lists_every_command` — adding a command to
 /// `SLASH_COMMANDS` without updating this string fails the test, so
 /// the help output and the `/` autocomplete cannot drift apart.
-const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/quit — quit kod\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
+const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
 
 /// Main TUI application loop
 pub struct TuiLoop {
@@ -538,6 +538,45 @@ impl TuiLoop {
                     self.app.save_session();
                 }
             }
+            Event::SwarmDecomposed(subs) => {
+                self.app.swarm_decomposed(&subs);
+            }
+            Event::SwarmAgentStarted { id, name, subtask } => {
+                self.app.swarm_agent_started(id, &name, &subtask);
+            }
+            Event::SwarmAgentChunk { id, text } => {
+                self.app.swarm_agent_chunk(&id, &text);
+            }
+            Event::SwarmAgentCompleted { id, result } => {
+                self.app.swarm_agent_finished(&id, &result);
+            }
+            Event::SwarmAgentFailed { id, error } => {
+                self.app.swarm_agent_failed(&id, &error);
+            }
+            Event::SwarmConflict { file, agents } => {
+                self.app.push_system_message(&format!(
+                    "⚠ conflict: {} written by {}",
+                    file,
+                    agents.join(", ")
+                ));
+            }
+            Event::SwarmMerging => {
+                self.app.push_system_message("── merging swarm results ──");
+            }
+            Event::SwarmComplete(merged) => {
+                self.gen_task = None;
+                self.app.swarm_complete(&merged);
+                if self.persist_history {
+                    self.app.save_session();
+                }
+            }
+            Event::SwarmError(e) => {
+                self.gen_task = None;
+                self.app.fail_generation(&e);
+                if self.persist_history {
+                    self.app.save_session();
+                }
+            }
             _ => {}
         }
 
@@ -713,6 +752,95 @@ impl TuiLoop {
         });
         self.gen_task = Some(handle);
 
+        Ok(())
+    }
+
+    /// Start a swarm run in the background. Same shape as
+    /// `dispatch_prompt`: a spawned task runs the runner, its events
+    /// flow through the event channel, and Esc / Ctrl+C aborts the task
+    /// via `gen_task`.
+    async fn dispatch_swarm(&mut self, goal: String) -> Result<()> {
+        let Some(engine) = self.engine.clone() else {
+            self.app.push_system_message("Engine not initialized.");
+            return Ok(());
+        };
+        if self.app.is_generating() {
+            self.app.push_system_message(
+                "A generation is already running — cancel it first (Esc or /cancel).",
+            );
+            return Ok(());
+        }
+
+        let config = kod_config::KodConfig::load_default()?;
+        let n = config.swarm.max_agents;
+        let merge = config.swarm.merge_results;
+
+        self.app.begin_swarm();
+        self.app.begin_generation();
+        self.app.push_system_message(&format!(
+            "Starting swarm ({} agents, merge {})",
+            n,
+            if merge { "on" } else { "off" }
+        ));
+
+        engine.clear_cancel();
+
+        let event_tx = self.event_handler.sender();
+        let handle = tokio::spawn(async move {
+            let runner = match kod_core::SwarmRunner::new(engine, n, merge).await {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = event_tx.send(Event::SwarmError(e.to_string())).await;
+                    return;
+                }
+            };
+
+            let (chunk_tx, mut chunk_rx) =
+                tokio::sync::mpsc::channel::<kod_core::SwarmEvent>(128);
+            let event_tx_pump = event_tx.clone();
+            let pump = tokio::spawn(async move {
+                while let Some(ev) = chunk_rx.recv().await {
+                    let tui_ev = match ev {
+                        kod_core::SwarmEvent::Decomposed(subs) => Event::SwarmDecomposed(
+                            subs.iter()
+                                .map(|s| (s.name.clone(), s.description.clone()))
+                                .collect(),
+                        ),
+                        kod_core::SwarmEvent::AgentStarted { id, name, subtask } => {
+                            Event::SwarmAgentStarted { id, name, subtask }
+                        }
+                        kod_core::SwarmEvent::AgentChunk { id, text, .. } => {
+                            Event::SwarmAgentChunk { id, text }
+                        }
+                        kod_core::SwarmEvent::AgentCompleted { id, result, .. } => {
+                            Event::SwarmAgentCompleted { id, result }
+                        }
+                        kod_core::SwarmEvent::AgentFailed { id, error, .. } => {
+                            Event::SwarmAgentFailed { id, error }
+                        }
+                        kod_core::SwarmEvent::ConflictDetected { file, agents } => {
+                            Event::SwarmConflict { file, agents }
+                        }
+                        kod_core::SwarmEvent::Merging => Event::SwarmMerging,
+                    };
+                    let _ = event_tx_pump.send(tui_ev).await;
+                }
+            });
+
+            let result = runner.run(&goal, &chunk_tx).await;
+            drop(chunk_tx);
+            let _ = pump.await;
+
+            match result {
+                Ok(resp) => {
+                    let _ = event_tx.send(Event::SwarmComplete(resp.merged)).await;
+                }
+                Err(e) => {
+                    let _ = event_tx.send(Event::SwarmError(e.to_string())).await;
+                }
+            }
+        });
+        self.gen_task = Some(handle);
         Ok(())
     }
 
@@ -1016,6 +1144,19 @@ impl TuiLoop {
                     );
                 }
             },
+            "/swarm" => {
+                let rest: String = parts.collect::<Vec<_>>().join(" ");
+                let goal = rest.trim();
+                if goal.is_empty() {
+                    self.app.push_system_message(
+                        "Usage: /swarm <goal> — decomposes the goal into N agents, \
+                         runs them concurrently, and merges the results. N comes \
+                         from `swarm.max_agents` in the config (default 5).",
+                    );
+                } else {
+                    self.dispatch_swarm(goal.to_string()).await?;
+                }
+            }
             _ => {
                 self.app
                     .push_system_message(&format!("Unknown command: {} — try /help", cmd));

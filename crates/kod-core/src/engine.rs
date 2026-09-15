@@ -11,6 +11,7 @@ use kod_tools::{
     ToolRegistry, WriteFileTool,
 };
 use kod_types::{ToolCall, ToolDefinition, ToolPermissions, ToolResult};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -671,6 +672,12 @@ struct ToolRound {
     elapsed_ms: Vec<u64>,
 }
 
+/// Default transcript key: the interactive session. Public methods
+/// without an explicit key operate on this. Swarm agents use a
+/// `swarm:<agent-id>` key so concurrent agents do not interleave their
+/// turns into one shared history.
+const DEFAULT_TRANSCRIPT_KEY: &str = "";
+
 /// Main engine for KOD
 pub struct KodEngine {
     router: Arc<TaskRouter>,
@@ -683,10 +690,10 @@ pub struct KodEngine {
     steer_queue: RwLock<Vec<String>>,
     /// Set by [`KodEngine::request_cancel`]; loops check it between rounds.
     cancelled: AtomicBool,
-    /// Transcript of past turns, rendered into every prompt (see
-    /// [`KodEngine::render_history`]). Survives TUI-side trims/compact —
-    /// those only touch display messages, never this.
-    history: RwLock<Vec<HistoryTurn>>,
+    /// Transcripts, one per key. `DEFAULT_TRANSCRIPT_KEY` is the
+    /// interactive session; a swarm agent uses `swarm:<agent-id>` so
+    /// concurrent agents do not interleave their turns.
+    history: RwLock<HashMap<String, Vec<HistoryTurn>>>,
     /// Total chars of history rendered into a prompt. Defaults to
     /// [`DEFAULT_HISTORY_CHAR_BUDGET`]; the TUI and CLI set this from
     /// `LlmConfig::context_window` at startup so a 128k model actually
@@ -699,7 +706,8 @@ pub struct KodEngine {
     /// otherwise invisible and the number one source of "why did the
     /// model answer that?" confusion. Overwritten each call; bounded
     /// by the prompt builder's own caps.
-    last_prompt: RwLock<Option<String>>,
+    /// Same keying as `history`.
+    last_prompt: RwLock<HashMap<String, String>>,
 }
 
 impl KodEngine {
@@ -727,11 +735,11 @@ impl KodEngine {
             working_dir,
             steer_queue: RwLock::new(Vec::new()),
             cancelled: AtomicBool::new(false),
-            history: RwLock::new(Vec::new()),
+            history: RwLock::new(HashMap::new()),
             history_budget: std::sync::atomic::AtomicUsize::new(
                 DEFAULT_HISTORY_CHAR_BUDGET,
             ),
-            last_prompt: RwLock::new(None),
+            last_prompt: RwLock::new(HashMap::new()),
         })
     }
 
@@ -796,6 +804,20 @@ impl KodEngine {
         &self.working_dir
     }
 
+    /// Execute a registered tool by name with the engine's own tool
+    /// context. Used by the swarm runner's repo probe; a caller that
+    /// wants a specific tool can also reach it this way, but the
+    /// agentic loop is the ordinary path.
+    pub async fn run_tool(
+        &self,
+        name: &str,
+        args: serde_json::Value,
+    ) -> Result<kod_types::ToolResult> {
+        self.tools
+            .execute_tool(name, &args, &self.tool_context)
+            .await
+    }
+
     /// List available models from the configured provider.
     ///
     /// Returns `Ok(vec![])` when no provider is set — there really
@@ -845,6 +867,14 @@ impl KodEngine {
 
     /// Process user input
     pub async fn process(&self, input: &str) -> Result<TaskResponse> {
+        self.process_for(DEFAULT_TRANSCRIPT_KEY, input).await
+    }
+
+    /// Process user input on a named transcript. `key` selects which
+    /// transcript (and last-prompt slot) this call reads and writes.
+    /// The swarm runner passes `swarm:<agent-id>` per agent, so three
+    /// concurrent agents do not interleave their turns.
+    pub async fn process_for(&self, key: &str, input: &str) -> Result<TaskResponse> {
         // Check if engine is running
         {
             let running = self.is_running.read().await;
@@ -868,8 +898,8 @@ impl KodEngine {
 
             // Build the full prompt using the router's context builder
             let task_type = response.task_type;
-            let history = self.render_history().await;
-            self.remember_turn(true, input).await;
+            let history = self.render_history_for(key).await;
+            self.remember_turn_for(key, true, input).await;
             let prompt = self
                 .router
                 .build_prompt(input, &task_type, &history)
@@ -883,7 +913,7 @@ impl KodEngine {
 
             // Snapshot the grounded prompt before the loop mutates it
             // with tool results. This is what `/debug last-prompt` shows.
-            *self.last_prompt.write().await = Some(convo.clone());
+            self.last_prompt.write().await.insert(key.to_string(), convo.clone());
 
             // Agentic loop: generate (with tools) -> execute -> feed back.
             let options = GenerationOptions::default();
@@ -900,7 +930,7 @@ impl KodEngine {
             } else {
                 final_text
             };
-            self.remember_turn(false, &final_text).await;
+            self.remember_turn_for(key, false, &final_text).await;
 
             return Ok(TaskResponse {
                 task_type: response.task_type,
@@ -930,6 +960,17 @@ impl KodEngine {
         input: &str,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
     ) -> Result<TaskResponse> {
+        self.process_streaming_for(DEFAULT_TRANSCRIPT_KEY, input, chunk_tx)
+            .await
+    }
+
+    /// Streaming variant of [`KodEngine::process_for`].
+    pub async fn process_streaming_for(
+        &self,
+        key: &str,
+        input: &str,
+        chunk_tx: &tokio::sync::mpsc::Sender<String>,
+    ) -> Result<TaskResponse> {
         {
             let running = self.is_running.read().await;
             if !*running {
@@ -943,8 +984,8 @@ impl KodEngine {
         if let Some(provider) = provider.as_ref() {
             let response = self.router.process_input(input).await?;
             let task_type = response.task_type;
-            let history = self.render_history().await;
-            self.remember_turn(true, input).await;
+            let history = self.render_history_for(key).await;
+            self.remember_turn_for(key, true, input).await;
             let prompt = self
                 .router
                 .build_prompt(input, &task_type, &history)
@@ -953,7 +994,7 @@ impl KodEngine {
             let mut pending = self.ground_prompt(prompt, &definitions);
 
             // Snapshot the grounded prompt for /debug last-prompt.
-            *self.last_prompt.write().await = Some(pending.clone());
+            self.last_prompt.write().await.insert(key.to_string(), pending.clone());
 
             let options = GenerationOptions::default();
             let (final_text, tool_calls, tool_results, usage) = self
@@ -968,7 +1009,7 @@ impl KodEngine {
             } else {
                 final_text
             };
-            self.remember_turn(false, &final_text).await;
+            self.remember_turn_for(key, false, &final_text).await;
 
             return Ok(TaskResponse {
                 task_type: response.task_type,
@@ -1000,6 +1041,18 @@ impl KodEngine {
         goal: &str,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
     ) -> Result<TaskResponse> {
+        self.process_goal_streaming_for(DEFAULT_TRANSCRIPT_KEY, input, goal, chunk_tx)
+            .await
+    }
+
+    /// Streaming goal loop on a named transcript.
+    pub async fn process_goal_streaming_for(
+        &self,
+        key: &str,
+        input: &str,
+        goal: &str,
+        chunk_tx: &tokio::sync::mpsc::Sender<String>,
+    ) -> Result<TaskResponse> {
         {
             let running = self.is_running.read().await;
             if !*running {
@@ -1013,8 +1066,8 @@ impl KodEngine {
         if let Some(provider) = provider.as_ref() {
             let response = self.router.process_input(input).await?;
             let task_type = response.task_type;
-            let history = self.render_history().await;
-            self.remember_turn(true, input).await;
+            let history = self.render_history_for(key).await;
+            self.remember_turn_for(key, true, input).await;
             let prompt = self
                 .router
                 .build_prompt(input, &task_type, &history)
@@ -1028,7 +1081,7 @@ impl KodEngine {
             // Snapshot includes the goal block — that is what the model
             // sees on turn 1, which is what users want to inspect when a
             // goal run misbehaves.
-            *self.last_prompt.write().await = Some(pending.clone());
+            self.last_prompt.write().await.insert(key.to_string(), pending.clone());
 
             let options = GenerationOptions::default();
             let mut all_text = String::new();
@@ -1063,7 +1116,7 @@ impl KodEngine {
                     all_text.push_str("\n\n(Goal loop stopped after maximum turns — progress above. Refine with /goal or /steer.)");
                 }
             }
-            self.remember_turn(false, &all_text).await;
+            self.remember_turn_for(key, false, &all_text).await;
 
             return Ok(TaskResponse {
                 task_type: response.task_type,
@@ -1556,48 +1609,41 @@ impl KodEngine {
         std::mem::take(&mut *self.steer_queue.write().await)
     }
 
-    /// Record one turn in the engine's transcript AND store it in
-    /// short-term memory. The two are separate stores with different
-    /// lifetimes:
-    ///
-    ///   - The transcript (`record_turn`) is the model-visible
-    ///     conversation, rendered into every prompt under
-    ///     `## Conversation so far`, capped by the history budget.
-    ///   - Short-term memory (`TaskRouter::store_short_term`) is the
-    ///     retrieval-side working set, read by `retrieve_context`
-    ///     under `## Current Context`, capped by the memory manager's
-    ///     own short-term capacity.
-    ///
-    /// Both are written from here so a caller that records a turn
-    /// cannot forget to store it, and vice versa. The memory write is
-    /// best-effort and a no-op when memory is disabled; a memory
-    /// failure must not lose the transcript entry, and it does not —
-    /// `record_turn` runs first and is infallible.
-    ///
-    /// See `TaskRouter::store_short_term` for the reasoning about why
-    /// only short-term is written (not long-term or episodic).
-    async fn remember_turn(&self, user: bool, text: &str) {
-        self.record_turn(user, text).await;
-        // The memory layer stores user and assistant turns
-        // indistinguishably — the role is a transcript concept, not a
-        // memory one. A caller that needs "who said this" has the
-        // transcript.
-        // Best-effort: `store_short_term` already swallows errors
-        // internally, but the Result return is part of the public
-        // shape; discard it explicitly.
+    /// Keyed variant of the transcript + memory writer.
+    async fn remember_turn_for(&self, key: &str, user: bool, text: &str) {
+        self.record_turn_for(key, user, text).await;
+        // Short-term memory is intentionally shared across transcripts:
+        // it is the retrieval-side working set and the retrieve path
+        // filters by input words, so an agent asking about "SQL schema"
+        // will not surface a sibling agent's turn about "HTTP handler".
         let _ = self.router.store_short_term(text).await;
     }
 
-    /// Remember one turn, truncating long texts and keeping only the most
-    /// recent [`MAX_HISTORY_TURNS`] turns.
-    ///
-    /// Uses [`truncate_chars`] rather than a raw byte slice. `&text[..N]`
-    /// panics when N lands inside a multibyte codepoint, which every
-    /// non-ASCII turn (a prompt in Japanese, an answer quoting "café",
-    /// any emoji) can hit — and the panic took down the whole agentic
-    /// loop on the *second* turn, since record_turn runs on both sides
-    /// of every prompt.
+    /// Test-only wrapper for the default transcript.
+    #[cfg(test)]
+    async fn remember_turn(&self, user: bool, text: &str) {
+        self.remember_turn_for(DEFAULT_TRANSCRIPT_KEY, user, text)
+            .await
+    }
+
+    /// Test-only wrapper for the default transcript.
+    #[cfg(test)]
     async fn record_turn(&self, user: bool, text: &str) {
+        self.record_turn_for(DEFAULT_TRANSCRIPT_KEY, user, text)
+            .await
+    }
+
+    /// Test-only wrapper for the default transcript.
+    #[cfg(test)]
+    async fn render_history(&self) -> String {
+        self.render_history_for(DEFAULT_TRANSCRIPT_KEY).await
+    }
+
+    /// Keyed turn recorder. Truncates long texts, keeps only the
+    /// most recent [`MAX_HISTORY_TURNS`] turns for `key`. Uses
+    /// [`truncate_chars`] rather than a raw slice — the byte-slice
+    /// version panicked on non-ASCII text that crossed the cap.
+    async fn record_turn_for(&self, key: &str, user: bool, text: &str) {
         let text = text.trim();
         if text.is_empty() {
             return;
@@ -1608,26 +1654,28 @@ impl KodEngine {
             text.to_string()
         };
         let mut history = self.history.write().await;
-        history.push(HistoryTurn { user, text: short });
-        let excess = history.len().saturating_sub(MAX_HISTORY_TURNS);
+        let turns = history.entry(key.to_string()).or_default();
+        turns.push(HistoryTurn { user, text: short });
+        let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
         if excess > 0 {
-            history.drain(..excess);
+            turns.drain(..excess);
         }
     }
 
-    /// Render past turns oldest-first for the prompt, newest-first dropped
-    /// once over the current history budget (see
-    /// [`KodEngine::set_history_budget`]). Returns a sentinel before the
-    /// first turn so the prompt always has a `## Conversation so far`
-    /// section to render.
-    async fn render_history(&self) -> String {
+    /// Render the transcript for `key`, oldest-first, dropping the
+    /// newest-over-budget entries per the current history budget (see
+    /// [`KodEngine::set_history_budget`]).
+    async fn render_history_for(&self, key: &str) -> String {
         let history = self.history.read().await;
-        if history.is_empty() {
+        let Some(turns) = history.get(key) else {
+            return "(start of conversation)".to_string();
+        };
+        if turns.is_empty() {
             return "(start of conversation)".to_string();
         }
         let budget = self.history_budget();
         let mut out = String::new();
-        for turn in history.iter().rev() {
+        for turn in turns.iter().rev() {
             let line = format!(
                 "{}: {}\n",
                 if turn.user { "User" } else { "Assistant" },
@@ -1641,58 +1689,68 @@ impl KodEngine {
         out
     }
 
-    /// The grounded prompt the provider received on the most recent
-    /// `process*` call, or `None` if no prompt has been sent yet. Used
-    /// by `/debug last-prompt` so the user can see exactly what the
-    /// model was working from.
+    /// The prompt the provider received on the most recent
+    /// `process*` call on the default transcript.
     pub async fn last_prompt(&self) -> Option<String> {
-        self.last_prompt.read().await.clone()
+        self.last_prompt_for(DEFAULT_TRANSCRIPT_KEY).await
     }
 
-    /// Seed one turn into the model-visible transcript.
-    ///
-    /// Used by the TUI after restoring a saved session so the model's
-    /// memory of the conversation matches what the user sees on screen.
-    /// Without this, a restart would show the old chat but the model
-    /// would open the next turn with "this is a fresh conversation".
-    ///
-    /// Runs through the same truncation as `record_turn`, so seeding
-    /// hundreds of restored turns can never blow the context window.
+    /// The prompt the provider received on the most recent `process*`
+    /// call for `key`.
+    pub async fn last_prompt_for(&self, key: &str) -> Option<String> {
+        self.last_prompt.read().await.get(key).cloned()
+    }
+
+    /// Seed a turn into the default transcript. Used by the TUI after
+    /// restoring a saved session.
     pub async fn seed_turn(&self, user: bool, text: &str) {
-        self.record_turn(user, text).await;
+        self.seed_turn_for(DEFAULT_TRANSCRIPT_KEY, user, text).await
     }
 
-    /// Forget the session (`/clear`).
-    ///
-    /// Two stores are cleared:
-    ///
-    ///   - The transcript (the model-visible conversation rendered
-    ///     under `## Conversation so far`).
-    ///   - Short-term memory (the working set rendered under
-    ///     `## Current Context` by the router's `retrieve_context`).
-    ///
-    /// Both hold the session's turns. Clearing only the transcript
-    /// would leave the previous turns retrievable through memory, so
-    /// the next prompt would still mention text the user asked to
-    /// forget. Long-term memory is untouched: it holds durable facts
-    /// whose lifetime the user did not ask to end, and every
-    /// `/clear` deleting a user's long-term facts would be
-    /// surprising.
-    ///
-    /// Returns nothing; failure to clear memory is logged inside the
-    /// router and does not fail the clear.
+    /// Seed a turn into the transcript identified by `key`.
+    pub async fn seed_turn_for(&self, key: &str, user: bool, text: &str) {
+        self.record_turn_for(key, user, text).await;
+    }
+
+    /// Clear the default transcript and short-term memory (`/clear`).
+    /// See the doc on [`KodEngine::clear_history_for`] for the
+    /// reasoning; this wrapper exists so the `/clear` command keeps its
+    /// current shape.
     pub async fn clear_history(&self) {
-        self.history.write().await.clear();
+        self.clear_history_for(DEFAULT_TRANSCRIPT_KEY).await;
         self.router.clear_short_term_memory().await;
     }
 
-    /// Keep only the last `max_turns` turns (`/compact`). Used by the TUI
-    /// so the model window stays bounded without wiping history entirely.
+    /// Forget the transcript for `key`. Does NOT touch short-term
+    /// memory: a per-key clear is used by the swarm runner between
+    /// runs, and clearing the shared working set would discard turns a
+    /// concurrent single-agent session still wants.
+    pub async fn clear_history_for(&self, key: &str) {
+        self.history.write().await.remove(key);
+        self.last_prompt.write().await.remove(key);
+    }
+
+    /// Drop both the transcript and its stored last-prompt for `key`.
+    /// Used by the swarm runner at the end of a run so transcripts do
+    /// not accumulate.
+    pub async fn forget_transcript(&self, key: &str) {
+        self.history.write().await.remove(key);
+        self.last_prompt.write().await.remove(key);
+    }
+
+    /// Compact the default transcript to the last `max_turns` turns.
     pub async fn compact_history(&self, max_turns: usize) {
+        self.compact_history_for(DEFAULT_TRANSCRIPT_KEY, max_turns).await
+    }
+
+    /// Compact the transcript for `key` to the last `max_turns` turns.
+    pub async fn compact_history_for(&self, key: &str, max_turns: usize) {
         let mut history = self.history.write().await;
-        if history.len() > max_turns {
-            let drop = history.len() - max_turns;
-            history.drain(..drop);
+        if let Some(turns) = history.get_mut(key)
+            && turns.len() > max_turns
+        {
+            let drop = turns.len() - max_turns;
+            turns.drain(..drop);
         }
     }
 }

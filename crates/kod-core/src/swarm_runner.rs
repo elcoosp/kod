@@ -83,8 +83,26 @@ pub enum SwarmEvent {
         name: String,
         error: String,
     },
+    /// Two agents wrote to the same file. Emitted after all agents
+    /// finish, before the merge call, so a live UI can show the
+    /// conflict while it is still actionable.
+    ConflictDetected {
+        file: String,
+        agents: Vec<String>,
+    },
     /// All agents done; the runner is now calling the model to merge.
     Merging,
+}
+
+/// Two or more agents touched the same file. The runner detects
+/// these after all agents finish, from the canonical path each
+/// `write_file` call recorded in its result. A conflict is a warning,
+/// not a failure — the merge step is asked to reconcile — but a caller
+/// that wants to surface it live reads `SwarmEvent::ConflictDetected`.
+#[derive(Debug, Clone)]
+pub struct FileConflict {
+    pub file: String,
+    pub agents: Vec<String>,
 }
 
 /// One agent's terminal outcome.
@@ -107,6 +125,10 @@ pub enum AgentOutcome {
 pub struct SwarmResponse {
     pub subtasks: Vec<Subtask>,
     pub per_agent: Vec<AgentResult>,
+    /// Files written by two or more agents. The merge step is asked
+    /// to reconcile them; the caller decides whether to warn, retry,
+    /// or present the merged answer and note the conflict.
+    pub conflicts: Vec<FileConflict>,
     /// The merged answer.
     pub merged: String,
     /// True when `merged` came from a synthesis call; false when it is a
@@ -240,15 +262,29 @@ impl SwarmRunner {
                     }
                 });
 
+                // Per-agent transcript key. Concurrent agents on
+                // different subtasks must not see each other's turns;
+                // the runner clears the transcript when the run ends.
+                let transcript_key = format!("swarm:{id}");
                 let result = engine
-                    .process_streaming(&subtask.description, &tx)
+                    .process_streaming_for(&transcript_key, &subtask.description, &tx)
                     .await;
+                // Drop the transcript; the merged answer is what the
+                // user keeps, and per-agent histories would otherwise
+                // accumulate across runs in one session.
+                engine.forget_transcript(&transcript_key).await;
                 drop(tx);
                 let _ = pump.await;
 
+                // Extract the canonical written-path set for this
+                // agent. Used by the conflict detector after all
+                // agents finish.
                 match result {
-                    Ok(resp) => (id, name, subtask, Ok(resp.text.unwrap_or_default())),
-                    Err(e) => (id, name, subtask, Err(e.to_string())),
+                    Ok(resp) => {
+                        let writes = collect_writes(&resp);
+                        (id, name, subtask, writes, Ok(resp.text.unwrap_or_default()))
+                    }
+                    Err(e) => (id, name, subtask, Vec::new(), Err(e.to_string())),
                 }
             });
         }
@@ -258,7 +294,17 @@ impl SwarmRunner {
         // 4. Report terminal status. The coordinator's load accounting
         //    needs the completion, and the events let a live UI update.
         let mut per_agent = Vec::with_capacity(raw.len());
-        for (id, name, subtask, outcome) in raw {
+        // File -> agent names that wrote it. Populated as the results
+        // come back; entries with two or more are conflicts.
+        let mut writers_per_file: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for (id, name, subtask, writes, outcome) in raw {
+            for path in &writes {
+                writers_per_file
+                    .entry(path.clone())
+                    .or_default()
+                    .push(name.clone());
+            }
             // Find the matching handle's task id by agent id.
             let task_id = handles
                 .iter()
@@ -304,10 +350,33 @@ impl SwarmRunner {
             }
         }
 
-        // 5. Merge.
+        // 5. Conflicts. A file written by two or more agents is a
+        //    signal the merge step needs to reconcile; it is not an
+        //    error — agents on interdependent subtasks legitimately
+        //    touch the same file, and the model is the right place to
+        //    decide what "merged" means.
+        let mut conflicts: Vec<FileConflict> = Vec::new();
+        for (file, mut agents) in writers_per_file {
+            agents.sort();
+            agents.dedup();
+            if agents.len() >= 2 {
+                conflicts.push(FileConflict {
+                    file: file.clone(),
+                    agents: agents.clone(),
+                });
+                let _ = chunk_tx
+                    .send(SwarmEvent::ConflictDetected { file, agents })
+                    .await;
+            }
+        }
+        // Stable order so a caller reading `conflicts` sees the same
+        // list across runs.
+        conflicts.sort_by(|a, b| a.file.cmp(&b.file));
+
+        // 6. Merge.
         let (merged, merged_by_model) = if self.merge_results {
             let _ = chunk_tx.send(SwarmEvent::Merging).await;
-            match self.merge(goal, &per_agent).await {
+            match self.merge(goal, &per_agent, &conflicts).await {
                 Ok(s) if !s.trim().is_empty() => (s, true),
                 _ => (Self::concatenate(&per_agent), false),
             }
@@ -318,9 +387,114 @@ impl SwarmRunner {
         Ok(SwarmResponse {
             subtasks,
             per_agent,
+            conflicts,
             merged,
             merged_by_model,
         })
+    }
+
+    /// Probe the working directory for context the decompose prompt
+    /// can use.
+    ///
+    /// Two cheap tool calls: a shallow `list_files` for the tree, and a
+    /// `grep` per content-word from the goal for where the goal's
+    /// vocabulary already appears. Both are bounded — `list_files` is
+    /// capped by the tool, and the probe takes the first few hits per
+    /// keyword — so a large repository produces a summary the model can
+    /// read in one paragraph, not a dump.
+    ///
+    /// Returns `None` when neither call produces anything useful (a
+    /// non-repo directory, a tool failure). The decompose prompt handles
+    /// the absent case with a one-line placeholder; there is no reason
+    /// to fail the whole decompose because the working directory is
+    /// empty.
+    async fn probe_repo(&self, goal: &str) -> Option<String> {
+        use kod_types::ToolResult;
+
+        // ---- Shallow listing. ----
+        let listing = self
+            .engine
+            .run_tool(
+                "list_files",
+                serde_json::json!({ "path": ".", "recursive": false }),
+            )
+            .await
+            .ok()?;
+        let listing_names: Vec<String> = match listing {
+            ToolResult::Success(v) => v
+                .get("files")
+                .and_then(|f| f.as_array())
+                .map(|a| {
+                    a.iter()
+                        .take(40)
+                        .filter_map(|v| v.as_str())
+                        .map(|s| {
+                            // The walker returns absolute paths; strip the
+                            // working-dir prefix so the model sees names.
+                            s.rsplit('/').next().unwrap_or(s).to_string()
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => return None,
+        };
+        if listing_names.is_empty() {
+            return None;
+        }
+
+        // ---- Keyword grep. ----
+        // Content words: length >= 4, deduplicated, capped at 5 so the
+        // probe stays bounded on a long goal.
+        let mut seen = std::collections::HashSet::new();
+        let keywords: Vec<String> = goal
+            .to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.len() >= 4)
+            .filter(|w| seen.insert(w.to_string()))
+            .take(5)
+            .map(|s| s.to_string())
+            .collect();
+
+        let mut hits = String::new();
+        for kw in &keywords {
+            let grep = match self
+                .engine
+                .run_tool(
+                    "grep",
+                    serde_json::json!({ "path": ".", "pattern": kw, "recursive": true }),
+                )
+                .await
+            {
+                Ok(ToolResult::Success(v)) => v,
+                _ => continue,
+            };
+            let results = match grep.get("results").and_then(|r| r.as_array()) {
+                Some(a) if !a.is_empty() => a,
+                _ => continue,
+            };
+            let files: Vec<&str> = results
+                .iter()
+                .take(5)
+                .filter_map(|r| r.get("file").and_then(|f| f.as_str()))
+                .map(|s| s.rsplit('/').next().unwrap_or(s))
+                .collect();
+            hits.push_str(&format!(
+                "  \"{}\" ({} match{}): {}\n",
+                kw,
+                results.len(),
+                if results.len() == 1 { "" } else { "es" },
+                files.join(", ")
+            ));
+        }
+
+        let mut out = String::new();
+        out.push_str("Top-level entries:\n");
+        out.push_str(&listing_names.join(", "));
+        if !hits.is_empty() {
+            out.push_str("\n\nGoal keywords already present in the tree:\n");
+            out.push_str(&hits);
+        }
+        Some(out)
     }
 
     /// Ask the model to split `goal` into at most `max_agents` subtasks.
@@ -328,10 +502,27 @@ impl SwarmRunner {
     /// not the requested JSON — a malformed reply should still produce a
     /// swarm, not a single agent.
     async fn decompose(&self, goal: &str) -> Result<Vec<Subtask>> {
+        // Probe the working directory so the split is informed by
+        // what is actually there: a repository context line listing
+        // the top-level entries plus, when the goal's vocabulary
+        // appears in the tree, a short list of files per keyword. The
+        // decompose prompt is asked to reference these concrete paths
+        // rather than invent them.
+        let repo_context = self.probe_repo(goal).await;
+        let repo_block = match &repo_context {
+            Some(s) if !s.is_empty() => format!(
+                "\nWorking directory context:\n{}\n\nReference the \
+                 concrete files above where a subtask touches them, \
+                 instead of naming files you have not seen.\n",
+                s
+            ),
+            _ => String::new(),
+        };
+
         let prompt = format!(
             "You are decomposing a task for a team of AI agents.\n\n\
-             Goal: {goal}\n\n\
-             Split this goal into at most {n} independent subtasks that \
+             Goal: {goal}\n{repo}\
+             \nSplit this goal into at most {n} independent subtasks that \
              can be worked on in parallel. Each subtask must be \
              self-contained: an agent receiving only its description, \
              plus the ability to read and write files and run shell \
@@ -343,6 +534,7 @@ impl SwarmRunner {
              [{{\"name\":\"design-schema\",\"description\":\"Write the SQL \
              schema for a users table with id, email, created_at.\"}}]\n",
             goal = goal,
+            repo = repo_block,
             n = self.max_agents,
         );
 
@@ -384,7 +576,19 @@ impl SwarmRunner {
     }
 
     /// Ask the model to synthesize the per-agent results.
-    async fn merge(&self, goal: &str, per_agent: &[AgentResult]) -> Result<String> {
+    /// Ask the model to synthesize the per-agent results.
+    ///
+    /// When `conflicts` is non-empty, the prompt leads with a warning
+    /// naming the files and their authors, and instructs the model to
+    /// reconcile. It can then say "agents A and B both edited
+    /// `schema.sql`; the merged version is A's schema plus B's index"
+    /// instead of ignoring the overlap.
+    async fn merge(
+        &self,
+        goal: &str,
+        per_agent: &[AgentResult],
+        conflicts: &[FileConflict],
+    ) -> Result<String> {
         let mut blocks = String::new();
         for r in per_agent {
             match &r.outcome {
@@ -399,15 +603,35 @@ impl SwarmRunner {
             }
         }
 
+        let conflict_block = if conflicts.is_empty() {
+            String::new()
+        } else {
+            let mut s = String::from(
+                "Warning: multiple agents edited the same files. The merged \
+                 answer must reconcile their changes and say which version \
+                 (or combination) wins, naming the file:\n",
+            );
+            for c in conflicts {
+                s.push_str(&format!(
+                    "  - {} was written by {}\n",
+                    c.file,
+                    c.agents.join(", ")
+                ));
+            }
+            s.push('\n');
+            s
+        };
+
         let prompt = format!(
             "You ran a team of {n} agents on this goal:\n\n{goal}\n\n\
-             Each agent reported:\n{blocks}\n\
+             {conflicts}Each agent reported:\n{blocks}\n\
              Synthesize their work into a single coherent answer for the \
              user. Note any conflicts between agents. If an agent failed, \
              say what is missing. Do not repeat the per-agent blocks \
              verbatim — write the merged answer.\n",
             n = per_agent.len(),
             goal = goal,
+            conflicts = conflict_block,
             blocks = blocks,
         );
 
@@ -442,6 +666,45 @@ struct AgentHandle {
     name: String,
     subtask: Subtask,
     task_id: TaskId,
+}
+
+/// Extract the canonical path of every file the agent wrote to.
+///
+/// Pairs `write_file` calls with their results (the tool resolves the
+/// path and returns the canonical form) so two agents writing
+/// `"shared.txt"` and `"./shared.txt"` are seen as touching the same
+/// file. Falls back to the raw path argument when a result is missing
+/// or not a `Success` — an agent whose write failed still "touched"
+/// the file as far as conflict detection cares.
+fn collect_writes(resp: &crate::router::TaskResponse) -> Vec<String> {
+    use kod_types::ToolResult;
+    let mut out = Vec::new();
+    for (call, result) in resp.tool_calls.iter().zip(resp.tool_results.iter()) {
+        if call.tool_name != "write_file" {
+            continue;
+        }
+        let from_result = match result {
+            ToolResult::Success(v) => v.get("path").and_then(|p| p.as_str()),
+            _ => None,
+        };
+        let from_call = call.arguments.get("path").and_then(|p| p.as_str());
+        if let Some(p) = from_result.or(from_call) {
+            out.push(p.to_string());
+        }
+    }
+    // A call with no paired result (the loop stopped at MAX_TOOL_ROUNDS
+    // mid-round) still counts — the write may or may not have happened,
+    // but the agent intended it.
+    for call in &resp.tool_calls[resp.tool_results.len().min(resp.tool_calls.len())..] {
+        if call.tool_name == "write_file"
+            && let Some(p) = call.arguments.get("path").and_then(|p| p.as_str())
+        {
+            out.push(p.to_string());
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Reduce an arbitrary string to a short kebab-case token for an agent

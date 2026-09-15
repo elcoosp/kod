@@ -200,6 +200,246 @@ async fn swarm_decomposes_runs_and_merges() {
     assert_eq!(merge_calls, 1);
 }
 
+/// A swarm working in a directory with files must have those files in
+/// its decompose prompt. The runner probes with `list_files` and
+/// `grep`; the prompt's "Working directory context" block names the
+/// top-level entries and, when a goal keyword is present, the files it
+/// appears in.
+#[tokio::test]
+async fn test_decompose_sees_repo_context() {
+    // Provider that records the decompose prompt for inspection.
+    struct PromptCapture {
+        decompose_prompt: Mutex<Option<String>>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for PromptCapture {
+        fn name(&self) -> &str {
+            "capture"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn generate(
+            &self,
+            prompt: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            if prompt.contains("Split this goal") {
+                *self.decompose_prompt.lock().unwrap() = Some(prompt.to_string());
+                return Ok(
+                    r#"[{"name":"a","description":"do a"},{"name":"b","description":"do b"}]"#
+                        .to_string(),
+                );
+            }
+            Ok("agent reply".to_string())
+        }
+        async fn generate_with_tools(
+            &self,
+            _p: &str,
+            _t: &[ToolDefinition],
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::Text {
+                content: "agent reply".to_string(),
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+        fn stream_with_tools<'a>(
+            &'a self,
+            _p: &'a str,
+            _t: &'a [ToolDefinition],
+            _o: &'a GenerationOptions,
+        ) -> Pin<
+            Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>,
+        > {
+            Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::Text("agent reply".to_string())),
+                Ok(StreamChunk::Done),
+            ]))
+        }
+    }
+
+    let provider = Arc::new(PromptCapture {
+        decompose_prompt: Mutex::new(None),
+    });
+    let (engine, tmp) = build_engine(provider.clone()).await;
+
+    // Seed the working directory with a distinctive file whose name
+    // carries a goal keyword, so the grep half of the probe fires too.
+    std::fs::write(tmp.path().join("payment_handler.rs"), "// stub").unwrap();
+    std::fs::create_dir_all(tmp.path().join("payments")).unwrap();
+    std::fs::write(tmp.path().join("payments/schema.sql"), "-- stub").unwrap();
+
+    let runner = SwarmRunner::new(engine, 2, false).await.unwrap();
+    let (tx, mut rx) = mpsc::channel::<SwarmEvent>(64);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let _ = runner.run("fix the payment handler", &tx).await.unwrap();
+    drop(tx);
+    let _ = drain.await;
+
+    let prompt = provider
+        .decompose_prompt
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("decompose should have been called");
+
+    assert!(
+        prompt.contains("Working directory context"),
+        "decompose prompt must carry the repo block: {prompt}"
+    );
+    assert!(
+        prompt.contains("payment_handler.rs") || prompt.contains("payments"),
+        "prompt should name the seeded files: {prompt}"
+    );
+}
+
+/// Two agents writing the same file must show up in
+/// `SwarmResponse.conflicts`, and the merge prompt must carry a warning
+/// block naming the file and its authors.
+#[tokio::test]
+async fn test_swarm_detects_file_conflicts() {
+    use kod_types::ToolCall;
+
+    // Provider whose stream_with_tools asks each agent to write to
+    // the same file, so every agent produces a write_file call on
+    // `shared.txt`.
+    struct SharedWriter {
+        merge_prompts: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for SharedWriter {
+        fn name(&self) -> &str {
+            "shared-writer"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn generate(
+            &self,
+            prompt: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            if prompt.contains("Split this goal") {
+                return Ok(
+                    r#"[{"name":"a","description":"edit shared"},{"name":"b","description":"edit shared too"}]"#
+                        .to_string(),
+                );
+            }
+            if prompt.contains("multiple agents edited the same files") {
+                self.merge_prompts.lock().unwrap().push(prompt.to_string());
+                return Ok("MERGED with reconciliation".to_string());
+            }
+            Ok("done".to_string())
+        }
+        async fn generate_with_tools(
+            &self,
+            _p: &str,
+            _t: &[ToolDefinition],
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::ToolCalls {
+                calls: vec![ToolCall {
+                    tool_name: "write_file".to_string(),
+                    arguments: serde_json::json!({
+                        "path": "shared.txt",
+                        "content": "from one agent"
+                    }),
+                }],
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+        fn stream_with_tools<'a>(
+            &'a self,
+            _p: &'a str,
+            _t: &'a [ToolDefinition],
+            _o: &'a GenerationOptions,
+        ) -> Pin<
+            Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>,
+        > {
+            // Two rounds per agent: first a write_file tool call, then
+            // a text reply. The engine loop sees the tool call and runs
+            // it, then gets Text and stops.
+            Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::ToolCallStart {
+                    name: "write_file".to_string(),
+                }),
+                Ok(StreamChunk::ToolCallDelta {
+                    arguments: serde_json::json!({
+                        "path": "shared.txt",
+                        "content": "from one agent"
+                    })
+                    .to_string(),
+                }),
+                Ok(StreamChunk::Done),
+            ]))
+        }
+    }
+
+    let provider = Arc::new(SharedWriter {
+        merge_prompts: Mutex::new(Vec::new()),
+    });
+    let (engine, _tmp) = build_engine(provider.clone()).await;
+
+    let runner = SwarmRunner::new(engine, 2, true).await.unwrap();
+    let (tx, mut rx) = mpsc::channel::<SwarmEvent>(256);
+    let drain = tokio::spawn(async move {
+        let mut saw_conflict = false;
+        while let Some(ev) = rx.recv().await {
+            if matches!(ev, SwarmEvent::ConflictDetected { .. }) {
+                saw_conflict = true;
+            }
+        }
+        saw_conflict
+    });
+
+    let resp = runner.run("edit shared files", &tx).await.unwrap();
+    drop(tx);
+    let saw_conflict = drain.await.unwrap();
+
+    assert!(saw_conflict, "runner should emit ConflictDetected");
+    assert_eq!(
+        resp.conflicts.len(),
+        1,
+        "exactly one conflict expected, got {:?}",
+        resp.conflicts
+    );
+    let c = &resp.conflicts[0];
+    assert!(
+        c.file.contains("shared.txt"),
+        "conflict file should be shared.txt: {}",
+        c.file
+    );
+    assert_eq!(c.agents.len(), 2, "two agents should be named: {:?}", c.agents);
+
+    // The merge prompt should carry the warning block.
+    let merge_prompts = provider.merge_prompts.lock().unwrap().clone();
+    assert_eq!(merge_prompts.len(), 1, "one merge call expected");
+    let mp = &merge_prompts[0];
+    assert!(
+        mp.contains("shared.txt"),
+        "merge prompt must name the conflicting file: {mp}"
+    );
+}
+
 #[tokio::test]
 async fn swarm_without_merge_concatenates() {
     let provider = Arc::new(ScriptedSwarmProvider::new());
