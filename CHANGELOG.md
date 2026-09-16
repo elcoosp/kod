@@ -8,14 +8,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Initial release with core functionality
-- Skills system with markdown-based skills
-- Memory system (short-term, long-term, episodic)
-- Agent swarm with coordination
-- Tool calling system
-- TUI interface
-- CLI interface
-- Ollama LLM provider support
+- `kod doctor` — first-run diagnostics (config, endpoint, skills, memory, git)
+- `kod init` — onboarding wizard output
+- `kod models` — list provider models with `--filter`
+- `kod sessions` — inspect/export/clear the TUI session file
+- `kod completions <shell>` — bash/zsh/fish/elvish/powershell completion
+- `kod checkpoint list|restore|clear` — file-level undo for `write_file` /
+  `patch_file`; snapshots taken before every mutating call
+- `kod update` — check GitHub for a newer release (read-only)
+- `kod skills --json` and `kod skills-validate` — machine-readable skill
+  inventory and CI-friendly validation
+- `web_fetch` tool — HTTP/HTTPS fetch with SSRF protection
+  (loopback / private / link-local / metadata endpoints refused)
+- `git_status` and `git_diff` tools — read-only git inspection
+- `tools.confirm_writes` — opt-in write approval; TUI dialog and CLI stdin
+  prompt
+- `llm.network_access` — opt-in network access for `web_fetch`
+- Approval dialog in TUI (`y`/`n`/Esc); CLI chat prompts on stdin
+- `--sandbox` flag on `kod chat` — run shell commands under bwrap/sandbox-exec
+- Session log (`KOD_SESSION_LOG`) and `kod replay` — every tool call recorded
+  as JSONL, replayable without the model
+- Unified-diff attachment on `write_file` / `patch_file` results
+
+### Changed
+- `Engine::process()` without a provider now returns an `InvalidState` error
+  instead of the router's placeholder text
+- `LlmConfig::validate()` clamps out-of-range values (temperature, context
+  window, max tokens, timeout, base URL, model)
+
+### Fixed
+- Engine agentic loop no longer holds the provider read lock across the
+  streaming round — `/model` switch during a prompt is now instantaneous
+- Provider `list_models()` errors are no longer collapsed to an empty list
+- Config `load_default()` is forgiving of a corrupt file (warns and falls
+  back to defaults instead of exiting)
+- Multiple substring-matcher and word-boundary fixes in `TaskRouter::classify_task`
+
+### Removed
+- Placeholder handlers in `TaskRouter::process_input` that returned
+  fabricated text instead of failing loudly
 
 ## [0.1.0] - 2026-09-04
 
