@@ -1,6 +1,7 @@
 //! UI rendering components.
 
 pub mod agent_panel;
+pub mod approval;
 pub mod chat;
 pub mod completions;
 pub mod header;
@@ -9,6 +10,7 @@ pub mod input;
 pub mod status;
 
 pub use agent_panel::AgentPanelWidget;
+pub use approval::ApprovalWidget;
 pub use chat::ChatWidget;
 pub use completions::CompletionsWidget;
 pub use header::HeaderWidget;

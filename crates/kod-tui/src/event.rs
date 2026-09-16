@@ -141,6 +141,16 @@ pub enum Event {
     },
     /// Post-tool thinking phase (tool result reinjected, LLM reasoning again)
     Thinking,
+    /// The engine wants a yes/no before running a write_file or
+    /// patch_file. Carries the parsed `ApprovalRequest`. The TUI shows
+    /// a modal dialog and calls `respond_to_approval` when the user
+    /// answers.
+    ApprovalRequested {
+        id: u64,
+        tool_name: String,
+        summary: String,
+        diff: Option<String>,
+    },
     Error(String),
     Quit,
     Resize(u16, u16),
