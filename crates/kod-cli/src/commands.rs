@@ -91,6 +91,26 @@ impl Cli {
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_tui(model.clone()).await })
             }
+            Some(Command::Doctor) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_doctor().await })
+            }
+            Some(Command::Init) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_init().await })
+            }
+            Some(Command::Models { filter }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_models(filter.clone()).await })
+            }
+            Some(Command::Sessions { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_sessions(action.clone()).await })
+            }
             None => {
                 // First-run UX. A bare `kod` invocation is the most common
                 // first experience, and the previous output was one line
@@ -261,6 +281,62 @@ pub enum Command {
         /// Specify the model to use
         #[arg(short, long)]
         model: Option<String>,
+    },
+
+    /// Print a diagnostics report: config file presence, LLM endpoint
+    /// shape, skill directories, and the memory database path. Exits
+    /// non-zero if any check fails, so it can gate CI or a first-run
+    /// script.
+    Doctor,
+
+    /// First-run helper: ensure a config file exists, print where it
+    /// lives, and print the next three commands a new user should run.
+    /// Idempotent — running it twice is a no-op.
+    Init,
+
+    /// List, or filter, the models the configured provider offers.
+    /// Read-only: never pulls, downloads, or deletes — those are the
+    /// server's job, and running them from here would need a progress
+    /// UI that the CLI does not have.
+    Models {
+        /// When set, only print models whose id contains this substring
+        /// (case-insensitive). A plain substring match is what a user
+        /// wanting `qwen2.5-coder` needs; a real regex is a footgun for
+        /// a filter this small.
+        #[arg(short, long)]
+        filter: Option<String>,
+    },
+
+    /// Inspect, export, or clear the chat session saved by the TUI
+    /// (`~/.kod/tui_session.json`, or `$KOD_TUI_STATE_DIR`). Read-only
+    /// by default; `clear` deletes the file.
+    Sessions {
+        #[command(subcommand)]
+        action: SessionsAction,
+    },
+}
+
+/// `kod sessions` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum SessionsAction {
+    /// Print where the session file lives and how many messages it holds.
+    /// When the file does not exist, say so — a user running this on a
+    /// fresh machine should not get a silent empty output.
+    Show,
+    /// Delete the saved session file. An explicit `kod sessions clear`
+    /// is consent; no confirmation prompt.
+    Clear,
+    /// Write the saved session to `path` (or stdout when `-`).
+    /// Default format is Markdown — the shape a user pastes into a
+    /// gist. `json` round-trips through `kod sessions export --format
+    /// json | ...`.
+    Export {
+        /// Output path. `-` writes to stdout.
+        #[arg(default_value = "-")]
+        path: std::path::PathBuf,
+        /// `markdown` (default) or `json`.
+        #[arg(short, long, default_value = "markdown")]
+        format: String,
     },
 }
 
@@ -997,4 +1073,314 @@ pub async fn run_profile(action: ProfileAction) -> Result<()> {
 pub async fn run_tui(model: Option<String>) -> Result<()> {
     let mut tui = kod_tui::TuiLoop::new();
     tui.run(model).await
+}
+
+/// Print a diagnostics report. Read-only: never writes to the config,
+/// the database, or the skills directories. Exit code carries the
+/// verdict so a first-run script or CI job can gate on it.
+pub async fn run_doctor() -> Result<()> {
+    use crate::doctor::{CheckStatus, run_diagnostics};
+
+    let config = KodConfig::load_default()?;
+    let report = run_diagnostics(&config);
+
+    println!("KOD doctor");
+    println!();
+    for check in &report.checks {
+        let mark = match check.status {
+            CheckStatus::Ok => "✓",
+            CheckStatus::Warn => "⚠",
+            CheckStatus::Fail => "✗",
+        };
+        println!("  {} {:<14} {}", mark, check.name, check.message);
+    }
+    println!();
+
+    if report.has_failures() {
+        println!("One or more checks failed — review the items marked ✗ above.");
+        std::process::exit(1);
+    }
+
+    println!("All checks passed.");
+    Ok(())
+}
+
+/// First-run helper. `KodConfig::load_default()` already writes the
+/// default config on the first call; this command makes that side
+/// effect explicit and prints the next steps a new user needs. Running
+/// it twice is a no-op — the second call finds the config present and
+/// prints the same summary.
+///
+/// Deliberately does not prompt or modify the config: an init that
+/// silently rewrites a user's config is worse than no init at all.
+/// Users who want to change a setting are pointed at the file itself.
+pub async fn run_init() -> Result<()> {
+    let config = KodConfig::load_default()?;
+    let config_dir = KodConfig::config_dir()?;
+    let path = config_dir.join("config.toml");
+
+    println!("KOD initialized.");
+    println!();
+    if path.exists() {
+        println!("Config:   {}", path.display());
+    } else {
+        println!("Config:   (in memory only — could not write {})", path.display());
+    }
+    println!("Model:    {}", config.llm.model);
+    println!("Endpoint: {}", config.llm.base_url);
+    println!();
+    println!("Next steps:");
+    println!("  1. Start the model server (e.g. `ollama serve`)");
+    println!("  2. Pull the model (e.g. `ollama pull {}`)", config.llm.model);
+    println!("  3. Verify the setup:  kod doctor");
+    println!("  4. Start a session:   kod tui    (interactive)");
+    println!("                        kod chat   (plain REPL)");
+    Ok(())
+}
+
+/// Print the models the configured provider offers, optionally
+/// filtered by a case-insensitive substring.
+///
+/// Read-only. The provider builds its model list from
+/// `GET /v1/models` (Ollama, LM Studio, MLX, vLLM, OpenAI all expose
+/// this). Distinguishes three outcomes a user must be able to tell
+/// apart:
+///
+///   - the server answered with a list: print it (filtered, if asked);
+///   - the server answered but the list was empty: say so, and print
+///     the pull command for the configured model;
+///   - the server could not be reached: name the failure, do not
+///     pretend the list was empty.
+///
+/// The previous `Engine::list_models` on a fresh session could not
+/// distinguish (2) from (3) once the messages were printed; this
+/// command keeps the distinction visible.
+pub async fn run_models(filter: Option<String>) -> Result<()> {
+    let config = KodConfig::load_default()?;
+    let provider = OpenAICompatProvider::from_config(&config.llm, None)?;
+
+    let models = match provider.list_models().await {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!(
+                "Could not list models from {}: {}",
+                config.llm.base_url, e
+            );
+            eprintln!();
+            eprintln!("Check that the server is running and `base_url` in the config is correct.");
+            eprintln!("For Ollama: `ollama serve`, then retry.");
+            std::process::exit(1);
+        }
+    };
+
+    let needle = filter.as_ref().map(|s| s.to_lowercase());
+    let shown: Vec<&String> = match &needle {
+        Some(n) => models
+            .iter()
+            .filter(|m| m.to_lowercase().contains(n))
+            .collect(),
+        None => models.iter().collect(),
+    };
+
+    if models.is_empty() {
+        println!(
+            "The provider at {} is reachable but reports no models.",
+            config.llm.base_url
+        );
+        println!();
+        println!("Pull one first, e.g.:");
+        println!("  ollama pull {}", config.llm.model);
+        return Ok(());
+    }
+
+    if shown.is_empty() {
+        println!(
+            "No model matches {:?} ({} model{} on the server).",
+            filter.as_deref().unwrap_or(""),
+            models.len(),
+            if models.len() == 1 { "" } else { "s" },
+        );
+        return Ok(());
+    }
+
+    if let Some(n) = &needle {
+        println!(
+            "{} of {} model{} match {:?}:",
+            shown.len(),
+            models.len(),
+            if models.len() == 1 { "" } else { "s" },
+            n,
+        );
+    } else {
+        println!("{} model(s) on {}:", shown.len(), config.llm.base_url);
+    }
+    for m in &shown {
+        if m.as_str() == config.llm.model {
+            println!("  - {}  (current)", m);
+        } else {
+            println!("  - {}", m);
+        }
+    }
+    Ok(())
+}
+
+/// `kod sessions <action>`.
+///
+/// Reads the session file the TUI writes at `~/.kod/tui_session.json`
+/// (overridable via `$KOD_TUI_STATE_DIR`, which the TUI itself honors
+/// and which this command therefore respects too — the two must agree
+/// on which file they are talking about). `Show` and `Export` are
+/// read-only; `Clear` deletes. The file is JSON-serialized
+/// `kod_tui::Message` records, so the CLI decodes through the same
+/// type the TUI wrote.
+pub async fn run_sessions(action: SessionsAction) -> Result<()> {
+    use kod_tui::app::Message;
+
+    let path = kod_tui::app::KodApp::session_path().ok_or_else(|| {
+        KodError::Config(
+            "Could not determine the session file path (no home directory, no $KOD_TUI_STATE_DIR)."
+                .to_string(),
+        )
+    })?;
+
+    match action {
+        SessionsAction::Show => {
+            if !path.exists() {
+                println!("No saved session at {}.", path.display());
+                println!();
+                println!("A session is written after your first reply in `kod tui`.");
+                return Ok(());
+            }
+            let raw = std::fs::read_to_string(&path).map_err(KodError::Io)?;
+            let messages: Vec<Message> = serde_json::from_str(&raw)
+                .map_err(|e| KodError::Deserialization(format!("{}: {}", path.display(), e)))?;
+            let (users, assistants, others) = count_roles(&messages);
+            println!("Session: {}", path.display());
+            println!("Size:    {} bytes", raw.len());
+            println!(
+                "Messages: {} total ({} user, {} assistant, {} other)",
+                messages.len(),
+                users,
+                assistants,
+                others,
+            );
+            if let (Some(first), Some(last)) = (messages.first(), messages.last()) {
+                println!();
+                println!("First:   [{}] {}", first.timestamp.format("%Y-%m-%d %H:%M:%S"), preview(&first.content, 60));
+                println!("Last:    [{}] {}", last.timestamp.format("%Y-%m-%d %H:%M:%S"), preview(&last.content, 60));
+            }
+            Ok(())
+        }
+        SessionsAction::Clear => {
+            if !path.exists() {
+                println!("No saved session at {} — nothing to clear.", path.display());
+                return Ok(());
+            }
+            std::fs::remove_file(&path).map_err(KodError::Io)?;
+            println!("Deleted {}", path.display());
+            Ok(())
+        }
+        SessionsAction::Export {
+            path: dest,
+            format,
+        } => {
+            let raw = std::fs::read_to_string(&path).map_err(KodError::Io)?;
+            let messages: Vec<Message> = serde_json::from_str(&raw)
+                .map_err(|e| KodError::Deserialization(format!("{}: {}", path.display(), e)))?;
+
+            let rendered = match format.to_lowercase().as_str() {
+                "json" => serde_json::to_string_pretty(&messages)
+                    .map_err(|e| KodError::Serialization(e.to_string()))?,
+                "markdown" | "md" | "" => render_session_markdown(&messages),
+                other => {
+                    return Err(KodError::Config(format!(
+                        "Unknown format {:?}. Use `markdown` or `json`.",
+                        other
+                    )));
+                }
+            };
+
+            if dest.as_os_str() == "-" {
+                print!("{}", rendered);
+            } else {
+                if let Some(parent) = dest.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    std::fs::create_dir_all(parent).map_err(KodError::Io)?;
+                }
+                std::fs::write(&dest, rendered.as_bytes()).map_err(KodError::Io)?;
+                println!(
+                    "Wrote {} message(s) as {} to {}",
+                    messages.len(),
+                    format.to_lowercase(),
+                    dest.display()
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Count (user, assistant, other) roles in a session.
+fn count_roles(messages: &[kod_tui::app::Message]) -> (usize, usize, usize) {
+    use kod_types::MessageRole;
+    let mut users = 0;
+    let mut assistants = 0;
+    let mut others = 0;
+    for m in messages {
+        match m.role {
+            MessageRole::User => users += 1,
+            MessageRole::Assistant => assistants += 1,
+            _ => others += 1,
+        }
+    }
+    (users, assistants, others)
+}
+
+/// One-line preview of `s`, clipped to `max` chars (char-aware).
+fn preview(s: &str, max: usize) -> String {
+    let first = s.lines().next().unwrap_or("");
+    if first.chars().count() <= max {
+        return first.to_string();
+    }
+    let cut: String = first.chars().take(max).collect();
+    format!("{cut}…")
+}
+
+/// Render a session as Markdown: a heading per role, fenced code blocks
+/// for tool output so a code-heavy transcript stays readable.
+fn render_session_markdown(messages: &[kod_tui::app::Message]) -> String {
+    use kod_types::MessageRole;
+    let mut out = String::from("# KOD session\n\n");
+    for m in messages {
+        let (label, fence) = match &m.role {
+            MessageRole::User => ("## you", false),
+            MessageRole::Assistant => ("## ai", true),
+            MessageRole::System => ("## sys", false),
+            MessageRole::Tool => ("## tool", true),
+            MessageRole::Agent(id) => {
+                out.push_str(&format!("## agent {}\n\n", id));
+                out.push_str(&m.content);
+                out.push_str("\n\n");
+                continue;
+            }
+        };
+        out.push_str(&format!(
+            "{} · {}\n\n",
+            label,
+            m.timestamp.format("%Y-%m-%d %H:%M:%S"),
+        ));
+        if fence {
+            out.push_str("```\n");
+            out.push_str(&m.content);
+            if !m.content.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str("```\n\n");
+        } else {
+            out.push_str(&m.content);
+            out.push_str("\n\n");
+        }
+    }
+    out
 }
