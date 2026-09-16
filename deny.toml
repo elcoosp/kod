@@ -9,7 +9,7 @@ all-features = true
 # We use the UNLICENSE for code in this project.
 # For dual-licensed projects, you can specify multiple licenses.
 license-files = [
-    { path = "LICENSE", hash = 0xff1bba7b76842121 }
+    { path = "LICENSE" }
 ]
 
 [bans]
