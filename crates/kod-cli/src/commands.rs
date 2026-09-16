@@ -909,6 +909,22 @@ pub async fn run_config_display() -> Result<()> {
     println!("  Context Window: {}", config.llm.context_window);
     println!("  Max Tokens: {}", config.llm.max_tokens);
     println!("  Temperature: {}", config.llm.temperature);
+    println!(
+        "  Network access: {}",
+        if config.llm.network_access {
+            "enabled (web_fetch can reach the network)"
+        } else {
+            "disabled"
+        }
+    );
+    println!(
+        "  Confirm writes: {}",
+        if config.tools.confirm_writes {
+            "enabled (write_file / patch_file require approval)"
+        } else {
+            "disabled"
+        }
+    );
     println!();
     println!("Memory:");
     println!(
