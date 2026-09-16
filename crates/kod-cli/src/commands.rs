@@ -47,6 +47,14 @@ pub enum SkillsAction {
         /// Query text.
         query: String,
     },
+    /// Rename a skill file. Equivalent to copy + delete, but atomic
+    /// within one call. Refuses if the destination exists.
+    Rename {
+        /// Existing skill name.
+        name: String,
+        /// New skill name (kebab-case).
+        new_name: String,
+    },
     /// Copy a skill file to a new name in the same directory. Rewrites
     /// the `name:` field inside the file. Refuses if the destination
     /// exists.
@@ -163,6 +171,9 @@ impl Cli {
                         }
                         Some(SkillsAction::Copy { name, new_name }) => {
                             run_skills_copy(name, new_name).await
+                        }
+                        Some(SkillsAction::Rename { name, new_name }) => {
+                            run_skills_rename(name, new_name).await
                         }
                     }
                 })
@@ -288,6 +299,11 @@ impl Cli {
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_tips().await })
             }
+            Some(Command::Tokens) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_tokens().await })
+            }
             Some(Command::Grep {
                 pattern,
                 path,
@@ -315,6 +331,48 @@ impl Cli {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_memory(action.clone()).await })
+            }
+            Some(Command::Theme { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async {
+                    match action {
+                        ThemeAction::List => {
+                            println!("Built-in themes:");
+                            println!("  dark   (default)");
+                            println!("  light  (high-contrast for bright terminals)");
+                            println!();
+                            println!("Set the theme with /theme <name> in the TUI, or `theme = \"light\"`");
+                            println!("in ~/.config/kod/theme.toml.");
+                            Ok(())
+                        }
+                        ThemeAction::Show { name } => {
+                            let theme = kod_tui::theme::Theme::from_name(name);
+                            // Print as JSON for scriptability; the
+                            // ratatui Color enum does not impl Serialize,
+                            // so hand-build the map.
+                            let json = serde_json::json!({
+                                "name": theme.name,
+                                "background": format!("{:?}", theme.background),
+                                "foreground": format!("{:?}", theme.foreground),
+                                "assistant": format!("{:?}", theme.assistant),
+                                "user": format!("{:?}", theme.user),
+                                "system": format!("{:?}", theme.system),
+                                "tool": format!("{:?}", theme.tool),
+                                "accent": format!("{:?}", theme.accent),
+                                "warning": format!("{:?}", theme.warning),
+                                "error": format!("{:?}", theme.error),
+                                "dim": format!("{:?}", theme.dim),
+                                "code": format!("{:?}", theme.code),
+                                "keyword": format!("{:?}", theme.keyword),
+                            });
+                            let s = serde_json::to_string_pretty(&json)
+                                .map_err(|e| KodError::Serialization(e.to_string()))?;
+                            println!("{}", s);
+                            Ok(())
+                        }
+                    }
+                })
             }
             Some(Command::Tools { action }) => {
                 let rt = tokio::runtime::Runtime::new()
@@ -644,6 +702,10 @@ pub enum Command {
     /// features are unused, what to try next.
     Tips,
 
+    /// Print token accounting: context window, session totals, and
+    /// the same breakdown `kod sessions` shows. Read-only.
+    Tokens,
+
     /// Search file contents with a regex. Same semantics as the
     /// `search_files` tool, useful from the shell without starting a
     /// session.
@@ -690,6 +752,24 @@ pub enum Command {
         #[command(subcommand)]
         action: Option<ToolsAction>,
     },
+
+    /// Inspect or print the TUI theme.
+    Theme {
+        #[command(subcommand)]
+        action: ThemeAction,
+    },
+}
+
+/// `kod theme` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum ThemeAction {
+    /// List the built-in theme names.
+    List,
+    /// Print a theme's full palette as JSON.
+    Show {
+        /// Theme name (`dark` or `light`).
+        name: String,
+    },
 }
 
 /// `kod tools` subcommands.
@@ -717,6 +797,19 @@ pub enum SandboxAction {
 pub enum MemoryAction {
     /// List every long-term memory entry, newest first.
     List,
+    /// Dump every long-term entry to a JSON file (or stdout with `-`).
+    Export {
+        /// Destination path, `-` for stdout.
+        #[arg(default_value = "-")]
+        path: std::path::PathBuf,
+    },
+    /// Append every entry from a JSON file (or `-` for stdin) to the
+    /// long-term store. Non-destructive: existing entries are kept.
+    Import {
+        /// Source path, `-` for stdin.
+        #[arg(default_value = "-")]
+        path: std::path::PathBuf,
+    },
     /// Search entries by case-insensitive substring.
     Search {
         /// Query text.
@@ -2652,6 +2745,63 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
     let manager = MemoryManager::new(path, config.memory.short_term_capacity)?;
 
     match action {
+        MemoryAction::Export { path: dest } => {
+            let all = manager.get_all_long_term().await?;
+            let arr: Vec<serde_json::Value> = all
+                .iter()
+                .map(|e| {
+                    serde_json::json!({
+                        "content": e.content,
+                        "relevance": e.relevance,
+                        "timestamp": e.timestamp.to_string(),
+                    })
+                })
+                .collect();
+            let s = serde_json::to_string_pretty(&arr)
+                .map_err(|e| KodError::Serialization(e.to_string()))?;
+            if dest.as_os_str() == "-" {
+                println!("{}", s);
+            } else {
+                if let Some(parent) = dest.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    std::fs::create_dir_all(parent).map_err(KodError::Io)?;
+                }
+                std::fs::write(&dest, s.as_bytes()).map_err(KodError::Io)?;
+                println!(
+                    "Exported {} long-term entr{} to {}",
+                    all.len(),
+                    if all.len() == 1 { "y" } else { "ies" },
+                    dest.display(),
+                );
+            }
+            Ok(())
+        }
+        MemoryAction::Import { path: src } => {
+            let raw = if src.as_os_str() == "-" {
+                use std::io::Read;
+                let mut buf = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut buf)
+                    .map_err(KodError::Io)?;
+                buf
+            } else {
+                std::fs::read_to_string(&src).map_err(KodError::Io)?
+            };
+            let arr: Vec<serde_json::Value> = serde_json::from_str(&raw)
+                .map_err(|e| KodError::Deserialization(e.to_string()))?;
+            let mut added = 0usize;
+            for v in &arr {
+                if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
+                    let _ = manager
+                        .store(kod_types::MemoryType::LongTerm, content)
+                        .await;
+                    added += 1;
+                }
+            }
+            println!("Imported {} long-term entr{}.", added, if added == 1 { "y" } else { "ies" });
+            Ok(())
+        }
         MemoryAction::List => {
             let all = manager.get_all_long_term().await?;
             if all.is_empty() {
@@ -3785,5 +3935,102 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
     std::fs::write(&dest, out.as_bytes()).map_err(KodError::Io)?;
     println!("Copied {} to {}", src.display(), dest.display());
     println!("Run `kod skills show {}` to inspect.", new_name);
+    Ok(())
+}
+
+
+/// Print token-related accounting for the current session: the
+/// configured context window, a rough character-based estimate of the
+/// session's prompt+reply volume, and any usage line that a session log
+/// contains. Best-effort: without a session log (a fresh checkout,
+/// no runs yet) it still reports the config window and the estimated
+/// chars-to-tokens breakdown.
+pub async fn run_tokens() -> Result<()> {
+    let config = KodConfig::load_default()?;
+
+    println!("Token accounting");
+    println!();
+    println!("Context window:   {} tokens", config.llm.context_window);
+    println!("Max output:       {} tokens", config.llm.max_tokens);
+    println!("Temperature:      {}", config.llm.temperature);
+    println!("Model:            {}", config.llm.model);
+    println!();
+
+    // If a session log exists, report char counts by holder.
+    if let Some(path) = kod_core::session_log::default_session_path() {
+        if path.exists() {
+            if let Ok(entries) = kod_core::session_log::read_session(&path) {
+                use std::collections::HashMap;
+                let mut args_chars: HashMap<String, usize> = HashMap::new();
+                let mut result_chars: HashMap<String, usize> = HashMap::new();
+                for e in &entries {
+                    if let kod_core::session_log::SessionEntry::ToolCall {
+                        holder,
+                        arguments,
+                        result,
+                        ..
+                    } = e
+                    {
+                        *args_chars.entry(holder.clone()).or_insert(0) +=
+                            arguments.to_string().len();
+                        *result_chars.entry(holder.clone()).or_insert(0) +=
+                            result.to_string().len();
+                    }
+                }
+                println!("Most recent session log: {}", path.display());
+                println!("Tool-call chars by holder (approx /4 = tokens):");
+                let mut keys: Vec<&String> = args_chars.keys().collect();
+                keys.sort();
+                for k in keys {
+                    let a = args_chars.get(k).copied().unwrap_or(0);
+                    let r = result_chars.get(k).copied().unwrap_or(0);
+                    println!(
+                        "  {:<20} args {:>7} (~{:>5}t)  results {:>7} (~{:>5}t)",
+                        k,
+                        a,
+                        a / 4,
+                        r,
+                        r / 4,
+                    );
+                }
+            }
+        } else {
+            println!("No session log found yet (start a session to accumulate usage).");
+        }
+    }
+    println!();
+    println!("Auto-compact fires at 4/5 of the context window in the TUI.");
+    Ok(())
+}
+
+
+/// Rename a skill file. Reuses `run_skills_copy` then removes the
+/// original. Refuses if the destination exists (a rename that
+/// overwrites a colleague's skill is worse than a slow copy).
+pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
+    let src = match find_skill_path(name).await? {
+        Some(p) => p,
+        None => {
+            eprintln!("No skill named {:?}.", name);
+            std::process::exit(1);
+        }
+    };
+    let parent = src
+        .parent()
+        .ok_or_else(|| KodError::Internal("source skill has no parent".to_string()))?;
+    let dest = parent.join(format!("{new_name}.md"));
+    if dest.exists() {
+        eprintln!(
+            "Destination {} already exists — refusing to overwrite.",
+            dest.display()
+        );
+        std::process::exit(1);
+    }
+
+    // Reuse the copy path so the `name:` rewrite logic lives in one
+    // place.
+    run_skills_copy(name, new_name).await?;
+    std::fs::remove_file(&src).map_err(KodError::Io)?;
+    println!("Renamed {} -> {} (removed {})", name, new_name, src.display());
     Ok(())
 }

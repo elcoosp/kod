@@ -29,6 +29,9 @@ impl StatusWidget {
                 crate::app::ConfirmKind::Quit => {
                     "Quit with a generation running? y = quit · n/Esc = stay"
                 }
+                crate::app::ConfirmKind::ClearAll => {
+                    "Clear chat + memory + checkpoints? Cannot be undone. y = yes · n/Esc = keep"
+                }
             };
             Widget::render(
                 Line::from(vec![Span::styled(

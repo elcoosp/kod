@@ -28,7 +28,7 @@ use std::time::Duration;
 /// `test_slash_help_lists_every_command` — adding a command to
 /// `SLASH_COMMANDS` without updating this string fails the test, so
 /// the help output and the `/` autocomplete cannot drift apart.
-const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/doctor — print a diagnostics report (same as `kod doctor`)\n/init — onboarding info: config path, model profiles, next steps\n/regenerate — regenerate the last assistant reply\n/delete — remove the last user+assistant exchange\n/export [path] — export session as markdown (stdout when no path)\n/rollback [id] — restore a file from a checkpoint (newest when no id)\n/checkpoints — list file checkpoints for this project\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\\n/tools-status — show tool policy: network, confirm_writes, sandbox\\n/notify on|off — toggle terminal bell on long turn completion\\n/tools-list — list registered tools\\n/copy-history <n> — copy the Nth-last assistant reply\\n/whoami — session summary: model, skills, context, paths\\n/autocompact on|off — toggle auto-compaction\\n/summarize — ask the model to summarize the session so far\\n/grep <regex> — regex search the chat history\\n/system <text> — override the system prompt for this session\\n/branch [label] — drop a branch-point marker in the chat\\n/history — show recent prompt history\\n/load <path> — load a JSON session file\\n/save <path> — save session markdown to a file\\n/raw — print the last assistant reply raw (no decoration)\\n/refine <instruction> — refine the last assistant reply\n/paste — paste clipboard into the input box\n/attach <path> — attach a file to the next prompt\n/diff — show the most recent file change (from checkpoints)\n/last-prompt — write the most recent prompt to ~/.kod/last_prompt.txt\n/context — visualize context window usage and session totals\n/memory [search <q> | delete <id> | clear] — long-term memory store\n/map [max-chars] — repository map (top-level symbols per file)\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
+const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/doctor — print a diagnostics report (same as `kod doctor`)\n/init — onboarding info: config path, model profiles, next steps\n/regenerate — regenerate the last assistant reply\n/delete — remove the last user+assistant exchange\n/export [path] — export session as markdown (stdout when no path)\n/rollback [id] — restore a file from a checkpoint (newest when no id)\n/checkpoints — list file checkpoints for this project\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\\n/clearall — clear chat + long-term memory + checkpoints (asks for confirmation)\\n/prompt-history <n> — load the nth prompt from history\\n/diff-unstaged — git diff of unstaged changes\\n/diff-staged — git diff --staged in the current directory\\n/tools-status — show tool policy: network, confirm_writes, sandbox\\n/notify on|off — toggle terminal bell on long turn completion\\n/tools-list — list registered tools\\n/copy-history <n> — copy the Nth-last assistant reply\\n/whoami — session summary: model, skills, context, paths\\n/autocompact on|off — toggle auto-compaction\\n/summarize — ask the model to summarize the session so far\\n/grep <regex> — regex search the chat history\\n/system <text> — override the system prompt for this session\\n/branch [label] — drop a branch-point marker in the chat\\n/history — show recent prompt history\\n/load <path> — load a JSON session file\\n/save <path> — save session markdown to a file\\n/raw — print the last assistant reply raw (no decoration)\\n/refine <instruction> — refine the last assistant reply\n/paste — paste clipboard into the input box\n/attach <path> — attach a file to the next prompt\n/diff — show the most recent file change (from checkpoints)\n/last-prompt — write the most recent prompt to ~/.kod/last_prompt.txt\n/context — visualize context window usage and session totals\n/memory [search <q> | delete <id> | clear] — long-term memory store\n/map [max-chars] — repository map (top-level symbols per file)\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
 
 /// Main TUI application loop
 pub struct TuiLoop {
@@ -2294,6 +2294,122 @@ impl TuiLoop {
                 );
                 self.app.push_system_message(&msg);
             }
+            "/diff-staged" => {
+                // Run `git diff --staged` in the working directory and
+                // print the result as a system message. Read-only.
+                let cwd = std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                match std::process::Command::new("git")
+                    .args(["diff", "--staged", "--no-color", "--no-ext-diff"])
+                    .current_dir(&cwd)
+                    .output()
+                {
+                    Ok(out) if out.status.success() => {
+                        let text = String::from_utf8_lossy(&out.stdout);
+                        let trimmed = text.trim_end();
+                        if trimmed.is_empty() {
+                            self.app.push_system_message(
+                                "No staged changes. Use `git add` first.",
+                            );
+                        } else {
+                            self.app.push_system_message(&format!(
+                                "git diff --staged ({}):\n\n{}",
+                                cwd.display(),
+                                trimmed,
+                            ));
+                        }
+                    }
+                    Ok(out) => {
+                        let err = String::from_utf8_lossy(&out.stderr);
+                        self.app.push_system_message(&format!(
+                            "git diff --staged failed: {}",
+                            err.trim(),
+                        ));
+                    }
+                    Err(e) => self.app.push_system_message(&format!(
+                        "Could not run git: {e} — is git on PATH?",
+                    )),
+                }
+            }
+            "/diff-unstaged" => {
+                let cwd = std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                match std::process::Command::new("git")
+                    .args(["diff", "--no-color", "--no-ext-diff"])
+                    .current_dir(&cwd)
+                    .output()
+                {
+                    Ok(out) if out.status.success() => {
+                        let text = String::from_utf8_lossy(&out.stdout);
+                        let trimmed = text.trim_end();
+                        if trimmed.is_empty() {
+                            self.app.push_system_message(
+                                "No unstaged changes.",
+                            );
+                        } else {
+                            self.app.push_system_message(&format!(
+                                "git diff (unstaged) ({}):\n\n{}",
+                                cwd.display(),
+                                trimmed,
+                            ));
+                        }
+                    }
+                    Ok(out) => {
+                        let err = String::from_utf8_lossy(&out.stderr);
+                        self.app.push_system_message(&format!(
+                            "git diff failed: {}",
+                            err.trim(),
+                        ));
+                    }
+                    Err(e) => self.app.push_system_message(&format!(
+                        "Could not run git: {e} — is git on PATH?",
+                    )),
+                }
+            }
+            "/prompt-history" => {
+                let n = parts.next().and_then(|s| s.parse::<usize>().ok());
+                match n {
+                    Some(n) if n >= 1 => {
+                        let hist = self.app.input_history();
+                        if n > hist.len() {
+                            self.app.push_system_message(&format!(
+                                "History has {} entries — /prompt-history {} is out of range.",
+                                hist.len(),
+                                n,
+                            ));
+                        } else {
+                            let prompt = hist[n - 1].clone();
+                            if self.app.is_generating() {
+                                self.app.push_system_message(
+                                    "A generation is already running — cancel it first.",
+                                );
+                            } else {
+                                self.app.set_input(prompt);
+                                self.app.set_input_mode(InputMode::Insert);
+                                self.app.push_system_message(&format!(
+                                    "Loaded prompt #{} into the input box. Enter resends.",
+                                    n,
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        self.app.push_system_message(
+                            "Usage: /prompt-history <n> — load the nth prompt from history. \
+                             /history lists them.",
+                        );
+                    }
+                }
+            }
+            "/clearall" => {
+                if self.app.is_generating() {
+                    self.app.push_system_message(
+                        "Wait for the current prompt to finish before clearing.",
+                    );
+                } else {
+                    self.app.request_confirm(ConfirmKind::ClearAll);
+                }
+            }
             "/export" => {
                 let arg = parts.next().map(|s| s.to_string());
                 let markdown = self.app.export_markdown();
@@ -2705,10 +2821,56 @@ impl TuiLoop {
             match key {
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
                     let kind = self.app.resolve_confirm(true);
-                    if kind == Some(ConfirmKind::Clear)
-                        && let Some(engine) = &self.engine
-                    {
-                        engine.clear_history().await;
+                    match kind {
+                        Some(ConfirmKind::Clear) => {
+                            if let Some(engine) = &self.engine {
+                                engine.clear_history().await;
+                            }
+                        }
+                        Some(ConfirmKind::ClearAll) => {
+                            // Clear chat (already done by resolve),
+                            // engine history, long-term memory, and
+                            // checkpoints for this project.
+                            if let Some(engine) = &self.engine {
+                                engine.clear_history().await;
+                            }
+                            if let Ok(config) = KodConfig::load_default()
+                                && let Ok(path) = config.memory_db_path()
+                                && let Ok(manager) = kod_memory::MemoryManager::new(
+                                    path,
+                                    config.memory.short_term_capacity,
+                                )
+                                && let Ok(all) = manager.get_all_long_term().await
+                            {
+                                let n = all.len();
+                                for e in &all {
+                                    let _ = manager
+                                        .remove(
+                                            kod_types::MemoryType::LongTerm,
+                                            &e.id,
+                                        )
+                                        .await;
+                                }
+                                self.app.push_system_message(&format!(
+                                    "Cleared {} long-term memory entr{}.",
+                                    n,
+                                    if n == 1 { "y" } else { "ies" },
+                                ));
+                            }
+                            if let Some(engine) = &self.engine
+                                && let Some(cp) = engine.checkpoints()
+                                && let Ok(n) = cp.clear()
+                            {
+                                self.app.push_system_message(&format!(
+                                    "Cleared {} checkpoint(s).",
+                                    n,
+                                ));
+                            }
+                            self.app.push_system_message(
+                                "Cleared all: chat, engine history, long-term memory, checkpoints.",
+                            );
+                        }
+                        _ => {}
                     }
                     return Ok(());
                 }

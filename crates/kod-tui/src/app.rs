@@ -273,6 +273,22 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/tools-status",
         hint: "show tool policy: network, confirm_writes, sandbox",
     },
+    SlashCommand {
+        name: "/diff-staged",
+        hint: "git diff --staged in the current directory",
+    },
+    SlashCommand {
+        name: "/diff-unstaged",
+        hint: "git diff of unstaged changes",
+    },
+    SlashCommand {
+        name: "/prompt-history",
+        hint: "load the nth prompt from history: /prompt-history <n>",
+    },
+    SlashCommand {
+        name: "/clearall",
+        hint: "clear chat + memory + checkpoints (asks for confirmation)",
+    },
 ];
 
 /// What the generation is currently doing — shown in the header/status so
@@ -291,6 +307,10 @@ pub enum GenPhase {
 pub enum ConfirmKind {
     Clear,
     Quit,
+    /// Clear chat, long-term memory, AND checkpoints for this project.
+    /// The most destructive action; the caller must request it
+    /// explicitly.
+    ClearAll,
 }
 
 /// Spinner frames for the "thinking" indicator
@@ -845,6 +865,10 @@ impl KodApp {
             match kind {
                 ConfirmKind::Clear => self.clear_messages(),
                 ConfirmKind::Quit => self.should_quit = true,
+                // The actual memory+checkpoint clear happens in the
+                // main loop, which owns the engine handle. Resolving
+                // here just clears the visible chat.
+                ConfirmKind::ClearAll => self.clear_messages(),
             }
         }
         Some(kind)
