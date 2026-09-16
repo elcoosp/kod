@@ -1485,7 +1485,7 @@ impl KodEngine {
                     if calls.is_empty() {
                         break;
                     }
-                    let section = self.run_tool_calls(&calls, holder).await;
+                    let section = self.run_tool_calls(&calls, holder, None).await;
                     tool_calls.extend(calls);
                     tool_results.extend(section.results);
                     pending.push_str(&format!("\n\n{}", section.prompt_block));
@@ -1501,7 +1501,7 @@ impl KodEngine {
                     if calls.is_empty() {
                         break;
                     }
-                    let section = self.run_tool_calls(&calls, holder).await;
+                    let section = self.run_tool_calls(&calls, holder, None).await;
                     tool_calls.extend(calls);
                     tool_results.extend(section.results);
                     pending.push_str(&format!("\n\n{}", section.prompt_block));
@@ -1571,7 +1571,7 @@ impl KodEngine {
                     )))
                     .await;
             }
-            let section = self.run_tool_calls(&calls, holder).await;
+            let section = self.run_tool_calls(&calls, holder, Some(chunk_tx)).await;
             // Each call finished: hand the TUI its completion live (header
             // + summary + wall time) so the "running …" row fills in now,
             // not when the whole loop returns. Markers travel the same
@@ -1724,7 +1724,12 @@ impl KodEngine {
     /// the read is guaranteed to observe the write. All-read-only rounds
     /// still run concurrently — their results cannot depend on each other
     /// or on external state they did not observe themselves.
-    async fn run_tool_calls(&self, calls: &[ToolCall], holder: &str) -> ToolRound {
+    async fn run_tool_calls(
+        &self,
+        calls: &[ToolCall],
+        holder: &str,
+        chunk_tx: Option<&tokio::sync::mpsc::Sender<String>>,
+    ) -> ToolRound {
         // Derive a per-call context so the write lock records the
         // right holder. `holder` is the transcript key for the caller
         // — `swarm:<agent-id>` for a swarm agent, `session` for the
@@ -1813,126 +1818,121 @@ impl KodEngine {
 
         // Approval gate. When `confirm_writes` is on, every
         // write_file / patch_file call pauses on a oneshot until the
-        // consumer answers. The dialog is emitted as a
-        // `tool_approval_marker` chunk by the caller of run_tool_calls
-        // — but the caller is not here; the streaming loop runs the
-        // marker emission before invoking this function. This method
-        // does the actual wait, keyed by an id the caller must set on
-        // `tool_context.approval_id`. When the context carries no id
-        // (a CLI-run tool, a test), approval is skipped and the tool
-        // runs — see the doc on `ToolContext::approval_id`.
+        // streaming consumer answers. The consumer is the caller's
+        // `chunk_tx` — the same channel the tool markers travel on.
+        //
+        // Three cases:
+        //
+        // 1. confirm_writes is off (the default): no gate, no cost.
+        // 2. confirm_writes on, chunk_tx is Some: emit an approval
+        //    marker carrying `{id, request}` JSON, register a oneshot,
+        //    await the answer. Timeout, drop, or explicit deny all map
+        //    to a denial; only an explicit `Approve` lets the call run.
+        // 3. confirm_writes on, chunk_tx is None: the caller is
+        //    `process` (non-streaming). Approval needs an interactive
+        //    consumer; rather than hang for AWAIT_APPROVAL_SECS and
+        //    then deny, refuse immediately with a message the user
+        //    can act on.
         let mut denied: std::collections::HashMap<usize, String> =
             std::collections::HashMap::new();
         if self.confirm_writes_setting() {
-            for (i, call) in calls.iter().enumerate() {
-                if !matches!(call.tool_name.as_str(), "write_file" | "patch_file") {
-                    continue;
-                }
-                // Build a summary the consumer can show without parsing
-                // the arguments. The diff itself is generated from the
-                // snapshot the pre-pass just wrote.
-                let summary = format_call_brief(&call.tool_name, &call.arguments);
-                let diff = snapshot_ids
-                    .get(i)
-                    .and_then(|o| o.as_ref())
-                    .and_then(|id| {
-                        self.checkpoints
-                            .as_ref()
-                            .and_then(|cp| cp.find(id).ok().flatten())
-                    })
-                    .map(|snap| {
-                        // Prefer the diff against the new content the
-                        // call carries. For write_file that is the
-                        // `content` argument; for patch_file it is the
-                        // patch's result, which only exists after the
-                        // tool runs. So the dialog shows what the
-                        // tool *intends*: for write_file, the diff
-                        // between snapshot and content; for
-                        // patch_file, the raw patch text.
-                        match call.tool_name.as_str() {
-                            "write_file" => {
-                                let new_content = call
-                                    .arguments
-                                    .get("content")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
-                                kod_tools::patch::render_unified_diff(
-                                    &snap.content,
-                                    new_content,
-                                    &snap.path.display().to_string(),
-                                )
-                            }
-                            "patch_file" => call
-                                .arguments
-                                .get("patch")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            _ => String::new(),
+            match chunk_tx {
+                Some(tx) => {
+                    for (i, call) in calls.iter().enumerate() {
+                        if !matches!(call.tool_name.as_str(), "write_file" | "patch_file") {
+                            continue;
                         }
-                    });
+                        let summary = format_call_brief(&call.tool_name, &call.arguments);
+                        let diff = snapshot_ids
+                            .get(i)
+                            .and_then(|o| o.as_ref())
+                            .and_then(|id| {
+                                self.checkpoints
+                                    .as_ref()
+                                    .and_then(|cp| cp.find(id).ok().flatten())
+                            })
+                            .map(|snap| match call.tool_name.as_str() {
+                                "write_file" => {
+                                    let new_content = call
+                                        .arguments
+                                        .get("content")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    kod_tools::patch::render_unified_diff(
+                                        &snap.content,
+                                        new_content,
+                                        &snap.path.display().to_string(),
+                                    )
+                                }
+                                "patch_file" => call
+                                    .arguments
+                                    .get("patch")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                _ => String::new(),
+                            });
 
-                let request = ApprovalRequest {
-                    tool_name: call.tool_name.clone(),
-                    arguments: call.arguments.clone(),
-                    diff,
-                    summary,
-                };
-                let id = self
-                    .next_approval_id
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let (tx, rx) = tokio::sync::oneshot::channel();
-                self.pending_approvals.write().await.insert(id, tx);
-                // The caller sent an approval marker on the stream
-                // before invoking this method; the id in that marker
-                // matches this one only if the caller had the id
-                // beforehand. That is why the caller passes the id
-                // through `tool_context.approval_id` instead. This
-                // branch is the fallback path used when the caller
-                // could not pre-allocate an id (see the CLI's
-                // non-streaming `process` — which does not support
-                // approval yet and runs tools without waiting).
-                //
-                // The current engine design: the *streaming* loop
-                // sends the marker itself, pre-allocating the id, and
-                // stores it in the shared context. run_tool_calls
-                // reads it. This branch logs and skips the wait when
-                // no id is available.
-                let _ = request; // retained for future logging
-                let _ = id;
-                let decision = tokio::time::timeout(
-                    std::time::Duration::from_secs(AWAIT_APPROVAL_SECS),
-                    rx,
-                )
-                .await;
-                match decision {
-                    Ok(Ok(ApprovalDecision::Approve)) => {
-                        // proceed
+                        let id = self
+                            .next_approval_id
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let (otx, orx) = tokio::sync::oneshot::channel();
+                        self.pending_approvals.write().await.insert(id, otx);
+
+                        let request = ApprovalRequest {
+                            tool_name: call.tool_name.clone(),
+                            arguments: call.arguments.clone(),
+                            diff,
+                            summary,
+                        };
+                        let json = serde_json::to_string(&request)
+                            .unwrap_or_else(|_| "{}".to_string());
+                        let _ = tx
+                            .send(tool_approval_marker(id, &json))
+                            .await;
+
+                        let decision = tokio::time::timeout(
+                            std::time::Duration::from_secs(AWAIT_APPROVAL_SECS),
+                            orx,
+                        )
+                        .await;
+                        match decision {
+                            Ok(Ok(ApprovalDecision::Approve)) => {}
+                            Ok(Ok(ApprovalDecision::Deny))
+                            | Ok(Ok(ApprovalDecision::DenyAlways)) => {
+                                denied.insert(i, "denied by user".to_string());
+                            }
+                            Ok(Err(_)) => {
+                                denied.insert(i, "approval cancelled".to_string());
+                            }
+                            Err(_) => {
+                                denied.insert(
+                                    i,
+                                    format!(
+                                        "no approval answer within {}s — denied",
+                                        AWAIT_APPROVAL_SECS
+                                    ),
+                                );
+                            }
+                        }
                     }
-                    Ok(Ok(ApprovalDecision::Deny))
-                    | Ok(Ok(ApprovalDecision::DenyAlways)) => {
-                        denied.insert(i, "denied by user".to_string());
-                    }
-                    Ok(Err(_)) => {
-                        // Sender dropped without answering — treat as
-                        // deny, matching a cancelled dialog.
-                        denied.insert(i, "approval cancelled".to_string());
-                    }
-                    Err(_) => {
-                        denied.insert(
-                            i,
-                            format!(
-                                "no approval answer within {}s — denied",
-                                AWAIT_APPROVAL_SECS
-                            ),
-                        );
+                }
+                None => {
+                    for (i, call) in calls.iter().enumerate() {
+                        if matches!(call.tool_name.as_str(), "write_file" | "patch_file") {
+                            denied.insert(
+                                i,
+                                "tools.confirm_writes is on but this execution \
+                                 path has no interactive consumer. Set \
+                                 tools.confirm_writes = false, or use the TUI."
+                                    .to_string(),
+                            );
+                        }
                     }
                 }
             }
         }
 
-        // `mut` because the diff-augmentation pass below rewrites each
-        // successful result in place to attach the `"diff"` field.
         let mut raw_results: Vec<(Result<ToolResult>, u64)> = if any_mutating {
             let mut out = Vec::with_capacity(calls.len());
             for (i, call) in calls.iter().enumerate() {
@@ -1941,6 +1941,13 @@ impl KodEngine {
                         Ok(ToolResult::Error(format!(
                             "pre_tool_use hook denied this call: {reason}"
                         ))),
+                        0,
+                    ));
+                    continue;
+                }
+                if let Some(reason) = denied.get(&i) {
+                    out.push((
+                        Ok(ToolResult::Error(format!("write denied: {reason}"))),
                         0,
                     ));
                     continue;
@@ -1954,13 +1961,14 @@ impl KodEngine {
             }
             out
         } else {
+            // Read-only round: no approvals are involved (approval is
+            // only requested for write_file / patch_file, both of
+            // which set `any_mutating` above), so the concurrent path
+            // is unchanged.
             let futs: Vec<_> = calls
                 .iter()
                 .map(|call| {
                     let start = std::time::Instant::now();
-                    // `ToolContext` is not `Copy` and the future moves
-                    // it in; clone per call so every future carries its
-                    // own copy into the async block.
                     let ctx = tool_context.clone();
                     async move {
                         let res = self
@@ -1973,8 +1981,7 @@ impl KodEngine {
                 .collect();
             futures::future::join_all(futs).await
         };
-        // Session log: every tool call and its result as one JSONL line.
-        // Best-effort — a write failure logs and the run continues.
+
         // Post-tool hooks. Run for every non-denied call, before the
         // result reaches the model. Failures are logged by `run_post`,
         // never propagated — a formatting failure after a successful
@@ -1989,6 +1996,10 @@ impl KodEngine {
                 runner.run_post(call).await;
             }
         }
+
+        // Session log: every tool call and its result as one JSONL
+        // line. Best-effort — a write failure logs and the run
+        // continues.
         if let Ok(guard) = self.session_recorder.read()
             && let Some(recorder) = guard.as_ref()
         {
@@ -2025,6 +2036,7 @@ impl KodEngine {
                 }
             }
         }
+
         // Diff augmentation: for every successful write_file / patch_file
         // that had a pre-call snapshot, compute a unified diff (old vs
         // new) and attach it to the result payload as `"diff"`. The TUI
