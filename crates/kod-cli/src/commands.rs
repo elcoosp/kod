@@ -127,6 +127,11 @@ impl Cli {
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_checkpoint(action.clone()).await })
             }
+            Some(Command::Update) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_update().await })
+            }
             None => {
                 // First-run UX. A bare `kod` invocation is the most common
                 // first experience, and the previous output was one line
@@ -359,6 +364,11 @@ pub enum Command {
         #[command(subcommand)]
         action: CheckpointAction,
     },
+
+    /// Check GitHub for a newer release and, if one exists, print its
+    /// URL and installation instructions. Read-only — never replaces
+    /// the running binary.
+    Update,
 }
 
 /// `kod checkpoint` subcommands.
@@ -1730,4 +1740,129 @@ pub async fn run_skills_validate() -> Result<()> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+
+/// Check GitHub for a newer release of KOD.
+///
+/// Hits the public `releases/latest` endpoint for the project repo
+/// (configurable via `KOD_UPDATE_REPO` so a fork can point elsewhere)
+/// and compares the tag to `CARGO_PKG_VERSION`. Three outcomes:
+///
+/// - the running version matches or exceeds the latest: "up to date";
+/// - a newer release exists: prints the tag, the release URL, and the
+///   install command for the current platform;
+/// - the network request fails: reports the failure and exits non-zero
+///   so a script can branch on it. A check that silently no-ops on
+///   network failure is worse than a check that says so.
+///
+/// Deliberately does not download or replace the binary. Auto-update of
+/// a self-installed Rust binary is a footgun: the running process has
+/// the file open on Windows, and on Unix a partial replacement can
+/// leave a broken executable. A user who wants a new version runs the
+/// install command the tool prints.
+pub async fn run_update() -> Result<()> {
+    let current = env!("CARGO_PKG_VERSION");
+    let repo = std::env::var("KOD_UPDATE_REPO")
+        .unwrap_or_else(|_| "kod-team/kod".to_string());
+    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+
+    println!("Current: v{}", current);
+    println!("Checking {} …", url);
+
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("kod/", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| KodError::Internal(format!("could not build http client: {e}")))?;
+
+    let resp = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Could not reach GitHub: {e}");
+            eprintln!();
+            eprintln!("The check requires network access. If you are offline or behind");
+            eprintln!("a proxy, this command cannot help — check");
+            eprintln!("  https://github.com/{repo}/releases");
+            eprintln!("manually.");
+            std::process::exit(1);
+        }
+    };
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let short = if body.len() > 300 {
+            format!("{}…", &body[..300])
+        } else {
+            body
+        };
+        eprintln!("GitHub returned {status}: {short}");
+        std::process::exit(1);
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| KodError::Provider(format!("invalid JSON: {e}")))?;
+
+    let tag = body
+        .get("tag_name")
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    let html_url = body
+        .get("html_url")
+        .and_then(|u| u.as_str())
+        .unwrap_or("");
+    let tag_clean = tag.trim_start_matches('v');
+
+    if tag_clean.is_empty() {
+        eprintln!("Release metadata is missing tag_name; cannot compare versions.");
+        std::process::exit(1);
+    }
+
+    if versions_equal(current, tag_clean) || version_is_older(tag_clean, current) {
+        println!();
+        println!("You are on the latest release (v{}).", current);
+        return Ok(());
+    }
+
+    println!();
+    println!("A newer release is available: {} → {}", current, tag_clean);
+    if !html_url.is_empty() {
+        println!("Release notes: {}", html_url);
+    }
+    println!();
+    println!("To update, reinstall from source:");
+    println!("  cargo install --path crates/kod-cli --force");
+    println!("Or download the release asset for your platform from the URL above.");
+    Ok(())
+}
+
+/// `true` when `a` and `b` name the same version, ignoring a leading `v`.
+fn versions_equal(a: &str, b: &str) -> bool {
+    a.trim_start_matches('v') == b.trim_start_matches('v')
+}
+
+/// `true` when `candidate` is strictly older than `running`.
+///
+/// Parses each version as `major.minor.patch` (any missing component
+/// counts as 0). Suffixes like `-rc1` are compared as "less than" the
+/// same numeric version without the suffix — a release candidate is
+/// older than its final release, which is the intuitive order.
+fn version_is_older(candidate: &str, running: &str) -> bool {
+    fn parse(v: &str) -> (u32, u32, u32, bool) {
+        let (numeric, pre) = match v.split_once('-') {
+            Some((n, _)) => (n, true),
+            None => (v, false),
+        };
+        let mut parts = numeric.split('.');
+        let major = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let minor = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let patch = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        (major, minor, patch, pre)
+    }
+    let (cm, cn, cp, cpre) = parse(candidate);
+    let (rm, rn, rp, rpre) = parse(running);
+    (cm, cn, cp) < (rm, rn, rp) || ((cm, cn, cp) == (rm, rn, rp) && cpre && !rpre)
 }
