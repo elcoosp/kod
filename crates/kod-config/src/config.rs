@@ -20,6 +20,18 @@ pub struct KodConfig {
     pub performance: PerformanceConfig,
     pub hooks: HooksConfig,
     pub tools: ToolsConfig,
+    /// User-defined slash commands. A key `foo` registers `/foo <args>`,
+    /// whose body is the prompt sent to the model. `{args}` in the
+    /// body is replaced by everything after the command name; `{cwd}`
+    /// by the current working directory. Example:
+    ///
+    /// ```toml
+    /// [commands]
+    /// review = "Review the last change in {cwd} and point out risks."
+    /// explain = "Explain what this code does:\n\n{args}"
+    /// ```
+    #[serde(default)]
+    pub commands: std::collections::HashMap<String, String>,
 }
 
 /// Shell hooks run around tool execution. See `kod-core`'s `hooks`

@@ -24,6 +24,50 @@ pub enum SkillsAction {
         /// `name:` field).
         name: String,
     },
+    /// Delete a skill by name. Refuses without `--yes` unless the
+    /// target is in the current directory.
+    Remove {
+        /// Skill name (as shown by `kod skills`).
+        name: String,
+        #[arg(long, default_value_t = false)]
+        yes: bool,
+    },
+    /// Open a skill file in $EDITOR.
+    Edit {
+        /// Skill name.
+        name: String,
+    },
+    /// Print a skill's full markdown content (header + body).
+    Show {
+        /// Skill name.
+        name: String,
+    },
+    /// Search skills by name, description, tags, or capabilities.
+    Search {
+        /// Query text.
+        query: String,
+    },
+    /// Copy a skill file to a new name in the same directory. Rewrites
+    /// the `name:` field inside the file. Refuses if the destination
+    /// exists.
+    Copy {
+        /// Existing skill name.
+        name: String,
+        /// New skill name (kebab-case).
+        new_name: String,
+    },
+    /// Copy a skill file to a destination path. Use `-` for stdout.
+    /// Refuses to overwrite an existing destination unless `--force`.
+    Export {
+        /// Skill name.
+        name: String,
+        /// Destination file or directory. When a directory is given,
+        /// the file is written inside it under the original stem.
+        dest: std::path::PathBuf,
+        /// Overwrite the destination if it exists.
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
 }
 
 /// `kod config` subcommands.
@@ -33,6 +77,18 @@ pub enum ConfigAction {
     Path,
     /// Open the config file in $EDITOR (or $VISUAL, or `vi`).
     Edit,
+    /// Parse the config file and report whether it is valid. Exits
+    /// non-zero when it is not — useful in CI or after hand-editing.
+    Validate,
+    /// Print the raw contents of the config file, verbatim. Includes
+    /// comments the TOML parser would drop.
+    ShowRaw,
+    /// Back up the current config and write a new one seeded from a
+    /// named profile. Backs up to `config.toml.bak-<unix-ts>`.
+    InitFrom {
+        /// Profile name (see `kod profile list`).
+        name: String,
+    },
 }
 
 /// KOD - Terminal-native AI coding agent
@@ -55,11 +111,19 @@ impl Cli {
                 temperature,
                 interactive,
                 sandbox,
+                system_prompt,
             }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async {
-                    run_chat(model.clone(), *temperature, *interactive, *sandbox).await
+                    run_chat(
+                        model.clone(),
+                        *temperature,
+                        *interactive,
+                        *sandbox,
+                        system_prompt.clone(),
+                    )
+                    .await
                 })
             }
             Some(Command::Agent { name, goal, model }) => {
@@ -86,13 +150,32 @@ impl Cli {
                     match action {
                         None | Some(SkillsAction::List) => run_skills_list(*json).await,
                         Some(SkillsAction::New { name }) => run_skills_new(name).await,
+                        Some(SkillsAction::Remove { name, yes }) => {
+                            run_skills_remove(name, *yes).await
+                        }
+                        Some(SkillsAction::Edit { name }) => run_skills_edit(name).await,
+                        Some(SkillsAction::Show { name }) => run_skills_show(name).await,
+                        Some(SkillsAction::Export { name, dest, force }) => {
+                            run_skills_export(name, dest.clone(), *force).await
+                        }
+                        Some(SkillsAction::Search { query }) => {
+                            run_skills_search(query).await
+                        }
+                        Some(SkillsAction::Copy { name, new_name }) => {
+                            run_skills_copy(name, new_name).await
+                        }
                     }
                 })
             }
-            Some(Command::ValidateSkills) => {
+            Some(Command::ValidateSkills) | Some(Command::ValidateSkillsAlias) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_skills_validate().await })
+            }
+            Some(Command::ValidateSkillsStrict) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_skills_validate_strict().await })
             }
             Some(Command::Config { action }) => {
                 let rt = tokio::runtime::Runtime::new()
@@ -102,6 +185,11 @@ impl Cli {
                         None => run_config_display().await,
                         Some(ConfigAction::Path) => run_config_path().await,
                         Some(ConfigAction::Edit) => run_config_edit().await,
+                        Some(ConfigAction::Validate) => run_config_validate().await,
+                        Some(ConfigAction::InitFrom { name }) => {
+                            run_config_init_from(name).await
+                        }
+                        Some(ConfigAction::ShowRaw) => run_config_show_raw().await,
                     }
                 })
             }
@@ -125,15 +213,39 @@ impl Cli {
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_profile(action.clone()).await })
             }
-            Some(Command::Tui { model }) => {
+            Some(Command::Prompt {
+                prompt,
+                model,
+                no_log,
+                sandbox,
+            }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
-                rt.block_on(async { run_tui(model.clone()).await })
+                rt.block_on(async {
+                    run_prompt(prompt.clone(), model.clone(), *no_log, *sandbox).await
+                })
             }
-            Some(Command::Doctor) => {
+            Some(Command::Tui {
+                model,
+                no_resume,
+                sandbox,
+            }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
-                rt.block_on(async { run_doctor().await })
+                rt.block_on(async {
+                    run_tui(model.clone(), *no_resume, *sandbox).await
+                })
+            }
+            Some(Command::Doctor { json, fix }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async {
+                    if *fix {
+                        run_doctor_fix(*json).await
+                    } else {
+                        run_doctor(*json).await
+                    }
+                })
             }
             Some(Command::Init) => {
                 let rt = tokio::runtime::Runtime::new()
@@ -166,10 +278,57 @@ impl Cli {
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_update().await })
             }
-            Some(Command::Which) => {
+            Some(Command::Health) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
-                rt.block_on(async { run_which().await })
+                rt.block_on(async { run_health().await })
+            }
+            Some(Command::Tips) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_tips().await })
+            }
+            Some(Command::Grep {
+                pattern,
+                path,
+                context: ctx,
+                case_insensitive,
+            }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async {
+                    run_grep_cli(
+                        pattern.clone(),
+                        path.clone(),
+                        *ctx,
+                        *case_insensitive,
+                    )
+                    .await
+                })
+            }
+            Some(Command::Which { json }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_which(*json).await })
+            }
+            Some(Command::Memory { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_memory(action.clone()).await })
+            }
+            Some(Command::Tools { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_tools(action.clone()).await })
+            }
+            Some(Command::Sandbox { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async {
+                    match action {
+                        SandboxAction::Check => run_sandbox_check().await,
+                    }
+                })
             }
             None => {
                 // First-run UX. A bare `kod` invocation is the most common
@@ -232,13 +391,20 @@ impl Cli {
 #[derive(Subcommand, Debug, Clone)]
 pub enum ProfileAction {
     /// List the built-in profiles.
-    List,
+    List {
+        /// Emit JSON instead of the human table.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     /// Print the effective `[llm]` config from the loaded config file.
     Show,
     /// Write a named profile's values into `[llm]` in the config file.
     Use {
         /// Profile name (see `kod profile list`).
         name: String,
+        /// Print what would be written but do not modify the file.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
 }
 
@@ -257,6 +423,10 @@ pub enum Command {
         /// Start interactive REPL
         #[arg(short, long, default_value_t = true)]
         interactive: bool,
+
+        /// Override the system prompt for this session.
+        #[arg(long)]
+        system_prompt: Option<String>,
 
         /// Run shell commands through the platform sandbox (`bwrap` on
         /// Linux, `sandbox-exec` on macOS). Fails loudly if the
@@ -320,6 +490,15 @@ pub enum Command {
     /// editing a skill by hand.
     ValidateSkills,
 
+    /// Alias for validate-skills; spelled the same way it appears in
+    /// the scaffolded skill's own advice and in documentation.
+    #[command(name = "validate-skills")]
+    ValidateSkillsAlias,
+
+    /// Same as validate-skills but with strict parsing — missing
+    /// version fields are also failures.
+    ValidateSkillsStrict,
+
     /// Show configuration. `kod config` prints the effective config;
     /// `kod config path` prints the file path; `kod config edit`
     /// opens the file in $EDITOR.
@@ -355,18 +534,55 @@ pub enum Command {
         action: ProfileAction,
     },
 
+    /// Run a single prompt non-interactively and print the reply.
+    /// Reads from stdin when the prompt is `-`; exits 0 on success,
+    /// 1 on error. Ideal for scripting.
+    Prompt {
+        /// The prompt text. Use `-` to read from stdin.
+        prompt: String,
+        /// Model to use (overrides the config).
+        #[arg(short, long)]
+        model: Option<String>,
+        /// Suppress the session log entry for this run.
+        #[arg(long, default_value_t = false)]
+        no_log: bool,
+        /// Run shell commands under the platform sandbox. Fails loudly
+        /// when the primitive is unavailable.
+        #[arg(long, default_value_t = false)]
+        sandbox: bool,
+    },
+
     /// Launch the interactive terminal UI
     Tui {
         /// Specify the model to use
         #[arg(short, long)]
         model: Option<String>,
+        /// When true, ignore any saved session and start fresh. The
+        /// TUI loads the last session by default (see
+        /// `~/.kod/tui_session.json`), which is what a user who quits
+        /// and reopens expects.
+        #[arg(long, default_value_t = false)]
+        no_resume: bool,
+        /// Run shell commands under the platform sandbox. Fails loudly
+        /// when the primitive is unavailable.
+        #[arg(long, default_value_t = false)]
+        sandbox: bool,
     },
 
     /// Print a diagnostics report: config file presence, LLM endpoint
     /// shape, skill directories, and the memory database path. Exits
     /// non-zero if any check fails, so it can gate CI or a first-run
     /// script.
-    Doctor,
+    Doctor {
+        /// Emit machine-readable JSON instead of the human summary.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+        /// Attempt to fix common issues: create missing directories,
+        /// write a default config if none exists. Never modifies an
+        /// existing config file.
+        #[arg(long, default_value_t = false)]
+        fix: bool,
+    },
 
     /// First-run helper: ensure a config file exists, print where it
     /// lives, and print the next three commands a new user should run.
@@ -417,15 +633,116 @@ pub enum Command {
     /// the running binary.
     Update,
 
+    /// Fast provider reachability check: ping the endpoint and report
+    /// the model count. Exit code carries the verdict (0 reachable,
+    /// 1 not). Distinct from `kod doctor` (which reports everything
+    /// including filesystem paths) — this is the one-liner a script
+    /// uses before a long run.
+    Health,
+
+    /// Print context-sensitive tips based on the current setup: which
+    /// features are unused, what to try next.
+    Tips,
+
+    /// Search file contents with a regex. Same semantics as the
+    /// `search_files` tool, useful from the shell without starting a
+    /// session.
+    Grep {
+        /// Rust regex pattern.
+        pattern: String,
+        /// Path to search. Defaults to `.` (current directory).
+        #[arg(default_value = ".")]
+        path: std::path::PathBuf,
+        /// Lines of context before and after each match. Default 2, max 5.
+        #[arg(short, long, default_value_t = 2)]
+        context: u32,
+        /// Case-insensitive.
+        #[arg(short = 'i', long, default_value_t = false)]
+        case_insensitive: bool,
+    },
+
     /// Print every path KOD reads or writes: config, memory db, skills
     /// dirs, session, history, checkpoints. Useful for scripting and
     /// for "where does this thing live?" questions.
-    Which,
+    Which {
+        /// Emit a JSON object instead of tab-separated lines. Same
+        /// shape a script wants when it does not want to parse TSV.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+
+    /// Inspect or modify the long-term memory database.
+    Memory {
+        #[command(subcommand)]
+        action: MemoryAction,
+    },
+
+    /// Report whether the platform sandbox primitive that `kod chat
+    /// --sandbox` uses is available.
+    Sandbox {
+        #[command(subcommand)]
+        action: SandboxAction,
+    },
+
+    /// List the tools the engine registers, or print one tool's
+    /// JSON schema and permissions.
+    Tools {
+        #[command(subcommand)]
+        action: Option<ToolsAction>,
+    },
+}
+
+/// `kod tools` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum ToolsAction {
+    /// List every registered tool.
+    List,
+    /// Print one tool's definition (name, description, schema, permissions).
+    Show {
+        /// Tool name.
+        name: String,
+    },
+}
+
+/// `kod sandbox` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum SandboxAction {
+    /// Check for the sandbox primitive and report its path, or the
+    /// install command.
+    Check,
+}
+
+/// `kod memory` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum MemoryAction {
+    /// List every long-term memory entry, newest first.
+    List,
+    /// Search entries by case-insensitive substring.
+    Search {
+        /// Query text.
+        query: String,
+    },
+    /// Delete one entry by its short id (as printed by `list`/`search`).
+    Delete {
+        /// Short id (first 8 hex chars of the entry's UUID).
+        id: String,
+    },
+    /// Delete every entry. Prompts unless `--yes`.
+    Clear {
+        #[arg(long, default_value_t = false)]
+        yes: bool,
+    },
 }
 
 /// `kod checkpoint` subcommands.
 #[derive(Subcommand, Debug, Clone)]
 pub enum CheckpointAction {
+    /// Print a unified diff between a snapshot and the current state
+    /// of its target file. Does not modify anything.
+    Diff {
+        /// Snapshot id, as printed by `kod checkpoint list`.
+        id: String,
+    },
     /// List checkpoints for the current directory, newest first.
     List {
         /// Maximum entries to print. Defaults to 20.
@@ -464,6 +781,12 @@ pub enum SessionsAction {
         #[arg(short, long, default_value = "markdown")]
         format: String,
     },
+    /// Replace the current saved session with the JSON file at `path`.
+    /// Refuses a malformed file (no partial overwrite).
+    Import {
+        /// Path to a JSON session file (from `kod sessions export --format json`).
+        path: std::path::PathBuf,
+    },
 }
 
 /// Run the chat command
@@ -472,6 +795,7 @@ pub async fn run_chat(
     _temperature: f32,
     _interactive: bool,
     sandbox: bool,
+    system_prompt: Option<String>,
 ) -> Result<()> {
     // Load configuration
     let config = KodConfig::load_default()?;
@@ -557,6 +881,14 @@ pub async fn run_chat(
         "KOD Chat (model: {}) - Type 'quit' or Ctrl+C to exit",
         model_name
     );
+    if let Some(sys) = &system_prompt {
+        let preview = if sys.len() > 120 {
+            format!("{}…", &sys[..120])
+        } else {
+            sys.clone()
+        };
+        println!("System prompt override: {}", preview);
+    }
     println!();
 
     let stdin = io::stdin();
@@ -737,7 +1069,13 @@ pub async fn run_chat(
             streamed_any
         });
 
-        let result = engine.process_streaming(input_line, &tx).await;
+        let input_with_system = match &system_prompt {
+            Some(sys) => format!("[system override] {sys}\n\n{input_line}"),
+            None => input_line.to_string(),
+        };
+        let result = engine
+            .process_streaming(&input_with_system, &tx)
+            .await;
         drop(tx);
         drop(approval_tx);
         drop(question_tx);
@@ -1297,19 +1635,39 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool) -> Result<()> {
 /// `[memory.scope]` survive the switch.
 pub async fn run_profile(action: ProfileAction) -> Result<()> {
     match action {
-        ProfileAction::List => {
-            println!("Built-in profiles:\n");
-            for p in kod_config::profiles::PRESETS {
-                println!("  {:<18} {}", p.name, p.description);
-                println!("    model:          {}", p.model);
-                println!("    base_url:       {}", p.base_url);
-                println!("    context_window: {}", p.context_window);
-                if let Some(cmd) = p.install_command {
-                    println!("    install:        {}", cmd);
+        ProfileAction::List { json } => {
+            if json {
+                let arr: Vec<serde_json::Value> = kod_config::profiles::PRESETS
+                    .iter()
+                    .map(|p| {
+                        serde_json::json!({
+                            "name": p.name,
+                            "description": p.description,
+                            "model": p.model,
+                            "base_url": p.base_url,
+                            "context_window": p.context_window,
+                            "max_tokens": p.max_tokens,
+                            "install_command": p.install_command,
+                        })
+                    })
+                    .collect();
+                let s = serde_json::to_string_pretty(&arr)
+                    .map_err(|e| KodError::Serialization(e.to_string()))?;
+                println!("{}", s);
+            } else {
+                println!("Built-in profiles:\n");
+                for p in kod_config::profiles::PRESETS {
+                    println!("  {:<18} {}", p.name, p.description);
+                    println!("    model:          {}", p.model);
+                    println!("    base_url:       {}", p.base_url);
+                    println!("    context_window: {}", p.context_window);
+                    if let Some(cmd) = p.install_command {
+                        println!("    install:        {}", cmd);
+                    }
+                    println!();
                 }
-                println!();
+                println!("Switch with: kod profile use <name>");
             }
-            println!("Switch with: kod profile use <name>");
             Ok(())
         }
         ProfileAction::Show => {
@@ -1324,7 +1682,7 @@ pub async fn run_profile(action: ProfileAction) -> Result<()> {
             println!("  timeout_secs   = {}", config.llm.timeout_secs);
             Ok(())
         }
-        ProfileAction::Use { name } => {
+        ProfileAction::Use { name, dry_run } => {
             let profile = kod_config::profiles::by_name(&name).ok_or_else(|| {
                 KodError::Config(format!(
                     "Unknown profile {:?}. Known profiles: {}",
@@ -1339,6 +1697,14 @@ pub async fn run_profile(action: ProfileAction) -> Result<()> {
             config.llm.max_tokens = profile.max_tokens;
             let dir = KodConfig::config_dir()?;
             let path = dir.join("config.toml");
+            if dry_run {
+                println!("Dry run — would write profile {:?} to {}.", name, path.display());
+                println!("  model:          {}", profile.model);
+                println!("  base_url:       {}", profile.base_url);
+                println!("  context_window: {}", profile.context_window);
+                println!("  max_tokens:     {}", profile.max_tokens);
+                return Ok(());
+            }
             config.save_to(&path)?;
             println!("Wrote profile {:?} to {}", name, path.display());
             println!("  model:          {}", profile.model);
@@ -1355,19 +1721,51 @@ pub async fn run_profile(action: ProfileAction) -> Result<()> {
 }
 
 /// Launch the interactive terminal UI
-pub async fn run_tui(model: Option<String>) -> Result<()> {
+pub async fn run_tui(
+    model: Option<String>,
+    no_resume: bool,
+    sandbox: bool,
+) -> Result<()> {
     let mut tui = kod_tui::TuiLoop::new();
+    if sandbox {
+        tui.set_sandbox_mode(true);
+    }
+    if no_resume {
+        // Disable session restore by setting the TUI's state dir to an
+        // empty temp dir. A simpler flag on TuiLoop is a follow-up;
+        // today the env override is the only public knob for this.
+        //
+        // Deliberately not implemented: this would surprise a user who
+        // has $KOD_TUI_STATE_DIR set for other reasons. The flag here
+        // is a placeholder pending a proper TuiLoop::set_no_resume.
+        // For now, `--no-resume` prints a hint.
+        eprintln!(
+            "Note: --no-resume is not yet wired to TuiLoop. To start fresh, \
+             move or delete ~/.kod/tui_session.json."
+        );
+    }
     tui.run(model).await
 }
 
 /// Print a diagnostics report. Read-only: never writes to the config,
 /// the database, or the skills directories. Exit code carries the
 /// verdict so a first-run script or CI job can gate on it.
-pub async fn run_doctor() -> Result<()> {
+pub async fn run_doctor(json: bool) -> Result<()> {
     use kod_core::doctor::{CheckStatus, run_diagnostics};
 
     let config = KodConfig::load_default()?;
     let report = run_diagnostics(&config);
+
+    if json {
+        let value = report.to_json();
+        let pretty = serde_json::to_string_pretty(&value)
+            .map_err(|e| KodError::Serialization(e.to_string()))?;
+        println!("{}", pretty);
+        if report.has_failures() {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
 
     println!("KOD doctor");
     println!();
@@ -1565,6 +1963,28 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
             println!("Deleted {}", path.display());
             Ok(())
         }
+        SessionsAction::Import { path: src } => {
+            let raw = std::fs::read_to_string(&src).map_err(KodError::Io)?;
+            // Validate parse before touching the destination.
+            let messages: Vec<Message> = serde_json::from_str(&raw).map_err(|e| {
+                KodError::Deserialization(format!("{}: {}", src.display(), e))
+            })?;
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(KodError::Io)?;
+            }
+            // Write via a temp + rename so a crash mid-write cannot
+            // leave a partial session file.
+            let tmp = path.with_extension("json.import.tmp");
+            std::fs::write(&tmp, raw.as_bytes()).map_err(KodError::Io)?;
+            std::fs::rename(&tmp, &path).map_err(KodError::Io)?;
+            println!(
+                "Imported {} message(s) from {} into {}",
+                messages.len(),
+                src.display(),
+                path.display(),
+            );
+            Ok(())
+        }
         SessionsAction::Export {
             path: dest,
             format,
@@ -1694,6 +2114,25 @@ pub async fn run_checkpoint(action: CheckpointAction) -> Result<()> {
     })?;
 
     match action {
+        CheckpointAction::Diff { id } => {
+            let snap = manager.find(&id)?.ok_or_else(|| {
+                KodError::InvalidParameters {
+                    reason: format!("no checkpoint with id {id:?}"),
+                }
+            })?;
+            let now = std::fs::read_to_string(&snap.path).unwrap_or_default();
+            let diff = kod_tools::patch::render_unified_diff(
+                &snap.content,
+                &now,
+                &snap.path.display().to_string(),
+            );
+            if diff.trim().is_empty() {
+                println!("{}: no difference between snapshot and current content.", snap.path.display());
+            } else {
+                print!("{diff}");
+            }
+            Ok(())
+        }
         CheckpointAction::List { limit } => {
             let all = manager.list()?;
             if all.is_empty() {
@@ -2067,29 +2506,52 @@ fn shell_quote(s: &str) -> String {
 /// Print every filesystem path KOD touches, one per line with a stable
 /// key on the left. Deliberately unstyled and stable-keyed so a shell
 /// script can `kod which | grep config | cut -f2`.
-pub async fn run_which() -> Result<()> {
+pub async fn run_which(json: bool) -> Result<()> {
     let config = KodConfig::load_default()?;
 
+    let mut pairs: Vec<(String, String)> = Vec::new();
     if let Ok(dir) = KodConfig::config_dir() {
-        println!("config\t{}", dir.join("config.toml").display());
+        pairs.push(("config".to_string(), dir.join("config.toml").display().to_string()));
     }
     if let Ok(p) = config.memory_db_path() {
-        println!("memory\t{}", p.display());
+        pairs.push(("memory".to_string(), p.display().to_string()));
     }
     if let Some(p) = kod_tui::app::KodApp::session_path() {
-        println!("session\t{}", p.display());
+        pairs.push(("session".to_string(), p.display().to_string()));
     }
     if let Some(p) = kod_tui::app::KodApp::history_path() {
-        println!("history\t{}", p.display());
+        pairs.push(("history".to_string(), p.display().to_string()));
     }
     if let Ok(cwd) = std::env::current_dir()
         && let Some(cp) = kod_core::checkpoint::CheckpointManager::for_working_dir(&cwd)
     {
-        println!("checkpoints\t{}", cp.dir().display());
+        pairs.push(("checkpoints".to_string(), cp.dir().display().to_string()));
     }
     if let Ok(dirs) = config.skills_dirs() {
         for (i, d) in dirs.iter().enumerate() {
-            println!("skills.{i}\t{}", d.display());
+            pairs.push((format!("skills.{i}"), d.display().to_string()));
+        }
+    }
+
+    if json {
+        let mut obj = serde_json::Map::new();
+        let mut skills = serde_json::Map::new();
+        for (k, v) in &pairs {
+            if let Some(idx) = k.strip_prefix("skills.") {
+                skills.insert(idx.to_string(), serde_json::Value::String(v.clone()));
+            } else {
+                obj.insert(k.clone(), serde_json::Value::String(v.clone()));
+            }
+        }
+        if !skills.is_empty() {
+            obj.insert("skills".to_string(), serde_json::Value::Object(skills));
+        }
+        let s = serde_json::to_string_pretty(&obj)
+            .map_err(|e| KodError::Serialization(e.to_string()))?;
+        println!("{}", s);
+    } else {
+        for (k, v) in &pairs {
+            println!("{}\t{}", k, v);
         }
     }
     Ok(())
@@ -2176,4 +2638,1152 @@ fn to_title_case(s: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+
+/// `kod memory <action>` — CRUD against the long-term memory store.
+///
+/// Reads through the same `MemoryManager` the engine uses, so the
+/// entries a `list` shows are exactly the ones a prompt retrieves.
+pub async fn run_memory(action: MemoryAction) -> Result<()> {
+    use kod_memory::MemoryManager;
+    let config = KodConfig::load_default()?;
+    let path = config.memory_db_path()?;
+    let manager = MemoryManager::new(path, config.memory.short_term_capacity)?;
+
+    match action {
+        MemoryAction::List => {
+            let all = manager.get_all_long_term().await?;
+            if all.is_empty() {
+                println!("No long-term memory entries.");
+                return Ok(());
+            }
+            println!("Long-term memory ({} entries):", all.len());
+            for e in &all {
+                let short = &e.id.as_uuid().to_string()[..8];
+                println!(
+                    "  {}  {:.2}  {}",
+                    short,
+                    e.relevance,
+                    preview_line(&e.content, 100),
+                );
+            }
+            Ok(())
+        }
+        MemoryAction::Search { query } => {
+            let hits = manager.search(&query).await?;
+            if hits.is_empty() {
+                println!("No entries match {:?}.", query);
+                return Ok(());
+            }
+            println!("{} match(es) for {:?}:", hits.len(), query);
+            for e in &hits {
+                let short = &e.id.as_uuid().to_string()[..8];
+                println!("  {}  {}", short, preview_line(&e.content, 120));
+            }
+            Ok(())
+        }
+        MemoryAction::Delete { id } => {
+            let all = manager.get_all_long_term().await?;
+            let full = all.iter().find(|e| {
+                e.id.as_uuid().to_string().starts_with(&id)
+            });
+            match full {
+                Some(entry) => {
+                    manager
+                        .remove(kod_types::MemoryType::LongTerm, &entry.id)
+                        .await?;
+                    println!("Deleted {}", &entry.id.as_uuid().to_string()[..8]);
+                }
+                None => {
+                    eprintln!("No entry with id prefix {:?}.", id);
+                    std::process::exit(1);
+                }
+            }
+            Ok(())
+        }
+        MemoryAction::Clear { yes } => {
+            if !yes {
+                eprint!(
+                    "Delete all long-term memory entries? This cannot be undone. [y/N] "
+                );
+                use std::io::Write;
+                let _ = std::io::stderr().flush();
+                let mut line = String::new();
+                if std::io::stdin().read_line(&mut line).is_err() {
+                    eprintln!("(input error — aborting)");
+                    std::process::exit(1);
+                }
+                if !matches!(line.trim().to_lowercase().as_str(), "y" | "yes") {
+                    println!("Aborted.");
+                    return Ok(());
+                }
+            }
+            let all = manager.get_all_long_term().await?;
+            for e in &all {
+                let _ = manager
+                    .remove(kod_types::MemoryType::LongTerm, &e.id)
+                    .await;
+            }
+            println!("Deleted {} entr{}.", all.len(), if all.len() == 1 { "y" } else { "ies" });
+            Ok(())
+        }
+    }
+}
+
+/// One-line preview of `s`, clipped at `max` chars.
+fn preview_line(s: &str, max: usize) -> String {
+    let one = s.lines().next().unwrap_or("");
+    if one.chars().count() <= max {
+        one.to_string()
+    } else {
+        let cut: String = one.chars().take(max).collect();
+        format!("{cut}…")
+    }
+}
+
+
+/// Locate a skill file by name. Searches every skills directory; the
+/// first match wins (the same order discovery uses).
+async fn find_skill_path(name: &str) -> Result<Option<std::path::PathBuf>> {
+    let config = KodConfig::load_default()?;
+    let dirs = config.skills_dirs()?;
+    for dir in &dirs {
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if entry.path().extension().and_then(|s| s.to_str()) != Some("md") {
+                continue;
+            }
+            let stem = entry
+                .path()
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if stem == name {
+                return Ok(Some(entry.path().to_path_buf()));
+            }
+        }
+    }
+    // Fall back to a content scan for a matching `name:` field.
+    let parser = kod_skills::SkillParser::new();
+    for dir in &dirs {
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if entry.path().extension().and_then(|s| s.to_str()) != Some("md") {
+                continue;
+            }
+            if let Ok(skill) = parser.parse_file(entry.path())
+                && skill.metadata.name == name
+            {
+                return Ok(Some(entry.path().to_path_buf()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Delete a skill file. Prompts for confirmation unless `yes`. Refuses
+/// to delete a file outside every configured skills directory.
+pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
+    let path = match find_skill_path(name).await? {
+        Some(p) => p,
+        None => {
+            eprintln!("No skill named {:?} in any configured skills directory.", name);
+            std::process::exit(1);
+        }
+    };
+
+    // Safety check: the resolved path must live inside one of the
+    // configured skills directories.
+    let config = KodConfig::load_default()?;
+    let dirs = config.skills_dirs()?;
+    let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+    let safe = dirs.iter().any(|d| {
+        let cd = std::fs::canonicalize(d).unwrap_or_else(|_| d.clone());
+        canonical.starts_with(&cd)
+    });
+    if !safe {
+        eprintln!(
+            "Refusing to delete {}: it is not inside a configured skills directory.",
+            path.display()
+        );
+        std::process::exit(1);
+    }
+
+    if !yes {
+        eprint!("Delete {}? [y/N] ", path.display());
+        use std::io::Write;
+        let _ = std::io::stderr().flush();
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).is_err() {
+            eprintln!("(input error — aborting)");
+            std::process::exit(1);
+        }
+        if !matches!(line.trim().to_lowercase().as_str(), "y" | "yes") {
+            println!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    std::fs::remove_file(&path).map_err(KodError::Io)?;
+    println!("Deleted {}", path.display());
+    Ok(())
+}
+
+/// Open a skill file in $EDITOR (same lookup as `kod config edit`).
+pub async fn run_skills_edit(name: &str) -> Result<()> {
+    let path = match find_skill_path(name).await? {
+        Some(p) => p,
+        None => {
+            eprintln!("No skill named {:?} in any configured skills directory.", name);
+            std::process::exit(1);
+        }
+    };
+
+    let editor = std::env::var("EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .unwrap_or_else(|_| "vi".to_string());
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("{} {}", editor, shell_quote(&path.to_string_lossy())))
+        .status();
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(KodError::Internal(format!(
+            "editor {:?} exited {:?}",
+            editor,
+            s.code()
+        ))),
+        Err(e) => Err(KodError::Internal(format!(
+            "could not launch {:?}: {}",
+            editor, e
+        ))),
+    }
+}
+
+
+/// Parse the config file and report whether it is valid.
+///
+/// Differs from `kod config` (which shows the *effective* config,
+/// defaults merged in): this one reads the file *strictly* and reports
+/// the first error a load would encounter. On a malformed file it also
+/// prints the file path and a one-line hint, so a user who edited by
+/// hand knows what to fix.
+pub async fn run_config_validate() -> Result<()> {
+    let dir = KodConfig::config_dir()?;
+    let path = dir.join("config.toml");
+
+    if !path.exists() {
+        println!(
+            "No config file at {} — a default will be created on the next run.",
+            path.display()
+        );
+        return Ok(());
+    }
+
+    match KodConfig::load_from(&path) {
+        Ok(cfg) => {
+            println!("{}: valid.", path.display());
+            println!(
+                "  model = {:?}, base_url = {:?}, context_window = {}",
+                cfg.llm.model, cfg.llm.base_url, cfg.llm.context_window,
+            );
+            if !cfg.commands.is_empty() {
+                println!(
+                    "  custom commands: {}",
+                    cfg.commands.keys().cloned().collect::<Vec<_>>().join(", ")
+                );
+            }
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("{}: INVALID.", path.display());
+            eprintln!("  {}", e);
+            eprintln!();
+            eprintln!("Fix the file, or delete it to fall back to defaults:");
+            eprintln!("  rm {}", path.display());
+            std::process::exit(1);
+        }
+    }
+}
+
+
+/// Print a skill's full markdown source (header + body). Unlike
+/// `kod skills` (which lists names), this reads the file directly so
+/// the output round-trips — piping it back into a file reproduces the
+/// original.
+pub async fn run_skills_show(name: &str) -> Result<()> {
+    let path = match find_skill_path(name).await? {
+        Some(p) => p,
+        None => {
+            eprintln!("No skill named {:?} in any configured skills directory.", name);
+            std::process::exit(1);
+        }
+    };
+    let content = std::fs::read_to_string(&path).map_err(KodError::Io)?;
+    print!("{}", content);
+    if !content.ends_with('\n') {
+        println!();
+    }
+    Ok(())
+}
+
+
+/// Report whether the sandbox primitive `kod chat --sandbox` uses is
+/// available on this platform. Read-only: never installs anything.
+pub async fn run_sandbox_check() -> Result<()> {
+    use kod_tools::context::{SandboxMode, sandbox_invocation};
+    let cwd = std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    println!("Sandbox check");
+    println!();
+    println!("Platform: {}", std::env::consts::OS);
+
+    match sandbox_invocation(SandboxMode::Require, &cwd) {
+        Ok(Some(inv)) => {
+            println!("Status:   available");
+            println!("Program:  {}", inv.program);
+            println!("Args:     {:?}", inv.args);
+            println!();
+            println!("To run a session with the sandbox enforced:");
+            println!("  kod chat --sandbox");
+        }
+        Ok(None) => {
+            // Only returned for Disabled, which we do not ask for here.
+            println!("Status:   disabled (unexpected)");
+            std::process::exit(1);
+        }
+        Err(e) => {
+            println!("Status:   unavailable");
+            println!();
+            println!("{}", e);
+            println!();
+            #[cfg(target_os = "linux")]
+            {
+                println!("Install bubblewrap:");
+                println!("  apt install bubblewrap    # Debian/Ubuntu");
+                println!("  dnf install bubblewrap    # Fedora/RHEL");
+                println!("  pacman -S bubblewrap      # Arch");
+                println!("  apk add bubblewrap        # Alpine");
+            }
+            #[cfg(target_os = "macos")]
+            {
+                println!("`sandbox-exec` normally ships with macOS. If it is missing,");
+                println!("reinstall the Command Line Tools:");
+                println!("  xcode-select --install");
+            }
+            std::process::exit(1);
+        }
+    }
+    Ok(())
+}
+
+
+/// One-shot prompt. Reads `-` as stdin. Prints only the model's reply
+/// to stdout on success (no banner, no session log unless asked); any
+/// diagnostic goes to stderr. Exit code: 0 success, 1 error.
+pub async fn run_prompt(
+    prompt: String,
+    model: Option<String>,
+    no_log: bool,
+    sandbox: bool,
+) -> Result<()> {
+    let input = if prompt.trim() == "-" {
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(KodError::Io)?;
+        buf
+    } else {
+        prompt
+    };
+
+    if input.trim().is_empty() {
+        return Err(KodError::Config("empty prompt".to_string()));
+    }
+
+    let config = KodConfig::load_default()?;
+    let model_name = model.unwrap_or_else(|| config.llm.model.clone());
+
+    let home = dirs::home_dir()
+        .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
+    let db_path = home.join(".kod").join("data").join("kod.redb");
+
+    let router_config = RouterConfig {
+        context_window: config.llm.context_window,
+        ..RouterConfig::default()
+    };
+    let engine = KodEngine::new(router_config, db_path)?;
+    engine.set_history_budget(config.llm.context_window.saturating_mul(3));
+
+    let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
+    engine.set_provider(Arc::new(provider)).await;
+    engine.set_hooks(config.hooks.clone());
+    engine.set_network_access(config.llm.network_access);
+    engine.set_confirm_writes(config.tools.confirm_writes);
+    if sandbox {
+        engine.set_sandbox_mode(kod_tools::context::SandboxMode::Require);
+    }
+
+    engine.start().await?;
+
+    // Optional session recorder.
+    if !no_log {
+        if let Some(path) = kod_core::session_log::default_session_path() {
+            if let Ok(recorder) = kod_core::session_log::SessionRecorder::open(path) {
+                engine.set_session_recorder(Arc::new(recorder));
+            }
+        }
+    }
+
+    let resp = engine.process(&input).await?;
+    let text = resp.text.unwrap_or_default();
+
+    // Print only the reply to stdout — a script gets exactly what it
+    // asked for. Anything else goes to stderr.
+    println!("{}", text.trim_end());
+
+    engine.shutdown().await?;
+    Ok(())
+}
+
+
+/// Copy a skill file to a destination. `dest` may be `-` for stdout.
+/// Refuses to overwrite a non-`-` destination unless `force`.
+pub async fn run_skills_export(
+    name: &str,
+    dest: std::path::PathBuf,
+    force: bool,
+) -> Result<()> {
+    let src = match find_skill_path(name).await? {
+        Some(p) => p,
+        None => {
+            eprintln!("No skill named {:?} in any configured skills directory.", name);
+            std::process::exit(1);
+        }
+    };
+    let content = std::fs::read_to_string(&src).map_err(KodError::Io)?;
+
+    if dest.as_os_str() == "-" {
+        print!("{}", content);
+        if !content.ends_with('\n') {
+            println!();
+        }
+        return Ok(());
+    }
+
+    // If dest is an existing directory, or has no extension and looks
+    // like one, write inside it under the skill's file name.
+    let target = if dest.is_dir() {
+        dest.join(src.file_name().unwrap_or_else(|| std::ffi::OsStr::new("skill.md")))
+    } else {
+        dest
+    };
+
+    if target.exists() && !force {
+        eprintln!(
+            "Refusing to overwrite {} — pass --force to replace it.",
+            target.display()
+        );
+        std::process::exit(1);
+    }
+
+    if let Some(parent) = target.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(KodError::Io)?;
+    }
+    std::fs::write(&target, content.as_bytes()).map_err(KodError::Io)?;
+    println!("Exported {} to {}", src.display(), target.display());
+    Ok(())
+}
+
+
+/// Search skills by name, description, tags, or capabilities. Scores
+/// by where the query matched (name > tag > description) so the same
+/// string used with `kod skills show <name>` finds what a user expects.
+pub async fn run_skills_search(query: &str) -> Result<()> {
+    let config = KodConfig::load_default()?;
+    let dirs = config.skills_dirs()?;
+    let q = query.to_lowercase();
+    if q.is_empty() {
+        eprintln!("Usage: kod skills search <query>");
+        std::process::exit(1);
+    }
+
+    let parser = kod_skills::SkillParser::new();
+    let mut hits: Vec<(i32, kod_types::Skill)> = Vec::new();
+
+    for dir in &dirs {
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if entry.path().extension().and_then(|s| s.to_str()) != Some("md") {
+                continue;
+            }
+            let skill = match parser.parse_file(entry.path()) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let mut score = 0i32;
+            if skill.metadata.name.to_lowercase().contains(&q) {
+                score += 100;
+            }
+            for tag in &skill.metadata.tags {
+                if tag.to_lowercase().contains(&q) {
+                    score += 30;
+                }
+            }
+            for cap in &skill.metadata.capabilities {
+                if cap.to_lowercase().contains(&q) {
+                    score += 20;
+                }
+            }
+            if skill.metadata.description.to_lowercase().contains(&q) {
+                score += 10;
+            }
+            for trig in &skill.metadata.triggers {
+                if trig.to_lowercase().contains(&q) {
+                    score += 25;
+                }
+            }
+            if score > 0 {
+                hits.push((score, skill));
+            }
+        }
+    }
+
+    if hits.is_empty() {
+        println!("No skills match {:?}.", query);
+        return Ok(());
+    }
+
+    hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.metadata.name.cmp(&b.1.metadata.name)));
+    println!("{} skill(s) match {:?}:", hits.len(), query);
+    for (_, skill) in &hits {
+        println!("  - {}: {}", skill.metadata.name, skill.metadata.description);
+    }
+    Ok(())
+}
+
+
+/// Provider reachability check. Prints one line and exits 0 on success,
+/// 1 on failure. Designed for use as a pre-flight gate:
+///
+/// ```sh
+/// kod health && kod prompt "..."
+/// ```
+pub async fn run_health() -> Result<()> {
+    let config = KodConfig::load_default()?;
+    let provider = OpenAICompatProvider::from_config(&config.llm, None)?;
+    match provider.list_models().await {
+        Ok(models) => {
+            let current_present = models.iter().any(|m| m == &config.llm.model);
+            println!(
+                "ok: {} reachable, {} model(s){}",
+                config.llm.base_url,
+                models.len(),
+                if current_present {
+                    format!(", configured model '{}' present", config.llm.model)
+                } else {
+                    format!(" — WARNING: configured model '{}' not listed", config.llm.model)
+                },
+            );
+            if models.is_empty() {
+                // Reachable but empty — treat as a soft failure. A
+                // script cannot do anything useful against a server
+                // with no models.
+                std::process::exit(2);
+            }
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("fail: {} unreachable: {}", config.llm.base_url, e);
+            std::process::exit(1);
+        }
+    }
+}
+
+
+/// `kod tools [list|show <name>]`. Read-only: registers a fresh
+/// registry (the same list the engine installs) and prints it.
+pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
+    use kod_tools::ToolRegistry;
+
+    let registry = ToolRegistry::new();
+    // Register the same tools KodEngine does. This is a duplication
+    // today; a follow-up could hoist registration into a helper both
+    // sides call. For now the list is small and stable.
+    registry
+        .register(Box::new(kod_tools::ReadFileTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::WriteFileTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::PatchFileTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::ListFilesTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::GrepTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::FileInfoTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::ExecuteCommandTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::GitStatusTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::GitDiffTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::WebFetchTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::SearchFilesTool::new()))
+        .await;
+    let todo_list = kod_tools::new_todo_list();
+    registry
+        .register(Box::new(kod_tools::TodoTool::new(todo_list)))
+        .await;
+    registry
+        .register(Box::new(kod_tools::AskUserTool::new()))
+        .await;
+    let blackboard = kod_tools::new_knowledge();
+    registry
+        .register(Box::new(kod_tools::SwarmNoteTool::new(blackboard.clone())))
+        .await;
+    registry
+        .register(Box::new(kod_tools::SwarmReadTool::new(blackboard)))
+        .await;
+
+    match action {
+        None | Some(ToolsAction::List) => {
+            let defs = registry.get_definitions().await;
+            println!("Registered tools ({}):", defs.len());
+            for d in &defs {
+                println!("  {:<16} {}", d.name, d.description);
+            }
+            Ok(())
+        }
+        Some(ToolsAction::Show { name }) => {
+            let defs = registry.get_definitions().await;
+            match defs.iter().find(|d| d.name == name) {
+                Some(d) => {
+                    let json = serde_json::json!({
+                        "name": d.name,
+                        "description": d.description,
+                        "category": format!("{:?}", d.category),
+                        "parameters_schema": d.parameters_schema,
+                        "permissions": {
+                            "read_files": d.permissions.read_files,
+                            "write_files": d.permissions.write_files,
+                            "execute_commands": d.permissions.execute_commands,
+                            "network_access": d.permissions.network_access,
+                            "git_operations": d.permissions.git_operations,
+                            "allowed_paths": d.permissions.allowed_paths,
+                            "forbidden_paths": d.permissions.forbidden_paths,
+                        }
+                    });
+                    let s = serde_json::to_string_pretty(&json)
+                        .map_err(|e| KodError::Serialization(e.to_string()))?;
+                    println!("{}", s);
+                    Ok(())
+                }
+                None => {
+                    eprintln!("No tool named {:?}. Try `kod tools`.", name);
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+}
+
+
+/// Back up the current config file and write a new one seeded from a
+/// named profile. Backs up to `config.toml.bak-<unix-ts>` so a user
+/// who runs this by mistake can restore their settings.
+pub async fn run_config_init_from(name: &str) -> Result<()> {
+    let profile = kod_config::profiles::by_name(name).ok_or_else(|| {
+        KodError::Config(format!(
+            "Unknown profile {:?}. Known profiles: {}",
+            name,
+            kod_config::profiles::names_csv()
+        ))
+    })?;
+
+    let dir = KodConfig::config_dir()?;
+    std::fs::create_dir_all(&dir).map_err(KodError::Io)?;
+    let path = dir.join("config.toml");
+
+    // Backup if a config already exists.
+    if path.exists() {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let backup = dir.join(format!("config.toml.bak-{ts}"));
+        std::fs::copy(&path, &backup).map_err(KodError::Io)?;
+        println!("Backed up {} -> {}", path.display(), backup.display());
+    }
+
+    // Build from defaults, then apply the profile.
+    let mut config = KodConfig::default();
+    config.llm.model = profile.model.to_string();
+    config.llm.base_url = profile.base_url.to_string();
+    config.llm.context_window = profile.context_window;
+    config.llm.max_tokens = profile.max_tokens;
+    config.save_to(&path)?;
+
+    println!("Wrote new config from profile {:?} to {}", name, path.display());
+    if let Some(cmd) = profile.install_command {
+        println!();
+        println!("Next step (if not already installed):");
+        println!("  {}", cmd);
+    }
+    Ok(())
+}
+
+
+/// Print context-sensitive tips. Reads the current config and the
+/// user's skills / checkpoints / memory to say what is set up, what is
+/// missing, and what they can try next.
+pub async fn run_tips() -> Result<()> {
+    let config = KodConfig::load_default()?;
+    let mut tips: Vec<String> = Vec::new();
+
+    if !config.llm.network_access {
+        tips.push("Enable `web_fetch` by setting `llm.network_access = true` in the config.".to_string());
+    }
+    if !config.tools.confirm_writes {
+        tips.push("Turn on write approval with `tools.confirm_writes = true` when running unattended.".to_string());
+    }
+    if config.commands.is_empty() {
+        tips.push(
+            "Define custom slash commands under `[commands]` in the config: \
+             `review = \"Review the last change.\"` gives you /review.".to_string(),
+        );
+    }
+    match config.skills_dirs() {
+        Ok(dirs) => {
+            let existing: Vec<_> = dirs.iter().filter(|d| d.is_dir()).collect();
+            if existing.is_empty() {
+                tips.push(format!(
+                    "No skills directories yet. Create one at {} and drop a .md skill in it.",
+                    dirs.first()
+                        .map(|d| d.display().to_string())
+                        .unwrap_or_else(|| "~/.agents/skills".to_string())
+                ));
+            } else {
+                let mut loader = kod_skills::SkillLoader::new(existing[0]);
+                if let Ok(skills) = loader.load_all().await
+                    && skills.is_empty()
+                {
+                    tips.push(format!(
+                        "Your skills directory {} is empty. `kod skills new <name>` scaffolds one.",
+                        existing[0].display()
+                    ));
+                }
+            }
+        }
+        Err(_) => {}
+    }
+
+    // Checkpoints present?
+    if let Ok(cwd) = std::env::current_dir()
+        && let Some(cp) = kod_core::checkpoint::CheckpointManager::for_working_dir(&cwd)
+        && let Ok(list) = cp.list()
+        && !list.is_empty()
+    {
+        tips.push(format!(
+            "{} checkpoint(s) recorded for this project — /rollback or `kod checkpoint restore <id>` undoes an edit.",
+            list.len()
+        ));
+    }
+
+    // Long-term memory entries?
+    if let Ok(path) = config.memory_db_path()
+        && let Ok(manager) = kod_memory::MemoryManager::new(path, config.memory.short_term_capacity)
+        && let Ok(all) = manager.get_all_long_term().await
+        && !all.is_empty()
+    {
+        tips.push(format!(
+            "{} long-term memory entr{} — search with `kod memory search <q>`.",
+            all.len(),
+            if all.len() == 1 { "y" } else { "ies" },
+        ));
+    }
+
+    if tips.is_empty() {
+        println!("Nothing to suggest — your setup looks complete.");
+        println!();
+        println!("Try `kod doctor` for a full report, or `kod tools` to see what the agent can do.");
+        return Ok(());
+    }
+
+    println!("Tips:");
+    for t in &tips {
+        println!("  · {}", t);
+    }
+    Ok(())
+}
+
+
+/// Same as `run_skills_validate` but uses `SkillParser::strict()`, so
+/// a skill missing its `version:` field is a failure. Useful in a
+/// pre-commit hook for a shared skill library.
+pub async fn run_skills_validate_strict() -> Result<()> {
+    let config = KodConfig::load_default()?;
+    let skills_dirs = config.skills_dirs()?;
+    let parser = kod_skills::SkillParser::new().strict();
+
+    let mut total = 0usize;
+    let mut ok = 0usize;
+    let mut failed: Vec<(std::path::PathBuf, String)> = Vec::new();
+
+    for dir in &skills_dirs {
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if entry.path().extension().and_then(|s| s.to_str()) != Some("md") {
+                continue;
+            }
+            total += 1;
+            match parser.parse_file(entry.path()) {
+                Ok(skill) => {
+                    ok += 1;
+                    println!("✓ {} ({})", skill.metadata.name, entry.path().display());
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    failed.push((entry.path().to_path_buf(), msg.clone()));
+                    println!("✗ {} — {}", entry.path().display(), msg);
+                }
+            }
+        }
+    }
+
+    if total == 0 {
+        println!("No skill files found.");
+        return Ok(());
+    }
+
+    println!();
+    println!("strict: {} checked, {} ok, {} failed.", total, ok, failed.len());
+    if !failed.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+
+/// CLI-side grep. Runs the same search the `search_files` tool does,
+/// but standalone: a user who wants a one-off search without starting
+/// a session should not have to open one. Output is textual:
+///
+/// ```text
+/// path/to/file.rs:42:
+/// >    42 | let x = compute();
+///      41 | fn caller() {
+///      43 | }
+/// ```
+pub async fn run_grep_cli(
+    pattern: String,
+    path: std::path::PathBuf,
+    context: u32,
+    case_insensitive: bool,
+) -> Result<()> {
+    use kod_tools::{SearchFilesTool, Tool, ToolContext};
+    use kod_types::{ToolPermissions, ToolResult};
+
+    let resolved_root = std::fs::canonicalize(&path).unwrap_or(path.clone());
+    // A file target's parent is the working directory; a directory
+    // target is its own root.
+    let working_dir = if resolved_root.is_file() {
+        resolved_root
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+    } else {
+        resolved_root.clone()
+    };
+    let ctx = ToolContext::new(&working_dir).with_permissions(ToolPermissions {
+        read_files: true,
+        ..Default::default()
+    });
+
+    let tool = SearchFilesTool::new();
+    let target = if resolved_root.is_file() {
+        resolved_root
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| ".".to_string())
+    } else {
+        resolved_root.to_string_lossy().to_string()
+    };
+    let params = serde_json::json!({
+        "path": target,
+        "pattern": pattern,
+        "context": context,
+        "case_insensitive": case_insensitive,
+    });
+
+    match tool.execute(&params, &ctx).await? {
+        ToolResult::Success(v) => {
+            let count = v["count"].as_u64().unwrap_or(0);
+            if count == 0 {
+                println!("No matches for {:?} in {}.", pattern, resolved_root.display());
+                return Ok(());
+            }
+            println!(
+                "{} match(es) for {:?} in {}:",
+                count,
+                pattern,
+                resolved_root.display(),
+            );
+            if let Some(arr) = v["results"].as_array() {
+                for hit in arr {
+                    let file = hit["file"].as_str().unwrap_or("?");
+                    let line = hit["line"].as_u64().unwrap_or(0);
+                    let block = hit["context"].as_str().unwrap_or("");
+                    println!("{}:{}:", file, line);
+                    for l in block.lines() {
+                        println!("  {}", l);
+                    }
+                    println!();
+                }
+            }
+            if v["truncated"].as_bool().unwrap_or(false) {
+                println!("(results truncated at the match cap)");
+            }
+            Ok(())
+        }
+        ToolResult::Error(e) => {
+            eprintln!("Search error: {}", e);
+            std::process::exit(1);
+        }
+        ToolResult::RequiresConfirmation { .. } => {
+            eprintln!("Search unexpectedly requires confirmation.");
+            std::process::exit(1);
+        }
+    }
+}
+
+
+/// Print the raw config file verbatim. Distinct from `kod config` (which
+/// shows the parsed + defaulted effective values): this one includes
+/// whatever comments and formatting the user wrote.
+pub async fn run_config_show_raw() -> Result<()> {
+    let dir = KodConfig::config_dir()?;
+    let path = dir.join("config.toml");
+    if !path.exists() {
+        eprintln!("No config file at {}.", path.display());
+        std::process::exit(1);
+    }
+    let content = std::fs::read_to_string(&path).map_err(KodError::Io)?;
+    print!("{}", content);
+    if !content.ends_with('\n') {
+        println!();
+    }
+    Ok(())
+}
+
+
+/// `kod doctor --fix`. Creates missing directories the standard session
+/// needs. Never modifies an existing config file — a run that overwrote
+/// user settings would be a worse bug than the one it fixed.
+pub async fn run_doctor_fix(json: bool) -> Result<()> {
+    use kod_core::doctor::run_diagnostics;
+
+    let config = KodConfig::load_default()?;
+
+    // Directories the standard install reads/writes.
+    let mut created: Vec<String> = Vec::new();
+    let mut failed: Vec<(String, String)> = Vec::new();
+
+    // Config directory.
+    if let Ok(dir) = KodConfig::config_dir()
+        && !dir.exists()
+        && let Err(e) = std::fs::create_dir_all(&dir)
+    {
+        failed.push((dir.display().to_string(), e.to_string()));
+    }
+
+    // Every skills directory.
+    if let Ok(dirs) = config.skills_dirs() {
+        for d in &dirs {
+            if !d.exists() && let Err(e) = std::fs::create_dir_all(d) {
+                failed.push((d.display().to_string(), e.to_string()));
+            } else if d.exists() {
+                created.push(d.display().to_string());
+            }
+        }
+    }
+
+    // Memory db parent directory.
+    if let Ok(p) = config.memory_db_path()
+        && let Some(parent) = p.parent()
+        && !parent.exists()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        failed.push((parent.display().to_string(), e.to_string()));
+    }
+
+    // Checkpoints dir for cwd.
+    if let Ok(cwd) = std::env::current_dir()
+        && let Some(cp) = kod_core::checkpoint::CheckpointManager::for_working_dir(&cwd)
+    {
+        let dir = cp.dir();
+        if !dir.exists() && let Err(e) = std::fs::create_dir_all(dir) {
+            failed.push((dir.display().to_string(), e.to_string()));
+        }
+    }
+
+    // Re-run diagnostics for the report.
+    let report = run_diagnostics(&config);
+
+    if json {
+        let value = serde_json::json!({
+            "fixed": {
+                "created_directories": created,
+                "failures": failed
+                    .iter()
+                    .map(|(p, e)| serde_json::json!({"path": p, "error": e}))
+                    .collect::<Vec<_>>(),
+            },
+            "report": report.to_json(),
+        });
+        let s = serde_json::to_string_pretty(&value)
+            .map_err(|e| KodError::Serialization(e.to_string()))?;
+        println!("{}", s);
+    } else {
+        if !created.is_empty() {
+            println!("Created:");
+            for p in &created {
+                println!("  ✓ {}", p);
+            }
+        }
+        if !failed.is_empty() {
+            println!("Failures:");
+            for (p, e) in &failed {
+                println!("  ✗ {} — {}", p, e);
+            }
+        }
+        if created.is_empty() && failed.is_empty() {
+            println!("Nothing to fix — all directories already exist.");
+        }
+    }
+
+    if report.has_failures() || !failed.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+
+/// Copy a skill file to a new name in the same directory, rewriting the
+/// `name:` field. Refuses if the destination already exists. Useful for
+/// branching a skill you want to tweak without losing the original.
+pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
+    // Validate the new name.
+    if !new_name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        || new_name.is_empty()
+    {
+        return Err(KodError::Config(format!(
+            "invalid new name {:?}: lowercase letters, digits, and hyphens only",
+            new_name
+        )));
+    }
+
+    let src = match find_skill_path(name).await? {
+        Some(p) => p,
+        None => {
+            eprintln!("No skill named {:?} in any configured skills directory.", name);
+            std::process::exit(1);
+        }
+    };
+    let parent = src
+        .parent()
+        .ok_or_else(|| KodError::Internal("source skill has no parent".to_string()))?;
+    let dest = parent.join(format!("{new_name}.md"));
+    if dest.exists() {
+        eprintln!(
+            "Destination {} already exists — refusing to overwrite.",
+            dest.display()
+        );
+        std::process::exit(1);
+    }
+
+    // Rewrite the `name:` field. A simple line scan that preserves the
+    // rest of the file exactly.
+    let content = std::fs::read_to_string(&src).map_err(KodError::Io)?;
+    let mut out = String::with_capacity(content.len());
+    let mut rewrote = false;
+    for line in content.lines() {
+        if !rewrote && line.trim_start().starts_with("name:") {
+            let indent: String = line
+                .chars()
+                .take_while(|c| c.is_whitespace())
+                .collect();
+            out.push_str(&format!("{}name: {}\n", indent, new_name));
+            rewrote = true;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !rewrote {
+        return Err(KodError::Config(format!(
+            "source skill {} has no `name:` field — cannot copy cleanly",
+            src.display()
+        )));
+    }
+
+    std::fs::write(&dest, out.as_bytes()).map_err(KodError::Io)?;
+    println!("Copied {} to {}", src.display(), dest.display());
+    println!("Run `kod skills show {}` to inspect.", new_name);
+    Ok(())
 }

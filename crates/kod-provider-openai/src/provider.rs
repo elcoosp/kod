@@ -14,6 +14,42 @@ use std::pin::Pin;
 /// Fallback API key for local servers (Ollama, LM Studio, MLX) that accept any value.
 const LOCAL_FALLBACK_API_KEY: &str = "not-needed";
 
+/// Retries attempted on a transient provider error (rate limit, 5xx,
+/// connection reset). Local model servers routinely cold-start on the
+/// first request — the very first prompt against a freshly-started
+/// Ollama frequently fails once and then succeeds on retry. Three
+/// attempts (1 initial + 2 retries) with exponential backoff covers
+/// that case without making a genuinely-broken endpoint feel like a
+/// hang.
+const MAX_RETRIES: u32 = 3;
+
+/// Base backoff in milliseconds. Doubled each retry: 500, 1000.
+/// Kept short because the user is staring at a live terminal — a
+/// 30-second wait on the third try would be worse than the original
+/// error.
+const RETRY_BACKOFF_MS: u64 = 500;
+
+/// Classify whether an error is worth retrying. Retrying a 401 just
+/// wastes the user's time and hides the real problem.
+fn is_retryable(e: &str) -> bool {
+    let lower = e.to_lowercase();
+    lower.contains("rate limit")
+        || lower.contains("429")
+        || lower.contains("too many requests")
+        || lower.contains("timeout")
+        || lower.contains("timed out")
+        || lower.contains("connection reset")
+        || lower.contains("connection closed")
+        || lower.contains("temporarily")
+        || lower.contains("try again")
+        || lower.contains("503")
+        || lower.contains("502")
+        || lower.contains("504")
+        || lower.contains("bad gateway")
+        || lower.contains("service unavailable")
+        || lower.contains("gateway timeout")
+}
+
 /// Adapter that implements kod's [`LlmProvider`] for any OpenAI-compatible endpoint.
 pub struct OpenAICompatProvider {
     inner: OpenAICompatible,
@@ -149,14 +185,51 @@ impl OpenAICompatProvider {
     }
 
     /// Run a request and split the collected stream into text + tool calls.
+    ///
+    /// Transient errors (rate limit, connection reset, 5xx) are retried
+    /// with exponential backoff up to [`MAX_RETRIES`]. Non-retryable
+    /// errors (auth, model not found, malformed request) return
+    /// immediately — retrying them only wastes time.
     async fn collect(
         &self,
         request: LlmRequest,
         stream: bool,
     ) -> Result<(String, Vec<ToolCall>, Option<kod_provider::TokenUsage>)> {
+        let mut attempt = 0u32;
+        loop {
+            attempt += 1;
+            match self.collect_once(&request, stream).await {
+                Ok(v) => return Ok(v),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if attempt < MAX_RETRIES && is_retryable(&msg) {
+                        let delay = RETRY_BACKOFF_MS * (1u64 << (attempt - 1).min(3));
+                        tracing::warn!(
+                            attempt,
+                            max_attempts = MAX_RETRIES,
+                            delay_ms = delay,
+                            error = %msg,
+                            "transient provider error; retrying"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    /// One attempt of the request. Split out so `collect` can retry
+    /// without rebuilding anything.
+    async fn collect_once(
+        &self,
+        request: &LlmRequest,
+        stream: bool,
+    ) -> Result<(String, Vec<ToolCall>, Option<kod_provider::TokenUsage>)> {
         let mut responses = self
             .inner
-            .generate_content(request, stream)
+            .generate_content(request.clone(), stream)
             .await
             .map_err(adk_err)?;
         let mut text = String::new();

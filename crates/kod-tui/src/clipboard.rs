@@ -70,3 +70,47 @@ pub fn write_clipboard(text: &str) -> bool {
     #[allow(unreachable_code)]
     false
 }
+
+
+/// Read the system clipboard into a string. Mirrors
+/// [`write_clipboard`]: same backends, same best-effort contract.
+/// Returns `None` when the clipboard is unreachable or empty.
+pub fn read_clipboard() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = Command::new("pbpaste").output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).into_owned();
+        return Some(s);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        for (bin, args) in [
+            ("xclip", vec!["-sel", "clipboard", "-o"]),
+            ("xsel", vec!["--clipboard", "--output"]),
+            ("wl-paste", vec![]),
+        ] {
+            let out = match Command::new(bin).args(&args).output() {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            if out.status.success() {
+                return Some(String::from_utf8_lossy(&out.stdout).into_owned());
+            }
+        }
+        return None;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // No Win32 clipboard read implemented yet; callers fall back
+        // to a message.
+        return None;
+    }
+
+    #[allow(unreachable_code)]
+    None
+}

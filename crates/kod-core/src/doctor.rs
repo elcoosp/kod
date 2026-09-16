@@ -52,6 +52,33 @@ impl DiagnosticReport {
     pub fn has_failures(&self) -> bool {
         self.checks.iter().any(|c| c.status == CheckStatus::Fail)
     }
+
+    /// Render the report as a JSON object with `ok` (bool), `checks`
+    /// (array of `{name, status, message}`), and `has_failures`
+    /// (bool). Kept in kod-core so `kod doctor --json` and any embedder
+    /// that wants to consume diagnostics use the same shape.
+    pub fn to_json(&self) -> serde_json::Value {
+        let checks: Vec<serde_json::Value> = self
+            .checks
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "name": c.name,
+                    "status": match c.status {
+                        CheckStatus::Ok => "ok",
+                        CheckStatus::Warn => "warn",
+                        CheckStatus::Fail => "fail",
+                    },
+                    "message": c.message,
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "ok": !self.has_failures(),
+            "has_failures": self.has_failures(),
+            "checks": checks,
+        })
+    }
 }
 
 /// Run every check against `config`. Pure over `config`: no network
@@ -147,6 +174,31 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
             }
         }
         Err(e) => report.push("memory", CheckStatus::Fail, format!("{e}")),
+    }
+
+    // Sandbox primitive. Informational — a session without one still
+    // runs `execute_command`, it just cannot require the sandbox.
+    {
+        use kod_tools::context::{SandboxMode, sandbox_invocation};
+        let cwd = std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        match sandbox_invocation(SandboxMode::Require, &cwd) {
+            Ok(Some(inv)) => report.push(
+                "sandbox",
+                CheckStatus::Ok,
+                format!("{} available (kod chat --sandbox)", inv.program),
+            ),
+            _ => {
+                #[cfg(target_os = "linux")]
+                let advice = "install bubblewrap to enable --sandbox";
+                #[cfg(target_os = "macos")]
+                let advice = "sandbox-exec is not available; `xcode-select --install` may fix it";
+                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+                let advice = "no sandbox primitive on this platform";
+
+                report.push("sandbox", CheckStatus::Warn, advice);
+            }
+        }
     }
 
     // Git availability. Only a warning — KOD runs fine without git,

@@ -185,6 +185,94 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/export",
         hint: "export session as markdown: /export [path]",
     },
+    SlashCommand {
+        name: "/memory",
+        hint: "long-term memory: /memory [search <q> | delete <id> | clear]",
+    },
+    SlashCommand {
+        name: "/map",
+        hint: "print the repository map (top-level symbols per file)",
+    },
+    SlashCommand {
+        name: "/context",
+        hint: "visualize context window usage and session totals",
+    },
+    SlashCommand {
+        name: "/last-prompt",
+        hint: "shortcut for /debug last-prompt",
+    },
+    SlashCommand {
+        name: "/diff",
+        hint: "show the most recent file diff (from checkpoints)",
+    },
+    SlashCommand {
+        name: "/attach",
+        hint: "attach a file to the next prompt: /attach <path>",
+    },
+    SlashCommand {
+        name: "/paste",
+        hint: "paste the system clipboard into the input box",
+    },
+    SlashCommand {
+        name: "/refine",
+        hint: "refine the last assistant reply: /refine <instruction>",
+    },
+    SlashCommand {
+        name: "/raw",
+        hint: "print the last assistant reply raw (no decoration)",
+    },
+    SlashCommand {
+        name: "/save",
+        hint: "save session to a file: /save <path>",
+    },
+    SlashCommand {
+        name: "/load",
+        hint: "load session from a JSON file: /load <path>",
+    },
+    SlashCommand {
+        name: "/history",
+        hint: "show recent prompt history",
+    },
+    SlashCommand {
+        name: "/branch",
+        hint: "drop a branch-point marker: /branch [label]",
+    },
+    SlashCommand {
+        name: "/system",
+        hint: "override the system prompt: /system <text> | /system clear",
+    },
+    SlashCommand {
+        name: "/grep",
+        hint: "regex search the chat history: /grep <regex>",
+    },
+    SlashCommand {
+        name: "/summarize",
+        hint: "LLM-summarize the session so far",
+    },
+    SlashCommand {
+        name: "/autocompact",
+        hint: "toggle auto-compaction: /autocompact on|off",
+    },
+    SlashCommand {
+        name: "/whoami",
+        hint: "session summary: model, skills, context, paths",
+    },
+    SlashCommand {
+        name: "/copy-history",
+        hint: "copy the Nth-last assistant reply: /copy-history <n>",
+    },
+    SlashCommand {
+        name: "/tools-list",
+        hint: "list registered tools",
+    },
+    SlashCommand {
+        name: "/notify",
+        hint: "toggle terminal bell on completion: /notify on|off",
+    },
+    SlashCommand {
+        name: "/tools-status",
+        hint: "show tool policy: network, confirm_writes, sandbox",
+    },
 ];
 
 /// What the generation is currently doing — shown in the header/status so
@@ -329,6 +417,20 @@ pub struct KodApp {
     pending_question: Option<PendingQuestion>,
     /// The buffer the user is typing into while a question is up.
     question_input: String,
+    /// Mid-session system prompt override. Prepended to every prompt
+    /// when set. Cleared with `/system clear`.
+    session_system_prompt: Option<String>,
+    /// When true (the default), `maybe_compact` fires when the context
+    /// crosses 4/5 of the window. When false, the user controls
+    /// compaction entirely with `/compact`.
+    autocompact_enabled: bool,
+    /// When true, a long turn rings the terminal bell. Toggle with
+    /// `/notify on|off`. Default true.
+    notify_bell_enabled: bool,
+    /// Files attached to the next prompt with `/attach`. Prepended as
+    /// `<file path="...">` blocks to the outgoing message. Cleared
+    /// after the prompt is dispatched.
+    attached_files: Vec<std::path::PathBuf>,
     /// Wall-clock instant the session started.
     session_started_at: Instant,
     /// Accumulated input tokens the provider has reported this session.
@@ -337,6 +439,9 @@ pub struct KodApp {
     session_input_tokens: usize,
     /// Accumulated output tokens the provider has reported this session.
     session_output_tokens: usize,
+    /// When the current generation started. Used to decide whether a
+    /// completion is worth a terminal bell — a 2-second turn is not.
+    turn_started_at: Option<Instant>,
     should_quit: bool,
     next_seq: u64,
 }
@@ -419,9 +524,14 @@ impl KodApp {
             pending_approval: None,
             pending_question: None,
             question_input: String::new(),
+            session_system_prompt: None,
+            autocompact_enabled: true,
+            notify_bell_enabled: true,
+            attached_files: Vec::new(),
             session_started_at: Instant::now(),
             session_input_tokens: 0,
             session_output_tokens: 0,
+            turn_started_at: None,
             should_quit: false,
             next_seq: 0,
         }
@@ -1351,6 +1461,7 @@ impl KodApp {
     pub fn begin_generation(&mut self) {
         self.generating = true;
         self.spinner_started = Some(Instant::now());
+        self.turn_started_at = Some(Instant::now());
         self.stream_flushed_bubble = false;
         self.last_error = None;
         // New turn: no real usage seen yet, so the char estimate
@@ -1708,6 +1819,9 @@ impl KodApp {
     /// Drop oldest messages once past 4/5 of the window, keeping the most
     /// recent 20. Announces itself so the user sees where they stand.
     fn maybe_compact(&mut self) {
+        if !self.autocompact_enabled {
+            return;
+        }
         let threshold = self.context_limit * COMPACT_AT_FRACTION_NUM / COMPACT_AT_FRACTION_DEN;
         if self.context_tokens < threshold || self.messages.len() <= 21 {
             return;
@@ -2567,6 +2681,85 @@ impl KodApp {
     }
 }
 
+/// Notification-bell toggle.
+impl KodApp {
+    pub fn set_notify_bell(&mut self, enabled: bool) {
+        self.notify_bell_enabled = enabled;
+    }
+    pub fn notify_bell(&self) -> bool {
+        self.notify_bell_enabled
+    }
+}
+
+/// Auto-compaction toggle.
+impl KodApp {
+    pub fn set_autocompact(&mut self, enabled: bool) {
+        self.autocompact_enabled = enabled;
+    }
+    pub fn autocompact(&self) -> bool {
+        self.autocompact_enabled
+    }
+}
+
+/// Mid-session system prompt override.
+impl KodApp {
+    pub fn set_session_system_prompt(&mut self, text: String) {
+        self.session_system_prompt = Some(text);
+    }
+    pub fn clear_session_system_prompt(&mut self) {
+        self.session_system_prompt = None;
+    }
+    pub fn session_system_prompt(&self) -> Option<&str> {
+        self.session_system_prompt.as_deref()
+    }
+}
+
+/// Whole-transcript replacement (`/load`).
+impl KodApp {
+    /// Replace the current chat with `messages`, resetting `sequence`
+    /// so the widget's sort is a no-op. Refuses to add a `sequence`
+    /// value past the existing `next_seq`.
+    pub fn replace_messages(&mut self, mut messages: Vec<Message>) {
+        for (i, m) in messages.iter_mut().enumerate() {
+            m.sequence = i as u64;
+        }
+        self.next_seq = messages.len() as u64;
+        self.messages = messages;
+        self.scroll_to_bottom();
+    }
+}
+
+/// File-attachment state.
+impl KodApp {
+    /// Add a file to the pending attachment list. Returns false when
+    /// the file cannot be read — the caller can then print a message.
+    pub fn attach_file(&mut self, path: std::path::PathBuf) -> bool {
+        if !path.is_file() {
+            return false;
+        }
+        if self.attached_files.contains(&path) {
+            return true; // idempotent
+        }
+        self.attached_files.push(path);
+        true
+    }
+
+    /// Take and clear the attachments, returning the file list.
+    pub fn take_attachments(&mut self) -> Vec<std::path::PathBuf> {
+        std::mem::take(&mut self.attached_files)
+    }
+
+    /// The currently attached files (for display).
+    pub fn attached_files(&self) -> &[std::path::PathBuf] {
+        &self.attached_files
+    }
+
+    /// Clear all attachments.
+    pub fn clear_attachments(&mut self) {
+        self.attached_files.clear();
+    }
+}
+
 /// Question-dialog state, alongside the approval dialog.
 impl KodApp {
     pub fn set_pending_question(&mut self, q: PendingQuestion) {
@@ -2589,6 +2782,42 @@ impl KodApp {
     }
     pub fn question_input_mut(&mut self) -> &mut String {
         &mut self.question_input
+    }
+}
+
+/// Turn-completion notification.
+impl KodApp {
+    /// If the turn that just finished ran longer than `threshold`, ring
+    /// the terminal bell and (on supporting terminals) send an OSC 9
+    /// notification. Returns the elapsed time when a bell fired, so
+    /// the caller can print an informational line.
+    ///
+    /// Bells are cheap and silent on most setups; a threshold keeps
+    /// them from firing on every trivial turn. 30 seconds is
+    /// conservative — a user can react, but not every keystroke gets a
+    /// beep.
+    pub fn notify_turn_complete(&mut self, threshold: std::time::Duration) -> Option<std::time::Duration> {
+        if !self.notify_bell_enabled {
+            // Still clear the timestamp so the state does not leak
+            // into the next turn's measurement.
+            self.turn_started_at = None;
+            return None;
+        }
+        let started = self.turn_started_at.take()?;
+        let elapsed = started.elapsed();
+        if elapsed < threshold {
+            return None;
+        }
+        // Terminal bell.
+        eprint!("\x07");
+        // OSC 9 notification (iTerm2, Windows Terminal, kitty). Some
+        // terminals do not implement it and ignore the sequence.
+        let msg = format!(
+            "kod: turn completed in {}s",
+            elapsed.as_secs()
+        );
+        eprint!("\x1b]9;{}\x07", msg);
+        Some(elapsed)
     }
 }
 

@@ -24,11 +24,11 @@ use std::time::Duration;
 
 /// Help text for the `/help` command.
 ///
-/// Kept in sync with `kod_tui::app::SLASH_COMMANDS` by
+/// Kept in sync with `crate::app::SLASH_COMMANDS` by
 /// `test_slash_help_lists_every_command` — adding a command to
 /// `SLASH_COMMANDS` without updating this string fails the test, so
 /// the help output and the `/` autocomplete cannot drift apart.
-const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/doctor — print a diagnostics report (same as `kod doctor`)\n/init — onboarding info: config path, model profiles, next steps\n/regenerate — regenerate the last assistant reply\n/delete — remove the last user+assistant exchange\n/export [path] — export session as markdown (stdout when no path)\n/rollback [id] — restore a file from a checkpoint (newest when no id)\n/checkpoints — list file checkpoints for this project\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
+const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/doctor — print a diagnostics report (same as `kod doctor`)\n/init — onboarding info: config path, model profiles, next steps\n/regenerate — regenerate the last assistant reply\n/delete — remove the last user+assistant exchange\n/export [path] — export session as markdown (stdout when no path)\n/rollback [id] — restore a file from a checkpoint (newest when no id)\n/checkpoints — list file checkpoints for this project\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\\n/tools-status — show tool policy: network, confirm_writes, sandbox\\n/notify on|off — toggle terminal bell on long turn completion\\n/tools-list — list registered tools\\n/copy-history <n> — copy the Nth-last assistant reply\\n/whoami — session summary: model, skills, context, paths\\n/autocompact on|off — toggle auto-compaction\\n/summarize — ask the model to summarize the session so far\\n/grep <regex> — regex search the chat history\\n/system <text> — override the system prompt for this session\\n/branch [label] — drop a branch-point marker in the chat\\n/history — show recent prompt history\\n/load <path> — load a JSON session file\\n/save <path> — save session markdown to a file\\n/raw — print the last assistant reply raw (no decoration)\\n/refine <instruction> — refine the last assistant reply\n/paste — paste clipboard into the input box\n/attach <path> — attach a file to the next prompt\n/diff — show the most recent file change (from checkpoints)\n/last-prompt — write the most recent prompt to ~/.kod/last_prompt.txt\n/context — visualize context window usage and session totals\n/memory [search <q> | delete <id> | clear] — long-term memory store\n/map [max-chars] — repository map (top-level symbols per file)\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
 
 /// Main TUI application loop
 pub struct TuiLoop {
@@ -56,6 +56,9 @@ pub struct TuiLoop {
     /// before this — the doc comment on the persistence module
     /// promised cross-restart history that did not happen.
     persist_history: bool,
+    /// When true, shell commands require the platform sandbox.
+    /// Set from the `--sandbox` CLI flag before `run`.
+    sandbox_required: bool,
 }
 
 impl TuiLoop {
@@ -69,6 +72,7 @@ impl TuiLoop {
             gen_task: None,
             keybindings: load_bindings(),
             persist_history: false,
+            sandbox_required: false,
         }
     }
 
@@ -76,6 +80,12 @@ impl TuiLoop {
     /// callers load the map once in [`TuiLoop::new`].
     pub fn set_keybindings(&mut self, bindings: std::collections::HashMap<char, KeyAction>) {
         self.keybindings = bindings;
+    }
+
+    /// When true, `init_engine` requires the platform sandbox for shell
+    /// commands. Set from the `--sandbox` CLI flag before `run`.
+    pub fn set_sandbox_mode(&mut self, required: bool) {
+        self.sandbox_required = required;
     }
 
     /// Set up the engine with the OpenAI-compatible provider
@@ -123,6 +133,9 @@ impl TuiLoop {
         engine.set_hooks(config.hooks.clone());
         engine.set_network_access(config.llm.network_access);
         engine.set_confirm_writes(config.tools.confirm_writes);
+        if self.sandbox_required {
+            engine.set_sandbox_mode(kod_tools::context::SandboxMode::Require);
+        }
 
         engine.start().await?;
         self.engine = Some(Arc::new(engine));
@@ -458,6 +471,17 @@ impl TuiLoop {
             Event::ResponseComplete(text) => {
                 self.gen_task = None;
                 self.app.finish_response(&text);
+                // Notify only for turns longer than 30 seconds — a
+                // quick exchange does not deserve a bell.
+                if let Some(elapsed) = self
+                    .app
+                    .notify_turn_complete(std::time::Duration::from_secs(30))
+                {
+                    self.app.push_system_message(&format!(
+                        "(turn took {}s — press any key to focus)",
+                        elapsed.as_secs(),
+                    ));
+                }
                 // Snapshot the transcript after every completed turn.
                 // The doc on KodApp::save_session has always claimed
                 // "called on quit / after each assistant reply", but
@@ -664,6 +688,51 @@ impl TuiLoop {
         }
 
         self.app.submit_input();
+
+        // Prepend attached files. The `input` sent to the engine is
+        // rewritten here; the display row was pushed by submit_input
+        // above using the user's literal text, which is what the user
+        // wants to see in the chat.
+        // System prompt override wraps the outgoing message.
+        let input_with_system = match self.app.session_system_prompt() {
+            Some(sys) if !sys.is_empty() => format!(
+                "[system] {sys}\n\n[user] {input}",
+            ),
+            _ => input.clone(),
+        };
+        let input = input_with_system;
+
+        let attached = self.app.take_attachments();
+        let input = if attached.is_empty() {
+            input
+        } else {
+            let mut buf = String::with_capacity(input.len() + 512);
+            for f in &attached {
+                match std::fs::read_to_string(f) {
+                    Ok(body) => {
+                        let shown = if body.len() > 64 * 1024 {
+                            format!("{}…\n[truncated]", &body[..64 * 1024])
+                        } else {
+                            body
+                        };
+                        buf.push_str(&format!(
+                            "<file path=\"{}\">\n{}\n</file>\n",
+                            f.display(),
+                            shown,
+                        ));
+                    }
+                    Err(e) => {
+                        self.app.push_system_message(&format!(
+                            "Could not read attachment {}: {}",
+                            f.display(),
+                            e
+                        ));
+                    }
+                }
+            }
+            buf.push_str(&input);
+            buf
+        };
 
         // Remember the prompt for /retry (and the `r` key). The previous
         // code only set last_prompt from retry_generation itself, so
@@ -1007,6 +1076,67 @@ impl TuiLoop {
                 None => self.show_and_refresh_models().await?,
             },
             "/skills" => {
+                // `/skills <name>` prints the full instructions of one
+                // skill. `/skills` (no arg) keeps the existing listing.
+                if let Some(name) = parts.next() {
+                    let Some(engine) = &self.engine else {
+                        self.app.push_system_message("Engine not initialized.");
+                        return Ok(());
+                    };
+                    // Find the skill by name from the router's matcher.
+                    let details = engine.loaded_skill_details().await;
+                    let found = details.iter().find(|(n, _)| n == name).cloned();
+                    match found {
+                        Some((n, d)) => {
+                            // Read the file for the full content.
+                            let config = KodConfig::load_default().ok();
+                            let mut body: Option<String> = None;
+                            if let Some(cfg) = &config {
+                                if let Ok(dirs) = cfg.skills_dirs() {
+                                    for dir in dirs.iter() {
+                                        if !dir.is_dir() {
+                                            continue;
+                                        }
+                                        for entry in walkdir::WalkDir::new(dir)
+                                            .follow_links(false)
+                                            .into_iter()
+                                            .filter_map(|e| e.ok())
+                                        {
+                                            if !entry.file_type().is_file() {
+                                                continue;
+                                            }
+                                            if entry.path().extension().and_then(|s| s.to_str()) != Some("md") {
+                                                continue;
+                                            }
+                                            let stem = entry.path().file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                                            if stem == n {
+                                                if let Ok(text) = std::fs::read_to_string(entry.path()) {
+                                                    body = Some(text);
+                                                }
+                                                break;
+                                            }
+                                        }
+                                        if body.is_some() {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            let text = body.unwrap_or_else(|| format!("(description) {}", d));
+                            self.app.push_system_message(&format!(
+                                "Skill {}\n\n{}",
+                                n,
+                                text,
+                            ));
+                        }
+                        None => self.app.push_system_message(&format!(
+                            "No skill named {:?}. Run /skills to list.",
+                            name,
+                        )),
+                    }
+                    return Ok(());
+                }
+
                 let details: Vec<(String, String)> = if let Some(engine) = &self.engine {
                     engine.loaded_skill_details().await
                 } else {
@@ -1417,6 +1547,753 @@ impl TuiLoop {
                     None => self.app.push_system_message("Nothing to delete."),
                 }
             }
+            "/memory" => {
+                let config = match KodConfig::load_default() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        self.app
+                            .push_system_message(&format!("Could not load config: {e}"));
+                        return Ok(());
+                    }
+                };
+                let path = match config.memory_db_path() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        self.app.push_system_message(&format!(
+                            "Could not determine memory database path: {e}"
+                        ));
+                        return Ok(());
+                    }
+                };
+                let manager = match kod_memory::MemoryManager::new(
+                    path,
+                    config.memory.short_term_capacity,
+                ) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        self.app.push_system_message(&format!(
+                            "Could not open memory database: {e}"
+                        ));
+                        return Ok(());
+                    }
+                };
+
+                let sub = parts.next();
+                match sub {
+                    Some("search") => {
+                        let query: String = parts.collect::<Vec<_>>().join(" ");
+                        if query.trim().is_empty() {
+                            self.app.push_system_message("Usage: /memory search <text>");
+                        } else {
+                            match manager.search(&query).await {
+                                Ok(hits) if hits.is_empty() => self.app.push_system_message(
+                                    &format!("No memory entries match {:?}.", query),
+                                ),
+                                Ok(hits) => {
+                                    let mut msg = format!(
+                                        "{} memory entr{} match {:?}:\n",
+                                        hits.len(),
+                                        if hits.len() == 1 { "y" } else { "ies" },
+                                        query,
+                                    );
+                                    for e in hits.iter().take(30) {
+                                        let short = &e.id.as_uuid().to_string()[..8];
+                                        let one = e.content.lines().next().unwrap_or("");
+                                        let shown = if one.chars().count() > 100 {
+                                            let s: String = one.chars().take(100).collect();
+                                            format!("{s}…")
+                                        } else {
+                                            one.to_string()
+                                        };
+                                        msg.push_str(&format!("  {}  {}\n", short, shown));
+                                    }
+                                    self.app.push_system_message(msg.trim_end());
+                                }
+                                Err(e) => self.app.push_system_message(&format!(
+                                    "Search failed: {e}"
+                                )),
+                            }
+                        }
+                    }
+                    Some("delete") => match parts.next() {
+                        Some(prefix) => match manager.get_all_long_term().await {
+                            Ok(all) => match all
+                                .iter()
+                                .find(|e| e.id.as_uuid().to_string().starts_with(prefix))
+                            {
+                                Some(entry) => {
+                                    match manager
+                                        .remove(
+                                            kod_types::MemoryType::LongTerm,
+                                            &entry.id,
+                                        )
+                                        .await
+                                    {
+                                        Ok(()) => self.app.push_system_message(
+                                            &format!("Deleted memory entry {}.", &entry.id.as_uuid().to_string()[..8]),
+                                        ),
+                                        Err(e) => self.app.push_system_message(&format!(
+                                            "Delete failed: {e}"
+                                        )),
+                                    }
+                                }
+                                None => self.app.push_system_message(&format!(
+                                    "No memory entry with id prefix {:?}.",
+                                    prefix
+                                )),
+                            },
+                            Err(e) => self.app.push_system_message(&format!(
+                                "Could not read memory database: {e}"
+                            )),
+                        },
+                        None => self.app.push_system_message("Usage: /memory delete <id>"),
+                    },
+                    Some("clear") => {
+                        match manager.get_all_long_term().await {
+                            Ok(all) => {
+                                let n = all.len();
+                                for e in &all {
+                                    let _ = manager
+                                        .remove(
+                                            kod_types::MemoryType::LongTerm,
+                                            &e.id,
+                                        )
+                                        .await;
+                                }
+                                self.app.push_system_message(&format!(
+                                    "Cleared {} memory entr{}.",
+                                    n,
+                                    if n == 1 { "y" } else { "ies" },
+                                ));
+                            }
+                            Err(e) => self.app.push_system_message(&format!(
+                                "Could not read memory database: {e}"
+                            )),
+                        }
+                    }
+                    _ => {
+                        // No subcommand: list entries.
+                        match manager.get_all_long_term().await {
+                            Ok(all) if all.is_empty() => self.app.push_system_message(
+                                "No long-term memory entries. Add some with the memory tools.",
+                            ),
+                            Ok(all) => {
+                                let mut msg = format!(
+                                    "Long-term memory ({} entries):\n",
+                                    all.len(),
+                                );
+                                for e in all.iter().take(30) {
+                                    let short = &e.id.as_uuid().to_string()[..8];
+                                    let one = e.content.lines().next().unwrap_or("");
+                                    let shown = if one.chars().count() > 100 {
+                                        let s: String = one.chars().take(100).collect();
+                                        format!("{s}…")
+                                    } else {
+                                        one.to_string()
+                                    };
+                                    msg.push_str(&format!("  {}  {}\n", short, shown));
+                                }
+                                if all.len() > 30 {
+                                    msg.push_str(&format!("… and {} more.", all.len() - 30));
+                                }
+                                msg.push_str(
+                                    "\nSubcommands: /memory search <q>, /memory delete <id>, /memory clear",
+                                );
+                                self.app.push_system_message(msg.trim_end());
+                            }
+                            Err(e) => self.app.push_system_message(&format!(
+                                "Could not read memory database: {e}"
+                            )),
+                        }
+                    }
+                }
+            }
+            "/context" => {
+                let used = self.app.context_tokens();
+                let limit = self.app.context_limit();
+                let pct = self.app.context_usage() * 100.0;
+                let inp = self.app.session_input_tokens();
+                let out = self.app.session_output_tokens();
+                let total = self.app.session_total_tokens();
+                let msg_count = self.app.messages().len();
+                let assistant_count = self.app
+                    .messages()
+                    .iter()
+                    .filter(|m| matches!(m.role, kod_types::MessageRole::Assistant))
+                    .count();
+                let tool_count = self.app
+                    .messages()
+                    .iter()
+                    .filter(|m| matches!(m.role, kod_types::MessageRole::Tool))
+                    .count();
+                let warning = self.app.context_warning().unwrap_or("");
+                let mut msg = String::new();
+                msg.push_str("Context window\n");
+                msg.push_str(&format!("  approx used:  {} tokens\n", used));
+                msg.push_str(&format!("  limit:        {} tokens\n", limit));
+                msg.push_str(&format!("  fill:         {:.1}%\n", pct));
+                msg.push_str(&format!("  label:        {}\n", self.app.context_label()));
+                if !warning.is_empty() {
+                    msg.push_str(&format!("  warning:      {}\n", warning));
+                }
+                msg.push_str("\nSession totals (from provider usage)\n");
+                msg.push_str(&format!("  input:        {} tokens\n", inp));
+                msg.push_str(&format!("  output:       {} tokens\n", out));
+                msg.push_str(&format!("  total:        {} tokens\n", total));
+                msg.push_str("\nMessage counts\n");
+                msg.push_str(&format!("  total:        {}\n", msg_count));
+                msg.push_str(&format!("  assistant:    {}\n", assistant_count));
+                msg.push_str(&format!("  tool:         {}\n", tool_count));
+                msg.push_str(&format!(
+                    "\nAuto-compact fires at {}% of the window.\n",
+                    4 * 100 / 5
+                ));
+                msg.push_str("Force with /compact. Reset with /clear.");
+                self.app.push_system_message(&msg);
+            }
+            "/last-prompt" => {
+                // Shortcut for /debug last-prompt.
+                Box::pin(self.handle_command("/debug last-prompt")).await?;
+            }
+            "/diff" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                let Some(cp) = engine.checkpoints() else {
+                    self.app.push_system_message(
+                        "No checkpoint directory — a home directory is required.",
+                    );
+                    return Ok(());
+                };
+                match cp.list() {
+                    Ok(list) if list.is_empty() => self.app.push_system_message(
+                        "No file diffs to show. A checkpoint is written before each \
+                         write_file or patch_file.",
+                    ),
+                    Ok(list) => {
+                        // Show the most recent checkpoint's diff. If the
+                        // snapshot was for a create, the current file is
+                        // the new content.
+                        let newest = &list[0];
+                        let current = std::fs::read_to_string(&newest.path).unwrap_or_default();
+                        let diff = kod_tools::patch::render_unified_diff(
+                            &newest.content,
+                            &current,
+                            &newest.path.display().to_string(),
+                        );
+                        if diff.trim().is_empty() {
+                            self.app.push_system_message(&format!(
+                                "Newest checkpoint ({}): {} — no change since.",
+                                newest.id,
+                                newest.path.display(),
+                            ));
+                        } else {
+                            self.app.push_system_message(&format!(
+                                "Most recent file change ({}: {} · {})\n\n{}",
+                                newest.id,
+                                newest.tool,
+                                newest.path.display(),
+                                diff,
+                            ));
+                        }
+                    }
+                    Err(e) => self.app.push_system_message(&format!(
+                        "Could not read checkpoints: {e}",
+                    )),
+                }
+            }
+            "/attach" => {
+                match parts.next() {
+                    None => {
+                        // No argument: list current attachments and the
+                        // usage line.
+                        let attached = self.app.attached_files();
+                        if attached.is_empty() {
+                            self.app.push_system_message(
+                                "Usage: /attach <path> — attach a file to the next prompt. \
+                                 \nClear with /attach clear. Multiple files supported.",
+                            );
+                        } else {
+                            let mut msg = format!(
+                                "Attached files ({}):\n",
+                                attached.len(),
+                            );
+                            for f in attached {
+                                msg.push_str(&format!("  {}\n", f.display()));
+                            }
+                            msg.push_str("\n/attach clear to remove, or send your next prompt.");
+                            self.app.push_system_message(&msg);
+                        }
+                    }
+                    Some("clear") => {
+                        let n = self.app.attached_files().len();
+                        self.app.clear_attachments();
+                        self.app
+                            .push_system_message(&format!("Cleared {} attachment(s).", n));
+                    }
+                    Some(path_str) => {
+                        let path = std::path::PathBuf::from(path_str);
+                        if self.app.attach_file(path.clone()) {
+                            self.app.push_system_message(&format!(
+                                "Attached {}. It will be sent with the next prompt.",
+                                path.display()
+                            ));
+                        } else {
+                            self.app.push_system_message(&format!(
+                                "Could not attach {}: not a readable file.",
+                                path.display()
+                            ));
+                        }
+                    }
+                }
+            }
+            "/paste" => {
+                // Read the clipboard and place its contents into the
+                // input box, at the cursor. Nothing is sent.
+                match crate::clipboard::read_clipboard() {
+                    Some(text) if !text.is_empty() => {
+                        let lines = text.lines().count();
+                        let bytes = text.len();
+                        for c in text.chars() {
+                            if c == '\n' {
+                                self.app.insert_newline();
+                            } else {
+                                self.app.add_char(c);
+                            }
+                        }
+                        self.app.set_input_mode(InputMode::Insert);
+                        self.app.push_system_message(&format!(
+                            "Pasted {} line(s), {} byte(s) into the input box. \
+                             Edit as needed, Enter sends.",
+                            lines,
+                            bytes,
+                        ));
+                    }
+                    Some(_) => self.app.push_system_message("Clipboard is empty."),
+                    None => self.app.push_system_message(
+                        "Could not read the clipboard. On Linux, install xclip, xsel, \
+                         or wl-clipboard.",
+                    ),
+                }
+            }
+            "/refine" => {
+                if self.app.is_generating() {
+                    self.app.push_system_message(
+                        "Wait for the current prompt to finish before refining.",
+                    );
+                    return Ok(());
+                }
+                let instruction: String = parts.collect::<Vec<_>>().join(" ");
+                if instruction.trim().is_empty() {
+                    self.app.push_system_message(
+                        "Usage: /refine <instruction> — refine the last assistant reply \
+                         given this instruction. Example: /refine make it shorter",
+                    );
+                    return Ok(());
+                }
+                let Some(last_assistant) = self.app.last_assistant_text() else {
+                    self.app.push_system_message(
+                        "Nothing to refine — no assistant reply yet.",
+                    );
+                    return Ok(());
+                };
+                let prior = last_assistant.to_string();
+                let prompt = format!(
+                    "Here is your previous reply:\n\n{prior}\n\n\
+                     Refine it according to this instruction:\n\n{instruction}",
+                );
+                // Drop the last assistant reply so we do not create a
+                // chain of unrefined → refined → refined again.
+                let _ = self.app.drop_last_exchange();
+                self.app.set_input(prompt);
+                self.app
+                    .push_system_message("Refining the last reply…");
+                Box::pin(self.dispatch_prompt()).await?;
+            }
+            "/raw" => {
+                // Print the last assistant reply with no decoration —
+                // no markdown fences, no bubble frame. Useful when
+                // copy-pasting code from a rendered reply.
+                let text = self.app.last_assistant_text().map(|s| s.to_string());
+                match text {
+                    Some(t) => {
+                        println!();
+                        println!("{}", t);
+                        println!();
+                        self.app.push_system_message(
+                            "(raw reply printed to stdout — select with your terminal)",
+                        );
+                    }
+                    None => self.app.push_system_message(
+                        "No assistant reply yet.",
+                    ),
+                }
+            }
+            "/save" => {
+                let path = match parts.next() {
+                    Some(p) => std::path::PathBuf::from(p),
+                    None => {
+                        self.app.push_system_message("Usage: /save <path>");
+                        return Ok(());
+                    }
+                };
+                if let Some(parent) = path.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let markdown = self.app.export_markdown();
+                match std::fs::write(&path, markdown.as_bytes()) {
+                    Ok(()) => self.app.push_system_message(&format!(
+                        "Saved session ({} bytes) to {}",
+                        markdown.len(),
+                        path.display(),
+                    )),
+                    Err(e) => self.app
+                        .push_system_message(&format!("Save failed: {e}")),
+                }
+            }
+            "/load" => {
+                let path = match parts.next() {
+                    Some(p) => std::path::PathBuf::from(p),
+                    None => {
+                        self.app.push_system_message("Usage: /load <path>");
+                        return Ok(());
+                    }
+                };
+                match std::fs::read_to_string(&path) {
+                    Ok(_) => {
+                        // Only the JSON serialized session round-trips;
+                        // markdown is one-way. Try JSON first.
+                        match std::fs::read_to_string(&path)
+                            .ok()
+                            .and_then(|s| serde_json::from_str::<Vec<crate::app::Message>>(&s).ok())
+                        {
+                            Some(msgs) => {
+                                let n = msgs.len();
+                                self.app.replace_messages(msgs);
+                                self.app.push_system_message(&format!(
+                                    "Loaded {} message(s) from {}",
+                                    n,
+                                    path.display(),
+                                ));
+                            }
+                            None => self.app.push_system_message(
+                                "That file is not a JSON session file. Use /export --json to produce one.",
+                            ),
+                        }
+                    }
+                    Err(e) => self.app
+                        .push_system_message(&format!("Load failed: {e}")),
+                }
+            }
+            "/history" => {
+                let hist = self.app.input_history();
+                if hist.is_empty() {
+                    self.app.push_system_message("No prompt history yet.");
+                } else {
+                    // Show up to the last 30 prompts with a re-run hint.
+                    let start = hist.len().saturating_sub(30);
+                    let mut msg = format!(
+                        "Prompt history ({} total, showing last {}):\n",
+                        hist.len(),
+                        hist.len() - start,
+                    );
+                    for (i, p) in hist[start..].iter().enumerate() {
+                        let n = start + i + 1;
+                        let one = p.lines().next().unwrap_or("");
+                        let shown: String = if one.chars().count() > 100 {
+                            one.chars().take(100).collect::<String>() + "…"
+                        } else {
+                            one.to_string()
+                        };
+                        msg.push_str(&format!("  {:>3}. {}\n", n, shown));
+                    }
+                    msg.push_str("\nUp-arrow in insert mode recalls history.");
+                    self.app.push_system_message(&msg);
+                }
+            }
+            "/branch" => {
+                // Drop a system marker in the chat. A subsequent
+                // /save <path> captures everything up to this point,
+                // making the marker a "branch from here" anchor for a
+                // manual workflow. Automatic branch-state capture is
+                // a follow-up.
+                let n = self.app.messages().len();
+                let label = parts
+                    .next()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("branch-{}", n));
+                self.app.push_system_message(&format!(
+                    "⤵ branch point: {} ({} messages so far). Use /save <path> to capture this state.",
+                    label, n,
+                ));
+            }
+            "/system" => {
+                let rest: String = parts.collect::<Vec<_>>().join(" ");
+                let rest = rest.trim();
+                if rest.eq_ignore_ascii_case("clear") || rest.eq_ignore_ascii_case("off") {
+                    self.app.clear_session_system_prompt();
+                    self.app
+                        .push_system_message("System prompt override cleared.");
+                } else if rest.is_empty() {
+                    match self.app.session_system_prompt() {
+                        Some(s) => {
+                            let shown = if s.len() > 300 {
+                                format!("{}…", &s[..300])
+                            } else {
+                                s.to_string()
+                            };
+                            self.app.push_system_message(&format!(
+                                "Active system prompt override:\n\n{}\n\nUse /system clear to remove it.",
+                                shown,
+                            ));
+                        }
+                        None => self.app.push_system_message(
+                            "No system prompt override set. Usage: /system <text>, or /system clear.",
+                        ),
+                    }
+                } else {
+                    self.app.set_session_system_prompt(rest.to_string());
+                    let shown = if rest.len() > 80 {
+                        format!("{}…", &rest[..80])
+                    } else {
+                        rest.to_string()
+                    };
+                    self.app.push_system_message(&format!(
+                        "System prompt override set: {}\nPrepended to every subsequent prompt.",
+                        shown,
+                    ));
+                }
+            }
+            "/summarize" => {
+                if self.app.is_generating() {
+                    self.app.push_system_message(
+                        "Wait for the current prompt to finish before summarizing.",
+                    );
+                    return Ok(());
+                }
+                let Some(engine) = self.engine.clone() else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                let transcript = self.app.export_markdown();
+                if transcript.trim().is_empty() {
+                    self.app.push_system_message("Nothing to summarize.");
+                    return Ok(());
+                }
+                let prompt = format!(
+                    "Summarize the following coding session in 4-6 bullet points. \
+                     Capture: what was asked, what was done, any files touched, \
+                     and any open questions or blockers. Be terse.\n\n{}",
+                    transcript,
+                );
+                self.app.begin_generation();
+                let event_tx = self.event_handler.sender();
+                tokio::spawn(async move {
+                    match engine.process(&prompt).await {
+                        Ok(resp) => {
+                            let text = resp.text.unwrap_or_default();
+                            let _ = event_tx
+                                .send(Event::ResponseComplete(text))
+                                .await;
+                        }
+                        Err(e) => {
+                            let _ = event_tx.send(Event::Error(e.to_string())).await;
+                        }
+                    }
+                });
+            }
+            "/autocompact" => {
+                match parts.next() {
+                    Some("on") | Some("true") => {
+                        self.app.set_autocompact(true);
+                        self.app.push_system_message("Auto-compaction enabled.");
+                    }
+                    Some("off") | Some("false") => {
+                        self.app.set_autocompact(false);
+                        self.app.push_system_message(
+                            "Auto-compaction disabled. Use /compact to compact manually.",
+                        );
+                    }
+                    Some("status") | None => {
+                        let on = self.app.autocompact();
+                        let status = if on { "enabled" } else { "disabled" };
+                        self.app.push_system_message(&format!(
+                            "Auto-compaction is {status}. Toggle with /autocompact on|off.",
+                        ));
+                    }
+                    Some(other) => self.app.push_system_message(&format!(
+                        "Unknown argument {:?}. Use /autocompact on|off|status.",
+                        other,
+                    )),
+                }
+            }
+            "/whoami" => {
+                // Session summary: everything a user wants to see in
+                // one place when they forget where they are.
+                let model = self.app.model_label().to_string();
+                let skills = self.app.loaded_skills().len();
+                let msgs = self.app.messages().len();
+                let ctx = self.app.context_label();
+                let tools_on = self.app.show_tools();
+                let auto_on = self.app.autocompact();
+                let theme = self.app.theme_name().to_string();
+                let goal = self.app.goal().map(|g| g.to_string());
+                let sys_override = self.app.session_system_prompt().is_some();
+                let attached = self.app.attached_files().len();
+                let config_path = KodConfig::config_dir()
+                    .ok()
+                    .map(|d| d.join("config.toml").display().to_string())
+                    .unwrap_or_else(|| "(unknown)".to_string());
+                let session_path = crate::app::KodApp::session_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "(unavailable)".to_string());
+
+                let mut msg = String::new();
+                msg.push_str("Session summary\n");
+                msg.push_str(&format!("  model:         {}\n", model));
+                msg.push_str(&format!("  skills:        {}\n", skills));
+                msg.push_str(&format!("  messages:      {}\n", msgs));
+                msg.push_str(&format!("  context:       {}\n", ctx));
+                msg.push_str(&format!("  theme:         {}\n", theme));
+                msg.push_str(&format!("  tool output:   {}\n", if tools_on { "shown" } else { "hidden" }));
+                msg.push_str(&format!("  autocompact:   {}\n", if auto_on { "on" } else { "off" }));
+                msg.push_str(&format!("  system prompt: {}\n", if sys_override { "override active" } else { "(default)" }));
+                msg.push_str(&format!("  attachments:   {}\n", attached));
+                if let Some(g) = goal {
+                    let shown: String = if g.chars().count() > 60 {
+                        g.chars().take(60).collect::<String>() + "…"
+                    } else {
+                        g
+                    };
+                    msg.push_str(&format!("  goal:          {}\n", shown));
+                }
+                msg.push_str("\nPaths\n");
+                msg.push_str(&format!("  config:  {}\n", config_path));
+                msg.push_str(&format!("  session: {}\n", session_path));
+                self.app.push_system_message(&msg.trim_end().to_string());
+            }
+            "/copy-history" => {
+                // Copy the Nth-last assistant reply to the clipboard.
+                let n = parts
+                    .next()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(1);
+                if n == 0 {
+                    self.app
+                        .push_system_message("Nth-last means 1 for the most recent.");
+                    return Ok(());
+                }
+                let assistants: Vec<&str> = self
+                    .app
+                    .messages()
+                    .iter()
+                    .rev()
+                    .filter(|m| matches!(m.role, kod_types::MessageRole::Assistant))
+                    .map(|m| m.content.as_str())
+                    .collect();
+                match assistants.get(n - 1) {
+                    Some(text) => {
+                        if crate::clipboard::write_clipboard(text) {
+                            self.app.push_system_message(&format!(
+                                "Copied assistant reply #{} ({} chars) to the clipboard.",
+                                n,
+                                text.len(),
+                            ));
+                        } else {
+                            self.app.push_system_message(
+                                "Clipboard write failed — no pbcopy/xclip/xsel available.",
+                            );
+                        }
+                    }
+                    None => {
+                        let total = assistants.len();
+                        self.app.push_system_message(&format!(
+                            "No assistant reply #{} — there are {} total.",
+                            n, total,
+                        ));
+                    }
+                }
+            }
+            "/tools-list" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                let defs = engine.router().tool_definitions().await;
+                if defs.is_empty() {
+                    self.app.push_system_message("No tools registered.");
+                } else {
+                    let mut msg = format!("Registered tools ({}):\n", defs.len());
+                    for d in &defs {
+                        let short = if d.description.len() > 80 {
+                            format!("{}…", &d.description[..80])
+                        } else {
+                            d.description.clone()
+                        };
+                        msg.push_str(&format!("  {:<16} {}\n", d.name, short));
+                    }
+                    self.app.push_system_message(msg.trim_end());
+                }
+            }
+            "/notify" => {
+                match parts.next() {
+                    Some("on") | Some("true") => {
+                        self.app.set_notify_bell(true);
+                        self.app.push_system_message(
+                            "Terminal bell on completion enabled.",
+                        );
+                    }
+                    Some("off") | Some("false") => {
+                        self.app.set_notify_bell(false);
+                        self.app.push_system_message(
+                            "Terminal bell disabled.",
+                        );
+                    }
+                    Some("status") | None => {
+                        let on = self.app.notify_bell();
+                        self.app.push_system_message(&format!(
+                            "Completion bell is {}. Toggle with /notify on|off.",
+                            if on { "enabled" } else { "disabled" },
+                        ));
+                    }
+                    Some(other) => self.app.push_system_message(&format!(
+                        "Unknown argument {:?}. Use /notify on|off|status.",
+                        other,
+                    )),
+                }
+            }
+            "/tools-status" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                let net = engine.network_access_setting();
+                let confirm = engine.confirm_writes_setting();
+                let sandbox = engine.sandbox_setting();
+                let config_path = KodConfig::config_dir()
+                    .ok()
+                    .map(|d| d.join("config.toml").display().to_string())
+                    .unwrap_or_else(|| "(unknown)".to_string());
+                let msg = format!(
+                    "Tool policy\n\
+                       network_access: {}\n\
+                       confirm_writes: {}\n\
+                       sandbox:        {:?}\n\
+                       config:         {}\n\
+                     \n\
+                     Change these with `tools.confirm_writes` / `llm.network_access`\
+                     in the config, or `kod chat --sandbox`.\n\
+                     `kod tools` lists every registered tool.",
+                    if net { "enabled" } else { "disabled" },
+                    if confirm { "enabled (writes prompt)" } else { "disabled" },
+                    sandbox,
+                    config_path,
+                );
+                self.app.push_system_message(&msg);
+            }
             "/export" => {
                 let arg = parts.next().map(|s| s.to_string());
                 let markdown = self.app.export_markdown();
@@ -1543,8 +2420,59 @@ impl TuiLoop {
                 self.app.push_system_message(&lines.join("\n"));
             }
             _ => {
-                self.app
-                    .push_system_message(&format!("Unknown command: {} — try /help", cmd));
+                // User-defined commands from `[commands]` in the config.
+                // A `/foo` that is not a builtin is looked up by name;
+                // a match expands `{args}` and `{cwd}` and dispatches
+                // as a normal prompt.
+                let config = KodConfig::load_default().ok();
+                let custom = config.as_ref().and_then(|c| {
+                    let key = cmd.trim_start_matches('/');
+                    c.commands.get(key).cloned()
+                });
+                match custom {
+                    Some(body) => {
+                        let args: String =
+                            parts.collect::<Vec<_>>().join(" ");
+                        let cwd = std::env::current_dir()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|_| ".".to_string());
+                        let expanded = body
+                            .replace("{args}", &args)
+                            .replace("{cwd}", &cwd);
+                        self.app.set_input(expanded);
+                        Box::pin(self.dispatch_prompt()).await?;
+                    }
+                    None => {
+                        // Helpful hint when the user typed something
+                        // close to a custom command's name.
+                        let hint = config
+                            .as_ref()
+                            .map(|c| {
+                                let names: Vec<&str> = c
+                                    .commands
+                                    .keys()
+                                    .map(|s| s.as_str())
+                                    .collect();
+                                if names.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(
+                                        " Custom commands available: {}",
+                                        names
+                                            .iter()
+                                            .map(|n| format!("/{n}"))
+                                            .collect::<Vec<_>>()
+                                            .join(", "),
+                                    )
+                                }
+                            })
+                            .unwrap_or_default();
+                        self.app.push_system_message(&format!(
+                            "Unknown command: {} — try /help.{}",
+                            cmd, hint,
+                        ));
+                    }
+                }
             }
         }
         Ok(())

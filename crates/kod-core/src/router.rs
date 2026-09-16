@@ -591,6 +591,14 @@ impl TaskRouter {
         Ok(context)
     }
 
+    /// The tool definitions this router's engine exposes. Currently a
+    /// thin proxy that returns an empty vec — the engine owns the
+    /// actual `ToolRegistry`. A follow-up could plumb the registry in;
+    /// for now the TUI's /tools-list falls back to an empty list.
+    pub async fn tool_definitions(&self) -> Vec<kod_types::ToolDefinition> {
+        Vec::new()
+    }
+
     /// Build a full prompt for LLM generation. `history` is the rendered
     /// transcript of past turns (`(start of conversation)` on the first
     /// turn) — without it every prompt arrives context-free and the model
