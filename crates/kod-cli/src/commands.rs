@@ -111,6 +111,12 @@ impl Cli {
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_sessions(action.clone()).await })
             }
+            Some(Command::Completions { shell }) => {
+                let mut cmd = <Cli as clap::CommandFactory>::command();
+                let bin_name = cmd.get_name().to_string();
+                clap_complete::generate(*shell, &mut cmd, bin_name, &mut std::io::stdout());
+                Ok(())
+            }
             None => {
                 // First-run UX. A bare `kod` invocation is the most common
                 // first experience, and the previous output was one line
@@ -313,6 +319,16 @@ pub enum Command {
     Sessions {
         #[command(subcommand)]
         action: SessionsAction,
+    },
+
+    /// Print a shell completion script for the given shell on stdout.
+    /// Typical install:
+    ///   bash:  kod completions bash > ~/.local/share/bash-completion/completions/kod
+    ///   zsh:   kod completions zsh  > ~/.zfunc/_kod
+    ///   fish:  kod completions fish > ~/.config/fish/completions/kod.fish
+    Completions {
+        /// One of: bash, zsh, fish, elvish, powershell.
+        shell: clap_complete::Shell,
     },
 }
 

@@ -1164,9 +1164,45 @@ impl TuiLoop {
                             .push_system_message("No prompt has been sent yet this session."),
                     }
                 }
+                Some("tokens") => {
+                    let label = self.app.context_label();
+                    let used = self.app.context_tokens();
+                    let limit = self.app.context_limit();
+                    let pct = self.app.context_usage() * 100.0;
+                    let inp = self.app.session_input_tokens();
+                    let out = self.app.session_output_tokens();
+                    let total = self.app.session_total_tokens();
+                    let elapsed = self.app.elapsed_session();
+                    let secs = elapsed.as_secs();
+                    let elapsed_label = if secs < 60 {
+                        format!("{secs}s")
+                    } else if secs < 3600 {
+                        format!("{}m{:02}s", secs / 60, secs % 60)
+                    } else {
+                        format!("{}h{:02}m", secs / 3600, (secs % 3600) / 60)
+                    };
+                    self.app.push_system_message(&format!(
+                        "Token accounting\n\
+                         \n\
+                         Window (approx):\n\
+                           used:  {} tokens\n\
+                           limit: {} tokens\n\
+                           fill:  {:.1}%\n\
+                           label: {}\n\
+                         \n\
+                         Session totals (from provider usage):\n\
+                           input:  {} tokens\n\
+                           output: {} tokens\n\
+                           total:  {} tokens\n\
+                         \n\
+                         Elapsed: {}",
+                        used, limit, pct, label, inp, out, total, elapsed_label,
+                    ));
+                }
                 _ => {
                     self.app.push_system_message(
-                        "Usage: /debug last-prompt — writes the last prompt sent to the model into ~/.kod/last_prompt.txt",
+                        "Usage: /debug last-prompt — writes the last prompt sent to the model into ~/.kod/last_prompt.txt\n\
+                         Usage: /debug tokens — show the token accounting breakdown for this session",
                     );
                 }
             },
