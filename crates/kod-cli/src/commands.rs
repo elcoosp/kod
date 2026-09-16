@@ -1866,3 +1866,49 @@ fn version_is_older(candidate: &str, running: &str) -> bool {
     let (rm, rn, rp, rpre) = parse(running);
     (cm, cn, cp) < (rm, rn, rp) || ((cm, cn, cp) == (rm, rn, rp) && cpre && !rpre)
 }
+
+
+#[cfg(test)]
+mod update_tests {
+    use super::{version_is_older, versions_equal};
+
+    #[test]
+    fn versions_equal_ignores_leading_v() {
+        assert!(versions_equal("0.1.0", "0.1.0"));
+        assert!(versions_equal("v0.1.0", "0.1.0"));
+        assert!(versions_equal("0.1.0", "v0.1.0"));
+        assert!(!versions_equal("0.1.0", "0.1.1"));
+    }
+
+    #[test]
+    fn version_is_older_compares_semver_triples() {
+        assert!(version_is_older("0.1.0", "0.1.1"));
+        assert!(version_is_older("0.1.9", "0.2.0"));
+        assert!(version_is_older("0.9.9", "1.0.0"));
+        assert!(!version_is_older("0.1.0", "0.1.0"));
+        assert!(!version_is_older("0.2.0", "0.1.9"));
+        assert!(!version_is_older("1.0.0", "0.9.9"));
+    }
+
+    #[test]
+    fn version_is_older_handles_missing_components() {
+        assert!(version_is_older("1", "1.0.1"));
+        assert!(!version_is_older("1.0.1", "1"));
+        assert!(version_is_older("1.0", "1.0.1"));
+        assert!(version_is_older("0", "0.0.1"));
+    }
+
+    #[test]
+    fn version_is_older_treats_prerelease_as_older() {
+        assert!(version_is_older("0.1.0-rc1", "0.1.0"));
+        assert!(!version_is_older("0.1.0", "0.1.0-rc1"));
+        assert!(version_is_older("0.1.0-rc1", "0.1.1-rc1"));
+    }
+
+    #[test]
+    fn version_is_older_with_leading_v() {
+        assert!(version_is_older("v0.1.0", "v0.1.1"));
+        assert!(version_is_older("v0.1.0", "0.1.1"));
+        assert!(version_is_older("0.1.0", "v0.1.1"));
+    }
+}
