@@ -149,6 +149,49 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
         Err(e) => report.push("memory", CheckStatus::Fail, format!("{e}")),
     }
 
+    // Git availability. Only a warning — KOD runs fine without git,
+    // but a user who intends to use git_status / git_diff needs git
+    // installed and on PATH.
+    match std::process::Command::new("git")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        Ok(s) if s.success() => {
+            report.push("git", CheckStatus::Ok, "git binary found on PATH");
+        }
+        _ => {
+            report.push(
+                "git",
+                CheckStatus::Warn,
+                "git is not on PATH — git_status / git_diff will fail",
+            );
+        }
+    }
+
+    // Network access. Informational.
+    report.push(
+        "llm.network_access",
+        CheckStatus::Ok,
+        if config.llm.network_access {
+            "enabled — web_fetch may reach the network"
+        } else {
+            "disabled — set llm.network_access = true to enable web_fetch"
+        },
+    );
+
+    // Write confirmation. Informational.
+    report.push(
+        "tools.confirm_writes",
+        CheckStatus::Ok,
+        if config.tools.confirm_writes {
+            "enabled — write_file / patch_file ask for approval"
+        } else {
+            "disabled — writes proceed without a prompt (checkpoint rollback still available)"
+        },
+    );
+
     report
 }
 

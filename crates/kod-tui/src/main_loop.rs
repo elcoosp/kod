@@ -28,7 +28,7 @@ use std::time::Duration;
 /// `test_slash_help_lists_every_command` — adding a command to
 /// `SLASH_COMMANDS` without updating this string fails the test, so
 /// the help output and the `/` autocomplete cannot drift apart.
-const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/doctor — print a diagnostics report (same as `kod doctor`)\n/rollback [id] — restore a file from a checkpoint (newest when no id)\n/checkpoints — list file checkpoints for this project\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
+const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/doctor — print a diagnostics report (same as `kod doctor`)\n/init — onboarding info: config path, model profiles, next steps\n/rollback [id] — restore a file from a checkpoint (newest when no id)\n/checkpoints — list file checkpoints for this project\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
 
 /// Main TUI application loop
 pub struct TuiLoop {
@@ -1351,6 +1351,73 @@ impl TuiLoop {
                         .app
                         .push_system_message(&format!("Could not list checkpoints: {e}")),
                 }
+            }
+            "/init" => {
+                let config = match KodConfig::load_default() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        self.app
+                            .push_system_message(&format!("Could not load config: {e}"));
+                        return Ok(());
+                    }
+                };
+                let config_dir = KodConfig::config_dir().ok();
+                let path = config_dir.as_ref().map(|d| d.join("config.toml"));
+                let mut lines = vec![
+                    "KOD onboarding".to_string(),
+                    String::new(),
+                ];
+                match &path {
+                    Some(p) if p.exists() => {
+                        lines.push(format!("Config:   {}", p.display()));
+                    }
+                    Some(p) => {
+                        lines.push(format!(
+                            "Config:   (in memory only — could not write {})",
+                            p.display()
+                        ));
+                    }
+                    None => lines.push("Config:   (unknown — no config directory)".to_string()),
+                }
+                lines.push(format!("Model:    {}", config.llm.model));
+                lines.push(format!("Endpoint: {}", config.llm.base_url));
+                lines.push(format!(
+                    "Network:  {}",
+                    if config.llm.network_access {
+                        "enabled (web_fetch can reach the network)"
+                    } else {
+                        "disabled (set llm.network_access = true to enable)"
+                    }
+                ));
+                lines.push(format!(
+                    "Writes:   {}",
+                    if config.tools.confirm_writes {
+                        "confirm (write_file / patch_file ask for approval)"
+                    } else {
+                        "auto (checkpoint rollback still available via /rollback)"
+                    }
+                ));
+                lines.push(String::new());
+                lines.push("Built-in model profiles:".to_string());
+                for p in kod_config::profiles::PRESETS {
+                    lines.push(format!("  {:<18} {}", p.name, p.description));
+                    lines.push(format!("    model:    {}", p.model));
+                    if let Some(cmd) = p.install_command {
+                        lines.push(format!("    install:  {}", cmd));
+                    }
+                }
+                lines.push(String::new());
+                lines.push("Switch profiles with:  kod profile use <name>".to_string());
+                lines.push(String::new());
+                lines.push("Next steps:".to_string());
+                lines.push("  1. Start the model server (e.g. `ollama serve`)".to_string());
+                lines.push(format!(
+                    "  2. Pull the model (e.g. `ollama pull {}`)",
+                    config.llm.model
+                ));
+                lines.push("  3. Verify the setup:  kod doctor (or /doctor)".to_string());
+                lines.push("  4. Read skills: /skills".to_string());
+                self.app.push_system_message(&lines.join("\n"));
             }
             "/doctor" => {
                 let config = match KodConfig::load_default() {

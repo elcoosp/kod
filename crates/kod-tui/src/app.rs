@@ -169,6 +169,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/doctor",
         hint: "print a diagnostics report (same as `kod doctor`)",
     },
+    SlashCommand {
+        name: "/init",
+        hint: "onboarding info: config path, model profiles, next steps",
+    },
 ];
 
 /// What the generation is currently doing — shown in the header/status so
