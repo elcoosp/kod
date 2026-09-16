@@ -178,7 +178,7 @@ impl Cli {
                     }
                 })
             }
-            Some(Command::ValidateSkills) | Some(Command::ValidateSkillsAlias) => {
+            Some(Command::ValidateSkills) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_skills_validate().await })
@@ -547,11 +547,6 @@ pub enum Command {
     /// and exit non-zero if at least one did. Useful in CI and after
     /// editing a skill by hand.
     ValidateSkills,
-
-    /// Alias for validate-skills; spelled the same way it appears in
-    /// the scaffolded skill's own advice and in documentation.
-    #[command(name = "validate-skills")]
-    ValidateSkillsAlias,
 
     /// Same as validate-skills but with strict parsing — missing
     /// version fields are also failures.
