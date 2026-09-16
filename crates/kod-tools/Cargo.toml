@@ -17,7 +17,7 @@ globset = { workspace = true }
 regex = { workspace = true }
 fs4 = { workspace = true }
 similar = { workspace = true }
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["stream"] }
 futures = { workspace = true }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }

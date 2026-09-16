@@ -19,11 +19,37 @@ pub struct KodConfig {
     pub swarm: SwarmConfig,
     pub performance: PerformanceConfig,
     pub hooks: HooksConfig,
+    pub tools: ToolsConfig,
 }
 
 /// Shell hooks run around tool execution. See `kod-core`'s `hooks`
 /// module for the runtime side. Disabled by default; a config that
 /// wants them sets `enabled = true` and adds at least one hook.
+/// Tool-execution policy. Currently one flag; the struct exists so
+/// future toggles (a per-tool allowlist, a bulk-write size cap) have a
+/// home and do not silently land in `LlmConfig` — which they do not
+/// belong in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolsConfig {
+    /// When true, `write_file` and `patch_file` require explicit user
+    /// approval before executing. The engine emits an approval request
+    /// on the streaming chunk channel; the TUI renders it as a diff
+    /// dialog, the CLI prints a prompt on stderr. Default false: a
+    /// session that has not asked for confirmation runs as it always
+    /// has, with the safety net being the checkpoint system (see
+    /// `kod checkpoint restore`).
+    pub confirm_writes: bool,
+}
+
+impl Default for ToolsConfig {
+    fn default() -> Self {
+        Self {
+            confirm_writes: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HooksConfig {

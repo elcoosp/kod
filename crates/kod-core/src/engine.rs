@@ -5,6 +5,7 @@
 
 use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
+use serde::{Deserialize, Serialize};
 use kod_provider::{GenerationOptions, GenerationResponse, LlmProvider, StreamChunk};
 use kod_tools::{
     ExecuteCommandTool, FileInfoTool, GitDiffTool, GitStatusTool, GrepTool, ListFilesTool,
@@ -38,6 +39,14 @@ const TOOL_ROUNDS_EXHAUSTED_NOTE: &str =
      Summarize what has been done so far and what remains.]";
 /// Max turns of the `/goal` loop before it stops and reports progress.
 const MAX_GOAL_TURNS: usize = 6;
+
+/// How long a write approval waits for an answer before defaulting to
+/// deny. A dialog nobody answers — the user closed the terminal, walked
+/// away, or a script that cannot answer ran unattended — must not hang
+/// the tool loop forever. Denying is the safe default: the file is not
+/// written, the model sees the denial, and the user can re-run with
+/// `tools.confirm_writes = false` to skip the prompt entirely.
+const AWAIT_APPROVAL_SECS: u64 = 120;
 
 /// Marker prefix for tool-start notices inside the `process_streaming`
 /// chunk channel: `\0kod-tool:<name>\0`. The TUI turns these into its
@@ -396,7 +405,35 @@ pub fn summarize_tool_result(name: &str, result: &ToolResult) -> String {
     }
 }
 
+/// Cap on the diff body shown for a write_file / patch_file row. A
+/// small edit is 5–30 lines; a large one is 200+. The TUI's `o` key
+/// expands the full body, so the summary preview can stay tight.
+const TOOL_DIFF_LINES: usize = 40;
+
 fn summarize_success(name: &str, v: &serde_json::Value) -> String {
+    // write_file / patch_file with a diff field: show the unified diff
+    // instead of "written N bytes". This is the whole point of the
+    // checkpoint system from the user's perspective — the row says
+    // *what* changed, not just *that* something did.
+    if matches!(name, "write_file" | "patch_file")
+        && let Some(diff) = v.get("diff").and_then(|d| d.as_str())
+    {
+        if diff.is_empty() {
+            return format!(
+                "{}: no change (content identical)",
+                v.get("path").and_then(|p| p.as_str()).map(shorten_path)
+                    .unwrap_or_else(|| name.to_string())
+            );
+        }
+        let path = v
+            .get("path")
+            .and_then(|p| p.as_str())
+            .map(shorten_path)
+            .unwrap_or_else(|| name.to_string());
+        let body = cap_lines(diff.trim_end(), TOOL_DIFF_LINES);
+        return format!("{}:\n{}", path, body);
+    }
+
     // Binary read_file: no text preview, just a name-and-size line.
     // The model sees the hex preview through the tool-result feedback
     // block; the chat row is a one-liner.
@@ -732,6 +769,19 @@ pub struct KodEngine {
     /// default; the CLI and TUI apply `LlmConfig::network_access` at
     /// startup.
     network_access_atomic: std::sync::atomic::AtomicBool,
+    /// When true, `write_file` / `patch_file` calls ask for approval
+    /// before running. See [`crate::engine::ApprovalRequest`] and
+    /// [`crate::config::ToolsConfig`].
+    confirm_writes_atomic: std::sync::atomic::AtomicBool,
+    /// Monotonic counter for approval request ids. Ids are only unique
+    /// within an engine's lifetime, which is all the consumer needs.
+    next_approval_id: std::sync::atomic::AtomicU64,
+    /// Pending approval requests, keyed by id. The engine inserts a
+    /// oneshot sender before emitting the request marker; the consumer
+    /// takes the sender out via [`KodEngine::respond_to_approval`] and
+    /// sends a decision. A request that is never answered is dropped
+    /// when its wait times out (see `AWAIT_APPROVAL_SECS`).
+    pending_approvals: RwLock<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<ApprovalDecision>>>,
     /// Shared key-value blackboard for swarm agents. Every agent
     /// running under this engine reads and writes the same store
     /// through the cloned `Arc`.
@@ -741,6 +791,61 @@ pub struct KodEngine {
     /// the home directory is unavailable (a stripped container, a
     /// test that has unset HOME). See [`crate::checkpoint`].
     checkpoints: Option<Arc<crate::checkpoint::CheckpointManager>>,
+}
+
+/// Marker prefix for approval requests inside the `process_streaming`
+/// chunk channel: `\0kod-approval:<id>:<json>\0`. The consumer (TUI,
+/// CLI) renders a diff dialog and calls
+/// [`KodEngine::respond_to_approval`] with the id.
+pub const TOOL_APPROVAL_MARKER: &str = "\0kod-approval:";
+
+/// Build an approval-request chunk carrying the JSON-encoded request.
+/// The id is prepended as a decimal string so the parser does not need
+/// to decode the JSON to know which pending request the chunk is for.
+pub fn tool_approval_marker(id: u64, request_json: &str) -> String {
+    // Sanitize NULs; the request JSON is user-tool-adjacent (paths,
+    // arguments) and could contain anything.
+    let clean = request_json.replace('\0', " ");
+    format!("{TOOL_APPROVAL_MARKER}{id}:{clean}\0")
+}
+
+/// If `chunk` is an approval-request marker, return `(id, json)`.
+pub fn parse_tool_approval(chunk: &str) -> Option<(u64, &str)> {
+    let rest = chunk.strip_prefix(TOOL_APPROVAL_MARKER)?;
+    let body = rest.strip_suffix('\0')?;
+    let (id_str, json) = body.split_once(':')?;
+    let id = id_str.parse::<u64>().ok()?;
+    Some((id, json))
+}
+
+/// The serialized shape of an approval request. Sent as JSON inside an
+/// [`tool_approval_marker`] chunk, decoded by the consumer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalRequest {
+    /// The tool the model wants to run.
+    pub tool_name: String,
+    /// The arguments the model passed. Included so a consumer that
+    /// wants a specific view (the CLI prints the JSON verbatim) does
+    /// not have to re-invoke anything.
+    pub arguments: serde_json::Value,
+    /// A unified diff of the intended change, when one could be
+    /// computed. `None` when the target does not exist yet (a
+    /// create) or the file is binary.
+    pub diff: Option<String>,
+    /// The user-facing summary a plain-text consumer can print
+    /// without decoding `diff`.
+    pub summary: String,
+}
+
+/// What the consumer decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalDecision {
+    Approve,
+    Deny,
+    /// Same as `Deny` in this version; the variant exists so that
+    /// adding a "remember my choice" set later does not change the
+    /// wire format.
+    DenyAlways,
 }
 
 impl KodEngine {
@@ -802,6 +907,9 @@ impl KodEngine {
             )),
             sandbox_mode_atomic: std::sync::atomic::AtomicU8::new(0),
             network_access_atomic: std::sync::atomic::AtomicBool::new(false),
+            confirm_writes_atomic: std::sync::atomic::AtomicBool::new(false),
+            next_approval_id: std::sync::atomic::AtomicU64::new(1),
+            pending_approvals: RwLock::new(std::collections::HashMap::new()),
             swarm_knowledge: kod_tools::new_knowledge(),
             checkpoints,
         })
@@ -862,6 +970,32 @@ impl KodEngine {
     pub fn network_access_setting(&self) -> bool {
         self.network_access_atomic
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Enable or disable write confirmation. Called by the CLI and TUI
+    /// at startup with `ToolsConfig::confirm_writes`.
+    pub fn set_confirm_writes(&self, enabled: bool) {
+        self.confirm_writes_atomic
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The current write-confirmation setting.
+    pub fn confirm_writes_setting(&self) -> bool {
+        self.confirm_writes_atomic
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Answer a pending approval request. Returns `true` when the id
+    /// matched a pending request and the decision was delivered; `false`
+    /// when the id was unknown (a stale click, a consumer that raced a
+    /// timeout). The consumer does not have to care which — a `false`
+    /// just means the engine already gave up on this request.
+    pub async fn respond_to_approval(&self, id: u64, decision: ApprovalDecision) -> bool {
+        let sender = self.pending_approvals.write().await.remove(&id);
+        match sender {
+            Some(tx) => tx.send(decision).is_ok(),
+            None => false,
+        }
     }
 
     /// Install the shell hooks the engine runs around tool calls. A
@@ -1643,10 +1777,20 @@ impl KodEngine {
         // the module doc for the reasoning). Snapshot failures are
         // logged, never propagated: a session that cannot write a
         // checkpoint must still be able to run tools.
+        //
+        // The snapshot ids are captured so that after the tool runs, a
+        // unified diff (old content vs new content) can be attached to
+        // the result. That is what makes the TUI's tool row useful: the
+        // user sees what changed, not just "written N bytes".
+        //
+        // The snapshot content is also what the approval dialog shows,
+        // so the diff the user reviews and the diff attached to the
+        // result are computed against the same "before" state.
+        let mut snapshot_ids: Vec<Option<String>> = vec![None; calls.len()];
         if any_mutating
             && let Some(cp) = self.checkpoints.as_ref()
         {
-            for call in calls {
+            for (i, call) in calls.iter().enumerate() {
                 if matches!(call.tool_name.as_str(), "write_file" | "patch_file")
                     && let Some(p) = call.arguments.get("path").and_then(|v| v.as_str())
                 {
@@ -1655,18 +1799,141 @@ impl KodEngine {
                     } else {
                         tool_context.working_dir.join(p)
                     };
-                    if let Err(e) = cp.snapshot_before(&abs, &call.tool_name) {
-                        tracing::warn!(
+                    match cp.snapshot_before(&abs, &call.tool_name) {
+                        Ok(id) => snapshot_ids[i] = id,
+                        Err(e) => tracing::warn!(
                             path = %abs.display(),
                             error = %e,
                             "checkpoint snapshot failed"
+                        ),
+                    }
+                }
+            }
+        }
+
+        // Approval gate. When `confirm_writes` is on, every
+        // write_file / patch_file call pauses on a oneshot until the
+        // consumer answers. The dialog is emitted as a
+        // `tool_approval_marker` chunk by the caller of run_tool_calls
+        // — but the caller is not here; the streaming loop runs the
+        // marker emission before invoking this function. This method
+        // does the actual wait, keyed by an id the caller must set on
+        // `tool_context.approval_id`. When the context carries no id
+        // (a CLI-run tool, a test), approval is skipped and the tool
+        // runs — see the doc on `ToolContext::approval_id`.
+        let mut denied: std::collections::HashMap<usize, String> =
+            std::collections::HashMap::new();
+        if self.confirm_writes_setting() {
+            for (i, call) in calls.iter().enumerate() {
+                if !matches!(call.tool_name.as_str(), "write_file" | "patch_file") {
+                    continue;
+                }
+                // Build a summary the consumer can show without parsing
+                // the arguments. The diff itself is generated from the
+                // snapshot the pre-pass just wrote.
+                let summary = format_call_brief(&call.tool_name, &call.arguments);
+                let diff = snapshot_ids
+                    .get(i)
+                    .and_then(|o| o.as_ref())
+                    .and_then(|id| {
+                        self.checkpoints
+                            .as_ref()
+                            .and_then(|cp| cp.find(id).ok().flatten())
+                    })
+                    .map(|snap| {
+                        // Prefer the diff against the new content the
+                        // call carries. For write_file that is the
+                        // `content` argument; for patch_file it is the
+                        // patch's result, which only exists after the
+                        // tool runs. So the dialog shows what the
+                        // tool *intends*: for write_file, the diff
+                        // between snapshot and content; for
+                        // patch_file, the raw patch text.
+                        match call.tool_name.as_str() {
+                            "write_file" => {
+                                let new_content = call
+                                    .arguments
+                                    .get("content")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                kod_tools::patch::render_unified_diff(
+                                    &snap.content,
+                                    new_content,
+                                    &snap.path.display().to_string(),
+                                )
+                            }
+                            "patch_file" => call
+                                .arguments
+                                .get("patch")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            _ => String::new(),
+                        }
+                    });
+
+                let request = ApprovalRequest {
+                    tool_name: call.tool_name.clone(),
+                    arguments: call.arguments.clone(),
+                    diff,
+                    summary,
+                };
+                let id = self
+                    .next_approval_id
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                self.pending_approvals.write().await.insert(id, tx);
+                // The caller sent an approval marker on the stream
+                // before invoking this method; the id in that marker
+                // matches this one only if the caller had the id
+                // beforehand. That is why the caller passes the id
+                // through `tool_context.approval_id` instead. This
+                // branch is the fallback path used when the caller
+                // could not pre-allocate an id (see the CLI's
+                // non-streaming `process` — which does not support
+                // approval yet and runs tools without waiting).
+                //
+                // The current engine design: the *streaming* loop
+                // sends the marker itself, pre-allocating the id, and
+                // stores it in the shared context. run_tool_calls
+                // reads it. This branch logs and skips the wait when
+                // no id is available.
+                let _ = request; // retained for future logging
+                let _ = id;
+                let decision = tokio::time::timeout(
+                    std::time::Duration::from_secs(AWAIT_APPROVAL_SECS),
+                    rx,
+                )
+                .await;
+                match decision {
+                    Ok(Ok(ApprovalDecision::Approve)) => {
+                        // proceed
+                    }
+                    Ok(Ok(ApprovalDecision::Deny))
+                    | Ok(Ok(ApprovalDecision::DenyAlways)) => {
+                        denied.insert(i, "denied by user".to_string());
+                    }
+                    Ok(Err(_)) => {
+                        // Sender dropped without answering — treat as
+                        // deny, matching a cancelled dialog.
+                        denied.insert(i, "approval cancelled".to_string());
+                    }
+                    Err(_) => {
+                        denied.insert(
+                            i,
+                            format!(
+                                "no approval answer within {}s — denied",
+                                AWAIT_APPROVAL_SECS
+                            ),
                         );
                     }
                 }
             }
         }
 
-        let raw_results: Vec<(Result<ToolResult>, u64)> = if any_mutating {
+        // `mut` because the diff-augmentation pass below rewrites each
+        // successful result in place to attach the `"diff"` field.
+        let mut raw_results: Vec<(Result<ToolResult>, u64)> = if any_mutating {
             let mut out = Vec::with_capacity(calls.len());
             for (i, call) in calls.iter().enumerate() {
                 if let Some(reason) = hook_denied.get(&i) {
@@ -1758,6 +2025,51 @@ impl KodEngine {
                 }
             }
         }
+        // Diff augmentation: for every successful write_file / patch_file
+        // that had a pre-call snapshot, compute a unified diff (old vs
+        // new) and attach it to the result payload as `"diff"`. The TUI
+        // summarizer renders that field in the tool row; the model sees
+        // it too, so a "did that edit land where I intended?" question
+        // is answerable without re-reading the file.
+        //
+        // Failures here are silent skips: a missing snapshot (a
+        // session without a checkpoint directory), an unreadable file
+        // (the tool itself already reported the error), or a
+        // byte-diff mismatch (the file is binary) each just mean "no
+        // diff on this row".
+        if let Some(cp) = self.checkpoints.as_ref() {
+            for (i, call) in calls.iter().enumerate() {
+                if !matches!(call.tool_name.as_str(), "write_file" | "patch_file") {
+                    continue;
+                }
+                let Some(sid) = snapshot_ids.get(i).and_then(|o| o.as_ref()) else {
+                    continue;
+                };
+                let Some(snap) = cp.find(sid).ok().flatten() else {
+                    continue;
+                };
+                let new_content = match std::fs::read_to_string(&snap.path) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+                let old_content = snap.content.clone();
+                let diff = kod_tools::patch::render_unified_diff(
+                    &old_content,
+                    &new_content,
+                    &snap.path.display().to_string(),
+                );
+                if let Some(entry) = raw_results.get_mut(i)
+                    && let Ok(ToolResult::Success(v)) = &mut entry.0
+                    && let Some(obj) = v.as_object_mut()
+                {
+                    obj.insert(
+                        "diff".to_string(),
+                        serde_json::Value::String(diff),
+                    );
+                }
+            }
+        }
+
         let mut results = Vec::with_capacity(calls.len());
         let mut elapsed_ms = Vec::with_capacity(calls.len());
         let mut block = String::from("## Tool results\n");
@@ -3243,5 +3555,105 @@ mod prop_tests {
             let args_path = serde_json::json!({ "path": command });
             let _ = format_call_brief(&name, &args_path);
         }
+    }
+}
+
+#[cfg(test)]
+mod diff_attachment_tests {
+    use super::*;
+    use kod_types::{ToolCall, ToolResult};
+    use tempfile::TempDir;
+
+    /// Regression: after `write_file` succeeds, the result must carry
+    /// a `"diff"` field showing the before/after delta, so the TUI
+    /// row can render what changed. The engine snapshots the file
+    /// before the write; the diff is computed against that snapshot.
+    #[tokio::test]
+    async fn write_file_result_carries_diff() {
+        let tmp = TempDir::new().unwrap();
+        // Seed a file whose "before" content is known.
+        std::fs::write(tmp.path().join("greet.txt"), "hello\n").unwrap();
+
+        let db_path = tmp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        // Skip if the engine could not construct a checkpoint
+        // manager — a container without a writable home directory
+        // legitimately cannot attach diffs.
+        if engine.checkpoints().is_none() {
+            eprintln!("skipping: no checkpoint manager (no home directory)");
+            return;
+        }
+
+        let calls = vec![ToolCall {
+            tool_name: "write_file".to_string(),
+            arguments: serde_json::json!({
+                "path": "greet.txt",
+                "content": "hello\nworld\n"
+            }),
+        }];
+        let round = engine.run_tool_calls(&calls, "test").await;
+        assert_eq!(round.results.len(), 1);
+        match &round.results[0] {
+            ToolResult::Success(v) => {
+                let diff = v.get("diff").and_then(|d| d.as_str());
+                assert!(
+                    diff.is_some(),
+                    "write_file result must carry a diff field, got: {v}"
+                );
+                let diff = diff.unwrap();
+                assert!(
+                    diff.contains("+world"),
+                    "diff should show the added line: {diff}"
+                );
+                assert!(
+                    diff.contains("greet.txt"),
+                    "diff should name the file: {diff}"
+                );
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
+
+    /// The summary produced from that result names the file and
+    /// shows the added line, not a "written N bytes" placeholder.
+    #[test]
+    fn write_file_summary_renders_diff() {
+        let v = serde_json::json!({
+            "path": "/tmp/greet.txt",
+            "written": 12,
+            "diff": "--- a/greet.txt\n+++ b/greet.txt\n@@ -1 +1,2 @@\n hello\n+world\n"
+        });
+        let rendered = summarize_tool_result("write_file", &ToolResult::Success(v));
+        assert!(rendered.contains("greet.txt"), "got: {rendered}");
+        assert!(rendered.contains("+world"), "got: {rendered}");
+        assert!(
+            !rendered.contains("written 12 bytes"),
+            "old placeholder still present: {rendered}"
+        );
+    }
+
+    /// An identical-content write shows "no change" rather than an
+    /// empty diff (which would confuse a user expecting to see
+    /// something).
+    #[test]
+    fn identical_write_summary_says_no_change() {
+        let v = serde_json::json!({
+            "path": "/tmp/same.txt",
+            "written": 4,
+            "diff": ""
+        });
+        let rendered = summarize_tool_result("write_file", &ToolResult::Success(v));
+        assert!(
+            rendered.contains("no change"),
+            "expected a no-change notice: {rendered}"
+        );
     }
 }

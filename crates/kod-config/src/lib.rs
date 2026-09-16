@@ -5,7 +5,7 @@ pub mod profiles;
 pub mod skills;
 pub mod swarm;
 
-pub use config::{HooksConfig, KodConfig};
+pub use config::{HooksConfig, KodConfig, ToolsConfig};
 pub use llm::LlmConfig;
 pub use memory::{MemoryConfig, MemoryScope};
 pub use skills::SkillsConfig;
