@@ -5,8 +5,8 @@ use crate::{
     event::{Event, EventHandler, KeyCode},
     keybindings::{KeyAction, load_bindings},
     ui::{
-        AgentPanelWidget, ChatWidget, CompletionsWidget, HeaderWidget, HelpWidget, InputWidget,
-        StatusWidget,
+        AgentPanelWidget, ApprovalWidget, ChatWidget, CompletionsWidget, HeaderWidget, HelpWidget,
+        InputWidget, StatusWidget,
     },
 };
 use kod_config::{KodConfig, LlmConfig};
@@ -422,6 +422,9 @@ impl TuiLoop {
                     if self.app.show_help() {
                         HelpWidget::new().render(&self.app, size, f.buffer_mut());
                     }
+                    if self.app.is_approving() {
+                        ApprovalWidget::new().render(&self.app, size, f.buffer_mut());
+                    }
                 })
                 .map_err(|e| KodError::Internal(format!("Failed to draw: {}", e)))?;
         }
@@ -491,6 +494,21 @@ impl TuiLoop {
             }
             Event::Thinking => {
                 self.app.begin_thinking();
+            }
+            Event::ApprovalRequested {
+                id,
+                tool_name,
+                summary,
+                diff,
+            } => {
+                self.app.set_pending_approval(
+                    crate::app::PendingApproval {
+                        id,
+                        tool_name,
+                        summary,
+                        diff,
+                    },
+                );
             }
             Event::Cancelled => {
                 self.gen_task = None;
@@ -688,7 +706,27 @@ impl TuiLoop {
             let event_tx_chunks = event_tx.clone();
             let pump = tokio::spawn(async move {
                 while let Some(chunk) = chunk_rx.recv().await {
-                    if let Some(tool) = kod_core::engine::parse_tool_start(&chunk) {
+                    if let Some((id, json)) =
+                        kod_core::engine::parse_tool_approval(&chunk)
+                    {
+                        let request: kod_core::engine::ApprovalRequest =
+                            serde_json::from_str(json).unwrap_or_else(|_| {
+                                kod_core::engine::ApprovalRequest {
+                                    tool_name: "?".to_string(),
+                                    arguments: serde_json::Value::Null,
+                                    diff: None,
+                                    summary: "(unparseable approval request)".to_string(),
+                                }
+                            });
+                        let _ = event_tx_chunks
+                            .send(Event::ApprovalRequested {
+                                id,
+                                tool_name: request.tool_name,
+                                summary: request.summary,
+                                diff: request.diff,
+                            })
+                            .await;
+                    } else if let Some(tool) = kod_core::engine::parse_tool_start(&chunk) {
                         let _ = event_tx_chunks
                             .send(Event::ToolStarted(tool.to_string()))
                             .await;
@@ -1458,6 +1496,47 @@ impl TuiLoop {
 
     /// Handle key events
     async fn handle_key(&mut self, key: KeyCode) -> Result<()> {
+        // Approval dialog: while it is up, y / n / Esc / Ctrl+C
+        // answer the request; every other key is swallowed so the
+        // user does not type past a modal they cannot dismiss.
+        if self.app.is_approving() {
+            match key {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    if let Some(approval) = self.app.pending_approval() {
+                        let id = approval.id;
+                        self.app.clear_pending_approval();
+                        if let Some(engine) = &self.engine {
+                            engine
+                                .respond_to_approval(
+                                    id,
+                                    kod_core::engine::ApprovalDecision::Approve,
+                                )
+                                .await;
+                        }
+                    }
+                }
+                KeyCode::Char('n')
+                | KeyCode::Char('N')
+                | KeyCode::Escape
+                | KeyCode::CtrlC => {
+                    if let Some(approval) = self.app.pending_approval() {
+                        let id = approval.id;
+                        self.app.clear_pending_approval();
+                        if let Some(engine) = &self.engine {
+                            engine
+                                .respond_to_approval(
+                                    id,
+                                    kod_core::engine::ApprovalDecision::Deny,
+                                )
+                                .await;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
         // Type-ahead search: while the bar is open and being edited,
         // every printable character, Backspace, and Escape belongs to
         // the query, not the input box. This check runs before the
