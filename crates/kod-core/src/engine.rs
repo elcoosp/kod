@@ -3045,7 +3045,7 @@ mod tests {
             tool_name: "list_files".to_string(),
             arguments: serde_json::json!({ "path": "." }),
         }];
-        let round = engine.run_tool_calls(&calls, "test").await;
+        let round = engine.run_tool_calls(&calls, "test", None).await;
         assert_eq!(round.results.len(), 1);
         let block = &round.prompt_block;
         assert!(
@@ -3364,7 +3364,7 @@ mod tests {
             },
         ];
 
-        let round = engine.run_tool_calls(&calls, "test").await;
+        let round = engine.run_tool_calls(&calls, "test", None).await;
         assert_eq!(round.results.len(), 2);
 
         // Write must succeed.
@@ -3413,7 +3413,7 @@ mod tests {
                 arguments: serde_json::json!({ "path": "b.txt" }),
             },
         ];
-        let round = engine.run_tool_calls(&calls, "test").await;
+        let round = engine.run_tool_calls(&calls, "test", None).await;
         assert_eq!(round.results.len(), 2);
         assert_eq!(round.elapsed_ms.len(), 2);
         // Order matches caller order regardless of scheduling.
@@ -3611,7 +3611,7 @@ mod diff_attachment_tests {
                 "content": "hello\nworld\n"
             }),
         }];
-        let round = engine.run_tool_calls(&calls, "test").await;
+        let round = engine.run_tool_calls(&calls, "test", None).await;
         assert_eq!(round.results.len(), 1);
         match &round.results[0] {
             ToolResult::Success(v) => {
