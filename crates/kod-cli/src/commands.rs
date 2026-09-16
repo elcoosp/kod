@@ -431,7 +431,10 @@ pub async fn run_chat(
         context_window: config.llm.context_window,
         ..RouterConfig::default()
     };
-    let engine = KodEngine::new(router_config, db_path)?;
+    // Arc because the approval forwarder task (spawned below) needs to
+    // call `respond_to_approval` while `process_streaming` runs on the
+    // same engine.
+    let engine = Arc::new(KodEngine::new(router_config, db_path)?);
     engine.set_history_budget(config.llm.context_window.saturating_mul(3));
 
     // Set up OpenAI-compatible provider (Ollama /v1, LM Studio, MLX, ...)
@@ -439,6 +442,7 @@ pub async fn run_chat(
     engine.set_provider(Arc::new(provider)).await;
     engine.set_hooks(config.hooks.clone());
     engine.set_network_access(config.llm.network_access);
+    engine.set_confirm_writes(config.tools.confirm_writes);
 
     // Start the engine
     engine.start().await?;
@@ -526,6 +530,25 @@ pub async fn run_chat(
         // default stream_with_tools emits no Text), fall back to the
         // response's full text.
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
+        // Approval channel: the pump sends (id, decision); the
+        // forwarder calls engine.respond_to_approval. The split
+        // exists because the pump owns its scope and cannot also
+        // borrow the engine across the response loop.
+        let (approval_tx, mut approval_rx) =
+            tokio::sync::mpsc::channel::<(u64, kod_core::engine::ApprovalDecision)>(16);
+        let engine_for_approvals = engine.clone();
+        let approval_forwarder = tokio::spawn(async move {
+            while let Some((id, decision)) = approval_rx.recv().await {
+                let _ = engine_for_approvals
+                    .respond_to_approval(id, decision)
+                    .await;
+            }
+        });
+        // Clone so the outer scope retains its own sender: dropping it
+        // after `process_streaming` closes the channel, and the pump's
+        // clone is dropped with the task. Without the clone, the outer
+        // `drop(approval_tx)` is a use-after-move.
+        let approval_tx_pump = approval_tx.clone();
         let pump = tokio::spawn(async move {
             // `streamed_any` counts text chunks, not control markers.
             // It decides whether the caller still needs to print the
@@ -554,6 +577,54 @@ pub async fn run_chat(
                 // preceding tool notice already covers the visible
                 // activity, and the model's follow-up text will
                 // arrive as ordinary streamed chunks.
+                // Approval marker: engine wants yes/no before running
+                // a write_file / patch_file. Print the diff, read a
+                // line from stdin, forward the answer to the engine.
+                // Any input error is treated as Deny.
+                if let Some((id, json)) = kod_core::engine::parse_tool_approval(&chunk) {
+                    let request: kod_core::engine::ApprovalRequest =
+                        serde_json::from_str(json).unwrap_or_else(|_| {
+                            kod_core::engine::ApprovalRequest {
+                                tool_name: "?".to_string(),
+                                arguments: serde_json::Value::Null,
+                                diff: None,
+                                summary: "(unparseable approval request)".to_string(),
+                            }
+                        });
+                    println!();
+                    println!("── approval required ──");
+                    println!("Tool:    {}", request.tool_name);
+                    println!("Summary: {}", request.summary);
+                    if let Some(diff) = &request.diff {
+                        println!();
+                        let mut lines = diff.lines();
+                        for l in lines.by_ref().take(60) {
+                            println!("{l}");
+                        }
+                        let extra = lines.count();
+                        if extra > 0 {
+                            println!("… and {extra} more lines of diff");
+                        }
+                    }
+                    print!("Approve? [y/N] ");
+                    let _ = io::stdout().flush();
+                    let mut answer = String::new();
+                    let approved = match io::stdin().read_line(&mut answer) {
+                        Ok(_) => {
+                            let a = answer.trim().to_lowercase();
+                            a == "y" || a == "yes"
+                        }
+                        Err(_) => false,
+                    };
+                    let decision = if approved {
+                        kod_core::engine::ApprovalDecision::Approve
+                    } else {
+                        kod_core::engine::ApprovalDecision::Deny
+                    };
+                    let _ = approval_tx_pump.send((id, decision)).await;
+                    continue;
+                }
+
                 if kod_core::engine::parse_tool_start(&chunk).is_some()
                     || kod_core::engine::parse_tool_done(&chunk).is_some()
                     || kod_core::engine::is_thinking_marker(&chunk)
@@ -569,6 +640,8 @@ pub async fn run_chat(
 
         let result = engine.process_streaming(input_line, &tx).await;
         drop(tx);
+        drop(approval_tx);
+        let _ = approval_forwarder.await;
         let streamed_any = pump.await.unwrap_or(false);
 
         match result {
@@ -742,6 +815,10 @@ pub async fn run_agent(name: String, goal: String, model: Option<String>) -> Res
 
     let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
     engine.set_provider(Arc::new(provider)).await;
+    // `kod agent` has no interactive consumer. When confirm_writes is
+    // on, the engine refuses every write with a message the model and
+    // the user can act on. Approving silently would defeat the flag.
+    engine.set_confirm_writes(config.tools.confirm_writes);
 
     engine.start().await?;
 

@@ -304,6 +304,10 @@ pub struct KodApp {
     /// start of each swarm run; a running agent appends its chunks to
     /// the chat message whose id is stored here.
     swarm_agents: std::collections::HashMap<kod_types::AgentId, SwarmAgentView>,
+    /// The approval request the TUI is currently showing a dialog for.
+    /// `None` when no dialog is up. Populated from an approval-marker
+    /// chunk; cleared when the user answers (y/n) or cancels (Esc).
+    pending_approval: Option<PendingApproval>,
     /// Wall-clock instant the session started.
     session_started_at: Instant,
     /// Accumulated input tokens the provider has reported this session.
@@ -321,6 +325,17 @@ pub const DEFAULT_CONTEXT_LIMIT: usize = 128_000;
 /// Fraction of the window that triggers auto-compact.
 pub const COMPACT_AT_FRACTION_NUM: usize = 4;
 pub const COMPACT_AT_FRACTION_DEN: usize = 5;
+
+/// An approval request currently waiting for a yes/no answer in the
+/// TUI. The `id` matches the engine's request id; the decision is
+/// sent back via `KodEngine::respond_to_approval`.
+#[derive(Debug, Clone)]
+pub struct PendingApproval {
+    pub id: u64,
+    pub tool_name: String,
+    pub summary: String,
+    pub diff: Option<String>,
+}
 
 impl KodApp {
     pub fn new() -> Self {
@@ -372,6 +387,7 @@ impl KodApp {
             last_error: None,
 
             swarm_agents: std::collections::HashMap::new(),
+            pending_approval: None,
             session_started_at: Instant::now(),
             session_input_tokens: 0,
             session_output_tokens: 0,
@@ -2494,6 +2510,30 @@ fn fuzzy_match(name: &str, query: &str) -> bool {
         }
     }
     false
+}
+
+/// Approval dialog state.
+impl KodApp {
+    /// Record an incoming approval request and show the dialog.
+    pub fn set_pending_approval(&mut self, approval: PendingApproval) {
+        self.pending_approval = Some(approval);
+    }
+
+    /// The approval currently awaiting an answer, if any.
+    pub fn pending_approval(&self) -> Option<&PendingApproval> {
+        self.pending_approval.as_ref()
+    }
+
+    /// Clear the dialog. Called after the decision is dispatched.
+    pub fn clear_pending_approval(&mut self) {
+        self.pending_approval = None;
+    }
+
+    /// True when the approval dialog is up and normal key handling
+    /// must be routed to it instead of the input box.
+    pub fn is_approving(&self) -> bool {
+        self.pending_approval.is_some()
+    }
 }
 
 impl Default for KodApp {

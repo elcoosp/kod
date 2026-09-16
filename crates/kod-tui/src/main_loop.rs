@@ -122,6 +122,7 @@ impl TuiLoop {
         engine.set_provider(Arc::new(provider)).await;
         engine.set_hooks(config.hooks.clone());
         engine.set_network_access(config.llm.network_access);
+        engine.set_confirm_writes(config.tools.confirm_writes);
 
         engine.start().await?;
         self.engine = Some(Arc::new(engine));
