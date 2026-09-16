@@ -34,12 +34,14 @@
 //! ```
 
 pub mod context;
+pub mod git;
 pub mod patch;
 pub mod path_lock;
 pub mod executor;
 pub mod registry;
 pub mod swarm_tools;
 pub mod tools;
+pub use git::{GitDiffTool, GitStatusTool};
 pub use tools::{
     ExecuteCommandTool, FileInfoTool, GrepTool, ListFilesTool, PatchFileTool, ReadFileTool,
     WriteFileTool,

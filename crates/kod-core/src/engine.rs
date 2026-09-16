@@ -7,8 +7,8 @@ use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
 use kod_provider::{GenerationOptions, GenerationResponse, LlmProvider, StreamChunk};
 use kod_tools::{
-    ExecuteCommandTool, FileInfoTool, GrepTool, ListFilesTool, PatchFileTool, PathLockTable,
-    ReadFileTool, ToolContext, ToolRegistry, WriteFileTool,
+    ExecuteCommandTool, FileInfoTool, GitDiffTool, GitStatusTool, GrepTool, ListFilesTool,
+    PatchFileTool, PathLockTable, ReadFileTool, ToolContext, ToolRegistry, WriteFileTool,
 };
 use kod_types::{ToolCall, ToolDefinition, ToolPermissions, ToolResult};
 use std::collections::HashMap;
@@ -737,13 +737,19 @@ impl KodEngine {
     /// Create a new engine
     pub fn new(config: RouterConfig, db_path: PathBuf) -> Result<Self> {
         let working_dir = config.working_dir.clone();
+        // Git operations default to enabled because the git tools that
+        // exist today (`git_status`, `git_diff`) are read-only. A
+        // future mutating git tool (commit, branch, checkout) must
+        // reconsider this default — today, disabling the flag turns
+        // off `git status` for a caller that wants it, which is the
+        // wrong trade.
         let tool_context =
             ToolContext::new(working_dir.clone()).with_permissions(ToolPermissions {
                 read_files: true,
                 write_files: true,
                 execute_commands: true,
                 network_access: false,
-                git_operations: false,
+                git_operations: true,
                 allowed_paths: Vec::new(),
                 forbidden_paths: Vec::new(),
             });
@@ -968,6 +974,11 @@ impl KodEngine {
         self.tools
             .register(Box::new(ExecuteCommandTool::new()))
             .await;
+        // Read-only git inspection. Registered unconditionally; the
+        // per-context `git_operations` permission gate rejects calls
+        // from a context that opted out.
+        self.tools.register(Box::new(GitStatusTool::new())).await;
+        self.tools.register(Box::new(GitDiffTool::new())).await;
 
         tracing::info!("KOD engine started");
         Ok(())
