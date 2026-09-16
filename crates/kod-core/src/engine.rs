@@ -731,6 +731,11 @@ pub struct KodEngine {
     /// running under this engine reads and writes the same store
     /// through the cloned `Arc`.
     swarm_knowledge: kod_tools::SwarmKnowledge,
+    /// File checkpoint snapshots. `Some` when a checkpoint directory
+    /// could be determined from the working directory; `None` when
+    /// the home directory is unavailable (a stripped container, a
+    /// test that has unset HOME). See [`crate::checkpoint`].
+    checkpoints: Option<Arc<crate::checkpoint::CheckpointManager>>,
 }
 
 impl KodEngine {
@@ -755,6 +760,14 @@ impl KodEngine {
             });
         let router = TaskRouter::new(config, db_path)?;
         let lock_table = Arc::new(PathLockTable::new());
+        // Snapshots are best-effort: a session without a home directory
+        // still runs, it just cannot roll back. The manager is
+        // per-working-directory, so two sessions on different projects
+        // do not see each other's checkpoints.
+        let checkpoints = crate::checkpoint::CheckpointManager::for_working_dir(
+            &working_dir,
+        )
+        .map(Arc::new);
 
         Ok(Self {
             router: Arc::new(router),
@@ -777,6 +790,7 @@ impl KodEngine {
             )),
             sandbox_mode_atomic: std::sync::atomic::AtomicU8::new(0),
             swarm_knowledge: kod_tools::new_knowledge(),
+            checkpoints,
         })
     }
 
@@ -897,6 +911,14 @@ impl KodEngine {
     /// agent) acquires from this table directly.
     pub fn path_lock_table(&self) -> Arc<PathLockTable> {
         Arc::clone(&self.lock_table)
+    }
+
+    /// The engine's checkpoint manager, when a checkpoint directory
+    /// could be determined. `None` means the engine cannot snapshot
+    /// (no home directory); a caller that offers `/rollback` should
+    /// say so rather than silently no-op.
+    pub fn checkpoints(&self) -> Option<&Arc<crate::checkpoint::CheckpointManager>> {
+        self.checkpoints.as_ref()
     }
 
     /// The working directory tools are rooted at.
@@ -1574,6 +1596,35 @@ impl KodEngine {
             }
         }
         let any_mutating = any_mutating || !hook_denied.is_empty();
+
+        // Snapshot the target file of every mutating call BEFORE any of
+        // them runs. Only `write_file` and `patch_file` are snapshotted
+        // — `execute_command` has no declared write set to snapshot (see
+        // the module doc for the reasoning). Snapshot failures are
+        // logged, never propagated: a session that cannot write a
+        // checkpoint must still be able to run tools.
+        if any_mutating
+            && let Some(cp) = self.checkpoints.as_ref()
+        {
+            for call in calls {
+                if matches!(call.tool_name.as_str(), "write_file" | "patch_file")
+                    && let Some(p) = call.arguments.get("path").and_then(|v| v.as_str())
+                {
+                    let abs = if std::path::Path::new(p).is_absolute() {
+                        std::path::PathBuf::from(p)
+                    } else {
+                        tool_context.working_dir.join(p)
+                    };
+                    if let Err(e) = cp.snapshot_before(&abs, &call.tool_name) {
+                        tracing::warn!(
+                            path = %abs.display(),
+                            error = %e,
+                            "checkpoint snapshot failed"
+                        );
+                    }
+                }
+            }
+        }
 
         let raw_results: Vec<(Result<ToolResult>, u64)> = if any_mutating {
             let mut out = Vec::with_capacity(calls.len());

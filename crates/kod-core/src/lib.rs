@@ -3,6 +3,7 @@
 //! This crate integrates skills, memory, tools, and LLM providers
 //! into a unified task routing and execution engine.
 
+pub mod checkpoint;
 pub mod config;
 pub mod context;
 pub mod engine;
