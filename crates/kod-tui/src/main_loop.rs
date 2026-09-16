@@ -6,7 +6,7 @@ use crate::{
     keybindings::{KeyAction, load_bindings},
     ui::{
         AgentPanelWidget, ApprovalWidget, ChatWidget, CompletionsWidget, HeaderWidget, HelpWidget,
-        InputWidget, StatusWidget,
+        InputWidget, QuestionWidget, StatusWidget,
     },
 };
 use kod_config::{KodConfig, LlmConfig};
@@ -28,7 +28,7 @@ use std::time::Duration;
 /// `test_slash_help_lists_every_command` — adding a command to
 /// `SLASH_COMMANDS` without updating this string fails the test, so
 /// the help output and the `/` autocomplete cannot drift apart.
-const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/doctor — print a diagnostics report (same as `kod doctor`)\n/init — onboarding info: config path, model profiles, next steps\n/rollback [id] — restore a file from a checkpoint (newest when no id)\n/checkpoints — list file checkpoints for this project\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
+const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/doctor — print a diagnostics report (same as `kod doctor`)\n/init — onboarding info: config path, model profiles, next steps\n/regenerate — regenerate the last assistant reply\n/delete — remove the last user+assistant exchange\n/export [path] — export session as markdown (stdout when no path)\n/rollback [id] — restore a file from a checkpoint (newest when no id)\n/checkpoints — list file checkpoints for this project\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
 
 /// Main TUI application loop
 pub struct TuiLoop {
@@ -425,6 +425,9 @@ impl TuiLoop {
                     if self.app.is_approving() {
                         ApprovalWidget::new().render(&self.app, size, f.buffer_mut());
                     }
+                    if self.app.is_asking() {
+                        QuestionWidget::new().render(&self.app, size, f.buffer_mut());
+                    }
                 })
                 .map_err(|e| KodError::Internal(format!("Failed to draw: {}", e)))?;
         }
@@ -507,6 +510,19 @@ impl TuiLoop {
                         tool_name,
                         summary,
                         diff,
+                    },
+                );
+            }
+            Event::QuestionRequested {
+                id,
+                question,
+                placeholder,
+            } => {
+                self.app.set_pending_question(
+                    crate::app::PendingQuestion {
+                        id,
+                        question,
+                        placeholder,
                     },
                 );
             }
@@ -707,6 +723,23 @@ impl TuiLoop {
             let pump = tokio::spawn(async move {
                 while let Some(chunk) = chunk_rx.recv().await {
                     if let Some((id, json)) =
+                        kod_core::engine::parse_question(&chunk)
+                    {
+                        let req: kod_tools::ask::QuestionRequest =
+                            serde_json::from_str(json).unwrap_or_else(|_| {
+                                kod_tools::ask::QuestionRequest {
+                                    question: "(unparseable question)".to_string(),
+                                    placeholder: None,
+                                }
+                            });
+                        let _ = event_tx_chunks
+                            .send(Event::QuestionRequested {
+                                id,
+                                question: req.question,
+                                placeholder: req.placeholder,
+                            })
+                            .await;
+                    } else if let Some((id, json)) =
                         kod_core::engine::parse_tool_approval(&chunk)
                     {
                         let request: kod_core::engine::ApprovalRequest =
@@ -1352,6 +1385,66 @@ impl TuiLoop {
                         .push_system_message(&format!("Could not list checkpoints: {e}")),
                 }
             }
+            "/regenerate" => {
+                if self.app.is_generating() {
+                    self.app.push_system_message(
+                        "Wait for the current prompt to finish before regenerating.",
+                    );
+                    return Ok(());
+                }
+                match self.app.drop_last_exchange() {
+                    Some(prompt) => {
+                        self.app.set_input(prompt);
+                        self.app.push_system_message(
+                            "Last exchange removed — resending the same prompt.",
+                        );
+                        Box::pin(self.dispatch_prompt()).await?;
+                    }
+                    None => self.app.push_system_message("Nothing to regenerate."),
+                }
+            }
+            "/delete" => {
+                if self.app.is_generating() {
+                    self.app.push_system_message(
+                        "Wait for the current prompt to finish before deleting.",
+                    );
+                    return Ok(());
+                }
+                match self.app.drop_last_exchange() {
+                    Some(_) => self
+                        .app
+                        .push_system_message("Last exchange removed."),
+                    None => self.app.push_system_message("Nothing to delete."),
+                }
+            }
+            "/export" => {
+                let arg = parts.next().map(|s| s.to_string());
+                let markdown = self.app.export_markdown();
+                match arg {
+                    None => {
+                        self.app
+                            .push_system_message(&format!(
+                                "Session markdown ({} chars). To write it to a file, run /export <path>.\n\n{}",
+                                markdown.len(),
+                                markdown,
+                            ));
+                    }
+                    Some(path) => {
+                        let p = std::path::PathBuf::from(&path);
+                        let _ = std::fs::create_dir_all(p.parent().unwrap_or(std::path::Path::new(".")));
+                        match std::fs::write(&p, markdown.as_bytes()) {
+                            Ok(()) => self.app.push_system_message(&format!(
+                                "Exported session ({} bytes) to {}",
+                                markdown.len(),
+                                p.display(),
+                            )),
+                            Err(e) => self
+                                .app
+                                .push_system_message(&format!("Export failed: {e}")),
+                        }
+                    }
+                }
+            }
             "/init" => {
                 let config = match KodConfig::load_default() {
                     Ok(c) => c,
@@ -1563,6 +1656,42 @@ impl TuiLoop {
 
     /// Handle key events
     async fn handle_key(&mut self, key: KeyCode) -> Result<()> {
+        // Question dialog: while it is up, all printable characters
+        // go into the answer buffer, Backspace edits, Enter submits,
+        // Esc/Ctrl+C cancels.
+        if self.app.is_asking() {
+            match key {
+                KeyCode::Char(c) => {
+                    self.app.question_input_mut().push(c);
+                }
+                KeyCode::Backspace => {
+                    self.app.question_input_mut().pop();
+                }
+                KeyCode::Enter => {
+                    if let Some(q) = self.app.pending_question() {
+                        let id = q.id;
+                        let answer = self.app.clear_pending_question();
+                        if let Some(engine) = &self.engine {
+                            engine.respond_to_question(id, answer).await;
+                        }
+                    }
+                }
+                KeyCode::Escape | KeyCode::CtrlC => {
+                    if let Some(q) = self.app.pending_question() {
+                        let id = q.id;
+                        self.app.clear_pending_question();
+                        if let Some(engine) = &self.engine {
+                            engine
+                                .respond_to_question(id, "(cancelled)".to_string())
+                                .await;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
         // Approval dialog: while it is up, y / n / Esc / Ctrl+C
         // answer the request; every other key is swallowed so the
         // user does not type past a modal they cannot dismiss.

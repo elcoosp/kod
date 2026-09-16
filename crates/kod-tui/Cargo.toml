@@ -22,6 +22,7 @@ kod-config = { path = "../kod-config" }
 kod-core = { path = "../kod-core" }
 kod-skills = { path = "../kod-skills" }
 kod-provider-openai = { path = "../kod-provider-openai" }
+kod-tools = { path = "../kod-tools" }
 dirs = { workspace = true }
 toml = { workspace = true }
 

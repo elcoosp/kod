@@ -173,6 +173,18 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/init",
         hint: "onboarding info: config path, model profiles, next steps",
     },
+    SlashCommand {
+        name: "/regenerate",
+        hint: "regenerate the last assistant reply",
+    },
+    SlashCommand {
+        name: "/delete",
+        hint: "remove the last user+assistant exchange",
+    },
+    SlashCommand {
+        name: "/export",
+        hint: "export session as markdown: /export [path]",
+    },
 ];
 
 /// What the generation is currently doing — shown in the header/status so
@@ -312,6 +324,11 @@ pub struct KodApp {
     /// `None` when no dialog is up. Populated from an approval-marker
     /// chunk; cleared when the user answers (y/n) or cancels (Esc).
     pending_approval: Option<PendingApproval>,
+    /// The ask_user question the TUI is currently prompting for.
+    /// Populated from a question-marker chunk; cleared on answer.
+    pending_question: Option<PendingQuestion>,
+    /// The buffer the user is typing into while a question is up.
+    question_input: String,
     /// Wall-clock instant the session started.
     session_started_at: Instant,
     /// Accumulated input tokens the provider has reported this session.
@@ -339,6 +356,14 @@ pub struct PendingApproval {
     pub tool_name: String,
     pub summary: String,
     pub diff: Option<String>,
+}
+
+/// A question currently waiting for a text answer in the TUI.
+#[derive(Debug, Clone)]
+pub struct PendingQuestion {
+    pub id: u64,
+    pub question: String,
+    pub placeholder: Option<String>,
 }
 
 impl KodApp {
@@ -392,6 +417,8 @@ impl KodApp {
 
             swarm_agents: std::collections::HashMap::new(),
             pending_approval: None,
+            pending_question: None,
+            question_input: String::new(),
             session_started_at: Instant::now(),
             session_input_tokens: 0,
             session_output_tokens: 0,
@@ -2537,6 +2564,100 @@ impl KodApp {
     /// must be routed to it instead of the input box.
     pub fn is_approving(&self) -> bool {
         self.pending_approval.is_some()
+    }
+}
+
+/// Question-dialog state, alongside the approval dialog.
+impl KodApp {
+    pub fn set_pending_question(&mut self, q: PendingQuestion) {
+        self.pending_question = Some(q);
+        self.question_input.clear();
+    }
+    pub fn pending_question(&self) -> Option<&PendingQuestion> {
+        self.pending_question.as_ref()
+    }
+    pub fn clear_pending_question(&mut self) -> String {
+        let text = std::mem::take(&mut self.question_input);
+        self.pending_question = None;
+        text
+    }
+    pub fn is_asking(&self) -> bool {
+        self.pending_question.is_some()
+    }
+    pub fn question_input(&self) -> &str {
+        &self.question_input
+    }
+    pub fn question_input_mut(&mut self) -> &mut String {
+        &mut self.question_input
+    }
+}
+
+/// Session-editing helpers used by /regenerate, /delete, /export.
+impl KodApp {
+    /// Remove the trailing (assistant, ...) pair through the preceding
+    /// user message. Returns the removed user text when something was
+    /// removed, so the caller can feed it back into a new turn.
+    pub fn drop_last_exchange(&mut self) -> Option<String> {
+        // Walk back from the end: drop tool / assistant / system
+        // messages, then the user message, then stop.
+        let mut user_text: Option<String> = None;
+        while let Some(msg) = self.messages.last() {
+            match msg.role {
+                kod_types::MessageRole::User => {
+                    user_text = Some(msg.content.clone());
+                    self.messages.pop();
+                    break;
+                }
+                kod_types::MessageRole::Assistant
+                | kod_types::MessageRole::Tool
+                | kod_types::MessageRole::System => {
+                    self.messages.pop();
+                }
+                kod_types::MessageRole::Agent(_) => {
+                    self.messages.pop();
+                }
+            }
+        }
+        user_text
+    }
+
+    /// Render the current chat as Markdown. Same shape the CLI's
+    /// `kod sessions export --format markdown` produces, so the two
+    /// paths agree.
+    pub fn export_markdown(&self) -> String {
+        let mut out = String::from("# KOD session\n\n");
+        let mut ordered: Vec<&Message> = self.messages.iter().collect();
+        ordered.sort_by_key(|m| m.sequence);
+        for m in ordered {
+            let label = match &m.role {
+                kod_types::MessageRole::User => "you",
+                kod_types::MessageRole::Assistant => "ai",
+                kod_types::MessageRole::System => "sys",
+                kod_types::MessageRole::Tool => "tool",
+                kod_types::MessageRole::Agent(_) => "agent",
+            };
+            out.push_str(&format!(
+                "## {} · {}\n\n",
+                label,
+                m.timestamp.format("%Y-%m-%d %H:%M:%S")
+            ));
+            let fenced = matches!(
+                m.role,
+                kod_types::MessageRole::Assistant | kod_types::MessageRole::Tool
+            );
+            if fenced {
+                out.push_str("```\n");
+                out.push_str(&m.content);
+                if !m.content.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str("```\n\n");
+            } else {
+                out.push_str(&m.content);
+                out.push_str("\n\n");
+            }
+        }
+        out
     }
 }
 

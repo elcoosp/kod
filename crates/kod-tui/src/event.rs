@@ -151,6 +151,15 @@ pub enum Event {
         summary: String,
         diff: Option<String>,
     },
+    /// The agent called ask_user and wants a text answer. Carries the
+    /// question and optional placeholder hint. The TUI shows an input
+    /// prompt; the answer is sent back via
+    /// `respond_to_question`.
+    QuestionRequested {
+        id: u64,
+        question: String,
+        placeholder: Option<String>,
+    },
     Error(String),
     Quit,
     Resize(u16, u16),

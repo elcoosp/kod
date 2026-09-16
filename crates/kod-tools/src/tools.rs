@@ -806,7 +806,7 @@ fn truncate_entry(s: &str, max: usize) -> String {
 /// global git excludes), keeping dotfiles visible but always pruning `.git`.
 /// Used by `list_files` and `grep` so ignored build output (`target/`,
 /// `node_modules/`, …) never bloats tool results.
-fn gitaware_walk(root: &std::path::Path, recursive: bool) -> Vec<std::path::PathBuf> {
+pub(crate) fn gitaware_walk(root: &std::path::Path, recursive: bool) -> Vec<std::path::PathBuf> {
     let mut builder = ignore::WalkBuilder::new(root);
     builder
         .hidden(false)

@@ -136,6 +136,22 @@ pub fn is_thinking_marker(chunk: &str) -> bool {
     chunk == THINKING_MARKER
 }
 
+/// Marker prefix for an interactive question on the streaming chunk
+/// channel: `\0kod-question:<id>:<json>\0`. Same shape as the
+/// approval marker; re-exported here so consumers do not have to reach
+/// into kod-tools.
+pub const QUESTION_MARKER: &str = kod_tools::ask::QUESTION_MARKER;
+
+/// Build a question marker for `id` with the JSON-encoded request.
+pub fn question_marker(id: u64, json: &str) -> String {
+    kod_tools::ask::question_marker(id, json)
+}
+
+/// Parse a question marker, returning `(id, json)`.
+pub fn parse_question(chunk: &str) -> Option<(u64, &str)> {
+    kod_tools::ask::parse_question(chunk)
+}
+
 /// Bytes of headroom reserved when capping a JSON tool result: enough
 /// room for the surrounding `{"path": "…", "content": "…", "truncated":
 /// …}` scaffolding after we trim the big string fields.
@@ -776,6 +792,13 @@ pub struct KodEngine {
     /// Monotonic counter for approval request ids. Ids are only unique
     /// within an engine's lifetime, which is all the consumer needs.
     next_approval_id: std::sync::atomic::AtomicU64,
+    /// Pending ask_user questions, keyed by id. Same shape as
+    /// `pending_approvals`, different answer type.
+    pending_questions: RwLock<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<String>>>,
+    /// Monotonic id source for ask_user questions. Kept distinct from
+    /// the approval counter so a marker cannot be accidentally
+    /// answered by the wrong dialog.
+    next_question_id: std::sync::atomic::AtomicU64,
     /// Pending approval requests, keyed by id. The engine inserts a
     /// oneshot sender before emitting the request marker; the consumer
     /// takes the sender out via [`KodEngine::respond_to_approval`] and
@@ -786,6 +809,9 @@ pub struct KodEngine {
     /// running under this engine reads and writes the same store
     /// through the cloned `Arc`.
     swarm_knowledge: kod_tools::SwarmKnowledge,
+    /// The session's todo list. Shared across swarm agents and across
+    /// every turn of the same engine.
+    todo_list: kod_tools::TodoList,
     /// File checkpoint snapshots. `Some` when a checkpoint directory
     /// could be determined from the working directory; `None` when
     /// the home directory is unavailable (a stripped container, a
@@ -910,7 +936,10 @@ impl KodEngine {
             confirm_writes_atomic: std::sync::atomic::AtomicBool::new(false),
             next_approval_id: std::sync::atomic::AtomicU64::new(1),
             pending_approvals: RwLock::new(std::collections::HashMap::new()),
+            pending_questions: RwLock::new(std::collections::HashMap::new()),
+            next_question_id: std::sync::atomic::AtomicU64::new(1),
             swarm_knowledge: kod_tools::new_knowledge(),
+            todo_list: kod_tools::new_todo_list(),
             checkpoints,
         })
     }
@@ -998,6 +1027,16 @@ impl KodEngine {
         }
     }
 
+    /// Answer a pending ask_user question. Returns `true` when the id
+    /// matched and the answer was delivered.
+    pub async fn respond_to_question(&self, id: u64, answer: String) -> bool {
+        let sender = self.pending_questions.write().await.remove(&id);
+        match sender {
+            Some(tx) => tx.send(answer).is_ok(),
+            None => false,
+        }
+    }
+
     /// Install the shell hooks the engine runs around tool calls. A
     /// caller that never calls this gets a disabled runner.
     pub fn set_hooks(&self, config: kod_config::HooksConfig) {
@@ -1066,6 +1105,13 @@ impl KodEngine {
     /// after, reads and writes this directly.
     pub fn swarm_knowledge(&self) -> &kod_tools::SwarmKnowledge {
         &self.swarm_knowledge
+    }
+
+    /// The engine's shared todo list. A caller that wants to seed it
+    /// before a session, or render it alongside the chat, reads this
+    /// directly.
+    pub fn todo_list(&self) -> &kod_tools::TodoList {
+        &self.todo_list
     }
 
     /// The engine's shared per-path lock table. A caller that wants
@@ -1163,6 +1209,17 @@ impl KodEngine {
         // from a context that opted out.
         self.tools.register(Box::new(GitStatusTool::new())).await;
         self.tools.register(Box::new(GitDiffTool::new())).await;
+        self.tools
+            .register(Box::new(kod_tools::TodoTool::new(
+                self.todo_list.clone(),
+            )))
+            .await;
+        self.tools
+            .register(Box::new(kod_tools::SearchFilesTool::new()))
+            .await;
+        self.tools
+            .register(Box::new(kod_tools::AskUserTool::new()))
+            .await;
         // `web_fetch` is registered unconditionally; the per-context
         // `network_access` permission gates the actual call. This is
         // the same shape the git tools use, and it means a future
@@ -1933,6 +1990,78 @@ impl KodEngine {
             }
         }
 
+        // ask_user interception. The tool itself cannot reach the
+        // chunk channel (its `execute` signature does not carry one), so
+        // the engine does the marker + await, and hands the answer back
+        // as the tool result. A call with no chunk_tx (non-streaming
+        // `process`) becomes a denial with a message the model can act
+        // on, matching the confirm_writes fallback.
+        let mut answers: std::collections::HashMap<usize, String> =
+            std::collections::HashMap::new();
+        for (i, call) in calls.iter().enumerate() {
+            if call.tool_name != "ask_user" {
+                continue;
+            }
+            match chunk_tx {
+                Some(tx) => {
+                    let question = call
+                        .arguments
+                        .get("question")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(no question)")
+                        .to_string();
+                    let placeholder = call
+                        .arguments
+                        .get("placeholder")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let req = kod_tools::ask::QuestionRequest {
+                        question,
+                        placeholder,
+                    };
+                    let json = serde_json::to_string(&req)
+                        .unwrap_or_else(|_| "{}".to_string());
+                    let id = self
+                        .next_question_id
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let (otx, orx) = tokio::sync::oneshot::channel();
+                    self.pending_questions.write().await.insert(id, otx);
+                    let _ = tx.send(question_marker(id, &json)).await;
+                    // Generous timeout — a user reading the question and
+                    // typing a real answer needs more than a click.
+                    let answer = tokio::time::timeout(
+                        std::time::Duration::from_secs(AWAIT_APPROVAL_SECS),
+                        orx,
+                    )
+                    .await;
+                    match answer {
+                        Ok(Ok(text)) => {
+                            answers.insert(i, text);
+                        }
+                        Ok(Err(_)) => {
+                            answers.insert(i, "(question cancelled)".to_string());
+                        }
+                        Err(_) => {
+                            answers.insert(
+                                i,
+                                format!(
+                                    "(no answer within {}s — the user is away)",
+                                    AWAIT_APPROVAL_SECS
+                                ),
+                            );
+                        }
+                    }
+                }
+                None => {
+                    answers.insert(
+                        i,
+                        "(ask_user requires an interactive consumer; use kod tui or kod chat)"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+
         let mut raw_results: Vec<(Result<ToolResult>, u64)> = if any_mutating {
             let mut out = Vec::with_capacity(calls.len());
             for (i, call) in calls.iter().enumerate() {
@@ -2085,11 +2214,18 @@ impl KodEngine {
         let mut results = Vec::with_capacity(calls.len());
         let mut elapsed_ms = Vec::with_capacity(calls.len());
         let mut block = String::from("## Tool results\n");
-        for (call, (res, ms)) in calls.iter().zip(raw_results) {
+        for (i, (call, (res, ms))) in calls.iter().zip(raw_results).enumerate() {
             elapsed_ms.push(ms);
             let result = match res {
                 Ok(r) => r,
                 Err(e) => ToolResult::Error(e.to_string()),
+            };
+            // ask_user: replace whatever the tool returned (an error
+            // from its fallback) with the answer the user gave.
+            let result = if let Some(answer) = answers.get(&i) {
+                ToolResult::Success(serde_json::json!({ "answer": answer }))
+            } else {
+                result
             };
             // Cap for the prompt block the model sees. Byte count, not
             // tokens, but at the workspace's 4-chars-per-token rule of

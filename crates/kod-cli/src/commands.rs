@@ -12,6 +12,29 @@ use kod_provider_openai::OpenAICompatProvider;
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
+/// `kod skills` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum SkillsAction {
+    /// List skills (same as `kod skills` without a subcommand).
+    List,
+    /// Scaffold a new skill file in the first writable skills
+    /// directory. Refuses to overwrite an existing file.
+    New {
+        /// Skill name (kebab-case; used as the file stem and the
+        /// `name:` field).
+        name: String,
+    },
+}
+
+/// `kod config` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum ConfigAction {
+    /// Print the path to the config file.
+    Path,
+    /// Open the config file in $EDITOR (or $VISUAL, or `vi`).
+    Edit,
+}
+
 /// KOD - Terminal-native AI coding agent
 #[derive(Parser, Debug)]
 #[command(name = "kod", version, about)]
@@ -56,20 +79,31 @@ impl Cli {
                     run_swarm(goal.clone(), *agents, model.clone(), *merge).await
                 })
             }
-            Some(Command::Skills { json }) => {
+            Some(Command::Skills { action, json }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
-                rt.block_on(async { run_skills_list(*json).await })
+                rt.block_on(async {
+                    match action {
+                        None | Some(SkillsAction::List) => run_skills_list(*json).await,
+                        Some(SkillsAction::New { name }) => run_skills_new(name).await,
+                    }
+                })
             }
             Some(Command::ValidateSkills) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_skills_validate().await })
             }
-            Some(Command::Config) => {
+            Some(Command::Config { action }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
-                rt.block_on(async { run_config_display().await })
+                rt.block_on(async {
+                    match action {
+                        None => run_config_display().await,
+                        Some(ConfigAction::Path) => run_config_path().await,
+                        Some(ConfigAction::Edit) => run_config_edit().await,
+                    }
+                })
             }
             Some(Command::Test) => {
                 let rt = tokio::runtime::Runtime::new()
@@ -131,6 +165,11 @@ impl Cli {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_update().await })
+            }
+            Some(Command::Which) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_which().await })
             }
             None => {
                 // First-run UX. A bare `kod` invocation is the most common
@@ -264,11 +303,14 @@ pub enum Command {
         model: Option<String>,
     },
 
-    /// List available skills
+    /// Work with skills. `kod skills` (no subcommand) lists them;
+    /// `kod skills list` is the same; `kod skills new <name>`
+    /// scaffolds a new skill file.
     Skills {
+        #[command(subcommand)]
+        action: Option<SkillsAction>,
         /// Emit machine-readable JSON instead of the human text
-        /// listing. Lets a script consume the same inventory `kod
-        /// skills` shows.
+        /// listing. Applies to the list action.
         #[arg(long, default_value_t = false)]
         json: bool,
     },
@@ -278,8 +320,13 @@ pub enum Command {
     /// editing a skill by hand.
     ValidateSkills,
 
-    /// Show configuration
-    Config,
+    /// Show configuration. `kod config` prints the effective config;
+    /// `kod config path` prints the file path; `kod config edit`
+    /// opens the file in $EDITOR.
+    Config {
+        #[command(subcommand)]
+        action: Option<ConfigAction>,
+    },
 
     /// Run self-tests
     Test,
@@ -369,6 +416,11 @@ pub enum Command {
     /// URL and installation instructions. Read-only — never replaces
     /// the running binary.
     Update,
+
+    /// Print every path KOD reads or writes: config, memory db, skills
+    /// dirs, session, history, checkpoints. Useful for scripting and
+    /// for "where does this thing live?" questions.
+    Which,
 }
 
 /// `kod checkpoint` subcommands.
@@ -558,7 +610,18 @@ pub async fn run_chat(
         // after `process_streaming` closes the channel, and the pump's
         // clone is dropped with the task. Without the clone, the outer
         // `drop(approval_tx)` is a use-after-move.
+        let (question_tx, mut question_rx) =
+            tokio::sync::mpsc::channel::<(u64, String)>(16);
+        let engine_for_questions = engine.clone();
+        let question_forwarder = tokio::spawn(async move {
+            while let Some((id, answer)) = question_rx.recv().await {
+                let _ = engine_for_questions
+                    .respond_to_question(id, answer)
+                    .await;
+            }
+        });
         let approval_tx_pump = approval_tx.clone();
+        let question_tx_pump = question_tx.clone();
         let pump = tokio::spawn(async move {
             // `streamed_any` counts text chunks, not control markers.
             // It decides whether the caller still needs to print the
@@ -591,6 +654,32 @@ pub async fn run_chat(
                 // a write_file / patch_file. Print the diff, read a
                 // line from stdin, forward the answer to the engine.
                 // Any input error is treated as Deny.
+                // Question marker: ask_user wants a text answer.
+                if let Some((id, json)) = kod_core::engine::parse_question(&chunk) {
+                    let request: kod_tools::ask::QuestionRequest =
+                        serde_json::from_str(json).unwrap_or_else(|_| {
+                            kod_tools::ask::QuestionRequest {
+                                question: "(unparseable question)".to_string(),
+                                placeholder: None,
+                            }
+                        });
+                    println!();
+                    println!("── question ──");
+                    println!("{}", request.question);
+                    if let Some(hint) = &request.placeholder {
+                        println!("(e.g. {})", hint);
+                    }
+                    print!("> ");
+                    let _ = io::stdout().flush();
+                    let mut answer = String::new();
+                    let text = match io::stdin().read_line(&mut answer) {
+                        Ok(_) => answer.trim_end().to_string(),
+                        Err(_) => "(no answer)".to_string(),
+                    };
+                    let _ = question_tx_pump.send((id, text)).await;
+                    continue;
+                }
+
                 if let Some((id, json)) = kod_core::engine::parse_tool_approval(&chunk) {
                     let request: kod_core::engine::ApprovalRequest =
                         serde_json::from_str(json).unwrap_or_else(|_| {
@@ -651,7 +740,9 @@ pub async fn run_chat(
         let result = engine.process_streaming(input_line, &tx).await;
         drop(tx);
         drop(approval_tx);
+        drop(question_tx);
         let _ = approval_forwarder.await;
+        let _ = question_forwarder.await;
         let streamed_any = pump.await.unwrap_or(false);
 
         match result {
@@ -1911,4 +2002,178 @@ mod update_tests {
         assert!(version_is_older("v0.1.0", "0.1.1"));
         assert!(version_is_older("0.1.0", "v0.1.1"));
     }
+}
+
+
+/// Print just the config file path. Useful for `$(kod config path)`.
+pub async fn run_config_path() -> Result<()> {
+    let dir = KodConfig::config_dir()?;
+    println!("{}", dir.join("config.toml").display());
+    Ok(())
+}
+
+/// Open the config file in the user's editor. Falls back through
+/// `$EDITOR`, `$VISUAL`, `vi`, and `nano` — the first one that exists on
+/// PATH is used. Exits non-zero when no editor is available so a script
+/// that wants to gate on this can.
+pub async fn run_config_edit() -> Result<()> {
+    let dir = KodConfig::config_dir()?;
+    let path = dir.join("config.toml");
+    // Ensure the file exists so `$EDITOR` opens something.
+    if !path.exists() {
+        let config = KodConfig::load_default()?;
+        config.save_to(&path)?;
+    }
+
+    let candidates: Vec<String> = ["EDITOR", "VISUAL"]
+        .iter()
+        .filter_map(|k| std::env::var(k).ok())
+        .filter(|s| !s.trim().is_empty())
+        .chain(std::iter::once("vi".to_string()))
+        .chain(std::iter::once("nano".to_string()))
+        .collect();
+
+    for editor in candidates {
+        // `sh -c` so a value like `code --wait` works.
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{} {}", editor, shell_quote(&path.to_string_lossy())))
+            .status();
+        match status {
+            Ok(s) if s.success() => return Ok(()),
+            Ok(s) => {
+                return Err(KodError::Internal(format!(
+                    "editor {:?} exited with status {:?}",
+                    editor,
+                    s.code()
+                )));
+            }
+            Err(_) => continue,
+        }
+    }
+    Err(KodError::Internal(
+        "no editor found — set $EDITOR or install vi/nano".to_string(),
+    ))
+}
+
+/// Quote a string for safe interpolation into a `sh -c` command. Only
+/// wraps in single quotes; the common editor invocation is a path, and
+/// a path with a single quote in it is pathological.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+
+/// Print every filesystem path KOD touches, one per line with a stable
+/// key on the left. Deliberately unstyled and stable-keyed so a shell
+/// script can `kod which | grep config | cut -f2`.
+pub async fn run_which() -> Result<()> {
+    let config = KodConfig::load_default()?;
+
+    if let Ok(dir) = KodConfig::config_dir() {
+        println!("config\t{}", dir.join("config.toml").display());
+    }
+    if let Ok(p) = config.memory_db_path() {
+        println!("memory\t{}", p.display());
+    }
+    if let Some(p) = kod_tui::app::KodApp::session_path() {
+        println!("session\t{}", p.display());
+    }
+    if let Some(p) = kod_tui::app::KodApp::history_path() {
+        println!("history\t{}", p.display());
+    }
+    if let Ok(cwd) = std::env::current_dir()
+        && let Some(cp) = kod_core::checkpoint::CheckpointManager::for_working_dir(&cwd)
+    {
+        println!("checkpoints\t{}", cp.dir().display());
+    }
+    if let Ok(dirs) = config.skills_dirs() {
+        for (i, d) in dirs.iter().enumerate() {
+            println!("skills.{i}\t{}", d.display());
+        }
+    }
+    Ok(())
+}
+
+
+/// Scaffold a new skill file. Writes into the first writable directory
+/// among the standard locations (project-local .agents/skills first,
+/// then ~/.agents/skills). Refuses to overwrite an existing file with
+/// the same name — a scaffold that silently replaces a real skill is
+/// worse than no scaffold.
+pub async fn run_skills_new(name: &str) -> Result<()> {
+    // Validate the name: kebab-case, [a-z0-9-].
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(KodError::Config("skill name is required".to_string()));
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(KodError::Config(format!(
+            "invalid skill name {:?}: use lowercase letters, digits, and hyphens only",
+            trimmed
+        )));
+    }
+
+    let config = KodConfig::load_default()?;
+    let dirs = config.skills_dirs()?;
+
+    // Prefer a project-local path if the cwd is inside one; else the
+    // first home-level path.
+    let cwd = std::env::current_dir().ok();
+    let target_dir = dirs
+        .iter()
+        .find(|d| {
+            cwd.as_ref()
+                .map(|c| d.starts_with(c) || d.parent().map(|p| p.starts_with(c)).unwrap_or(false))
+                .unwrap_or(false)
+        })
+        .or_else(|| dirs.first())
+        .cloned()
+        .ok_or_else(|| {
+            KodError::Config(
+                "could not determine a skills directory to write to".to_string(),
+            )
+        })?;
+
+    std::fs::create_dir_all(&target_dir).map_err(KodError::Io)?;
+    let path = target_dir.join(format!("{trimmed}.md"));
+    if path.exists() {
+        return Err(KodError::Config(format!(
+            "{} already exists — refusing to overwrite",
+            path.display()
+        )));
+    }
+
+    let title = to_title_case(trimmed);
+    let body = format!(
+        "---\n         name: {name}\n         description: TODO: one-sentence description of what this skill does\n         version: 0.1.0\n         category: general\n         tags: []\n         capabilities: []\n         triggers:\n  - \"TODO trigger phrase\"\n         ---\n\n         # {title}\n\n         ## Instructions\n\n         Describe the skill's guidance here. The model reads this section\n         when the skill's triggers match the user's request.\n\n         ## Examples\n\n         <example input=\"A sample user request\">\n         A sample response that demonstrates the skill.\n         </example>\n\n         ## Constraints\n\n         Optional. Rules the model must respect when applying the skill.\n",
+        name = trimmed,
+        title = title,
+    );
+
+    std::fs::write(&path, body.as_bytes()).map_err(KodError::Io)?;
+
+    println!("Created {}", path.display());
+    println!();
+    println!("Edit it to fill in the description, triggers, and instructions.");
+    println!("Validate with: kod validate-skills");
+    Ok(())
+}
+
+/// Convert a kebab-case identifier to Title Case for the markdown
+/// heading: `rust-refactoring` -> `Rust Refactoring`.
+fn to_title_case(s: &str) -> String {
+    s.split('-')
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }

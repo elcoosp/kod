@@ -33,15 +33,21 @@
 //! # fn main() {}
 //! ```
 
+pub mod ask;
 pub mod context;
 pub mod git;
 pub mod patch;
 pub mod path_lock;
 pub mod executor;
 pub mod registry;
+pub mod search;
 pub mod swarm_tools;
+pub mod todo;
 pub mod tools;
 pub mod web;
+pub use ask::{AskUserTool, QUESTION_MARKER, QuestionRequest, parse_question, question_marker};
+pub use search::SearchFilesTool;
+pub use todo::{TodoItem, TodoList, TodoStatus, TodoTool, new_list as new_todo_list};
 pub use git::{GitDiffTool, GitStatusTool};
 pub use web::WebFetchTool;
 pub use tools::{
