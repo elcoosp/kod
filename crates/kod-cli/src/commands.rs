@@ -56,10 +56,15 @@ impl Cli {
                     run_swarm(goal.clone(), *agents, model.clone(), *merge).await
                 })
             }
-            Some(Command::Skills) => {
+            Some(Command::Skills { json }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
-                rt.block_on(async { run_skills_list().await })
+                rt.block_on(async { run_skills_list(*json).await })
+            }
+            Some(Command::ValidateSkills) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_skills_validate().await })
             }
             Some(Command::Config) => {
                 let rt = tokio::runtime::Runtime::new()
@@ -255,7 +260,18 @@ pub enum Command {
     },
 
     /// List available skills
-    Skills,
+    Skills {
+        /// Emit machine-readable JSON instead of the human text
+        /// listing. Lets a script consume the same inventory `kod
+        /// skills` shows.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+
+    /// Validate every skill file: parse each .md, report any that fail,
+    /// and exit non-zero if at least one did. Useful in CI and after
+    /// editing a skill by hand.
+    ValidateSkills,
 
     /// Show configuration
     Config,
@@ -742,10 +758,36 @@ pub async fn run_agent(name: String, goal: String, model: Option<String>) -> Res
     Ok(())
 }
 
-/// List available skills
-pub async fn run_skills_list() -> Result<()> {
+/// List available skills. With `json = true`, prints a JSON array of
+/// the same data instead of the human-readable text — every consumer
+/// of the text output today (a script, a viewer) can instead consume
+/// the array and stop parsing prose.
+pub async fn run_skills_list(json: bool) -> Result<()> {
     let config = KodConfig::load_default()?;
     let skills_dirs = config.skills_dirs()?;
+
+    if json {
+        let skills = kod_skills::load_from_dirs(&skills_dirs).await?;
+        let arr: Vec<serde_json::Value> = skills
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "name": s.metadata.name,
+                    "description": s.metadata.description,
+                    "version": s.metadata.version,
+                    "category": s.metadata.category,
+                    "tags": s.metadata.tags,
+                    "capabilities": s.metadata.capabilities,
+                    "triggers": s.metadata.triggers,
+                    "path": s.path.display().to_string(),
+                })
+            })
+            .collect();
+        let out = serde_json::to_string_pretty(&arr)
+            .map_err(|e| KodError::Serialization(e.to_string()))?;
+        println!("{}", out);
+        return Ok(());
+    }
 
     let existing: Vec<_> = skills_dirs.iter().filter(|d| d.is_dir()).collect();
     if existing.is_empty() {
@@ -1526,4 +1568,73 @@ fn format_timestamp_ms(ms: u64) -> String {
         }
         None => format!("{ms} ms"),
     }
+}
+
+/// Validate every skill file: parse each `.md` in every configured
+/// skills directory, print one line per file (✓ or ✗), and exit
+/// non-zero if at least one file failed to parse.
+///
+/// Distinct from `kod skills` — that command loads through the matcher
+/// (which logs a warning and *skips* a malformed file), so a typo in
+/// one skill is invisible until the file is actually needed. This one
+/// looks at every file, and the exit code carries the verdict.
+pub async fn run_skills_validate() -> Result<()> {
+    let config = KodConfig::load_default()?;
+    let skills_dirs = config.skills_dirs()?;
+    let parser = kod_skills::SkillParser::new();
+
+    let mut total = 0usize;
+    let mut ok = 0usize;
+    let mut failed: Vec<(std::path::PathBuf, String)> = Vec::new();
+
+    for dir in &skills_dirs {
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if entry.path().extension().and_then(|s| s.to_str()) != Some("md") {
+                continue;
+            }
+            total += 1;
+            match parser.parse_file(entry.path()) {
+                Ok(skill) => {
+                    ok += 1;
+                    println!("✓ {} ({})", skill.metadata.name, entry.path().display());
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    failed.push((entry.path().to_path_buf(), msg.clone()));
+                    println!("✗ {} — {}", entry.path().display(), msg);
+                }
+            }
+        }
+    }
+
+    if total == 0 {
+        println!("No skill files found. Checked:");
+        for d in &skills_dirs {
+            println!("  {}", d.display());
+        }
+        return Ok(());
+    }
+
+    println!();
+    println!(
+        "{} skill file(s) checked: {} parsed, {} failed.",
+        total,
+        ok,
+        failed.len()
+    );
+
+    if !failed.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
 }
