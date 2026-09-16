@@ -13,6 +13,13 @@ pub struct LlmConfig {
     pub max_tokens: usize,
     pub temperature: f32,
     pub timeout_secs: u64,
+    /// Allow the agent to reach the network through `web_fetch` (and,
+    /// once a search tool exists, that too). Default false: the agent
+    /// running with a user's shell privileges should not reach out
+    /// without an explicit opt-in. A local-only session with a local
+    /// model gains nothing from it; a session that does need docs at a
+    /// URL turns it on.
+    pub network_access: bool,
 }
 
 impl Default for LlmConfig {
@@ -26,6 +33,7 @@ impl Default for LlmConfig {
             max_tokens: 2048,
             temperature: 0.7,
             timeout_secs: 300,
+            network_access: false,
         }
     }
 }

@@ -41,7 +41,9 @@ pub mod executor;
 pub mod registry;
 pub mod swarm_tools;
 pub mod tools;
+pub mod web;
 pub use git::{GitDiffTool, GitStatusTool};
+pub use web::WebFetchTool;
 pub use tools::{
     ExecuteCommandTool, FileInfoTool, GrepTool, ListFilesTool, PatchFileTool, ReadFileTool,
     WriteFileTool,

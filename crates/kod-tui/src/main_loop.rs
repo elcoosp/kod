@@ -28,7 +28,7 @@ use std::time::Duration;
 /// `test_slash_help_lists_every_command` — adding a command to
 /// `SLASH_COMMANDS` without updating this string fails the test, so
 /// the help output and the `/` autocomplete cannot drift apart.
-const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
+const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/doctor — print a diagnostics report (same as `kod doctor`)\n/rollback [id] — restore a file from a checkpoint (newest when no id)\n/checkpoints — list file checkpoints for this project\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
 
 /// Main TUI application loop
 pub struct TuiLoop {
@@ -121,6 +121,7 @@ impl TuiLoop {
         let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
         engine.set_provider(Arc::new(provider)).await;
         engine.set_hooks(config.hooks.clone());
+        engine.set_network_access(config.llm.network_access);
 
         engine.start().await?;
         self.engine = Some(Arc::new(engine));
@@ -1311,6 +1312,36 @@ impl TuiLoop {
                         .app
                         .push_system_message(&format!("Could not list checkpoints: {e}")),
                 }
+            }
+            "/doctor" => {
+                let config = match KodConfig::load_default() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        self.app
+                            .push_system_message(&format!("Could not load config: {e}"));
+                        return Ok(());
+                    }
+                };
+                let report = kod_core::doctor::run_diagnostics(&config);
+                let mut lines = vec!["KOD doctor".to_string(), String::new()];
+                for check in &report.checks {
+                    let mark = match check.status {
+                        kod_core::doctor::CheckStatus::Ok => "✓",
+                        kod_core::doctor::CheckStatus::Warn => "⚠",
+                        kod_core::doctor::CheckStatus::Fail => "✗",
+                    };
+                    lines.push(format!("  {} {:<14} {}", mark, check.name, check.message));
+                }
+                lines.push(String::new());
+                if report.has_failures() {
+                    lines.push(
+                        "One or more checks failed — review the items marked ✗ above."
+                            .to_string(),
+                    );
+                } else {
+                    lines.push("All checks passed.".to_string());
+                }
+                self.app.push_system_message(&lines.join("\n"));
             }
             _ => {
                 self.app

@@ -165,6 +165,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/checkpoints",
         hint: "list file checkpoints for this project",
     },
+    SlashCommand {
+        name: "/doctor",
+        hint: "print a diagnostics report (same as `kod doctor`)",
+    },
 ];
 
 /// What the generation is currently doing — shown in the header/status so

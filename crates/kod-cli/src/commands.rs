@@ -422,6 +422,7 @@ pub async fn run_chat(
     let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
     engine.set_provider(Arc::new(provider)).await;
     engine.set_hooks(config.hooks.clone());
+    engine.set_network_access(config.llm.network_access);
 
     // Start the engine
     engine.start().await?;
@@ -1127,7 +1128,7 @@ pub async fn run_tui(model: Option<String>) -> Result<()> {
 /// the database, or the skills directories. Exit code carries the
 /// verdict so a first-run script or CI job can gate on it.
 pub async fn run_doctor() -> Result<()> {
-    use crate::doctor::{CheckStatus, run_diagnostics};
+    use kod_core::doctor::{CheckStatus, run_diagnostics};
 
     let config = KodConfig::load_default()?;
     let report = run_diagnostics(&config);

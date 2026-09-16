@@ -727,6 +727,11 @@ pub struct KodEngine {
     /// so `set_sandbox_mode` works through `&self` — the engine is
     /// shared as `Arc<KodEngine>`.
     sandbox_mode_atomic: std::sync::atomic::AtomicU8,
+    /// Whether `web_fetch` may reach the network. `AtomicBool` so the
+    /// setter works through `&self`, matching the sandbox flag. Off by
+    /// default; the CLI and TUI apply `LlmConfig::network_access` at
+    /// startup.
+    network_access_atomic: std::sync::atomic::AtomicBool,
     /// Shared key-value blackboard for swarm agents. Every agent
     /// running under this engine reads and writes the same store
     /// through the cloned `Arc`.
@@ -748,6 +753,13 @@ impl KodEngine {
         // reconsider this default — today, disabling the flag turns
         // off `git status` for a caller that wants it, which is the
         // wrong trade.
+        // `network_access` stays off in the default context. The
+        // `web_fetch` tool is registered either way; a caller that
+        // wants the agent to reach the network must construct a
+        // context with `network_access: true`. Wiring this to the
+        // `LlmConfig::network_access` flag is a follow-up — the
+        // context is built before the config is available here, and
+        // the CLI/TUI do not currently pass a context in.
         let tool_context =
             ToolContext::new(working_dir.clone()).with_permissions(ToolPermissions {
                 read_files: true,
@@ -789,6 +801,7 @@ impl KodEngine {
                 crate::hooks::HookRunner::disabled(),
             )),
             sandbox_mode_atomic: std::sync::atomic::AtomicU8::new(0),
+            network_access_atomic: std::sync::atomic::AtomicBool::new(false),
             swarm_knowledge: kod_tools::new_knowledge(),
             checkpoints,
         })
@@ -834,6 +847,21 @@ impl KodEngine {
             1 => kod_tools::context::SandboxMode::Require,
             _ => kod_tools::context::SandboxMode::Disabled,
         }
+    }
+
+    /// Enable or disable network access for `web_fetch`. The CLI and
+    /// TUI call this at startup with `LlmConfig::network_access`. A
+    /// caller that never calls it gets the default (off) — a session
+    /// that has not opted in cannot reach the network through a tool.
+    pub fn set_network_access(&self, allowed: bool) {
+        self.network_access_atomic
+            .store(allowed, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The current network-access setting.
+    pub fn network_access_setting(&self) -> bool {
+        self.network_access_atomic
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Install the shell hooks the engine runs around tool calls. A
@@ -1001,6 +1029,12 @@ impl KodEngine {
         // from a context that opted out.
         self.tools.register(Box::new(GitStatusTool::new())).await;
         self.tools.register(Box::new(GitDiffTool::new())).await;
+        // `web_fetch` is registered unconditionally; the per-context
+        // `network_access` permission gates the actual call. This is
+        // the same shape the git tools use, and it means a future
+        // caller that wants to enable network access for one agent
+        // does not have to re-register the tool.
+        self.tools.register(Box::new(kod_tools::WebFetchTool::new())).await;
 
         tracing::info!("KOD engine started");
         Ok(())
@@ -1562,11 +1596,17 @@ impl KodEngine {
         // — `swarm:<agent-id>` for a swarm agent, `session` for the
         // interactive session — converted to a stable label here.
         let effective_holder: &str = if holder.is_empty() { "session" } else { holder };
-        let tool_context = self
+        let mut tool_context = self
             .tool_context
             .clone()
             .with_locks(Arc::clone(&self.lock_table), effective_holder)
             .with_sandbox(self.sandbox_setting());
+        // The engine-level network flag overrides whatever the
+        // construction-time context held. This is what makes
+        // `set_network_access` meaningful through an `Arc<KodEngine>`
+        // (no `&mut self` available): the flag is read here, per call,
+        // and applied to the context the tool sees.
+        tool_context.permissions.network_access = self.network_access_setting();
 
         let mut any_mutating = false;
         for call in calls {
