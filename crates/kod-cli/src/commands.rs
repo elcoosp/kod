@@ -117,6 +117,11 @@ impl Cli {
                 clap_complete::generate(*shell, &mut cmd, bin_name, &mut std::io::stdout());
                 Ok(())
             }
+            Some(Command::Checkpoint { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_checkpoint(action.clone()).await })
+            }
             None => {
                 // First-run UX. A bare `kod` invocation is the most common
                 // first experience, and the previous output was one line
@@ -330,6 +335,33 @@ pub enum Command {
         /// One of: bash, zsh, fish, elvish, powershell.
         shell: clap_complete::Shell,
     },
+
+    /// Inspect, restore, or clear file checkpoints. A checkpoint is
+    /// captured automatically before `write_file` and `patch_file`
+    /// run, so a session that does not like an edit can undo it.
+    Checkpoint {
+        #[command(subcommand)]
+        action: CheckpointAction,
+    },
+}
+
+/// `kod checkpoint` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum CheckpointAction {
+    /// List checkpoints for the current directory, newest first.
+    List {
+        /// Maximum entries to print. Defaults to 20.
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Restore the file contents recorded in one checkpoint. Does not
+    /// delete the checkpoint — a restore can be restored again.
+    Restore {
+        /// Snapshot id, as printed by `kod checkpoint list`.
+        id: String,
+    },
+    /// Delete every checkpoint for the current directory.
+    Clear,
 }
 
 /// `kod sessions` subcommands.
@@ -1399,4 +1431,98 @@ fn render_session_markdown(messages: &[kod_tui::app::Message]) -> String {
         }
     }
     out
+}
+
+/// `kod checkpoint <action>`.
+///
+/// Operates on the checkpoint directory for the current working
+/// directory (see `kod_core::checkpoint`). Read-only for `list`;
+/// `restore` writes the snapshot's content back; `clear` deletes
+/// every snapshot for this project.
+///
+/// Prints an explicit "no checkpoints directory" message when the
+/// manager is None (no home directory) rather than a silent empty
+/// list, because a user running this in a stripped container should
+/// know *why* there is nothing to see.
+pub async fn run_checkpoint(action: CheckpointAction) -> Result<()> {
+    use kod_core::checkpoint::CheckpointManager;
+
+    let cwd = std::env::current_dir()
+        .map_err(|e| KodError::Config(format!("Could not determine working directory: {e}")))?;
+    let manager = CheckpointManager::for_working_dir(&cwd).ok_or_else(|| {
+        KodError::Config(
+            "Could not determine a checkpoint directory — no home directory is available."
+                .to_string(),
+        )
+    })?;
+
+    match action {
+        CheckpointAction::List { limit } => {
+            let all = manager.list()?;
+            if all.is_empty() {
+                println!(
+                    "No checkpoints for {}. A checkpoint is written before each write_file or patch_file.",
+                    cwd.display()
+                );
+                return Ok(());
+            }
+            let shown: Vec<_> = all.iter().take(limit).collect();
+            println!(
+                "Checkpoints for {} ({} total, showing {}):",
+                cwd.display(),
+                all.len(),
+                shown.len()
+            );
+            println!();
+            for s in &shown {
+                let when = format_timestamp_ms(s.taken_at_ms);
+                let kind = if s.existed { "modify" } else { "create" };
+                println!(
+                    "  {}  {:<7} {:<12} {}",
+                    s.id,
+                    kind,
+                    s.tool,
+                    s.path.display()
+                );
+                println!("             taken {}", when);
+            }
+            if all.len() > shown.len() {
+                println!();
+                println!(
+                    "… and {} older — use --limit to show more.",
+                    all.len() - shown.len()
+                );
+            }
+            Ok(())
+        }
+        CheckpointAction::Restore { id } => {
+            let path = manager.restore(&id)?;
+            println!("Restored {} from checkpoint {}.", path.display(), id);
+            Ok(())
+        }
+        CheckpointAction::Clear => {
+            let n = manager.clear()?;
+            if n == 0 {
+                println!("No checkpoints to clear.");
+            } else {
+                println!("Cleared {} checkpoint(s).", n);
+            }
+            Ok(())
+        }
+    }
+}
+
+/// `YYYY-MM-DD HH:MM:SS` from Unix milliseconds, in local time when the
+/// platform provides it, UTC otherwise. Falls back to the raw ms when
+/// the timestamp is nonsensical.
+fn format_timestamp_ms(ms: u64) -> String {
+    use std::time::{Duration, UNIX_EPOCH};
+    let secs = ms / 1000;
+    match UNIX_EPOCH.checked_add(Duration::from_secs(secs)) {
+        Some(t) => {
+            let dt: chrono::DateTime<chrono::Local> = t.into();
+            dt.format("%Y-%m-%d %H:%M:%S").to_string()
+        }
+        None => format!("{ms} ms"),
+    }
 }

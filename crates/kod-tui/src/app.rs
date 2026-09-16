@@ -157,6 +157,14 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/debug",
         hint: "diagnostics: /debug last-prompt dumps the last prompt",
     },
+    SlashCommand {
+        name: "/rollback",
+        hint: "restore a file from a checkpoint: /rollback [id]",
+    },
+    SlashCommand {
+        name: "/checkpoints",
+        hint: "list file checkpoints for this project",
+    },
 ];
 
 /// What the generation is currently doing — shown in the header/status so

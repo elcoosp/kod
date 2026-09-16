@@ -23,6 +23,7 @@ kod-tools = { path = "../kod-tools" }
 kod-tui = { path = "../kod-tui" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-std", "io-util"] }
 dirs.workspace = true
+chrono = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

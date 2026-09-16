@@ -1219,6 +1219,99 @@ impl TuiLoop {
                     self.dispatch_swarm(goal.to_string()).await?;
                 }
             }
+            "/rollback" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                let Some(cp) = engine.checkpoints() else {
+                    self.app.push_system_message(
+                        "No checkpoint directory — a home directory is required.",
+                    );
+                    return Ok(());
+                };
+                match parts.next() {
+                    Some(id) => match cp.restore(id) {
+                        Ok(path) => self.app.push_system_message(&format!(
+                            "Restored {} from checkpoint {}.",
+                            path.display(),
+                            id,
+                        )),
+                        Err(e) => self
+                            .app
+                            .push_system_message(&format!("Rollback failed: {e}")),
+                    },
+                    None => match cp.list() {
+                        Ok(list) if list.is_empty() => self.app.push_system_message(
+                            "No checkpoints yet. A checkpoint is written before each \
+                             write_file or patch_file.",
+                        ),
+                        Ok(list) => {
+                            let newest = &list[0];
+                            match cp.restore(&newest.id) {
+                                Ok(path) => self.app.push_system_message(&format!(
+                                    "Restored {} from checkpoint {} ({}, {}).",
+                                    path.display(),
+                                    newest.id,
+                                    if newest.existed { "modify" } else { "create" },
+                                    newest.tool,
+                                )),
+                                Err(e) => self
+                                    .app
+                                    .push_system_message(&format!("Rollback failed: {e}")),
+                            }
+                        }
+                        Err(e) => self
+                            .app
+                            .push_system_message(&format!("Could not list checkpoints: {e}")),
+                    },
+                }
+            }
+            "/checkpoints" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                let Some(cp) = engine.checkpoints() else {
+                    self.app.push_system_message(
+                        "No checkpoint directory — a home directory is required.",
+                    );
+                    return Ok(());
+                };
+                match cp.list() {
+                    Ok(list) if list.is_empty() => self.app.push_system_message(
+                        "No checkpoints yet. A checkpoint is written before each \
+                         write_file or patch_file.",
+                    ),
+                    Ok(list) => {
+                        let mut msg =
+                            format!("Checkpoints ({} total, newest first):\n", list.len());
+                        for s in list.iter().take(20) {
+                            let kind = if s.existed { "modify" } else { "create" };
+                            msg.push_str(&format!(
+                                "  {}  {:<7} {:<12} {}\n",
+                                s.id,
+                                kind,
+                                s.tool,
+                                s.path.display(),
+                            ));
+                        }
+                        if list.len() > 20 {
+                            msg.push_str(&format!(
+                                "… and {} older — `kod checkpoint list` shows more.\n",
+                                list.len() - 20,
+                            ));
+                        }
+                        msg.push_str(
+                            "\nRestore with /rollback <id>, or /rollback for the newest.",
+                        );
+                        self.app.push_system_message(&msg);
+                    }
+                    Err(e) => self
+                        .app
+                        .push_system_message(&format!("Could not list checkpoints: {e}")),
+                }
+            }
             _ => {
                 self.app
                     .push_system_message(&format!("Unknown command: {} — try /help", cmd));
