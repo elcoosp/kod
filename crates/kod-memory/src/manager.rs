@@ -160,6 +160,17 @@ impl MemoryManager {
                 };
                 self.long_term.store(entry).await?;
             }
+            MemoryType::Episodic => {
+                let entry = MemoryEntry {
+                    id: id.clone(),
+                    memory_type,
+                    content: content.to_string(),
+                    timestamp: OffsetDateTime::now_utc(),
+                    relevance: 0.7,
+                    metadata,
+                };
+                self.long_term.store(entry).await?;
+            }
         }
 
         Ok(id)
@@ -193,7 +204,7 @@ impl MemoryManager {
                     Err(KodError::MemoryStorage("Entry not found".to_string()))
                 }
             }
-            MemoryType::LongTerm => {
+            MemoryType::LongTerm | MemoryType::Episodic => {
                 if let Some(mut entry) = self.long_term.get(id).await? {
                     entry.content = content.to_string();
                     self.long_term.store(entry).await?;
@@ -212,7 +223,7 @@ impl MemoryManager {
                 self.short_term.remove(id);
                 Ok(())
             }
-            MemoryType::LongTerm => self.long_term.remove(id).await,
+            MemoryType::LongTerm | MemoryType::Episodic => self.long_term.remove(id).await,
         }
     }
 
