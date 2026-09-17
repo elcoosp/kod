@@ -15,7 +15,9 @@ Three things must be present on your machine before you build:
 
 - **Rust 1.85 or newer**, installed via [rustup](https://rustup.rs/). The workspace uses the 2024 edition, so older toolchains will refuse to build it. `rust-toolchain.toml` in the repository pins the expected version.
 - **A model server** that speaks the OpenAI chat-completions protocol. [Ollama](https://ollama.ai/) is the recommended default and what the bundled profiles target first, but LM Studio, MLX Omni Serve, vLLM, and OpenAI itself all work unchanged.
-- **Git**, required both for the built-in git tools (`git_status`, `git_diff`) and for `build.rs`, which stamps version information into the binary at compile time.
+- **Git**, required both for the built-in git tools (`git_status`, `git_diff`, `git_commit`, `git_branch`) and for `build.rs`, which stamps version information into the binary at compile time.
+
+Two optional extras unlock more later: [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) on Linux for `--sandbox`, and any [language server](/guides/tools/#lsp-tools) on your `PATH` (rust-analyzer, typescript-language-server, …) for the LSP tools. Neither is required to start.
 
 ## Build from source
 
@@ -49,28 +51,32 @@ KOD does not need any configuration to start — every setting has a sane defaul
 
 ### `kod doctor`
 
-`kod doctor` prints a diagnostics report covering the configuration file, the model endpoint, discovered skills, the memory database, and git availability. It is the fastest way to answer “is my setup actually working?” without launching a session. Run it right after building:
+`kod doctor` prints a diagnostics report covering the configuration file, the model endpoint, discovered skills, the memory database, the sandbox primitive, and git. It is the fastest way to answer “is my setup actually working?” without launching a session, and it exits non-zero if any check fails — so you can also use it to gate a script:
 
 ```bash
-kod doctor
+kod doctor            # human-readable report
+kod doctor --json     # machine-readable, for scripts
+kod doctor --fix      # create missing directories, write a default config
 ```
 
-Each check tells you what it tested and what it found. A config file that does not exist yet is not an error — KOD will generate a default one.
+`--fix` never modifies an existing config file; it only fills in what is missing.
 
 ### `kod init`
 
-`kod init` walks you through the same steps as a first session and writes a default config to the platform location if one does not exist:
+`kod init` prints where the config lives, the model profiles you can switch to, and the next three commands a new user should run. It is idempotent — running it twice changes nothing. With `--force` it rewrites the config from defaults (backing up the old one):
 
-- **Linux:** `~/.config/kod/config.toml`
-- **macOS:** `~/Library/Application Support/kod/config.toml`
+```bash
+kod init
+kod init --force      # reset to defaults, backing up the current file
+```
 
 ### Point KOD at a model
 
 Model profiles bundle a model name, base URL, context window, and generation settings into a preset so a first-run user does not have to know what a `context_window` is. The built-in presets are `local-fast` (Qwen 2.5 Coder 7B), `local-capable` (32B), `local-reasoning` (DeepSeek-R1 14B), and `cloud-openai` (GPT-4o mini):
 
 ```bash
-ollama pull qwen3.8:27b-mlx      # one-time model download
-kod profile use local-fast        # writes the preset into config.toml
+ollama pull qwen2.5-coder:7b    # one-time model download
+kod profile use local-fast      # writes the preset into config.toml
 ```
 
 <Aside type="tip">
@@ -83,7 +89,7 @@ kod profile use local-fast        # writes the preset into config.toml
 kod tui
 ```
 
-The TUI opens with a header, chat area, status line, and input box. If you prefer a plain REPL, `kod chat` gives you the same agent in a scriptable shell.
+The TUI opens, restores your previous session if you have one, and greets you with the loaded model and skill count. If you prefer a plain REPL, `kod chat` gives you the same agent in a scriptable shell.
 
 ## Shell completions
 
@@ -115,7 +121,7 @@ KOD can print a completion script for your shell, ready to source:
 
 ## Keeping up to date
 
-`kod update` checks GitHub for a newer release. It is read-only — it tells you a newer version exists, it does not replace your binary. To update, pull the latest source and rebuild with the same two commands you used to install.
+`kod update` checks GitHub for a newer release and prints the URL and install instructions. It is read-only — it never replaces your binary. To update, pull the latest source and rebuild with the same two commands you used to install.
 
 <Aside type="note">
   Rebuilding after `git pull` is the intended upgrade path for now. Prebuilt release artefacts are produced by the CI pipeline, but the source build remains the canonical install.
