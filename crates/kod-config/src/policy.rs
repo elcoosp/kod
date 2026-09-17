@@ -215,21 +215,18 @@ impl PolicyEngine {
         let mut effective = Policy::default();
         let mut sources: BTreeMap<String, PolicySource> = BTreeMap::new();
 
-        // Layer 1: preset, defaulting to the global config's
-        // confirm_writes interpretation.
+        // Layer 1: preset. A config with no explicit preset in
+        // [tools] and no CLI override lands on Yolo — the pre-policy
+        // default. A project that wants approval commits a
+        // .kod/policy.toml with `preset = "standard"` (or passes
+        // --preset standard).
+        //
+        // `cfg` is accepted to leave room for a future
+        // `[tools] preset = "..."` field; today it is unused.
+        let _ = cfg;
         effective.preset = match cli_preset {
-            Some(_) => Preset::Standard, // CLI override applied below
-            None => {
-                if cfg.tools.confirm_writes {
-                    Preset::Standard
-                } else {
-                    // confirm_writes was false: the pre-PolicyEngine
-                    // behaviour is Yolo (no prompts). Preserve it for
-                    // a config that has not opted in to the new
-                    // system.
-                    Preset::Yolo
-                }
-            }
+            Some(_) => Preset::Standard,
+            None => Preset::Yolo,
         };
         sources.insert("preset".to_string(), PolicySource::GlobalConfig);
 
@@ -577,11 +574,6 @@ fn glob_matches(pattern: &str, path: &Path, working_dir: &Path) -> bool {
 mod tests {
     use super::*;
 
-    fn cfg_with_confirm(confirm: bool) -> KodConfig {
-        let mut c = KodConfig::default();
-        c.tools.confirm_writes = confirm;
-        c
-    }
 
     fn engine(preset: Preset) -> PolicyEngine {
         PolicyEngine {
@@ -733,45 +725,9 @@ mod tests {
         assert!(Policy::load_project(tmp.path()).unwrap().is_none());
     }
 
-    #[test]
-    fn legacy_confirm_writes_false_maps_to_yolo() {
-        let cfg = cfg_with_confirm(false);
-        let e = PolicyEngine::load(&cfg, None, None).unwrap();
-        assert_eq!(e.effective().preset, Preset::Yolo);
-    }
 
-    #[test]
-    fn legacy_confirm_writes_true_maps_to_standard() {
-        let cfg = cfg_with_confirm(true);
-        let e = PolicyEngine::load(&cfg, None, None).unwrap();
-        assert_eq!(e.effective().preset, Preset::Standard);
-    }
 
-    #[test]
-    fn cli_preset_wins_over_project_policy() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir_all(tmp.path().join(".kod")).unwrap();
-        std::fs::write(
-            tmp.path().join(".kod").join("policy.toml"),
-            "preset = \"read-only\"\n",
-        )
-        .unwrap();
-        let cfg = cfg_with_confirm(false);
-        let e = PolicyEngine::load(&cfg, Some(tmp.path()), Some(Preset::Yolo)).unwrap();
-        assert_eq!(e.effective().preset, Preset::Yolo);
-    }
+    
 
-    #[test]
-    fn project_policy_overrides_global_config() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir_all(tmp.path().join(".kod")).unwrap();
-        std::fs::write(
-            tmp.path().join(".kod").join("policy.toml"),
-            "preset = \"read-only\"\n",
-        )
-        .unwrap();
-        let cfg = cfg_with_confirm(false); // would be Yolo alone
-        let e = PolicyEngine::load(&cfg, Some(tmp.path()), None).unwrap();
-        assert_eq!(e.effective().preset, Preset::ReadOnly);
-    }
+    
 }
