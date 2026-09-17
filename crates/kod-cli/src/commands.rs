@@ -1149,6 +1149,60 @@ pub async fn run_chat(
                     continue;
                 }
 
+                if let Some((_batch_id, json)) =
+                    kod_core::engine::parse_tool_approval_batch(&chunk)
+                {
+                    let batch: kod_core::engine::ApprovalBatch =
+                        serde_json::from_str(json).unwrap_or_else(|_| {
+                            kod_core::engine::ApprovalBatch { items: Vec::new() }
+                        });
+                    let total = batch.items.len();
+                    for (n, item) in batch.items.iter().enumerate() {
+                        let item_id = match item.id {
+                            Some(i) => i,
+                            None => {
+                                println!(
+                                    "(approval item {}/{} has no id; skipping)",
+                                    n + 1,
+                                    total
+                                );
+                                continue;
+                            }
+                        };
+                        println!();
+                        println!("── approval required ({}/{}) ──", n + 1, total);
+                        println!("Tool:    {}", item.tool_name);
+                        println!("Summary: {}", item.summary);
+                        if let Some(diff) = &item.diff {
+                            println!();
+                            let mut lines = diff.lines();
+                            for l in lines.by_ref().take(60) {
+                                println!("{l}");
+                            }
+                            let extra = lines.count();
+                            if extra > 0 {
+                                println!("… and {extra} more lines of diff");
+                            }
+                        }
+                        print!("Approve? [y/N/a=never] ");
+                        let _ = io::stdout().flush();
+                        let mut answer = String::new();
+                        let answer_lower = match io::stdin().read_line(&mut answer) {
+                            Ok(_) => answer.trim().to_lowercase(),
+                            Err(_) => String::new(),
+                        };
+                        let decision = match answer_lower.as_str() {
+                            "y" | "yes" => kod_core::engine::ApprovalDecision::Approve,
+                            "a" | "always" | "never" => {
+                                kod_core::engine::ApprovalDecision::DenyAlways
+                            }
+                            _ => kod_core::engine::ApprovalDecision::Deny,
+                        };
+                        let _ = approval_tx_pump.send((item_id, decision)).await;
+                    }
+                    continue;
+                }
+
                 if let Some((id, json)) = kod_core::engine::parse_tool_approval(&chunk) {
                     let request: kod_core::engine::ApprovalRequest =
                         serde_json::from_str(json).unwrap_or_else(|_| {
@@ -1157,6 +1211,7 @@ pub async fn run_chat(
                                 arguments: serde_json::Value::Null,
                                 diff: None,
                                 summary: "(unparseable approval request)".to_string(),
+                                id: None,
                             }
                         });
                     println!();
@@ -2632,7 +2687,7 @@ pub async fn run_skills_validate() -> Result<()> {
 pub async fn run_update() -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
     let repo = std::env::var("KOD_UPDATE_REPO")
-        .unwrap_or_else(|_| "kod-team/kod".to_string());
+        .unwrap_or_else(|_| "elcoosp/kod".to_string());
     let url = format!("https://api.github.com/repos/{repo}/releases/latest");
 
     println!("Current: v{}", current);
@@ -4068,4 +4123,3 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
     engine.shutdown().await?;
     Ok(())
 }
-
