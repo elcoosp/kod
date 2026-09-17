@@ -5,11 +5,11 @@ sidebar:
   order: 1
 ---
 
-import { Aside, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+import { Aside, LinkCard } from '@astrojs/starlight/components';
 
 The TUI is KOD's primary interface: a ratatui-based terminal application with a chat area, live tool rows, an agent panel, type-ahead search, themes, and slash commands. It talks to the same engine as the CLI, so everything it does — session logging, policy decisions, memory updates — behaves identically to `kod chat`. The difference is comfort: the TUI is built for long, interactive sessions where you inspect what the agent is doing while it does it.
 
-Launch it with `kod tui`. (Bare `kod` prints the entry-point summary instead of launching the interface, which is a quick way to check which model and preset you are running.)
+Launch it with `kod tui`. Flags you will actually use: `--model <name>` to start with a different model, `--preset read-only` to lock the session down, and `--sandbox` to confine shell commands.
 
 ## The layout
 
@@ -26,14 +26,16 @@ Tool rows are collapsed by default so the transcript stays readable. This is a d
 
 The TUI is modal. **Normal mode** is for navigation and commands; **insert mode** is for typing prompts. Press `i` to enter insert mode and `Esc` to return to normal mode — and note that `Esc` in normal mode cancels a running generation.
 
-Scrolling and search work in normal mode: `j`/`k` move line by line, `g`/`G` jump to the oldest/newest message, `PgUp`/`PgDn` page, and `f` opens a type-ahead search with `n`/`N` cycling matches. `y` copies the last assistant reply to the clipboard, and `?` opens the help overlay if you lose track.
+Scrolling and search work in normal mode: `j`/`k` move line by line, `g`/`G` jump to the oldest/newest message, `PgUp`/`PgDn` page, and `f` opens a type-ahead search with `n`/`N` cycling matches. `/grep <regex>` searches the transcript with a regular expression instead. `y` copies the last assistant reply to the clipboard, and `?` opens the help overlay if you lose track.
 
 ## Tool rows and transparency
 
 Every tool call the agent makes renders as its own row. Expanding a row (`o` for the newest collapsed row, `t` to toggle all) shows the arguments and the result — including unified diffs attached to `write_file` and `patch_file` results. Watching diffs appear inline is the fastest way to build trust in a run: you see exactly what changed, character by character, before you ever look at git.
 
+When a write lands, KOD can follow up automatically: with `tools.auto_lsp = true` (the default) a language-server diagnostics pass runs on the touched file and its findings are appended to the next prompt; with `tools.auto_check = true` the project's compiler or linter runs too. See [Tools](/guides/tools/#write-follow-ups-lsp-and-check).
+
 <Aside type="tip">
-  If you only learn one keybinding, learn `t`. Toggling tool-output visibility lets you flip between “narrative” and “full forensics” views of the same session.
+  If you only learn one keybinding, learn <code>t</code>. Toggling tool-output visibility lets you flip between “narrative” and “full forensics” views of the same session.
 </Aside>
 
 ## Steering, cancelling, retrying
@@ -42,33 +44,53 @@ While a generation runs you have three options, all non-destructive:
 
 1. **Steer** — type a plain prompt. It is queued and delivered to the model as guidance; the work already done is kept. This is identical to `/steer` and is usually the right move.
 2. **Cancel** — `Esc` (normal mode) or `/cancel`. The round stops; completed tool results stay in the session.
-3. **Wait** — the loop has a configurable round cap, so no run is infinite.
+3. **Wait** — the tool loop caps itself at 40 tool rounds per prompt, so no run is infinite.
 
-After the fact, `r` retries the last prompt, and `e` edits your last message before resending — faster than re-typing a long instruction.
+After the fact, `/retry` resends the last prompt, `e` edits your last message before resending — faster than re-typing a long instruction — and `/regenerate` asks for a fresh reply without resending your prompt.
 
 ## Slash commands
 
-Slash commands cover session control, model switching, and interface state. Typing `/` in insert mode opens completion; the full list:
+Typing `/` in insert mode opens a completion popup; `Tab` cycles it. There are around fifty built-in commands — the complete, annotated table lives at [TUI Keybindings](/reference/tui-keys/#slash-commands). They group into a few families:
 
-```
-/help      /clear     /model [<name>]   /skills    /goal <text>
-/steer     /cancel    /compact          /retry     /search [<text>]
-/copy      /theme     /tools            /undo      /edit
-/debug     /swarm     /quit
+- **Conversation**: `/clear`, `/undo`, `/compact`, `/summarize`, `/edit`, `/retry`, `/regenerate`, `/delete`, `/branch`, `/fork`, `/handoff`
+- **Model and tools**: `/model`, `/skills`, `/tools`, `/goal`, `/system`, `/map`, `/check`, `/git-status`
+- **Files and history**: `/attach`, `/diff`, `/rollback`, `/checkpoints`, `/export`, `/save`, `/load`
+- **Memory**: `/memory [search|delete|clear]` — the long-term store, without leaving the chat
+- **Introspection**: `/context`, `/stats`, `/whoami`, `/debug last-prompt`, `/log`
+- **Housekeeping**: `/theme`, `/search`, `/grep`, `/copy`, `/raw`, `/pin`, `/unpin`, `/reset`, `/doctor`, `/init`, `/help`, `/swarm`, `/quit`, `/clearall`
+
+Three deserve a call-out:
+
+- `/compact` summarises the conversation to reclaim context-window headroom; `/pin <n>` protects a message from being compacted away, and `/context` shows where the window is going.
+- `/fork [label]` saves the current chat as a restorable fork — cheap insurance before a risky prompt. `/branch` drops a labelled marker into the transcript instead.
+- `/handoff` writes a handoff document and starts a fresh session with it as context — the clean way to end a long session and pick up tomorrow.
+
+`/clearall` is the scorched-earth option: chat, long-term memory, *and* checkpoints for this project, behind a confirmation.
+
+## Custom slash commands
+
+Anything you put in a `[commands]` block in `config.toml` becomes a slash command:
+
+```toml
+[commands]
+review = "Review the last change in {cwd} and point out risks."
+explain = "Explain what this code does:\n\n{args}"
 ```
 
-`/compact` deserves special mention: it summarises the conversation to reclaim context-window headroom, and `/undo` reverses a `/clear` if you cleared too much. `/model` switches models mid-session — instantaneous, because the engine does not hold the provider read lock across a streaming round. `/tools` lists the tool registry with each tool's current policy state.
+`/review` sends the first template verbatim; `/explain <selection>` replaces `{args}` with everything you typed after the command name, and `{cwd}` with the working directory. Custom commands appear in the completion popup alongside the built-ins.
 
 ## Themes
 
-The TUI ships `dark` and `light` themes, selected with `/theme` or `theme = "light"` in a `theme.toml` next to the config. A full custom `[theme]` table in that file overrides individual colors (the palette accepts the same color names ratatui does: `black`, `red`, `green`, …), so you can match your terminal colorscheme exactly.
+The TUI ships `dark` and `light` themes, selected with `/theme [dark|light]` or `theme = "light"` in a `theme.toml` next to the config. A full custom `[theme]` table in that file overrides individual colors (the palette accepts the same color names ratatui does: `black`, `red`, `green`, …), so you can match your terminal colorscheme exactly. `kod theme list` prints the built-ins and `kod theme show dark` dumps a palette as JSON — handy when writing your own.
 
-## Completions and history
+## Completions, history, and the mouse
 
-In insert mode, `Tab` cycles completions for slash commands and prompt history. `Up`/`Down` walk the history directly. Line editing follows the usual conventions — `Ctrl+W` deletes a word, `Ctrl+U` clears the line, `Ctrl+K` kills to the end, `Ctrl+Left`/`Ctrl+Right` jump by word — and `Ctrl+J` (or `Shift+Enter`) inserts a newline without sending.
+In insert mode, `Tab` cycles completions for slash commands, model names (after `/model `), and file paths. `Up`/`Down` walk the history directly, and the draft you were typing is stashed — `Down` past the newest entry brings it back. Line editing follows the usual conventions — `Ctrl+W` deletes a word, `Ctrl+U` clears the line, `Ctrl+K` kills to the end, `Ctrl+Left`/`Ctrl+Right` jump by word — and `Ctrl+J` (or `Shift+Enter`) inserts a newline without sending.
+
+The mouse works too: the wheel scrolls the chat, and `Option`/`Shift`+drag selects text the normal way.
 
 <Aside type="note">
-  The TUI has its own test suite (105 test attributes — the largest in the workspace) covering app state, events, keybindings, completion, search, and the main loop. Behaviour you see here is pinned by tests, not accident.
+  The TUI resumes where you left off: the session is saved to <code>~/.kod/tui_session.json</code> (override the directory with <code>KOD_TUI_STATE_DIR</code>) and prompt history to <code>tui_history.json</code> next to it. To start deliberately fresh, move those files aside — or point <code>KOD_TUI_STATE_DIR</code> at an empty directory.
 </Aside>
 
 <LinkCard title="Reference: TUI Keybindings" href="/reference/tui-keys/" description="Every keybinding and slash command in one table." />
