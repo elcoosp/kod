@@ -154,15 +154,17 @@ pub enum Event {
     },
     /// Post-tool thinking phase (tool result reinjected, LLM reasoning again)
     Thinking,
-    /// The engine wants a yes/no before running a write_file or
-    /// patch_file. Carries the parsed `ApprovalRequest`. The TUI shows
-    /// a modal dialog and calls `respond_to_approval` when the user
-    /// answers.
-    ApprovalRequested {
-        id: u64,
-        tool_name: String,
-        summary: String,
-        diff: Option<String>,
+    /// The engine wants yes/no answers for one or more mutating calls
+    /// (write_file, patch_file, or execute_command gated by policy).
+    /// The items are ordered; the TUI walks them one at a time with
+    /// y/n/a, navigates with ↑/↓, and calls `respond_to_approval`
+    /// per item.
+    ///
+    /// A batch of one item is the common case (a single write in a
+    /// round) and renders exactly like the old single-item dialog.
+    ApprovalBatchRequested {
+        batch_id: u64,
+        items: Vec<ApprovalItem>,
     },
     /// The agent called ask_user and wants a text answer. Carries the
     /// question and optional placeholder hint. The TUI shows an input
@@ -176,6 +178,16 @@ pub enum Event {
     Error(String),
     Quit,
     Resize(u16, u16),
+}
+
+/// One item of an [`Event::ApprovalBatchRequested`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalItem {
+    pub id: u64,
+    pub tool_name: String,
+    pub summary: String,
+    #[serde(default)]
+    pub diff: Option<String>,
 }
 
 /// Event handler that manages the event loop
