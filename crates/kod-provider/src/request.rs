@@ -209,7 +209,7 @@ pub enum PromptCacheKind {
 }
 
 /// USD per million tokens for input and output.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ModelPricing {
     pub input_per_mtok_usd: f64,
     pub output_per_mtok_usd: f64,
