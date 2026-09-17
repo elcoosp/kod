@@ -364,6 +364,84 @@ async fn handle_connection(
                 engine.steer_for(&key, &note).await;
                 write_ack(&mut write_half, &req.id).await?;
             }
+            "swarm" => {
+                let goal = string_param(&req.params, "goal");
+                if goal.trim().is_empty() {
+                    write_error(&mut write_half, &req.id, "swarm: 'goal' is required")
+                        .await?;
+                    continue;
+                }
+                let max_agents = req
+                    .params
+                    .get("max_agents")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as usize)
+                    .unwrap_or(5);
+                let merge = req
+                    .params
+                    .get("merge")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+
+                let runner = match crate::swarm_runner::SwarmRunner::new(
+                    engine.clone(),
+                    max_agents,
+                    merge,
+                )
+                .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        write_error(&mut write_half, &req.id, &e.to_string()).await?;
+                        continue;
+                    }
+                };
+
+                let (evt_tx, mut evt_rx) =
+                    tokio::sync::mpsc::channel::<crate::swarm_runner::SwarmEvent>(256);
+                let goal_owned = goal.clone();
+                let run_handle =
+                    tokio::spawn(async move { runner.run(&goal_owned, &evt_tx).await });
+
+                // The event type derives Serialize, so the wire
+                // shape is produced by serde, not a hand-rolled
+                // match arm per variant.
+                while let Some(evt) = evt_rx.recv().await {
+                    let data = serde_json::to_value(&evt)
+                        .unwrap_or(serde_json::Value::Null);
+                    write_line(
+                        &mut write_half,
+                        &Response {
+                            id: &req.id,
+                            kind: "swarm_event",
+                            data: Some(data),
+                        },
+                    )
+                    .await?;
+                }
+
+                let outcome = run_handle.await.map_err(|e| {
+                    KodError::Internal(format!("swarm task panicked: {e}"))
+                })?;
+                match outcome {
+                    Ok(resp) => {
+                        let data = serde_json::json!({
+                            "merged": resp.merged,
+                            "merged_by_model": resp.merged_by_model,
+                            "conflicts": resp.conflicts.iter().map(|c| {
+                                serde_json::json!({
+                                    "file": c.file,
+                                    "agents": c.agents,
+                                })
+                            }).collect::<Vec<_>>(),
+                        });
+                        write_ok(&mut write_half, &req.id, data).await?;
+                    }
+                    Err(e) => {
+                        write_error(&mut write_half, &req.id, &e.to_string()).await?;
+                    }
+                }
+            }
             "cancel" => {
                 let key = string_param(&req.params, "transcript_key");
                 engine.request_cancel_for(&key);

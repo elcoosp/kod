@@ -45,7 +45,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// One decomposed piece of the user's goal.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Subtask {
     pub name: String,
     pub description: String,
@@ -70,7 +70,13 @@ pub struct Subtask {
 
 /// Progress events a swarm run emits while it works. The consumer
 /// decides what to render; the runner does not print.
-#[derive(Debug, Clone)]
+///
+/// Derives serde with adjacent tagging (`kind` + `data`) so the
+/// daemon can serialize an event as one JSON object without a
+/// hand-written match arm per variant. The wire shape is
+/// `{"kind": "agent_started", "data": {...}}`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum SwarmEvent {
     /// The decompose step produced these subtasks.
     Decomposed(Vec<Subtask>),
