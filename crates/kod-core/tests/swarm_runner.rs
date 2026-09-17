@@ -15,6 +15,8 @@ use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use tokio::sync::mpsc;
 
+mod common;
+
 /// Provider that routes on the prompt's shape:
 ///
 /// - "Split this goal" returns a canned JSON subtask list.
@@ -128,7 +130,7 @@ async fn build_engine(provider: Arc<dyn LlmProvider>) -> (Arc<KodEngine>, TempDi
     };
     let engine = KodEngine::new(cfg, db_path).unwrap();
     engine.start().await.unwrap();
-    engine.set_provider(provider).await;
+    common::install_test_provider(&engine, provider).await;
     (Arc::new(engine), temp)
 }
 

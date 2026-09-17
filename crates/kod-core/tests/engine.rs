@@ -2,6 +2,8 @@ use kod_core::engine::KodEngine;
 use kod_core::router::RouterConfig;
 use tempfile::TempDir;
 
+mod common;
+
 fn create_test_engine() -> (KodEngine, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.redb");

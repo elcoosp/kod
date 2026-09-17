@@ -10,6 +10,8 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
+mod common;
+
 /// Scripted provider: first round requests a real `list_files` call,
 /// second round answers in text.
 struct ScriptedProvider {
@@ -79,11 +81,9 @@ async fn test_engine_tool_loop_lists_working_dir() {
     };
     let engine = KodEngine::new(config, temp_dir.path().join("test.redb")).unwrap();
     engine.start().await.unwrap();
-    engine
-        .set_provider(Arc::new(ScriptedProvider {
+    common::install_test_provider(&engine, Arc::new(ScriptedProvider {
             rounds: Mutex::new(0),
-        }))
-        .await;
+        })).await;
 
     let response = engine.process("what is here?").await.unwrap();
 
@@ -113,11 +113,9 @@ async fn test_process_streaming_delivers_chunks_and_tool_marker() {
     };
     let engine = KodEngine::new(config, temp_dir.path().join("stream.redb")).unwrap();
     engine.start().await.unwrap();
-    engine
-        .set_provider(Arc::new(ScriptedProvider {
+    common::install_test_provider(&engine, Arc::new(ScriptedProvider {
             rounds: Mutex::new(0),
-        }))
-        .await;
+        })).await;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
     let response = engine
@@ -253,7 +251,22 @@ async fn test_steer_note_reaches_next_round() {
         rounds: Mutex::new(0),
         prompts: Mutex::new(Vec::new()),
     });
-    engine.set_provider(provider.clone()).await;
+    {
+        let mut reg = kod_provider::ProviderRegistry::new();
+        reg.insert(
+            "default",
+            provider.clone(),
+            kod_provider::ProviderCapabilities::conservative(),
+            "",
+        );
+        engine
+            .set_registry(
+                std::sync::Arc::new(reg),
+                kod_provider::ModelRef::new("default", ""),
+                None,
+            )
+            .await;
+    }
 
     engine.steer("focus on src only").await;
     engine.process("list things").await.unwrap();
@@ -280,11 +293,9 @@ async fn test_cancel_stops_process() {
     };
     let engine = KodEngine::new(config, temp_dir.path().join("cancel.redb")).unwrap();
     engine.start().await.unwrap();
-    engine
-        .set_provider(Arc::new(ScriptedProvider {
+    common::install_test_provider(&engine, Arc::new(ScriptedProvider {
             rounds: Mutex::new(0),
-        }))
-        .await;
+        })).await;
 
     assert!(!engine.is_cancelled());
     engine.request_cancel();
@@ -366,11 +377,9 @@ async fn test_goal_loop_stops_at_goal_met() {
     };
     let engine = KodEngine::new(config, temp_dir.path().join("goal.redb")).unwrap();
     engine.start().await.unwrap();
-    engine
-        .set_provider(Arc::new(GoalProvider {
+    common::install_test_provider(&engine, Arc::new(GoalProvider {
             rounds: Mutex::new(0),
-        }))
-        .await;
+        })).await;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
     let response = engine
@@ -444,7 +453,22 @@ async fn test_second_turn_sees_first_turn_history() {
         rounds: Mutex::new(1),
         prompts: Mutex::new(Vec::new()),
     });
-    engine.set_provider(provider.clone()).await;
+    {
+        let mut reg = kod_provider::ProviderRegistry::new();
+        reg.insert(
+            "default",
+            provider.clone(),
+            kod_provider::ProviderCapabilities::conservative(),
+            "",
+        );
+        engine
+            .set_registry(
+                std::sync::Arc::new(reg),
+                kod_provider::ModelRef::new("default", ""),
+                None,
+            )
+            .await;
+    }
 
     engine.process("first question about apples").await.unwrap();
     engine.process("and what about pears?").await.unwrap();

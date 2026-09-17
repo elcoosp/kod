@@ -4,6 +4,8 @@ use kod_core::{
 };
 use tempfile::TempDir;
 
+mod common;
+
 /// A provider that returns a canned reply without touching the
 /// network. `KodEngine::process` requires an installed provider — the
 /// earlier fallback to the router's placeholder handlers was replaced
@@ -112,9 +114,7 @@ You are a Rust coding expert. Help with idiomatic Rust code.
 
 async fn create_test_engine() -> (KodEngine, TempDir) {
     let (engine, temp_dir) = create_test_environment();
-    engine
-        .set_provider(std::sync::Arc::new(NoOpProvider))
-        .await;
+    common::install_test_provider(&engine, std::sync::Arc::new(NoOpProvider)).await;
     (engine, temp_dir)
 }
 
