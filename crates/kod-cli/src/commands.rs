@@ -12,6 +12,43 @@ use kod_provider_openai::OpenAICompatProvider;
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
+/// Parse a `--preset` argument into a `kod_config::Preset`. Returns
+/// `Ok(None)` for an absent flag and a descriptive `Err` for an
+/// unknown value — a typo must not silently fall back to the default.
+fn parse_preset(s: Option<&str>) -> Result<Option<kod_config::Preset>> {
+    match s {
+        None => Ok(None),
+        Some("read-only") | Some("readonly") => {
+            Ok(Some(kod_config::Preset::ReadOnly))
+        }
+        Some("standard") | Some("default") => {
+            Ok(Some(kod_config::Preset::Standard))
+        }
+        Some("yolo") | Some("unrestricted") => {
+            Ok(Some(kod_config::Preset::Yolo))
+        }
+        Some(other) => Err(kod_error::KodError::Config(format!(
+            "unknown --preset {other:?}. Known presets: read-only, standard, yolo"
+        ))),
+    }
+}
+
+/// Async version of `install_policy`: builds the engine's PolicyEngine
+/// from config + cwd + CLI preset, and installs it.
+async fn install_policy_async(
+    engine: &kod_core::KodEngine,
+    config: &kod_config::KodConfig,
+    cli_preset: Option<&str>,
+) -> Result<()> {
+    let preset = parse_preset(cli_preset)?;
+    let cwd = std::env::current_dir().map_err(|e| {
+        kod_error::KodError::Config(format!("could not determine cwd: {e}"))
+    })?;
+    let policy = kod_config::PolicyEngine::load(config, Some(&cwd), preset)?;
+    engine.set_policy(std::sync::Arc::new(policy)).await;
+    Ok(())
+}
+
 /// `kod skills` subcommands.
 #[derive(Subcommand, Debug, Clone)]
 pub enum SkillsAction {
@@ -140,6 +177,7 @@ impl Cli {
                 interactive,
                 sandbox,
                 system_prompt,
+                preset,
             }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
@@ -150,14 +188,28 @@ impl Cli {
                         *interactive,
                         *sandbox,
                         system_prompt.clone(),
+                        preset.clone(),
                     )
                     .await
                 })
             }
-            Some(Command::Agent { name, goal, model }) => {
+            Some(Command::Agent {
+                name,
+                goal,
+                model,
+                preset,
+            }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
-                rt.block_on(async { run_agent(name.clone(), goal.clone(), model.clone()).await })
+                rt.block_on(async {
+                    run_agent(
+                        name.clone(),
+                        goal.clone(),
+                        model.clone(),
+                        preset.clone(),
+                    )
+                    .await
+                })
             }
             Some(Command::Swarm {
                 goal,
@@ -269,11 +321,12 @@ impl Cli {
                 model,
                 no_resume,
                 sandbox,
+                preset,
             }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async {
-                    run_tui(model.clone(), *no_resume, *sandbox).await
+                    run_tui(model.clone(), *no_resume, *sandbox, preset.clone()).await
                 })
             }
             Some(Command::Doctor { json, fix }) => {
@@ -488,6 +541,13 @@ pub enum Command {
         /// agent run unsupervised.
         #[arg(long, default_value_t = false)]
         sandbox: bool,
+
+        /// Policy preset (read-only | standard | yolo). Overrides the
+        /// global config and any `.kod/policy.toml` in the project.
+        /// Defaults to Standard (which matches the pre-policy default
+        /// when `tools.confirm_writes = true`).
+        #[arg(long)]
+        preset: Option<String>,
     },
 
     /// Run a multi-agent swarm on a goal: decompose, spawn N agents,
@@ -525,6 +585,10 @@ pub enum Command {
         /// Specify the model to use
         #[arg(short, long)]
         model: Option<String>,
+
+        /// Policy preset (read-only | standard | yolo).
+        #[arg(long)]
+        preset: Option<String>,
     },
 
     /// Work with skills. `kod skills` (no subcommand) lists them;
@@ -616,6 +680,9 @@ pub enum Command {
         /// when the primitive is unavailable.
         #[arg(long, default_value_t = false)]
         sandbox: bool,
+        /// Policy preset (read-only | standard | yolo).
+        #[arg(long)]
+        preset: Option<String>,
     },
 
     /// Print a diagnostics report: config file presence, LLM endpoint
@@ -879,6 +946,7 @@ pub async fn run_chat(
     _interactive: bool,
     sandbox: bool,
     system_prompt: Option<String>,
+    cli_preset: Option<String>,
 ) -> Result<()> {
     // Load configuration
     let config = KodConfig::load_default()?;
@@ -908,16 +976,18 @@ pub async fn run_chat(
     engine.set_history_budget(config.llm.context_window.saturating_mul(3));
 
     // Set up OpenAI-compatible provider (Ollama /v1, LM Studio, MLX, ...)
-    let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
-    engine.set_provider(Arc::new(provider)).await;
+    let (registry, default_model, routing) =
+        kod_core::build_registry(&config.llm, Some(&model_name))?;
+    engine.set_registry(registry, default_model, routing).await;
     engine.set_hooks(config.hooks.clone());
     engine.set_network_access(config.llm.network_access);
-    engine.set_confirm_writes(config.tools.confirm_writes);
     engine.set_auto_check(config.tools.auto_check);
+    engine.set_auto_lsp(config.tools.auto_lsp);
     engine.set_generation_defaults(
         Some(config.llm.temperature),
         Some(config.llm.max_tokens),
     );
+    install_policy_async(&engine, &config, cli_preset.as_deref()).await?;
 
     // Start the engine
     engine.start().await?;
@@ -1126,20 +1196,19 @@ pub async fn run_chat(
                             println!("… and {extra} more lines of diff");
                         }
                     }
-                    print!("Approve? [y/N] ");
+                    print!("Approve? [y/N/a=never] ");
                     let _ = io::stdout().flush();
                     let mut answer = String::new();
-                    let approved = match io::stdin().read_line(&mut answer) {
-                        Ok(_) => {
-                            let a = answer.trim().to_lowercase();
-                            a == "y" || a == "yes"
-                        }
-                        Err(_) => false,
+                    let answer_lower = match io::stdin().read_line(&mut answer) {
+                        Ok(_) => answer.trim().to_lowercase(),
+                        Err(_) => String::new(),
                     };
-                    let decision = if approved {
-                        kod_core::engine::ApprovalDecision::Approve
-                    } else {
-                        kod_core::engine::ApprovalDecision::Deny
+                    let decision = match answer_lower.as_str() {
+                        "y" | "yes" => kod_core::engine::ApprovalDecision::Approve,
+                        "a" | "always" | "never" => {
+                            kod_core::engine::ApprovalDecision::DenyAlways
+                        }
+                        _ => kod_core::engine::ApprovalDecision::Deny,
                     };
                     let _ = approval_tx_pump.send((id, decision)).await;
                     continue;
@@ -1228,8 +1297,9 @@ pub async fn run_swarm(
     let engine = KodEngine::new(router_config, db_path)?;
     engine.set_history_budget(config.llm.context_window.saturating_mul(3));
 
-    let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
-    engine.set_provider(Arc::new(provider)).await;
+    let (registry, default_model, routing) =
+        kod_core::build_registry(&config.llm, Some(&model_name))?;
+    engine.set_registry(registry, default_model, routing).await;
 
     engine.start().await?;
 
@@ -1294,8 +1364,58 @@ pub async fn run_swarm(
                         agents.join(", ")
                     );
                 }
+                SwarmEvent::AgentRetrying {
+                    id: _,
+                    name,
+                    attempt,
+                    max_attempts,
+                    previous_error,
+                } => {
+                    println!(
+                        "\n── {} retrying ({}/{}): {} ──\n",
+                        name, attempt, max_attempts, previous_error,
+                    );
+                }
                 SwarmEvent::Merging => {
                     println!("\n── merging results ──\n");
+                }
+                SwarmEvent::WorktreeCreated {
+                    agent_name,
+                    path,
+                    branch,
+                } => {
+                    println!(
+                        "── {}: worktree {} (branch {})",
+                        agent_name,
+                        path.display(),
+                        branch,
+                    );
+                }
+                SwarmEvent::WorktreesMerged {
+                    merged,
+                    conflicted,
+                    failed,
+                } => {
+                    if conflicted.is_empty() && failed.is_empty() {
+                        println!(
+                            "\n── worktrees merged: {} ok ──\n",
+                            merged.len()
+                        );
+                    } else {
+                        println!(
+                            "\n── worktrees merged: {} ok, {} conflict(s), {} failed ──",
+                            merged.len(),
+                            conflicted.len(),
+                            failed.len(),
+                        );
+                        for f in &conflicted {
+                            println!("   ⚠ conflict: {}", f.display());
+                        }
+                        for (branch, err) in &failed {
+                            println!("   ✗ {}: {}", branch, err);
+                        }
+                        println!();
+                    }
                 }
             }
         }
@@ -1327,7 +1447,12 @@ pub async fn run_swarm(
 }
 
 /// Run the agent command
-pub async fn run_agent(name: String, goal: String, model: Option<String>) -> Result<()> {
+pub async fn run_agent(
+    name: String,
+    goal: String,
+    model: Option<String>,
+    cli_preset: Option<String>,
+) -> Result<()> {
     let config = KodConfig::load_default()?;
     let model_name = model.unwrap_or_else(|| config.llm.model.clone());
 
@@ -1343,13 +1468,15 @@ pub async fn run_agent(name: String, goal: String, model: Option<String>) -> Res
     let engine = KodEngine::new(router_config, db_path)?;
     engine.set_history_budget(config.llm.context_window.saturating_mul(3));
 
-    let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
-    engine.set_provider(Arc::new(provider)).await;
+    let (registry, default_model, routing) =
+        kod_core::build_registry(&config.llm, Some(&model_name))?;
+    engine.set_registry(registry, default_model, routing).await;
     // `kod agent` has no interactive consumer. When confirm_writes is
     // on, the engine refuses every write with a message the model and
     // the user can act on. Approving silently would defeat the flag.
-    engine.set_confirm_writes(config.tools.confirm_writes);
     engine.set_auto_check(config.tools.auto_check);
+    engine.set_auto_lsp(config.tools.auto_lsp);
+    install_policy_async(&engine, &config, cli_preset.as_deref()).await?;
 
     engine.start().await?;
 
@@ -1826,11 +1953,13 @@ pub async fn run_tui(
     model: Option<String>,
     no_resume: bool,
     sandbox: bool,
+    cli_preset: Option<String>,
 ) -> Result<()> {
     let mut tui = kod_tui::TuiLoop::new();
     if sandbox {
         tui.set_sandbox_mode(true);
     }
+    tui.set_cli_preset(cli_preset);
     if no_resume {
         // Disable session restore by setting the TUI's state dir to an
         // empty temp dir. A simpler flag on TuiLoop is a follow-up;
@@ -3257,12 +3386,13 @@ pub async fn run_prompt(
     let engine = KodEngine::new(router_config, db_path)?;
     engine.set_history_budget(config.llm.context_window.saturating_mul(3));
 
-    let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
-    engine.set_provider(Arc::new(provider)).await;
+    let (registry, default_model, routing) =
+        kod_core::build_registry(&config.llm, Some(&model_name))?;
+    engine.set_registry(registry, default_model, routing).await;
     engine.set_hooks(config.hooks.clone());
     engine.set_network_access(config.llm.network_access);
-    engine.set_confirm_writes(config.tools.confirm_writes);
     engine.set_auto_check(config.tools.auto_check);
+    engine.set_auto_lsp(config.tools.auto_lsp);
     if sandbox {
         engine.set_sandbox_mode(kod_tools::context::SandboxMode::Require);
     }
@@ -3466,7 +3596,7 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
     registry
         .register(Box::new(kod_tools::AskUserTool::new()))
         .await;
-    let blackboard = kod_tools::new_knowledge();
+    let blackboard = kod_tools::SwarmKnowledge::new();
     registry
         .register(Box::new(kod_tools::SwarmNoteTool::new(blackboard.clone())))
         .await;
@@ -3497,7 +3627,7 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
                             "write_files": d.permissions.write_files,
                             "execute_commands": d.permissions.execute_commands,
                             "network_access": d.permissions.network_access,
-                            "git_operations": d.permissions.git_operations,
+                            "git_operations": d.permissions.git_access,
                             "allowed_paths": d.permissions.allowed_paths,
                             "forbidden_paths": d.permissions.forbidden_paths,
                         }
@@ -3932,12 +4062,13 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
     };
     let engine = KodEngine::new(router_config, db_path)?;
     engine.set_history_budget(config.llm.context_window.saturating_mul(3));
-    let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
-    engine.set_provider(Arc::new(provider)).await;
+    let (registry, default_model, routing) =
+        kod_core::build_registry(&config.llm, Some(&model_name))?;
+    engine.set_registry(registry, default_model, routing).await;
     engine.set_hooks(config.hooks.clone());
     engine.set_network_access(config.llm.network_access);
-    engine.set_confirm_writes(config.tools.confirm_writes);
     engine.set_auto_check(config.tools.auto_check);
+    engine.set_auto_lsp(config.tools.auto_lsp);
     engine.start().await?;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
