@@ -1,13 +1,13 @@
 ---
 title: Architecture
-description: How the KOD workspace is organised — the twelve crates, their layering, the data flow through the engine, and the design principles behind it.
+description: How KOD is organised — the components behind the interface, the data flow through the engine, and the design principles behind it.
 sidebar:
   order: 1
 ---
 
 import { Aside, LinkCard } from '@astrojs/starlight/components';
 
-KOD is a multi-crate Cargo workspace where each crate has a single responsibility and a narrow public API, so each phase can be built and tested in isolation. Twelve crates stack into five layers:
+KOD is a multi-crate Rust workspace where each crate has a single responsibility and a narrow public API, so each part can be built and reasoned about in isolation. Twelve crates stack into five layers:
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -31,14 +31,14 @@ KOD is a multi-crate Cargo workspace where each crate has a single responsibilit
 | --- | --- |
 | `kod-types` | Shared types: strongly-typed IDs (`AgentId`, `MessageId`, `SkillId`, …), messages, skills, memory, tools. |
 | `kod-error` | `KodError` enum and `Result` alias — comprehensive errors with recovery detection. |
-| `kod-config` | `KodConfig`, `LlmConfig`, `MemoryConfig`, `SkillsConfig`, `SwarmConfig`, model profiles, and the policy engine's config side. |
+| `kod-config` | Configuration parsing and validation: endpoints, routing, memory, skills, swarm, hooks, MCP, and the policy engine's config side. |
 | `kod-provider` | The `LlmProvider` trait, `GenerationOptions`, and streaming chunk types. |
 | `kod-provider-openai` | OpenAI-compatible implementation (backed by `adk-model`): one code path for Ollama, LM Studio, MLX, vLLM, OpenAI. |
 | `kod-skills` | Skill parser, loader, matcher, and hot-reload watcher. |
 | `kod-memory` | Short-term memory and long-term `redb` storage, plus the context builder. |
-| `kod-tools` | `Tool` trait, registry, built-in tools, per-path lock table, sandbox invocation. |
+| `kod-tools` | `Tool` trait, registry, the 24 built-in tools, per-path lock table, sandbox invocation. |
 | `kod-swarm` | Agent lifecycle, communication hub, task coordinator, shared workspace. |
-| `kod-core` | `KodEngine`, `TaskRouter`, `SwarmRunner`, repository map, session log, hooks. |
+| `kod-core` | `KodEngine`, `TaskRouter`, `SwarmRunner`, repository map, session log, hooks, LSP and MCP integration. |
 | `kod-tui` | Terminal UI: app state, event handling, widgets, keybindings, themes. |
 | `kod-cli` | The `kod` binary: command definitions and handlers. |
 
@@ -79,10 +79,10 @@ user input
 
 1. **Modularity** — each crate has a single responsibility and a narrow public API.
 2. **Performance** — zero-copy parsing, object pooling, caching, connection reuse.
-3. **Extensibility** — trait-based abstractions for providers and tools.
+3. **Extensibility** — trait-based abstractions for providers and tools; MCP servers plug in from config.
 4. **Type safety** — strongly-typed IDs prevent mixing an `AgentId` with a `SessionId`.
 5. **Error handling** — comprehensive error types with recovery detection.
-6. **Testing** — high coverage with property-based testing; offline by default.
+6. **Fail loudly** — corrupt configs warn and recover, missing sandbox primitives abort, absent providers refuse instead of inventing answers.
 7. **Documentation** — every component documented; docs describe the code as it is.
 
 ## Performance posture
@@ -91,7 +91,7 @@ The workspace is deliberate about resource use: Tokio-based async I/O throughout
 
 ## What is deliberately not here
 
-The in-repo `docs/SPEC.md` describes a larger aspirational system — LSP integration, debugger integration, vector search, a plugin system. Those are design references, not built features. The architecture above is the system as it exists.
+The in-repo `docs/SPEC.md` describes a larger aspirational system — a debugger integration, a full plugin API. Those are design references, not built features. LSP integration, MCP servers, and vector-based semantic memory, by contrast, *are* built and documented on this site. The architecture above is the system as it exists.
 
 <Aside type="note">
   The [README's Project Status](https://github.com/elcoosp/kod#project-status) section is the authoritative list of what works end-to-end versus what is on the roadmap; this site follows it.
