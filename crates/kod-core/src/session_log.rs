@@ -89,6 +89,38 @@ pub enum SessionEntry {
         ///  "cli-override" | "session-deny").
         source: String,
     },
+    /// A long-term memory entry was written (D2.4, AD-15).
+    ///
+    /// Emitted by each of the three write channels: extraction at
+    /// end of session, the `memory_save` tool, and the user's
+    /// `/remember` command. `channel` names which one; the value is
+    /// one of `"extraction" | "tool" | "user"`.
+    MemoryWrite {
+        timestamp_ms: u64,
+        memory_id: String,
+        channel: String,
+        #[serde(default)]
+        tags: Vec<String>,
+    },
+    /// An approval decision was made on a pending tool call
+    /// (D3.2, AD-15). `decision` is `"approve" | "deny" |
+    /// "deny-always" | "timeout"`.
+    Approval {
+        timestamp_ms: u64,
+        holder: String,
+        tool_name: String,
+        decision: String,
+    },
+    /// A post-write LSP diagnostics pass ran on a file (D5.2,
+    /// AD-15). One entry per file per pass. The counts let a reader
+    /// see whether a write introduced or resolved errors without
+    /// scanning the full diagnostic list.
+    Diagnostics {
+        timestamp_ms: u64,
+        file: String,
+        error_count: usize,
+        warning_count: usize,
+    },
 }
 
 /// Append-only writer for a session log.

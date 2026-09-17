@@ -8,6 +8,11 @@ pub mod request;
 pub mod traits;
 pub mod types;
 
+/// Provider contract suite (§11.2). Enabled under the `testkit`
+/// feature by each concrete provider crate.
+#[cfg(feature = "testkit")]
+pub mod testkit;
+
 pub use registry::{EndpointEntry, ProviderRegistry};
 pub use request::{
     CompletionRequest, ModelPricing, ModelRef, PromptCacheKind, ProviderCapabilities,

@@ -22,4 +22,5 @@ kod-provider = { path = "../kod-provider" }
 kod-config = { path = "../kod-config" }
 
 [dev-dependencies]
+httpmock = "0.7"
 tempfile = "3.8"

@@ -16,4 +16,12 @@ kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
 
 [dev-dependencies]
+httpmock = "0.7"
 time = { workspace = true }
+
+[features]
+# Exposes `kod_provider::testkit`, the shared provider contract
+# suite (§11.2). Enabled by each concrete provider crate's
+# dev-dependencies so a test binary can call the suite against its
+# own `LlmProvider` implementation.
+testkit = ["dep:tokio", "dep:serde_json"]
