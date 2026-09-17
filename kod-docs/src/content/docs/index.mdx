@@ -10,7 +10,7 @@ hero:
       <div class="kod-terminal" role="img" aria-label="Animated mock of a KOD terminal session: a user asks KOD to add doc comments, the agent reads and writes files, and reports success.">
         <div class="kod-terminal-bar">
           <span class="light r"></span><span class="light y"></span><span class="light g"></span>
-          <span class="title">kod tui — qwen2.5-coder:7b — local</span>
+          <span class="title">kod tui — qwen3.8:27b-mlx — local</span>
         </div>
         <div class="kod-terminal-body">
           <span class="ln no-anim"><span class="prompt">❯ </span><span class="kod-type" style="--chars:7; --type-dur:0.9s; --d:0.3s">kod tui</span></span>
@@ -106,11 +106,11 @@ KOD is designed around one question: *where does my code go when I run this?* Ev
 <Tabs>
 <TabItem label="Build from source">
   ```bash
-  git clone https://github.com/kod-team/kod.git
+  git clone https://github.com/elcoosp/kod.git
   cd kod && cargo build --release
 
   ollama serve &            # or LM Studio, MLX, vLLM, …
-  ollama pull qwen2.5-coder:7b
+  ollama pull qwen3.8:27b-mlx
 
   ./target/release/kod doctor
   ./target/release/kod profile use local-fast
