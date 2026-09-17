@@ -308,11 +308,17 @@ impl Cli {
                 model,
                 no_log,
                 sandbox,
+                remote,
+                socket,
             }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async {
-                    run_prompt(prompt.clone(), model.clone(), *no_log, *sandbox).await
+                    if *remote {
+                        run_prompt_remote(prompt.clone(), socket.clone()).await
+                    } else {
+                        run_prompt(prompt.clone(), model.clone(), *no_log, *sandbox).await
+                    }
                 })
             }
             Some(Command::Tui {
@@ -373,6 +379,11 @@ impl Cli {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_streaming_prompt(prompt.clone(), model.clone()).await })
+            }
+            Some(Command::Serve { stop, socket }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_serve(*stop, socket.clone()).await })
             }
             Some(Command::SandboxExec { profile, cmd }) => {
                 // No tokio runtime: exec replaces the process, so
@@ -441,6 +452,11 @@ impl Cli {
                         SandboxAction::Check => run_sandbox_check().await,
                     }
                 })
+            }
+            Some(Command::Policy { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async { run_policy(action.clone()).await })
             }
             None => {
                 // First-run UX. A bare `kod` invocation is the most common
@@ -668,6 +684,14 @@ pub enum Command {
         /// when the primitive is unavailable.
         #[arg(long, default_value_t = false)]
         sandbox: bool,
+        /// Send the prompt to a running `kod serve` daemon instead of
+        /// building an in-process engine. The daemon must already be
+        /// listening on `--socket` (default: the standard path).
+        #[arg(long, default_value_t = false)]
+        remote: bool,
+        /// Socket path to attach to when `--remote` is set.
+        #[arg(long)]
+        socket: Option<std::path::PathBuf>,
     },
 
     /// Launch the interactive terminal UI
@@ -772,6 +796,14 @@ pub enum Command {
         action: SandboxAction,
     },
 
+    /// Inspect the effective tool policy: what the engine would
+    /// allow, deny, or ask for. Read-only — never writes to a
+    /// `.kod/policy.toml`.
+    Policy {
+        #[command(subcommand)]
+        action: PolicyAction,
+    },
+
     /// List the tools the engine registers, or print one tool's
     /// JSON schema and permissions.
     Tools {
@@ -784,6 +816,23 @@ pub enum Command {
         #[command(subcommand)]
         action: ThemeAction,
     },
+    /// Start (or stop) the long-lived daemon that `kod prompt
+    /// --remote` and `kod chat --remote` attach to. Unix socket
+    /// only, never TCP.
+    ///
+    /// With `--stop`: connect to the running daemon and ask it to
+    /// exit, then wait for the socket file to disappear.
+    Serve {
+        /// Ask a running daemon to stop instead of starting one.
+        #[arg(long, default_value_t = false)]
+        stop: bool,
+        /// Override the socket path. Defaults to
+        /// `$XDG_RUNTIME_DIR/kod.sock` (Linux) or
+        /// `~/.kod/run/kod.sock` (macOS).
+        #[arg(long)]
+        socket: Option<std::path::PathBuf>,
+    },
+
     /// Hidden subcommand: apply a Landlock sandbox to the current
     /// process and exec the given command. Reachable only as
     /// `kod __sandbox-exec` from the parent process that built the
@@ -840,6 +889,41 @@ pub enum SandboxAction {
     /// Check for the sandbox primitive and report its path, or the
     /// install command.
     Check,
+}
+
+/// `kod policy` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum PolicyAction {
+    /// Print the effective policy: the preset, every per-tool
+    /// override, and the provenance of each rule (which layer set
+    /// it — the preset, the global config, `.kod/policy.toml`, or
+    /// the CLI override).
+    Show,
+    /// Answer "what would the engine decide for this call?" without
+    /// running anything. `tool` is a tool name (`write_file`,
+    /// `execute_command`, `mcp:filesystem.read_file`, …). Arguments
+    /// are `key=value` pairs; a value is parsed as JSON when it
+    /// parses, and treated as a string otherwise.
+    ///
+    /// Example:
+    ///   kod policy explain write_file path=src/main.rs
+    ///   kod policy explain execute_command command="cargo test"
+    ///   kod policy explain web_fetch url=https://docs.rs/
+    ///
+    /// The decision is the same one the engine makes: session deny
+    /// rules are not consulted (there are none in a fresh CLI
+    /// process), the project policy layer is loaded from the
+    /// current directory, and any `--preset` override is not
+    /// applied (a CLI inspection is meant to show the config's
+    /// answer, not a hypothetical).
+    Explain {
+        /// Tool name.
+        tool: String,
+        /// `key=value` argument pairs. A value that parses as JSON
+        /// is used as-is; anything else is used as a string.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 /// `kod memory` subcommands.
@@ -2505,6 +2589,97 @@ fn render_session_markdown(messages: &[kod_tui::app::Message]) -> String {
     out
 }
 
+/// `kod serve` — start the daemon, or stop a running one with
+/// `--stop`.
+///
+/// Starting: builds a `KodEngine` from the current config exactly
+/// as `kod chat` does, then hands it to `kod_core::serve::serve`.
+/// The daemon blocks until it receives a `shutdown` request or a
+/// SIGINT.
+///
+/// Stopping: connects to the socket, sends `shutdown`, then polls
+/// for the socket file to disappear (a 5 s budget). A daemon that
+/// does not exit cleanly in that window gets a warning, not a hard
+/// failure — the file may have been unlinked by an earlier run and
+/// the actual process is what matters.
+pub async fn run_serve(
+    stop: bool,
+    socket: Option<std::path::PathBuf>,
+) -> Result<()> {
+    let socket_path = socket.unwrap_or_else(kod_core::serve::default_socket_path);
+
+    if stop {
+        if !socket_path.exists() {
+            eprintln!(
+                "No daemon listening at {} — nothing to stop.",
+                socket_path.display()
+            );
+            return Ok(());
+        }
+        kod_core::serve::stop_daemon(&socket_path).await?;
+        // Poll for the socket file to disappear.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if !socket_path.exists() {
+                println!("Stopped daemon at {}.", socket_path.display());
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        eprintln!(
+            "Sent shutdown to {}, but the socket is still present after 5s. \
+             The daemon may be busy; check with `ps`.",
+            socket_path.display()
+        );
+        return Ok(());
+    }
+
+    let config = KodConfig::load_default()?;
+    let db_path = config.memory_db_path()?;
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let router_config = RouterConfig {
+        context_window: config.llm.default_endpoint().context_window,
+        short_term_capacity: config.memory.short_term_capacity,
+        skill_threshold: config.skills.match_threshold,
+        ..RouterConfig::default()
+    };
+    let engine = KodEngine::new(router_config, db_path)?;
+    engine.set_history_budget(
+        config.llm.default_endpoint().context_window.saturating_mul(3),
+    );
+
+    let (registry, default_model, routing) =
+        kod_core::build_registry(&config.llm, None)?;
+    engine.set_registry(registry, default_model, routing).await;
+    engine.set_hooks(config.hooks.clone());
+    engine.set_network_access(config.llm.network_access);
+    engine.set_auto_check(config.tools.auto_check);
+    engine.set_auto_lsp(config.tools.auto_lsp);
+
+    // Policy: a daemon has no CLI preset.
+    let cwd = std::env::current_dir().map_err(|e| {
+        KodError::Config(format!("could not determine cwd: {e}"))
+    })?;
+    let policy = kod_config::PolicyEngine::load(&config, Some(&cwd), None)?;
+    engine.set_policy(std::sync::Arc::new(policy)).await;
+    kod_core::mcp_adapters::install_from_config(&engine, &config).await;
+
+    engine.start().await?;
+
+    let engine = std::sync::Arc::new(engine);
+    println!(
+        "Starting daemon at {} (Ctrl+C to stop).",
+        socket_path.display()
+    );
+    let result = kod_core::serve::serve(engine.clone(), socket_path.clone()).await;
+
+    // Graceful engine shutdown after the accept loop exits.
+    let _ = engine.shutdown().await;
+    result
+}
+
 /// Hidden subcommand handler: apply a Landlock sandbox and exec.
 ///
 /// The launcher is spawned by `SandboxResolver::invocation` (see
@@ -3476,6 +3651,116 @@ pub async fn run_sandbox_check() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// `kod prompt --remote` — send a prompt to a running `kod serve`
+/// daemon, print the streamed reply on stdout, exit non-zero on
+/// error.
+///
+/// The protocol is the one `kod_core::serve` speaks: NDJSON, one
+/// request per line, `chunk` lines stream the text, a `done` line
+/// ends the response, an `error` line aborts. `--remote` does not
+/// fall back to the in-process path — a user who asked for the
+/// daemon wants the daemon, and a silent fallback would mask a
+/// misconfigured socket.
+pub async fn run_prompt_remote(
+    prompt: String,
+    socket: Option<std::path::PathBuf>,
+) -> Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let input = if prompt.trim() == "-" {
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(KodError::Io)?;
+        buf
+    } else {
+        prompt
+    };
+    if input.trim().is_empty() {
+        return Err(KodError::Config("empty prompt".to_string()));
+    }
+
+    let socket_path = socket.unwrap_or_else(kod_core::serve::default_socket_path);
+    let stream = tokio::net::UnixStream::connect(&socket_path)
+        .await
+        .map_err(|e| {
+            KodError::InvalidState(format!(
+                "could not connect to daemon at {}: {e}. \
+                 Start one with `kod serve`.",
+                socket_path.display()
+            ))
+        })?;
+    let (read_half, mut write_half) = stream.into_split();
+
+    let req = serde_json::json!({
+        "v": 1,
+        "id": "prompt-1",
+        "method": "process_streaming",
+        "params": { "input": input, "transcript_key": "" },
+    });
+    let mut line = serde_json::to_string(&req)
+        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    line.push('\n');
+    write_half.write_all(line.as_bytes()).await.map_err(KodError::Io)?;
+    write_half.flush().await.map_err(KodError::Io)?;
+
+    let mut reader = BufReader::new(read_half).lines();
+    let mut errored = false;
+    while let Some(line) = reader.next_line().await.map_err(KodError::Io)? {
+        let v: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        // Ignore responses for other ids (there are none today, but
+        // the protocol allows them).
+        if v.get("id").and_then(|x| x.as_str()) != Some("prompt-1") {
+            continue;
+        }
+        match v.get("type").and_then(|t| t.as_str()) {
+            Some("chunk") => {
+                if let Some(data) = v.get("data").and_then(|d| d.as_str()) {
+                    // The daemon sends every engine chunk verbatim,
+                    // including `\0kod-*` markers. The CLI drops the
+                    // markers (as it does for the embedded path)
+                    // and prints only the text.
+                    if is_control_marker(data) {
+                        continue;
+                    }
+                    print!("{data}");
+                    let _ = std::io::stdout().flush();
+                }
+            }
+            Some("done") => {
+                println!();
+                return Ok(());
+            }
+            Some("error") => {
+                let msg = v
+                    .get("data")
+                    .and_then(|d| d.get("message"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("(no message)");
+                eprintln!("daemon error: {msg}");
+                errored = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+    if errored {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// True when `s` starts with one of the engine's `\0kod-*` markers.
+/// Extracted so the remote path and the embedded path cannot disagree
+/// on what counts as a control marker.
+fn is_control_marker(s: &str) -> bool {
+    s.starts_with('\0')
 }
 
 /// One-shot prompt. Reads `-` as stdin. Prints only the model's reply
