@@ -1,13 +1,13 @@
 ---
 title: Tools Reference
-description: The ten built-in tools — arguments, results, and the safety machinery around each one.
+description: The 24 built-in tools — arguments, results, and the safety machinery around each one.
 sidebar:
   order: 3
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-KOD ships ten built-in tools. Every call goes through the [policy engine](/guides/policy/) before it runs, is executed under a timeout, passes through a per-path advisory lock table, and is recorded (arguments, result, and the policy decision) in the session log.
+KOD ships 24 built-in tools. Every call goes through the [policy engine](/guides/policy/) before it runs, is executed under a timeout, passes through a per-path advisory lock table, and is recorded (arguments, result, and the policy decision) in the session log. `kod tools list` prints the registry as the model sees it; `kod tools show <name>` prints one tool's full schema.
 
 ## File system tools
 
@@ -17,11 +17,15 @@ Reads a file relative to the engine's working directory. The workhorse for code 
 
 ### `list_files`
 
-Lists directory contents. Used for orientation before reads — and by `kod map`'s underlying repo-map data.
+Lists directory contents. Used for orientation before reads — and the same data `kod map` summarises.
 
 ### `grep`
 
 Searches file contents. Prefer it when the agent needs to find call sites, definitions, or patterns across many files.
+
+### `search_files`
+
+Finds files by name pattern — the right shape when the agent knows roughly what a file is called but not where it lives.
 
 ### `file_info`
 
@@ -37,13 +41,13 @@ Applies an edit patch to an existing file — the surgical alternative to full r
 
 ## Git tools
 
-### `git_status`
+### `git_status` / `git_diff`
 
-Read-only working-tree status. Lets the agent reason about what has changed without touching anything.
+Read-only working-tree status and diff view. Combined, this is how the agent reviews recent changes before suggesting or making edits.
 
-### `git_diff`
+### `git_commit` / `git_branch`
 
-Read-only diff view. Combined with `git_status` this is how the agent reviews recent changes before suggesting or making edits.
+Write-gated git operations: commit the current changes, create a branch. They pass through the same policy engine as file writes — `ask` under `standard`, denied under `read-only` — and inside a sandboxed command context `.git` stays read-only (`git.history_protected`).
 
 ## Shell tool
 
@@ -56,8 +60,42 @@ Runs a shell command. The most powerful and most gated tool:
 - **Hooks**: `pre_tool_use` / `post_tool_use` templates can wrap every execution.
 
 <Aside type="caution">
-  Command allowlists are ergonomics, not containment — `binaries = ["bash"]` allows everything bash can do. Real containment comes from the sandbox primitive.
+  Command allowlists are ergonomics, not containment — <code>binaries = ["bash"]</code> allows everything bash can do. Real containment comes from the sandbox primitive.
 </Aside>
+
+## Project check tool
+
+### `check`
+
+Runs the compiler or linter that matches the project — Cargo, `tsc`, `ruff`, or `go vet` — and returns structured diagnostics. Read-only by nature. The agent calls it after edits to ask "did that break the build?"; the TUI's `/check` runs it on demand, and `tools.auto_check = true` runs it automatically after every write (off by default — it is a compiler invocation per write).
+
+## Planning and interaction tools
+
+### `todo`
+
+Maintains a visible task list for multi-step work, so progress survives context pressure and you can see the plan alongside the transcript.
+
+### `ask_user`
+
+Lets the agent stop and ask you a question instead of guessing — one more reason unattended runs should use `read-only` (there is nobody to answer there either).
+
+## Memory tools
+
+### `memory_save` / `memory_search`
+
+Direct access to the long-term store: persist a durable fact, search existing entries. Registered only when memory is enabled; see [Memory](/guides/memory/) for storage locations and the `kod memory` management commands.
+
+## Swarm tools
+
+### `swarm_note` / `swarm_read`
+
+A shared blackboard for concurrent agents: one agent publishes findings (`note`), others read them (`read`). Always registered; outside a swarm they are simply an empty blackboard.
+
+## LSP tools
+
+### `lsp_diagnostics` / `lsp_definition` / `lsp_references` / `lsp_hover`
+
+Language-server-backed answers: current diagnostics for a file, where a symbol is defined, where it is referenced, and hover documentation. Each tool finds the right server for the file's language on your `PATH` (rust-analyzer, typescript-language-server, …) and **errors naming the missing binary** when there is none — never a silent empty result. The same diagnostics are appended automatically after writes when `tools.auto_lsp` is true (the default).
 
 ## Web tool
 
@@ -69,17 +107,21 @@ Fetches an HTTP/HTTPS URL and returns its content. Guards:
 - **Network opt-in**: disabled unless `llm.network_access` is true — or the tool's own policy entry sets `network = true`.
 - **Domain allow-list**: `.kod/policy.toml` can restrict `web_fetch` to named `domains` (e.g. `["docs.rs", "crates.io"]`).
 
+## MCP tools
+
+Tools contributed by configured [MCP servers](/guides/configuration/#mcpserversname) are registered under the naming policy `mcp:<server>.<tool>` — for example `mcp:filesystem.read_file` — and appear in `kod tools list` alongside the built-ins. Policy entries address them by that full name.
+
 ## Decision precedence, in one table
 
 | Layer | Source | Example |
 | --- | --- | --- |
 | 1. Preset | `read-only` / `standard` / `yolo` | `standard` (default) |
-| 2. Global config | `[tools]` in `config.toml` | `confirm_writes = true` → `standard` |
+| 2. Global config | `[tools]` / `[llm]` in `config.toml` | `network_access = false` |
 | 3. Project policy | `.kod/policy.toml` | `[tools.write_file] mode = "ask"` |
 | 4. CLI override | `--preset` flag | `--preset yolo` |
 
-Within a layer, per-tool entries refine the preset; at glob-conflict time **deny always wins over allow**.
+Within a layer, per-tool entries refine the preset; at glob-conflict time **deny always wins over allow**. `kod policy explain <tool> <args>` prints the verdict for a specific call without running it.
 
 <Aside type="note">
-  The tool layer carries 47 test attributes across built-in tool behaviour, path resolution, sandbox invocation, and permission enforcement — the guarantee being tested is that there is no ungated path to your files.
+  Timeout, path locking, checkpointing, and policy evaluation apply to *every* tool — there is no ungated path to your files. The [Tools guide](/guides/tools/) explains the families and the write follow-ups (LSP, check) in task-oriented terms.
 </Aside>
