@@ -10,7 +10,7 @@ hero:
       <div class="kod-terminal" role="img" aria-label="Animated mock of a KOD terminal session: a user asks KOD to add doc comments, the agent reads and writes files, and reports success.">
         <div class="kod-terminal-bar">
           <span class="light r"></span><span class="light y"></span><span class="light g"></span>
-          <span class="title">kod tui — qwen3.8:27b-mlx — local</span>
+          <span class="title">kod tui — qwen2.5-coder:7b — local</span>
         </div>
         <div class="kod-terminal-body">
           <span class="ln no-anim"><span class="prompt">❯ </span><span class="kod-type" style="--chars:7; --type-dur:0.9s; --d:0.3s">kod tui</span></span>
@@ -38,14 +38,14 @@ import { Card, CardGrid, LinkCard, Tabs, TabItem, Aside } from '@astrojs/starlig
 
 <div class="landing-section">
 
-## One binary, twelve crates, zero clouds
+## One binary. Every model you already run.
 
 KOD ships as a single Rust executable that runs the agent loop, the tools, the memory store, and the terminal UI. There is no Node runtime, no Python interpreter, and no Docker daemon in the path — just `cargo build --release` and a model server you control.
 
 <div class="kod-stats not-content" role="list">
-  <div class="stat" role="listitem"><span class="num">12</span><span class="lbl">crates in the workspace</span></div>
-  <div class="stat" role="listitem"><span class="num">~356</span><span class="lbl">test attributes across 11 crates</span></div>
-  <div class="stat" role="listitem"><span class="num">10</span><span class="lbl">permission-gated built-in tools</span></div>
+  <div class="stat" role="listitem"><span class="num">1</span><span class="lbl">binary to build, nothing else to install</span></div>
+  <div class="stat" role="listitem"><span class="num">24</span><span class="lbl">built-in, permission-gated tools</span></div>
+  <div class="stat" role="listitem"><span class="num">4</span><span class="lbl">model profiles ready out of the box</span></div>
   <div class="stat" role="listitem"><span class="num">0</span><span class="lbl">bytes of code uploaded by default</span></div>
 </div>
 
@@ -80,7 +80,7 @@ KOD is designed around one question: *where does my code go when I run this?* Ev
 <div class="feat">
   <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
   <h3>Layered memory on disk</h3>
-  <p>Short-term FIFO context plus a persistent <code>redb</code> long-term store — global or project-scoped. You can open the file, inspect it, or delete it.</p>
+  <p>Short-term FIFO context plus a persistent <code>redb</code> long-term store — global or project-scoped. Browse it with <code>kod memory</code>, export it, or delete it.</p>
 </div>
 
 <div class="feat">
@@ -109,8 +109,8 @@ KOD is designed around one question: *where does my code go when I run this?* Ev
   git clone https://github.com/elcoosp/kod.git
   cd kod && cargo build --release
 
-  ollama serve &            # or LM Studio, MLX, vLLM, …
-  ollama pull qwen3.8:27b-mlx
+  ollama serve &                 # or LM Studio, MLX, vLLM, …
+  ollama pull qwen2.5-coder:7b
 
   ./target/release/kod doctor
   ./target/release/kod profile use local-fast
@@ -122,6 +122,9 @@ KOD is designed around one question: *where does my code go when I run this?* Ev
   # one-shot agent run against a goal
   kod agent -g "add a doc comment to every public function in src/lib.rs"
 
+  # a single non-interactive prompt, ideal for scripts
+  kod prompt "explain what src/net.rs does in three bullets"
+
   # a swarm of 4 agents on something bigger
   kod swarm -g "implement and test a rate limiter" -n 4
 
@@ -132,7 +135,7 @@ KOD is designed around one question: *where does my code go when I run this?* Ev
 </Tabs>
 
 <Aside type="tip">
-  Not sure whether your setup works? <code>kod doctor</code> prints a diagnostics report for config, endpoint, skills, memory, and git in one shot.
+  Not sure whether your setup works? <code>kod doctor</code> prints a diagnostics report for config, endpoint, skills, memory, sandbox, and git in one shot.
 </Aside>
 
 </div>
@@ -143,22 +146,22 @@ KOD is designed around one question: *where does my code go when I run this?* Ev
 
 <CardGrid stagger>
   <Card title="Terminal UI (TUI)" icon="laptop">
-    Chat, live tool rows, an agent panel, themes, search, and slash commands — a full ratatui interface.
+    Chat, live tool rows, an agent panel, themes, search, and 49 slash commands — a full ratatui interface.
   </Card>
-  <Card title="Skills" icon="open-book">
-    Write reusable knowledge assets in Markdown and match them by trigger, tag, capability, or name.
+  <Card title="Scriptable CLI" icon="terminal">
+    `kod prompt`, `kod run`, `kod serve`, `kod agent` — the same engine, composable with pipes and cron.
   </Card>
   <Card title="Policy & Permissions" icon="padlock">
     Four layers of precedence decide what the agent may do — before every single tool call.
   </Card>
-  <Card title="Agent Swarms" icon="random">
-    Decompose, run concurrently, detect conflicts, and merge — all against your local model.
+  <Card title="MCP & LSP" icon="external">
+    Plug in MCP servers from config, and get language-server diagnostics after every write.
   </Card>
   <Card title="Architecture" icon="code-branch">
     Twelve crates, one responsibility each: types, config, providers, skills, memory, tools, core, TUI, CLI.
   </Card>
-  <Card title="Testing" icon="approve-check-circle">
-    356 test attributes, offline by default, with live-model tests gated behind <code>#[ignore]</code>.
+  <Card title="FAQ" icon="question">
+    Where sessions live, how to reset memory, why a key is blocked — the answers end users ask for.
   </Card>
 </CardGrid>
 
@@ -174,6 +177,7 @@ Install KOD, point it at the model server you already run, and keep your source 
   <span class="chip"><code>kod doctor</code></span>
   <span class="chip"><code>kod tui</code></span>
   <span class="chip"><code>kod agent -g "…"</code></span>
+  <span class="chip"><code>kod prompt "…"</code></span>
   <span class="chip"><code>kod swarm -g "…" -n 4</code></span>
   <span class="chip"><code>kod profile use local-fast</code></span>
   <span class="chip"><code>kod replay session.jsonl</code></span>
