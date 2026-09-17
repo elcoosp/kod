@@ -629,10 +629,11 @@ main kbd,
 .card {
   transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
-.card:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--kod-purple-600) 45%, var(--kod-panel-border));
-  box-shadow: 0 12px 30px -16px var(--kod-glow);
+.card:hover,
+.card-grid .card:hover {
+  transform: translateY(-2px) !important;
+  border-color: color-mix(in srgb, var(--kod-purple-600) 45%, var(--kod-panel-border)) !important;
+  box-shadow: 0 12px 30px -16px var(--kod-glow) !important;
 }
 .card .title {
   color: var(--sl-color-text);
@@ -707,6 +708,18 @@ nav.sidebar .current::before {
   width: 2.5px;
   border-radius: 2px;
   background: linear-gradient(180deg, var(--kod-purple-500), var(--kod-purple-700));
+}
+
+/* Current page nav link — white text on purple when selected */
+nav.sidebar a[aria-current='page'] {
+  color: #fff !important;
+  background-color: var(--kod-purple-500) !important;
+  font-weight: 600;
+}
+nav.sidebar a[aria-current='page']:hover,
+nav.sidebar a[aria-current='page']:focus {
+  color: #fff !important;
+  background-color: var(--kod-purple-600) !important;
 }
 
 /* Right-side TOC active link */
