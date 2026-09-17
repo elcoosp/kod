@@ -117,6 +117,19 @@ pub enum Event {
     SwarmAgentCompleted { id: kod_types::AgentId, result: String },
     /// A swarm agent failed; the others continue.
     SwarmAgentFailed { id: kod_types::AgentId, error: String },
+    /// A swarm agent's worktree was created (D4-D5).
+    SwarmAgentWorktree {
+        id: kod_types::AgentId,
+        path: std::path::PathBuf,
+        branch: String,
+    },
+    /// A swarm agent is retrying after a failure (D4-D6).
+    SwarmAgentRetrying {
+        id: kod_types::AgentId,
+        attempt: u32,
+        max_attempts: u32,
+        previous_error: String,
+    },
     /// Two swarm agents wrote to the same file.
     SwarmConflict { file: String, agents: Vec<String> },
     /// All swarm agents done; the runner is calling the merge.
