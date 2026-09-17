@@ -62,6 +62,12 @@ pub struct TuiLoop {
     /// loads in `init_engine`; overrides the config and project
     /// policy layers.
     cli_preset: Option<String>,
+    /// Whether mouse capture is currently enabled. Tracked here so
+    /// the `m` key can toggle it without querying the terminal
+    /// (crossterm has no "is capture enabled?" query on all
+    /// platforms) and so `restore_terminal` can send the right
+    /// disable-or-nothing command on exit.
+    mouse_captured: bool,
 }
 
 impl TuiLoop {
@@ -77,6 +83,7 @@ impl TuiLoop {
             persist_history: false,
             sandbox_required: false,
             cli_preset: None,
+            mouse_captured: true,
         }
     }
 
@@ -97,6 +104,116 @@ impl TuiLoop {
     /// layers only".
     pub fn set_cli_preset(&mut self, preset: Option<String>) {
         self.cli_preset = preset;
+    }
+
+    /// Open `initial` in `$EDITOR` (falling back to `$VISUAL` then
+    /// `vi`), and return whatever the user left behind.
+    ///
+    /// The TUI is in raw mode on the alternate screen while this
+    /// runs; both are suspended for the editor's lifetime and
+    /// restored after. A failure to restore either — a crash in
+    /// `crossterm::execute!` or the shell — is surfaced as an error
+    /// so the caller can decide whether to abort the whole session;
+    /// a silent failure leaves the user staring at a broken
+    /// terminal.
+    ///
+    /// The editor is spawned synchronously. This blocks the TUI's
+    /// event loop for the duration of the editing session, which is
+    /// the desired behaviour: while a user is in their editor, the
+    /// TUI behind it is frozen and should not be processing input.
+    pub async fn open_external_editor(&mut self, initial: &str) -> Result<String> {
+        use crossterm::execute;
+
+        // Write the initial buffer to a temp file. The prefix keeps
+        // two `kod` processes on the same machine from clobbering
+        // each other's scratch, and the suffix gives the editor a
+        // language hint so syntax highlighting works.
+        let tmp = std::env::temp_dir().join(format!(
+            "kod-edit-{}-{}.md",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        std::fs::write(&tmp, initial.as_bytes()).map_err(KodError::Io)?;
+
+        // Suspend TUI mode. Order matters: leave the alternate
+        // screen *before* disabling raw mode so the terminal's
+        // cursor and scrollback are restored first.
+        if let Some(terminal) = &mut self.terminal {
+            let _ = terminal.show_cursor();
+        }
+        execute!(
+            std::io::stdout(),
+            crossterm::event::DisableMouseCapture,
+            crossterm::terminal::LeaveAlternateScreen,
+        )
+        .map_err(|e| {
+            KodError::Internal(format!("could not leave alternate screen: {e}"))
+        })?;
+        crossterm::terminal::disable_raw_mode().map_err(|e| {
+            KodError::Internal(format!("could not disable raw mode: {e}"))
+        })?;
+
+        // Resolve the editor: $EDITOR, then $VISUAL, then `vi`.
+        let editor = std::env::var("EDITOR")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("VISUAL").ok().filter(|s| !s.trim().is_empty()))
+            .unwrap_or_else(|| "vi".to_string());
+
+        // Shell out so a value like `code --wait` (or
+        // `emacsclient -nw`) works without the caller splitting on
+        // whitespace themselves.
+        let cmd = format!("{} {}", editor, shell_quote(&tmp.to_string_lossy()));
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&cmd)
+            .status();
+
+        // Always restore the TUI, even when the editor failed —
+        // a user whose `$EDITOR` was set to garbage should still
+        // come back to a working `kod`.
+        let restore = (|| -> Result<()> {
+            crossterm::terminal::enable_raw_mode().map_err(|e| {
+                KodError::Internal(format!("could not re-enable raw mode: {e}"))
+            })?;
+            execute!(
+                std::io::stdout(),
+                crossterm::terminal::EnterAlternateScreen,
+                crossterm::event::EnableMouseCapture,
+            )
+            .map_err(|e| {
+                KodError::Internal(format!("could not re-enter alternate screen: {e}"))
+            })?;
+            if let Some(terminal) = &mut self.terminal {
+                let _ = terminal.clear();
+                let _ = terminal.hide_cursor();
+            }
+            Ok(())
+        })();
+        restore?;
+
+        // Read the file back regardless of the editor's exit code —
+        // a user who wrote something and then hit an editor error
+        // should still get their work. The error is surfaced, but
+        // after the content is read.
+        let content = std::fs::read_to_string(&tmp).unwrap_or_default();
+        let _ = std::fs::remove_file(&tmp);
+
+        match status {
+            Ok(s) if s.success() => Ok(content),
+            Ok(s) => Err(KodError::Internal(format!(
+                "editor {:?} exited with status {:?}. Your text is preserved in the input box.",
+                editor,
+                s.code()
+            ))),
+            Err(e) => Err(KodError::Internal(format!(
+                "could not launch editor {:?}: {e}",
+                editor
+            ))),
+        }
     }
 
     /// Set up the engine with the OpenAI-compatible provider
@@ -524,9 +641,13 @@ impl TuiLoop {
             Event::SessionUsage {
                 prompt_tokens,
                 completion_tokens,
+                cost_usd,
             } => {
                 self.app
                     .note_session_usage(prompt_tokens, completion_tokens);
+                if let Some(c) = cost_usd {
+                    self.app.note_session_cost(c);
+                }
             }
             Event::ToolStarted(tool_name) => {
                 // Flush text streamed so far as its own bubble first: the
@@ -1011,10 +1132,23 @@ impl TuiLoop {
                         } else {
                             usage.prompt_tokens + usage.completion_tokens
                         };
+                        // Compute the call's USD cost from the
+                        // pricing the response carries. `None` when
+                        // the endpoint has no `[pricing]` block, in
+                        // which case the header simply shows no `$`
+                        // figure — a number we did not earn the
+                        // right to print is worse than no number.
+                        let cost_usd = response.pricing.map(|p| {
+                            p.cost_usd(
+                                usage.prompt_tokens,
+                                usage.completion_tokens,
+                            )
+                        });
                         let _ = event_tx
                             .send(Event::SessionUsage {
                                 prompt_tokens: usage.prompt_tokens,
                                 completion_tokens: usage.completion_tokens,
+                                cost_usd,
                             })
                             .await;
                         let _ = event_tx.send(Event::TokenUsage(total)).await;
@@ -2530,6 +2664,61 @@ impl TuiLoop {
                     self.app.push_system_message(&msg);
                 }
             }
+            "/log" => {
+                // Session log viewer. Reads the recorder's JSONL
+                // file (the one `kod replay` reads) and prints the
+                // most recent entries. The optional argument caps
+                // the count; the default is 20, the max 200.
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                let Some(path) = engine.session_log_path() else {
+                    self.app.push_system_message(
+                        "No session log installed for this run. \
+                         Set KOD_SESSION_LOG to enable one.",
+                    );
+                    return Ok(());
+                };
+                let n: usize = parts
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(20)
+                    .min(200);
+                match kod_core::session_log::read_session(&path) {
+                    Ok(entries) => {
+                        if entries.is_empty() {
+                            self.app.push_system_message(&format!(
+                                "Session log {} is empty.",
+                                path.display(),
+                            ));
+                            return Ok(());
+                        }
+                        let total = entries.len();
+                        let shown = entries.iter().rev().take(n).collect::<Vec<_>>();
+                        let mut msg = format!(
+                            "Session log {} ({} total, newest {}):\n",
+                            path.display(),
+                            total,
+                            shown.len()
+                        );
+                        for e in shown.iter().rev() {
+                            msg.push_str(&format_entry_one_line(e));
+                            msg.push('\n');
+                        }
+                        msg.push_str(
+                            "\nReplay this log with: kod replay <path>",
+                        );
+                        self.app.push_system_message(msg.trim_end());
+                    }
+                    Err(e) => {
+                        self.app.push_system_message(&format!(
+                            "Could not read session log {}: {e}",
+                            path.display(),
+                        ));
+                    }
+                }
+            }
             "/check" => {
                 // No argument: whole-project compiler check.
                 // With a file argument: try LSP first (fast, per-file,
@@ -3222,6 +3411,37 @@ impl TuiLoop {
                     self.app.push_system_message("Expanded newest tool output.");
                 }
             }
+            KeyCode::Char('m') => {
+                // Toggle terminal mouse capture. The default is on
+                // — wheel scroll and click work out of the box —
+                // but a user who wants to select text natively
+                // (without holding Option/Shift) needs it off.
+                self.mouse_captured = !self.mouse_captured;
+                use crossterm::execute;
+                let result = if self.mouse_captured {
+                    execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)
+                } else {
+                    execute!(std::io::stdout(), crossterm::event::DisableMouseCapture)
+                };
+                match result {
+                    Ok(()) => {
+                        let state = if self.mouse_captured { "on" } else { "off" };
+                        self.app.push_system_message(&format!(
+                            "Mouse capture {state}. \
+                             With capture on, hold Option (macOS) or Shift to select text."
+                        ));
+                    }
+                    Err(e) => {
+                        // Revert the flag: the terminal refused the
+                        // change, so the app's state should match
+                        // reality.
+                        self.mouse_captured = !self.mouse_captured;
+                        self.app.push_system_message(&format!(
+                            "Could not toggle mouse capture: {e}"
+                        ));
+                    }
+                }
+            }
             KeyCode::Char('n') => {
                 if self.app.is_searching()
                     && let Some((pos, total)) = self.app.search_next()
@@ -3412,6 +3632,25 @@ impl TuiLoop {
             KeyCode::CtrlU => {
                 self.app.delete_to_line_start();
             }
+            KeyCode::CtrlE => {
+                // Open the current input (which may be empty) in
+                // $EDITOR. When the editor exits cleanly, whatever
+                // it left becomes the new input box content. When
+                // it fails, the input is unchanged and an error
+                // system message is pushed — a broken editor must
+                // not eat the user's draft.
+                let current = self.app.input().to_string();
+                match self.open_external_editor(&current).await {
+                    Ok(content) => {
+                        self.app.set_input(content.trim_end().to_string());
+                    }
+                    Err(e) => {
+                        self.app.push_system_message(&format!(
+                            "External editor failed: {e}"
+                        ));
+                    }
+                }
+            }
             KeyCode::CtrlW => {
                 self.app.delete_word_before();
             }
@@ -3467,6 +3706,67 @@ impl TuiLoop {
 impl Default for TuiLoop {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Wrap `s` in single quotes for safe interpolation into a `sh -c`
+/// command. A path with a single quote inside is pathological; the
+/// standard POSIX escape (`'\''`) handles it anyway.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// One-line summary of a `SessionEntry` for `/log`.
+///
+/// Deliberately compact: a session log over a busy run has
+/// thousands of entries, and a `/log` view is meant to be scanned.
+/// The full JSON is one `kod replay` or `cat` away.
+fn format_entry_one_line(entry: &kod_core::session_log::SessionEntry) -> String {
+    use kod_core::session_log::SessionEntry;
+    match entry {
+        SessionEntry::ToolCall {
+            tool_name,
+            duration_ms,
+            holder,
+            ..
+        } => format!("  {holder:>8}  tool   {tool_name} ({duration_ms}ms)"),
+        SessionEntry::ModelFallback { from, to, .. } => {
+            format!("  ------   fallback   {from} → {to}")
+        }
+        SessionEntry::PolicyDecision {
+            tool_name,
+            outcome,
+            rule,
+            ..
+        } => format!("  ------   policy   {outcome} {tool_name} ({rule})"),
+        SessionEntry::MemoryWrite {
+            channel, memory_id, ..
+        } => format!("  ------   memory   {channel} {memory_id}"),
+        SessionEntry::Cost {
+            endpoint,
+            model,
+            prompt_tokens,
+            completion_tokens,
+            cost_usd,
+            ..
+        } => format!(
+            "  ------   cost   {endpoint}/{model} \
+             ↑{prompt_tokens} ↓{completion_tokens} ${cost_usd:.4}"
+        ),
+        SessionEntry::Approval {
+            holder,
+            tool_name,
+            decision,
+            ..
+        } => format!("  {holder:>8}  approval   {decision} {tool_name}"),
+        SessionEntry::Diagnostics {
+            file,
+            error_count,
+            warning_count,
+            ..
+        } => format!(
+            "  ------   lsp   {file} ({error_count}E/{warning_count}W)"
+        ),
     }
 }
 
