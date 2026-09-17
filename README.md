@@ -145,7 +145,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full crate-by-crate b
 ### From source
 
 ```bash
-git clone https://github.com/kod-team/kod.git
+git clone https://github.com/elcoosp/kod.git
 cd kod
 cargo build --release
 ```
