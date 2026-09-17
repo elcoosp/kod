@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+kod-provider = { path = "../kod-provider" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 syntect = { workspace = true }
@@ -33,6 +34,5 @@ toml = { workspace = true }
 async-trait = "0.1"
 async-stream = { workspace = true }
 futures = { workspace = true }
-kod-provider = { path = "../kod-provider" }
 rstest = { workspace = true }
 tempfile = "3.8"
