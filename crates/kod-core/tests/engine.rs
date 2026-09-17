@@ -8,7 +8,7 @@ fn create_test_engine() -> (KodEngine, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.redb");
 
-    let config = RouterConfig {
+    let config = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
@@ -46,7 +46,7 @@ async fn test_engine_with_provider() {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.redb");
 
-    let config = RouterConfig {
+    let config = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
@@ -84,7 +84,7 @@ async fn test_seed_turn_feeds_history() {
 
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.redb");
-    let cfg = RouterConfig {
+    let cfg = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         short_term_capacity: 100,
         working_dir: tmp.path().to_path_buf(),
@@ -135,7 +135,7 @@ async fn engine_write_fails_when_lock_held() {
     use std::time::Duration;
 
     let temp = tempfile::TempDir::new().unwrap();
-    let cfg = kod_core::RouterConfig {
+    let cfg = kod_core::RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp.path().to_path_buf(),
         enable_memory: false,
@@ -203,7 +203,7 @@ async fn engine_write_succeeds_when_lock_free() {
     use std::sync::Arc;
 
     let temp = tempfile::TempDir::new().unwrap();
-    let cfg = kod_core::RouterConfig {
+    let cfg = kod_core::RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp.path().to_path_buf(),
         enable_memory: false,
