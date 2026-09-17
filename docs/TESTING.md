@@ -68,6 +68,9 @@ crates/
   kod-provider-anthropic/ -- Anthropic Messages API provider
   kod-lsp/            -- Minimal LSP client (JSON-RPC over stdio, diagnostics)
   kod-mcp/            -- Minimal MCP client (spawn servers, list/call tools)
+  kod-provider-anthropic/ -- Anthropic Messages API provider
+  kod-lsp/            -- Minimal LSP client (JSON-RPC over stdio, diagnostics)
+  kod-mcp/            -- Minimal MCP client (spawn servers, list/call tools)
   kod-skills/         -- Skill loading, parsing, matching, hot-reload watcher
   kod-memory/         -- Short-term and long-term memory
   kod-tools/          -- Tool trait, registry, and built-in tools
