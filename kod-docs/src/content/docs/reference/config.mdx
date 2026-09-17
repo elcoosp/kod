@@ -14,7 +14,7 @@ The config file lives at `~/.config/kod/config.toml` (Linux) or `~/Library/Appli
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `provider` | string | `"OpenAICompatible"` | `"Ollama"` and `"OpenAI"` are aliases of `OpenAICompatible`. `Anthropic` / `Custom` are recognised but fail at the first prompt. |
-| `model` | string | `"qwen2.5-coder:7b"` (via profiles; see `kod profile show`) | Must exist on the server. |
+| `model` | string | `"qwen3.8:27b-mlx"` (via profiles; see `kod profile show`) | Must exist on the server. |
 | `base_url` | URL | `http://localhost:11434/v1` | Normalised automatically — server root or `.../v1` root both work. |
 | `context_window` | integer | `32768` | Sizes the memory manager's per-prompt budget via the router. |
 | `max_tokens` | integer | `4096` | Generation cap. |
