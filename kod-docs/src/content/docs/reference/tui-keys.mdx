@@ -1,32 +1,33 @@
 ---
 title: TUI Keybindings
-description: Every TUI keybinding (normal and insert mode) and every slash command, with what each one does.
+description: Every TUI keybinding (normal and insert mode), how to rebind keys, and every slash command, with what each one does.
 sidebar:
   order: 2
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-The TUI is modal: **normal mode** navigates and commands, **insert mode** edits prompts. Press `i` to enter insert mode; `Esc` returns to normal mode (and cancels a running generation).
+The TUI is modal: **normal mode** navigates and commands, **insert mode** edits prompts. Press `i` to enter insert mode; `Esc` returns to normal mode (and cancels a running generation). `?` or `h` opens the in-app help overlay at any time.
 
 ## Normal mode
 
 | Key | Action |
 | --- | --- |
-| `i` | enter insert mode |
-| `Esc` | cancel the running prompt (in normal mode) |
-| `j` / `k` | scroll down / up |
-| `g` / `G` | jump to oldest / newest |
+| `i` (or `I`) | enter insert mode |
+| `Esc` / `Ctrl-C` | cancel the running prompt |
+| `j` / `k` | scroll down / up (arrow keys and mouse wheel also work) |
+| `g` / `G`, `Home` / `End` | jump to oldest / newest |
 | `PgUp` / `PgDn` | scroll by page |
 | `t` | toggle tool-output visibility |
 | `o` | expand the newest collapsed tool row |
+| `Enter` | expand the tool row under focus (chat focus) |
 | `f` | start a type-ahead search |
-| `n` / `N` | next / previous search match |
+| `n` / `N` | next / previous search match (after `/search`) |
 | `y` | copy the last assistant reply |
-| `r` | retry the last prompt |
+| `a` (or `Tab`) | open the agent panel |
 | `e` | edit your last message |
 | `u` | undo a `/clear` |
-| `?` | help overlay |
+| `?` (or `h`) | help overlay |
 | `q` | quit — asks for confirmation when a generation is running |
 
 ## Insert mode
@@ -35,42 +36,80 @@ The TUI is modal: **normal mode** navigates and commands, **insert mode** edits 
 | --- | --- |
 | `Enter` | send the prompt |
 | `Ctrl+J` (or `Shift+Enter`) | insert a newline |
-| `Tab` | cycle completions |
-| `Up` / `Down` | walk prompt history |
+| `Tab` | cycle completions (slash commands, model names, file paths) |
+| `Up` / `Down` | walk prompt history (your unsent draft is kept) |
 | `Ctrl+W` | delete the word before the cursor |
 | `Ctrl+U` | clear the line before the cursor |
 | `Ctrl+K` | kill to the end of the line |
 | `Ctrl+Left` / `Ctrl+Right` | jump by word |
 
+## Rebinding keys
+
+Normal-mode single-character keys are configurable. Put a `[keys]` table in `.kod-keys.toml` (project) or `tui_keys.toml` next to your config (global) — each entry maps an **action name** to a key:
+
+```toml
+[keys]
+quit = "Q"
+scroll_down = "J"
+```
+
+Recognised action names: `insert`, `quit`, `help`, `panel`, `scroll_up`, `scroll_down`, `top`, `bottom`, `edit_last`, `undo`, `toggle_tools`, `search_prefix`, `copy_last`. Unknown names are ignored, and a corrupt file silently keeps the defaults — key config must never break startup.
+
 ## Slash commands
 
-Type `/` in insert mode; completion lists the available commands.
+Type `/` in insert mode; the completion popup lists the available commands (Tab to cycle). Custom commands from your config's `[commands]` block appear here too.
 
 | Command | Purpose |
 | --- | --- |
 | `/help` | show the help overlay |
 | `/clear` | clear the conversation (reversible with `/undo` or `u`) |
-| `/model [<name>]` | show or switch the model — the switch is instantaneous, even mid-generation |
-| `/skills` | list loaded skills |
-| `/goal <text>` | set a standing goal included in the grounded prompt |
-| `/steer` | steer a running generation (typing a plain prompt does the same) |
-| `/cancel` | cancel the running generation |
-| `/compact` | summarise the conversation to reclaim context headroom |
-| `/retry` | retry the last prompt |
-| `/search [<text>]` | search the transcript |
-| `/copy` | copy the last assistant reply |
-| `/theme` | switch themes (`dark` / `light` / a `theme.toml`) |
-| `/tools` | list the tool registry with current policy state |
+| `/clearall` | clear chat + long-term memory + checkpoints (asks for confirmation) |
 | `/undo` | undo a `/clear` |
+| `/compact` | summarise the conversation to reclaim context headroom |
+| `/summarize` | LLM-summarise the session so far |
+| `/model [<name>]` | show or switch the model — instantaneous, even mid-generation |
+| `/goal <text>` | set a standing goal the agent works toward (`/goal clear` removes it) |
+| `/steer <instruction>` | steer a running generation (typing a plain prompt does the same) |
+| `/cancel` | cancel the running generation |
+| `/retry` | reconnect + resend the last prompt |
 | `/edit` | edit your last message |
-| `/debug` | show debug information for the session |
-| `/swarm` | launch a multi-agent swarm run |
+| `/regenerate` | regenerate the last assistant reply |
+| `/delete` | remove the last user + assistant exchange |
+| `/system <text>` | override the system prompt (`/system clear` resets) |
+| `/skills` | list loaded skills |
+| `/tools` | toggle tool output details |
+| `/map` | print the repository map (top-level symbols per file) |
+| `/check` | run the project compiler/linter (Cargo, tsc, ruff, go vet) |
+| `/git-status` | git status --porcelain=v2 in the current directory |
+| `/attach <path>` | attach a file to the next prompt |
+| `/diff` | show the most recent file diff (from checkpoints) |
+| `/checkpoints` | list file checkpoints for this project |
+| `/rollback [id]` | restore a file from a checkpoint |
+| `/export [path]` | export the session as Markdown |
+| `/save <path>` | save the session to a file |
+| `/load <path>` | load a session from a JSON file |
+| `/branch [label]` | drop a branch-point marker in the transcript |
+| `/fork [label]` | save the current chat as a restorable fork |
+| `/handoff` | write a handoff document and start a fresh session with it as context |
+| `/memory` | long-term memory: `/memory [search <q> \| delete <id> \| clear]` |
+| `/context` | visualise context-window usage and session totals |
+| `/stats` | per-session statistics: roles, tools, tokens, elapsed |
+| `/whoami` | session summary: model, skills, context, paths |
+| `/debug` | diagnostics: `/debug last-prompt` dumps the last grounded prompt |
+| `/last-prompt` | shortcut for `/debug last-prompt` |
+| `/log [N]` | show recent session log entries |
+| `/search [<text>]` | search the transcript (`n`/`N` jump between matches) |
+| `/grep <regex>` | regex search the chat history |
+| `/copy` | copy the last assistant reply |
+| `/raw` | print the last assistant reply raw (no decoration) |
+| `/theme [dark\|light]` | switch the theme |
+| `/pin <n>` / `/unpin <n>` | pin a message so it survives compaction / remove a pin |
+| `/reset` | reset transient state: input, search, expansions, attachments |
+| `/doctor` | print a diagnostics report (same as `kod doctor`) |
+| `/init` | onboarding info: config path, model profiles, next steps |
+| `/swarm <goal>` | launch a multi-agent swarm run |
 | `/quit` | exit the TUI |
 
 <Aside type="tip">
-  The fastest redirect for a run heading the wrong direction is typing a plain prompt while it generates — identical to `/steer`, and it preserves all work already done.
-</Aside>
-
-<Aside type="note">
-  Keybindings are covered by 105 test attributes in the workspace's largest test suite, so behaviour on this page is pinned by the test suite rather than folklore.
+  The fastest redirect for a run heading the wrong direction is typing a plain prompt while it generates — identical to <code>/steer</code>, and it preserves all work already done.
 </Aside>
