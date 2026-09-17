@@ -26,7 +26,7 @@ kod-docs/
 │   │   ├── index.mdx               # Landing page (splash + hero)
 │   │   ├── overview.mdx
 │   │   ├── getting-started/        # Installation, quickstart, first session
-│   │   ├── guides/                 # TUI, CLI, config, skills, memory, …
+│   │   ├── guides/                 # TUI, CLI, config, skills, memory, FAQ, …
 │   │   ├── reference/              # Commands, keys, tools, config, changelog
 │   │   ├── concepts/               # Architecture, agent loop, router, providers
 │   │   └── developers/             # Testing, contributing
@@ -38,6 +38,16 @@ kod-docs/
 │   └── og.png              # Social preview image
 └── package.json
 ```
+
+## Content conventions
+
+These docs describe KOD **as it exists**, verified against the source:
+
+- Every CLI command, flag, and default on the reference pages is checked against the clap definitions in `crates/kod-cli/src/commands.rs`.
+- Every config key and default on the config reference is checked against `crates/kod-config`.
+- Every keybinding and slash command is checked against `crates/kod-tui/src/keybindings.rs` and `crates/kod-tui/src/app.rs` (`SLASH_COMMANDS`).
+- User-facing pages avoid contributor internals (test counts, crate test suites) — that belongs in the Developers section.
+- Aspirational text belongs in issues or `docs/SPEC.md`, never in these pages.
 
 ## Theming
 
