@@ -152,7 +152,7 @@ async fn test_live_prompt_roundtrip() {
     use kod_config::KodConfig;
 
     let config = KodConfig::load_default().expect("kod config must load");
-    let model = std::env::var("KOD_TEST_MODEL").unwrap_or(config.llm.model.clone());
+    let model = std::env::var("KOD_TEST_MODEL").unwrap_or(config.llm.default_endpoint().model.clone());
 
     let mut tui = TuiLoop::new();
     tui.init_engine(Some(model))
