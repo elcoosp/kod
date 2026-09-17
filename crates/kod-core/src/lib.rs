@@ -9,13 +9,20 @@ pub mod context;
 pub mod doctor;
 pub mod engine;
 pub mod hooks;
+pub mod memory_tools;
+pub mod provider_setup;
 pub mod repomap;
 pub mod router;
 pub mod session_log;
 pub mod swarm_runner;
+pub mod worktree;
 
 pub use engine::KodEngine;
+pub use memory_tools::{MemorySaveTool, MemorySearchTool};
+pub use provider_setup::build_registry;
 pub use router::{RouterConfig, TaskResponse, TaskRouter, TaskType};
+pub use worktree::{MergeReport, WorktreeInfo, WorktreeManager};
 pub use swarm_runner::{
     AgentOutcome, AgentResult, Subtask, SwarmEvent, SwarmResponse, SwarmRunner,
+    WorktreeMergeOutcome,
 };
