@@ -132,7 +132,7 @@ impl TuiLoop {
         // Propagate the model's context window to the router so its
         // memory manager sizes its own budget from the same number the
         // engine uses for history.
-        let router_config = RouterConfig {
+        let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
             context_window: config.llm.default_endpoint().context_window,
             short_term_capacity: config.memory.short_term_capacity,
             ..RouterConfig::default()
