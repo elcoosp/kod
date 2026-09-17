@@ -56,7 +56,7 @@ impl WebFetchTool {
             .user_agent(concat!(
                 "kod/",
                 env!("CARGO_PKG_VERSION"),
-                " (+https://github.com/kod-team/kod)"
+                " (+https://github.com/elcoosp/kod)"
             ))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
@@ -67,7 +67,8 @@ impl WebFetchTool {
                 description: "Fetch a URL over HTTP/HTTPS and return its text. HTML is \
                     converted to plain text; JSON is returned as-is. Private and \
                     link-local addresses are refused. Requires the `network_access` \
-                    permission.".to_string(),
+                    permission."
+                    .to_string(),
                 category: ToolCategory::Web,
                 parameters_schema: serde_json::json!({
                     "type": "object",
@@ -643,10 +644,7 @@ mod tests {
         let ctx = network_ctx(tmp.path());
         let tool = WebFetchTool::new();
         let result = tool
-            .execute(
-                &serde_json::json!({ "url": "file:///etc/passwd" }),
-                &ctx,
-            )
+            .execute(&serde_json::json!({ "url": "file:///etc/passwd" }), &ctx)
             .await
             .unwrap();
         match result {
