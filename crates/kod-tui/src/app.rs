@@ -33,14 +33,32 @@ pub struct AgentInfo {
     pub current_task: Option<String>,
 }
 
-/// A live swarm agent's chat row: the message that carries its
-/// progress and the running/finished flag. The message id is stable for
-/// the agent's lifetime so chunks append in place rather than spawning
-/// a new row per token.
+/// A live swarm agent's chat row and the data the panel needs to
+/// render a status line. The message id is stable for the agent's
+/// lifetime so chunks append in place rather than spawning a new row
+/// per token; the remaining fields are populated by the Swarm*
+/// events the engine emits.
 #[derive(Debug, Clone)]
 pub struct SwarmAgentView {
     pub message_id: MessageId,
     pub finished: bool,
+    /// Display name (`agent-1-design-schema`).
+    pub name: String,
+    /// Short subtask description, first line only.
+    pub subtask: String,
+    /// Model name, when known.
+    pub model: Option<String>,
+    /// Worktree path, when a per-agent worktree was created.
+    pub worktree: Option<std::path::PathBuf>,
+    /// Worktree branch name.
+    pub branch: Option<String>,
+    /// Number of tool-call chunks seen so far.
+    pub tool_count: usize,
+    /// Set to `Some(reason)` when the agent failed.
+    pub failure: Option<String>,
+    /// Set to `Some(note)` when the agent was retried; cleared on the
+    /// next successful finish.
+    pub retry_note: Option<String>,
 }
 
 /// Tool execution state
@@ -427,6 +445,10 @@ pub struct KodApp {
     /// When true, a long turn rings the terminal bell. Toggle with
     /// `/notify on|off`. Default true.
     notify_bell_enabled: bool,
+    /// Whether the effective network access is on. Set by
+    /// `TuiLoop::init_engine` from the engine's setting; drives the
+    /// header `net:on` badge (D3-C5).
+    network_access_enabled: bool,
     /// Files attached to the next prompt with `/attach`. Prepended as
     /// `<file path="...">` blocks to the outgoing message. Cleared
     /// after the prompt is dispatched.
@@ -527,6 +549,7 @@ impl KodApp {
             session_system_prompt: None,
             autocompact_enabled: true,
             notify_bell_enabled: true,
+            network_access_enabled: false,
             attached_files: Vec::new(),
             session_started_at: Instant::now(),
             session_input_tokens: 0,
@@ -2180,6 +2203,14 @@ impl KodApp {
 
     // ---- Swarm runs ----
 
+    /// The live swarm-agent views, keyed by id. Read by the agent
+    /// panel (D4-D5) and any future status surface.
+    pub fn swarm_agents(
+        &self,
+    ) -> &std::collections::HashMap<kod_types::AgentId, SwarmAgentView> {
+        &self.swarm_agents
+    }
+
     /// Prepare for a new swarm run: clears the live-agent map so a
     /// previous run's rows are not appended to.
     pub fn begin_swarm(&mut self) {
@@ -2221,19 +2252,36 @@ impl KodApp {
             SwarmAgentView {
                 message_id: msg_id,
                 finished: false,
+                name: name.to_string(),
+                subtask: subtask.lines().next().unwrap_or(subtask).to_string(),
+                model: None,
+                worktree: None,
+                branch: None,
+                tool_count: 0,
+                failure: None,
+                retry_note: None,
             },
         );
     }
 
     /// Append a text chunk to a live agent's row.
     pub fn swarm_agent_chunk(&mut self, id: &kod_types::AgentId, text: &str) {
-        let Some(view) = self.swarm_agents.get(id) else {
-            return;
+        // A chunk starting with "  [tool: " is a tool-start notice the
+        // engine emits; its count is what the panel shows as
+        // "N tools".
+        let is_tool_marker = text.starts_with("  [tool: ");
+        let msg_id = {
+            let Some(view) = self.swarm_agents.get_mut(id) else {
+                return;
+            };
+            if view.finished {
+                return;
+            }
+            if is_tool_marker {
+                view.tool_count += 1;
+            }
+            view.message_id.clone()
         };
-        if view.finished {
-            return;
-        }
-        let msg_id = view.message_id.clone();
         if let Some(msg) = self.messages.iter_mut().find(|m| m.id == msg_id) {
             msg.content.push_str(text);
         }
@@ -2245,6 +2293,8 @@ impl KodApp {
         let Some(view) = self.swarm_agents.get_mut(id) else {
             return;
         };
+        view.failure = None;
+        view.retry_note = None;
         let msg_id = view.message_id.clone();
         if let Some(msg) = self.messages.iter_mut().find(|m| m.id == msg_id) {
             let header = msg
@@ -2262,11 +2312,43 @@ impl KodApp {
         view.finished = true;
     }
 
+    /// Attach worktree info to a live agent's view (D4-D5).
+    pub fn swarm_set_worktree(
+        &mut self,
+        id: &kod_types::AgentId,
+        path: std::path::PathBuf,
+        branch: String,
+    ) {
+        if let Some(view) = self.swarm_agents.get_mut(id) {
+            view.worktree = Some(path);
+            view.branch = Some(branch);
+        }
+    }
+
+    /// Record that an agent is retrying (D4-D5).
+    pub fn swarm_set_retrying(
+        &mut self,
+        id: &kod_types::AgentId,
+        attempt: u32,
+        max_attempts: u32,
+        previous_error: &str,
+    ) {
+        if let Some(view) = self.swarm_agents.get_mut(id) {
+            view.retry_note = Some(format!(
+                "retrying ({}/{}): {}",
+                attempt,
+                max_attempts,
+                previous_error.lines().next().unwrap_or(""),
+            ));
+        }
+    }
+
     /// Mark a live row as failed and replace its buffer with the error.
     pub fn swarm_agent_failed(&mut self, id: &kod_types::AgentId, error: &str) {
         let Some(view) = self.swarm_agents.get_mut(id) else {
             return;
         };
+        view.failure = Some(error.to_string());
         let msg_id = view.message_id.clone();
         if let Some(msg) = self.messages.iter_mut().find(|m| m.id == msg_id) {
             let header = msg
@@ -3114,6 +3196,19 @@ impl KodApp {
         }
     }
 
+    /// Whether the effective network access is enabled. Drives the
+    /// header's `net:on` badge (D3-C5). The TUI sets this from the
+    /// engine's `network_access_setting()` after init; the default is
+    /// off, matching `LlmConfig::network_access = false`.
+    pub fn network_access_enabled(&self) -> bool {
+        self.network_access_enabled
+    }
+
+    /// Setter used by `TuiLoop::init_engine`.
+    pub fn set_network_access_enabled(&mut self, enabled: bool) {
+        self.network_access_enabled = enabled;
+    }
+
     /// Total input tokens the provider has reported this session.
     pub fn session_input_tokens(&self) -> usize {
         self.session_input_tokens
@@ -3378,7 +3473,7 @@ mod tests {
     fn test_context_limit_overrides_default() {
         let mut app = KodApp::new();
         assert_eq!(app.context_limit(), DEFAULT_CONTEXT_LIMIT);
-        // init_engine applies config.llm.context_window so the meter and
+        // init_engine applies config.llm.default_endpoint().context_window so the meter and
         // the compaction threshold use the model's real window, not 128k.
         app.set_context_limit(8192);
         assert_eq!(app.context_limit(), 8192);
