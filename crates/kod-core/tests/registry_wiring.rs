@@ -77,7 +77,7 @@ impl LlmProvider for NamedProvider {
 fn engine_in(dir: &std::path::Path) -> KodEngine {
     std::fs::write(dir.join("main.rs"), "pub fn main() {}\n").unwrap();
     let db_path = dir.join("test.redb");
-    let cfg = RouterConfig {
+    let cfg = RouterConfig { skill_threshold: 0.3,
         working_dir: dir.to_path_buf(),
         enable_memory: false,
         max_skills_per_query: 3,

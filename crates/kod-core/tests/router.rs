@@ -167,7 +167,7 @@ async fn test_router_configuration() {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.redb");
 
-    let config = RouterConfig {
+    let config = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         short_term_capacity: 100,
         max_skills_per_query: 2,
