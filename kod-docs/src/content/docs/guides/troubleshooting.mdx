@@ -21,7 +21,7 @@ Most KOD problems have short causes: a model server that is not running, a confi
 
 1. The model server is not running. Start it — `ollama serve` — or start LM Studio's server / MLX Omni Serve / vLLM.
 2. Wrong base URL. Ollama's OpenAI-compatible root is `http://localhost:11434/v1`; the default config points there. `kod profile show` prints the effective `[llm]` block so you can see what KOD actually uses.
-3. The model name does not exist on the server. `kod models` lists what the provider offers (`--filter` narrows). Note the server name is what counts (`qwen2.5-coder:7b`), not the profile name.
+3. The model name does not exist on the server. `kod models` lists what the provider offers (`--filter` narrows). Note the server name is what counts (`qwen3.8:27b-mlx`), not the profile name.
 
 ## Config problems
 
