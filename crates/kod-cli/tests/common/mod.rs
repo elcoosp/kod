@@ -143,3 +143,34 @@ pub fn create_mock_response(prompt: &str) -> String {
         prompt
     )
 }
+
+
+/// Install a provider behind a one-endpoint registry named
+/// `"default"`. Integration-test utility: the engine's own
+/// `install_test_provider` is `#[cfg(test)]` (crate-local) and
+/// therefore not visible from a test binary compiled against
+/// `kod-core` as an external crate. This helper is that same
+/// operation expressed through the public registry API.
+///
+/// `#[allow(dead_code)]` because not every test binary that includes
+/// `mod common;` uses every helper.
+#[allow(dead_code)]
+pub async fn install_test_provider(
+    engine: &kod_core::KodEngine,
+    provider: std::sync::Arc<dyn kod_provider::LlmProvider>,
+) {
+    let mut reg = kod_provider::ProviderRegistry::new();
+    reg.insert(
+        "default",
+        provider,
+        kod_provider::ProviderCapabilities::conservative(),
+        "",
+    );
+    engine
+        .set_registry(
+            std::sync::Arc::new(reg),
+            kod_provider::ModelRef::new("default", ""),
+            None,
+        )
+        .await;
+}
