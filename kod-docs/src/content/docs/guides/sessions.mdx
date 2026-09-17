@@ -65,7 +65,7 @@ tool call ──▶ policy decision (logged) ──▶ checkpoint snapshot ─�
 A practical audit loop: run `kod sessions list`, pick a session, read the JSONL to see what happened, replay it against a different branch or commit to see whether it still makes sense, and restore checkpoints if you want the files back the way they were.
 
 <Aside type="note">
-  This is also why the [README](https://github.com/kod-team/kod) says “if 'where does my code go when I run this?' is a question you want a one-line answer to, KOD is for you.” The answer is: into files with checkpoints, into a JSONL log you can read, and nowhere else.
+  This is also why the [README](https://github.com/elcoosp/kod) says “if 'where does my code go when I run this?' is a question you want a one-line answer to, KOD is for you.” The answer is: into files with checkpoints, into a JSONL log you can read, and nowhere else.
 </Aside>
 
 <LinkCard title="Guides: Policy & Permissions" href="/guides/policy/" description="What the PolicyDecision entries in the log mean." />
