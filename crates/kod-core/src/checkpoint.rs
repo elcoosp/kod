@@ -305,7 +305,7 @@ impl CheckpointManager {
 /// and processes, which `std::collections::hash_map::DefaultHasher` is
 /// not — the checkpoint directory for a project must be the same for
 /// the session that wrote a snapshot and the session that restores it.
-fn fnv1a_hex(s: &str) -> String {
+pub fn fnv1a_hex(s: &str) -> String {
     const OFFSET: u64 = 0xcbf29ce484222325;
     const PRIME: u64 = 0x100000001b3;
     let mut h = OFFSET;
