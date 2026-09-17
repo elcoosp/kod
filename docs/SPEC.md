@@ -379,7 +379,7 @@ impl TaskRouter {
 name: rust-refactoring
 description: Rust code refactoring with LSP integration
 version: 1.2.0
-author: kod-team
+author: elcoosp
 category: coding
 tags: [rust, refactoring, lsp]
 capabilities:
