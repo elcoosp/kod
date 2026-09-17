@@ -9,6 +9,7 @@ pub mod components;
 pub mod event;
 pub mod keybindings;
 pub mod main_loop;
+pub mod markdown;
 pub mod theme;
 pub mod ui;
 
