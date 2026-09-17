@@ -39,8 +39,24 @@ impl GenerationResponse {
 #[derive(Debug, Clone)]
 pub enum StreamChunk {
     Text(String),
-    ToolCallStart { name: String },
-    ToolCallDelta { arguments: String },
+    /// The provider has begun describing a tool call.
+    ///
+    /// `index` distinguishes concurrent calls within one response
+    /// (OpenAI SSE numbers them; a provider that emits calls one at
+    /// a time uses `index: 0`). `id` is the wire-level id when the
+    /// provider reports one — `None` otherwise.
+    ToolCallStart {
+        index: usize,
+        id: Option<String>,
+        name: String,
+    },
+    /// A fragment of the arguments JSON for the call at `index`. A
+    /// provider that emits the full arguments in one chunk sends a
+    /// single delta; a provider that streams them sends several.
+    ToolCallDelta {
+        index: usize,
+        arguments: String,
+    },
     Usage(TokenUsage),
     Done,
 }
@@ -56,11 +72,14 @@ pub fn response_chunks(response: GenerationResponse) -> Vec<StreamChunk> {
             }
         }
         GenerationResponse::ToolCalls { calls, .. } => {
-            for call in &calls {
+            for (index, call) in calls.iter().enumerate() {
                 chunks.push(StreamChunk::ToolCallStart {
+                    index,
+                    id: call.id.clone(),
                     name: call.tool_name.clone(),
                 });
                 chunks.push(StreamChunk::ToolCallDelta {
+                    index,
                     arguments: call.arguments.to_string(),
                 });
             }
@@ -69,11 +88,14 @@ pub fn response_chunks(response: GenerationResponse) -> Vec<StreamChunk> {
             if !content.is_empty() {
                 chunks.push(StreamChunk::Text(content));
             }
-            for call in &calls {
+            for (index, call) in calls.iter().enumerate() {
                 chunks.push(StreamChunk::ToolCallStart {
+                    index,
+                    id: call.id.clone(),
                     name: call.tool_name.clone(),
                 });
                 chunks.push(StreamChunk::ToolCallDelta {
+                    index,
                     arguments: call.arguments.to_string(),
                 });
             }
