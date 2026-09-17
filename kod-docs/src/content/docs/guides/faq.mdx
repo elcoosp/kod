@@ -1,0 +1,105 @@
+---
+title: FAQ
+description: Quick answers to the questions KOD users ask most — where data lives, how to reset things, why calls get blocked, and which command to use when.
+sidebar:
+  order: 14
+---
+
+import { Aside, LinkCard } from '@astrojs/starlight/components';
+
+Short answers to the questions that come up most in practice. Each one links to the page with the full story.
+
+## Where does KOD put its data?
+
+Everything lives under your home directory — nothing is uploaded:
+
+| What | Where |
+| --- | --- |
+| Config | `~/.config/kod/config.toml` (Linux) · `~/Library/Application Support/kod/config.toml` (macOS) |
+| Theme & keybindings | `theme.toml`, `tui_keys.toml` — same directory as the config |
+| Skills | `~/.kod/skills/` and `~/.agents/skills/` (global) · `<project>/.kod/skills/` and `<project>/.agents/skills/` (project) |
+| Long-term memory | `~/.kod/data/kod.redb` (global scope) · `<project>/.kod/memory.redb` (project scope) |
+| Session logs (JSONL) | `~/.kod/sessions/<unix-ms>.jsonl` |
+| TUI conversation state | `~/.kod/tui_session.json` |
+| Prompt history | `~/.kod/tui_history.json` |
+| Checkpoints | `~/.kod/checkpoints/<project-hash>/` |
+| Daemon socket | `$XDG_RUNTIME_DIR/kod.sock` · `~/.kod/run/kod.sock` (macOS) |
+
+`kod config path`, `kod sessions show`, and `kod doctor` each print the relevant locations for your machine.
+
+## How do I reset everything?
+
+Per area, from safest to most destructive:
+
+```bash
+kod sessions clear          # forget the TUI conversation
+kod memory clear            # empty long-term memory (prompts; add --yes)
+kod checkpoint clear        # drop this project's file snapshots
+rm ~/.kod/tui_history.json  # clear prompt history
+kod init --force            # rewrite config from defaults (backs up the old file)
+```
+
+Deleting the memory `redb` file by hand works too — it is recreated empty on next use. `/clearall` in the TUI wipes chat, memory, *and* checkpoints behind one confirmation.
+
+## Which command should I use — `chat`, `prompt`, `run`, or `agent`?
+
+- `kod chat` — interactive REPL in your terminal.
+- `kod tui` — the same, plus tool rows, panel, search, themes.
+- `kod prompt "<text>"` — one question, one answer, clean stdout. Best for pipes and scripts. `-` reads the prompt from stdin.
+- `kod run "<text>"` — same, but the answer streams to stdout as it is generated.
+- `kod agent -g "<goal>"` — the full loop with tools: the agent may read, write, and run things until the goal is done.
+- `kod swarm -g "<goal>" -n 4` — several agents on subtasks of one goal, merged at the end.
+
+## Can I stop the agent from modifying anything?
+
+Yes — three escalating ways:
+
+1. `--preset read-only` on any run: `write_file`, `patch_file`, and `execute_command` are denied outright. 
+2. A committed `.kod/policy.toml` with `forbidden` globs and `forbidden_binaries` — see [Policy](/guides/policy/).
+3. Sandbox the shell: `--sandbox` confines `execute_command` with bwrap/sandbox-exec.
+
+Check what would happen before running anything with `kod policy explain write_file path=src/main.rs`.
+
+## Why did nothing happen when the agent tried to write?
+
+Under the `standard` preset, writes and shell commands need approval. The TUI shows a dialog (`y`/`n`/Esc) and `kod chat` prompts on stdin. If nobody answers within 120 seconds — or the command has no way to ask, like `kod agent` — the call is denied. That is deliberate: an unanswered approval must not hang the loop, and unattended runs should ask nobody. Re-run with `--preset yolo` only where you accept unprompted writes.
+
+## Why is my skill never matched?
+
+Three usual suspects:
+
+1. **Wrong directory.** `kod skills list` shows the merged set; if your file is missing, it is not in one of the four search paths (or `skills_dir` overrides them).
+2. **Trigger overlap.** Matching scores triggers, tags, capabilities, and name against your prompt with a threshold (`match_threshold`, default 0.7). Run `kod skills search "<words from your prompt>"` — if your skill does not appear, its triggers share no words with how you actually ask.
+3. **Broken front matter.** `kod validate-skills` parses every file and reports what fails; `kod skills show <name>` prints what KOD parsed (which may differ from what you wrote).
+
+## How do I switch models mid-session?
+
+`/model <name>` in the TUI — completion lists what your server actually offers. The switch is instant, even mid-generation. From the shell, `kod profile use <profile>` writes a preset into your config, or `--model` overrides per run. See [Model Profiles](/guides/profiles/).
+
+## Can I use OpenAI? Anthropic? Gemini?
+
+Any server that speaks the OpenAI chat-completions protocol works today: Ollama, LM Studio, MLX Omni Serve, vLLM, OpenAI itself. Point an `[[llm.endpoints]]` block at it and put the API key in an environment variable named by `api_key_env` — never in the file. An `anthropic` provider kind is recognised in config but not implemented yet; it fails at the first prompt, with a startup warning so the gap is visible early.
+
+## How much context do I have left?
+
+The status line's context meter in the TUI shows usage live; `/context` breaks it down, `/compact` summarises the conversation to reclaim headroom, and `/pin <n>` protects a message from compaction. The window size comes from `context_window` on your endpoint — set it to match your model (the built-in profiles do).
+
+## What did the agent actually change?
+
+- Tool rows in the TUI show a unified diff inline for every `write_file`/`patch_file` (`t` to expand).
+- `/diff` shows the most recent file change; `/checkpoints` lists snapshots and `/rollback <id>` restores one.
+- `git_status` / `git_diff` are the agent's own view — run them yourself before committing.
+
+## Does KOD work on Windows?
+
+The workspace builds on Windows and the agent runs, but shell sandboxing is unavailable there — `--sandbox` reports the primitive as missing and fails loudly. Sandboxed workflows are a Linux/macOS feature today.
+
+## Where are the example skills?
+
+The repository ships `code-review`, `python-testing`, and `rust-refactoring` under `skills/examples/` — copy one into `~/.kod/skills/` and edit. See [Skills](/guides/skills/).
+
+<Aside type="tip">
+  Still stuck? <code>kod doctor --json</code> output plus the newest session log answer most questions a maintainer would ask — see [Troubleshooting](/guides/troubleshooting/) for the full triage flow.
+</Aside>
+
+<LinkCard title="Guides: Troubleshooting" href="/guides/troubleshooting/" description="Symptom-first fixes for the common failures." />
