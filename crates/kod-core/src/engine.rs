@@ -2269,6 +2269,24 @@ impl KodEngine {
             } else {
                 final_text
             };
+
+            // Research mode: verify file:line citations before
+            // returning. Purely local — no extra LLM call, no
+            // network. The block appears only when at least one
+            // citation fails to verify; a clean reply stays clean.
+            let final_text = if matches!(
+                task_type,
+                crate::router::TaskType::Research
+            ) {
+                crate::citations::check_and_annotate(
+                    &final_text,
+                    &self.working_dir,
+                )
+                .text
+            } else {
+                final_text
+            };
+
             self.remember_turn_for(key, false, &final_text).await;
 
             return Ok(TaskResponse {
@@ -2437,6 +2455,27 @@ impl KodEngine {
             } else {
                 final_text
             };
+
+            // Research mode: verify file:line citations. Same pass
+            // as the collected path, plus a chunk over the stream so
+            // the TUI shows the block as part of the reply, not as
+            // a separate message. A clean reply emits nothing.
+            let final_text = if matches!(
+                task_type,
+                crate::router::TaskType::Research
+            ) {
+                let annotated = crate::citations::check_and_annotate(
+                    &final_text,
+                    &self.working_dir,
+                );
+                if let Some(block) = &annotated.block {
+                    let _ = chunk_tx.send(format!("\n\n{block}")).await;
+                }
+                annotated.text
+            } else {
+                final_text
+            };
+
             self.remember_turn_for(key, false, &final_text).await;
 
             return Ok(TaskResponse {
@@ -4241,6 +4280,91 @@ impl KodEngine {
     /// removed.
     pub async fn clear_transcript_working_dir(&self, key: &str) {
         self.transcript_working_dirs.write().await.remove(key);
+    }
+
+    /// A pinned turn must survive a budget that would otherwise drop
+    /// it. Regression: before this, the pin flag was stored but never
+    /// consulted — the budget scan dropped the oldest turn
+    /// unconditionally, so a pinned turn at the start of a long
+    /// session was lost exactly when it mattered.
+    #[cfg(test)]
+    #[tokio::test]
+    async fn test_render_history_keeps_pinned_turn() {
+        use tempfile::TempDir;
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+        // Tiny budget so most turns get dropped.
+        engine.set_history_budget(MIN_HISTORY_CHAR_BUDGET);
+
+        // The first turn is unique enough to identify in the output.
+        let first = "PINNED-CONTENT-UNIQUE-MARKER-that-fits";
+        engine.seed_turn(true, first).await;
+        assert!(
+            engine
+                .set_turn_pinned_by_content("", first, true)
+                .await,
+            "pinning the first turn must succeed"
+        );
+
+        // Flood the transcript so the first turn would be dropped.
+        for i in 0..40 {
+            engine
+                .seed_turn(true, &format!("filler-{i}-{}", "x".repeat(400)))
+                .await;
+        }
+
+        // Render and check: the pinned turn must be present even
+        // though the budget cannot hold all 41 turns.
+        let rendered = engine.render_history().await;
+        assert!(
+            rendered.contains("PINNED-CONTENT-UNIQUE-MARKER"),
+            "pinned turn was dropped from rendered history: {}",
+            &rendered[..rendered.len().min(500)]
+        );
+    }
+
+    /// Unpinning reverses the protection.
+    #[cfg(test)]
+    #[tokio::test]
+    async fn test_render_history_drops_unpinned_turn_again() {
+        use tempfile::TempDir;
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+        engine.set_history_budget(MIN_HISTORY_CHAR_BUDGET);
+
+        let first = "PINNED-THEN-UNPINNED-MARKER";
+        engine.seed_turn(true, first).await;
+        engine.set_turn_pinned_by_content("", first, true).await;
+        for i in 0..40 {
+            engine
+                .seed_turn(true, &format!("filler-{i}-{}", "x".repeat(400)))
+                .await;
+        }
+        // Unpin and re-render.
+        engine.set_turn_pinned_by_content("", first, false).await;
+        let rendered = engine.render_history().await;
+        assert!(
+            !rendered.contains("PINNED-THEN-UNPINNED-MARKER"),
+            "unpinned turn should be dropped under a tight budget"
+        );
     }
 
     /// Seed a turn into the default transcript. Used by the TUI after
