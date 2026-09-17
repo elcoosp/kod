@@ -46,6 +46,8 @@ pub enum LspError {
     Json(#[from] serde_json::Error),
     #[error("protocol: {0}")]
     Protocol(String),
+    #[error("timeout waiting for server response")]
+    Timeout,
 }
 
 /// A running language server.
@@ -278,6 +280,146 @@ impl LspClient {
         Ok(latest.unwrap_or_default())
     }
 
+    /// `textDocument/definition` at `pos`. Sends the request, waits
+    /// for the response (30 s timeout), and parses the Location(s)
+    /// the server returns. LSP allows a single Location, an array of
+    /// Locations, or `null`; all three shapes are normalised here.
+    pub async fn definition(
+        &mut self,
+        path: &std::path::Path,
+        pos: crate::types::Position,
+    ) -> Result<Vec<crate::types::Location>, LspError> {
+        self.ensure_open(path).await?;
+        let uri = path_to_uri(path);
+        let result = self
+            .request_with_response(
+                "textDocument/definition",
+                serde_json::json!({
+                    "textDocument": { "uri": uri },
+                    "position": {
+                        "line": pos.line.saturating_sub(1),
+                        "character": pos.column.saturating_sub(1),
+                    },
+                }),
+            )
+            .await?;
+        Ok(parse_locations(&result))
+    }
+
+    /// `textDocument/references`. `include_declaration` controls
+    /// whether the symbol's own declaration is included; true is the
+    /// usual choice for a coding agent (it wants every mention).
+    pub async fn references(
+        &mut self,
+        path: &std::path::Path,
+        pos: crate::types::Position,
+        include_declaration: bool,
+    ) -> Result<Vec<crate::types::Location>, LspError> {
+        self.ensure_open(path).await?;
+        let uri = path_to_uri(path);
+        let result = self
+            .request_with_response(
+                "textDocument/references",
+                serde_json::json!({
+                    "textDocument": { "uri": uri },
+                    "position": {
+                        "line": pos.line.saturating_sub(1),
+                        "character": pos.column.saturating_sub(1),
+                    },
+                    "context": { "includeDeclaration": include_declaration },
+                }),
+            )
+            .await?;
+        Ok(parse_locations(&result))
+    }
+
+    /// `textDocument/hover`. Returns the text plus the range it
+    /// applies to. A `null` response is normalised to an empty Hover.
+    pub async fn hover(
+        &mut self,
+        path: &std::path::Path,
+        pos: crate::types::Position,
+    ) -> Result<crate::types::Hover, LspError> {
+        self.ensure_open(path).await?;
+        let uri = path_to_uri(path);
+        let result = self
+            .request_with_response(
+                "textDocument/hover",
+                serde_json::json!({
+                    "textDocument": { "uri": uri },
+                    "position": {
+                        "line": pos.line.saturating_sub(1),
+                        "character": pos.column.saturating_sub(1),
+                    },
+                }),
+            )
+            .await?;
+        Ok(parse_hover(&result))
+    }
+
+    /// Ensure `path` has been sent to the server via `didOpen`. A
+    /// second call for the same path is a no-op — the server is
+    /// already tracking the document. A fresh file is sent with an
+    /// empty body; hover/definition/references do not need the
+    /// current content to answer (they need the *on-disk* file, which
+    /// the server reads itself).
+    ///
+    /// `diagnostics` is separate: it wants the exact current content
+    /// because it is asking the server to check a write the model
+    /// just made.
+    async fn ensure_open(&mut self, path: &std::path::Path) -> Result<(), LspError> {
+        let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if self.opened.contains_key(&key) {
+            return Ok(());
+        }
+        self.did_open(path, "").await?;
+        self.opened.insert(key, 1);
+        Ok(())
+    }
+
+    /// Send a request and return the response's `result` field. A
+    /// JSON-RPC error becomes an `LspError::Protocol`.
+    async fn request_with_response(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, LspError> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.send_message(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        }))
+        .await?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return Err(LspError::Timeout);
+            }
+            let remaining = deadline - now;
+            let msg = tokio::time::timeout(
+                remaining,
+                self.read_handling_server_requests(),
+            )
+            .await
+            .map_err(|_| LspError::Timeout)??;
+            if msg.get("id").and_then(|v| v.as_i64()) == Some(id) {
+                if let Some(err) = msg.get("error") {
+                    return Err(LspError::Protocol(format!(
+                        "{method} returned an error: {err}"
+                    )));
+                }
+                return Ok(msg
+                    .get("result")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null));
+            }
+        }
+    }
+
     /// Best-effort graceful shutdown. Errors are ignored — the process
     /// is about to die regardless, and `kill_on_drop` is the safety
     /// net.
@@ -445,6 +587,107 @@ fn parse_diagnostics(params: &serde_json::Value, uri: &str) -> Vec<Diagnostic> {
             })
         })
         .collect()
+}
+
+/// Parse the response of `textDocument/definition` /
+/// `textDocument/references` into a `Vec<Location>`. Handles the
+/// three LSP-legal shapes: a single Location, an array of Locations,
+/// or `null`.
+fn parse_locations(v: &serde_json::Value) -> Vec<crate::types::Location> {
+    fn to_pos(p: &serde_json::Value) -> Option<crate::types::Position> {
+        Some(crate::types::Position {
+            line: (p.get("line")?.as_u64()? + 1) as u32,
+            column: (p.get("character")?.as_u64()? + 1) as u32,
+        })
+    }
+    fn one(item: &serde_json::Value) -> Option<crate::types::Location> {
+        let uri = item.get("uri")?.as_str()?;
+        let file = uri_to_path(uri);
+        let r = item.get("range")?;
+        let start = r.get("start")?;
+        let end = r.get("end")?;
+        Some(crate::types::Location {
+            file,
+            range: crate::types::Range {
+                start: to_pos(start)?,
+                end: to_pos(end)?,
+            },
+        })
+    }
+    if v.is_null() {
+        return Vec::new();
+    }
+    if let Some(arr) = v.as_array() {
+        arr.iter().filter_map(one).collect()
+    } else {
+        one(v).into_iter().collect()
+    }
+}
+
+/// Parse a `textDocument/hover` response.
+fn parse_hover(v: &serde_json::Value) -> crate::types::Hover {
+    if v.is_null() {
+        return crate::types::Hover {
+            text: String::new(),
+            range: None,
+        };
+    }
+    fn to_pos(p: &serde_json::Value) -> Option<crate::types::Position> {
+        Some(crate::types::Position {
+            line: (p.get("line")?.as_u64()? + 1) as u32,
+            column: (p.get("character")?.as_u64()? + 1) as u32,
+        })
+    }
+    let range = v.get("range").and_then(|r| {
+        let s = r.get("start")?;
+        let e = r.get("end")?;
+        Some(crate::types::Range {
+            start: to_pos(s)?,
+            end: to_pos(e)?,
+        })
+    });
+    // `contents` is MarkupContent, MarkedString, or an array of
+    // either. We flatten all of them into a single string.
+    let text = match v.get("contents") {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .filter_map(|it| match it {
+                serde_json::Value::String(s) => Some(s.clone()),
+                serde_json::Value::Object(_) => it
+                    .get("value")
+                    .and_then(|x| x.as_str())
+                    .map(String::from),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Some(serde_json::Value::Object(_)) => v
+            .get("contents")
+            .and_then(|c| c.get("value"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        _ => String::new(),
+    };
+    crate::types::Hover { text, range }
+}
+
+/// Inverse of `path_to_uri` for the shapes we produce and consume:
+/// `file:///abs/path` on Unix, `file:///C:/path` on Windows.
+fn uri_to_path(uri: &str) -> std::path::PathBuf {
+    let rest = uri.strip_prefix("file://").unwrap_or(uri);
+    // Strip a leading slash on Windows (file:///C:/...) but keep it
+    // on Unix (/abs/path).
+    #[cfg(windows)]
+    {
+        let s = rest.trim_start_matches('/');
+        std::path::PathBuf::from(s.replace('/', "\\"))
+    }
+    #[cfg(not(windows))]
+    {
+        std::path::PathBuf::from(rest)
+    }
 }
 
 #[cfg(test)]

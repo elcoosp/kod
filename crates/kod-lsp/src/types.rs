@@ -30,6 +30,38 @@ pub struct Diagnostic {
     pub message: String,
 }
 
+/// A cursor position in a document. 1-based to match
+/// `Diagnostic`. `LspClient`'s request methods translate to the LSP
+/// 0-based wire form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Position {
+    pub line: u32,
+    pub column: u32,
+}
+
+/// A range inside one file, both ends 1-based.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Range {
+    pub start: Position,
+    pub end: Position,
+}
+
+/// A location the server returned: a file plus a range in it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Location {
+    pub file: std::path::PathBuf,
+    pub range: Range,
+}
+
+/// What `textDocument/hover` returns: the text the server wants to
+/// show plus the range it applies to. `text` may be empty when the
+/// server has nothing to say about the position.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Hover {
+    pub text: String,
+    pub range: Option<Range>,
+}
+
 /// Which server speaks for a given file.
 ///
 /// Detection is by extension; the caller decides which binary to

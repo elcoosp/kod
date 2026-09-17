@@ -26,4 +26,6 @@ pub mod client;
 pub mod types;
 
 pub use client::{LspClient, LspError};
-pub use types::{Diagnostic, language_id_for};
+pub use types::{
+    Diagnostic, Hover, Location, Position, Range, language_id_for,
+};
