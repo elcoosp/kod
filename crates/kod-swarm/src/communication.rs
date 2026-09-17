@@ -250,6 +250,30 @@ impl AgentCommunicationHub {
         Ok(())
     }
 
+    /// Broadcast a lifecycle notification (started, finished, failed,
+    /// retrying) to every other online agent. `note` is a short
+    /// human-readable string; the recipient's history records it with
+    /// the sender id so a debug panel can attribute it.
+    ///
+    /// This is the small piece the swarm runner was missing to use the
+    /// hub without inventing a second message shape: the runner's
+    /// events are progress notifications, and
+    /// `AgentMessageContent::ProgressUpdate` carries exactly that.
+    pub async fn broadcast_lifecycle(
+        &self,
+        from: &AgentId,
+        note: &str,
+    ) -> Result<()> {
+        self.broadcast(
+            from,
+            MessageContent::ProgressUpdate {
+                status: kod_types::TaskStatus::InProgress,
+                details: note.to_string(),
+            },
+        )
+        .await
+    }
+
     pub async fn set_agent_offline(&self, agent_id: &AgentId) {
         if let Some(info) = self.agents.write().await.get_mut(agent_id) {
             info.online = false;
