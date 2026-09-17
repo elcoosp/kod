@@ -1064,6 +1064,31 @@ pub fn parse_tool_approval(chunk: &str) -> Option<(u64, &str)> {
     Some((id, json))
 }
 
+/// Marker prefix for a batch of approval requests: one marker per
+/// round, carrying every `Ask`-gated call the round produced.
+/// `\0kod-approval-batch:<batch_id>:<json>\0`, where `<json>` decodes
+/// to [`ApprovalBatch`].
+///
+/// A batch of exactly one item is protocol-identical to the old
+/// single-item marker from the user's point of view: a consumer that
+/// special-cases `items.len() == 1` renders the familiar dialog.
+pub const TOOL_APPROVAL_BATCH_MARKER: &str = "\0kod-approval-batch:";
+
+/// Build a batch-approval chunk carrying the JSON-encoded batch.
+pub fn tool_approval_batch_marker(batch_id: u64, batch_json: &str) -> String {
+    let clean = batch_json.replace('\0', " ");
+    format!("{TOOL_APPROVAL_BATCH_MARKER}{batch_id}:{clean}\0")
+}
+
+/// If `chunk` is a batch-approval marker, return `(batch_id, json)`.
+pub fn parse_tool_approval_batch(chunk: &str) -> Option<(u64, &str)> {
+    let rest = chunk.strip_prefix(TOOL_APPROVAL_BATCH_MARKER)?;
+    let body = rest.strip_suffix('\0')?;
+    let (id_str, json) = body.split_once(':')?;
+    let id = id_str.parse::<u64>().ok()?;
+    Some((id, json))
+}
+
 /// The serialized shape of an approval request. Sent as JSON inside an
 /// [`tool_approval_marker`] chunk, decoded by the consumer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1081,6 +1106,19 @@ pub struct ApprovalRequest {
     /// The user-facing summary a plain-text consumer can print
     /// without decoding `diff`.
     pub summary: String,
+    /// The engine's internal approval id. Present in items of an
+    /// [`ApprovalBatch`]; `None` on the legacy single-item marker
+    /// (which carries the id out-of-band as
+    /// `\0kod-approval:<id>:<json>`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
+}
+
+/// A single round's worth of approvals, emitted together so a
+/// consumer can present them as one batch.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ApprovalBatch {
+    pub items: Vec<ApprovalRequest>,
 }
 
 /// What the consumer decides.
@@ -3095,12 +3133,26 @@ impl KodEngine {
             }
         }
 
-        // Approval flow for every `Ask` call. Uses the same
-        // marker + oneshot contract as pre-D3 (write_file, patch_file)
-        // and extends it to execute_command when the policy says so.
+        // Approval flow for every `Ask` call. The round's asks are
+        // batched: one marker carries every item, the consumer walks
+        // them, and the engine awaits each oneshot in order. A batch
+        // of one is protocol-identical to the pre-batch single-item
+        // marker from the consumer's perspective — the dialog just
+        // shows one row.
         if !need_approval.is_empty() {
             match chunk_tx {
                 Some(tx) => {
+                    // Phase 1 — build every request and register every
+                    // oneshot. Doing all the registration up-front means
+                    // the consumer can answer items out of order without
+                    // a race: a decision sent before the engine reaches
+                    // that item's `orx.await` is buffered by the
+                    // oneshot, not dropped.
+                    let mut items: Vec<ApprovalRequest> = Vec::new();
+                    let mut awaiting: Vec<(
+                        usize,
+                        tokio::sync::oneshot::Receiver<ApprovalDecision>,
+                    )> = Vec::new();
                     for i in &need_approval {
                         let Some(call) = calls.get(*i) else { continue };
                         let summary = format_call_brief(&call.tool_name, &call.arguments);
@@ -3139,17 +3191,27 @@ impl KodEngine {
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let (otx, orx) = tokio::sync::oneshot::channel();
                         self.pending_approvals.write().await.insert(id, otx);
-
-                        let request = ApprovalRequest {
+                        items.push(ApprovalRequest {
                             tool_name: call.tool_name.clone(),
                             arguments: call.arguments.clone(),
                             diff,
                             summary,
-                        };
-                        let json = serde_json::to_string(&request)
-                            .unwrap_or_else(|_| "{}".to_string());
-                        let _ = tx.send(tool_approval_marker(id, &json)).await;
+                            id: Some(id),
+                        });
+                        awaiting.push((*i, orx));
+                    }
 
+                    // Phase 2 — emit ONE batch marker.
+                    let batch = ApprovalBatch { items };
+                    let json = serde_json::to_string(&batch)
+                        .unwrap_or_else(|_| "{\"items\":[]}".to_string());
+                    let batch_id = self
+                        .next_approval_id
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let _ = tx.send(tool_approval_batch_marker(batch_id, &json)).await;
+
+                    // Phase 3 — await each in order.
+                    for (i, orx) in awaiting {
                         let decision = tokio::time::timeout(
                             std::time::Duration::from_secs(AWAIT_APPROVAL_SECS),
                             orx,
@@ -3157,16 +3219,11 @@ impl KodEngine {
                         .await;
                         match decision {
                             Ok(Ok(ApprovalDecision::Approve)) => {}
-                            Ok(Ok(ApprovalDecision::Deny))
-                            | Ok(Ok(ApprovalDecision::DenyAlways)) => {
-                                // DenyAlways: register a session deny
-                                // rule so the next matching call is
-                                // denied without a prompt. The pattern
-                                // is derived from the call's args.
-                                if matches!(
-                                    decision,
-                                    Ok(Ok(ApprovalDecision::DenyAlways))
-                                ) {
+                            Ok(Ok(d @ (ApprovalDecision::Deny
+                                | ApprovalDecision::DenyAlways))) => {
+                                if matches!(d, ApprovalDecision::DenyAlways)
+                                    && let Some(call) = calls.get(i)
+                                {
                                     let path_pattern = call
                                         .arguments
                                         .get("path")
@@ -3178,14 +3235,14 @@ impl KodEngine {
                                     };
                                     self.add_deny_rule(rule).await;
                                 }
-                                denied.insert(*i, "denied by user".to_string());
+                                denied.insert(i, "denied by user".to_string());
                             }
                             Ok(Err(_)) => {
-                                denied.insert(*i, "approval cancelled".to_string());
+                                denied.insert(i, "approval cancelled".to_string());
                             }
                             Err(_) => {
                                 denied.insert(
-                                    *i,
+                                    i,
                                     format!(
                                         "no approval answer within {}s — denied",
                                         AWAIT_APPROVAL_SECS
