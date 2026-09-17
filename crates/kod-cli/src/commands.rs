@@ -962,7 +962,7 @@ pub async fn run_chat(
     // user gets useful recall; the engine clamps below its floor.
     // RouterConfig carries the token window itself so the memory manager
     // sizes its own budget from the same source.
-    let router_config = RouterConfig {
+    let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
@@ -1343,7 +1343,7 @@ pub async fn run_swarm(
     let db_path = home.join(".kod").join("data").join("kod.redb");
     let _ = std::fs::create_dir_all(db_path.parent().unwrap());
 
-    let router_config = RouterConfig {
+    let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
@@ -1515,7 +1515,7 @@ pub async fn run_agent(
         .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
     let db_path = home.join(".kod").join("data").join("kod.redb");
 
-    let router_config = RouterConfig {
+    let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
@@ -1825,7 +1825,7 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool) -> Result<()> {
     let tool_calls: Vec<_> = entries
         .iter()
         .filter_map(|e| match e {
-            kod_core::session_log::SessionEntry::ToolCall {
+            kod_core::session_log::SessionEntry::ToolCall { id: None,
                 tool_name,
                 arguments,
                 result,
@@ -1867,7 +1867,7 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool) -> Result<()> {
 
     let config = KodConfig::load_default()?;
     let db_path = config.memory_db_path()?;
-    let router_config = RouterConfig {
+    let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
@@ -3509,7 +3509,7 @@ pub async fn run_prompt(
         .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
     let db_path = home.join(".kod").join("data").join("kod.redb");
 
-    let router_config = RouterConfig {
+    let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
@@ -4174,7 +4174,7 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
         .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
     let db_path = home.join(".kod").join("data").join("kod.redb");
 
-    let router_config = RouterConfig {
+    let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
