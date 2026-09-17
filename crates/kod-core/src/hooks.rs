@@ -172,8 +172,8 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn call(name: &str, args: serde_json::Value) -> ToolCall {
-        ToolCall {
+    fn call(name: &str, args: serde_json::Value) -> ToolCall { id: None,
+        ToolCall { id: None,
             tool_name: name.to_string(),
             arguments: args,
         }
