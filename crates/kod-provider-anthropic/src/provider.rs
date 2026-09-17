@@ -109,7 +109,7 @@ impl AnthropicProvider {
                 for part in content.parts {
                     match part {
                         Part::Text { text: chunk } => text.push_str(&chunk),
-                        Part::FunctionCall { name, args, .. } => calls.push(ToolCall {
+                        Part::FunctionCall { name, args, .. } => calls.push(ToolCall { id: None,
                             tool_name: name,
                             arguments: args,
                         }),
@@ -213,6 +213,7 @@ impl AnthropicProvider {
             match inner.generate_content(request, true).await {
                 Ok(mut responses) => {
                     let mut last_usage: Option<kod_provider::TokenUsage> = None;
+                    let mut next_tool_index: usize = 0;
                     while let Some(item) = responses.next().await {
                         match item {
                             Ok(response) => {
@@ -231,9 +232,12 @@ impl AnthropicProvider {
                                                     yield Ok(StreamChunk::Text(text));
                                                 }
                                             }
-                                            Part::FunctionCall { name, args, .. } => {
-                                                yield Ok(StreamChunk::ToolCallStart { name });
+                                            Part::FunctionCall { name, args, id, .. } => {
+                                                let index = next_tool_index;
+                                                next_tool_index += 1;
+                                                yield Ok(StreamChunk::ToolCallStart { index, id, name });
                                                 yield Ok(StreamChunk::ToolCallDelta {
+                                                    index,
                                                     arguments: args.to_string(),
                                                 });
                                             }
