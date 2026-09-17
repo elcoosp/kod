@@ -30,7 +30,7 @@ use std::sync::Mutex;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SessionEntry {
     /// A tool call and its result.
-    ToolCall { id: None,
+    ToolCall {
         /// Unix milliseconds when the call started.
         timestamp_ms: u64,
         /// The engine-transcript key the call ran under (`session` for
@@ -193,7 +193,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn sample_entry() -> SessionEntry {
-        SessionEntry::ToolCall { id: None,
+        SessionEntry::ToolCall {
             timestamp_ms: 1_700_000_000_000,
             holder: "session".to_string(),
             tool_name: "read_file".to_string(),
@@ -214,7 +214,7 @@ mod tests {
         let entries = read_session(&path).unwrap();
         assert_eq!(entries.len(), 2);
         match &entries[0] {
-            SessionEntry::ToolCall { id: None,
+            SessionEntry::ToolCall {
                 tool_name, holder, ..
             } => {
                 assert_eq!(tool_name, "read_file");
