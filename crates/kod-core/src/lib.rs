@@ -5,6 +5,7 @@
 
 pub mod budget;
 pub mod checkpoint;
+pub mod citations;
 pub mod config;
 pub mod context;
 pub mod doctor;
