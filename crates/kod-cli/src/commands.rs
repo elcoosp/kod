@@ -3603,6 +3603,95 @@ pub async fn run_skills_show(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// `kod policy show` / `kod policy explain`.
+///
+/// Both load the effective `PolicyEngine` exactly as the CLI does
+/// at session start (`PolicyEngine::load(config, cwd, None)`) so
+/// what they report is what the engine would decide. No engine is
+/// spun up — this is a pure read of the policy layers.
+pub async fn run_policy(action: PolicyAction) -> Result<()> {
+    let config = KodConfig::load_default()?;
+    let cwd = std::env::current_dir().map_err(|e| {
+        KodError::Config(format!("could not determine cwd: {e}"))
+    })?;
+    let policy = kod_config::PolicyEngine::load(&config, Some(&cwd), None)?;
+
+    match action {
+        PolicyAction::Show => {
+            println!("Effective policy for {}", cwd.display());
+            println!();
+            println!("{}", policy.describe());
+            println!();
+            println!("Layer precedence (later overrides earlier):");
+            println!("  1. preset                 (built-in default: standard)");
+            println!("  2. global [tools]         (~/.config/kod/config.toml)");
+            println!("  3. .kod/policy.toml       (this project, if present)");
+            println!("  4. --preset CLI flag      (a session override)");
+            println!();
+            let project = cwd.join(".kod").join("policy.toml");
+            if project.is_file() {
+                println!("Project policy: {} (read)", project.display());
+            } else {
+                println!("Project policy: {} (not present)", project.display());
+            }
+        }
+        PolicyAction::Explain { tool, args } => {
+            let parsed = parse_kv_args(&args)?;
+            let empty_denies = std::collections::HashSet::new();
+            let decision = policy.decide(&tool, &parsed, &cwd, &empty_denies);
+            println!("tool:    {}", tool);
+            println!("args:    {}", parsed);
+            println!("outcome: {:?}", decision.outcome);
+            println!("rule:    {}", decision.rule);
+            println!("source:  {:?}", decision.source);
+            let word = match decision.outcome {
+                kod_config::Decision::Allow => "allow",
+                kod_config::Decision::Deny => "deny",
+                kod_config::Decision::Ask => "ask",
+            };
+            println!("summary: {word}");
+        }
+    }
+    Ok(())
+}
+
+/// Parse `key=value` argument tokens into a JSON object. A value
+/// that parses as JSON (a number, `true`/`false`, a quoted string,
+/// an array) is used as-is; anything else is treated as a plain
+/// string.
+///
+/// The grammar is deliberately minimal — a single level of
+/// `key=value`, no nesting, no equals-signs inside unquoted values.
+/// Complex arguments go through a JSON blob instead, with the shell
+/// handling the quoting.
+///
+/// Every argument must be `key=value`; a bare token is a usage
+/// error, not a silently ignored one.
+fn parse_kv_args(args: &[String]) -> Result<serde_json::Value> {
+    let mut obj = serde_json::Map::new();
+    for token in args {
+        let (k, v) = match token.split_once('=') {
+            Some(pair) => pair,
+            None => {
+                return Err(KodError::InvalidParameters {
+                    reason: format!(
+                        "argument {token:?} is not key=value. Use `key=value` for every argument, or pass a JSON object as a single token."
+                    ),
+                });
+            }
+        };
+        if k.is_empty() {
+            return Err(KodError::InvalidParameters {
+                reason: format!("argument {token:?} has an empty key"),
+            });
+        }
+        let value: serde_json::Value = serde_json::from_str(v)
+            .unwrap_or_else(|_| serde_json::Value::String(v.to_string()));
+        obj.insert(k.to_string(), value);
+    }
+    Ok(serde_json::Value::Object(obj))
+}
+
 /// Report whether the sandbox primitive `kod chat --sandbox` uses is
 /// available on this platform. Read-only: never installs anything.
 pub async fn run_sandbox_check() -> Result<()> {
