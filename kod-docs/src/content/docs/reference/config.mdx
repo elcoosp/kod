@@ -7,28 +7,56 @@ sidebar:
 
 import { Aside } from '@astrojs/starlight/components';
 
-The config file lives at `~/.config/kod/config.toml` (Linux) or `~/Library/Application Support/kod/config.toml` (macOS), is auto-generated on first run, and every key below is optional — defaults are clamped into valid ranges at load time with a warning.
+The config file lives at `~/.config/kod/config.toml` (Linux) or `~/Library/Application Support/kod/config.toml` (macOS), is auto-generated on first run, and every key below is optional — out-of-range values are clamped into valid ranges at load time with a warning. A missing or corrupt file falls back to defaults rather than failing the session.
 
 ## `[llm]`
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `provider` | string | `"OpenAICompatible"` | `"Ollama"` and `"OpenAI"` are aliases of `OpenAICompatible`. `Anthropic` / `Custom` are recognised but fail at the first prompt. |
-| `model` | string | `"qwen3.8:27b-mlx"` (via profiles; see `kod profile show`) | Must exist on the server. |
+| `network_access` | bool | `false` | Opt-in network access; gates `web_fetch`. Per-tool `network` in `.kod/policy.toml` overrides. |
+
+## `[[llm.endpoints]]`
+
+An array of named model servers; the first is the default. Everything that affects the wire lives on the endpoint.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `name` | string | `"default"` | Routing key referenced by `[llm.routing]`; duplicate names warn. |
+| `provider` | string | `"openai-compatible"` | `"Ollama"` and `"OpenAI"` are aliases of `openai-compatible`. `"anthropic"` is recognised but fails at the first prompt. |
 | `base_url` | URL | `http://localhost:11434/v1` | Normalised automatically — server root or `.../v1` root both work. |
-| `context_window` | integer | `32768` | Sizes the memory manager's per-prompt budget via the router. |
-| `max_tokens` | integer | `4096` | Generation cap. |
-| `temperature` | float | `0.2` | Clamped to a valid range at load. |
-| `timeout_secs` | integer | `120` | Per-request timeout. |
-| `network_access` | bool | `false` | Opt-in network access; currently gates `web_fetch`. |
+| `model` | string | `"codellama:13b"` | Must exist on the server; what `kod models` lists. |
+| `api_key_env` | string (optional) | — | Name of the env var holding the API key. The key itself never appears in the file. |
+| `temperature` | float (optional) | `0.7` | Clamped to 0.0–2.0 at load. |
+| `max_tokens` | integer (optional) | `2048` | Generation cap; `0` falls back to the default. |
+| `context_window` | integer | `8192` | Sizes the memory budget and the context meter; clamped to ≥ 2000. |
+| `timeout_secs` | integer | `300` | Per-request timeout; floored at 1. |
+| `pricing.input_per_mtok_usd` | float (optional) | — | USD per million input tokens, for the TUI cost display. |
+| `pricing.output_per_mtok_usd` | float (optional) | — | USD per million output tokens. |
+
+## `[llm.routing]`
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `by_task` | map: task type → endpoint name | — | `"Simple"`, `"Debugging"`, … route to the named endpoint. Unknown names are dropped with a warning. |
+| `fallback` | list of endpoint names | — | Ordered retry chain when the primary fails with a retryable error. |
+| `swarm` | map: capability → endpoint name | — | `Planning`, `Coding`, … route swarm roles to different models. |
 
 ## `[memory]`
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `short_term_capacity` | integer | `100` | FIFO entries kept for the session. |
-| `scope` | `"global"` \| `"project"` | `"global"` | `project` puts the long-term DB under `<cwd>/.kod/`. |
+| `scope` | `"global"` \| `"project"` | `"global"` | `project` puts the long-term DB at `<cwd>/.kod/memory.redb`; `global` uses `~/.kod/data/kod.redb`. |
 | `long_term_db_path` | string (optional) | — | Overrides both scopes with an explicit `redb` path. |
+| `enable_semantic_search` | bool | `true` | Applies when an embedding endpoint is configured; retrieval is keyword + recency otherwise. |
+| `embedding_endpoint` | `"none"` \| `"ollama"` \| `"openai"` | `"none"` | `ollama` derives the URL from `llm.base_url`; `openai` speaks `/v1/embeddings`. |
+| `embedding_url` | string (optional) | — | Explicit embedder URL, overriding the derived one. |
+| `embedding_api_key_env` | string (optional) | — | Env var holding the embedder API key (openai endpoint). |
+| `embedding_model` | string | `"all-MiniLM-L6-v2"` | Model name sent to the embedder. |
+| `context_window` | integer | `4096` | Memory manager fallback budget. |
+| `compaction_interval_secs` | integer | `3600` | Long-term store compaction cadence. |
+| `extract_on_shutdown` | bool | `false` | One LLM call at session end pulls durable facts from the transcript. |
+| `extract_max_entries` | integer | `12` | Cap on facts extracted per session. |
 
 ## `[skills]`
 
@@ -37,6 +65,8 @@ The config file lives at `~/.config/kod/config.toml` (Linux) or `~/Library/Appli
 | `enable_hot_reload` | bool | `true` | Edits to skill files apply on the next prompt. |
 | `max_skills_per_query` | integer | `3` | Skills matched per prompt, capped. |
 | `skills_dir` | string (optional) | — | Replaces the four standard search directories with one custom path. |
+| `match_threshold` | float | `0.7` | Minimum match score for a skill to ride along. |
+| `max_cache_size_mb` | integer | `50` | Parsed-skill cache limit. |
 
 ## `[swarm]`
 
@@ -44,12 +74,17 @@ The config file lives at `~/.config/kod/config.toml` (Linux) or `~/Library/Appli
 | --- | --- | --- | --- |
 | `max_agents` | integer | `5` | The decompose step targets this; the runner clamps to 2–8. |
 | `merge_results` | bool | `true` | `false` (or a failed synthesis) concatenates per-agent results under their labels. |
+| `agent_timeout_secs` | integer | `300` | Per-agent wall clock; a stuck agent is cancelled and retried. `0` disables. |
+| `agent_retries` | integer | `1` | Extra attempts after a timeout or provider error. |
 
 ## `[tools]`
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `confirm_writes` | bool | `true` | Approval dialog (TUI) or stdin prompt (CLI) before writes. Maps to the `standard` / `yolo` presets for backward compatibility. |
+| `auto_check` | bool | `false` | After a successful write, run the project check (Cargo, tsc, ruff, go vet) and append diagnostics to the next prompt. |
+| `auto_lsp` | bool | `true` | After a successful write, run language-server diagnostics on the touched files and append them to the next prompt. Cheap; no-op without a server on `PATH`. |
+
+Write approval behaviour comes from the [policy presets](/guides/policy/), not from a config flag.
 
 ## `[hooks]`
 
@@ -61,9 +96,33 @@ The config file lives at `~/.config/kod/config.toml` (Linux) or `~/Library/Appli
 
 ```toml
 [hooks]
-enabled = false
+enabled = true
 pre_tool_use  = { write_file = "rustfmt {path}" }
 post_tool_use = { write_file = "cargo check" }
+```
+
+## `[mcp.servers.<name>]`
+
+One block per MCP server; absent `[mcp]` means no plugins. A failing server is logged and skipped — one broken plugin never blocks the built-ins.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `command` | string | — | Program to spawn, resolved against `$PATH`. Empty commands are skipped. |
+| `args` | string[] | `[]` | Arguments to the program. |
+| `env` | map: string → string | — | Added to the child's environment (parent env is inherited). |
+| `enabled` | bool | `true` | `false` keeps the block as a record without spawning. |
+| `call_timeout_secs` | integer | `60` | Per-call timeout for `tools/call`. |
+
+Tools are exposed to the model as `mcp:<server>.<tool>`.
+
+## `[commands]`
+
+User-defined TUI slash commands. Each key registers `/key`; `{args}` in the value is replaced by everything typed after the command name, `{cwd}` by the working directory.
+
+```toml
+[commands]
+review  = "Review the last change in {cwd} and point out risks."
+explain = "Explain what this code does:\n\n{args}"
 ```
 
 ## Project policy: `.kod/policy.toml`
@@ -82,6 +141,15 @@ Committed to the repository, layered over the global config (see [Policy & Permi
 | `tools.<name>.domains` | string[] | — | Domain allow-list for `web_fetch`. |
 | `git.history_protected` | bool | `true` | Mounts `.git` read-only at the sandbox. |
 
+## Environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `KOD_SESSION_LOG` | Explicit session log path; default is `~/.kod/sessions/<unix-ms>.jsonl`. |
+| `KOD_TUI_STATE_DIR` | Directory for the TUI session and prompt-history files. |
+| `OPENAI_API_KEY` | Used by the `cloud-openai` profile (via the endpoint's `api_key_env`). |
+| `KOD_TEST_MODEL`, `KOD_TEST_DB` | Live-model test opt-in for contributors; see [Testing](/developers/testing/). |
+
 ## Theme: `theme.toml`
 
 A `theme.toml` next to the config selects the TUI palette:
@@ -90,8 +158,12 @@ A `theme.toml` next to the config selects the TUI palette:
 theme = "light"        # or "dark", or a full [theme] table below
 ```
 
-A bare `theme = "light"` line is accepted, as is a full `[theme]` table overriding individual ratatui colors (`black`, `red`, `green`, …). Loading is best-effort: an invalid theme file falls back to the default dark theme with a warning rather than failing the session.
+A bare `theme = "light"` line is accepted, as is a full `[theme]` table overriding individual ratatui colors (`black`, `red`, `green`, …). Loading is best-effort: an invalid theme file falls back to the default dark theme with a warning rather than failing the session. `kod theme show <name>` prints a built-in palette as JSON.
+
+## Keybindings: `tui_keys.toml` / `.kod-keys.toml`
+
+See [TUI Keybindings](/reference/tui-keys/#rebinding-keys).
 
 <Aside type="tip">
-  `kod config write -` prints the effective config (defaults merged with your edits) to stdout — the fastest way to see every resolved value, including clamped ones.
+  <code>kod config export -</code> prints the effective config (defaults merged with your edits) to stdout — the fastest way to see every resolved value, including clamped ones.
 </Aside>
