@@ -158,7 +158,7 @@ fn benchmark_task_classification(c: &mut Criterion) {
     let db_path = env.working_dir.join("bench.redb");
 
     let router = TaskRouter::new(
-        RouterConfig {
+        RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             enable_memory: false,
@@ -205,7 +205,7 @@ fn benchmark_task_processing(c: &mut Criterion) {
     let db_path = env.working_dir.join("bench_process.redb");
 
     let router = TaskRouter::new(
-        RouterConfig {
+        RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             enable_memory: false,
