@@ -142,10 +142,18 @@ Core engine:
 - **Zero-copy parsing**: Minimize allocations where possible
 - **Connection pooling**: HTTP connection reuse
 
-## Future Considerations
+## Delivered since this document was first written
 
-- **LSP Integration**: Language Server Protocol for code intelligence
-- **Debugger Integration**: Debug Adapter Protocol for debugging
-- **Additional Providers**: Anthropic, OpenAI, custom endpoints
-- **Vector Search**: Integration with vector databases
-- **Plugin System**: Dynamic loading of plugins
+- **LSP Integration** (`kod-lsp`): diagnostics, definition, references, hover.
+- **Additional provider**: Anthropic Messages API (`kod-provider-anthropic`).
+- **MCP client** (`kod-mcp`): external tools registered under the `mcp:<server>.<tool>` naming policy.
+- **Sandbox backends**: bwrap on Linux, sandbox-exec on macOS, and Landlock on Linux kernels ≥ 5.13.
+- **Unix-socket daemon** (`kod serve`): NDJSON protocol, peer-UID check, `--remote` on `kod prompt`, `kod chat`, `kod agent`.
+- **Policy engine** (`kod-config::policy`): presets, per-tool overrides, session deny rules, `kod policy show|explain`.
+
+## Still on the roadmap
+
+- **Debugger Integration**: Debug Adapter Protocol for debugging.
+- **Vector Search**: external vector databases (the current brute-force `VectorIndex` is in-process only).
+- **Plugin System**: dynamic loading beyond MCP.
+- **`kod swarm --remote`**: streaming swarm events over the daemon socket.

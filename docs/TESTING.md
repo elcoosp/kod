@@ -26,8 +26,8 @@ cargo test --workspace --tests
 
 ## Test Counts
 
-The workspace currently contains roughly 356 test attributes
-(`#[test]`, `#[tokio::test]`, `#[rstest]`) across 11 crates. The
+The workspace currently contains roughly 500 test attributes
+(`#[test]`, `#[tokio::test]`, `#[rstest]`) across 15 crates. The
 numbers are illustrative, not canonical — `#[rstest]` cases expand
 into multiple tests at runtime, and ordinary development adds tests
 without updating the count. To see the exact current total:
@@ -47,6 +47,9 @@ cargo test --workspace -- --list | tail -1
 | kod-cli                | 15         |
 | kod-types              | 9          |
 | kod-provider-openai    | 6          |
+| kod-provider-anthropic | 3          |
+| kod-lsp                | 4          |
+| kod-mcp                | 5          |
 | kod-error              | 3          |
 | kod-provider           | 0          |
 | **Total (attributes)** | **341**    |
@@ -62,6 +65,9 @@ crates/
   kod-config/         -- Configuration (KodConfig, LLM, Memory, Skills)
   kod-provider/       -- Provider traits (LlmProvider trait, GenerationOptions)
   kod-provider-openai/ -- OpenAI-compatible LLM provider (Ollama, LM Studio, MLX, vLLM)
+  kod-provider-anthropic/ -- Anthropic Messages API provider
+  kod-lsp/            -- Minimal LSP client (JSON-RPC over stdio, diagnostics)
+  kod-mcp/            -- Minimal MCP client (spawn servers, list/call tools)
   kod-skills/         -- Skill loading, parsing, matching, hot-reload watcher
   kod-memory/         -- Short-term and long-term memory
   kod-tools/          -- Tool trait, registry, and built-in tools
