@@ -87,7 +87,7 @@ Output for {} test.
 
         // Use KodConfig::default() and modify the model field
         let mut config = kod_config::KodConfig::default();
-        config.llm.model = model.to_string();
+        config.llm.default_endpoint_mut().model = model.to_string();
         let config_content = toml::to_string(&config).unwrap();
 
         fs::write(&config_path, config_content).unwrap();

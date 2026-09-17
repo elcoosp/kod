@@ -250,11 +250,9 @@ async fn test_engine_process_input() {
     // Install a no-op provider. Without one the engine rejects the
     // call — see the `no_provider_error` doc in kod-core. This test
     // exercises the real processing path with a canned reply.
-    engine
-        .set_provider(std::sync::Arc::new(NoOpProvider {
+    common::install_test_provider(&engine, std::sync::Arc::new(NoOpProvider {
             reply: "I can help with code.".to_string(),
-        }))
-        .await;
+        })).await;
 
     // Process a simple input.
     let response = engine.process("Hello, what can you do?").await.unwrap();
@@ -310,9 +308,9 @@ async fn test_config_file_usage() {
 
     // Load the config we just wrote
     let config = kod_config::KodConfig::load_from(&config_path).unwrap();
-    assert_eq!(config.llm.model, "test-model");
+    assert_eq!(config.llm.default_endpoint().model, "test-model");
     assert_eq!(
-        config.llm.provider,
+        config.llm.default_endpoint().provider,
         kod_config::llm::ProviderType::OpenAICompatible
     );
 }
