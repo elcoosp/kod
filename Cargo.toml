@@ -32,7 +32,7 @@ thiserror = "2.0.19"
 bytes = "1.11.1"
 
 # Async
-tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "process", "net", "io-util", "io-std", "parking_lot"] }
+tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "process", "net", "io-util", "io-std", "parking_lot", "signal"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
 eventsource-stream = "0.2.3"
 futures = "0.3.31"
