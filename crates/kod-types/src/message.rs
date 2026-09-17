@@ -75,6 +75,16 @@ pub struct MessageMetadata {
     pub agent_id: Option<AgentId>,
     pub thinking_time_ms: Option<u64>,
     pub token_count: Option<usize>,
+    /// When true, the engine never drops this turn from the rendered
+    /// history, even when the budget is exhausted. Set by the TUI's
+    /// `/pin` command; persisted with the session so a pin set in one
+    /// session survives a restart.
+    ///
+    /// `#[serde(default)]` for the same reason the whole struct uses
+    /// it: a session file written before the field existed still
+    /// parses, with every message unpinned.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
