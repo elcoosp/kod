@@ -29,6 +29,10 @@ The canonical pair from the config comments shows the intended shape:
 
 The same pattern extends naturally: run `eslint --fix` after JavaScript edits, `gofmt` after Go writes, or a quick test suite after any `patch_file` on a crate you care about.
 
+<Aside type="tip">
+  If all you want is post-write diagnostics, check whether the built-in switches do it first: <code>tools.auto_lsp = true</code> (default) appends language-server diagnostics after writes, and <code>tools.auto_check = true</code> runs the project compiler/linter with baseline-aware output. Hooks are for commands that are *yours* — formatters with house rules, notification bells, snapshot scripts.
+</Aside>
+
 ## How hooks relate to policy
 
 Hooks execute *inside* the tool lifecycle, not in place of it. The order per call is:
@@ -38,14 +42,14 @@ Hooks execute *inside* the tool lifecycle, not in place of it. The order per cal
 3. The tool executes (sandboxed if requested, path-locked, checkpointed if mutating).
 4. `post_tool_use` hook, if configured.
 
-A denied tool call never reaches its hooks — there is nothing to hook around. Hook commands are themselves shell commands, so treat them with the same care as policy allowlists: they run with your permissions.
+A denied tool call never reaches its hooks — there is nothing to hook around. Hook commands are themselves shell commands, so treat them with the same care as policy allowlists: they run with your permissions, outside the tool sandbox.
 
 <Aside type="caution">
-  Keep hooks fast. A `post_tool_use` hook runs after every matching tool call — a hook that takes 30 seconds turns every write into a 30-second round. `cargo check` is a good hook; `cargo test` usually is not.
+  Keep hooks fast. A <code>post_tool_use</code> hook runs after every matching tool call — a hook that takes 30 seconds turns every write into a 30-second round. <code>cargo check</code> is a good hook; <code>cargo test</code> usually is not.
 </Aside>
 
-## Where hooks fit in the engine
+## Where hooks live in the engine
 
-The hook system lives in `kod-core` alongside the session log, and hook invocations are part of the recorded session — so a run with hooks active is fully replayable, hooks included, via [kod replay](/guides/sessions/#replay-sessions-as-regression-checks).
+The hook system lives in `kod-core` alongside the session log. Hook commands run in your session's shell with your privileges; their output is not injected into the model's prompt — if you want the model to *see* the result of a check, that is precisely what `tools.auto_check` and the `check` tool are for (see [Tools](/guides/tools/#write-follow-ups-lsp-and-check)).
 
 <LinkCard title="Guides: Tools" href="/guides/tools/" description="The tool families hooks attach to." />
