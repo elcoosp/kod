@@ -311,7 +311,7 @@ async fn test_config_file_usage() {
     assert_eq!(config.llm.default_endpoint().model, "test-model");
     assert_eq!(
         config.llm.default_endpoint().provider,
-        kod_config::llm::ProviderType::OpenAICompatible
+        kod_config::llm::ProviderKind::OpenAICompatible
     );
 }
 
