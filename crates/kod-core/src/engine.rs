@@ -923,6 +923,15 @@ pub struct KodEngine {
     /// Absent for the default session — that key falls through to
     /// `self.working_dir`, which is the pre-D4 behaviour.
     transcript_working_dirs: RwLock<HashMap<String, PathBuf>>,
+    /// Per-transcript write set (D4.2). The swarm runner registers
+    /// each agent's `expected_writes` under the agent's transcript
+    /// key before the agent starts. The engine applies the globs to
+    /// the `ToolContext` of every tool call that transcript makes,
+    /// so a write outside the declared set is refused at the call
+    /// boundary. An entry that was never set (the default session,
+    /// a non-swarm run) behaves as if the globs were `None` — no
+    /// restriction beyond the existing permission gate.
+    transcript_write_globs: RwLock<HashMap<String, Option<Vec<String>>>>,
     /// Total chars of history rendered into a prompt. Defaults to
     /// [`DEFAULT_HISTORY_CHAR_BUDGET`]; the TUI and CLI set this from
     /// `LlmConfig::context_window` at startup so a 128k model actually
@@ -1209,6 +1218,7 @@ impl KodEngine {
             cancels: RwLock::new(std::collections::HashSet::new()),
             history: RwLock::new(HashMap::new()),
             transcript_working_dirs: RwLock::new(HashMap::new()),
+            transcript_write_globs: RwLock::new(HashMap::new()),
             history_budget: std::sync::atomic::AtomicUsize::new(
                 DEFAULT_HISTORY_CHAR_BUDGET,
             ),
@@ -1720,6 +1730,22 @@ impl KodEngine {
         self.current_model.read().await.clone()
     }
 
+    /// The USD pricing the registry associates with `model_ref`'s
+    /// endpoint, if the endpoint carries a `[pricing]` block.
+    ///
+    /// Public so the CLI's `kod models` (and any future cost-report
+    /// surface) can read the same number the engine uses when it
+    /// populates `TaskResponse::pricing`.
+    pub async fn pricing_for(
+        &self,
+        model_ref: &ModelRef,
+    ) -> Option<kod_provider::ModelPricing> {
+        let reg = self.registry.read().await;
+        reg.as_ref()
+            .and_then(|r| r.capabilities(&model_ref.endpoint))
+            .and_then(|c| c.pricing)
+    }
+
     /// Compute the allocation for a prompt of `input.len()` chars
     /// against the configured endpoint's window. Reads the config
     /// each time; cheap (one file read at most) and correct after a
@@ -1810,6 +1836,40 @@ impl KodEngine {
         match self.registry.read().await.as_ref() {
             Some(registry) => registry.resolve(model_ref),
             None => Err(Self::no_provider_error()),
+        }
+    }
+
+    /// Append a `SessionEntry::Cost` for one provider call, when a
+    /// recorder is installed and the endpoint reported pricing.
+    /// Best-effort: a write failure logs and the run continues.
+    async fn record_cost(
+        &self,
+        holder: &str,
+        model_ref: &ModelRef,
+        usage: &kod_provider::TokenUsage,
+        pricing: kod_provider::ModelPricing,
+    ) {
+        if let Ok(guard) = self.session_recorder.read()
+            && let Some(rec) = guard.as_ref()
+        {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let cost = pricing
+                .cost_usd(usage.prompt_tokens, usage.completion_tokens);
+            let entry = crate::session_log::SessionEntry::Cost {
+                timestamp_ms: now_ms,
+                holder: holder.to_string(),
+                endpoint: model_ref.endpoint.clone(),
+                model: model_ref.model.clone(),
+                prompt_tokens: usage.prompt_tokens,
+                completion_tokens: usage.completion_tokens,
+                cost_usd: cost,
+            };
+            if let Err(e) = rec.record(&entry) {
+                tracing::warn!(error = %e, "could not append Cost to session log");
+            }
         }
     }
 
@@ -2196,6 +2256,7 @@ impl KodEngine {
             // tool-only-reply summary below calls through the same
             // endpoint the model response came from.
             let mut winning_provider: Option<Arc<dyn LlmProvider>> = None;
+            let mut winning_model: Option<ModelRef> = None;
             for (i, model_ref) in chain.iter().enumerate() {
                 let this_provider = match self
                     .resolve_provider_for_model_ref(model_ref)
@@ -2229,6 +2290,7 @@ impl KodEngine {
                         // needs the same mutation (the tool-result block).
                         outcome = Some(v);
                         winning_provider = Some(this_provider);
+                        winning_model = Some(model_ref.clone());
                         // We deliberately discard `attempt_pending` here;
                         // the summary path reuses the *original* `convo`.
                         // In practice the summary is short and the model
@@ -2257,6 +2319,23 @@ impl KodEngine {
             }
             let (final_text, tool_calls, tool_results, usage) = outcome
                 .ok_or_else(|| last_err.unwrap_or_else(Self::no_provider_error))?;
+            // The winning endpoint's configured pricing. `None` for
+            // a local endpoint (no cost), a remote endpoint without
+            // a `[pricing]` block, or a response that never reached
+            // the provider.
+            let pricing = match &winning_model {
+                Some(m) => self.pricing_for(m).await,
+                None => None,
+            };
+            // Persist the cost line for this call, when we know the
+            // pricing. One line per call, not per session — a session
+            // log read later can reconstruct the total by summing,
+            // and a per-turn figure is what a debug pass needs.
+            if let (Some(m), Some(p), Some(u)) =
+                (winning_model.as_ref(), pricing, usage.as_ref())
+            {
+                self.record_cost(key, m, u, p).await;
+            }
             // Model only called tools and never wrote back: ask for a summary.
             let final_text = if final_text.trim().is_empty() && !tool_calls.is_empty() {
                 let mut summary_prompt = convo.clone();
@@ -2298,6 +2377,7 @@ impl KodEngine {
                 memory_used: response.memory_used,
                 execution_time_ms: response.execution_time_ms,
                 usage,
+                pricing,
                 memory_context: response.memory_context,
             });
         }
@@ -2392,6 +2472,7 @@ impl KodEngine {
                 Option<kod_provider::TokenUsage>,
             )> = None;
             let mut winning_provider: Option<Arc<dyn LlmProvider>> = None;
+            let mut winning_model: Option<ModelRef> = None;
             for (i, model_ref) in chain.iter().enumerate() {
                 let this_provider = match self
                     .resolve_provider_for_model_ref(model_ref)
@@ -2423,6 +2504,7 @@ impl KodEngine {
                     Ok(v) => {
                         outcome = Some(v);
                         winning_provider = Some(this_provider);
+                        winning_model = Some(model_ref.clone());
                         break;
                     }
                     Err(e) if e.is_retryable() && i + 1 < chain.len() => {
@@ -2443,6 +2525,23 @@ impl KodEngine {
             }
             let (final_text, tool_calls, tool_results, usage) = outcome
                 .ok_or_else(|| last_err.unwrap_or_else(Self::no_provider_error))?;
+            // The winning endpoint's configured pricing. `None` for
+            // a local endpoint (no cost), a remote endpoint without
+            // a `[pricing]` block, or a response that never reached
+            // the provider.
+            let pricing = match &winning_model {
+                Some(m) => self.pricing_for(m).await,
+                None => None,
+            };
+            // Persist the cost line for this call, when we know the
+            // pricing. One line per call, not per session — a session
+            // log read later can reconstruct the total by summing,
+            // and a per-turn figure is what a debug pass needs.
+            if let (Some(m), Some(p), Some(u)) =
+                (winning_model.as_ref(), pricing, usage.as_ref())
+            {
+                self.record_cost(key, m, u, p).await;
+            }
             let final_text = if final_text.trim().is_empty() && !tool_calls.is_empty() {
                 let mut summary_prompt = pending.clone();
                 summary_prompt.push_str(
@@ -2487,6 +2586,7 @@ impl KodEngine {
                 memory_used: response.memory_used,
                 execution_time_ms: response.execution_time_ms,
                 usage,
+                pricing,
                 memory_context: response.memory_context,
             });
         }
@@ -2677,6 +2777,12 @@ impl KodEngine {
                 memory_used: response.memory_used,
                 execution_time_ms: response.execution_time_ms,
                 usage: last_usage,
+                // Goal-loop turns share one fallback chain; the
+                // pricing that would report accurately is per-turn,
+                // and the TUI's cost display uses the streaming
+                // path, not the goal path. Left `None` rather than
+                // guessed.
+                pricing: None,
                 memory_context: response.memory_context,
             });
         }
@@ -3000,6 +3106,13 @@ impl KodEngine {
             .with_sandbox(self.sandbox_setting());
         if per_transcript_wd != self.working_dir {
             tool_context.working_dir = per_transcript_wd;
+        }
+        // Per-transcript write set (D4.2). A swarm agent that
+        // declared `src/parser/**` gets that restriction applied to
+        // every tool call it makes, in this round and the next,
+        // until the runner clears it.
+        if let Some(globs) = self.write_globs_for(effective_holder).await {
+            tool_context.allowed_write_globs = Some(globs);
         }
         // The engine-level network flag overrides whatever the
         // construction-time context held. This is what makes
@@ -3479,7 +3592,7 @@ impl KodEngine {
                     }
                     Err(e) => serde_json::json!({ "error": e.to_string() }),
                 };
-                let entry = crate::session_log::SessionEntry::ToolCall { id: None,
+                let entry = crate::session_log::SessionEntry::ToolCall {
                     timestamp_ms: now_ms,
                     holder: effective_holder.to_string(),
                     tool_name: call.tool_name.clone(),
@@ -4296,6 +4409,47 @@ impl KodEngine {
     /// removed.
     pub async fn clear_transcript_working_dir(&self, key: &str) {
         self.transcript_working_dirs.write().await.remove(key);
+    }
+
+    /// Register a per-transcript write set (D4.2). `Some(globs)`
+    /// restricts the transcript's tool calls to paths matching at
+    /// least one glob; `None` removes the restriction (the default
+    /// for every transcript). Called by the swarm runner before
+    /// each agent starts.
+    pub async fn set_transcript_write_globs(
+        &self,
+        key: &str,
+        globs: Option<Vec<String>>,
+    ) {
+        let mut guard = self.transcript_write_globs.write().await;
+        match globs {
+            Some(g) if !g.is_empty() => {
+                guard.insert(key.to_string(), Some(g));
+            }
+            // An empty `Some(vec![])` and a `None` mean the same
+            // thing: no claim in force. Normalising here means the
+            // tool-context builder has one case to check, not two.
+            _ => {
+                guard.remove(key);
+            }
+        }
+    }
+
+    /// The write set that applies to a transcript's tool calls.
+    /// `None` when no claim is in force.
+    pub async fn write_globs_for(&self, key: &str) -> Option<Vec<String>> {
+        self.transcript_write_globs
+            .read()
+            .await
+            .get(key)
+            .cloned()
+            .flatten()
+    }
+
+    /// Clear the per-transcript write set for `key`. Called by the
+    /// swarm runner after each agent finishes.
+    pub async fn clear_transcript_write_globs(&self, key: &str) {
+        self.transcript_write_globs.write().await.remove(key);
     }
 
 
