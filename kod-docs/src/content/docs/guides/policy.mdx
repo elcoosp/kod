@@ -12,7 +12,7 @@ A `Policy` says what the agent is allowed to do, project by project. It is read 
 ## Four layers, later overriding earlier
 
 1. **Preset** — `read-only`, `standard`, or `yolo`. The default preset is `standard`.
-2. **Global config** — the `[tools]` section of `~/.config/kod/config.toml`. Today this carries `confirm_writes`, which maps to `standard` (true) or `yolo` (false) for backward compatibility.
+2. **Global config** — the `[tools]` and `[llm]` sections of your `config.toml` (network access defaults).
 3. **Project policy** — `.kod/policy.toml`, committed to the repo like an `.editorconfig`.
 4. **CLI override** — `--preset yolo` on the command line.
 
@@ -26,7 +26,13 @@ Within a layer, `[tools.<name>]` entries give a per-tool decision (`allow` / `de
 | `standard` *(default)* | allowed | **require approval** | everyday interactive work |
 | `yolo` | allowed | **allowed without prompting** | trusted throwaway sandboxes |
 
-`standard` matches the historical behaviour of `tools.confirm_writes = true`: writes and shell commands pause for an approval dialog (TUI: `y`/`n`/Esc) or a stdin prompt (CLI). `read-only` is the right default for any unattended script — a script cannot answer an approval prompt, so asking would be a lie. `yolo` is the pre-PolicyEngine behaviour of `confirm_writes = false`, kept under an honest name.
+`standard` asks before writes and shell commands: an approval dialog in the TUI (`y`/`n`/Esc), a stdin prompt in `kod chat`. An unanswered approval times out after **120 seconds and defaults to deny** — a dialog nobody walks up to must not hang the tool loop forever.
+
+`read-only` is the right default for any unattended script — a script cannot answer an approval prompt, so asking would be a lie. `yolo` exists for trusted throwaway sandboxes where the prompts cost more than they protect.
+
+<Aside type="caution">
+  <code>kod agent</code> and <code>kod prompt</code> have no interactive consumer: under <code>standard</code>, calls that need approval are refused immediately with a message the model and you can act on, rather than blocking. Design unattended runs around <code>--preset read-only</code> or an explicit project policy.
+</Aside>
 
 ## Writing a `.kod/policy.toml`
 
@@ -67,9 +73,26 @@ Field reference:
 
 Path globs follow gitignore intuition, implemented with `globset` and `literal_separator(true)`: `*` does not cross `/`, `**` does. A pattern is tried three ways — verbatim (for absolute patterns), relative to the working directory (the usual project-relative form like `src/**`), and, unless the pattern is anchored, prefixed with `**/` so `src/**` also matches files under nested directories the way a shell glob would.
 
-<Aside type="caution">
-  Command allowlists are a footgun if treated as security. `binaries = ["bash"]` allows bash to run anything. They are ergonomics for steering the agent; the actual containment comes from [Sandboxing](/guides/sandboxing/).
-</Aside>
+## Asking "why was it denied?" without a session
+
+`kod policy show` prints the effective policy — the preset in force, every per-tool override, and which layer set each rule. `kod policy explain` answers the sharper question, *what would the engine decide for this exact call?*:
+
+<Tabs>
+<TabItem label="Show the policy">
+  ```bash
+  kod policy show
+  ```
+</TabItem>
+<TabItem label="Explain one call">
+  ```bash
+  kod policy explain write_file path=src/main.rs
+  kod policy explain execute_command command="cargo test"
+  kod policy explain web_fetch url=https://docs.rs/
+  ```
+</TabItem>
+</Tabs>
+
+The verdict matches what a session would do: the project policy layer is loaded from the current directory, session-scoped deny rules (added at runtime, e.g. by a swarm) are not present in a fresh CLI process, and a `--preset` CLI override is *not* applied — the inspection shows the config's answer, not a hypothetical.
 
 ## Every decision is logged
 
