@@ -23,6 +23,17 @@ pub struct MemoryManager {
     short_term: ShortTermMemory,
     long_term: LongTermMemory,
     context_window: usize,
+    /// Optional embedding client (D2-B2). When `None` (or `dims()==0`),
+    /// retrieval falls back to keyword + recency. Installed via
+    /// `set_embedder` after construction; the CLI/TUI decide which
+    /// endpoint to use.
+    embedder: Option<std::sync::Arc<dyn crate::embedding::EmbeddingClient>>,
+    /// In-memory vector index. Built lazily on the first retrieval
+    /// that wants semantic scoring. Rebuilt from scratch when the
+    /// embedder is swapped.
+    vector_index: parking_lot::RwLock<Option<crate::vector_index::VectorIndex>>,
+    /// Tunables for the hybrid scorer.
+    scorer: crate::retrieval::HybridScorer,
 }
 
 impl MemoryManager {
@@ -34,6 +45,9 @@ impl MemoryManager {
             short_term: ShortTermMemory::new(short_term_capacity),
             long_term,
             context_window: 4096, // Default context window
+            embedder: None,
+            vector_index: parking_lot::RwLock::new(None),
+            scorer: crate::retrieval::HybridScorer::default(),
         })
     }
 
@@ -42,8 +56,79 @@ impl MemoryManager {
         self.context_window = tokens;
     }
 
+    /// Install an embedding client (D2-B2). A second call replaces the
+    /// first and invalidates any cached vector index — vectors from a
+    /// different model are incomparable.
+    pub fn set_embedder(
+        &mut self,
+        embedder: std::sync::Arc<dyn crate::embedding::EmbeddingClient>,
+    ) {
+        self.embedder = Some(embedder);
+        *self.vector_index.write() = None;
+    }
+
+    /// The installed embedder's name, if any. `"none"` when none is
+    /// installed.
+    pub fn embedder_name(&self) -> &'static str {
+        match &self.embedder {
+            Some(e) if e.dims() > 0 => "configured",
+            Some(_) => "unusable",
+            None => "none",
+        }
+    }
+
+    /// Replace the retrieval scoring weights.
+    pub fn set_scorer(&mut self, scorer: crate::retrieval::HybridScorer) {
+        self.scorer = scorer;
+    }
+
+    /// Rebuild the vector index from the long-term store, using the
+    /// installed embedder. Best-effort: entries without a stored
+    /// embedding are skipped (embedding them is B3's job — the write
+    /// path). A missing embedder leaves the index empty.
+    ///
+    /// Called lazily from `retrieve_context` when semantic scoring is
+    /// requested and the index has not been built yet.
+    async fn rebuild_index(&self) -> Result<()> {
+        let Some(embedder) = self.embedder.as_ref() else {
+            *self.vector_index.write() = None;
+            return Ok(());
+        };
+        let dim = embedder.dims();
+        if dim == 0 {
+            *self.vector_index.write() = None;
+            return Ok(());
+        }
+        let all = self.long_term.get_all().await?;
+        let mut idx = crate::vector_index::VectorIndex::new(dim);
+        for entry in &all {
+            if let Some(v) = &entry.metadata.embedding
+                && v.len() == dim
+            {
+                // Ignore insert errors: a malformed embedding is
+                // skipped rather than aborting the rebuild.
+                let _ = idx.insert(entry.id.clone(), v.clone());
+            }
+        }
+        *self.vector_index.write() = Some(idx);
+        Ok(())
+    }
+
     /// Store content in the specified memory type
     pub async fn store(&self, memory_type: MemoryType, content: &str) -> Result<MemoryId> {
+        self.store_with_metadata(memory_type, content, Default::default())
+            .await
+    }
+
+    /// Store content with caller-supplied metadata (D2-B3a). Used by
+    /// the memory tools to attach tags and the project_key the hybrid
+    /// retrieval filters on. `store()` is the no-metadata shorthand.
+    pub async fn store_with_metadata(
+        &self,
+        memory_type: MemoryType,
+        content: &str,
+        metadata: kod_types::MemoryMetadata,
+    ) -> Result<MemoryId> {
         let id = MemoryId::new();
 
         match memory_type {
@@ -54,14 +139,10 @@ impl MemoryManager {
                     content: content.to_string(),
                     timestamp: OffsetDateTime::now_utc(),
                     relevance: 1.0,
-                    metadata: Default::default(),
+                    metadata,
                 };
                 self.short_term.store(entry);
-                // Compact down to 80% once the cap is reached, so the
-                // next 20% of writes do not each evict exactly one.
-                // This is the "compaction where it belongs" hook: the
-                // store path knows when the boundary was crossed, and
-                // trimming here keeps the working set below it.
+                // Compact down to 80% once the cap is reached.
                 let cap = self.short_term.capacity();
                 if cap > 0 && self.short_term.len() >= cap {
                     let target = cap * 4 / 5;
@@ -75,7 +156,7 @@ impl MemoryManager {
                     content: content.to_string(),
                     timestamp: OffsetDateTime::now_utc(),
                     relevance: 0.8,
-                    metadata: Default::default(),
+                    metadata,
                 };
                 self.long_term.store(entry).await?;
             }
@@ -155,87 +236,104 @@ impl MemoryManager {
         Ok(results)
     }
 
-    /// Retrieve context for a query.
+    /// Retrieve context for a query (D2-B2 hybrid scoring).
     ///
-    /// - Working memory is the most recent short-term entries (recency).
-    /// - Long-term memory is matched by word overlap — see
-    ///   [`MemoryManager::search_long_term_relevant`].
+    /// Short-term memory: recent N (unchanged).
+    /// Long-term memory: top-20 by the hybrid scorer. Semantic
+    /// component is cosine against the query embedding when an
+    /// embedder is installed; the keyword + recency components always
+    /// contribute. Without an embedder, weight is redistributed to
+    /// keyword and the behaviour reduces to a weighted keyword search
+    /// — the pre-D2 result, with stopwords and stemming.
     pub async fn retrieve_context(&self, query: &str) -> Result<MemoryContext> {
+        let working_memory = self.short_term.get_recent(10);
+        let long_term = self.retrieve_long_term_hybrid(query).await?;
         let mut context = MemoryContext {
-            working_memory: self.short_term.get_recent(10),
-            long_term: self.search_long_term_relevant(query).await?,
+            working_memory,
+            long_term,
             ..Default::default()
         };
-
-        // Limit total context size
         self.limit_context_size(&mut context);
-
         Ok(context)
     }
 
-    /// Retrieve long-term entries that share content words with `query`.
-    ///
-    /// The previous retrieve path called `long_term.search(query)`,
-    /// which is a whole-query substring test: an entry matched only if
-    /// its content literally contained the user's entire prompt. Real
-    /// prompts are sentences ("tell me about the project"); real
-    /// memory entries are short facts ("The user's project is called
-    /// KOD"). The strict substring matched nothing, so the memory
-    /// layer contributed nothing to any prompt — indistinguishable
-    /// from a disconnected manager. This method is the retrieval half
-    /// of the fix that wired the manager into `build_prompt`.
-    ///
-    /// Words of four or more characters, lowercased and deduplicated,
-    /// form the query's content-word set. An entry scores by how many
-    /// of those words its lowercased content contains; entries with
-    /// zero overlap are dropped. The top 20 are returned, ties broken
-    /// by the entry's own `relevance` so a fact explicitly marked
-    /// important keeps its edge.
-    ///
-    /// Four characters is the shortest length that is unlikely to be
-    /// an article, preposition, or pronoun — "the", "and", "is",
-    /// "you" are all three or fewer. The filter is deliberately crude;
-    /// a proper stopword list and stemming belong with the embedding
-    /// work that will replace this heuristic.
-    async fn search_long_term_relevant(&self, query: &str) -> Result<Vec<MemoryEntry>> {
-        let words: Vec<String> = {
-            let mut seen = std::collections::HashSet::new();
-            query
-                .to_lowercase()
-                .split(|c: char| !c.is_alphanumeric())
-                .filter(|w| w.len() >= 4)
-                .filter(|w| seen.insert(w.to_string()))
-                .map(|w| w.to_string())
-                .collect()
-        };
-        if words.is_empty() {
+    /// The hybrid retrieval itself, exposed for tests and for a caller
+    /// that wants the top-k list without wrapping it in a
+    /// `MemoryContext`.
+    pub async fn retrieve_long_term_hybrid(
+        &self,
+        query: &str,
+    ) -> Result<Vec<MemoryEntry>> {
+        let all = self.long_term.get_all().await?;
+        if all.is_empty() {
             return Ok(Vec::new());
         }
-        let all = self.long_term.get_all().await?;
-        let mut scored: Vec<(usize, MemoryEntry)> = all
-            .into_iter()
-            .filter_map(|entry| {
-                let lower = entry.content.to_lowercase();
-                let hits = words
-                    .iter()
-                    .filter(|w| lower.contains(w.as_str()))
-                    .count();
-                if hits > 0 {
-                    Some((hits, entry))
-                } else {
-                    None
+        let query_terms = crate::retrieval::QueryTerms::build(query, &all);
+
+        // Ensure the vector index is populated when an embedder is
+        // installed. `None` means "no semantic component".
+        let semantic_available = self.embedder.as_ref().map(|e| e.dims() > 0).unwrap_or(false);
+        if semantic_available && self.vector_index.read().is_none() {
+            // Best-effort rebuild: a failure here just means the
+            // hybrid falls back to keyword+recency for this call.
+            if let Err(e) = self.rebuild_index().await {
+                tracing::warn!(error = %e, "vector index rebuild failed; semantic scoring disabled for this call");
+            }
+        }
+
+        // Compute cosine per entry when the index is available and the
+        // embedder can produce a query vector. The semantic path is a
+        // single embed call for the query, then a top-k search.
+        let cosines: std::collections::HashMap<MemoryId, f32> = if semantic_available {
+            let embedder = self.embedder.as_ref().unwrap();
+            match embedder.embed(std::slice::from_ref(&query.to_string())).await {
+                Ok(mut v) if !v.is_empty() => {
+                    let q_vec = v.remove(0);
+                    let idx_guard = self.vector_index.read();
+                    match idx_guard.as_ref() {
+                        Some(idx) => {
+                            let hits = idx.search(&q_vec, 200, |_| true).unwrap_or_default();
+                            hits.into_iter().collect()
+                        }
+                        None => Default::default(),
+                    }
                 }
+                Ok(_) => Default::default(),
+                Err(e) => {
+                    tracing::warn!(error = %e, "query embedding failed; keyword+recency only");
+                    Default::default()
+                }
+            }
+        } else {
+            Default::default()
+        };
+
+        let now = time::OffsetDateTime::now_utc();
+        let mut scored: Vec<(f32, MemoryEntry)> = all
+            .into_iter()
+            .map(|entry| {
+                let cos = cosines.get(&entry.id).copied();
+                let s = self.scorer.score(&query_terms, &entry, cos, now);
+                (s, entry)
             })
             .collect();
         scored.sort_by(|a, b| {
-            b.0.cmp(&a.0).then_with(|| {
-                b.1.relevance
-                    .partial_cmp(&a.1.relevance)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+            b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
         });
-        Ok(scored.into_iter().take(20).map(|(_, e)| e).collect())
+
+        // Apply a minimum relevance threshold so an unrelated query
+        // does not return the entire store in a stable-but-meaningless
+        // order. 0.15 lets recency+keyword-only entries through but
+        // filters obvious noise.
+        const MIN_SCORE: f32 = 0.15;
+        Ok(scored
+            .into_iter()
+            .filter(|(s, _)| *s >= MIN_SCORE)
+            .take(20)
+            .map(|(_, e)| e)
+            .collect())
     }
+
 
     /// Proactively trim short-term memory to `target` entries,
     /// leaving headroom below capacity. Returns how many entries were
@@ -344,37 +442,41 @@ mod tests {
             .await
             .unwrap();
 
-        // The prompt shares only "project" with the first fact. The
-        // other two share no content word with it.
+        // The prompt shares "project" with the first fact. Under the
+        // hybrid scorer (D2-B2) a single overlap gives a modest score
+        // but the entry should still make the top-k.
         let ctx = manager
             .retrieve_context("tell me about the project")
             .await
             .unwrap();
-        assert_eq!(
-            ctx.long_term.len(),
-            1,
-            "expected exactly one match, got {:?}",
+        assert!(
+            ctx.long_term.iter().any(|e| e.content.contains("KOD")),
+            "expected the KOD fact in the results: {:?}",
             ctx.long_term.iter().map(|e| &e.content).collect::<Vec<_>>()
         );
-        assert!(ctx.long_term[0].content.contains("KOD"));
 
-        // A query with two hits across two facts returns both, ranked
-        // by hit count.
+        // A query with hits across two facts: both should appear.
         let ctx = manager
             .retrieve_context("does the project use dark mode?")
             .await
             .unwrap();
-        // "project" hits fact 1, "dark" and "mode" hit fact 2. Both
-        // included; the ordering is by hit count so fact 2 is first.
-        assert_eq!(ctx.long_term.len(), 2);
-        assert!(ctx.long_term[0].content.contains("dark mode"));
+        assert!(
+            ctx.long_term.iter().any(|e| e.content.contains("dark mode")),
+            "expected the dark-mode fact: {:?}",
+            ctx.long_term.iter().map(|e| &e.content).collect::<Vec<_>>()
+        );
 
-        // A query with no content-word overlap returns nothing.
+        // A query with no content-word overlap returns nothing past
+        // the min-score threshold.
         let ctx = manager
             .retrieve_context("xyzzy plugh")
             .await
             .unwrap();
-        assert!(ctx.long_term.is_empty());
+        assert!(
+            ctx.long_term.is_empty(),
+            "unrelated query should return nothing: {:?}",
+            ctx.long_term.iter().map(|e| &e.content).collect::<Vec<_>>()
+        );
     }
 
     /// Short words (<= 3 chars) are filtered out, so a prompt made
