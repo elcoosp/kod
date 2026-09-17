@@ -4151,18 +4151,43 @@ impl KodEngine {
             return "(start of conversation)".to_string();
         }
         let budget = self.history_budget();
-        let mut out = String::new();
-        for message in turns.iter().rev() {
+
+        // First pass: find the oldest index that fits under the
+        // budget. `cutoff` is the smallest index that will be
+        // included; iterate newest-to-oldest and stop when the next
+        // turn would push the rendered size over.
+        let mut total = 0usize;
+        let mut cutoff = turns.len();
+        for i in (0..turns.len()).rev() {
             // `ChatMessage::render_text` emits "User: {content}" /
             // "Assistant: {content}" / "System: {content}" etc. —
             // byte-identical to what `HistoryTurn` used to produce
             // for user and assistant turns. The characterization test
             // in tests/characterization_history.rs locks this.
-            let line = format!("{}\n", message.render_text());
-            if out.len() + line.len() > budget {
+            let line_len = turns[i].render_text().len() + 1; // + '\n'
+            if total + line_len > budget {
                 break;
             }
-            out.insert_str(0, &line);
+            total += line_len;
+            cutoff = i;
+        }
+
+        // Second pass: walk backward past the cutoff and pull in any
+        // pinned turn. A pinned turn is never dropped — the whole
+        // point of pinning is that the user has decided this turn
+        // matters more than the budget. The scan walks to 0 so a
+        // pin at the very start survives even when the budget ran
+        // out at index 20.
+        for i in (0..cutoff).rev() {
+            if turns[i].metadata.pinned {
+                cutoff = i;
+            }
+        }
+
+        let mut out = String::new();
+        for message in &turns[cutoff..] {
+            out.push_str(&message.render_text());
+            out.push('\n');
         }
         out
     }
@@ -4227,6 +4252,36 @@ impl KodEngine {
     /// Seed a turn into the transcript identified by `key`.
     pub async fn seed_turn_for(&self, key: &str, user: bool, text: &str) {
         self.record_turn_for(key, user, text).await;
+    }
+
+    /// Pin or unpin the most-recent transcript turn whose content
+    /// matches `content` exactly. Returns `true` if a match was
+    /// found.
+    ///
+    /// Matches newest-to-oldest so a re-issued prompt pins the most
+    /// recent occurrence — the one the user just clicked.
+    ///
+    /// Keyed by content rather than index because the TUI's message
+    /// list and the engine's transcript are not the same length (the
+    /// TUI renders tool rows and system notices the engine never
+    /// saw). Content equality is the one identity both sides share.
+    pub async fn set_turn_pinned_by_content(
+        &self,
+        key: &str,
+        content: &str,
+        pinned: bool,
+    ) -> bool {
+        let mut history = self.history.write().await;
+        let Some(turns) = history.get_mut(key) else {
+            return false;
+        };
+        for t in turns.iter_mut().rev() {
+            if t.content == content {
+                t.metadata.pinned = pinned;
+                return true;
+            }
+        }
+        false
     }
 
     /// Clear the default transcript and short-term memory (`/clear`).
