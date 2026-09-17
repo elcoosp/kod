@@ -374,6 +374,13 @@ impl Cli {
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_streaming_prompt(prompt.clone(), model.clone()).await })
             }
+            Some(Command::SandboxExec { profile, cmd }) => {
+                // No tokio runtime: exec replaces the process, so
+                // any runtime state would be lost anyway. Running
+                // this before the runtime is created makes the
+                // launcher's startup path as small as possible.
+                run_sandbox_exec(profile.clone(), cmd.clone())
+            }
             Some(Command::Memory { action }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
@@ -777,6 +784,19 @@ pub enum Command {
         #[command(subcommand)]
         action: ThemeAction,
     },
+    /// Hidden subcommand: apply a Landlock sandbox to the current
+    /// process and exec the given command. Reachable only as
+    /// `kod __sandbox-exec` from the parent process that built the
+    /// profile. Not documented in `--help` on purpose.
+    #[command(hide = true, name = "__sandbox-exec")]
+    SandboxExec {
+        /// Path to the profile JSON.
+        profile: std::path::PathBuf,
+        /// The command to exec, after `--`.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        cmd: Vec<String>,
+    },
+
     /// Run a prompt and stream the reply to stdout as it is generated.
     /// Unlike `kod prompt`, prints text chunks as they arrive. `-` reads
     /// the prompt from stdin.
@@ -2482,6 +2502,78 @@ fn render_session_markdown(messages: &[kod_tui::app::Message]) -> String {
         }
     }
     out
+}
+
+/// Hidden subcommand handler: apply a Landlock sandbox and exec.
+///
+/// The launcher is spawned by `SandboxResolver::invocation` (see
+/// `kod_tools::context`), never called directly by a user. It:
+///
+/// 1. Reads the profile JSON.
+/// 2. Unlinks the profile file (so it does not linger in /tmp).
+/// 3. Applies the Landlock ruleset to itself.
+/// 4. `execvp`s the inner command. Because `exec` replaces the
+///    process image, the sandbox applies to the new image too — the
+///    restriction is inherited by every descendant.
+///
+/// On a failure at steps 1–3, the launcher exits non-zero and the
+/// parent's `ExecuteCommandTool` reports the failure. There is no
+/// fallback to running the command unsandboxed: a caller that
+/// reached `SandboxMode::Require` and got a launcher failure did
+/// so on purpose.
+pub fn run_sandbox_exec(
+    profile_path: std::path::PathBuf,
+    cmd: Vec<String>,
+) -> Result<()> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (profile_path, cmd);
+        Err(KodError::SandboxViolation(
+            "__sandbox-exec is Linux-only".to_string(),
+        ))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Defensive: clap strips the leading `--` when
+        // `trailing_var_arg` is on, but a direct invocation
+        // (`kod __sandbox-exec profile -- echo hi`) from a script
+        // could leave it in.
+        let mut cmd = cmd;
+        if cmd.first().map(|s| s.as_str()) == Some("--") {
+            cmd.remove(0);
+        }
+        if cmd.is_empty() {
+            return Err(KodError::SandboxViolation(
+                "__sandbox-exec: no command given".to_string(),
+            ));
+        }
+
+        let raw = std::fs::read_to_string(&profile_path).map_err(|e| {
+            KodError::SandboxViolation(format!(
+                "__sandbox-exec: could not read profile {}: {e}",
+                profile_path.display()
+            ))
+        })?;
+        let profile = kod_tools::sandbox::landlock::LandlockProfile::from_json(&raw)?;
+
+        // Remove the profile before exec. Best-effort: if it fails,
+        // the file lingers in /tmp — not a correctness issue.
+        let _ = std::fs::remove_file(&profile_path);
+
+        kod_tools::sandbox::landlock::apply(&profile)?;
+
+        // exec replaces this process. The command inherits the
+        // sandbox we just installed.
+        use std::os::unix::process::CommandExt;
+        let mut command = std::process::Command::new(&cmd[0]);
+        command.args(&cmd[1..]);
+        let err = command.exec();
+        // execvp only returns on failure — success never comes back.
+        Err(KodError::SandboxViolation(format!(
+            "__sandbox-exec: exec of {} failed: {err}",
+            cmd[0]
+        )))
+    }
 }
 
 /// `kod checkpoint <action>`.
