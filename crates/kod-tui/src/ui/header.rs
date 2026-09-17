@@ -67,6 +67,20 @@ impl HeaderWidget {
             Style::default().fg(theme.dim),
         ));
 
+        // Network indicator: visible whenever the effective network
+        // access is enabled. The default is off (llm.network_access =
+        // false), so this is a positive signal — a user who enabled
+        // web_fetch sees the badge and is reminded of the wider blast
+        // radius.
+        if app.network_access_enabled() {
+            spans.push(Span::styled(
+                " net:on ",
+                Style::default()
+                    .fg(theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+
         // Show the active goal text, not a fake counter. The previous
         // header rendered `◉ 0/1` whenever a goal was set — the goal
         // loop runs turns inside `process_goal_streaming` and the TUI
