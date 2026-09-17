@@ -13,14 +13,20 @@ KOD follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semant
 
 ### Added
 
-- `kod doctor` — first-run diagnostics (config, endpoint, skills, memory, git)
-- `kod init` — onboarding wizard output
+- `kod doctor` — first-run diagnostics (config, endpoint, skills, memory, sandbox, git), with `--json` for scripts and `--fix` to create what is missing
+- `kod init` — onboarding helper, `--force` to reset config from defaults
 - `kod models` — list provider models with `--filter`
-- `kod sessions` — inspect/export/clear the TUI session file
 - `kod completions <shell>` — bash/zsh/fish/elvish/powershell completion
-- `kod checkpoint list|restore|clear` — file-level undo for `write_file` / `patch_file`; snapshots taken before every mutating call
+- `kod checkpoint list|diff|restore|clear` — file-level undo for `write_file` / `patch_file`; snapshots taken before every mutating call
 - `kod update` — check GitHub for a newer release (read-only)
-- `kod skills --json` and `kod skills-validate` — machine-readable skill inventory and CI-friendly validation
+- `kod skills --json` plus `kod validate-skills` / `kod validate-skills-strict` — machine-readable skill inventory and CI-friendly validation
+- `kod sessions show|export|import|latest|count|clear` — inspect, export (Markdown/JSON), and restore the saved session
+- `kod memory list|search|delete|export|import|clear` — manage the long-term store from the CLI
+- `kod policy show|explain` and `kod tools list|show` — inspect the effective policy and the tool registry
+- `kod sandbox check` — verify the platform sandbox primitive before an unattended run
+- `kod prompt` and `kod run` — one-shot prompts for scripts (clean stdout, stdin via `-`, streaming with `run`)
+- `kod serve` / `kod prompt --remote` — a long-lived engine daemon on a Unix socket
+- `kod theme list|show` — inspect the built-in TUI themes
 - `web_fetch` tool — HTTP/HTTPS fetch with SSRF protection (loopback / private / link-local / metadata endpoints refused)
 - `git_status` and `git_diff` tools — read-only git inspection
 - `tools.confirm_writes` — opt-in write approval; TUI dialog and CLI stdin prompt
