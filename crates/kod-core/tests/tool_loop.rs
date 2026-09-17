@@ -46,7 +46,7 @@ impl LlmProvider for ScriptedProvider {
         *rounds += 1;
         if *rounds == 1 {
             Ok(GenerationResponse::ToolCalls {
-                calls: vec![ToolCall {
+                calls: vec![ToolCall { id: None,
                     tool_name: "list_files".to_string(),
                     arguments: serde_json::json!({"path": "."}),
                 }],
@@ -74,7 +74,7 @@ async fn test_engine_tool_loop_lists_working_dir() {
     let temp_dir = TempDir::new().unwrap();
     std::fs::write(temp_dir.path().join("marker.txt"), "x").unwrap();
 
-    let config = RouterConfig {
+    let config = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
@@ -106,7 +106,7 @@ async fn test_process_streaming_delivers_chunks_and_tool_marker() {
     let temp_dir = TempDir::new().unwrap();
     std::fs::write(temp_dir.path().join("marker.txt"), "x").unwrap();
 
-    let config = RouterConfig {
+    let config = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
@@ -214,7 +214,7 @@ impl LlmProvider for CapturingProvider {
         *rounds += 1;
         if *rounds == 1 {
             Ok(GenerationResponse::ToolCalls {
-                calls: vec![ToolCall {
+                calls: vec![ToolCall { id: None,
                     tool_name: "list_files".to_string(),
                     arguments: serde_json::json!({"path": "."}),
                 }],
@@ -240,7 +240,7 @@ impl LlmProvider for CapturingProvider {
 #[tokio::test]
 async fn test_steer_note_reaches_next_round() {
     let temp_dir = TempDir::new().unwrap();
-    let config = RouterConfig {
+    let config = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
@@ -286,7 +286,7 @@ async fn test_steer_note_reaches_next_round() {
 #[tokio::test]
 async fn test_cancel_stops_process() {
     let temp_dir = TempDir::new().unwrap();
-    let config = RouterConfig {
+    let config = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
@@ -342,7 +342,7 @@ impl LlmProvider for GoalProvider {
         *rounds += 1;
         if *rounds == 1 {
             Ok(GenerationResponse::ToolCalls {
-                calls: vec![ToolCall {
+                calls: vec![ToolCall { id: None,
                     tool_name: "list_files".to_string(),
                     arguments: serde_json::json!({"path": "."}),
                 }],
@@ -370,7 +370,7 @@ async fn test_goal_loop_stops_at_goal_met() {
     use kod_core::engine::parse_tool_start;
 
     let temp_dir = TempDir::new().unwrap();
-    let config = RouterConfig {
+    let config = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
@@ -419,7 +419,7 @@ async fn test_skill_details_lists_descriptions() {
     )
     .unwrap();
 
-    let config = RouterConfig {
+    let config = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
@@ -442,7 +442,7 @@ async fn test_second_turn_sees_first_turn_history() {
     // model opened with "this is a fresh conversation" mid-session (or right
     // after a compact). The second prompt must contain turn one's text.
     let temp_dir = TempDir::new().unwrap();
-    let config = RouterConfig {
+    let config = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()

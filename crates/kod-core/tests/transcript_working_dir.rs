@@ -76,7 +76,7 @@ impl LlmProvider for ScriptedProvider {
 fn engine_in(dir: &std::path::Path) -> KodEngine {
     std::fs::write(dir.join("main.rs"), "pub fn main() {}\n").unwrap();
     let db_path = dir.join("test.redb");
-    let cfg = RouterConfig {
+    let cfg = RouterConfig { skill_threshold: 0.3,
         working_dir: dir.to_path_buf(),
         enable_memory: false,
         max_skills_per_query: 3,
@@ -95,7 +95,7 @@ async fn transcript_with_override_writes_under_the_override() {
     std::fs::create_dir_all(&worktree).unwrap();
 
     let engine = engine_in(&engine_root);
-    let provider = Arc::new(ScriptedProvider::new(vec![vec![ToolCall {
+    let provider = Arc::new(ScriptedProvider::new(vec![vec![ToolCall { id: None,
         tool_name: "write_file".to_string(),
         arguments: serde_json::json!({
             "path": "out.txt",
@@ -130,7 +130,7 @@ async fn transcript_with_override_writes_under_the_override() {
 async fn default_transcript_still_uses_engine_root() {
     let tmp = TempDir::new().unwrap();
     let engine = engine_in(tmp.path());
-    let provider = Arc::new(ScriptedProvider::new(vec![vec![ToolCall {
+    let provider = Arc::new(ScriptedProvider::new(vec![vec![ToolCall { id: None,
         tool_name: "write_file".to_string(),
         arguments: serde_json::json!({
             "path": "out.txt",
@@ -155,14 +155,14 @@ async fn clearing_override_reverts_to_engine_root() {
 
     let engine = engine_in(&engine_root);
     let provider = Arc::new(ScriptedProvider::new(vec![
-        vec![ToolCall {
+        vec![ToolCall { id: None,
             tool_name: "write_file".to_string(),
             arguments: serde_json::json!({
                 "path": "first.txt",
                 "content": "in worktree\n",
             }),
         }],
-        vec![ToolCall {
+        vec![ToolCall { id: None,
             tool_name: "write_file".to_string(),
             arguments: serde_json::json!({
                 "path": "second.txt",

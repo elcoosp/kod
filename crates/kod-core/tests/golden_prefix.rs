@@ -48,7 +48,7 @@ fn make_router() -> (TempDir, TaskRouter) {
 
     let db_path = tmp.path().join("test.redb");
     let router = TaskRouter::new(
-        RouterConfig {
+        RouterConfig { skill_threshold: 0.3,
             working_dir: tmp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -244,7 +244,7 @@ async fn repo_map_is_deterministic_across_routers() {
     let make = |name: &str| {
         let db = tmp.path().join(name);
         TaskRouter::new(
-            RouterConfig {
+            RouterConfig { skill_threshold: 0.3,
                 working_dir: tmp.path().to_path_buf(),
                 enable_memory: false,
                 max_skills_per_query: 3,
