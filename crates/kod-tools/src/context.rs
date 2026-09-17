@@ -485,6 +485,19 @@ pub struct ToolContext {
     /// `PolicyEngine` is installed. Subdomain matching: `docs.rs`
     /// accepts `docs.rs` and `*.docs.rs`.
     pub allowed_domains: Vec<String>,
+
+    /// Per-transcript write set declared by the swarm runner (D4.2).
+    /// `None` means "no claim is in force" — the permission bitmask
+    /// and policy engine are the only gates. `Some(globs)` restricts
+    /// writes to paths matching at least one glob: a write outside
+    /// the set is refused with a message the model can act on
+    /// (`use swarm_note to request it`).
+    ///
+    /// The claim is enforcement, not advice. An agent that declares
+    /// `src/parser/**` and then tries to write `src/http.rs` is
+    /// stopped at the tool-call boundary; the file is not touched,
+    /// and the failure reaches the model as a `ToolResult::Error`.
+    pub allowed_write_globs: Option<Vec<String>>,
 }
 
 impl ToolContext {
@@ -499,6 +512,7 @@ impl ToolContext {
             lock_timeout: std::time::Duration::from_secs(2),
             sandbox: SandboxMode::Auto,
             allowed_domains: Vec::new(),
+            allowed_write_globs: None,
         }
     }
 
@@ -645,7 +659,20 @@ impl ToolContext {
         Ok(())
     }
 
-    /// Check if path can be written
+    /// Check if path can be written.
+    ///
+    /// Three gates, checked in order:
+    ///
+    /// 1. The permission bitmask (`write_files`).
+    /// 2. The path allow/forbid lists.
+    /// 3. The declared write set, when a swarm agent set one
+    ///    (D4.2). This is the claim check: an agent that declared
+    ///    it would only touch `src/parser/**` and then tries to
+    ///    write `src/http.rs` is stopped here, at the tool-call
+    ///    boundary, before the file is touched.
+    ///
+    /// The three gates compose: the strictest applicable one wins.
+    /// None overrides the others.
     pub fn can_write(&self, path: &Path) -> Result<()> {
         if !self.permissions.write_files {
             return Err(KodError::PermissionDenied {
@@ -658,6 +685,24 @@ impl ToolContext {
                 action: "write".to_string(),
                 reason: format!("Path not allowed: {}", path.display()),
             });
+        }
+        if let Some(globs) = &self.allowed_write_globs {
+            let matched = globs
+                .iter()
+                .any(|g| Self::matches_pattern(path, g));
+            if !matched {
+                return Err(KodError::PermissionDenied {
+                    action: "write".to_string(),
+                    reason: format!(
+                        "path is outside your declared write set: {}. \
+                         Your claim is {:?}. Use `swarm_note` to ask the \
+                         coordinator to widen the set, or find another \
+                         file that fits your subtask.",
+                        path.display(),
+                        globs,
+                    ),
+                });
+            }
         }
         Ok(())
     }
@@ -896,6 +941,58 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn write_set_blocks_paths_outside_the_claim() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+
+        let perms = ToolPermissions {
+            write_files: true,
+            ..Default::default()
+        };
+        let ctx = ToolContext::new(&root)
+            .with_permissions(perms);
+        let mut ctx = ctx;
+        ctx.allowed_write_globs = Some(vec!["src/parser.rs".to_string()]);
+
+        // Inside the claim: allowed.
+        assert!(ctx.can_write(&root.join("src/parser.rs")).is_ok());
+
+        // Outside the claim: refused with a message naming the
+        // write set, not a generic permission error.
+        let err = ctx.can_write(&root.join("src/http.rs")).unwrap_err();
+        match err {
+            KodError::PermissionDenied { reason, .. } => {
+                assert!(
+                    reason.contains("declared write set"),
+                    "got: {reason}"
+                );
+                assert!(
+                    reason.contains("swarm_note"),
+                    "message should point at the correction path: {reason}"
+                );
+            }
+            other => panic!("expected PermissionDenied, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn write_set_none_is_permissive() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+
+        let perms = ToolPermissions {
+            write_files: true,
+            ..Default::default()
+        };
+        let ctx = ToolContext::new(&root).with_permissions(perms);
+        // `allowed_write_globs` defaults to None — every path
+        // permitted by the bitmask and allow-list is writable.
+        assert!(ctx.can_write(&root.join("src/anything.rs")).is_ok());
+    }
+
     #[test]
     fn test_resolve_path_rejects_dangling_symlink() {
         let temp = tempfile::TempDir::new().unwrap();
