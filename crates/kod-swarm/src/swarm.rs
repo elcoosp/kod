@@ -195,6 +195,17 @@ impl AgentSwarm {
         self.agents.read().await.contains_key(agent_id)
     }
 
+    /// Every message a specific agent has participated in (sent,
+    /// received, or broadcast), newest-last. Thin wrapper over the
+    /// hub's `get_agent_history` so a caller does not need to hold the
+    /// hub handle to read it.
+    pub async fn agent_messages(
+        &self,
+        agent_id: &AgentId,
+    ) -> Vec<crate::communication::SwarmMessage> {
+        self.communication.get_agent_history(agent_id).await
+    }
+
     /// Get the communication hub
     pub fn communication(&self) -> &AgentCommunicationHub {
         &self.communication
@@ -343,6 +354,33 @@ mod tests {
         assert!(swarm.list_agents().await.is_empty(), "swarm should be empty");
         assert_eq!(a_handle.state(), AgentState::Stopped);
         assert_eq!(b_handle.state(), AgentState::Stopped);
+    }
+
+    /// `agent_messages` reflects the hub's history for one agent:
+    /// a lifecycle broadcast from another agent shows up with the
+    /// sender's id.
+    #[tokio::test]
+    async fn agent_messages_round_trips_lifecycle() {
+        let swarm = AgentSwarm::new(swarm_root());
+        let a = Agent::new("a").build();
+        let b = Agent::new("b").build();
+        let a_id = a.id().clone();
+        let b_id = b.id().clone();
+        swarm.add_agent(a).await.unwrap();
+        swarm.add_agent(b).await.unwrap();
+
+        // Take b's receiver so its channel is live.
+        let _rx_b = swarm.communication().get_agent_receiver(&b_id).await.unwrap();
+
+        swarm
+            .communication()
+            .broadcast_lifecycle(&a_id, "started")
+            .await
+            .unwrap();
+
+        let seen = swarm.agent_messages(&b_id).await;
+        assert_eq!(seen.len(), 1, "b should see one message");
+        assert_eq!(seen[0].from, a_id);
     }
 
     /// shutdown on an empty swarm is a no-op, not an error.
