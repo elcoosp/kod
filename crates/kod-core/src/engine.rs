@@ -2859,7 +2859,6 @@ impl KodEngine {
     }
 
     /// One streaming round: forward text live, assemble tool calls from
-    /// `ToolCallStart`/`ToolCallDelta` framing.
     async fn stream_round(
         &self,
         provider: &Arc<dyn LlmProvider>,
@@ -2869,11 +2868,18 @@ impl KodEngine {
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
     ) -> Result<(String, Vec<ToolCall>, Option<kod_provider::TokenUsage>)> {
         use futures::StreamExt;
+        use std::collections::BTreeMap;
+
+        #[derive(Default)]
+        struct Partial {
+            id: Option<String>,
+            name: Option<String>,
+            args: String,
+        }
+
         let mut stream = provider.stream_with_tools(pending, definitions, options);
         let mut text = String::new();
-        let mut calls = Vec::new();
-        let mut cur_name: Option<String> = None;
-        let mut cur_args = String::new();
+        let mut partials: BTreeMap<usize, Partial> = BTreeMap::new();
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
         while let Some(item) = stream.next().await {
             match item? {
@@ -2881,16 +2887,18 @@ impl KodEngine {
                     text.push_str(&t);
                     let _ = chunk_tx.send(t).await;
                 }
-                StreamChunk::ToolCallStart { name } => {
-                    if let Some(prev) = cur_name.take() {
-                        calls.push(finish_stream_call(prev, &cur_args));
-                        cur_args.clear();
+                StreamChunk::ToolCallStart { index, id, name } => {
+                    let entry = partials.entry(index).or_default();
+                    if entry.id.is_none() {
+                        entry.id = id;
                     }
-                    let _ = chunk_tx.send(tool_start_marker(&name)).await;
-                    cur_name = Some(name);
+                    if entry.name.is_none() {
+                        entry.name = Some(name.clone());
+                        let _ = chunk_tx.send(tool_start_marker(&name)).await;
+                    }
                 }
-                StreamChunk::ToolCallDelta { arguments } => {
-                    cur_args.push_str(&arguments);
+                StreamChunk::ToolCallDelta { index, arguments } => {
+                    partials.entry(index).or_default().args.push_str(&arguments);
                 }
                 StreamChunk::Usage(usage) => {
                     last_usage = Some(usage);
@@ -2898,8 +2906,16 @@ impl KodEngine {
                 StreamChunk::Done => break,
             }
         }
-        if let Some(prev) = cur_name.take() {
-            calls.push(finish_stream_call(prev, &cur_args));
+        let mut calls = Vec::with_capacity(partials.len());
+        for (_, p) in partials {
+            let Some(name) = p.name else { continue };
+            let arguments: serde_json::Value = serde_json::from_str(&p.args)
+                .unwrap_or_else(|_| serde_json::Value::String(p.args.clone()));
+            calls.push(ToolCall {
+                id: p.id,
+                tool_name: name,
+                arguments,
+            });
         }
         Ok((text, calls, last_usage))
     }
@@ -3463,7 +3479,7 @@ impl KodEngine {
                     }
                     Err(e) => serde_json::json!({ "error": e.to_string() }),
                 };
-                let entry = crate::session_log::SessionEntry::ToolCall {
+                let entry = crate::session_log::SessionEntry::ToolCall { id: None,
                     timestamp_ms: now_ms,
                     holder: effective_holder.to_string(),
                     tool_name: call.tool_name.clone(),
@@ -4371,16 +4387,7 @@ impl KodEngine {
 }
 
 /// Assemble one [`ToolCall`] from streamed `ToolCallStart`/`ToolCallDelta`
-/// framing. Deltas arrive as JSON text; unparseable fragments are kept as a
-/// raw string so the call still executes instead of being dropped.
-fn finish_stream_call(name: String, args: &str) -> ToolCall {
-    let arguments: serde_json::Value =
-        serde_json::from_str(args).unwrap_or(serde_json::Value::String(args.to_string()));
-    ToolCall {
-        tool_name: name,
-        arguments,
-    }
-}
+
 
 
 /// `true` if `program` is on PATH. Used by
@@ -4613,7 +4620,7 @@ mod tests {
 
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -4671,7 +4678,7 @@ mod tests {
     async fn test_process_without_provider_errors() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -4695,7 +4702,7 @@ mod tests {
     async fn test_process_streaming_without_provider_errors() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -4717,7 +4724,7 @@ mod tests {
     async fn test_process_goal_streaming_without_provider_errors() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -4745,7 +4752,7 @@ mod tests {
     async fn test_remember_turn_writes_short_term_memory() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -4784,7 +4791,7 @@ mod tests {
     async fn test_remember_turn_skips_empty_text() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -4944,7 +4951,7 @@ mod tests {
 
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -4984,7 +4991,7 @@ mod tests {
     async fn test_history_budget_clamps_and_applies() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5012,7 +5019,7 @@ mod tests {
     async fn test_render_history_drops_oldest_first() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5055,7 +5062,7 @@ mod tests {
     async fn test_record_turn_does_not_panic_mid_multibyte() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5117,7 +5124,7 @@ mod tests {
         std::fs::write(temp.path().join("beta.txt"), "").unwrap();
 
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5127,7 +5134,7 @@ mod tests {
         let engine = KodEngine::new(cfg, db_path).unwrap();
         engine.start().await.unwrap();
 
-        let calls = vec![ToolCall {
+        let calls = vec![ToolCall { id: None,
             tool_name: "list_files".to_string(),
             arguments: serde_json::json!({ "path": "." }),
         }];
@@ -5427,7 +5434,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
 
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5438,14 +5445,14 @@ mod tests {
         engine.start().await.unwrap();
 
         let calls = vec![
-            ToolCall {
+            ToolCall { id: None,
                 tool_name: "write_file".to_string(),
                 arguments: serde_json::json!({
                     "path": "serialize_probe.txt",
                     "content": "hello-serial"
                 }),
             },
-            ToolCall {
+            ToolCall { id: None,
                 tool_name: "read_file".to_string(),
                 arguments: serde_json::json!({ "path": "serialize_probe.txt" }),
             },
@@ -5481,7 +5488,7 @@ mod tests {
         std::fs::write(temp.path().join("b.txt"), "BBB").unwrap();
 
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5492,11 +5499,11 @@ mod tests {
         engine.start().await.unwrap();
 
         let calls = vec![
-            ToolCall {
+            ToolCall { id: None,
                 tool_name: "read_file".to_string(),
                 arguments: serde_json::json!({ "path": "a.txt" }),
             },
-            ToolCall {
+            ToolCall { id: None,
                 tool_name: "read_file".to_string(),
                 arguments: serde_json::json!({ "path": "b.txt" }),
             },
@@ -5525,7 +5532,7 @@ async fn test_render_history_keeps_pinned_turn() {
     use tempfile::TempDir;
     let temp = TempDir::new().unwrap();
     let db_path = temp.path().join("test.redb");
-    let cfg = RouterConfig {
+    let cfg = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         short_term_capacity: 100,
         working_dir: temp.path().to_path_buf(),
@@ -5570,7 +5577,7 @@ async fn test_render_history_drops_unpinned_turn_again() {
     use tempfile::TempDir;
     let temp = TempDir::new().unwrap();
     let db_path = temp.path().join("test.redb");
-    let cfg = RouterConfig {
+    let cfg = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         short_term_capacity: 100,
         working_dir: temp.path().to_path_buf(),
@@ -5759,7 +5766,7 @@ mod diff_attachment_tests {
         std::fs::write(tmp.path().join("greet.txt"), "hello\n").unwrap();
 
         let db_path = tmp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -5777,7 +5784,7 @@ mod diff_attachment_tests {
             return;
         }
 
-        let calls = vec![ToolCall {
+        let calls = vec![ToolCall { id: None,
             tool_name: "write_file".to_string(),
             arguments: serde_json::json!({
                 "path": "greet.txt",
@@ -5876,7 +5883,7 @@ mod auto_check_tests {
         std::fs::write(tmp.path().join("src/lib.rs"), "pub fn ok() {}\n").unwrap();
 
         let db_path = tmp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -5887,7 +5894,7 @@ mod auto_check_tests {
         engine.set_auto_check(true);
         engine.start().await.unwrap();
 
-        let calls = vec![ToolCall {
+        let calls = vec![ToolCall { id: None,
             tool_name: "write_file".to_string(),
             arguments: serde_json::json!({
                 "path": "src/lib.rs",
@@ -5930,7 +5937,7 @@ mod auto_check_tests {
         std::fs::write(tmp.path().join("src/lib.rs"), "pub fn ok() {}\n").unwrap();
 
         let db_path = tmp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -5941,7 +5948,7 @@ mod auto_check_tests {
         // Intentionally NOT calling set_auto_check(true).
         engine.start().await.unwrap();
 
-        let calls = vec![ToolCall {
+        let calls = vec![ToolCall { id: None,
             tool_name: "write_file".to_string(),
             arguments: serde_json::json!({
                 "path": "src/lib.rs",
@@ -5981,7 +5988,7 @@ mod auto_check_tests {
         .unwrap();
 
         let db_path = tmp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -5996,14 +6003,14 @@ mod auto_check_tests {
         // extra.rs introduces a type error. Only the compiler sees
         // both.
         let calls = vec![
-            ToolCall {
+            ToolCall { id: None,
                 tool_name: "write_file".to_string(),
                 arguments: serde_json::json!({
                     "path": "src/lib.rs",
                     "content": "pub mod extra;\n// harmless comment\n"
                 }),
             },
-            ToolCall {
+            ToolCall { id: None,
                 tool_name: "write_file".to_string(),
                 arguments: serde_json::json!({
                     "path": "src/extra.rs",
@@ -6040,7 +6047,7 @@ mod auto_check_tests {
         std::fs::write(tmp.path().join("src/lib.rs"), "pub fn ok() {}\n").unwrap();
 
         let db_path = tmp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -6051,7 +6058,7 @@ mod auto_check_tests {
         engine.set_auto_check(true);
         engine.start().await.unwrap();
 
-        let calls = vec![ToolCall {
+        let calls = vec![ToolCall { id: None,
             tool_name: "read_file".to_string(),
             arguments: serde_json::json!({ "path": "src/lib.rs" }),
         }];
@@ -6088,7 +6095,7 @@ mod auto_check_tests {
         std::fs::write(tmp.path().join("src/touched.rs"), "pub fn ok() {}\n").unwrap();
 
         let db_path = tmp.path().join("test.redb");
-        let cfg = RouterConfig {
+        let cfg = RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -6111,7 +6118,7 @@ mod auto_check_tests {
 
         // Now write only the clean file. The pre-existing error in
         // existing.rs must NOT be reported as new.
-        let calls = vec![ToolCall {
+        let calls = vec![ToolCall { id: None,
             tool_name: "write_file".to_string(),
             arguments: serde_json::json!({
                 "path": "src/touched.rs",
