@@ -7,7 +7,7 @@ sidebar:
 
 import { Aside, FileTree } from '@astrojs/starlight/components';
 
-A skill is a Markdown file with YAML front matter. KOD's skills crate parses the front matter, splits the body into three sections, caches the result, and matches skills against prompts — with a file watcher enabling hot reload on edit. This page is the exact contract.
+A skill is a Markdown file with YAML front matter. KOD parses the front matter, splits the body into three sections, caches the result, and matches skills against prompts — with a file watcher enabling hot reload on edit. This page is the exact contract.
 
 ## Anatomy
 
@@ -46,7 +46,7 @@ You are an expert Rust refactoring assistant...
 | --- | --- | --- |
 | `name` | yes | Kebab-case identifier; used as the file stem by `kod skills new` and rewritten by `rename`/`copy` so it never drifts from the filename. |
 | `description` | yes | One-line summary; searched by `kod skills search` and shown by `kod skills`. |
-| `version` | no | Free-form version for the skill itself. |
+| `version` | no | Free-form version for the skill itself. (`validate-skills-strict` requires it.) |
 | `category` | no | Coarse grouping (`coding`, `testing`, …). |
 | `tags` | list | Matching signals — coarser than triggers, finer than category. |
 | `capabilities` | list | What the skill enables; also a matching signal. |
@@ -75,18 +75,19 @@ Setting `skills.skills_dir` in the config replaces all four with a single custom
 
 ## Matching
 
-The matcher scores skills against the prompt using triggers, tags, capabilities, and the name. At most `skills.max_skills_per_query` (default 3) skills ride along with a single prompt, selected by the [Task Router](/concepts/router/). Because hot reload is on by default, the next prompt after an edit sees the new content — no restart, no rebuild.
+The matcher scores skills against the prompt using triggers, tags, capabilities, and the name. A skill rides along when its score clears `skills.match_threshold` (default `0.7`), and at most `skills.max_skills_per_query` (default 3) are selected per prompt by the [Task Router](/concepts/router/). Because hot reload is on by default, the next prompt after an edit sees the new content — no restart, no rebuild.
+
+<Aside type="tip">
+  A skill that never fires is usually a vocabulary mismatch: the matcher scores word overlap, so triggers should use the words you actually type. <code>kod skills search "&lt;your words&gt;"</code> shows what the matcher sees.
+</Aside>
 
 ## Validation and CI
 
 Two tools keep a skills directory honest:
 
-- `kod skills-validate` — validates every skill file; exits non-zero on malformed front matter or structure. Wire it into CI so a broken skill fails the pipeline instead of silently never matching.
+- `kod validate-skills` — validates every skill file; exits non-zero on malformed front matter or structure. Wire it into CI so a broken skill fails the pipeline instead of silently never matching.
+- `kod validate-skills-strict` — the same, plus a missing `version` field is also a failure.
 - `kod skills show <name>` — prints the full file as parsed; if what you wrote is not what you see, the parser is telling you where you diverged.
-
-<Aside type="note">
-  The skills crate carries 34 test attributes across parser, loader, matcher, watcher, and full-pipeline tests — the format on this page is stable because it is exercised end to end.
-</Aside>
 
 <FileTree>
 - ~/.kod/skills/
