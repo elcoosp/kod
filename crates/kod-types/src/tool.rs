@@ -23,13 +23,38 @@ pub enum ToolCategory {
     System,
 }
 
+/// Git capability level. Replaces the pre-D3 `git_operations: bool`.
+///
+/// - `None`: no git tool runs. The default.
+/// - `Read`: `git_status` / `git_diff` (and `git_branch list`) run;
+///   nothing that mutates the index, worktree, or refs.
+/// - `Write`: everything `Read` allows, plus `git_commit` and
+///   `git_branch create`. The `.git` directory is not read-only at the
+///   sandbox for these tools — they intentionally bypass the sandbox
+///   and are the approved write path (AD-10 + the `[git]` policy
+///   section).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum GitAccess {
+    #[default]
+    None,
+    Read,
+    Write,
+}
+
+impl GitAccess {
+    pub fn is_at_least(self, required: GitAccess) -> bool {
+        self >= required
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolPermissions {
     pub read_files: bool,
     pub write_files: bool,
     pub execute_commands: bool,
     pub network_access: bool,
-    pub git_operations: bool,
+    pub git_access: GitAccess,
     pub allowed_paths: Vec<String>,
     pub forbidden_paths: Vec<String>,
 }
