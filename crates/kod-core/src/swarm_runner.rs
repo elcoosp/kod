@@ -83,6 +83,16 @@ pub enum SwarmEvent {
         name: String,
         error: String,
     },
+    /// Agent timed out or errored and is being restarted (D4-D6).
+    /// Emitted between the failure and the next `AgentStarted` for the
+    /// same id, so a live UI can show "agent-1 retrying (2/2): …".
+    AgentRetrying {
+        id: AgentId,
+        name: String,
+        attempt: u32,
+        max_attempts: u32,
+        previous_error: String,
+    },
     /// Two agents wrote to the same file. Emitted after all agents
     /// finish, before the merge call, so a live UI can show the
     /// conflict while it is still actionable.
@@ -92,6 +102,22 @@ pub enum SwarmEvent {
     },
     /// All agents done; the runner is now calling the model to merge.
     Merging,
+    /// A per-agent git worktree was created (D4-D2). Emitted before
+    /// `AgentStarted` for the same agent so a live UI can show the
+    /// isolated workspace the agent will work in.
+    WorktreeCreated {
+        agent_name: String,
+        path: std::path::PathBuf,
+        branch: String,
+    },
+    /// The worktrees were merged back into the base branch. Emitted
+    /// after every agent finishes and before the LLM merge step, so
+    /// the caller can see the deterministic git result first.
+    WorktreesMerged {
+        merged: Vec<String>,
+        conflicted: Vec<std::path::PathBuf>,
+        failed: Vec<(String, String)>,
+    },
 }
 
 /// Two or more agents touched the same file. The runner detects
@@ -134,6 +160,22 @@ pub struct SwarmResponse {
     /// True when `merged` came from a synthesis call; false when it is a
     /// concatenation (config disabled, or the synthesis call failed).
     pub merged_by_model: bool,
+    /// Git-level worktree merge outcome (D4-D2). `None` when the run
+    /// did not use worktrees (a non-git working dir, or a create
+    /// failure that forced a fall back to the shared root).
+    pub worktree_merge: Option<WorktreeMergeOutcome>,
+}
+
+/// What the git merge of every worktree produced.
+#[derive(Debug, Clone)]
+pub struct WorktreeMergeOutcome {
+    /// Branches that merged cleanly, in merge order.
+    pub merged: Vec<String>,
+    /// Files that produced a conflict; the merge was aborted.
+    pub conflicted: Vec<std::path::PathBuf>,
+    /// Branches that failed to merge for reasons other than a
+    /// conflict (dirty index, missing branch), with the git message.
+    pub failed: Vec<(String, String)>,
 }
 
 /// Runs a swarm. Construct once per goal; `run` is the only entry point.
@@ -142,6 +184,10 @@ pub struct SwarmRunner {
     provider: Arc<dyn LlmProvider>,
     max_agents: usize,
     merge_results: bool,
+    /// Per-agent wall-clock cap; 0 disables.
+    agent_timeout_secs: u64,
+    /// Additional attempts after a failure.
+    agent_retries: u32,
 }
 
 impl SwarmRunner {
@@ -154,10 +200,10 @@ impl SwarmRunner {
         max_agents: usize,
         merge_results: bool,
     ) -> Result<Self> {
-        let provider = engine.provider_arc().await.ok_or_else(|| {
+        let provider = engine.current_provider().await.ok_or_else(|| {
             KodError::InvalidState(
                 "SwarmRunner: no LLM provider installed. \
-                 Call engine.set_provider(...) first."
+                 Call engine.set_registry(...) first."
                     .to_string(),
             )
         })?;
@@ -166,7 +212,21 @@ impl SwarmRunner {
             provider,
             max_agents: max_agents.clamp(2, 8),
             merge_results,
+            agent_timeout_secs: 300,
+            agent_retries: 1,
         })
+    }
+
+    /// Set the per-agent wall-clock cap in seconds. 0 disables.
+    pub fn with_agent_timeout_secs(mut self, secs: u64) -> Self {
+        self.agent_timeout_secs = secs;
+        self
+    }
+
+    /// Set the retry budget. 0 means no retries.
+    pub fn with_agent_retries(mut self, retries: u32) -> Self {
+        self.agent_retries = retries;
+        self
     }
 
     pub fn max_agents(&self) -> usize {
@@ -181,9 +241,60 @@ impl SwarmRunner {
         goal: &str,
         chunk_tx: &mpsc::Sender<SwarmEvent>,
     ) -> Result<SwarmResponse> {
+        // 0. Try to set up worktrees (D4-D2). `None` when the working
+        //    directory is not a git repo — the runner then falls back
+        //    to the shared root, exactly the pre-D4 behaviour.
+        let mut worktree_mgr: Option<crate::worktree::WorktreeManager> =
+            match crate::worktree::WorktreeManager::detect(
+                &self.engine.working_dir(),
+            ) {
+                Ok(Some(m)) => Some(m),
+                Ok(None) => None,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "worktree detect failed; using shared workspace"
+                    );
+                    None
+                }
+            };
+        if worktree_mgr.is_some() {
+            tracing::info!(
+                "swarm: worktree mode enabled (per-agent isolation)"
+            );
+        }
+
         // 1. Decompose.
         let subtasks = self.decompose(goal).await?;
         let _ = chunk_tx.send(SwarmEvent::Decomposed(subtasks.clone())).await;
+
+        // 1b. Create one worktree per subtask. All-or-nothing: a
+        //     failure on any worktree drops the manager (cleaning up
+        //     whatever was created) and falls back to the shared root.
+        let mut worktree_created: Vec<crate::worktree::WorktreeInfo> = Vec::new();
+        let mut worktree_failed = false;
+        if let Some(mgr) = worktree_mgr.as_mut() {
+            for (i, st) in subtasks.iter().enumerate() {
+                let slug = format!("agent-{}-{}", i + 1, sanitize(&st.name));
+                match mgr.create(&slug) {
+                    Ok(info) => worktree_created.push(info),
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "worktree create failed; falling back to shared root"
+                        );
+                        worktree_failed = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if worktree_failed {
+            // `worktree_mgr = None` drops the manager, which cleans up
+            // every worktree created before the failure.
+            worktree_mgr = None;
+            worktree_created.clear();
+        }
 
         // 2. Spawn agents and register tasks.
         let working_dir = self.engine.working_dir().to_path_buf();
@@ -203,6 +314,25 @@ impl SwarmRunner {
             swarm.coordinator().register_task(task).await?;
             swarm.coordinator().assign_task(&task_id, &id).await?;
 
+            // Point this agent's transcript at its own worktree, if
+            // one was created. The engine's per-transcript
+            // working_dir override (D4-D1) makes every tool the agent
+            // calls run rooted there.
+            if let Some(wt) = worktree_created.get(i) {
+                let key = format!("swarm:{id}");
+                let _ = self
+                    .engine
+                    .set_transcript_working_dir(&key, Some(wt.path.clone()))
+                    .await;
+                let _ = chunk_tx
+                    .send(SwarmEvent::WorktreeCreated {
+                        agent_name: name.clone(),
+                        path: wt.path.clone(),
+                        branch: wt.branch.clone(),
+                    })
+                    .await;
+            }
+
             handles.push(AgentHandle {
                 id,
                 name,
@@ -214,6 +344,13 @@ impl SwarmRunner {
         // 3. Run all agents concurrently. Each gets its own channel so
         //    the engine streams per-agent text; a small forwarding task
         //    relabels tool markers and pushes onto the outgoing channel.
+        // Per-agent timeout / retry (D4-D6). The timeout bounds a
+        // stuck agent; the retry budget restarts it once with the
+        // previous error injected into the prompt. Both are configured
+        // via SwarmConfig (default 300 s, 1 retry).
+        let agent_timeout_secs: u64 = self.agent_timeout_secs;
+        let max_attempts: u32 = 1 + self.agent_retries;
+
         let mut tasks = Vec::with_capacity(handles.len());
         for h in &handles {
             let engine = self.engine.clone();
@@ -222,80 +359,171 @@ impl SwarmRunner {
             let subtask = h.subtask.clone();
             let out = chunk_tx.clone();
             tasks.push(async move {
-                let _ = out
-                    .send(SwarmEvent::AgentStarted {
-                        id: id.clone(),
-                        name: name.clone(),
-                        subtask: subtask.description.clone(),
-                    })
-                    .await;
-
-                let (tx, mut rx) = mpsc::channel::<String>(64);
-                let out_pump = out.clone();
-                let id_pump = id.clone();
-                let name_pump = name.clone();
-                let pump = tokio::spawn(async move {
-                    while let Some(chunk) = rx.recv().await {
-                        // Turn the engine's control markers into a
-                        // human-readable line. A swarm consumer wants to
-                        // see that a tool ran, not the raw marker.
-                        let display = if let Some(tool) =
-                            crate::engine::parse_tool_start(&chunk)
-                        {
-                            format!("  [tool: {tool}]\n")
-                        } else if let Some(brief) = crate::engine::parse_tool_args(&chunk) {
-                            format!("  [{brief}]\n")
-                        } else if crate::engine::parse_tool_done(&chunk).is_some()
-                            || crate::engine::is_thinking_marker(&chunk)
-                        {
-                            continue;
-                        } else {
-                            chunk
-                        };
-                        let _ = out_pump
-                            .send(SwarmEvent::AgentChunk {
-                                id: id_pump.clone(),
-                                name: name_pump.clone(),
-                                text: display,
-                            })
-                            .await;
-                    }
-                });
-
-                // Per-agent transcript key. Concurrent agents on
-                // different subtasks must not see each other's turns;
-                // the runner clears the transcript when the run ends.
-                let transcript_key = format!("swarm:{id}");
+                // Role preamble is computed once — retries use the
+                // same shaped prompt.
                 let per_agent_role = capability_for(&subtask.description);
-                let shaped = format!(
-                    "{}{}",
-                    role_preamble(per_agent_role),
-                    subtask.description
-                );
-                let result = engine
-                    .process_streaming_for(&transcript_key, &shaped, &tx)
-                    .await;
-                // Drop the transcript; the merged answer is what the
-                // user keeps, and per-agent histories would otherwise
-                // accumulate across runs in one session.
-                engine.forget_transcript(&transcript_key).await;
-                drop(tx);
-                let _ = pump.await;
+                let role_prefix = role_preamble(per_agent_role);
+                let transcript_key = format!("swarm:{id}");
 
-                // Extract the canonical written-path set for this
-                // agent. Used by the conflict detector after all
-                // agents finish.
-                match result {
-                    Ok(resp) => {
-                        let writes = collect_writes(&resp);
-                        (id, name, subtask, writes, Ok(resp.text.unwrap_or_default()))
+                let mut last_error: Option<String> = None;
+                let mut attempt: u32 = 0;
+                loop {
+                    attempt += 1;
+                    let _ = out
+                        .send(SwarmEvent::AgentStarted {
+                            id: id.clone(),
+                            name: name.clone(),
+                            subtask: subtask.description.clone(),
+                        })
+                        .await;
+
+                    // Retry attempts get the previous error appended so
+                    // the model can react to it.
+                    let shaped = match &last_error {
+                        Some(err) => format!(
+                            "{role_prefix}{desc}\n\n[Previous attempt failed: {err}]\n                             Avoid the failure mode above and try a different approach.\n",
+                            role_prefix = role_prefix,
+                            desc = subtask.description,
+                            err = err,
+                        ),
+                        None => format!("{role_prefix}{}", subtask.description),
+                    };
+
+                    let (tx, mut rx) = mpsc::channel::<String>(64);
+                    let out_pump = out.clone();
+                    let id_pump = id.clone();
+                    let name_pump = name.clone();
+                    let pump = tokio::spawn(async move {
+                        while let Some(chunk) = rx.recv().await {
+                            let display = if let Some(tool) =
+                                crate::engine::parse_tool_start(&chunk)
+                            {
+                                format!("  [tool: {tool}]\n")
+                            } else if let Some(brief) =
+                                crate::engine::parse_tool_args(&chunk)
+                            {
+                                format!("  [{brief}]\n")
+                            } else if crate::engine::parse_tool_done(&chunk).is_some()
+                                || crate::engine::is_thinking_marker(&chunk)
+                            {
+                                continue;
+                            } else {
+                                chunk
+                            };
+                            let _ = out_pump
+                                .send(SwarmEvent::AgentChunk {
+                                    id: id_pump.clone(),
+                                    name: name_pump.clone(),
+                                    text: display,
+                                })
+                                .await;
+                        }
+                    });
+
+                    let run = engine
+                        .process_streaming_for(&transcript_key, &shaped, &tx);
+
+                    let outcome: std::result::Result<
+                        crate::router::TaskResponse,
+                        String,
+                    > = if agent_timeout_secs == 0 {
+                        run.await.map_err(|e| e.to_string())
+                    } else {
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(agent_timeout_secs),
+                            run,
+                        )
+                        .await
+                        {
+                            Ok(Ok(resp)) => Ok(resp),
+                            Ok(Err(e)) => Err(e.to_string()),
+                            Err(_) => Err(format!(
+                                "timed out after {agent_timeout_secs}s"
+                            )),
+                        }
+                    };
+
+                    // Drop the chunk sender, wait for the pump to
+                    // drain, and clear the transcript + cancel flag
+                    // before any retry reuses the key.
+                    drop(tx);
+                    let _ = pump.await;
+                    engine.forget_transcript(&transcript_key).await;
+                    engine.clear_cancel_for(&transcript_key);
+
+                    match outcome {
+                        Ok(resp) => {
+                            let writes = collect_writes(&resp);
+                            let text = resp.text.unwrap_or_default();
+                            return (id, name, subtask, writes, Ok(text));
+                        }
+                        Err(err) => {
+                            // Signal any in-flight loop to stop cleanly
+                            // (the timeout already dropped the future,
+                            // but a cooperative cancel is cheap and
+                            // makes the next-attempt state unambiguous).
+                            engine.request_cancel_for(&transcript_key);
+                            last_error = Some(err.clone());
+                            if attempt >= max_attempts {
+                                return (id, name, subtask, Vec::new(), Err(err));
+                            }
+                            // Announce the retry so a live UI can show
+                            // "agent-1 retrying (2/2): …".
+                            let _ = out
+                                .send(SwarmEvent::AgentRetrying {
+                                    id: id.clone(),
+                                    name: name.clone(),
+                                    attempt: attempt + 1,
+                                    max_attempts,
+                                    previous_error: err,
+                                })
+                                .await;
+                        }
                     }
-                    Err(e) => (id, name, subtask, Vec::new(), Err(e.to_string())),
                 }
             });
         }
 
         let raw = join_all(tasks).await;
+
+        // 3b. Merge the worktrees back into the base branch (D4-D2).
+        //     The merge is deterministic (git, not a model call) and
+        //     runs before the LLM synthesis so the caller sees the
+        //     conflict list first. A conflict aborts the merge cleanly
+        //     and the report names the files.
+        let worktree_merge: Option<WorktreeMergeOutcome> =
+            if let Some(mgr) = worktree_mgr.as_mut() {
+                match mgr.merge_all() {
+                    Ok(report) => {
+                        let _ = chunk_tx
+                            .send(SwarmEvent::WorktreesMerged {
+                                merged: report.merged.clone(),
+                                conflicted: report.conflicted.clone(),
+                                failed: report.failed.clone(),
+                            })
+                            .await;
+                        Some(WorktreeMergeOutcome {
+                            merged: report.merged,
+                            conflicted: report.conflicted,
+                            failed: report.failed,
+                        })
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "worktree merge failed");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+        // 3c. Clear the per-transcript working dir overrides so a
+        //     reused engine (a second swarm run) does not inherit a
+        //     stale worktree path.
+        for h in &handles {
+            let key = format!("swarm:{}", h.id);
+            let _ = self.engine.clear_transcript_working_dir(&key).await;
+        }
 
         // 4. Report terminal status. The coordinator's load accounting
         //    needs the completion, and the events let a live UI update.
@@ -321,6 +549,18 @@ impl SwarmRunner {
                     if let Some(tid) = task_id.as_ref() {
                         let _ = swarm.coordinator().complete_task(tid).await;
                     }
+                    // Record the completion on the hub so peers can
+                    // see it (D4-D3b). Best-effort: a hub error never
+                    // fails the run.
+                    let _ = swarm
+                        .communication()
+                        .broadcast_lifecycle(
+                            &id,
+                            &format!("completed: {}",
+                                text.lines().next().unwrap_or("(no text)")
+                            ),
+                        )
+                        .await;
                     let _ = chunk_tx
                         .send(SwarmEvent::AgentCompleted {
                             id: id.clone(),
@@ -339,6 +579,13 @@ impl SwarmRunner {
                     if let Some(tid) = task_id.as_ref() {
                         let _ = swarm.coordinator().fail_task(tid).await;
                     }
+                    let _ = swarm
+                        .communication()
+                        .broadcast_lifecycle(
+                            &id,
+                            &format!("failed: {}", e.lines().next().unwrap_or("")),
+                        )
+                        .await;
                     let _ = chunk_tx
                         .send(SwarmEvent::AgentFailed {
                             id: id.clone(),
@@ -396,6 +643,7 @@ impl SwarmRunner {
             conflicts,
             merged,
             merged_by_model,
+            worktree_merge,
         })
     }
 
