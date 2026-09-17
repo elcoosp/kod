@@ -117,9 +117,16 @@ impl SandboxResolver {
         {
             if which("bwrap") {
                 available.push(Backend::Bwrap);
+            } else if crate::sandbox::landlock::probe_abi().is_some() {
+                // bwrap is preferred when present (it is a real
+                // namespace isolation and gets network denial on
+                // every supported kernel). Landlock is the fallback
+                // for a machine without bubblewrap — a container, a
+                // stripped distro, a locked-down CI image — and its
+                // availability is checked by the same real syscall
+                // `apply` will perform.
+                available.push(Backend::Landlock);
             }
-            // Landlock detection is deferred; the kernel ABI check
-            // needs a syscall probe.
         }
         #[cfg(target_os = "macos")]
         {
@@ -181,16 +188,96 @@ impl SandboxResolver {
         match backend {
             Backend::Bwrap => Ok(Some(bwrap_invocation(wd, opts))),
             Backend::Seatbelt => Ok(Some(seatbelt_invocation(wd, opts))),
-            Backend::Landlock => {
-                // Landlock wiring is deferred; the backend exists so the
-                // enum is exhaustive and so `kod doctor` has a slot.
-                // Reaching it means a detect() bug.
-                Err(KodError::SandboxViolation(
-                    "landlock backend is not yet implemented".to_string(),
-                ))
-            }
+            Backend::Landlock => landlock_invocation(wd, opts).map(Some),
         }
     }
+}
+
+/// Build the `kod __sandbox-exec <profile> -- …` invocation.
+///
+/// The profile is written to a temp file the launcher reads and
+/// unlinks. The file name is derived from the parent's pid so two
+/// concurrent `kod` processes cannot collide; the parent leaves it
+/// for the launcher to remove.
+#[cfg(target_os = "linux")]
+fn landlock_invocation(wd: &Path, opts: SandboxOpts) -> Result<SandboxInvocation> {
+    // Locate the `kod` binary. The invocation runs it back; the
+    // resolver has no other way to reach the launcher.
+    let kod = std::env::current_exe().map_err(|e| {
+        KodError::SandboxViolation(format!(
+            "could not determine the kod binary path for the landlock launcher: {e}"
+        ))
+    })?;
+
+    // Build the profile.
+    let mut profile = crate::sandbox::landlock::LandlockProfile {
+        ro_paths: vec![
+            PathBuf::from("/usr"),
+            PathBuf::from("/lib"),
+            PathBuf::from("/lib64"),
+            PathBuf::from("/bin"),
+            PathBuf::from("/etc"),
+        ],
+        rw_paths: vec![wd.to_path_buf()],
+        net_deny: opts.net_deny,
+    };
+    if opts.git_readonly {
+        let git = wd.join(".git");
+        if git.is_dir() {
+            profile.ro_paths.push(git);
+        }
+    }
+    if opts.tmp_rw {
+        if let Some(tmp) = std::env::var_os("TMPDIR") {
+            profile.rw_paths.push(PathBuf::from(tmp));
+        }
+        profile.rw_paths.push(PathBuf::from("/tmp"));
+    }
+
+    // The launcher refuses net_deny on ABI < 4. Detect that here so
+    // the caller (and thus the user) sees a clean fail-open with a
+    // warning, instead of spawning a launcher that would just error.
+    if opts.net_deny {
+        let abi = crate::sandbox::landlock::probe_abi().unwrap_or(0);
+        if abi < 4 {
+            return Err(KodError::SandboxViolation(format!(
+                "landlock cannot deny network on this kernel (ABI {abi}); \
+                 install bubblewrap or accept network access"
+            )));
+        }
+    }
+
+    let profile_path = std::env::temp_dir().join(format!(
+        "kod-sandbox-{}.json",
+        std::process::id(),
+    ));
+    std::fs::write(&profile_path, profile.to_json()).map_err(|e| {
+        KodError::SandboxViolation(format!(
+            "could not write sandbox profile to {}: {e}",
+            profile_path.display()
+        ))
+    })?;
+
+    Ok(SandboxInvocation {
+        program: kod.to_string_lossy().to_string(),
+        // The kernel's landlock_restrict_self is per-process; the
+        // launcher is `kod` re-entering itself with this hidden
+        // subcommand. `--` separates the profile from the inner
+        // command — the caller appends the shell invocation after.
+        args: vec![
+            "__sandbox-exec".to_string(),
+            profile_path.to_string_lossy().to_string(),
+            "--".to_string(),
+        ],
+        backend: Backend::Landlock,
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn landlock_invocation(_wd: &Path, _opts: SandboxOpts) -> Result<SandboxInvocation> {
+    Err(KodError::SandboxViolation(
+        "landlock is a Linux-only backend".to_string(),
+    ))
 }
 
 /// The default resolver for this host. Cheap after the first call.
