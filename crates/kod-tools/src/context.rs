@@ -7,20 +7,77 @@ use std::path::{Path, PathBuf};
 
 /// How the tool should invoke shell commands.
 ///
-/// `Disabled` is the default: commands run in the process's normal
-/// environment, no sandboxing. `Require` refuses to execute a command
-/// at all if the platform primitive is not available, rather than
-/// silently running unsandboxed — a caller that asked for a sandbox and
-/// got a bare shell would have a worse problem than a failure.
+/// - `Disabled`: commands run in the process's normal environment.
+///   The pre-D3 behaviour.
+/// - `Auto`: use the best available platform primitive (`bwrap` on
+///   Linux, `sandbox-exec` on macOS), silently skipping sandboxing
+///   when none is installed. The default — the caller does not have to
+///   know whether a sandbox is available on the host.
+/// - `Require`: use a primitive or refuse to run. Fails loudly when
+///   nothing is available.
+///
+/// The engine surfaces the effective backend through
+/// [`SandboxResolver::backend_name`] so a caller can show
+/// `sandbox: bwrap | sandbox-exec | off` in the UI. The
+/// `Disabled` value is retained because the `--preset yolo` path and
+/// several existing tests opt out explicitly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SandboxMode {
     /// Run commands normally, no sandbox.
-    #[default]
     Disabled,
-    /// Run commands under the platform's sandbox primitive. Refuse to
-    /// run if none is available. Linux: `bwrap` (bubblewrap). macOS:
-    /// `sandbox-exec` with a workspace-confined profile.
+    /// Use a sandbox if available, otherwise fall through to no
+    /// sandbox. The default.
+    #[default]
+    Auto,
+    /// Require a sandbox primitive. Fail loudly if unavailable.
     Require,
+}
+
+/// Options that shape the sandbox invocation.
+///
+/// Defaults are the safe choice: `.git` read-only, network denied,
+/// `$TMPDIR` writable. A caller that wants a looser sandbox for one
+/// command overrides the specific flag.
+#[derive(Debug, Clone, Copy)]
+pub struct SandboxOpts {
+    /// Mount `.git` read-only so `git status`/`git diff` work but
+    /// `git checkout .` cannot destroy history (D3-C4).
+    pub git_readonly: bool,
+    /// Deny network in the sandbox. Requires bwrap
+    /// (`--unshare-net`); Seatbelt's profile gets `(deny network*)`.
+    pub net_deny: bool,
+    /// Allow writes to the OS temp dir. On by default — a build tool
+    /// that stages through `/tmp` would otherwise break.
+    pub tmp_rw: bool,
+}
+
+impl Default for SandboxOpts {
+    fn default() -> Self {
+        Self {
+            git_readonly: true,
+            net_deny: true,
+            tmp_rw: true,
+        }
+    }
+}
+
+/// Which platform primitive a `SandboxInvocation` used. Named so the
+/// engine's UI (and `kod doctor`) can surface it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend {
+    Bwrap,
+    Landlock,
+    Seatbelt,
+}
+
+impl Backend {
+    pub fn name(self) -> &'static str {
+        match self {
+            Backend::Bwrap => "bwrap",
+            Backend::Landlock => "landlock",
+            Backend::Seatbelt => "sandbox-exec",
+        }
+    }
 }
 
 /// An OS-level sandbox invocation: the executable to spawn and the
@@ -33,95 +90,259 @@ pub struct SandboxInvocation {
     /// is `--` on both platforms, separating sandbox args from the
     /// command the sandboxed process will run.
     pub args: Vec<String>,
+    /// Which backend produced this invocation. Surfaced by the
+    /// engine UI and `kod doctor`.
+    pub backend: Backend,
 }
 
-/// Build the platform sandbox invocation for `mode`, rooted at `wd`.
+/// A resolver that knows which sandbox primitives are available on
+/// this host. Built once at startup; cheap to clone.
 ///
-/// Returns `Ok(None)` when mode is `Disabled`. Returns `Ok(Some(inv))`
-/// when a working primitive is available. Returns `Err(...)` when mode
-/// is `Require` and no primitive exists — the caller decides whether
-/// to fail the command.
+/// `detect` probes `which(bwrap)` / `which(sandbox-exec)` once. The
+/// engine, `kod doctor`, and the sandbox invocation itself all read
+/// the result — a single source of truth about "is a sandbox
+/// available here?" avoids the doctor saying one thing and the tool
+/// loop doing another.
+#[derive(Debug, Clone)]
+pub struct SandboxResolver {
+    available: Vec<Backend>,
+}
+
+impl SandboxResolver {
+    /// Probe the host for available primitives. Cheap; safe to call
+    /// from a startup path.
+    pub fn detect() -> Self {
+        let mut available = Vec::new();
+        #[cfg(target_os = "linux")]
+        {
+            if which("bwrap") {
+                available.push(Backend::Bwrap);
+            }
+            // Landlock detection is deferred; the kernel ABI check
+            // needs a syscall probe.
+        }
+        #[cfg(target_os = "macos")]
+        {
+            if which("sandbox-exec") {
+                available.push(Backend::Seatbelt);
+            }
+        }
+        Self { available }
+    }
+
+    /// A resolver with no backends (a stripped container, a test). The
+    /// `invocation` method returns `None` for `Auto` and errors for
+    /// `Require`, matching what a host without primitives would do.
+    pub fn empty() -> Self {
+        Self { available: Vec::new() }
+    }
+
+    pub fn has_any(&self) -> bool {
+        !self.available.is_empty()
+    }
+
+    /// The backend that would be used for a call, if any. Useful for
+    /// `sandbox: bwrap` badges.
+    pub fn backend_name(&self) -> Option<&'static str> {
+        self.available.first().map(|b| b.name())
+    }
+
+    /// The best available backend, or `None`.
+    fn best(&self) -> Option<Backend> {
+        self.available.first().copied()
+    }
+
+    /// Build an invocation for `mode`, rooted at `wd`, with `opts`.
+    ///
+    /// - `Disabled`: `Ok(None)`.
+    /// - `Auto` + a backend: `Ok(Some(inv))`.
+    /// - `Auto` + no backend: `Ok(None)` (silent passthrough; the
+    ///   caller checks `has_any` for a UI warning).
+    /// - `Require` + a backend: `Ok(Some(inv))`.
+    /// - `Require` + no backend: `Err(SandboxViolation)` naming the
+    ///   install command for the current platform.
+    pub fn invocation(
+        &self,
+        mode: SandboxMode,
+        wd: &Path,
+        opts: SandboxOpts,
+    ) -> Result<Option<SandboxInvocation>> {
+        if mode == SandboxMode::Disabled {
+            return Ok(None);
+        }
+        let Some(backend) = self.best() else {
+            return match mode {
+                SandboxMode::Require => Err(KodError::SandboxViolation(
+                    missing_backend_message(),
+                )),
+                _ => Ok(None),
+            };
+        };
+        match backend {
+            Backend::Bwrap => Ok(Some(bwrap_invocation(wd, opts))),
+            Backend::Seatbelt => Ok(Some(seatbelt_invocation(wd, opts))),
+            Backend::Landlock => {
+                // Landlock wiring is deferred; the backend exists so the
+                // enum is exhaustive and so `kod doctor` has a slot.
+                // Reaching it means a detect() bug.
+                Err(KodError::SandboxViolation(
+                    "landlock backend is not yet implemented".to_string(),
+                ))
+            }
+        }
+    }
+}
+
+/// The default resolver for this host. Cheap after the first call.
+pub fn default_resolver() -> SandboxResolver {
+    SandboxResolver::detect()
+}
+
+/// Message shown when a primitive is missing and the mode requires one.
+/// Mentions the platform's package manager so a user has a next step.
+fn missing_backend_message() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        "sandbox=require but bubblewrap (bwrap) is not installed. \
+         Install it (apt install bubblewrap, dnf install bubblewrap, \
+         pacman -S bubblewrap, apk add bubblewrap) or run with \
+         sandbox=disabled."
+            .to_string()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "sandbox=require but sandbox-exec is not available. It ships \
+         with macOS by default; if it is missing, run with \
+         sandbox=disabled."
+            .to_string()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        "sandbox=require is not supported on this platform. Run with \
+         sandbox=disabled."
+            .to_string()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn bwrap_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
+    let wd_str = wd.to_string_lossy().to_string();
+    let mut args: Vec<String> = vec![
+        "--ro-bind".into(), "/usr".into(), "/usr".into(),
+        "--ro-bind".into(), "/lib".into(), "/lib".into(),
+        "--ro-bind".into(), "/lib64".into(), "/lib64".into(),
+        "--ro-bind".into(), "/bin".into(), "/bin".into(),
+        "--ro-bind".into(), "/etc".into(), "/etc".into(),
+        "--dev".into(), "/dev".into(),
+        "--proc".into(), "/proc".into(),
+    ];
+    // .git read-only: mount it RO *after* the workspace bind so the
+    // narrower rule wins. Order matters in bwrap — later binds override
+    // earlier ones for the same mount point.
+    if opts.git_readonly {
+        let git = format!("{wd_str}/.git");
+        // Only bind when the .git directory actually exists; a bwrap
+        // invocation with a bind on a non-existent source fails hard.
+        if std::path::Path::new(&git).is_dir() {
+            args.extend([
+                "--ro-bind".into(), git.clone(), git.clone(),
+            ]);
+        }
+    }
+    args.extend([
+        "--bind".into(), wd_str.clone(), wd_str.clone(),
+        "--chdir".into(), wd_str,
+    ]);
+    if opts.net_deny {
+        args.push("--unshare-net".into());
+    }
+    args.push("--die-with-parent".into());
+    args.push("--".into());
+
+    SandboxInvocation {
+        program: "bwrap".to_string(),
+        args,
+        backend: Backend::Bwrap,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
+    let wd_str = wd.to_string_lossy().to_string();
+    // macOS sandbox profile: read access to the filesystem at large,
+    // writes only under the working dir (with .git excluded when
+    // git_readonly), temp dirs, and the standard macOS caches. Network
+    // denied when net_deny.
+    //
+    // Seatbelt rules are evaluated top-to-bottom and the *last*
+    // matching rule wins, so `(deny file-write* ...)` on .git must
+    // come after the general `(allow file-write* ...)`.
+    let mut profile = String::from("(version 1)\n(allow default)\n");
+    if opts.net_deny {
+        profile.push_str("(deny network*)\n");
+    }
+    // Deny-all-writes, then allow-list. The order matters: the last
+    // matching rule wins, so the specific allows must come after the
+    // broad deny.
+    profile.push_str("(deny file-write*)\n");
+    profile.push_str(&format!(
+        "(allow file-write* (subpath \"{wd}\"))\n",
+        wd = wd_str
+    ));
+    // stdout / stderr / /dev/null writes go through the file-write*
+    // operation. Without this allow, an `echo hello` inside the
+    // sandbox produces no output at all — the sandbox silently
+    // discards the write. Explicit literals for the standard streams.
+    profile.push_str("(allow file-write* (literal \"/dev/stdout\") (literal \"/dev/stderr\") (literal \"/dev/null\"))\n");
+    profile.push_str("(allow file-write-data (literal \"/dev/stdout\") (literal \"/dev/stderr\") (literal \"/dev/null\"))\n");
+    if opts.tmp_rw {
+        profile.push_str("(allow file-write* (subpath \"/tmp\") (subpath \"/private/tmp\") (subpath \"/private/var/folders\"))\n");
+    }
+    if opts.git_readonly {
+        profile.push_str(&format!(
+            "(deny file-write* (subpath \"{wd}/.git\"))\n",
+            wd = wd_str
+        ));
+    }
+
+    SandboxInvocation {
+        program: "sandbox-exec".to_string(),
+        args: vec!["-p".into(), profile, "--".into()],
+        backend: Backend::Seatbelt,
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn unsupported_platform_invocation() -> SandboxInvocation {
+    unreachable!("sandbox_invocation on unsupported platform")
+}
+
+/// Stub used on platforms where bwrap is unavailable. The resolver
+/// only reaches this arm when `Backend::Bwrap` is in `available`,
+/// which the `detect()` function only populates on Linux — the stub is
+/// therefore unreachable at runtime, but the compiler still needs the
+/// symbol to exist for the match in `SandboxResolver::invocation`.
+#[cfg(not(target_os = "linux"))]
+fn bwrap_invocation(_wd: &Path, _opts: SandboxOpts) -> SandboxInvocation {
+    unreachable!("bwrap_invocation called on a non-Linux platform")
+}
+
+
+/// Stub for platforms without Seatbelt. Same reasoning as the bwrap
+/// stub above.
+#[cfg(not(target_os = "macos"))]
+fn seatbelt_invocation(_wd: &Path, _opts: SandboxOpts) -> SandboxInvocation {
+    unreachable!("seatbelt_invocation called on a non-macOS platform")
+}
+
+/// Backward-compatible free function that matches the pre-C3a shape.
+/// Uses a one-shot resolver; prefer holding a `SandboxResolver` when
+/// the caller invokes multiple times.
 pub fn sandbox_invocation(
     mode: SandboxMode,
     wd: &Path,
 ) -> Result<Option<SandboxInvocation>> {
-    if mode == SandboxMode::Disabled {
-        return Ok(None);
-    }
-    let wd_str = wd.to_string_lossy().to_string();
-
-    #[cfg(target_os = "linux")]
-    {
-        if which("bwrap") {
-            let args = vec![
-                "--ro-bind".into(), "/usr".into(), "/usr".into(),
-                "--ro-bind".into(), "/lib".into(), "/lib".into(),
-                "--ro-bind".into(), "/lib64".into(), "/lib64".into(),
-                "--ro-bind".into(), "/bin".into(), "/bin".into(),
-                "--ro-bind".into(), "/etc".into(), "/etc".into(),
-                "--dev".into(), "/dev".into(),
-                "--proc".into(), "/proc".into(),
-                "--bind".into(), wd_str.clone(), wd_str.clone(),
-                "--chdir".into(), wd_str,
-                "--unshare-net".into(),
-                "--die-with-parent".into(),
-                "--".into(),
-            ];
-            return Ok(Some(SandboxInvocation {
-                program: "bwrap".to_string(),
-                args,
-            }));
-        }
-        return Err(KodError::SandboxViolation(
-            "sandbox=require but bubblewrap (bwrap) is not installed. \
-             Install it (apt install bubblewrap, dnf install bubblewrap) \
-             or run with sandbox=disabled."
-                .to_string(),
-        ));
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        if which("sandbox-exec") {
-            // macOS sandbox profile: confine writes to the working
-            // directory and standard temp locations, deny network,
-            // inherit read access to the rest of the filesystem so
-            // compilers and interpreters still work.
-            //
-            // Assembled via format! with the `{wd}` argument. Every
-            // newline is a two-character `\n` escape in the source —
-            // this string is the reason the previous attempt failed
-            // when a shell heredoc collapsed the escapes.
-            let profile = format!(
-                "(version 1)\n\
-                 (allow default)\n\
-                 (deny network*)\n\
-                 (deny file-write*)\n\
-                 (allow file-write* (subpath \"{wd}\") (subpath \"/tmp\") (subpath \"/private/tmp\") (subpath \"/private/var/folders\"))\n",
-                wd = wd_str,
-            );
-            return Ok(Some(SandboxInvocation {
-                program: "sandbox-exec".to_string(),
-                args: vec!["-p".into(), profile, "--".into()],
-            }));
-        }
-        return Err(KodError::SandboxViolation(
-            "sandbox=require but sandbox-exec is not available. It ships \
-             with macOS by default; if it is missing, run with \
-             sandbox=disabled."
-                .to_string(),
-        ));
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        let _ = wd_str;
-        Err(KodError::SandboxViolation(
-            "sandbox=require is not supported on this platform. Run with \
-             sandbox=disabled."
-                .to_string(),
-        ))
-    }
+    SandboxResolver::detect().invocation(mode, wd, SandboxOpts::default())
 }
 
 /// `true` if `program` is on PATH.
@@ -170,6 +391,13 @@ pub struct ToolContext {
     /// Whether `execute_command` runs through the platform's sandbox
     /// primitive. See [`SandboxMode`]. Default `Disabled`.
     pub sandbox: SandboxMode,
+
+    /// Domain allow-list for `web_fetch` (D3-C5). Empty means "no
+    /// policy-imposed restriction — the SSRF filter still applies".
+    /// Populated by the engine from `ToolPolicy.domains` when a
+    /// `PolicyEngine` is installed. Subdomain matching: `docs.rs`
+    /// accepts `docs.rs` and `*.docs.rs`.
+    pub allowed_domains: Vec<String>,
 }
 
 impl ToolContext {
@@ -182,7 +410,8 @@ impl ToolContext {
             lock_table: None,
             holder: "session".to_string(),
             lock_timeout: std::time::Duration::from_secs(2),
-            sandbox: SandboxMode::Disabled,
+            sandbox: SandboxMode::Auto,
+            allowed_domains: Vec::new(),
         }
     }
 
@@ -393,12 +622,22 @@ impl ToolContext {
         Ok(())
     }
 
-    /// Check if git operations are allowed
-    pub fn can_git_operation(&self) -> Result<()> {
-        if !self.permissions.git_operations {
+    /// Check whether git operations at the given access level are
+    /// allowed. The caller passes the level it actually needs:
+    /// `GitAccess::Read` for a query, `GitAccess::Write` for a
+    /// mutation. A context granted `Write` also satisfies `Read`
+    /// (see the enum's `Ord`).
+    pub fn can_git_operation(
+        &self,
+        required: kod_types::GitAccess,
+    ) -> Result<()> {
+        if !self.permissions.git_access.is_at_least(required) {
             return Err(KodError::PermissionDenied {
                 action: "git".to_string(),
-                reason: "Git operations not permitted".to_string(),
+                reason: format!(
+                    "git access {:?} is below the required {:?}",
+                    self.permissions.git_access, required
+                ),
             });
         }
         Ok(())
@@ -436,7 +675,10 @@ mod tests {
         let context = ToolContext::new("/tmp");
         assert_eq!(context.working_dir, PathBuf::from("/tmp"));
         assert_eq!(context.timeout_secs, 30);
-        assert_eq!(context.sandbox, SandboxMode::Disabled);
+        // The default is now Auto (D3-C3a). The engine overrides it
+        // per-call via `with_sandbox(self.sandbox_setting())`, so a
+        // bare `ToolContext::new()` is a testing convenience.
+        assert_eq!(context.sandbox, SandboxMode::Auto);
     }
 
     #[test]
@@ -471,16 +713,22 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn test_sandbox_require_macos() {
-        let inv = sandbox_invocation(SandboxMode::Require, Path::new("/tmp"))
+        let resolver = SandboxResolver::detect();
+        let inv = resolver
+            .invocation(SandboxMode::Require, Path::new("/tmp"), SandboxOpts::default())
             .expect("sandbox-exec should be available on macOS")
             .expect("Require must return Some");
         assert_eq!(inv.program, "sandbox-exec");
+        assert_eq!(inv.backend, Backend::Seatbelt);
         assert_eq!(inv.args.last().map(|s| s.as_str()), Some("--"));
-        // The profile must contain the working dir literally, not the
-        // placeholder.
         let profile = &inv.args[1];
         assert!(profile.contains("/tmp"), "profile missing wd: {profile}");
         assert!(!profile.contains("{wd}"), "profile has unexpanded {{wd}}: {profile}");
+        // The .git read-only rule must be present by default.
+        assert!(
+            profile.contains(".git"),
+            "default opts should protect .git: {profile}"
+        );
     }
 
     #[test]
@@ -603,4 +851,52 @@ mod tests {
         let ok = context.resolve_path("inside.txt").unwrap();
         assert!(ok.starts_with(&root));
     }
+
+    #[test]
+    fn auto_with_empty_resolver_returns_none() {
+        let resolver = SandboxResolver::empty();
+        let r = resolver
+            .invocation(
+                SandboxMode::Auto,
+                Path::new("/tmp"),
+                SandboxOpts::default(),
+            )
+            .unwrap();
+        assert!(r.is_none(), "Auto must gracefully fall through");
+    }
+
+    #[test]
+    fn require_with_empty_resolver_errors() {
+        let resolver = SandboxResolver::empty();
+        let err = resolver
+            .invocation(
+                SandboxMode::Require,
+                Path::new("/tmp"),
+                SandboxOpts::default(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, KodError::SandboxViolation(_)));
+    }
+
+    #[test]
+    fn disabled_ignores_the_resolver() {
+        // Even if the resolver has a backend, Disabled must short-circuit.
+        let resolver = SandboxResolver::detect();
+        let r = resolver
+            .invocation(
+                SandboxMode::Disabled,
+                Path::new("/tmp"),
+                SandboxOpts::default(),
+            )
+            .unwrap();
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn empty_resolver_reports_no_backend() {
+        let resolver = SandboxResolver::empty();
+        assert!(!resolver.has_any());
+        assert!(resolver.backend_name().is_none());
+    }
+
 }
