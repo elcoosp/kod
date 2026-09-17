@@ -61,8 +61,28 @@ pub struct ToolPermissions {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
+    /// Wire-level id the provider assigned to this call, when
+    /// available (OpenAI's `tool_calls[i].id`, Anthropic's
+    /// `tool_use.id`). The engine preserves it through the tool
+    /// round so a `Role::Tool` message can be linked back to its
+    /// originating call. `None` for a locally constructed call or a
+    /// provider that does not emit ids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub tool_name: String,
     pub arguments: Value,
+}
+
+impl ToolCall {
+    /// Construct a call with no wire id. Convenience for tests,
+    /// hand-built calls, and every site that predates AD-03.
+    pub fn new(tool_name: impl Into<String>, arguments: Value) -> Self {
+        Self {
+            id: None,
+            tool_name: tool_name.into(),
+            arguments,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +110,7 @@ mod tests {
     #[test]
     fn test_tool_call_serialization() {
         let call = ToolCall {
+            id: None,
             tool_name: "read_file".to_string(),
             arguments: serde_json::json!({"path": "/test.rs"}),
         };

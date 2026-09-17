@@ -85,7 +85,7 @@ impl LlmProvider for ScriptedProvider {
 async fn swarm_command_runs_end_to_end() {
     // Build an engine with a scripted provider and a temp DB.
     let temp = TempDir::new().unwrap();
-    let cfg = RouterConfig {
+    let cfg = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp.path().to_path_buf(),
         enable_memory: false,
@@ -160,7 +160,7 @@ async fn swarm_command_runs_end_to_end() {
 #[tokio::test]
 async fn swarm_command_refuses_when_busy() {
     let temp = TempDir::new().unwrap();
-    let cfg = RouterConfig {
+    let cfg = RouterConfig { skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp.path().to_path_buf(),
         enable_memory: false,

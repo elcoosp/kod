@@ -8,6 +8,14 @@ use time::OffsetDateTime;
 pub enum MemoryType {
     ShortTerm,
     LongTerm,
+    /// A session-scoped episode: a fact extracted from a transcript
+    /// (D2.4, extraction channel), tagged with the session it came
+    /// from. Stored in the same persistent backend as `LongTerm` —
+    /// the variant exists so a caller can filter by kind, and so
+    /// the extraction path has a natural home for the `auto-*` tags
+    /// it produces. Retrieval surfaces episodic entries alongside
+    /// long-term ones via the hybrid scorer.
+    Episodic,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
