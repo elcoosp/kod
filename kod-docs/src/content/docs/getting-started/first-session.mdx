@@ -1,0 +1,103 @@
+---
+title: Your First Session
+description: A guided tour of the KOD TUI — modes, keybindings, slash commands, steering a running generation, and the context meter.
+sidebar:
+  order: 4
+---
+
+import { Steps, Aside, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The TUI is where KOD is most itself: a header, a chat area with live tool rows, a status line, an input box, and a set of keybindings borrowed from the muscle memory you already have from Vim. This page walks through one realistic session from launch to exit and points out the parts that make the interface pleasant to live in.
+
+## Launch and look around
+
+```bash
+kod tui
+```
+
+The first screen is the entry-point summary (running bare `kod` shows the same thing): the loaded model, the active policy preset, the number of skills matched, and the memory scope. From there, press `i` to enter insert mode and start typing.
+
+The interface has four regions. The **header** shows the session state and model. The **chat area** renders your prompts, the assistant's streaming replies, and one row per tool call. The **status line** carries the context meter and mode indicator. The **input box** is where prompts go, with history and completion support.
+
+## Your first prompt
+
+<Steps>
+1. Press `i` to enter insert mode.
+2. Type a goal that will make the agent use tools, for example:
+
+   ```
+   explain the retry logic in src/net.rs and add a doc comment to the retry function
+   ```
+
+3. Press <kbd>Enter</kbd> to send. Tokens stream in live; tool rows appear as the agent works.
+</Steps>
+
+Tool rows start collapsed: you see the tool name and target (for example `read_file src/net.rs ✓`). Press `t` to toggle tool-output visibility globally, or `o` to expand the newest collapsed row. This keeps the transcript readable while still making every call inspectable.
+
+<Aside type="tip">
+  The context meter in the status line shows how much of the model's context window the session is using. When it climbs past what you are comfortable with, `/compact` summarises the conversation to reclaim headroom.
+</Aside>
+
+## Steer a running generation
+
+The single most useful thing to know: **typing a plain prompt while a generation is running steers it** — the same as issuing `/steer`. The input is queued, the model sees it as additional guidance, and the work already done is kept.
+
+Use this when a run is heading the wrong direction and you would rather redirect than cancel. If you do want to stop, `Esc` in normal mode cancels the running prompt.
+
+## Slash commands
+
+Type `/` in insert mode to open completion. The commands cover session control, model switching, and interface state:
+
+```
+/help      /clear     /model [<name>]   /skills    /goal <text>
+/steer     /cancel    /compact          /retry     /search [<text>]
+/copy      /theme     /tools            /undo      /edit
+/debug     /swarm     /quit
+```
+
+A few worth trying in a first session:
+
+- `/model <name>` — switch models mid-session. The switch is instantaneous because the engine does not hold the provider lock across a streaming round.
+- `/goal <text>` — set a standing goal the agent keeps in its grounded prompt.
+- `/theme` — switch between the built-in `dark` and `light` themes (or a `theme.toml` you place next to the config).
+- `/undo` — undo a `/clear`, in case you cleared more than you meant to.
+- `/swarm` — launch a multi-agent run from inside the TUI.
+
+## Keybindings at a glance
+
+Normal mode (`Esc` leaves insert mode):
+
+| Key | Action |
+| --- | --- |
+| `i` | enter insert mode |
+| `Esc` | cancel the running prompt |
+| `j` / `k` | scroll down / up |
+| `g` / `G` | jump to oldest / newest |
+| `PgUp` / `PgDn` | scroll by page |
+| `t` | toggle tool-output visibility |
+| `o` | expand the newest collapsed tool row |
+| `f` | start a type-ahead search |
+| `n` / `N` | next / previous search match |
+| `y` | copy the last assistant reply |
+| `r` | retry the last prompt |
+| `e` | edit your last message |
+| `u` | undo a `/clear` |
+| `?` | help overlay |
+| `q` | quit (asks for confirmation when a generation is running) |
+
+Insert mode adds line editing: `Enter` sends, `Ctrl+J` (or `Shift+Enter`) inserts a newline, `Tab` cycles completions, `Up`/`Down` walk prompt history, `Ctrl+W` / `Ctrl+U` / `Ctrl+K` edit the line, and `Ctrl+Left` / `Ctrl+Right` jump by word. The full reference lives at [TUI Keybindings](/reference/tui-keys/).
+
+## Exit cleanly
+
+Press `q` in normal mode. If a generation is running, the TUI asks for confirmation rather than silently dropping the stream. Your session is saved under `~/.kod/` and can be inspected later with `kod sessions`:
+
+```bash
+kod sessions list
+kod sessions export <session-id>   # write the session out as JSON/JSONL
+```
+
+<Aside type="note">
+  Everything the TUI does is recorded: prompts, replies, and every tool call with its arguments and result. That is what makes `kod replay` possible — see [Sessions, Replay & Checkpoints](/guides/sessions/).
+</Aside>
+
+<LinkCard title="Next: Scriptable CLI" href="/guides/cli/" description="The same agent loop, driven from scripts and one-shot commands." />

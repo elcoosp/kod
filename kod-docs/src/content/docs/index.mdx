@@ -1,0 +1,186 @@
+---
+title: KOD · Your terminal. Your model. Your code.
+description: KOD is a local-first AI coding agent harness for the terminal, written in Rust. Skills, multi-layer memory, a streaming tool loop, and both a TUI and a scriptable CLI — with nothing leaving your machine.
+template: splash
+hero:
+  title: "Your terminal. Your model. <span class='grad'>Your code.</span>"
+  tagline: "<span class='kod-eyebrow'><span class='dot'></span>local-first · MIT · v0.1.0</span><br/>KOD is a local-first AI coding agent harness for the terminal, written in Rust. It pairs any OpenAI-compatible model — <strong>Ollama</strong>, LM Studio, MLX, vLLM — with a streaming tool loop, layered memory, and a permissioned file system. <strong>Your code never leaves your machine.</strong>"
+  image:
+    html: |
+      <div class="kod-terminal" role="img" aria-label="Animated mock of a KOD terminal session: a user asks KOD to add doc comments, the agent reads and writes files, and reports success.">
+        <div class="kod-terminal-bar">
+          <span class="light r"></span><span class="light y"></span><span class="light g"></span>
+          <span class="title">kod tui — qwen2.5-coder:7b — local</span>
+        </div>
+        <div class="kod-terminal-body">
+          <span class="ln no-anim"><span class="prompt">❯ </span><span class="kod-type" style="--chars:7; --type-dur:0.9s; --d:0.3s">kod tui</span></span>
+          <span class="ln" style="--d:1.5s"><span class="prompt">▌ </span>add a doc comment to every public function in src/lib.rs</span>
+          <span class="ln" style="--d:2.1s"><span class="dim">  ⚙ </span>CodeModification · 3 skills matched · ctx 18%</span>
+          <span class="ln" style="--d:2.6s"><span class="dim">  ▸ </span><span class="tool">read_file</span> <span class="tool-path">src/lib.rs</span><span class="ok">  ✓</span></span>
+          <span class="ln" style="--d:3.1s"><span class="dim">  ▸ </span><span class="tool">write_file</span> <span class="tool-path">src/lib.rs</span><span class="ok">  ✓ </span><span class="diff-add">+42</span><span class="dim"> −0</span></span>
+          <span class="ln" style="--d:3.7s"><span class="ok">  ● </span>Done — 14 functions documented · <span class="ok">cargo check ✓</span></span>
+          <span class="ln" style="--d:4.2s"><span class="prompt">❯ </span><span class="caret"></span></span>
+        </div>
+      </div>
+    alt: ''
+  actions:
+    - text: Get Started
+      link: /getting-started/installation/
+      icon: rocket
+      variant: primary
+    - text: Quickstart in 5 minutes
+      link: /getting-started/quickstart/
+      icon: clock
+      variant: secondary
+---
+
+import { Card, CardGrid, LinkCard, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+<div class="landing-section">
+
+## One binary, twelve crates, zero clouds
+
+KOD ships as a single Rust executable that runs the agent loop, the tools, the memory store, and the terminal UI. There is no Node runtime, no Python interpreter, and no Docker daemon in the path — just `cargo build --release` and a model server you control.
+
+<div class="kod-stats not-content" role="list">
+  <div class="stat" role="listitem"><span class="num">12</span><span class="lbl">crates in the workspace</span></div>
+  <div class="stat" role="listitem"><span class="num">~356</span><span class="lbl">test attributes across 11 crates</span></div>
+  <div class="stat" role="listitem"><span class="num">10</span><span class="lbl">permission-gated built-in tools</span></div>
+  <div class="stat" role="listitem"><span class="num">0</span><span class="lbl">bytes of code uploaded by default</span></div>
+</div>
+
+</div>
+
+<div class="landing-section">
+
+## Built for people who read their own diffs
+
+KOD is designed around one question: *where does my code go when I run this?* Every design decision — from the local model default to the JSONL session log — exists so that the answer is always “nowhere you did not choose.”
+
+<div class="kod-features not-content">
+
+<div class="feat">
+  <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 6v6c0 5 4 8.4 9 10 5-1.6 9-5 9-10V6l-9-4Z"/><path d="m9 12 2 2 4-5"/></svg></span>
+  <h3>Policy before every tool call</h3>
+  <p>Read-only, standard, or yolo presets, layered with a committed <code>.kod/policy.toml</code>: per-tool allow/deny/ask, path globs, and command allowlists. Deny always wins.</p>
+</div>
+
+<div class="feat">
+  <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></span>
+  <h3>Auditable by design</h3>
+  <p>Every tool call is recorded as JSONL. <code>kod replay</code> re-runs a session's tool calls without the model, so you can verify any session against the codebase at any later commit.</p>
+</div>
+
+<div class="feat">
+  <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg></span>
+  <h3>Markdown skills, hot-reloaded</h3>
+  <p>Drop a Markdown file with YAML front matter into <code>~/.kod/skills</code> and the next prompt sees it. Triggers, tags, capabilities, and examples — no rebuild, no restart.</p>
+</div>
+
+<div class="feat">
+  <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+  <h3>Layered memory on disk</h3>
+  <p>Short-term FIFO context plus a persistent <code>redb</code> long-term store — global or project-scoped. You can open the file, inspect it, or delete it.</p>
+</div>
+
+<div class="feat">
+  <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><path d="M8.4 7.8 10.5 15M15.6 7.8 13.5 15M9 6h6"/></svg></span>
+  <h3>Agent swarms</h3>
+  <p><code>kod swarm</code> decomposes a goal into subtasks, runs up to 8 agents concurrently, detects file conflicts, and asks the model to merge the results.</p>
+</div>
+
+<div class="feat">
+  <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+  <h3>Optional sandboxing</h3>
+  <p><code>--sandbox</code> routes shell commands through <code>bwrap</code> on Linux or <code>sandbox-exec</code> on macOS — and fails loudly if the primitive is missing, rather than running unsandboxed.</p>
+</div>
+
+</div>
+
+</div>
+
+<div class="landing-section">
+
+## Up and running in five commands
+
+<Tabs>
+<TabItem label="Build from source">
+  ```bash
+  git clone https://github.com/kod-team/kod.git
+  cd kod && cargo build --release
+
+  ollama serve &            # or LM Studio, MLX, vLLM, …
+  ollama pull qwen2.5-coder:7b
+
+  ./target/release/kod doctor
+  ./target/release/kod profile use local-fast
+  ./target/release/kod tui
+  ```
+</TabItem>
+<TabItem label="Try the CLI first">
+  ```bash
+  # one-shot agent run against a goal
+  kod agent -g "add a doc comment to every public function in src/lib.rs"
+
+  # a swarm of 4 agents on something bigger
+  kod swarm -g "implement and test a rate limiter" -n 4
+
+  # replay a recorded session as a regression check
+  kod replay ~/.kod/sessions/1730000000000.jsonl --execute
+  ```
+</TabItem>
+</Tabs>
+
+<Aside type="tip">
+  Not sure whether your setup works? <code>kod doctor</code> prints a diagnostics report for config, endpoint, skills, memory, and git in one shot.
+</Aside>
+
+</div>
+
+<div class="landing-section">
+
+## Go deeper
+
+<CardGrid stagger>
+  <Card title="Terminal UI (TUI)" icon="laptop">
+    Chat, live tool rows, an agent panel, themes, search, and slash commands — a full ratatui interface.
+  </Card>
+  <Card title="Skills" icon="open-book">
+    Write reusable knowledge assets in Markdown and match them by trigger, tag, capability, or name.
+  </Card>
+  <Card title="Policy & Permissions" icon="padlock">
+    Four layers of precedence decide what the agent may do — before every single tool call.
+  </Card>
+  <Card title="Agent Swarms" icon="random">
+    Decompose, run concurrently, detect conflicts, and merge — all against your local model.
+  </Card>
+  <Card title="Architecture" icon="code-branch">
+    Twelve crates, one responsibility each: types, config, providers, skills, memory, tools, core, TUI, CLI.
+  </Card>
+  <Card title="Testing" icon="approve-check-circle">
+    356 test attributes, offline by default, with live-model tests gated behind <code>#[ignore]</code>.
+  </Card>
+</CardGrid>
+
+</div>
+
+<div class="landing-section">
+
+## Ready when you are
+
+Install KOD, point it at the model server you already run, and keep your source where it belongs.
+
+<div class="kod-rail not-content" aria-label="Popular CLI commands">
+  <span class="chip"><code>kod doctor</code></span>
+  <span class="chip"><code>kod tui</code></span>
+  <span class="chip"><code>kod agent -g "…"</code></span>
+  <span class="chip"><code>kod swarm -g "…" -n 4</code></span>
+  <span class="chip"><code>kod profile use local-fast</code></span>
+  <span class="chip"><code>kod replay session.jsonl</code></span>
+  <span class="chip"><code>kod skills</code></span>
+  <span class="chip"><code>kod map</code></span>
+</div>
+
+<p style="margin-top:1.6rem"><LinkCard title="Installation →" href="/getting-started/installation/" description="Prerequisites, building from source, and verifying your first setup." /></p>
+
+</div>

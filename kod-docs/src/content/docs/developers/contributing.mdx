@@ -1,0 +1,67 @@
+---
+title: Contributing
+description: How to contribute to KOD — the workspace conventions, what a good change looks like, the check suite your PR must pass, and how bug reports become fixes faster.
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard } from '@astrojs/starlight/components';
+
+Contributions, bug reports, and design discussions are welcome — KOD is a work in progress and says so up front. Contributions are licensed under MIT, the same terms as the project. This page condenses the repository's `CONTRIBUTING.md` into the practical loop: pick a scope, follow the crate conventions, pass the gates, open the PR.
+
+## Find the right crate to touch
+
+The workspace's modularity is your map. A change usually has one obvious home:
+
+| You are changing… | Work in |
+| --- | --- |
+| Shared types, IDs, messages | `kod-types` |
+| Error variants, recovery logic | `kod-error` |
+| Config keys, validation, profiles, policy config | `kod-config` |
+| Provider behaviour, endpoint handling | `kod-provider-openai` |
+| Skill parsing, matching, hot reload | `kod-skills` |
+| Memory eviction, storage, retrieval | `kod-memory` |
+| A built-in tool, path locks, sandbox calls | `kod-tools` |
+| Swarm coordination, workspace sharing | `kod-swarm` |
+| The engine loop, router, repo map, session log, hooks | `kod-core` |
+| TUI behaviour, themes, keybindings | `kod-tui` |
+| Command surface, doctor, completions | `kod-cli` |
+
+Each crate has a single responsibility and a narrow public API — keep it that way. If a change seems to require reaching sideways across layers, that is a design smell worth raising in an issue first.
+
+## The gates your PR must pass
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+./scripts/test.sh      # the whole suite in one shot
+```
+
+Clippy warnings are errors (`-D warnings`), and the `clippy.toml` encodes the project's lint preferences — run the linter before pushing, not in CI. Tests must pass offline; if you added a live-model test, gate it with `#[ignore]` and honour the `KOD_TEST_MODEL` / `KOD_TEST_DB` conventions.
+
+## Conventions that matter
+
+- **Tests document behaviour.** New behaviour wants a test that pins it; bug fixes want a test that fails without the fix. The suite's shape (105 TUI attributes, 47 tool attributes, …) is the project's contract with itself.
+- **Fail loudly.** The codebase consistently prefers explicit errors over silent fallbacks — corrupt configs warn and recover, missing sandbox primitives abort, absent providers return `InvalidState`. Follow that grain.
+- **Docs describe the code as it is.** Aspirational text belongs in issues or `docs/SPEC.md`, not in user-facing docs. When you change behaviour, the affected pages on this site want the same PR or a fast follow.
+- **Changelog entries.** Notable changes get a bullet in `CHANGELOG.md` under the right section — the release notes are assembled from it.
+
+## Good bug reports
+
+A report that includes the following gets fixed dramatically faster:
+
+1. What you ran (the exact command) and what you expected.
+2. What happened, with the relevant stderr/TUI output.
+3. An excerpt of the session JSONL (it records every tool call *and* the policy decision that gated it).
+4. `kod doctor` output — it answers the first five questions a maintainer would ask anyway.
+
+## Where design happens
+
+Big changes start as issues, not PRs. The repository keeps `docs/SPEC.md` as the design reference for the larger shape KOD could take, with `docs/ARCHITECTURE.md` and `docs/TESTING.md` describing the code as it exists. If your idea touches the engine loop, policy, or swarm coordination, an issue first saves everyone a rewrite.
+
+<Aside type="tip">
+  The fastest credible first contribution is often a test: the suites are dense but small-grained, and a new case for an edge in `classify_task`, glob matching, or keybinding handling is both genuinely useful and a great way to learn the codebase.
+</Aside>
+
+<LinkCard title="Developers: Testing" href="/developers/testing/" description="The suite layout and the exact commands CI runs." />

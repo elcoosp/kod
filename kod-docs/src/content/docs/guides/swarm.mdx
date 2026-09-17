@@ -1,0 +1,57 @@
+---
+title: Agent Swarms
+description: kod swarm — decomposing a goal into subtasks, running up to 8 agents concurrently, detecting file conflicts, and merging the results.
+sidebar:
+  order: 10
+---
+
+import { Aside, LinkCard, Steps } from '@astrojs/starlight/components';
+
+A swarm is KOD's answer to “this task is too big for one pass.” `kod swarm` decomposes a goal into N subtasks, spawns N agents, runs them **concurrently** against a shared workspace, detects file conflicts between them, and asks the model to merge the per-agent results into a single answer.
+
+## The lifecycle
+
+<Steps>
+1. **Decompose** — the runner asks the model to break your goal into subtasks, targeting `swarm.max_agents` pieces.
+2. **Spawn** — up to N agents start with their own subtask. The runner clamps N to the range **2–8**: a one-agent swarm is not a swarm, and eight concurrent agentic loops will saturate most local model servers.
+3. **Run** — agents loop independently (classify → ground → stream → tools), coordinated through a communication hub with a shared workspace and per-path locks.
+4. **Detect conflicts** — file-level locks and a conflict resolver surface agents that touched the same paths.
+5. **Merge** — when `swarm.merge_results` is true (the default), the model synthesizes one final answer from the per-agent results. When false — or when synthesis fails — the results are concatenated under their labels.
+</Steps>
+
+## Running one
+
+```bash
+kod swarm -g "implement and test a rate limiter for the HTTP client" -n 4
+```
+
+Flags that matter: `-n, --agents` overrides the configured agent count (still clamped to 2–8); `--model` switches the model for the whole run; `--no-merge` disables synthesis so you get labeled per-agent output. Inside the TUI, `/swarm` starts the same flow interactively.
+
+<Aside type="tip">
+  Swarms shine when subtasks are *file-disjoint* — “module A”, “module B”, “tests”. You get real parallelism and no merge conflicts. When subtasks must touch the same files, prefer a single `kod agent` run or keep `-n` small.
+</Aside>
+
+## Configuration
+
+```toml
+[swarm]
+max_agents     = 5     # the decompose step targets this; runner clamps to 2–8
+merge_results  = true  # false = concatenate per-agent results under labels
+```
+
+The config section is minimal on purpose — it carries only the two values the swarm runner actually consumes. Coordination strategy and lock timeouts are not tunable because they are not parameters worth exposing; the defaults encode one opinionated, tested pipeline.
+
+## Shared workspace and safety
+
+The workspace coordinator keeps agents from stomping each other through two mechanisms:
+
+1. **Per-path advisory locks** — the same table the tool layer uses for concurrent writes; two agents cannot silently interleave writes to the same file.
+2. **Conflict detection + resolution** — when agents do contend for the same paths, the conflicts are detected and reported rather than resolved by last-write-wins.
+
+Policy applies per agent: every agent's tool calls go through the same [policy engine](/guides/policy/) as single-agent runs. `--sandbox` (on `kod swarm` like `kod agent`) confines every agent's shell commands, and `--preset read-only` turns a swarm into a read-only analysis crew.
+
+<Aside type="caution">
+  A swarm with `yolo` and no sandbox multiplies unsupervised write access by N. For unattended runs, the safe posture is `--preset read-only` plus `--sandbox`, or a strict `.kod/policy.toml`.
+</Aside>
+
+<LinkCard title="Concepts: The Agent Loop" href="/concepts/agent-loop/" description="What each swarm agent is doing per round." />

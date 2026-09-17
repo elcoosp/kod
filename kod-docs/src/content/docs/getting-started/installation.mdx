@@ -1,0 +1,124 @@
+---
+title: Installation
+description: Prerequisites, building KOD from source, first-run setup with kod init and kod doctor, and shell completion installation.
+sidebar:
+  order: 2
+---
+
+import { Steps, Aside, Tabs, TabItem, LinkCard } from '@astrojs/starlight/components';
+
+KOD is distributed as a single Rust binary that you build from source. There is no package to download from a registry and no runtime to install: `cargo build --release` compiles the agent, the tools, the memory store, and the terminal UI into one executable at `./target/release/kod`.
+
+## Prerequisites
+
+Three things must be present on your machine before you build:
+
+- **Rust 1.85 or newer**, installed via [rustup](https://rustup.rs/). The workspace uses the 2024 edition, so older toolchains will refuse to build it. `rust-toolchain.toml` in the repository pins the expected version.
+- **A model server** that speaks the OpenAI chat-completions protocol. [Ollama](https://ollama.ai/) is the recommended default and what the bundled profiles target first, but LM Studio, MLX Omni Serve, vLLM, and OpenAI itself all work unchanged.
+- **Git**, required both for the built-in git tools (`git_status`, `git_diff`) and for `build.rs`, which stamps version information into the binary at compile time.
+
+## Build from source
+
+<Steps>
+1. Clone the repository and build the workspace in release mode:
+
+   ```bash
+   git clone https://github.com/kod-team/kod.git
+   cd kod
+   cargo build --release
+   ```
+
+2. Confirm the binary landed and runs:
+
+   ```bash
+   ./target/release/kod --version
+   ```
+
+3. Optionally put it on your `PATH`:
+
+   ```bash
+   cp ./target/release/kod ~/.local/bin/   # or another directory on PATH
+   ```
+</Steps>
+
+The workspace builds on Linux, macOS, and Windows. A debug build (`cargo build`) is fine for trying things out, but the streaming tool loop is noticeably snappier in release mode.
+
+## First run
+
+KOD does not need any configuration to start — every setting has a sane default — but two commands exist specifically to make the first five minutes smooth.
+
+### `kod doctor`
+
+`kod doctor` prints a diagnostics report covering the configuration file, the model endpoint, discovered skills, the memory database, and git availability. It is the fastest way to answer “is my setup actually working?” without launching a session. Run it right after building:
+
+```bash
+kod doctor
+```
+
+Each check tells you what it tested and what it found. A config file that does not exist yet is not an error — KOD will generate a default one.
+
+### `kod init`
+
+`kod init` walks you through the same steps as a first session and writes a default config to the platform location if one does not exist:
+
+- **Linux:** `~/.config/kod/config.toml`
+- **macOS:** `~/Library/Application Support/kod/config.toml`
+
+### Point KOD at a model
+
+Model profiles bundle a model name, base URL, context window, and generation settings into a preset so a first-run user does not have to know what a `context_window` is. The built-in presets are `local-fast` (Qwen 2.5 Coder 7B), `local-capable` (32B), `local-reasoning` (DeepSeek-R1 14B), and `cloud-openai` (GPT-4o mini):
+
+```bash
+ollama pull qwen2.5-coder:7b      # one-time model download
+kod profile use local-fast        # writes the preset into config.toml
+```
+
+<Aside type="tip">
+  Local profiles list their one-line install command (`ollama pull …`) right in `kod profile list`, so you can copy-paste without leaving the terminal.
+</Aside>
+
+### Start a session
+
+```bash
+kod tui
+```
+
+The TUI opens with a header, chat area, status line, and input box. If you prefer a plain REPL, `kod chat` gives you the same agent in a scriptable shell.
+
+## Shell completions
+
+KOD can print a completion script for your shell, ready to source:
+
+<Tabs>
+  <TabItem label="Bash">
+    ```bash
+    kod completions bash > ~/.local/share/bash-completion/completions/kod
+    ```
+  </TabItem>
+  <TabItem label="Zsh">
+    ```bash
+    kod completions zsh > ~/.zfunc/_kod
+    ```
+  </TabItem>
+  <TabItem label="Fish">
+    ```bash
+    kod completions fish > ~/.config/fish/completions/kod.fish
+    ```
+  </TabItem>
+  <TabItem label="Elvish / PowerShell">
+    ```bash
+    kod completions elvish
+    kod completions powershell
+    ```
+  </TabItem>
+</Tabs>
+
+## Keeping up to date
+
+`kod update` checks GitHub for a newer release. It is read-only — it tells you a newer version exists, it does not replace your binary. To update, pull the latest source and rebuild with the same two commands you used to install.
+
+<Aside type="note">
+  Rebuilding after `git pull` is the intended upgrade path for now. Prebuilt release artefacts are produced by the CI pipeline, but the source build remains the canonical install.
+</Aside>
+
+<LinkCard title="Next: Quickstart" href="/getting-started/quickstart/" description="Your first chat, agent run, and replay in about five minutes." />

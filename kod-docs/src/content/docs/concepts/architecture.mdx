@@ -1,0 +1,100 @@
+---
+title: Architecture
+description: How the KOD workspace is organised — the twelve crates, their layering, the data flow through the engine, and the design principles behind it.
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard } from '@astrojs/starlight/components';
+
+KOD is a multi-crate Cargo workspace where each crate has a single responsibility and a narrow public API, so each phase can be built and tested in isolation. Twelve crates stack into five layers:
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    CLI / TUI                         │
+│           (kod-cli, kod-tui)                        │
+├─────────────────────────────────────────────────────┤
+│                   Core Engine                        │
+│                      (kod-core)                     │
+├─────────────────────────────────────────────────────┤
+│                LLM Providers                         │
+│        (kod-provider, kod-provider-openai)           │
+├─────────────────────────────────────────────────────┤
+│                   Foundation                         │
+│        (kod-types, kod-error, kod-config)            │
+└─────────────────────────────────────────────────────┘
+```
+
+## The twelve crates
+
+| Crate | Responsibility |
+| --- | --- |
+| `kod-types` | Shared types: strongly-typed IDs (`AgentId`, `MessageId`, `SkillId`, …), messages, skills, memory, tools. |
+| `kod-error` | `KodError` enum and `Result` alias — comprehensive errors with recovery detection. |
+| `kod-config` | `KodConfig`, `LlmConfig`, `MemoryConfig`, `SkillsConfig`, `SwarmConfig`, model profiles, and the policy engine's config side. |
+| `kod-provider` | The `LlmProvider` trait, `GenerationOptions`, and streaming chunk types. |
+| `kod-provider-openai` | OpenAI-compatible implementation (backed by `adk-model`): one code path for Ollama, LM Studio, MLX, vLLM, OpenAI. |
+| `kod-skills` | Skill parser, loader, matcher, and hot-reload watcher. |
+| `kod-memory` | Short-term memory and long-term `redb` storage, plus the context builder. |
+| `kod-tools` | `Tool` trait, registry, built-in tools, per-path lock table, sandbox invocation. |
+| `kod-swarm` | Agent lifecycle, communication hub, task coordinator, shared workspace. |
+| `kod-core` | `KodEngine`, `TaskRouter`, `SwarmRunner`, repository map, session log, hooks. |
+| `kod-tui` | Terminal UI: app state, event handling, widgets, keybindings, themes. |
+| `kod-cli` | The `kod` binary: command definitions and handlers. |
+
+The layering is strict: interfaces depend on core, core depends on providers and the domain crates, and everything sits on the foundation. No crate reaches sideways past the layer below it.
+
+## Data flow through one round
+
+```
+user input
+   │
+   ▼
+┌────────────────┐   ┌────────────────┐   ┌────────────────┐
+│  TaskRouter    │──▶│  Memory +      │──▶│  Grounded      │
+│  (classify)    │   │  Skill match   │   │  prompt        │
+└────────────────┘   └────────────────┘   └────────────────┘
+                                                │
+                                                ▼
+┌────────────────┐   ┌────────────────┐   ┌────────────────┐
+│  Tool results  │◀──│  LLM provider  │──▶│  Streaming     │
+│  fed back      │   │  (streaming)   │   │  chunks → UI   │
+└────────────────┘   └────────────────┘   └────────────────┘
+        │
+        ▼
+┌────────────────┐   ┌────────────────┐
+│  Final reply   │──▶│  Session log   │
+│  → CLI / TUI   │   │  (JSONL)       │
+└────────────────┘   └────────────────┘
+```
+
+1. **User input** arrives from the CLI or TUI.
+2. **Task classification** (`kod-core::router`) decides the task type and how the round is shaped.
+3. **Context building** (`kod-memory`, `kod-skills`) assembles memory entries and matched skills.
+4. **LLM generation** (`kod-provider-*`) streams tokens and assembles tool calls live.
+5. **Tool execution** (`kod-tools`) runs policy-gated calls and feeds results back.
+6. **Response** reaches the interface while the **session log** records everything.
+
+## Design principles
+
+1. **Modularity** — each crate has a single responsibility and a narrow public API.
+2. **Performance** — zero-copy parsing, object pooling, caching, connection reuse.
+3. **Extensibility** — trait-based abstractions for providers and tools.
+4. **Type safety** — strongly-typed IDs prevent mixing an `AgentId` with a `SessionId`.
+5. **Error handling** — comprehensive error types with recovery detection.
+6. **Testing** — high coverage with property-based testing; offline by default.
+7. **Documentation** — every component documented; docs describe the code as it is.
+
+## Performance posture
+
+The workspace is deliberate about resource use: Tokio-based async I/O throughout, multi-level caching for skills and memory, object pooling and string interning to keep allocations down, and HTTP connection reuse for the provider. None of it is exotic — it is the accumulation of choosing allocations carefully in a program that streams tokens while running tools.
+
+## What is deliberately not here
+
+The in-repo `docs/SPEC.md` describes a larger aspirational system — LSP integration, debugger integration, vector search, a plugin system. Those are design references, not built features. The architecture above is the system as it exists.
+
+<Aside type="note">
+  The [README's Project Status](https://github.com/kod-team/kod#project-status) section is the authoritative list of what works end-to-end versus what is on the roadmap; this site follows it.
+</Aside>
+
+<LinkCard title="Concepts: The Agent Loop" href="/concepts/agent-loop/" description="What happens inside one engine round, step by step." />

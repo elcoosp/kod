@@ -1,0 +1,95 @@
+---
+title: Testing
+description: How KOD is tested — the suite layout, per-crate coverage, offline-by-default design, live-model tests, benchmarks, and the pre-release checklist.
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The workspace contains roughly **356 test attributes** (`#[test]`, `#[tokio::test]`, `#[rstest]`) across 11 crates. `cargo test --workspace` runs unit tests, integration tests, and doc tests **without external services** — the suite is designed to be fast and offline, with live-model tests opt-in behind `#[ignore]`.
+
+## Quick start
+
+```bash
+just test                        # or:
+cargo test --workspace           # all crates, all tests
+cargo test --workspace -- --test-threads=8     # faster, parallel
+cargo test --workspace --lib     # unit tests only
+cargo test --workspace --tests   # integration tests only
+cargo test --workspace -- --list | tail -1     # exact current total
+```
+
+The attribute count is illustrative, not canonical — `#[rstest]` cases expand into multiple tests at runtime, and ordinary development adds tests without updating the count.
+
+## Coverage by crate
+
+| Crate | Attributes | What is pinned |
+| --- | --- | --- |
+| `kod-tui` | 105 | App state, events, keybindings, completion, search, streaming, main loop |
+| `kod-core` | 79 | Engine lifecycle, task classification, memory wiring, prompt grounding, tool rounds, session log, swarm runner |
+| `kod-tools` | 47 | Built-in tools, path resolution, sandbox invocation, permission enforcement |
+| `kod-skills` | 34 | Parser, loader, matcher, watcher, full pipeline |
+| `kod-memory` | 25 | FIFO eviction, `redb` round-trips, retrieval, compaction |
+| `kod-config` | 18 | Defaults, partial-config parsing, LLM validation, profiles, memory scope |
+| `kod-cli` | 15 | Doctor checks, command dispatch, in-process engine tests |
+| `kod-types` | 9 | IDs, message serialisation, tool and skill types |
+| `kod-provider-openai` | 6 | Endpoint normalisation, config wiring, model switching |
+| `kod-error` | 3 | Error creation, display, conversion |
+| `kod-provider` | 0 | Trait-only crate — no tests |
+
+## Live model tests
+
+Tests that exercise the real provider are `#[ignore]`-gated so `cargo test` stays fast and offline. Opt in with a running server and environment variables:
+
+<Tabs>
+<TabItem label="Provider tests">
+  ```bash
+  KOD_TEST_MODEL=qwen2.5:0.5b \
+    cargo test -p kod-provider-openai -- --ignored --nocapture
+  ```
+</TabItem>
+<TabItem label="TUI main-loop test">
+  ```bash
+  KOD_TEST_MODEL=qwen2.5:0.5b KOD_TEST_DB=/tmp/kod-test.redb \
+    cargo test -p kod-tui --test main_loop -- --ignored --nocapture
+  ```
+</TabItem>
+</Tabs>
+
+In-process tests build the router with `enable_memory=false` to avoid database contention — mirroring how the engine wires memory in production but keeping tests hermetic.
+
+## Benchmarks
+
+```bash
+cargo bench --workspace          # or: just bench
+```
+
+Benchmarks live under `kod-core/benches/` and cover the engine's hot paths. `just bench` is the shortcut.
+
+## Debugging a failing test
+
+```bash
+cargo test --workspace -- --nocapture              # full output
+cargo test <name> -- --nocapture --test-threads=1  # serial, for races
+cargo test <name> -- --backtrace                   # backtrace
+cargo test -- --ignored                            # include live tests
+```
+
+Common causes: Ollama not reachable (only affects `#[ignore]`-gated tests), permission errors in tool tests (path resolution assumptions), and TUI tests in CI (run serially where timing matters).
+
+## Pre-release checklist
+
+The full check suite — format + lint + test + release build — is scripted:
+
+```bash
+./scripts/test.sh
+```
+
+Which mirrors the manual order: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, then a release build. A `justfile` provides the shortcuts (`just build`, `just test`, `just lint`, `just check`, `just bench`).
+
+<Aside type="note">
+  CI (GitHub Actions) runs the same suite on every push and produces release artefacts via `release.yml`. Warnings are errors: the workspace builds clean with `-D warnings`.
+</Aside>
+
+<LinkCard title="Guides: Troubleshooting" href="/guides/troubleshooting/" description="What to do when the suite or a session misbehaves." />

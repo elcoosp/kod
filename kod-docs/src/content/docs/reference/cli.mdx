@@ -1,0 +1,147 @@
+---
+title: CLI Commands
+description: Complete reference for the kod binary — every subcommand, its flags, and its purpose.
+sidebar:
+  order: 1
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+```
+kod [--verbose] <COMMAND>
+```
+
+KOD's CLI is a single binary with subcommands grouped by purpose: sessions, models, inspection, and audit. Most commands operate on the effective configuration (defaults merged with `~/.config/kod/config.toml` and any project policy) and talk to the model server configured under `[llm]`.
+
+## Commands at a glance
+
+| Command | Purpose |
+| --- | --- |
+| `chat` | Start a chat session (plain REPL) with streaming output |
+| `tui` | Launch the interactive terminal UI |
+| `agent` | Run a single agent against a goal, then exit |
+| `swarm` | Decompose a goal, run N agents concurrently, merge results |
+| `skills` | Work with skills: list, scaffold, edit, search, rename, copy, export |
+| `config` | Show, validate, dump, edit, or seed the configuration |
+| `models` | List models the configured provider offers |
+| `profile` | List, show, or switch model profiles |
+| `sessions` | Inspect, export, or clear the saved TUI session |
+| `map` | Print the repository map used for prompt grounding |
+| `replay` | Re-run the tool calls from a session log |
+| `checkpoint` | List, restore, or clear file-level undo snapshots |
+| `doctor` | Print a diagnostics report (config, endpoint, skills, memory, git) |
+| `init` | First-run helper; writes a default config if none exists |
+| `test` | Run the built-in self-tests |
+| `completions` | Print a shell completion script |
+| `update` | Check GitHub for a newer release (read-only) |
+
+## `kod chat`
+
+```bash
+kod chat [--model <name>] [--temperature <f>] [--system-prompt <text>]
+         [--sandbox] [--preset <read-only|standard|yolo>]
+```
+
+Starts a plain REPL with streaming output. `--model` overrides the configured model for this session; `--temperature` (default `0.7`) tunes generation; `--system-prompt` replaces the built-in system prompt; `--sandbox` routes shell commands through `bwrap`/`sandbox-exec` and fails loudly when the primitive is unavailable; `--preset` overrides the policy for this session, ignoring global config and any project policy.
+
+## `kod agent`
+
+```bash
+kod agent [--name <agent>] -g "<goal>" [--model <name>] [--preset <preset>]
+```
+
+One-shot agent run: classify the task, ground the prompt, call tools, finish with a summary. `--name` (default `kod-agent`) labels the agent in logs; `-g, --goal` is required.
+
+## `kod swarm`
+
+```bash
+kod swarm -g "<goal>" [-n <agents>] [--model <name>] [--no-merge]
+```
+
+Runs the full swarm pipeline. `-n, --agents` defaults to `swarm.max_agents` from config and is clamped to 2–8 by the runner. `--no-merge` disables model synthesis, yielding per-agent results concatenated under their labels.
+
+## `kod skills`
+
+`kod skills` with no subcommand lists the merged skills from every standard directory; `--json` emits the machine-readable inventory. Subcommands:
+
+| Subcommand | Purpose |
+| --- | --- |
+| `list` | Same as bare `kod skills` |
+| `new <name>` | Scaffold a new skill in the first writable directory; refuses to overwrite |
+| `remove <name>` | Delete a skill; refuses without `--yes` unless inside the current directory |
+| `edit <name>` | Open the file in `$EDITOR` |
+| `show <name>` | Print the full markdown (front matter + body) |
+| `search <query>` | Search by name, description, tags, or capabilities |
+| `source <name>` | Print the absolute file path — useful for scripts |
+| `rename <from> <to>` | Atomic rename; rewrites the `name:` field |
+| `copy <from> <to>` | Copy within the same directory; rewrites `name:`; refuses to overwrite |
+| `export <name> <dest>` | Copy to a path or `-` for stdout; `--force` overwrites |
+
+There is also `kod skills-validate` — a CI-friendly validator that exits non-zero on malformed skill files.
+
+## `kod config`
+
+| Subcommand | Purpose |
+| --- | --- |
+| `write [path]` | Write the effective config (defaults + user) to a file or `-`; `--force` overwrites |
+| `path` | Print the config file location |
+| `edit` | Open the config in `$EDITOR` (or `$VISUAL`, or `vi`) |
+| `validate` | Parse and validate; exits non-zero on error — CI-friendly |
+| `toml` | Print the effective config as TOML (reproducible) |
+| `raw` | Print the raw file contents verbatim, comments included |
+| `seed <profile>` | Back up current config (`config.toml.bak-<unix-ts>`) and write one seeded from a profile |
+
+## `kod profile`
+
+```bash
+kod profile list [--json]   # show the built-in presets
+kod profile show            # print the effective [llm] config
+kod profile use <profile> [--dry-run]   # write preset values into config.toml
+```
+
+Presets: `local-fast`, `local-capable`, `local-reasoning`, `cloud-openai`. See [Model Profiles](/guides/profiles/).
+
+## `kod sessions`
+
+```bash
+kod sessions list                  # recorded sessions
+kod sessions show <id>             # summary
+kod sessions export <id> [path]    # write out for archiving/diffing
+kod sessions clear                 # remove saved session state
+```
+
+## `kod checkpoint`
+
+```bash
+kod checkpoint list             # snapshots taken before mutating calls
+kod checkpoint restore <id>     # restore a file to its pre-call state
+kod checkpoint clear            # drop the checkpoint store
+```
+
+## `kod replay`
+
+```bash
+kod replay <session.jsonl> [--execute]
+```
+
+Re-runs the tool calls recorded in a session log, without the model. Without `--execute` it prints what would run; with `--execute` it performs the calls for real.
+
+## `kod models`
+
+```bash
+kod models [--filter <text>]
+```
+
+Lists models the configured provider offers. Errors from `list_models()` are surfaced rather than collapsed into an empty list, so a bad endpoint is visible here.
+
+## `kod completions`
+
+```bash
+kod completions <bash|zsh|fish|elvish|powershell>
+```
+
+Prints the completion script for the chosen shell.
+
+<Aside type="tip">
+  `--verbose` on the top-level command turns up logging across the run — most useful combined with `agent` and `swarm` when you want to see the loop breathe.
+</Aside>

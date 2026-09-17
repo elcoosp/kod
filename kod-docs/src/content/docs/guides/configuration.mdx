@@ -1,0 +1,100 @@
+---
+title: Configuration
+description: How KOD reads config.toml — locations, every section ([llm], [memory], [skills], [swarm], [hooks], [tools]), clamping behaviour, and the config subcommands.
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+
+KOD reads its configuration from a single TOML file, auto-generated on first run, with sane defaults for every key. You can go from zero config to a working session without touching anything — the config exists so you can *stop* accepting defaults, not so you have to set them.
+
+## Where the file lives
+
+- **Linux:** `~/.config/kod/config.toml`
+- **macOS:** `~/Library/Application Support/kod/config.toml`
+
+`kod config path` prints the exact location; `kod config edit` opens it in `$EDITOR`; `kod config validate` parses it and exits non-zero when it is invalid — useful in CI or after a hand-edit. Corrupt files are not fatal: `load_default()` warns and falls back to defaults instead of exiting, so a bad edit never bricks your session.
+
+## The full file, annotated
+
+This is the complete set of sections KOD reads today:
+
+```toml
+[llm]
+provider        = "OpenAICompatible"   # or "Ollama" / "OpenAI" (aliases)
+model           = "qwen2.5-coder:7b"
+base_url        = "http://localhost:11434/v1"
+context_window  = 32768
+max_tokens      = 4096
+temperature     = 0.2
+timeout_secs    = 120
+# network_access = false               # opt-in network access for web_fetch
+
+[memory]
+short_term_capacity = 100
+scope               = "global"         # or "project"
+# long_term_db_path = "/custom/path.redb"  # overrides scope
+
+[skills]
+enable_hot_reload     = true
+max_skills_per_query  = 3
+# skills_dir = "/custom/skills"        # overrides the standard search paths
+
+[swarm]
+max_agents     = 5                     # clamped to 2–8 by the runner
+merge_results  = true
+
+[tools]
+confirm_writes = true                  # approval dialog / stdin prompt before writes
+
+[hooks]
+enabled = false
+# pre_tool_use  = { write_file = "rustfmt {path}" }
+# post_tool_use = { write_file = "cargo check" }
+```
+
+<Aside type="note">
+  The `provider` field accepts `OpenAICompatible`, `Ollama`, and `OpenAI` — the last two are aliases for the first. Any server that speaks the OpenAI chat-completions protocol works on the same code path. `Anthropic` and `Custom` variants are recognised in config but will fail at the first prompt; `LlmConfig::validate` warns at startup.
+</Aside>
+
+## Out-of-range values are clamped, not fatal
+
+`LlmConfig::validate()` clamps out-of-range values — temperature, context window, max tokens, timeout, base URL, model — with a warning at load time. A typo does not produce a mysterious failure three prompts later; you get a warning naming the key and the corrected value. This is a deliberate philosophy: be forgiving at load, loud about it, and precise once running.
+
+## Per-project overrides: `.kod/`
+
+Two things can be scoped to a project directory instead of your home directory:
+
+1. **Policy** — `.kod/policy.toml` in the project root is committed to the repo like an `.editorconfig` and layers over your global config. See [Policy & Permissions](/guides/policy/).
+2. **Memory** — `memory.scope = "project"` puts the long-term database under `<cwd>/.kod/` instead of `~/.kod/`, giving each project its own memory.
+
+## Inspecting what actually applies
+
+Because configuration comes from defaults plus your edits, the useful question is often “what is *effective*?” rather than “what did I write?”:
+
+<Tabs>
+<TabItem label="Effective config">
+  ```bash
+  kod config toml    # defaults merged with user config, reproducible
+  ```
+</TabItem>
+<TabItem label="Raw file">
+  ```bash
+  kod config raw     # verbatim file contents, comments included
+  ```
+</TabItem>
+<TabItem label="Just the LLM block">
+  ```bash
+  kod profile show   # the effective [llm] section
+  ```
+</TabItem>
+</Tabs>
+
+`kod config write [path]` dumps the effective config to a file (refuses to overwrite without `--force`), which gives you a fully self-documenting starting point: dump it, read the defaults as comments-free TOML, edit what you need.
+
+<Aside type="tip">
+  Piping `kod config toml` into a file and committing it is a clean way to version your baseline and diff future changes against it.
+</Aside>
+
+<LinkCard title="Reference: Config Reference" href="/reference/config/" description="Every key, type, default, and valid range in table form." />

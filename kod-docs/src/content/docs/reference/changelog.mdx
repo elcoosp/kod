@@ -1,0 +1,68 @@
+---
+title: Changelog
+description: Notable changes in KOD — features, fixes, and behaviour changes, newest first.
+sidebar:
+  order: 6
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+KOD follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html); this page mirrors the repository's `CHANGELOG.md`.
+
+## [Unreleased]
+
+### Added
+
+- `kod doctor` — first-run diagnostics (config, endpoint, skills, memory, git)
+- `kod init` — onboarding wizard output
+- `kod models` — list provider models with `--filter`
+- `kod sessions` — inspect/export/clear the TUI session file
+- `kod completions <shell>` — bash/zsh/fish/elvish/powershell completion
+- `kod checkpoint list|restore|clear` — file-level undo for `write_file` / `patch_file`; snapshots taken before every mutating call
+- `kod update` — check GitHub for a newer release (read-only)
+- `kod skills --json` and `kod skills-validate` — machine-readable skill inventory and CI-friendly validation
+- `web_fetch` tool — HTTP/HTTPS fetch with SSRF protection (loopback / private / link-local / metadata endpoints refused)
+- `git_status` and `git_diff` tools — read-only git inspection
+- `tools.confirm_writes` — opt-in write approval; TUI dialog and CLI stdin prompt
+- `llm.network_access` — opt-in network access for `web_fetch`
+- Approval dialog in TUI (`y`/`n`/Esc); CLI chat prompts on stdin
+- `--sandbox` flag on `kod chat` — run shell commands under bwrap/sandbox-exec
+- Session log (`KOD_SESSION_LOG`) and `kod replay` — every tool call recorded as JSONL, replayable without the model
+- Unified-diff attachment on `write_file` / `patch_file` results
+
+### Changed
+
+- `Engine::process()` without a provider now returns an `InvalidState` error instead of the router's placeholder text
+- `LlmConfig::validate()` clamps out-of-range values (temperature, context window, max tokens, timeout, base URL, model)
+
+### Fixed
+
+- Engine agentic loop no longer holds the provider read lock across the streaming round — `/model` switch during a prompt is now instantaneous
+- Provider `list_models()` errors are no longer collapsed to an empty list
+- Config `load_default()` is forgiving of a corrupt file (warns and falls back to defaults instead of exiting)
+- Multiple substring-matcher and word-boundary fixes in `TaskRouter::classify_task`
+
+### Removed
+
+- Placeholder handlers in `TaskRouter::process_input` that returned fabricated text instead of failing loudly
+
+## [0.1.0] – 2026-09-04
+
+### Added
+
+- Project structure and workspace setup
+- Core type definitions (ids, messages, skills, memory, tools)
+- Error handling system
+- Configuration management
+- LLM provider abstraction
+- Ollama provider implementation
+- **Skills system**: Markdown parsing with YAML front matter; skill loader with directory scanning; matcher; hot reloading with file-system watching
+- **Memory system**: short-term (in-memory, capacity-limited); long-term (`redb` persistent); episodic (vector-based); manager with unified interface; context builder for prompts
+- **Tool system**: registry and trait definitions; file-system tools (read, write, list); git tools (status, diff); executor with timeout handling; permission-based sandboxing
+- **Agent swarm**: agent lifecycle management; direct messaging between agents; shared workspace with file locking; task coordination and decomposition; swarm manager
+- **TUI**: event handling; application state; chat widget; agent panel; input with history; streaming response display
+- **CLI**: chat, agent, skills, config, test, and tui entry points
+
+<Aside type="note">
+  The unreleased section above is the current development state — the docs on this site describe it. Version dates follow the repository's changelog.
+</Aside>

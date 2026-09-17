@@ -1,0 +1,85 @@
+---
+title: Tools Reference
+description: The ten built-in tools — arguments, results, and the safety machinery around each one.
+sidebar:
+  order: 3
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+KOD ships ten built-in tools. Every call goes through the [policy engine](/guides/policy/) before it runs, is executed under a timeout, passes through a per-path advisory lock table, and is recorded (arguments, result, and the policy decision) in the session log.
+
+## File system tools
+
+### `read_file`
+
+Reads a file relative to the engine's working directory. The workhorse for code inspection; allowed under every preset including `read-only`.
+
+### `list_files`
+
+Lists directory contents. Used for orientation before reads — and by `kod map`'s underlying repo-map data.
+
+### `grep`
+
+Searches file contents. Prefer it when the agent needs to find call sites, definitions, or patterns across many files.
+
+### `file_info`
+
+Returns metadata (size, type) for a path. Cheap and read-only.
+
+### `write_file`
+
+Creates or overwrites a file. The result attaches a **unified diff** of what changed, and the target file is **snapshot to a checkpoint** before the call executes, so `kod checkpoint restore` can undo it. Gated: `ask` under `standard`, denied under `read-only`.
+
+### `patch_file`
+
+Applies an edit patch to an existing file — the surgical alternative to full rewrites. Shares `write_file`'s safety machinery: unified diff on the result, checkpoint before the call, `ask` under `standard`, denied under `read-only`.
+
+## Git tools
+
+### `git_status`
+
+Read-only working-tree status. Lets the agent reason about what has changed without touching anything.
+
+### `git_diff`
+
+Read-only diff view. Combined with `git_status` this is how the agent reviews recent changes before suggesting or making edits.
+
+## Shell tool
+
+### `execute_command`
+
+Runs a shell command. The most powerful and most gated tool:
+
+- **Policy**: denied outright under `read-only`; `ask` under `standard`; `.kod/policy.toml` can allowlist `binaries` (by first token) and forbid `forbidden_binaries`.
+- **Sandbox**: with `--sandbox`, commands run through `bwrap` (Linux) or `sandbox-exec` (macOS), failing loudly when unavailable; `.git` is mounted read-only by default (`git.history_protected`).
+- **Hooks**: `pre_tool_use` / `post_tool_use` templates can wrap every execution.
+
+<Aside type="caution">
+  Command allowlists are ergonomics, not containment — `binaries = ["bash"]` allows everything bash can do. Real containment comes from the sandbox primitive.
+</Aside>
+
+## Web tool
+
+### `web_fetch`
+
+Fetches an HTTP/HTTPS URL and returns its content. Guards:
+
+- **SSRF protection**: loopback, private, link-local, and metadata endpoints are refused outright.
+- **Network opt-in**: disabled unless `llm.network_access` is true — or the tool's own policy entry sets `network = true`.
+- **Domain allow-list**: `.kod/policy.toml` can restrict `web_fetch` to named `domains` (e.g. `["docs.rs", "crates.io"]`).
+
+## Decision precedence, in one table
+
+| Layer | Source | Example |
+| --- | --- | --- |
+| 1. Preset | `read-only` / `standard` / `yolo` | `standard` (default) |
+| 2. Global config | `[tools]` in `config.toml` | `confirm_writes = true` → `standard` |
+| 3. Project policy | `.kod/policy.toml` | `[tools.write_file] mode = "ask"` |
+| 4. CLI override | `--preset` flag | `--preset yolo` |
+
+Within a layer, per-tool entries refine the preset; at glob-conflict time **deny always wins over allow**.
+
+<Aside type="note">
+  The tool layer carries 47 test attributes across built-in tool behaviour, path resolution, sandbox invocation, and permission enforcement — the guarantee being tested is that there is no ungated path to your files.
+</Aside>

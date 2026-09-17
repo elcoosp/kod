@@ -1,0 +1,54 @@
+---
+title: Sandboxing
+description: Running KOD's shell commands under OS-level containment — bwrap on Linux, sandbox-exec on macOS — and why it fails loudly rather than silently.
+sidebar:
+  order: 9
+---
+
+import { Aside, LinkCard } from '@astrojs/starlight/components';
+
+Sandboxing is KOD's hard containment layer for `execute_command`. Where the [policy engine](/guides/policy/) is a decision-maker, the sandbox is a wall: when `--sandbox` is active, shell commands execute through the platform's confinement primitive — **`bwrap`** (bubblewrap) on Linux or **`sandbox-exec`** on macOS — instead of directly in your session.
+
+The design rule that makes this trustworthy: **KOD fails loudly if the primitive is unavailable rather than silently running unsandboxed.** If you asked for a sandbox and the platform cannot provide one, the command does not run and you get an error. There is no silent fallback, because a sandbox that quietly disappears is worse than no sandbox at all.
+
+## When to use it
+
+- **Unattended runs.** Any `kod agent` invocation in a script, cron job, or pipeline should carry `--sandbox`. Combined with `--preset read-only` it gives you a run that can neither write files nor escape its process box.
+- **Swarm runs.** Multiple agents executing concurrently multiply both the power and the risk; `kod swarm` plus sandboxing keeps the concurrency contained.
+- **First sessions in an unfamiliar codebase.** Let the agent run tests and builds while the blast radius is bounded.
+
+## Enabling it
+
+```bash
+# per-invocation (chat, agent, swarm)
+kod chat --sandbox
+kod agent -g "run the test suite and fix failures" --sandbox
+
+# policy side: keep .git read-only inside the sandbox (default true)
+[git]
+history_protected = true
+```
+
+`kod sandbox` inspects the sandbox subsystem and reports which primitive is available on your platform, so you can confirm support before a long unattended run rather than discovering its absence mid-run.
+
+## What the sandbox bounds
+
+The platform primitives give the agent's shell commands a restricted filesystem view and limited network/device access. On top of that, KOD mounts `.git` read-only by default (`git.history_protected`) — the agent can read history through the git tools but cannot rewrite it from inside a sandboxed command.
+
+What the sandbox does **not** replace:
+
+- The policy engine still gates every tool call (allow/deny/ask, path globs, command allowlists).
+- Checkpoints still snapshot files before writes, so file-level undo exists either way.
+- Command allowlists (`binaries`) remain ergonomics, not guarantees — a `bash` allowlist is not containment.
+
+<Aside type="caution">
+  Sandboxing is belt-and-suspenders with the policy engine, not a substitute for it. The strongest unattended posture is all three layers: `--preset read-only`, `--sandbox`, and a committed `.kod/policy.toml` with `forbidden` globs for secrets.
+</Aside>
+
+## Platform notes
+
+- **Linux** — bubblewrap (`bwrap`) is a small, widely packaged utility. If it is not installed, `--sandbox` errors with a clear message; install it with your distribution's package manager.
+- **macOS** — `sandbox-exec` ships with the OS (it powers App Sandbox profiles). Note that Apple marks it deprecated; it remains the available primitive today, and KOD uses it as-is.
+- **Windows** — sandboxing support is limited; KOD reports the primitive as unavailable and fails loudly rather than faking it.
+
+<LinkCard title="Reference: Tools Reference" href="/reference/tools/" description="What execute_command and every other tool can do." />

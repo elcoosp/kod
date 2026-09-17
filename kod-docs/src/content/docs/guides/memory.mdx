@@ -1,0 +1,69 @@
+---
+title: Memory
+description: How KOD's multi-layer memory works — short-term FIFO, long-term redb storage, global vs project scope, retrieval, and tuning the knobs.
+sidebar:
+  order: 6
+---
+
+import { Aside, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+
+KOD's memory system has two layers with one job each: **short-term** memory keeps the current session coherent, and **long-term** memory persists facts across sessions in a file you can inspect and delete. Both are local by default — the long-term store is a `redb` database under your home directory, not a cloud service.
+
+## Short-term memory
+
+Short-term memory is in-memory with a capacity limit (`memory.short_term_capacity`, default 100 entries). It behaves as a FIFO: new entries push old ones out once the buffer is full. The point is not archive — it is keeping the *current* conversation grounded so the model does not lose the thread halfway through a long session.
+
+Capacity interacts with the model's context window. The router reads `llm.context_window` and sizes the memory manager's per-prompt context budget accordingly, so a long-running session does not silently drop memory entries that would comfortably fit a large model. If you build the router directly (embedders do), `RouterConfig` exposes the same knob with a sane 8192-token default.
+
+## Long-term memory
+
+Long-term memory is a persistent `redb` key-value database. Entries survive sessions, and retrieval uses word-overlap scoring against your prompt: when you say something related to a stored fact, the fact rides along in the grounded prompt.
+
+Where the database lives is controlled by `memory.scope`:
+
+- `"global"` (default) — one database under `~/.kod/`, shared by all projects.
+- `"project"` — one database per project, under `<cwd>/.kod/`, so work code and personal experiments never cross-contaminate.
+
+Setting `memory.long_term_db_path` overrides both with an explicit location.
+
+<Aside type="tip">
+  Project scope is the least surprising choice for people who work across many repositories. Global scope is convenient when your notes are about tooling and workflows rather than specific codebases. Either way, the file is yours: open it, inspect it, delete it.
+</Aside>
+
+## What gets remembered
+
+The engine stores facts it deems durable — decisions, preferences, corrections you made (“we don't use camelCase here”) — rather than entire transcripts. Transcripts themselves live in the session log (see [Sessions, Replay & Checkpoints](/guides/sessions/)), which is a different mechanism with a different purpose: audit, not recall.
+
+Memory participation is visible: the grounded prompt the engine builds for each turn includes identity, environment, repo map, matched skills, history, and memory, in a deterministic order. `kod doctor` reports the memory database state as part of its checks.
+
+## Tuning
+
+```toml
+[memory]
+short_term_capacity = 100        # FIFO entries kept per session
+scope               = "global"   # or "project"
+# long_term_db_path = "/data/kod/memory.redb"   # explicit path
+```
+
+Practical guidance:
+
+- **Raise `short_term_capacity`** for very long interactive sessions on models with big context windows; the router will budget against `context_window` rather than evict early.
+- **Prefer `scope = "project"`** when memory entries would otherwise leak between unrelated codebases.
+- **A wrong entry beats a lost entry** in retrieval today — retrieval is word-overlap, so write stored facts the way you would search for them later.
+
+<Aside type="caution">
+  Episodic memory (vector-based semantic search) is declared in the workspace but the write path is inert — `fastembed` is present without being wired. Long-term retrieval uses word-overlap heuristics today. Plan your stored facts accordingly.
+</Aside>
+
+## How the pieces fit
+
+```
+user prompt ──▶ TaskRouter ──▶ MemoryManager ──▶ grounded prompt
+                                   │
+                                   ├── short-term (RAM, FIFO)
+                                   └── long-term  (redb on disk)
+```
+
+The [Agent Loop](/concepts/agent-loop/) page shows where memory sits inside the full engine round; the [Memory crate tests](/developers/testing/) pin eviction, round-trips, retrieval, and compaction behaviour.
+
+<LinkCard title="Reference: Config Reference" href="/reference/config/" description="Every memory key, its type, and its default." />

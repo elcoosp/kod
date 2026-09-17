@@ -1,0 +1,44 @@
+---
+title: Tools
+description: What KOD's built-in tools can do — file system, git, shell, and web — and how every call is permission-gated, path-locked, and sandboxed.
+sidebar:
+  order: 7
+---
+
+import { Aside, LinkCard } from '@astrojs/starlight/components';
+
+Tools are how the agent touches your system. KOD ships ten built-in tools across four families — file system, git, shell, and web — and every single call passes through the same gauntlet: the [policy engine](/guides/policy/) decides allow/deny/ask, the executor enforces a timeout, a per-path advisory lock table prevents concurrent writes to the same file, and `--sandbox` can route shell commands through the platform sandbox.
+
+## The tool families
+
+**File system** — `read_file`, `write_file`, `patch_file`, `list_files`, `grep`, `file_info`. The write paths are careful: `write_file` results attach a unified diff of what changed, and both `write_file` and `patch_file` snapshot the target file first so [checkpoints](/guides/sessions/#checkpoints) can restore it.
+
+**Git** — `git_status` and `git_diff`, both read-only. They let the agent reason about your working tree and recent changes without the ability to commit, reset, or otherwise move history.
+
+**Shell** — `execute_command`, the most powerful and the most gated tool. It is the one most affected by policy presets (denied outright under `read-only`), command allowlists (`binaries` / `forbidden_binaries` in `.kod/policy.toml`), and sandboxing.
+
+**Web** — `web_fetch`, an HTTP/HTTPS fetch with SSRF protection: loopback, private, link-local, and metadata endpoints are refused. It is also the only tool that can reach the network, and only when `llm.network_access` (or the tool's own `network` policy) enables it.
+
+## Permission gating in one paragraph
+
+There is no ungated path. The `Tool` trait's execution context (`ToolContext`) carries permissions and anchors relative paths to a working directory; the policy engine consults the effective policy — preset, global config, project `.kod/policy.toml`, CLI override — before every call, and the decision (including which rule and which layer decided) is logged to the session. A `deny` always wins over an `allow` at glob-conflict time, and path globs follow gitignore semantics: `*` does not cross `/`, `**` does.
+
+## Concurrency safety
+
+A per-path advisory lock table means two agents (say, in a [swarm](/guides/swarm/)) cannot silently interleave writes to the same file. Conflicts are detected and surfaced rather than last-write-wins. This is what makes the swarm's shared-workspace mode usable instead of terrifying.
+
+## Which tool when
+
+| You want the agent to… | Tool that runs | Typical policy |
+| --- | --- | --- |
+| Inspect code, find patterns | `read_file`, `list_files`, `grep`, `file_info` | allowed everywhere |
+| Edit a file | `write_file` / `patch_file` | `ask` under `standard` |
+| Understand recent changes | `git_status`, `git_diff` | allowed |
+| Run tests, build, format | `execute_command` | `ask` under `standard` |
+| Read a public URL | `web_fetch` | needs network access enabled |
+
+<Aside type="note">
+  The tool layer carries 47 test attributes covering built-in tool behaviour, path resolution, sandbox invocation, and permission enforcement. The [Tools Reference](/reference/tools/) lists every tool's arguments and result shape.
+</Aside>
+
+<LinkCard title="Guides: Policy & Permissions" href="/guides/policy/" description="The four-layer policy engine that gates every tool call." />

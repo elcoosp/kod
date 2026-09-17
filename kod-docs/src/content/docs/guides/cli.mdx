@@ -1,0 +1,118 @@
+---
+title: Scriptable CLI
+description: Driving KOD from the command line — chat, agent, swarm, replay, and the housekeeping commands, with practical recipes.
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The CLI is the scriptable half of KOD. It exposes the same engine as the TUI — the same policy engine, memory, skills, and session logging — through one-shot commands that compose well with pipes, cron jobs, and shell scripts. Where the TUI optimises for long interactive sessions, the CLI optimises for *repeatable* ones.
+
+The full command surface is documented at [CLI Commands](/reference/cli/). This page is the practical tour.
+
+## The shape of the binary
+
+```
+kod [--verbose] <COMMAND>
+```
+
+Commands fall into four rough groups:
+
+- **Sessions** — `chat` (plain REPL), `tui` (full interface), `agent` (one-shot goal), `swarm` (multi-agent).
+- **Model management** — `models`, `profile`, and the `[llm]` parts of `config`.
+- **Inspection** — `skills`, `sessions`, `map`, `doctor`, `config`, `tools`.
+- **Audit and repair** — `replay`, `checkpoint`.
+
+## The three session commands
+
+`kod chat` starts a plain REPL with streaming output. It is the lightest way to interact with the model — no tool rows, no panel, just the conversation. Useful flags: `--model` to override the model for this session, `--system-prompt` to override the system prompt, `--sandbox` to route shell commands through the platform sandbox, and `--preset` to override the policy for the session.
+
+`kod agent -g "<goal>"` runs a single agent against a goal and exits when done. This is the workhorse for automation:
+
+```bash
+kod agent -g "add a doc comment to every public function in src/lib.rs"
+kod agent -a reviewer -g "summarise the changes in the last commit" --preset read-only
+```
+
+`kod swarm -g "<goal>" -n <agents>` decomposes a goal into subtasks, runs them concurrently, and merges the results — see [Agent Swarms](/guides/swarm/).
+
+## Inspecting the world
+
+`kod skills` lists the merged skill set from every standard directory (or `--json` for scripts). `kod map` prints the repository map the engine uses for grounding — handy for sanity-checking what the agent can see. `kod models` lists what the configured provider offers, with `--filter` to narrow. `kod doctor` runs the diagnostics suite: config, endpoint, skills, memory, git.
+
+`kod config` is a small toolbox in itself:
+
+<Tabs>
+<TabItem label="Dump the effective config">
+  ```bash
+  # defaults merged with whatever you set — self-documenting
+  kod config toml
+  ```
+</TabItem>
+<TabItem label="Validate before use">
+  ```bash
+  # exits non-zero on invalid TOML — CI-friendly
+  kod config validate
+  ```
+</TabItem>
+<TabItem label="Edit and reset">
+  ```bash
+  kod config edit                 # $EDITOR
+  kod config seed local-fast      # back up + write from a profile
+  ```
+</TabItem>
+</Tabs>
+
+## Auditing: replay and checkpoints
+
+Two commands make KOD's audit story concrete:
+
+```bash
+# re-run every tool call from a past session — without the model
+kod replay ~/.kod/sessions/1730000000000.jsonl --execute
+
+# list file-level checkpoints and restore one
+kod checkpoint list
+kod checkpoint restore <id>
+```
+
+`replay` is the regression check: any recorded session can be re-executed against the codebase at any later commit to see whether the same operations still make sense (or still pass). Without `--execute`, it prints what would run. `checkpoint` is the undo: KOD snapshots every file before a mutating tool call touches it, so `write_file` and `patch_file` damage is always recoverable.
+
+<Aside type="caution">
+  `--execute` performs real writes and commands against your working tree. Review a session with plain `kod replay <file>` first when you are not sure what it contains.
+</Aside>
+
+## Recipes
+
+A few patterns that work well in practice:
+
+<Tabs>
+<TabItem label="Nightly audit">
+  ```bash
+  # classify recent changes, read-only, no writes possible
+  kod agent --preset read-only \
+    -g "review yesterday's commits and flag risky patterns" \
+    | tee "$HOME/logs/kod-audit-$(date +%F).txt"
+  ```
+</TabItem>
+<TabItem label="Pre-commit tidy-up">
+  ```bash
+  kod agent -g "format and fix import ordering in the staged files" \
+    --preset standard
+  ```
+</TabItem>
+<TabItem label="Skill CI gate">
+  ```bash
+  # machine-readable skill inventory + validation for CI
+  kod skills --json
+  kod skills-validate
+  ```
+</TabItem>
+</Tabs>
+
+<Aside type="tip">
+  `--preset read-only` is the right default for any unattended run. It denies `write_file`, `patch_file`, and `execute_command` outright rather than asking — an unattended script cannot answer an approval prompt anyway.
+</Aside>
+
+<LinkCard title="Reference: CLI Commands" href="/reference/cli/" description="Every subcommand, flag, and default in one place." />

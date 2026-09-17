@@ -1,0 +1,71 @@
+---
+title: Sessions, Replay & Checkpoints
+description: How KOD records every tool call as JSONL, how kod replay turns sessions into regression checks, and how checkpoints give you file-level undo.
+sidebar:
+  order: 11
+---
+
+import { Aside, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+
+KOD's audit story rests on three mechanisms that all live on disk, in plain formats: the **session log** (JSONL), **replay** (re-execution without the model), and **checkpoints** (file snapshots before every mutating call). Together they mean any session — yesterday's or last month's — can be reviewed, re-run, or rolled back.
+
+## The session log
+
+Every tool call is recorded as a JSONL entry: the tool name, its arguments, the result, and the policy decision that allowed it (`SessionEntry::PolicyDecision` carries the outcome, the rule, and the layer that produced it). Session logs are written under `~/.kod/sessions/`, named by timestamp (for example `1730000000000.jsonl`).
+
+Because the format is line-delimited JSON, the log is inspectable with ordinary tools — `jq`, `grep`, `less` — no custom viewer required. It is also the substrate for `kod replay`.
+
+Inspecting sessions from the CLI:
+
+```bash
+kod sessions list                    # what has been recorded
+kod sessions show <id>               # summary of one session
+kod sessions export <id>             # write it out for archiving/diffing
+kod sessions clear                   # remove saved session state
+```
+
+The TUI session (prompts, replies, layout state) is saved separately and covered by the same `kod sessions` commands.
+
+## Replay: sessions as regression checks
+
+`kod replay <session.jsonl>` re-runs the tool calls a session made, **without the model**. Every `read_file`, `write_file`, and `execute_command` is checkable against the codebase at any later commit. This turns a historical session into a regression test: did the fix the agent made last week still hold? Does the refactoring it performed still pass?
+
+```bash
+# print what would run — always do this first
+kod replay ~/.kod/sessions/1730000000000.jsonl
+
+# actually re-execute the tool calls
+kod replay ~/.kod/sessions/1730000000000.jsonl --execute
+```
+
+<Aside type="caution">
+  `--execute` performs real writes and commands against your working tree. Review the dry run first; use `--preset read-only` semantics by simply not passing `--execute` until you trust the session.
+</Aside>
+
+## Checkpoints: file-level undo
+
+KOD snapshots the target file **before every mutating call** — `write_file` and `patch_file` — so the damage any single tool call can do is bounded and reversible:
+
+```bash
+kod checkpoint list             # what has been snapshotted
+kod checkpoint restore <id>     # put a file back
+kod checkpoint clear            # drop the checkpoint store
+```
+
+Checkpoints are per-file, not per-commit — they undo what *the agent* changed, which is usually exactly the granularity you want after a bad run. The TUI's `/undo` command additionally reverses a `/clear` of the conversation, a separate mechanism aimed at the transcript rather than the files.
+
+## How they compose
+
+```
+tool call ──▶ policy decision (logged) ──▶ checkpoint snapshot ──▶ execute ──▶ result (logged)
+                                                                                     │
+             ◀────────────────── kod replay --execute ────────────────────────────────┘
+```
+
+A practical audit loop: run `kod sessions list`, pick a session, read the JSONL to see what happened, replay it against a different branch or commit to see whether it still makes sense, and restore checkpoints if you want the files back the way they were.
+
+<Aside type="note">
+  This is also why the [README](https://github.com/kod-team/kod) says “if 'where does my code go when I run this?' is a question you want a one-line answer to, KOD is for you.” The answer is: into files with checkpoints, into a JSONL log you can read, and nowhere else.
+</Aside>
+
+<LinkCard title="Guides: Policy & Permissions" href="/guides/policy/" description="What the PolicyDecision entries in the log mean." />

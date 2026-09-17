@@ -1,0 +1,76 @@
+---
+title: TUI Keybindings
+description: Every TUI keybinding (normal and insert mode) and every slash command, with what each one does.
+sidebar:
+  order: 2
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The TUI is modal: **normal mode** navigates and commands, **insert mode** edits prompts. Press `i` to enter insert mode; `Esc` returns to normal mode (and cancels a running generation).
+
+## Normal mode
+
+| Key | Action |
+| --- | --- |
+| `i` | enter insert mode |
+| `Esc` | cancel the running prompt (in normal mode) |
+| `j` / `k` | scroll down / up |
+| `g` / `G` | jump to oldest / newest |
+| `PgUp` / `PgDn` | scroll by page |
+| `t` | toggle tool-output visibility |
+| `o` | expand the newest collapsed tool row |
+| `f` | start a type-ahead search |
+| `n` / `N` | next / previous search match |
+| `y` | copy the last assistant reply |
+| `r` | retry the last prompt |
+| `e` | edit your last message |
+| `u` | undo a `/clear` |
+| `?` | help overlay |
+| `q` | quit — asks for confirmation when a generation is running |
+
+## Insert mode
+
+| Key | Action |
+| --- | --- |
+| `Enter` | send the prompt |
+| `Ctrl+J` (or `Shift+Enter`) | insert a newline |
+| `Tab` | cycle completions |
+| `Up` / `Down` | walk prompt history |
+| `Ctrl+W` | delete the word before the cursor |
+| `Ctrl+U` | clear the line before the cursor |
+| `Ctrl+K` | kill to the end of the line |
+| `Ctrl+Left` / `Ctrl+Right` | jump by word |
+
+## Slash commands
+
+Type `/` in insert mode; completion lists the available commands.
+
+| Command | Purpose |
+| --- | --- |
+| `/help` | show the help overlay |
+| `/clear` | clear the conversation (reversible with `/undo` or `u`) |
+| `/model [<name>]` | show or switch the model — the switch is instantaneous, even mid-generation |
+| `/skills` | list loaded skills |
+| `/goal <text>` | set a standing goal included in the grounded prompt |
+| `/steer` | steer a running generation (typing a plain prompt does the same) |
+| `/cancel` | cancel the running generation |
+| `/compact` | summarise the conversation to reclaim context headroom |
+| `/retry` | retry the last prompt |
+| `/search [<text>]` | search the transcript |
+| `/copy` | copy the last assistant reply |
+| `/theme` | switch themes (`dark` / `light` / a `theme.toml`) |
+| `/tools` | list the tool registry with current policy state |
+| `/undo` | undo a `/clear` |
+| `/edit` | edit your last message |
+| `/debug` | show debug information for the session |
+| `/swarm` | launch a multi-agent swarm run |
+| `/quit` | exit the TUI |
+
+<Aside type="tip">
+  The fastest redirect for a run heading the wrong direction is typing a plain prompt while it generates — identical to `/steer`, and it preserves all work already done.
+</Aside>
+
+<Aside type="note">
+  Keybindings are covered by 105 test attributes in the workspace's largest test suite, so behaviour on this page is pinned by the test suite rather than folklore.
+</Aside>

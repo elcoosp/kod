@@ -1,0 +1,97 @@
+---
+title: Config Reference
+description: Every configuration key KOD reads — section, type, default, and notes — in one table.
+sidebar:
+  order: 4
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The config file lives at `~/.config/kod/config.toml` (Linux) or `~/Library/Application Support/kod/config.toml` (macOS), is auto-generated on first run, and every key below is optional — defaults are clamped into valid ranges at load time with a warning.
+
+## `[llm]`
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `provider` | string | `"OpenAICompatible"` | `"Ollama"` and `"OpenAI"` are aliases of `OpenAICompatible`. `Anthropic` / `Custom` are recognised but fail at the first prompt. |
+| `model` | string | `"qwen2.5-coder:7b"` (via profiles; see `kod profile show`) | Must exist on the server. |
+| `base_url` | URL | `http://localhost:11434/v1` | Normalised automatically — server root or `.../v1` root both work. |
+| `context_window` | integer | `32768` | Sizes the memory manager's per-prompt budget via the router. |
+| `max_tokens` | integer | `4096` | Generation cap. |
+| `temperature` | float | `0.2` | Clamped to a valid range at load. |
+| `timeout_secs` | integer | `120` | Per-request timeout. |
+| `network_access` | bool | `false` | Opt-in network access; currently gates `web_fetch`. |
+
+## `[memory]`
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `short_term_capacity` | integer | `100` | FIFO entries kept for the session. |
+| `scope` | `"global"` \| `"project"` | `"global"` | `project` puts the long-term DB under `<cwd>/.kod/`. |
+| `long_term_db_path` | string (optional) | — | Overrides both scopes with an explicit `redb` path. |
+
+## `[skills]`
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `enable_hot_reload` | bool | `true` | Edits to skill files apply on the next prompt. |
+| `max_skills_per_query` | integer | `3` | Skills matched per prompt, capped. |
+| `skills_dir` | string (optional) | — | Replaces the four standard search directories with one custom path. |
+
+## `[swarm]`
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `max_agents` | integer | `5` | The decompose step targets this; the runner clamps to 2–8. |
+| `merge_results` | bool | `true` | `false` (or a failed synthesis) concatenates per-agent results under their labels. |
+
+## `[tools]`
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `confirm_writes` | bool | `true` | Approval dialog (TUI) or stdin prompt (CLI) before writes. Maps to the `standard` / `yolo` presets for backward compatibility. |
+
+## `[hooks]`
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `enabled` | bool | `false` | Master switch for both hook maps. |
+| `pre_tool_use` | map: tool → command template | — | Runs before matching tool calls; `{path}`-style placeholders substituted from call arguments. |
+| `post_tool_use` | map: tool → command template | — | Runs after matching tool calls. |
+
+```toml
+[hooks]
+enabled = false
+pre_tool_use  = { write_file = "rustfmt {path}" }
+post_tool_use = { write_file = "cargo check" }
+```
+
+## Project policy: `.kod/policy.toml`
+
+Committed to the repository, layered over the global config (see [Policy & Permissions](/guides/policy/)):
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `preset` | `"read-only"` \| `"standard"` \| `"yolo"` | `"standard"` | Coarse baseline for the project. |
+| `tools.<name>.mode` | `"allow"` \| `"deny"` \| `"ask"` | — | Overrides the preset for one tool. |
+| `tools.<name>.paths` | string[] | — | Allow-list of path globs; unmatched paths are denied. |
+| `tools.<name>.forbidden` | string[] | — | Deny globs; deny always wins over allow. |
+| `tools.<name>.binaries` | string[] | — | Command allow-list (first token) for `execute_command`. |
+| `tools.<name>.forbidden_binaries` | string[] | — | Command deny-list; wins over `binaries`. |
+| `tools.<name>.network` | bool | — | Per-tool override of `llm.network_access`. |
+| `tools.<name>.domains` | string[] | — | Domain allow-list for `web_fetch`. |
+| `git.history_protected` | bool | `true` | Mounts `.git` read-only at the sandbox. |
+
+## Theme: `theme.toml`
+
+A `theme.toml` next to the config selects the TUI palette:
+
+```toml
+theme = "light"        # or "dark", or a full [theme] table below
+```
+
+A bare `theme = "light"` line is accepted, as is a full `[theme]` table overriding individual ratatui colors (`black`, `red`, `green`, …). Loading is best-effort: an invalid theme file falls back to the default dark theme with a warning rather than failing the session.
+
+<Aside type="tip">
+  `kod config write -` prints the effective config (defaults merged with your edits) to stdout — the fastest way to see every resolved value, including clamped ones.
+</Aside>

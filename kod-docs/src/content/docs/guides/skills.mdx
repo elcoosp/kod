@@ -1,0 +1,113 @@
+---
+title: Skills
+description: Writing and managing KOD skills — the Markdown + YAML format, the four search directories, matching rules, hot reload, and the kod skills subcommands.
+sidebar:
+  order: 5
+---
+
+import { Steps, Aside, LinkCard, Tabs, TabItem, FileTree } from '@astrojs/starlight/components';
+
+Skills are KOD's knowledge-reuse mechanism: plain Markdown files with YAML front matter that get matched against your prompts and injected into the grounded prompt. They are how you teach the harness *your* conventions — your refactoring patterns, your testing style, your house rules — in files you can read, diff, and version like any other text.
+
+The design goals are deliberately boring: no database, no daemon, no rebuild. A skill is a file on disk; editing it takes effect on the next prompt.
+
+## Where skills live
+
+KOD discovers skills in four standard directories, in order — later directories shadow earlier ones for skills that share a name:
+
+1. `~/.kod/skills` — canonical KOD location
+2. `~/.agents/skills` — Claude-style compatibility
+3. `<project>/.kod/skills` — project-local KOD
+4. `<project>/.agents/skills` — project-local Claude-style
+
+Setting `skills.skills_dir` in the config replaces all of the above with a single custom directory. `kod skills` (and `/skills` in the TUI) lists the merged set from every active directory, and `kod skills --json` emits the same inventory for scripts.
+
+## The file format
+
+A skill is a Markdown file with YAML front matter. The parser splits the body into three sections — instructions, examples, and constraints — and all three reach the model when the skill is matched:
+
+```markdown
+---
+name: rust-refactoring
+description: Rust refactoring with idiomatic patterns
+version: 1.0.0
+category: coding
+tags: [rust, refactoring, idioms]
+capabilities: [code-refactoring, ownership-analysis]
+triggers:
+  - "refactor rust"
+  - "make more idiomatic"
+---
+
+## Instructions
+
+You are an expert Rust refactoring assistant...
+
+## Examples
+
+<example input="Refactor this loop">
+...
+</example>
+
+## Constraints
+
+- Never change public API without explicit request
+- Preserve existing tests
+```
+
+What each part does:
+
+- **`triggers`** — phrases that should activate the skill. Matching considers triggers, tags, capabilities, and the name; the [Task Router](/concepts/router/) decides which skills ride along with a prompt.
+- **`tags` and `capabilities`** — coarser activation signals, useful when a skill should attach to a *kind* of task rather than a phrase.
+- **Instructions** — the operating guidance injected into the prompt.
+- **Examples** — concrete input/output demonstrations; they cost tokens but sharpen behaviour.
+- **Constraints** — hard rules the model is asked to respect. Put your non-negotiables here.
+
+## Managing skills from the CLI
+
+The `kod skills` subcommand tree is a small skill package manager:
+
+```bash
+kod skills                       # list (same as `kod skills list`)
+kod skills new my-skill          # scaffold in the first writable dir
+kod skills show my-skill         # full markdown content
+kod skills source my-skill       # absolute path of the file
+kod skills edit my-skill         # open in $EDITOR
+kod skills search "refactor"     # search names, descriptions, tags
+kod skills rename my-skill my-skill-v2
+kod skills copy my-skill other-name
+kod skills export my-skill -     # write to stdout / a path
+kod skills remove my-skill       # refuses without --yes outside cwd
+```
+
+`new` refuses to overwrite an existing file, `rename`/`copy` rewrite the `name:` field inside the file so the front matter never drifts, and `remove` asks for `--yes` unless the target is inside the current directory. For CI, `kod skills-validate` exits non-zero on malformed skills, so broken front matter fails your pipeline instead of silently not matching.
+
+<Aside type="tip">
+  Hot reload is on by default (`skills.enable_hot_reload`). Keep a project skill open in one pane, edit it, and the next prompt in the other pane sees the change — the fastest loop for tuning triggers and constraints.
+</Aside>
+
+## A practical first skill
+
+<Steps>
+1. Scaffold it:
+
+   ```bash
+   kod skills new python-testing
+   ```
+
+2. Edit the front matter — give it two or three triggers that match how you actually ask for the task.
+3. Write **constraints** first (the rules that must never be broken), then instructions, then one small example.
+4. Verify it matches:
+
+   ```bash
+   kod skills search "testing"
+   ```
+</Steps>
+
+Examples of the format — including `python-testing` and `code-review` — ship in the repository under `skills/examples/`.
+
+<Aside type="note">
+  The workspace's skills crate (parser, loader, matcher, and hot-reload watcher) carries 34 test attributes, including full-pipeline tests. The format is stable precisely because it is exercised end-to-end.
+</Aside>
+
+<LinkCard title="Reference: Skill File Format" href="/reference/skill-format/" description="The exact front matter schema, section parsing rules, and shadowing order." />

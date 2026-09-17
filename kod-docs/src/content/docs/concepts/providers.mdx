@@ -1,0 +1,70 @@
+---
+title: LLM Providers
+description: KOD's provider layer — the LlmProvider trait, the single OpenAI-compatible code path, base-URL normalisation, and streaming with live tool-call assembly.
+sidebar:
+  order: 4
+---
+
+import { Aside, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+
+KOD talks to models through one abstraction: the `LlmProvider` trait in `kod-provider`, implemented today by `kod-provider-openai` (backed by `adk-model`). The design bet is that almost every model server you might run locally — and OpenAI itself — speaks the same OpenAI chat-completions wire protocol, so one implementation covers all of them.
+
+## One code path, many servers
+
+All of these work unchanged, on the same code path:
+
+<Tabs>
+<TabItem label="Ollama (default)">
+  ```toml
+  [llm]
+  base_url = "http://localhost:11434/v1"
+  model    = "qwen2.5-coder:7b"
+  ```
+</TabItem>
+<TabItem label="LM Studio">
+  ```toml
+  [llm]
+  base_url = "http://localhost:1234/v1"
+  ```
+</TabItem>
+<TabItem label="vLLM">
+  ```toml
+  [llm]
+  base_url = "http://localhost:8000/v1"
+  ```
+</TabItem>
+<TabItem label="OpenAI (cloud)">
+  ```toml
+  [llm]
+  provider  = "OpenAI"          # alias of OpenAICompatible
+  base_url  = "https://api.openai.com/v1"
+  model     = "gpt-4o-mini"
+  ```
+</TabItem>
+</Tabs>
+
+The `provider` field accepts `OpenAICompatible`, `Ollama`, and `OpenAI` — the last two are aliases for the first. `Anthropic` and `Custom` variants are recognised in config but will fail at the first prompt; `LlmConfig::validate` warns at startup so the gap is visible before a session, not during one.
+
+## Base-URL normalisation
+
+Base URLs are normalised automatically: a server root (`http://localhost:11434`) or an `.../v1` root (`http://localhost:11434/v1`) both work. KOD composes the correct chat-completions endpoint either way, which removes the most common "connection works but requests 404" footgun when switching servers. This behaviour is pinned by tests in the provider crate.
+
+## Streaming and tool calls
+
+Generation is streaming-first. The provider consumes SSE and emits chunks the UI renders live; tool calls get special treatment with `ToolCallStart` / `ToolCallDelta` framing, so a tool call is **assembled live as the model emits it** rather than buffered until the response completes. By the time the model finishes its turn, KOD already has the call ready to gate and execute — one reason the TUI's tool rows feel immediate.
+
+Non-streaming generation exists too, but the engine's loop uses streaming everywhere, including inside [swarm](/guides/swarm/) agents.
+
+## Model discovery
+
+`kod models` calls the provider's `list_models()` (`GET /v1/models` upstream) with `--filter` to narrow the list. Errors are surfaced rather than collapsed into an empty list — a bad endpoint shows up as an error here instead of mysteriously showing "no models".
+
+## What a provider must provide
+
+The trait surface is deliberately small: generation (streaming and not) with tool calling, plus model listing. `GenerationOptions` carries temperature, token caps, and friends. That smallness is why adding a new provider is tractable, and why the OpenAI-compatible path can be tested end-to-end with a live model behind an `#[ignore]` gate (see [Testing](/developers/testing/)).
+
+<Aside type="note">
+  Engine detail worth knowing: the agentic loop no longer holds the provider read lock across the streaming round, so `/model` mid-prompt switches instantly. Provider correctness and engine concurrency were two separate bugs; both are fixed and tested.
+</Aside>
+
+<LinkCard title="Guides: Model Profiles" href="/guides/profiles/" description="The four presets that make switching models a one-liner." />

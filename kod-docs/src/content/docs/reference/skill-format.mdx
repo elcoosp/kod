@@ -1,0 +1,98 @@
+---
+title: Skill File Format
+description: The exact anatomy of a KOD skill — front matter fields, the three body sections, directory precedence, and validation rules.
+sidebar:
+  order: 5
+---
+
+import { Aside, FileTree } from '@astrojs/starlight/components';
+
+A skill is a Markdown file with YAML front matter. KOD's skills crate parses the front matter, splits the body into three sections, caches the result, and matches skills against prompts — with a file watcher enabling hot reload on edit. This page is the exact contract.
+
+## Anatomy
+
+```markdown
+---
+name: rust-refactoring
+description: Rust refactoring with idiomatic patterns
+version: 1.0.0
+category: coding
+tags: [rust, refactoring, idioms]
+capabilities: [code-refactoring, ownership-analysis]
+triggers:
+  - "refactor rust"
+  - "make more idiomatic"
+---
+
+## Instructions
+
+You are an expert Rust refactoring assistant...
+
+## Examples
+
+<example input="Refactor this loop">
+...
+</example>
+
+## Constraints
+
+- Never change public API without explicit request
+- Preserve existing tests
+```
+
+## Front matter fields
+
+| Field | Required | Purpose |
+| --- | --- | --- |
+| `name` | yes | Kebab-case identifier; used as the file stem by `kod skills new` and rewritten by `rename`/`copy` so it never drifts from the filename. |
+| `description` | yes | One-line summary; searched by `kod skills search` and shown by `kod skills`. |
+| `version` | no | Free-form version for the skill itself. |
+| `category` | no | Coarse grouping (`coding`, `testing`, …). |
+| `tags` | list | Matching signals — coarser than triggers, finer than category. |
+| `capabilities` | list | What the skill enables; also a matching signal. |
+| `triggers` | list | Phrases that should activate the skill; matched against the user's prompt. |
+
+## The three body sections
+
+The parser splits the body into:
+
+1. **Instructions** — the operating guidance injected into the model's prompt when the skill matches. This is the skill's main payload.
+2. **Examples** — concrete demonstrations. They cost tokens but sharpen behaviour noticeably; keep them small and realistic.
+3. **Constraints** — hard rules the model is asked to respect. Put non-negotiables here ("preserve existing tests", "never change the public API").
+
+All three sections reach the model when the skill is matched — none are decorative.
+
+## Directory precedence
+
+KOD discovers skills in four standard directories, in order. Later directories **shadow** earlier ones for skills sharing a name:
+
+1. `~/.kod/skills` — canonical KOD location
+2. `~/.agents/skills` — Claude-style compatibility
+3. `<project>/.kod/skills` — project-local KOD
+4. `<project>/.agents/skills` — project-local Claude-style
+
+Setting `skills.skills_dir` in the config replaces all four with a single custom directory. `kod skills --json` shows the merged inventory exactly as the engine sees it.
+
+## Matching
+
+The matcher scores skills against the prompt using triggers, tags, capabilities, and the name. At most `skills.max_skills_per_query` (default 3) skills ride along with a single prompt, selected by the [Task Router](/concepts/router/). Because hot reload is on by default, the next prompt after an edit sees the new content — no restart, no rebuild.
+
+## Validation and CI
+
+Two tools keep a skills directory honest:
+
+- `kod skills-validate` — validates every skill file; exits non-zero on malformed front matter or structure. Wire it into CI so a broken skill fails the pipeline instead of silently never matching.
+- `kod skills show <name>` — prints the full file as parsed; if what you wrote is not what you see, the parser is telling you where you diverged.
+
+<Aside type="note">
+  The skills crate carries 34 test attributes across parser, loader, matcher, watcher, and full-pipeline tests — the format on this page is stable because it is exercised end to end.
+</Aside>
+
+<FileTree>
+- ~/.kod/skills/
+  - rust-refactoring.md
+  - python-testing.md
+  - code-review.md
+- my-project/.kod/skills/
+  - house-style.md
+</FileTree>

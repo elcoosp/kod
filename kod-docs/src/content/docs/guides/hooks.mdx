@@ -1,0 +1,51 @@
+---
+title: Hooks
+description: Running your own shell commands around tool calls — pre_tool_use and post_tool_use hooks driven by config templates.
+sidebar:
+  order: 12
+---
+
+import { Aside, LinkCard } from '@astrojs/starlight/components';
+
+Hooks let you run your own shell commands at two points in the tool lifecycle: **before** a tool executes (`pre_tool_use`) and **after** it completes (`post_tool_use`). They are driven entirely by config templates — no scripting language to learn, no plugin API to import — which keeps them auditable like everything else in KOD: a hook is a line in your `config.toml`.
+
+## Enabling hooks
+
+```toml
+[hooks]
+enabled = false
+# pre_tool_use  = { write_file = "rustfmt {path}" }
+# post_tool_use = { write_file = "cargo check" }
+```
+
+Hooks are disabled by default. Flipping `enabled = true` activates both maps. Each entry keys a **tool name** (`write_file`, `patch_file`, `execute_command`, …) to a **shell command template**, and `{path}`-style placeholders are substituted with the tool call's arguments before execution.
+
+## What they are good for
+
+The canonical pair from the config comments shows the intended shape:
+
+- **`pre_tool_use` on `write_file`: `rustfmt {path}`** — every file the agent writes gets formatted the moment it lands, so style is enforced at the source rather than reviewed at the end.
+- **`post_tool_use` on `write_file`: `cargo check`** — every write is immediately followed by a compile check, so a broken edit surfaces in the same round that produced it instead of five prompts later.
+
+The same pattern extends naturally: run `eslint --fix` after JavaScript edits, `gofmt` after Go writes, or a quick test suite after any `patch_file` on a crate you care about.
+
+## How hooks relate to policy
+
+Hooks execute *inside* the tool lifecycle, not in place of it. The order per call is:
+
+1. Policy decision (preset → global → project → CLI) — allow, deny, or ask.
+2. If allowed: `pre_tool_use` hook for this tool, if one is configured.
+3. The tool executes (sandboxed if requested, path-locked, checkpointed if mutating).
+4. `post_tool_use` hook, if configured.
+
+A denied tool call never reaches its hooks — there is nothing to hook around. Hook commands are themselves shell commands, so treat them with the same care as policy allowlists: they run with your permissions.
+
+<Aside type="caution">
+  Keep hooks fast. A `post_tool_use` hook runs after every matching tool call — a hook that takes 30 seconds turns every write into a 30-second round. `cargo check` is a good hook; `cargo test` usually is not.
+</Aside>
+
+## Where hooks fit in the engine
+
+The hook system lives in `kod-core` alongside the session log, and hook invocations are part of the recorded session — so a run with hooks active is fully replayable, hooks included, via [kod replay](/guides/sessions/#replay-sessions-as-regression-checks).
+
+<LinkCard title="Guides: Tools" href="/guides/tools/" description="The tool families hooks attach to." />

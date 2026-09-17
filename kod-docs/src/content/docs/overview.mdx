@@ -1,0 +1,58 @@
+---
+title: Overview
+description: What KOD is, why it exists, and how it differs from cloud-hosted coding agents. Local-first philosophy, feature map, and where to go next.
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid, Card } from '@astrojs/starlight/components';
+
+KOD is a **local-first AI coding agent harness for the terminal**, written in Rust. It gives you a complete agentic loop — task classification, prompt grounding, streaming LLM calls, tool execution, and feedback — as a single binary that you build yourself and point at a model server you control. Ollama, LM Studio, MLX Omni Serve, vLLM, or any other OpenAI-compatible endpoint all work over the same code path.
+
+The project is a 12-crate Cargo workspace that is deliberately narrow in scope: it is a *harness*, not an IDE. The workspace builds, the test suite runs offline, and the CLI and TUI are usable today, but the public API is still stabilising. This site documents the system as it exists — where the docs describe an aspiration, they say so.
+
+## Why local-first
+
+Your code does not leave your machine. That is the whole thesis.
+
+Cloud-hosted coding agents are built around a model you do not control, on a schedule you do not set, under terms that can change without your consent. When a vendor deprecates a model, changes a rate limit, or simply has a bad day, your workflow stops. KOD is built around the opposite set of assumptions:
+
+- **The binary is one Rust program.** `cargo build --release` produces a single executable that runs the agent, the tools, the memory store, and the terminal UI. No Node runtime, no Python interpreter, no Docker.
+- **The model is one you chose.** The default config points at `http://localhost:11434/v1` (Ollama). Any OpenAI-compatible endpoint works — LM Studio, MLX Omni Serve, vLLM, OpenAI itself — but only if you want cloud.
+- **Memory is on disk, in a file you can inspect.** Long-term memory lives in a `redb` database under `~/.kod/`, or per-project under `<cwd>/.kod/` when `memory.scope = "project"`.
+- **The tool loop is auditable.** `kod replay <session.jsonl>` re-runs the tool calls a session made, without the model. Every `read_file`, `write_file`, and `execute_command` is checkable against the codebase at any later commit.
+
+If “where does my code go when I run this?” is a question you want a one-line answer to, KOD is for you.
+
+## What is in the box
+
+The harness ships a full feature set across four areas:
+
+**Agent harness.** A skills system based on Markdown files with YAML front matter, matched by triggers, tags, capabilities, and name, with hot reload on edit. Multi-layer memory with short-term (in-memory, FIFO) and long-term (`redb`, persistent) stores, global or project-scoped, retrieved by word-overlap against your prompt. A streaming agentic loop that classifies tasks, builds a grounded prompt, streams tokens live, executes tool calls, and feeds results back up to a configurable round cap. An agent swarm that decomposes a goal into subtasks, runs them concurrently, detects file conflicts, and merges the results.
+
+**Safety.** Every tool call passes through a four-layer policy engine (preset → global config → project `.kod/policy.toml` → CLI override) before it runs. Writes can require explicit approval, shell commands can be sandboxed through `bwrap` or `sandbox-exec`, and every mutating call snapshots the target file so it can be restored with `kod checkpoint restore`.
+
+**Interfaces.** A full ratatui TUI with chat, live tool rows, an agent panel, type-ahead search, themes, and slash commands — plus a scriptable CLI with `chat`, `agent`, `swarm`, `skills`, `config`, `models`, `profile`, `sessions`, `map`, `replay`, `doctor`, `init`, `test`, and shell completions.
+
+**Providers.** One OpenAI-compatible code path with automatic base-URL normalisation, SSE token streaming, and live tool-call assembly (`ToolCallStart` / `ToolCallDelta` framing), so tool calls stream in as they are generated rather than arriving buffered.
+
+## Project status
+
+KOD is early-stage. The [README](https://github.com/kod-team/kod) tracks what is wired up end-to-end versus what is still on the roadmap. Notably:
+
+- Only the OpenAI-compatible protocol is implemented. `Anthropic` and `Custom` provider variants are recognised in config but will fail at the first prompt.
+- Episodic memory and embeddings are declared but not yet wired — long-term retrieval uses word-overlap heuristics today.
+- `docs/SPEC.md` in the repository describes a larger aspirational system than the workspace implements; it is kept as a design reference.
+
+<Aside type="caution">
+  KOD is not a drop-in replacement for a full-featured IDE agent. It is a working harness whose goal is auditability and local-first control. Expect rough edges.
+</Aside>
+
+## Where to go next
+
+<CardGrid>
+  <Card title="Installation" icon="download">Build the binary and verify your toolchain.</Card>
+  <Card title="Quickstart" icon="rocket">First chat in about five minutes.</Card>
+  <Card title="Your First Session" icon="laptop">A guided tour of the TUI.</Card>
+  <Card title="Configuration" icon="setting">Every key in <code>config.toml</code>, explained.</Card>
+</CardGrid>
