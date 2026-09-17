@@ -103,6 +103,10 @@ pub enum Event {
     ToolProgress(String),
     /// A running prompt was cancelled (Esc / Ctrl+C / `/cancel`).
     Cancelled,
+    /// `/handoff` produced its document. The main loop writes the
+    /// file, resets the display and the engine transcript, and seeds
+    /// the transcript with this text as its only context.
+    HandoffGenerated(String),
     /// Swarm decompose produced these `(name, description)` subtasks.
     SwarmDecomposed(Vec<(String, String)>),
     /// A swarm agent began work.
