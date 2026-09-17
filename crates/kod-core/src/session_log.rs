@@ -47,6 +47,35 @@ pub enum SessionEntry {
         /// `RequiresConfirmation` under `requires_confirmation`.
         result: serde_json::Value,
     },
+    /// The routing layer gave up on one endpoint and moved to the next
+    /// in the chain (AD-15). Written once per transition, so a session
+    /// log carries a clean audit trail of which endpoint served which
+    /// turn.
+    ModelFallback {
+        timestamp_ms: u64,
+        /// The transcript key the fallback happened on ("session",
+        /// "swarm:agent-3", ...).
+        holder: String,
+        from: String,
+        to: String,
+        error: String,
+    },
+    /// A policy decision made before a tool call (D3, AD-15).
+    /// One entry per tool call, so the JSONL carries an audit trail
+    /// of every allow/deny/ask the engine answered.
+    PolicyDecision {
+        timestamp_ms: u64,
+        holder: String,
+        tool_name: String,
+        /// "allow" | "deny" | "ask"
+        outcome: String,
+        /// Human-readable description of the rule that fired.
+        rule: String,
+        /// Which layer produced the decision
+        /// ("preset" | "global-config" | "project-policy" |
+        ///  "cli-override" | "session-deny").
+        source: String,
+    },
 }
 
 /// Append-only writer for a session log.
@@ -178,6 +207,7 @@ mod tests {
                 assert_eq!(tool_name, "read_file");
                 assert_eq!(holder, "session");
             }
+            other => panic!("unexpected entry kind: {other:?}"),
         }
     }
 
