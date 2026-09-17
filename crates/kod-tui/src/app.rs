@@ -288,6 +288,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "run the project compiler/linter (Cargo, tsc, ruff, go vet)",
     },
     SlashCommand {
+        name: "/log",
+        hint: "show recent session log entries: /log [N]",
+    },
+    SlashCommand {
         name: "/pin",
         hint: "pin a message so it survives history compaction: /pin <n>",
     },
@@ -361,6 +365,11 @@ pub struct KodApp {
     /// When the current generation started; drives the time-based spinner
     /// so it spins with every render even when chunk events starve ticks.
     spinner_started: Option<Instant>,
+    /// Time the first non-empty streamed text chunk of the current
+    /// turn arrived. `None` until that chunk lands, and reset by
+    /// `begin_generation`. The latency from `spinner_started` to
+    /// this instant is the turn's time-to-first-token.
+    first_chunk_at: Option<Instant>,
     model_name: String,
     completion_index: usize,
     /// Model names the provider reported (for `/model` completion).
@@ -472,6 +481,11 @@ pub struct KodApp {
     /// Distinct from `context_tokens` (which is a window snapshot and
     /// shrinks under compaction); this counter only grows.
     session_input_tokens: usize,
+    /// Accumulated USD cost of every reported provider call this
+    /// session. Advances only when the endpoint carries a
+    /// `[pricing]` block; stays at 0.0 otherwise, in which case the
+    /// header does not display a `$` figure.
+    session_cost_usd: f64,
     /// Accumulated output tokens the provider has reported this session.
     session_output_tokens: usize,
     /// When the current generation started. Used to decide whether a
@@ -576,6 +590,7 @@ impl KodApp {
             generating: false,
             spinner_frame: 0,
             spinner_started: None,
+            first_chunk_at: None,
             model_name: String::new(),
             completion_index: 0,
             available_models: Vec::new(),
@@ -612,6 +627,7 @@ impl KodApp {
             session_started_at: Instant::now(),
             session_input_tokens: 0,
             session_output_tokens: 0,
+            session_cost_usd: 0.0,
             turn_started_at: None,
             should_quit: false,
             next_seq: 0,
@@ -916,6 +932,10 @@ impl KodApp {
         // started".
         self.context_tokens = 0;
         self.compacted_messages = 0;
+        // Session cost accumulates per session, and `/clear` starts
+        // a new session: the previous spend is no longer this
+        // session's.
+        self.session_cost_usd = 0.0;
     }
 
     /// Restore the most recently cleared chat. False when nothing is stashed.
@@ -1537,6 +1557,15 @@ impl KodApp {
 
     pub fn add_response_chunk(&mut self, chunk: &str) {
         if self.is_streaming {
+            // The first non-empty text chunk of a turn is the
+            // moment the model's answer started arriving. Recorded
+            // once; subsequent chunks are what they are. Empty
+            // chunks (an SSE keep-alive, a provider that emits a
+            // zero-length text fragment) do not count — "the model
+            // started answering" is not true when nothing was said.
+            if !chunk.is_empty() && self.first_chunk_at.is_none() {
+                self.first_chunk_at = Some(Instant::now());
+            }
             self.current_response.push_str(chunk);
             if self.phase == GenPhase::Connecting {
                 self.set_phase(GenPhase::Generating);
@@ -1570,6 +1599,7 @@ impl KodApp {
     pub fn begin_generation(&mut self) {
         self.generating = true;
         self.spinner_started = Some(Instant::now());
+        self.first_chunk_at = None;
         self.turn_started_at = Some(Instant::now());
         self.stream_flushed_bubble = false;
         self.last_error = None;
@@ -1627,6 +1657,7 @@ impl KodApp {
         self.current_response.clear();
         self.generating = false;
         self.spinner_started = None;
+        self.first_chunk_at = None;
         self.set_phase(GenPhase::Idle);
         self.fail_count = 0;
     }
@@ -1667,6 +1698,7 @@ impl KodApp {
         self.current_response.clear();
         self.generating = false;
         self.spinner_started = None;
+        self.first_chunk_at = None;
         self.set_phase(GenPhase::Idle);
         self.fail_count += 1;
         self.settle_running_tools(ToolStatus::Failed, error);
@@ -1754,6 +1786,7 @@ impl KodApp {
         self.current_response.clear();
         self.generating = false;
         self.spinner_started = None;
+        self.first_chunk_at = None;
         self.set_phase(GenPhase::Idle);
         self.settle_running_tools(ToolStatus::Failed, "cancelled");
         if !partial.is_empty() {
@@ -3258,6 +3291,22 @@ impl KodApp {
         }
     }
 
+    /// Milliseconds from `begin_generation` to the first non-empty
+    /// streamed text chunk of the current turn. `None` before that
+    /// chunk lands, and after the turn ends (both `finish_response`
+    /// and `fail_generation` clear it).
+    ///
+    /// Wall-clock measured on the TUI thread, not by the engine.
+    /// The two are close enough for a status-bar figure; if the
+    /// engine ever wants to make this exact (provider-reported
+    /// timing, sub-millisecond precision), it should emit a
+    /// dedicated event, not have the TUI measure a proxy.
+    pub fn ttft_ms(&self) -> Option<u128> {
+        let started = self.spinner_started?;
+        let first = self.first_chunk_at?;
+        Some(first.duration_since(started).as_millis())
+    }
+
     /// Consecutive generation failures (offline badge + backoff hints).
     pub fn consecutive_failures(&self) -> usize {
         self.fail_count
@@ -3313,6 +3362,32 @@ impl KodApp {
     /// Total output tokens the provider has reported this session.
     pub fn session_output_tokens(&self) -> usize {
         self.session_output_tokens
+    }
+
+    /// USD spent so far this session, per the pricing the endpoints
+    /// reported. 0.0 when no endpoint has a `[pricing]` block — the
+    /// caller checks `cost_known()` before rendering a `$` figure,
+    /// so a genuine 0.0 from a free local model is distinguishable
+    /// from "pricing not configured" only by the second flag, not
+    /// by this number.
+    pub fn session_cost_usd(&self) -> f64 {
+        self.session_cost_usd
+    }
+
+    /// True once at least one reported call has contributed a cost.
+    /// The header renders the `$` figure only when this is true, so
+    /// an endpoint without pricing never produces a fake `$0.00`.
+    pub fn cost_known(&self) -> bool {
+        self.session_cost_usd > 0.0
+    }
+
+    /// Add a call's USD cost to the session total. Negative and NaN
+    /// values are rejected — a broken pricing block should not
+    /// corrupt the accumulator.
+    pub fn note_session_cost(&mut self, cost_usd: f64) {
+        if cost_usd.is_finite() && cost_usd >= 0.0 {
+            self.session_cost_usd += cost_usd;
+        }
     }
 
     /// Total tokens moved through the model this session.
@@ -3817,6 +3892,44 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    /// Cost accumulates when `note_session_cost` is called with
+    /// valid figures, refuses NaN / negative / infinite values, and
+    /// the `cost_known()` flag flips only on a real contribution.
+    #[test]
+    fn test_session_cost_accumulation() {
+        let mut app = KodApp::new();
+        assert_eq!(app.session_cost_usd(), 0.0);
+        assert!(!app.cost_known(), "fresh session has no cost knowledge");
+
+        app.note_session_cost(0.0025);
+        app.note_session_cost(0.0125);
+        assert!((app.session_cost_usd() - 0.015).abs() < 1e-9);
+        assert!(app.cost_known());
+
+        // Broken pricing blocks do not corrupt the accumulator.
+        app.note_session_cost(f64::NAN);
+        app.note_session_cost(-1.0);
+        app.note_session_cost(f64::INFINITY);
+        assert!(
+            (app.session_cost_usd() - 0.015).abs() < 1e-9,
+            "invalid values must be ignored, got {}",
+            app.session_cost_usd()
+        );
+    }
+
+    /// `/clear` resets the cost alongside the other session counters.
+    #[test]
+    fn test_clear_resets_session_cost() {
+        let mut app = KodApp::new();
+        app.push_system_message("hello");
+        app.note_session_cost(1.25);
+        assert!(app.cost_known());
+
+        app.clear_messages();
+        assert_eq!(app.session_cost_usd(), 0.0);
+        assert!(!app.cost_known(), "cost knowledge resets with the session");
+    }
+
     /// Real token usage replaces the char estimate, and subsequent
     /// estimate calls in the same turn must not stack on top of it.
     /// Regression: TokenUsage arrives before ResponseComplete in the
@@ -3911,6 +4024,67 @@ mod tests {
         assert_eq!(app.search_query_text(), "");
         assert_eq!(app.search_status(), SearchStatus::Inactive);
     }
+
+    /// TTFT: `begin_generation` clears the field, the first non-empty
+    /// chunk sets it, and empty chunks do not. The value is stable
+    /// across subsequent chunks of the same turn.
+    #[test]
+    fn test_ttft_records_first_nonempty_chunk() {
+        use std::thread::sleep;
+        use std::time::Duration;
+        let mut app = KodApp::new();
+        assert!(app.ttft_ms().is_none(), "no turn, no ttft");
+
+        app.begin_generation();
+        assert!(app.ttft_ms().is_none(), "no chunk yet, no ttft");
+
+        // An empty chunk must not count.
+        app.add_response_chunk("");
+        assert!(app.ttft_ms().is_none(), "empty chunk must not start the clock");
+
+        // Sleep so the measured interval is a positive integer.
+        sleep(Duration::from_millis(5));
+        app.add_response_chunk("hello");
+        let t1 = app.ttft_ms().expect("first chunk starts the clock");
+        assert!(t1 >= 5, "ttft should be >= 5ms, got {t1}");
+
+        // Subsequent chunks do not move the figure.
+        sleep(Duration::from_millis(5));
+        app.add_response_chunk(" world");
+        let t2 = app.ttft_ms().expect("ttft stable across chunks");
+        assert_eq!(t1, t2, "ttft is a per-turn constant once measured");
+    }
+
+    /// A new turn resets the measurement.
+    #[test]
+    fn test_ttft_resets_per_turn() {
+        use std::thread::sleep;
+        use std::time::Duration;
+        let mut app = KodApp::new();
+
+        app.begin_generation();
+        sleep(Duration::from_millis(10));
+        app.add_response_chunk("first");
+        let first_ttft = app.ttft_ms().expect("first ttft");
+        assert!(first_ttft >= 10);
+
+        app.finish_response("");
+        assert!(app.ttft_ms().is_none(), "finished turn has no ttft");
+
+        app.begin_generation();
+        assert!(app.ttft_ms().is_none(), "new turn starts fresh");
+        sleep(Duration::from_millis(1));
+        app.add_response_chunk("second");
+        let second_ttft = app.ttft_ms().expect("second ttft");
+        assert!(
+            second_ttft < first_ttft,
+            "second turn slept less; expected smaller ttft, got {second_ttft} vs {first_ttft}",
+        );
+    }
+
+
+
+
 
     /// `search_status` must distinguish the states the old
     /// `search_position` tuple collapsed together.
