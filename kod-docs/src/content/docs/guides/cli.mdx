@@ -1,6 +1,6 @@
 ---
 title: Scriptable CLI
-description: Driving KOD from the command line — chat, agent, swarm, replay, and the housekeeping commands, with practical recipes.
+description: Driving KOD from the command line — prompt, run, serve, agent, swarm, replay, and the housekeeping commands, with practical recipes.
 sidebar:
   order: 2
 ---
@@ -17,29 +17,55 @@ The full command surface is documented at [CLI Commands](/reference/cli/). This 
 kod [--verbose] <COMMAND>
 ```
 
-Commands fall into four rough groups:
+Commands fall into five rough groups:
 
-- **Sessions** — `chat` (plain REPL), `tui` (full interface), `agent` (one-shot goal), `swarm` (multi-agent).
-- **Model management** — `models`, `profile`, and the `[llm]` parts of `config`.
-- **Inspection** — `skills`, `sessions`, `map`, `doctor`, `config`, `tools`.
+- **Sessions** — `chat` (plain REPL), `tui` (full interface), `agent` (one-shot goal), `prompt` / `run` (single prompt), `swarm` (multi-agent), `serve` (daemon).
+- **Model management** — `models`, `profile`, `theme`, and the `[llm]` parts of `config`.
+- **Inspection** — `skills`, `sessions`, `memory`, `map`, `doctor`, `config`, `tools`, `policy`, `sandbox`.
 - **Audit and repair** — `replay`, `checkpoint`.
+- **Setup** — `init`, `test`, `completions`, `update`.
 
-## The three session commands
+Bare `kod` prints a short onboarding summary: the four entry points, where your config lives, and which skill directories were found.
 
-`kod chat` starts a plain REPL with streaming output. It is the lightest way to interact with the model — no tool rows, no panel, just the conversation. Useful flags: `--model` to override the model for this session, `--system-prompt` to override the system prompt, `--sandbox` to route shell commands through the platform sandbox, and `--preset` to override the policy for the session.
+## The four ways to send a prompt
 
-`kod agent -g "<goal>"` runs a single agent against a goal and exits when done. This is the workhorse for automation:
+**`kod chat`** starts a plain REPL with streaming output — the lightest way to interact with the model. No tool rows, no panel, just the conversation. Useful flags: `--model` to override the model for this session, `--system-prompt` to replace the built-in one, `--sandbox` to route shell commands through the platform sandbox, and `--preset` to override the policy for the session.
+
+**`kod prompt "<text>"`** answers one prompt and exits — no banner, no REPL. The reply goes to stdout and diagnostics go to stderr, so it pipes cleanly. `-` reads the prompt from stdin. It is the command you want inside shell pipelines:
+
+```bash
+kod prompt "summarise the TODO comments in src/ in a bullet list"
+git diff main..feature | kod prompt -   # read the prompt from stdin
+```
+
+**`kod run "<text>"`** is `prompt` in streaming form: the reply prints to stdout as it is generated instead of at the end. Same `-` stdin convention, same clean output.
+
+**`kod agent -g "<goal>"`** runs a single agent against a goal — the full loop with tool calls — and exits when done. This is the workhorse for automation:
 
 ```bash
 kod agent -g "add a doc comment to every public function in src/lib.rs"
-kod agent -a reviewer -g "summarise the changes in the last commit" --preset read-only
+kod agent -n reviewer -g "summarise the changes in the last commit" --preset read-only
 ```
 
-`kod swarm -g "<goal>" -n <agents>` decomposes a goal into subtasks, runs them concurrently, and merges the results — see [Agent Swarms](/guides/swarm/).
+<Aside type="caution">
+  <code>kod agent</code> has no interactive consumer. When the policy says a write needs approval, the run refuses the write with an explanatory message rather than waiting — an unattended process cannot click <em>yes</em>. For scripts, either pass <code>--preset read-only</code>, accept the refusals by design, or use <code>--preset yolo</code> only where you truly mean it.
+</Aside>
+
+## The daemon: `kod serve`
+
+Starting an engine per one-shot prompt costs process startup and engine init. `kod serve` starts a long-lived engine behind a Unix socket; `kod prompt --remote` sends prompts to it instead of building an in-process engine:
+
+```bash
+kod serve &                        # daemon, listening on the default socket
+kod prompt --remote "lint-check my last commit message"
+kod serve --stop                   # ask the daemon to exit
+```
+
+The socket lives at `$XDG_RUNTIME_DIR/kod.sock` (Linux) or `~/.kod/run/kod.sock` (macOS); `--socket <path>` overrides it. It is Unix-socket only, never TCP — there is no network surface.
 
 ## Inspecting the world
 
-`kod skills` lists the merged skill set from every standard directory (or `--json` for scripts). `kod map` prints the repository map the engine uses for grounding — handy for sanity-checking what the agent can see. `kod models` lists what the configured provider offers, with `--filter` to narrow. `kod doctor` runs the diagnostics suite: config, endpoint, skills, memory, git.
+`kod skills` lists the merged skill set from every standard directory (or `--json` for scripts). `kod map` prints the repository map the engine uses for grounding — handy for sanity-checking what the agent can see (`--max-chars` caps the output, default 16000). `kod models` lists what the configured provider offers, with `--filter` to narrow. `kod tools list` prints the tool registry the model sees, `kod tools show write_file` one tool's schema, and `kod policy show` the effective permissions. `kod doctor` runs the diagnostics suite: config, endpoint, skills, memory, sandbox, git.
 
 `kod config` is a small toolbox in itself:
 
@@ -47,7 +73,7 @@ kod agent -a reviewer -g "summarise the changes in the last commit" --preset rea
 <TabItem label="Dump the effective config">
   ```bash
   # defaults merged with whatever you set — self-documenting
-  kod config toml
+  kod config show-merged
   ```
 </TabItem>
 <TabItem label="Validate before use">
@@ -56,10 +82,11 @@ kod agent -a reviewer -g "summarise the changes in the last commit" --preset rea
   kod config validate
   ```
 </TabItem>
-<TabItem label="Edit and reset">
+<TabItem label="Edit, export, reset">
   ```bash
-  kod config edit                 # $EDITOR
-  kod config seed local-fast      # back up + write from a profile
+  kod config edit                     # $EDITOR
+  kod config export my-baseline.toml  # effective config to a file
+  kod config init-from local-fast     # backup + write from a profile
   ```
 </TabItem>
 </Tabs>
@@ -72,15 +99,16 @@ Two commands make KOD's audit story concrete:
 # re-run every tool call from a past session — without the model
 kod replay ~/.kod/sessions/1730000000000.jsonl --execute
 
-# list file-level checkpoints and restore one
+# list file-level checkpoints, inspect one, restore it
 kod checkpoint list
+kod checkpoint diff <id>
 kod checkpoint restore <id>
 ```
 
-`replay` is the regression check: any recorded session can be re-executed against the codebase at any later commit to see whether the same operations still make sense (or still pass). Without `--execute`, it prints what would run. `checkpoint` is the undo: KOD snapshots every file before a mutating tool call touches it, so `write_file` and `patch_file` damage is always recoverable.
+`replay` is the regression check: any recorded session can be re-executed against the codebase at any later commit to see whether the same operations still make sense (or still pass). Without `--execute`, it prints what would run. `checkpoint` is the undo: KOD snapshots every file before a mutating tool call touches it, so `write_file` and `patch_file` damage is always recoverable — and `checkpoint diff` shows you exactly what restoring would change.
 
 <Aside type="caution">
-  `--execute` performs real writes and commands against your working tree. Review a session with plain `kod replay <file>` first when you are not sure what it contains.
+  <code>--execute</code> performs real writes and commands against your working tree. Review a session with plain <code>kod replay &lt;file&gt;</code> first when you are not sure what it contains.
 </Aside>
 
 ## Recipes
@@ -96,23 +124,31 @@ A few patterns that work well in practice:
     | tee "$HOME/logs/kod-audit-$(date +%F).txt"
   ```
 </TabItem>
-<TabItem label="Pre-commit tidy-up">
+<TabItem label="Explain a diff in CI">
   ```bash
-  kod agent -g "format and fix import ordering in the staged files" \
-    --preset standard
+  git diff origin/main..HEAD | kod prompt - > /tmp/pr-summary.txt
+  ```
+</TabItem>
+<TabItem label="Long-running daemon for scripts">
+  ```bash
+  kod serve &
+  for f in $(git diff --name-only); do
+    kod prompt --remote "review $f for obvious bugs" >> review.md
+  done
+  kod serve --stop
   ```
 </TabItem>
 <TabItem label="Skill CI gate">
   ```bash
   # machine-readable skill inventory + validation for CI
   kod skills --json
-  kod skills-validate
+  kod validate-skills
   ```
 </TabItem>
 </Tabs>
 
 <Aside type="tip">
-  `--preset read-only` is the right default for any unattended run. It denies `write_file`, `patch_file`, and `execute_command` outright rather than asking — an unattended script cannot answer an approval prompt anyway.
+  <code>--preset read-only</code> is the right default for any unattended run. It denies <code>write_file</code>, <code>patch_file</code>, and <code>execute_command</code> outright rather than asking — an unattended script cannot answer an approval prompt anyway.
 </Aside>
 
 <LinkCard title="Reference: CLI Commands" href="/reference/cli/" description="Every subcommand, flag, and default in one place." />
