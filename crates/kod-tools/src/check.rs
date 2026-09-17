@@ -383,7 +383,7 @@ impl CheckTool {
                     write_files: false,
                     execute_commands: true,
                     network_access: false,
-                    git_operations: false,
+                    git_access: kod_types::GitAccess::None,
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
