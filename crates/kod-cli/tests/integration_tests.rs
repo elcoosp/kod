@@ -66,7 +66,7 @@ async fn test_task_routers_config() {
     let db_path = env.working_dir.join("test.redb");
 
     let router = kod_core::router::TaskRouter::new(
-        kod_core::router::RouterConfig {
+        kod_core::router::RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             enable_memory: true,
@@ -87,7 +87,7 @@ async fn test_task_classification_full() {
     let db_path = env.working_dir.join("test.redb");
 
     let router = kod_core::router::TaskRouter::new(
-        kod_core::router::RouterConfig {
+        kod_core::router::RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             enable_memory: false,
@@ -145,7 +145,7 @@ async fn test_engine_lifecycle() {
     let db_path = env.working_dir.join("test.redb");
 
     let engine = kod_core::engine::KodEngine::new(
-        kod_core::router::RouterConfig {
+        kod_core::router::RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             enable_memory: false,
@@ -234,7 +234,7 @@ async fn test_engine_process_input() {
     let db_path = env.working_dir.join("test.redb");
 
     let engine = kod_core::engine::KodEngine::new(
-        kod_core::router::RouterConfig {
+        kod_core::router::RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             enable_memory: false,
@@ -276,7 +276,7 @@ async fn test_engine_rejects_prompt_without_provider() {
     let db_path = env.working_dir.join("test.redb");
 
     let engine = kod_core::engine::KodEngine::new(
-        kod_core::router::RouterConfig {
+        kod_core::router::RouterConfig { skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             enable_memory: false,
