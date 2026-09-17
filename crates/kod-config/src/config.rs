@@ -19,6 +19,10 @@ pub struct KodConfig {
     pub swarm: SwarmConfig,
     pub hooks: HooksConfig,
     pub tools: ToolsConfig,
+    /// MCP servers (D6.1). Empty when the config has no `[mcp]`
+    /// section, which is the default — no plugin is registered
+    /// unless the user writes a block for it.
+    pub mcp: crate::McpConfig,
     /// User-defined slash commands. A key `foo` registers `/foo <args>`,
     /// whose body is the prompt sent to the model. `{args}` in the
     /// body is replaced by everything after the command name; `{cwd}`
@@ -43,14 +47,6 @@ pub struct KodConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ToolsConfig {
-    /// When true, `write_file` and `patch_file` require explicit user
-    /// approval before executing. The engine emits an approval request
-    /// on the streaming chunk channel; the TUI renders it as a diff
-    /// dialog, the CLI prints a prompt on stderr. Default false: a
-    /// session that has not asked for confirmation runs as it always
-    /// has, with the safety net being the checkpoint system (see
-    /// `kod checkpoint restore`).
-    pub confirm_writes: bool,
     /// When true, a successful `write_file` / `patch_file` in a tool
     /// round triggers a project check (Cargo, tsc, ruff, go vet) and
     /// the diagnostics are appended to the prompt the model sees on
@@ -58,13 +54,21 @@ pub struct ToolsConfig {
     /// every write is not free, and a session on a large workspace
     /// may prefer to run `check` only when it decides to.
     pub auto_check: bool,
+    /// When true (the default), a successful write in a tool round
+    /// also runs the language server's diagnostics pass on the
+    /// touched file(s) and appends a `## LSP diagnostics` block to
+    /// the next turn's prompt. Unlike `auto_check` this is cheap
+    /// (sub-second per file) and only runs for languages that have
+    /// a server on PATH; a session with no LSP installed simply sees
+    /// no block.
+    pub auto_lsp: bool,
 }
 
 impl Default for ToolsConfig {
     fn default() -> Self {
         Self {
-            confirm_writes: false,
             auto_check: false,
+            auto_lsp: true,
         }
     }
 }
@@ -271,7 +275,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = KodConfig::default();
-        assert_eq!(config.llm.model, "codellama:13b");
+        assert_eq!(config.llm.default_endpoint().model, "codellama:13b");
     }
 
     #[test]
@@ -279,7 +283,10 @@ mod tests {
         let config = KodConfig::default();
         let toml_str = toml::to_string(&config).unwrap();
         let deserialized: KodConfig = toml::from_str(&toml_str).unwrap();
-        assert_eq!(config.llm.model, deserialized.llm.model);
+        assert_eq!(
+            config.llm.default_endpoint().model,
+            deserialized.llm.default_endpoint().model
+        );
     }
 
     #[test]
@@ -291,7 +298,10 @@ mod tests {
         config.save_to(&config_path).unwrap();
 
         let loaded = KodConfig::load_from(&config_path).unwrap();
-        assert_eq!(config.llm.model, loaded.llm.model);
+        assert_eq!(
+            config.llm.default_endpoint().model,
+            loaded.llm.default_endpoint().model
+        );
     }
 
     #[test]
@@ -329,7 +339,7 @@ mod tests {
     fn test_partial_config_uses_defaults() {
         // Empty file: every field defaults.
         let cfg: KodConfig = toml::from_str("").unwrap();
-        assert_eq!(cfg.llm.model, "codellama:13b");
+        assert_eq!(cfg.llm.default_endpoint().model, "codellama:13b");
         assert_eq!(cfg.memory.short_term_capacity, 100);
         assert_eq!(cfg.skills.max_skills_per_query, 3);
 
@@ -341,7 +351,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(cfg.llm.model, "llama3.1");
+        assert_eq!(cfg.llm.default_endpoint().model, "llama3.1");
         assert_eq!(cfg.memory.short_term_capacity, 100);
 
         // A single field inside a section: siblings default.
@@ -355,11 +365,15 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(cfg.llm.model, "llama3.1");
+        assert_eq!(cfg.llm.default_endpoint().model, "llama3.1");
         // The other llm fields fall back to their defaults.
-        assert_eq!(cfg.llm.provider, crate::llm::ProviderType::OpenAICompatible);
-        assert_eq!(cfg.llm.temperature, 0.7);
-        assert_eq!(cfg.llm.context_window, 8192);
+        assert_eq!(
+            cfg.llm.default_endpoint()
+                .provider,
+            crate::llm::ProviderKind::OpenAICompatible,
+        );
+        assert_eq!(cfg.llm.default_endpoint().temperature.unwrap_or(0.7), 0.7);
+        assert_eq!(cfg.llm.default_endpoint().context_window, 8192);
         // The set skills field is honored, its siblings default.
         assert_eq!(cfg.skills.max_skills_per_query, 7);
         assert!(cfg.skills.enable_hot_reload);
@@ -435,6 +449,9 @@ mod tests {
         assert!(KodConfig::load_from(&path).is_err());
         // Defaults, by construction, have the documented fields.
         let defaults = KodConfig::default();
-        assert_eq!(defaults.llm.model, "codellama:13b");
+        assert_eq!(
+            defaults.llm.default_endpoint().model,
+            "codellama:13b"
+        );
     }
 }
