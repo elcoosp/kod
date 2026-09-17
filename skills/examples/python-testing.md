@@ -2,7 +2,7 @@
 name: python-testing
 description: Python testing best practices with pytest
 version: 1.0.0
-author: kod-team
+author: elcoosp
 category: testing
 tags:
   - python
