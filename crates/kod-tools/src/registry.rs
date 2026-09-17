@@ -46,14 +46,6 @@ impl ToolRegistry {
         self.tools.read().await.contains_key(name)
     }
 
-    /// Deprecated alias for [`ToolRegistry::has`]. The name `get` was
-    /// misleading: the method returns `bool`, not the tool. New code
-    /// should call `has`.
-    #[deprecated(note = "use `has` — the method returns bool, not the tool")]
-    pub async fn get(&self, name: &str) -> bool {
-        self.has(name).await
-    }
-
     /// List all tool names, sorted for stable presentation.
     pub async fn list_all(&self) -> Vec<String> {
         let tools = self.tools.read().await;
