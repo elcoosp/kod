@@ -136,7 +136,7 @@ impl GitStatusTool {
                     write_files: false,
                     execute_commands: false,
                     network_access: false,
-                    git_operations: true,
+                    git_access: kod_types::GitAccess::Write,
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
@@ -158,7 +158,7 @@ impl Tool for GitStatusTool {
     }
 
     async fn execute(&self, _params: &Value, context: &ToolContext) -> Result<ToolResult> {
-        context.can_git_operation()?;
+        context.can_git_operation(kod_types::GitAccess::Read)?;
 
         let raw = match run_git(
             &["status", "--porcelain=v2", "-b"],
@@ -265,7 +265,7 @@ impl GitDiffTool {
                     write_files: false,
                     execute_commands: false,
                     network_access: false,
-                    git_operations: true,
+                    git_access: kod_types::GitAccess::Write,
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
@@ -287,7 +287,7 @@ impl Tool for GitDiffTool {
     }
 
     async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
-        context.can_git_operation()?;
+        context.can_git_operation(kod_types::GitAccess::Read)?;
 
         let staged = params["staged"].as_bool().unwrap_or(false);
         let stat = params["stat"].as_bool().unwrap_or(false);
@@ -338,6 +338,325 @@ impl Tool for GitDiffTool {
     }
 }
 
+/// `git commit`: the approval-gated write path (D3-C4).
+///
+/// This tool is the ONLY way the agent can mutate the index or commit
+/// the worktree. `execute_command "git ..."` runs under the sandbox
+/// (`.git` read-only), so a shell-issued `git commit` fails at the OS
+/// level — the tool bypasses the sandbox intentionally and is the
+/// approved path. Every call goes through the policy layer (default
+/// mode for this tool is `ask`), so a user sees a diff before the
+/// commit lands.
+pub struct GitCommitTool {
+    pub definition: ToolDefinition,
+}
+
+impl GitCommitTool {
+    pub fn new() -> Self {
+        Self {
+            definition: ToolDefinition {
+                id: ToolId::new(),
+                name: "git_commit".to_string(),
+                description: "Stage the named files and create a commit. This is the only \
+                    git-mutating tool: `execute_command` cannot modify `.git` because the \
+                    sandbox mounts it read-only. Pass `files` to stage a specific set; omit \
+                    it to commit everything already staged. Never force-pushes, resets, or \
+                    changes the branch."
+                    .to_string(),
+                category: ToolCategory::Git,
+                parameters_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "message": {
+                            "type": "string",
+                            "description": "Commit message (single line)."
+                        },
+                        "files": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Optional list of paths to stage before committing.                                 When omitted, commits whatever is already staged."
+                        }
+                    },
+                    "required": ["message"],
+                    "additionalProperties": false
+                }),
+                permissions: ToolPermissions {
+                    read_files: true,
+                    write_files: false,
+                    execute_commands: false,
+                    network_access: false,
+                    git_access: kod_types::GitAccess::Write,
+                    allowed_paths: Vec::new(),
+                    forbidden_paths: Vec::new(),
+                },
+            },
+        }
+    }
+}
+
+impl Default for GitCommitTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for GitCommitTool {
+    fn definition(&self) -> ToolDefinition {
+        self.definition.clone()
+    }
+
+    async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
+        context.can_git_operation(kod_types::GitAccess::Write)?;
+
+        let message = match params.get("message").and_then(|v| v.as_str()) {
+            Some(m) if !m.trim().is_empty() => m.trim().to_string(),
+            _ => {
+                return Ok(ToolResult::Error(
+                    "git_commit: 'message' is required and must not be empty".to_string(),
+                ));
+            }
+        };
+
+        // Optional staging step. `git add <files>` is validated per
+        // path through the tool context resolver so a path outside the
+        // workspace is rejected before git sees it.
+        let files: Vec<String> = params
+            .get("files")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for f in &files {
+            let resolved = context.resolve_path(f)?;
+            context.can_read(&resolved)?;
+            // `git add` accepts a path; resolve to relative-to-workdir
+            // by stripping the working_dir prefix, so a repo-rooted
+            // path is expressed the way git expects it.
+            let relative = resolved
+                .strip_prefix(&context.working_dir)
+                .unwrap_or(&resolved)
+                .to_string_lossy()
+                .to_string();
+            let add = run_git(
+                &["add", "--", &relative],
+                &context.working_dir,
+                context.timeout_secs,
+            )
+            .await;
+            if let Err(e) = add {
+                return Ok(ToolResult::Error(format!(
+                    "git_commit: could not stage {f:?}: {e}"
+                )));
+            }
+        }
+
+        let commit = match run_git(
+            &["commit", "-m", &message],
+            &context.working_dir,
+            context.timeout_secs,
+        )
+        .await
+        {
+            Ok(out) => out,
+            Err(e) => {
+                return Ok(ToolResult::Error(format!(
+                    "git_commit: commit failed: {e}"
+                )));
+            }
+        };
+
+        // Return a short structured summary. The full stdout is kept
+        // because a commit that produces no changes prints a
+        // recognisable "nothing to commit" line, and the model needs
+        // to see that.
+        let head = run_git(
+            &["rev-parse", "--short", "HEAD"],
+            &context.working_dir,
+            context.timeout_secs,
+        )
+        .await
+        .unwrap_or_default();
+        Ok(ToolResult::Success(serde_json::json!({
+            "commit": head.trim(),
+            "message": message,
+            "stdout": commit,
+        })))
+    }
+}
+
+/// `git branch`: list existing branches, or create a new one.
+///
+/// No `checkout`, no `delete`, no `-f`. The tool exists to let the
+/// agent work on an isolated branch (the swarm's worktree-per-agent
+/// path uses it) without giving it the ability to rewrite refs or
+/// discard work. `list` requires `Read`; `create` requires `Write`.
+pub struct GitBranchTool {
+    pub definition: ToolDefinition,
+}
+
+impl GitBranchTool {
+    pub fn new() -> Self {
+        Self {
+            definition: ToolDefinition {
+                id: ToolId::new(),
+                name: "git_branch".to_string(),
+                description: "List branches, or create a new one. Never deletes, never \
+                    force-creates, never checks out. `action = \"list\"` (default) requires \
+                    only read access; `action = \"create\"` requires write access and is \
+                    subject to the policy layer."
+                    .to_string(),
+                category: ToolCategory::Git,
+                parameters_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["list", "create"],
+                            "description": "What to do. Defaults to 'list'."
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Branch name. Required when action = 'create'."
+                        }
+                    },
+                    "additionalProperties": false
+                }),
+                permissions: ToolPermissions {
+                    read_files: false,
+                    write_files: false,
+                    execute_commands: false,
+                    network_access: false,
+                    // Declared at the highest level the tool may use,
+                    // so the policy engine's decision is written with
+                    // the tool's full capability in mind. The tool
+                    // itself downgrades to a Read check for `list`.
+                    git_access: kod_types::GitAccess::Write,
+                    allowed_paths: Vec::new(),
+                    forbidden_paths: Vec::new(),
+                },
+            },
+        }
+    }
+}
+
+impl Default for GitBranchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for GitBranchTool {
+    fn definition(&self) -> ToolDefinition {
+        self.definition.clone()
+    }
+
+    async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
+        let action = params
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("list");
+        match action {
+            "list" => {
+                // List only reads refs; a Read context is enough.
+                context.can_git_operation(kod_types::GitAccess::Read)?;
+                let out = match run_git(
+                    &["branch", "--format=%(refname:short) %(HEAD)"],
+                    &context.working_dir,
+                    context.timeout_secs,
+                )
+                .await
+                {
+                    Ok(o) => o,
+                    Err(e) => {
+                        return Ok(ToolResult::Error(format!(
+                            "git_branch: list failed: {e}"
+                        )));
+                    }
+                };
+                let mut current: Option<String> = None;
+                let mut branches: Vec<String> = Vec::new();
+                for line in out.lines() {
+                    let mut parts = line.split_whitespace();
+                    let name = parts.next().unwrap_or("").to_string();
+                    let is_head = parts.next().unwrap_or("") == "*";
+                    if name.is_empty() {
+                        continue;
+                    }
+                    if is_head {
+                        current = Some(name.clone());
+                    }
+                    branches.push(name);
+                }
+                Ok(ToolResult::Success(serde_json::json!({
+                    "current": current,
+                    "branches": branches,
+                    "count": branches.len(),
+                })))
+            }
+            "create" => {
+                context.can_git_operation(kod_types::GitAccess::Write)?;
+                let name = match params.get("name").and_then(|v| v.as_str()) {
+                    Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+                    _ => {
+                        return Ok(ToolResult::Error(
+                            "git_branch: 'name' is required when action = 'create'"
+                                .to_string(),
+                        ));
+                    }
+                };
+                // A conservative name check: no spaces, no path
+                // separators, no leading dash. A branch name is a
+                // single ref segment; anything else is a mistake or
+                // an injection attempt.
+                if name.contains(char::is_whitespace)
+                    || name.contains('/')
+                    || name.starts_with('-')
+                    || name.contains("..")
+                    || name.contains('~')
+                    || name.contains('^')
+                    || name.contains(':')
+                    || name.contains('?')
+                    || name.contains('*')
+                    || name.contains('[')
+                    || name.contains('\\')
+                {
+                    return Ok(ToolResult::Error(format!(
+                        "git_branch: invalid branch name {name:?}"
+                    )));
+                }
+                let out = match run_git(
+                    &["branch", &name],
+                    &context.working_dir,
+                    context.timeout_secs,
+                )
+                .await
+                {
+                    Ok(o) => o,
+                    Err(e) => {
+                        return Ok(ToolResult::Error(format!(
+                            "git_branch: create failed: {e}"
+                        )));
+                    }
+                };
+                Ok(ToolResult::Success(serde_json::json!({
+                    "created": name,
+                    "stdout": out,
+                })))
+            }
+            other => Ok(ToolResult::Error(format!(
+                "git_branch: unknown action {other:?} (expected 'list' or 'create')"
+            ))),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,7 +668,7 @@ mod tests {
     fn git_ctx(dir: &std::path::Path) -> ToolContext {
         ToolContext::new(dir).with_permissions(ToolPermissions {
             read_files: true,
-            git_operations: true,
+            git_access: kod_types::GitAccess::Write,
             ..Default::default()
         })
     }
@@ -431,7 +750,7 @@ mod tests {
         let (_tmp, repo) = init_repo().await;
         let ctx = ToolContext::new(&repo).with_permissions(ToolPermissions {
             read_files: true,
-            git_operations: false,
+            git_access: kod_types::GitAccess::None,
             ..Default::default()
         });
         let tool = GitStatusTool::new();
