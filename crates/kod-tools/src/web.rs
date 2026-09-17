@@ -85,7 +85,7 @@ impl WebFetchTool {
                     write_files: false,
                     execute_commands: false,
                     network_access: true,
-                    git_operations: false,
+                    git_access: kod_types::GitAccess::None,
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
@@ -115,6 +115,27 @@ impl Tool for WebFetchTool {
             })?;
 
         context.can_access_network(url_str)?;
+
+        // Domain allowlist from the policy layer (D3-C5). Empty means
+        // "any public domain the SSRF filter allows"; a non-empty list
+        // restricts to exactly those domains (subdomain matching:
+        // `docs.rs` allows `docs.rs` and `*.docs.rs`).
+        if !context.allowed_domains.is_empty() {
+            let host = reqwest::Url::parse(url_str)
+                .ok()
+                .and_then(|u| u.host_str().map(|s| s.to_lowercase()))
+                .unwrap_or_default();
+            let allowed = context.allowed_domains.iter().any(|d| {
+                let d = d.to_lowercase();
+                host == d || host.ends_with(&format!(".{d}"))
+            });
+            if !allowed {
+                return Ok(ToolResult::Error(format!(
+                    "refusing to fetch {}: the effective policy allow-list is {:?}",
+                    url_str, context.allowed_domains
+                )));
+            }
+        }
 
         let url = match reqwest::Url::parse(url_str) {
             Ok(u) => u,
