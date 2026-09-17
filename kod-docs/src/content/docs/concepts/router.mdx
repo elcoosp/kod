@@ -1,13 +1,13 @@
 ---
 title: Task Router
-description: How KOD classifies your prompt — the task types, how classification shapes grounding and skill matching, and how the router is configured.
+description: How KOD classifies your prompt — the task types, how classification shapes grounding and skill matching, and how to steer it.
 sidebar:
   order: 3
 ---
 
 import { Aside, LinkCard } from '@astrojs/starlight/components';
 
-The Task Router is the first thing your prompt meets. `TaskRouter::classify_task` reads the input and assigns it a `TaskType`, and that classification quietly shapes the whole round: which skills are matched, how the grounded prompt is framed, and how the engine treats the result. It is keyword- and pattern-based — deterministic, fast, and inspectable — not a model call, which means classification costs nothing and never varies between runs of the same prompt.
+The Task Router is the first thing your prompt meets. The router reads the input and assigns it a `TaskType`, and that classification quietly shapes the whole round: which skills are matched, how the grounded prompt is framed, and how the engine treats the result. It is keyword- and pattern-based — deterministic, fast, and inspectable — not a model call, which means classification costs nothing and never varies between runs of the same prompt.
 
 ## The task types
 
@@ -26,25 +26,31 @@ The Task Router is the first thing your prompt meets. `TaskRouter::classify_task
 
 Two concrete effects worth knowing:
 
-1. **Skill matching budget.** The router configures how many skills ride along per prompt (`max_skills_per_query`, default 3). Classification and matching work together: a `Debugging` prompt and a `Documentation` prompt can surface different skill sets from the same directory.
+1. **Skill matching.** The router decides which skills ride along per prompt, up to `max_skills_per_query` (default 3) with a match threshold of `0.7`. A `Debugging` prompt and a `Documentation` prompt can surface different skill sets from the same directory.
 2. **Prompt shaping.** The grounded prompt reflects the task type, so the model starts from a framing that fits the request instead of inferring one from scratch.
 
-## Configuration
+Classification also feeds [multi-model routing](/guides/configuration/#endpoints-instead-of-a-single-model): with `[llm.routing].by_task`, you can send `Debugging` work to a stronger endpoint while `Simple` questions stay on the fast local model.
 
-The router's `RouterConfig` carries the knobs that shape a round:
+## What the router considers
 
-- `enable_memory` — whether memory participates in grounding (the test suite turns this off for in-process tests to avoid DB contention).
+The router config carries the knobs that shape a round:
+
+- `enable_memory` — whether memory participates in grounding.
 - `max_skills_per_query` — the per-prompt skill cap.
 - `working_dir` — the anchor for all relative paths in tool calls and globs.
-- `context_window` — read from `llm.context_window`; sizes the memory manager's per-prompt budget so long sessions do not drop entries that a large model could have kept.
-- `short_term_capacity` — read from `memory.short_term_capacity`; defaults to 100 when built directly.
+- `context_window` — read from the endpoint; sizes the memory manager's per-prompt budget so long sessions do not drop entries that a large model could have kept.
+- `short_term_capacity` — read from `memory.short_term_capacity`.
 
-## Precision is pinned by tests
+## When routing surprises you
 
-Classification is string surgery, and string surgery is where subtle bugs live — so the matcher gets dedicated coverage. The changelog records multiple substring-matcher and word-boundary fixes in `TaskRouter::classify_task`, and the router's test suite pins the classification of realistic prompts. When you suspect a misclassification, the fastest check is the same one the tests use: classify the prompt and see which type falls out.
+Because classification is deterministic string matching, a surprising result is always traceable:
+
+- `kod chat --verbose` (or the TUI's expanded tool rows) shows the classification for each round.
+- The header in the TUI shows the task type as the round starts — `CodeModification`, `Debugging`, and so on.
+- If a prompt is classified differently from what you intend, rephrase with the verbs the router keys on ("refactor", "debug", "explain", "write tests", "document") — or let `/goal` set a standing framing for the whole session.
 
 <Aside type="caution">
-  One deliberate change: the router used to carry placeholder handlers that returned fabricated text when no provider was configured. They were removed — `Engine::process()` without a provider now returns an `InvalidState` error instead of inventing an answer. Fail loudly beats fake politely.
+  One deliberate design choice: the router used to return fabricated placeholder text when no provider was configured. It does not any more — a missing provider produces an explicit error instead of an invented answer. Fail loudly beats fake politely.
 </Aside>
 
 <LinkCard title="Concepts: The Agent Loop" href="/concepts/agent-loop/" description="Where classification sits inside the full round." />
