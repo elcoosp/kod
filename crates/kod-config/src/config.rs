@@ -316,25 +316,13 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// `load_default` must never fail the process on a corrupt file —
-    /// it should warn and return defaults. `load_from` stays strict, so
-    /// the two callsites are not accidentally swapped.
-    ///
-    /// This test drives the fallback path directly by pointing the
-    /// loader at a temp dir containing a corrupt config.toml. Because
-    /// `load_default` uses `dirs::config_dir()`, we exercise the same
-    /// code by calling `load_from` on the corrupt file (which errors, as
-    /// expected) and asserting the recovery branch we care about in
-    /// `load_default` would return `Self::default()`. The observable
-    /// contract — that a corrupt file at the default location cannot
-    /// take the CLI down — is captured by the CLI integration test
-    /// (`test_cli_error_handling`), which sets up the same condition.
     /// A config.toml with only a subset of sections (or a subset of
-    /// fields within a section) must parse. Before `#[serde(default)]`
-    /// at container level, a file containing only `[llm]` failed with
-    /// "missing field `memory`", and a file containing only `[llm]
-    /// model = "…"` additionally failed with "missing field
-    /// `provider`". Both are the common hand-edited shape.
+    /// fields within a section) must parse. The v1 shape — a bare
+    /// `[llm] model = "…"` at the top of the `[llm]` table — is no
+    /// longer a supported spelling: in v2 a model lives on an
+    /// endpoint, and the shape below names that endpoint explicitly.
+    /// The test verifies that omitting sections and omitting
+    /// optional fields still works.
     #[test]
     fn test_partial_config_uses_defaults() {
         // Empty file: every field defaults.
@@ -343,38 +331,43 @@ mod tests {
         assert_eq!(cfg.memory.short_term_capacity, 100);
         assert_eq!(cfg.skills.max_skills_per_query, 3);
 
-        // Only [llm] present: other sections default.
+        // Only [skills] present: every other section defaults.
         let cfg: KodConfig = toml::from_str(
             r#"
-            [llm]
-            model = "llama3.1"
-            "#,
-        )
-        .unwrap();
-        assert_eq!(cfg.llm.default_endpoint().model, "llama3.1");
-        assert_eq!(cfg.memory.short_term_capacity, 100);
-
-        // A single field inside a section: siblings default.
-        let cfg: KodConfig = toml::from_str(
-            r#"
-            [llm]
-            model = "llama3.1"
-
             [skills]
             max_skills_per_query = 7
             "#,
         )
         .unwrap();
+        assert_eq!(cfg.memory.short_term_capacity, 100);
+        assert_eq!(cfg.skills.max_skills_per_query, 7);
+
+        // A v2 config with a single endpoint and an explicit skills
+        // block. Required endpoint fields (name, provider, base_url,
+        // model, context_window) are given; optional ones
+        // (temperature, max_tokens, timeout_secs) fall back to their
+        // defaults.
+        let cfg: KodConfig = toml::from_str(
+            r#"
+            [skills]
+            max_skills_per_query = 7
+
+            [[llm.endpoints]]
+            name = "default"
+            provider = "openai-compatible"
+            base_url = "http://localhost:11434/v1"
+            model = "llama3.1"
+            context_window = 8192
+            "#,
+        )
+        .unwrap();
         assert_eq!(cfg.llm.default_endpoint().model, "llama3.1");
-        // The other llm fields fall back to their defaults.
         assert_eq!(
-            cfg.llm.default_endpoint()
-                .provider,
+            cfg.llm.default_endpoint().provider,
             crate::llm::ProviderKind::OpenAICompatible,
         );
         assert_eq!(cfg.llm.default_endpoint().temperature.unwrap_or(0.7), 0.7);
         assert_eq!(cfg.llm.default_endpoint().context_window, 8192);
-        // The set skills field is honored, its siblings default.
         assert_eq!(cfg.skills.max_skills_per_query, 7);
         assert!(cfg.skills.enable_hot_reload);
     }
