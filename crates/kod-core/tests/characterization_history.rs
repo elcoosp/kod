@@ -21,6 +21,8 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
+mod common;
+
 struct CaptureProvider {
     prompts: Mutex<Vec<String>>,
 }
@@ -102,7 +104,7 @@ async fn history_rendering_shape_is_stable_across_turns() {
     let temp = TempDir::new().unwrap();
     let engine = engine_in(temp.path());
     let capture = Arc::new(CaptureProvider::new());
-    engine.set_provider(capture.clone()).await;
+    common::install_test_provider(&engine, capture.clone()).await;
     engine.start().await.unwrap();
 
     engine.process("first prompt").await.unwrap();
@@ -178,7 +180,7 @@ async fn history_budget_drops_oldest_first() {
     let temp = TempDir::new().unwrap();
     let engine = engine_in(temp.path());
     let capture = Arc::new(CaptureProvider::new());
-    engine.set_provider(capture.clone()).await;
+    common::install_test_provider(&engine, capture.clone()).await;
     engine.start().await.unwrap();
 
     // At the floor: 4_000 chars. Each seeded turn is
