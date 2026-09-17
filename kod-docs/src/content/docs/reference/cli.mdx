@@ -8,10 +8,14 @@ sidebar:
 import { Aside } from '@astrojs/starlight/components';
 
 ```
-kod [--verbose] <COMMAND>
+kod [--verbose] [<COMMAND>]
 ```
 
-KOD's CLI is a single binary with subcommands grouped by purpose: sessions, models, inspection, and audit. Most commands operate on the effective configuration (defaults merged with `~/.config/kod/config.toml` and any project policy) and talk to the model server configured under `[llm]`.
+KOD's CLI is a single binary with subcommands grouped by purpose: sessions, models, inspection, and audit. Most commands operate on the effective configuration (defaults merged with `~/.config/kod/config.toml` and any project policy) and talk to the model server configured under `[llm]`. Bare `kod` — no subcommand — prints an onboarding summary: entry points, config path, and discovered skill directories.
+
+Global flag: `--verbose` turns up logging across the run — most useful with `agent` and `swarm` when you want to see the loop breathe.
+
+Policy flag: where shown, `--preset` accepts `read-only` (alias `readonly`), `standard` (alias `default`), or `yolo` (alias `unrestricted`) and overrides the global config and any project `.kod/policy.toml` for that run.
 
 ## Commands at a glance
 
@@ -20,16 +24,25 @@ KOD's CLI is a single binary with subcommands grouped by purpose: sessions, mode
 | `chat` | Start a chat session (plain REPL) with streaming output |
 | `tui` | Launch the interactive terminal UI |
 | `agent` | Run a single agent against a goal, then exit |
+| `prompt` | Run one prompt non-interactively and print the reply |
+| `run` | Run one prompt and stream the reply to stdout |
 | `swarm` | Decompose a goal, run N agents concurrently, merge results |
+| `serve` | Start (or stop) the long-lived engine daemon |
 | `skills` | Work with skills: list, scaffold, edit, search, rename, copy, export |
-| `config` | Show, validate, dump, edit, or seed the configuration |
+| `validate-skills` | Validate every skill file; exits non-zero on malformed ones |
+| `config` | Show, validate, export, edit, or seed the configuration |
 | `models` | List models the configured provider offers |
 | `profile` | List, show, or switch model profiles |
-| `sessions` | Inspect, export, or clear the saved TUI session |
+| `theme` | List or print the TUI themes |
+| `sessions` | Show, export, import, or clear the saved TUI session |
+| `memory` | Inspect, export, import, or clear long-term memory |
 | `map` | Print the repository map used for prompt grounding |
 | `replay` | Re-run the tool calls from a session log |
-| `checkpoint` | List, restore, or clear file-level undo snapshots |
-| `doctor` | Print a diagnostics report (config, endpoint, skills, memory, git) |
+| `checkpoint` | List, diff, restore, or clear file-level undo snapshots |
+| `policy` | Show the effective policy, or explain one hypothetical call |
+| `tools` | List the tool registry, or show one tool's schema |
+| `sandbox` | Check that the platform sandbox primitive is available |
+| `doctor` | Print a diagnostics report; exits non-zero on failure |
 | `init` | First-run helper; writes a default config if none exists |
 | `test` | Run the built-in self-tests |
 | `completions` | Print a shell completion script |
@@ -38,27 +51,60 @@ KOD's CLI is a single binary with subcommands grouped by purpose: sessions, mode
 ## `kod chat`
 
 ```bash
-kod chat [--model <name>] [--temperature <f>] [--system-prompt <text>]
-         [--sandbox] [--preset <read-only|standard|yolo>]
+kod chat [--model <name>] [--temperature <f>] [-i, --interactive]
+         [--system-prompt <text>] [--sandbox] [--preset <preset>]
 ```
 
-Starts a plain REPL with streaming output. `--model` overrides the configured model for this session; `--temperature` (default `0.7`) tunes generation; `--system-prompt` replaces the built-in system prompt; `--sandbox` routes shell commands through `bwrap`/`sandbox-exec` and fails loudly when the primitive is unavailable; `--preset` overrides the policy for this session, ignoring global config and any project policy.
+Starts a plain REPL with streaming output. `--model` overrides the configured model for this session. `--temperature` (default `0.7`) is accepted for compatibility; the temperature actually applied comes from the endpoint config. `--system-prompt` replaces the built-in system prompt. `--sandbox` routes shell commands through `bwrap`/`sandbox-exec` and fails loudly when the primitive is unavailable. `--preset` overrides the policy for this session.
+
+## `kod tui`
+
+```bash
+kod tui [--model <name>] [--sandbox] [--preset <preset>] [--no-resume]
+```
+
+Launches the interactive terminal UI. `--no-resume` is intended to skip the saved session; today it prints a hint instead — to start fresh, move `~/.kod/tui_session.json` aside.
 
 ## `kod agent`
 
 ```bash
-kod agent [--name <agent>] -g "<goal>" [--model <name>] [--preset <preset>]
+kod agent [-n <name>] -g "<goal>" [--model <name>] [--preset <preset>]
 ```
 
-One-shot agent run: classify the task, ground the prompt, call tools, finish with a summary. `--name` (default `kod-agent`) labels the agent in logs; `-g, --goal` is required.
+One-shot agent run: classify the task, ground the prompt, call tools, finish with a summary. `-n, --name` (default `kod-agent`) labels the agent in logs; `-g, --goal` is required. Writes that need approval are refused (nothing interactive to approve) — see [Policy](/guides/policy/).
+
+## `kod prompt`
+
+```bash
+kod prompt <prompt> [--model <name>] [--no-log] [--sandbox]
+           [--remote] [--socket <path>]
+```
+
+One prompt, one reply, exit code 0 on success and 1 on error. Only the reply is printed to stdout; diagnostics go to stderr, so it pipes cleanly. `-` reads the prompt text from stdin. `--no-log` skips the session log entry. `--remote` sends the prompt to a running `kod serve` daemon instead of building an in-process engine (`--socket` overrides the socket path).
+
+## `kod run`
+
+```bash
+kod run <prompt> [--model <name>]
+```
+
+Like `prompt`, but streams the reply to stdout as it is generated. `-` reads the prompt from stdin.
 
 ## `kod swarm`
 
 ```bash
-kod swarm -g "<goal>" [-n <agents>] [--model <name>] [--no-merge]
+kod swarm -g "<goal>" [-n <agents>] [--model <name>] [--merge]
 ```
 
-Runs the full swarm pipeline. `-n, --agents` defaults to `swarm.max_agents` from config and is clamped to 2–8 by the runner. `--no-merge` disables model synthesis, yielding per-agent results concatenated under their labels.
+Runs the full swarm pipeline. `-n, --agents` defaults to `swarm.max_agents` from config and is clamped to 2–8 by the runner. Merging is controlled by `swarm.merge_results` in the config; there is no `--no-merge` flag.
+
+## `kod serve`
+
+```bash
+kod serve [--stop] [--socket <path>]
+```
+
+Starts a long-lived engine behind a Unix socket (default `$XDG_RUNTIME_DIR/kod.sock`, or `~/.kod/run/kod.sock` on macOS; never TCP) that `kod prompt --remote` attaches to. `--stop` asks a running daemon to exit and waits for the socket file to disappear.
 
 ## `kod skills`
 
@@ -73,50 +119,81 @@ Runs the full swarm pipeline. `-n, --agents` defaults to `swarm.max_agents` from
 | `show <name>` | Print the full markdown (front matter + body) |
 | `search <query>` | Search by name, description, tags, or capabilities |
 | `source <name>` | Print the absolute file path — useful for scripts |
-| `rename <from> <to>` | Atomic rename; rewrites the `name:` field |
+| `rename <from> <to>` | Rename; rewrites the `name:` field; refuses if the destination exists |
 | `copy <from> <to>` | Copy within the same directory; rewrites `name:`; refuses to overwrite |
 | `export <name> <dest>` | Copy to a path or `-` for stdout; `--force` overwrites |
 
-There is also `kod skills-validate` — a CI-friendly validator that exits non-zero on malformed skill files.
+Two standalone validators complement the tree: `kod validate-skills` (exits non-zero on malformed skill files) and `kod validate-skills-strict` (additionally fails skills missing a `version`).
 
 ## `kod config`
 
 | Subcommand | Purpose |
 | --- | --- |
-| `write [path]` | Write the effective config (defaults + user) to a file or `-`; `--force` overwrites |
+| *(none)* | Print the effective config |
+| `export [path]` | Write the effective config (defaults + user) to a file or `-`; `--force` overwrites |
 | `path` | Print the config file location |
 | `edit` | Open the config in `$EDITOR` (or `$VISUAL`, or `vi`) |
 | `validate` | Parse and validate; exits non-zero on error — CI-friendly |
-| `toml` | Print the effective config as TOML (reproducible) |
-| `raw` | Print the raw file contents verbatim, comments included |
-| `seed <profile>` | Back up current config (`config.toml.bak-<unix-ts>`) and write one seeded from a profile |
+| `show-merged` | Print the effective config as TOML (reproducible) |
+| `show-raw` | Print the raw file contents verbatim, comments included |
+| `init-from <profile>` | Back up current config (`config.toml.bak-<unix-ts>`) and write one seeded from a profile |
 
 ## `kod profile`
 
 ```bash
-kod profile list [--json]   # show the built-in presets
-kod profile show            # print the effective [llm] config
-kod profile use <profile> [--dry-run]   # write preset values into config.toml
+kod profile list [--json]              # show the built-in presets
+kod profile show                       # print the effective [llm] config
+kod profile use <profile> [--dry-run]  # write preset values into config.toml
 ```
 
 Presets: `local-fast`, `local-capable`, `local-reasoning`, `cloud-openai`. See [Model Profiles](/guides/profiles/).
 
+## `kod models`
+
+```bash
+kod models [--filter <text>]
+```
+
+Lists models the configured provider offers (`--filter` is a case-insensitive substring match). Errors from the provider are surfaced rather than collapsed into an empty list, so a bad endpoint is visible here.
+
+## `kod theme`
+
+```bash
+kod theme list          # built-in theme names
+kod theme show <name>   # one theme's palette as JSON (dark | light)
+```
+
 ## `kod sessions`
 
 ```bash
-kod sessions list                  # recorded sessions
-kod sessions show <id>             # summary
-kod sessions export <id> [path]    # write out for archiving/diffing
-kod sessions clear                 # remove saved session state
+kod sessions show                        # where the TUI session lives, message count
+kod sessions export [path] [--format markdown|json]   # default stdout, Markdown
+kod sessions import <path>               # replace saved session from JSON
+kod sessions latest                      # path of the newest session log
+kod sessions count                       # number of logs and combined size
+kod sessions clear                       # delete the saved session file
 ```
 
-## `kod checkpoint`
+`export`/`import` round-trip: only `--format json` output can be imported back.
+
+## `kod memory`
 
 ```bash
-kod checkpoint list             # snapshots taken before mutating calls
-kod checkpoint restore <id>     # restore a file to its pre-call state
-kod checkpoint clear            # drop the checkpoint store
+kod memory list                  # every long-term entry, newest first
+kod memory search <query>        # case-insensitive substring search
+kod memory delete <short-id>     # remove one entry (id from list/search)
+kod memory export [path]         # dump entries to a JSON file or `-`
+kod memory import [path]         # append entries from a JSON file or `-`
+kod memory clear [--yes]         # delete every entry; prompts without --yes
 ```
+
+## `kod map`
+
+```bash
+kod map [--max-chars <n>]
+```
+
+Prints the repository map (top-level symbols per recognised source file) used for prompt grounding. The cap defaults to 16000 characters (~4k tokens).
 
 ## `kod replay`
 
@@ -126,22 +203,63 @@ kod replay <session.jsonl> [--execute]
 
 Re-runs the tool calls recorded in a session log, without the model. Without `--execute` it prints what would run; with `--execute` it performs the calls for real.
 
-## `kod models`
+## `kod checkpoint`
 
 ```bash
-kod models [--filter <text>]
+kod checkpoint list [--limit <n>]   # snapshots for this project (default 20)
+kod checkpoint diff <id>            # unified diff: snapshot vs current file
+kod checkpoint restore <id>         # restore the file; the snapshot is kept
+kod checkpoint clear                # delete every checkpoint for this directory
 ```
 
-Lists models the configured provider offers. Errors from `list_models()` are surfaced rather than collapsed into an empty list, so a bad endpoint is visible here.
-
-## `kod completions`
+## `kod policy`
 
 ```bash
-kod completions <bash|zsh|fish|elvish|powershell>
+kod policy show
+kod policy explain <tool> [key=value …]
 ```
 
-Prints the completion script for the chosen shell.
+`show` prints the effective policy with each rule's provenance. `explain` answers “what would the engine decide for this call?” without running anything — for example `kod policy explain write_file path=src/main.rs`. Values that parse as JSON are used as JSON; anything else is treated as a string. CLI `--preset` overrides are deliberately not applied.
+
+## `kod tools`
+
+```bash
+kod tools list        # every registered tool
+kod tools show <name> # one tool's name, description, schema, permissions
+```
+
+## `kod sandbox`
+
+```bash
+kod sandbox check
+```
+
+Reports whether the platform sandbox primitive is available — and the install command when it is not.
+
+## `kod doctor`
+
+```bash
+kod doctor [--json] [--fix]
+```
+
+Diagnostics for config, endpoint, skills, memory, sandbox, and git. Exits non-zero if any check fails, so it can gate a script or CI. `--fix` creates missing directories and writes a default config if none exists; it never modifies an existing config file.
+
+## `kod init`
+
+```bash
+kod init [--force]
+```
+
+Ensures a config file exists (backing up the old one with `--force`), prints where it lives, and prints the next three commands a new user should run. Idempotent.
+
+## `kod completions` / `kod test` / `kod update`
+
+```bash
+kod completions <bash|zsh|fish|elvish|powershell>   # completion script on stdout
+kod test                                            # built-in self-tests
+kod update                                          # check GitHub for a newer release
+```
 
 <Aside type="tip">
-  `--verbose` on the top-level command turns up logging across the run — most useful combined with `agent` and `swarm` when you want to see the loop breathe.
+  Scripting against KOD? <code>kod prompt</code> (clean stdout, exit codes) and <code>kod doctor --json</code> / <code>kod skills --json</code> (machine-readable) are the stable surfaces to build on.
 </Aside>
