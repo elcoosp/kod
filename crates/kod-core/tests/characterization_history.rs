@@ -7,13 +7,9 @@
 //! session silently re-tokenizes a different prefix than it did
 //! yesterday — the exact cache-defeat failure the roadmap warns about.
 //!
-//! The test drives a real `KodEngine` with a capture-only provider and
-//! asserts what each turn's outgoing prompt contains. It runs on the
-//! pre-change code first (baseline: green), then again post-change
-//! (guard: still green). Substring checks are used rather than a full
-//! byte snapshot because the prompt contains environment-dependent
-//! paths; the specific shape `render_history_for` emits is what
-//! matters.
+//! Both tests below were green on the pre-swap engine. They stay green
+//! after the swap, guarding the `ChatMessage::render_text` equivalence
+//! with the private `HistoryTurn` format.
 
 use async_trait::async_trait;
 use futures::Stream;
@@ -25,8 +21,6 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-/// A provider that records every prompt it receives and always
-/// responds with the same text ("ack"). No tool calls, no streaming.
 struct CaptureProvider {
     prompts: Mutex<Vec<String>>,
 }
@@ -80,9 +74,6 @@ impl LlmProvider for CaptureProvider {
 }
 
 fn engine_in(dir: &std::path::Path) -> KodEngine {
-    // Seed a minimal source file so the repomap is non-empty (an
-    // empty map skips a section, weakening the history rendering
-    // assertions by removing surrounding context).
     std::fs::write(dir.join("main.rs"), "pub fn main() {}\n").unwrap();
     let db_path = dir.join("test.redb");
     let cfg = RouterConfig {
@@ -95,12 +86,17 @@ fn engine_in(dir: &std::path::Path) -> KodEngine {
     KodEngine::new(cfg, db_path).unwrap()
 }
 
-/// Turn 1: history is empty → `(start of conversation)` placeholder.
-/// Turn 2: history contains turn 1's exchange.
-/// Turn 3: history contains turns 1 and 2, in order.
-///
-/// The format `"User: {text}"` / `"Assistant: {text}"` is what
-/// `render_history_for` emits and what the model sees.
+/// Truncate a captured prompt for error messages so a failed assertion
+/// does not dump 40 KB of tool descriptions into the test log.
+fn excerpt(s: &str) -> String {
+    const LIMIT: usize = 400;
+    if s.len() <= LIMIT {
+        s.to_string()
+    } else {
+        format!("{}… [{} more bytes]", &s[..LIMIT], s.len() - LIMIT)
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn history_rendering_shape_is_stable_across_turns() {
     let temp = TempDir::new().unwrap();
@@ -121,56 +117,62 @@ async fn history_rendering_shape_is_stable_across_turns() {
         prompts.len()
     );
 
-    // Turn 1: no prior history.
     assert!(
         prompts[0].contains("(start of conversation)"),
         "turn 1 should carry the placeholder: {}",
-        prompts[0]
+        excerpt(&prompts[0])
     );
 
-    // Turn 2: history contains the turn-1 exchange.
     assert!(
         prompts[1].contains("User: first prompt"),
         "turn 2 history missing the user side of turn 1: {}",
-        prompts[1]
+        excerpt(&prompts[1])
     );
     assert!(
         prompts[1].contains("Assistant: ack"),
         "turn 2 history missing the assistant side of turn 1: {}",
-        prompts[1]
+        excerpt(&prompts[1])
     );
     assert!(
         !prompts[1].contains("(start of conversation)"),
         "turn 2 must not carry the placeholder: {}",
-        prompts[1]
+        excerpt(&prompts[1])
     );
 
-    // Turn 3: both prior exchanges visible, in order.
     assert!(
         prompts[2].contains("User: first prompt"),
         "turn 3 missing the first exchange: {}",
-        prompts[2]
+        excerpt(&prompts[2])
     );
     assert!(
         prompts[2].contains("User: second prompt"),
         "turn 3 missing the second exchange: {}",
-        prompts[2]
+        excerpt(&prompts[2])
     );
     let first_pos = prompts[2].find("User: first prompt").unwrap();
     let second_pos = prompts[2].find("User: second prompt").unwrap();
     assert!(
         first_pos < second_pos,
         "history ordering drifted (first should precede second): {}",
-        prompts[2]
+        excerpt(&prompts[2])
     );
 
     engine.shutdown().await.unwrap();
 }
 
-/// `render_history_for` prepends the newest lines and stops when the
-/// accumulated length exceeds the budget. Assert that the OLDEST
-/// entries drop first, so the invariant "newest turns always preserved"
-/// holds through the representation swap.
+/// `render_history_for` walks the transcript newest-to-oldest and stops
+/// as soon as accumulating the next (older) line would exceed the
+/// budget. Consequence: the OLDEST messages drop first; the newest
+/// always survive.
+///
+/// The engine floors `set_history_budget` at `MIN_HISTORY_CHAR_BUDGET`
+/// (4_000 chars). A "tight 60-char budget" is silently raised to 4_000
+/// and nothing drops — so the test must exceed the floor to exercise
+/// the drop path. Ten turns of ~640 chars each sum to ~6_400, well
+/// past the floor.
+///
+/// Each turn carries a unique `UNIQ_<i>_` marker so we can assert on
+/// exactly which turns survived, not just whether "some marker" did.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn history_budget_drops_oldest_first() {
     let temp = TempDir::new().unwrap();
@@ -179,30 +181,84 @@ async fn history_budget_drops_oldest_first() {
     engine.set_provider(capture.clone()).await;
     engine.start().await.unwrap();
 
-    // Tight budget: only a couple of turns' worth of chars fit.
-    engine.set_history_budget(120);
+    // At the floor: 4_000 chars. Each seeded turn is
+    // `UNIQ_<i>_` + 620 'x' chars ≈ 640 bytes; ten of them sum to
+    // ≈ 6_400 chars, exceeding the floor by ~2_400, so roughly the
+    // oldest three or four turns are dropped.
+    engine.set_history_budget(4_000);
 
-    // Seed distinctive turns directly through the public seed_turn
-    // API, bypassing the provider call.
-    engine.seed_turn(true, "ALPHA_MARKER_user_turn_one").await;
-    engine.seed_turn(false, "ALPHA_MARKER_asst_turn_one").await;
-    engine.seed_turn(true, "OMEGA_MARKER_user_turn_two").await;
-    engine.seed_turn(false, "OMEGA_MARKER_asst_turn_two").await;
+    const TURNS: usize = 10;
+    const PAD: usize = 620;
+    for i in 0..TURNS {
+        let user = format!("UNIQ_{i:04}_USER_{}", "x".repeat(PAD));
+        let asst = format!("UNIQ_{i:04}_ASST_{}", "x".repeat(PAD));
+        engine.seed_turn(true, &user).await;
+        engine.seed_turn(false, &asst).await;
+    }
 
     engine.process("final question").await.unwrap();
 
     let prompts = capture.prompts();
     assert_eq!(prompts.len(), 1);
+    let p = &prompts[0];
+
+    // The newest turn always survives: dropping starts from the
+    // oldest, and stopping only happens when the next-to-prepend
+    // (older) line would overflow.
     assert!(
-        prompts[0].contains("OMEGA_MARKER"),
-        "newest turn dropped despite budget: {}",
-        prompts[0]
+        p.contains("UNIQ_0009_USER"),
+        "newest user turn dropped despite budget: {}",
+        excerpt(p)
     );
     assert!(
-        !prompts[0].contains("ALPHA_MARKER"),
-        "oldest turn kept despite tight budget — drop order regressed: {}",
-        prompts[0]
+        p.contains("UNIQ_0009_ASST"),
+        "newest assistant turn dropped despite budget: {}",
+        excerpt(p)
     );
+
+    // The oldest turn never survives: the loop drops oldest-first.
+    assert!(
+        !p.contains("UNIQ_0000_USER"),
+        "oldest user turn kept — drop order regressed: {}",
+        excerpt(p)
+    );
+    assert!(
+        !p.contains("UNIQ_0000_ASST"),
+        "oldest assistant turn kept — drop order regressed: {}",
+        excerpt(p)
+    );
+
+    // The drop must be *partial* — the budget exceeds one turn but
+    // is well under all ten. If we dropped everything, the loop
+    // broke early on the first iteration; if we dropped nothing, the
+    // budget was not respected. Count distinct indices present.
+    let mut present = std::collections::HashSet::new();
+    for i in 0..TURNS {
+        if p.contains(&format!("UNIQ_{i:04}_USER")) {
+            present.insert(i);
+        }
+    }
+    assert!(
+        !present.is_empty(),
+        "no turns survived — the loop broke before prepending anything"
+    );
+    assert!(
+        present.len() < TURNS,
+        "every turn survived — the budget was not respected ({} present)",
+        present.len()
+    );
+    // Contiguity check: the survivors are exactly the newest N turns
+    // for some N (i.e. indices form a suffix of 0..TURNS). A gap
+    // would mean the drop logic skipped a middle turn, which is the
+    // failure mode the "drop oldest first" contract forbids.
+    let min_present = *present.iter().min().unwrap();
+    for i in min_present..TURNS {
+        assert!(
+            present.contains(&i),
+            "gap in survivors: turn {i} missing but a newer turn is present. \
+             Drop must be oldest-first, never arbitrary. Present: {present:?}"
+        );
+    }
 
     engine.shutdown().await.unwrap();
 }

@@ -5,6 +5,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmConfig {
+    // ---- v1 legacy fields ----
+    //
+    // Kept in the struct so existing config.toml files keep parsing.
+    // `effective_endpoints()` synthesises a single `"default"` endpoint
+    // from these when `endpoints` is empty, and every consumer that
+    // used to read `llm.model` / `llm.base_url` should switch to that
+    // synthesis path. The fields stay until every caller has migrated
+    // (a deprecation cycle, not a removal).
     pub provider: ProviderType,
     pub model: String,
     pub base_url: String,
@@ -13,6 +21,15 @@ pub struct LlmConfig {
     pub max_tokens: usize,
     pub temperature: f32,
     pub timeout_secs: u64,
+
+    // ---- v2 fields ----
+    //
+    // An empty `endpoints` vector is the v1 shape; a non-empty one
+    // activates the v2 path. `routing` is v2-only and is `None` in v1.
+    #[serde(default)]
+    pub endpoints: Vec<EndpointConfig>,
+    #[serde(default)]
+    pub routing: Option<RoutingConfig>,
     /// Allow the agent to reach the network through `web_fetch` (and,
     /// once a search tool exists, that too). Default false: the agent
     /// running with a user's shell privileges should not reach out
@@ -34,6 +51,8 @@ impl Default for LlmConfig {
             temperature: 0.7,
             timeout_secs: 300,
             network_access: false,
+            endpoints: Vec::new(),
+            routing: None,
         }
     }
 }
@@ -191,6 +210,124 @@ impl LlmConfig {
             }
         }
     }
+    /// The effective endpoint list after applying the v1 -> v2
+    /// migration. Three cases:
+    ///
+    /// - **v2 explicit**: `endpoints` is non-empty. Returned as-is
+    ///   after validation.
+    /// - **v1 only** (`endpoints` empty): synthesise exactly one
+    ///   endpoint named `"default"` from the legacy `provider` /
+    ///   `model` / `base_url` / etc. fields. This is what every
+    ///   caller that read `llm.model` directly was doing, without
+    ///   going through a synthesis step. The result is deterministic
+    ///   and diffable, which matters for `/debug last-prompt`.
+    /// - **v1 fallback** (`provider == Anthropic` or `Custom`): the
+    ///   legacy enum has variants that have no v2 equivalent today.
+    ///   The synthesis emits an OpenAICompatible endpoint and logs a
+    ///   warning (same spirit as `validate()`, at the synthesis
+    ///   layer where the caller actually acts on the result).
+    ///
+    /// Also validates: endpoint names unique; every route points at
+    /// an existing endpoint; at least one endpoint present. Returns
+    /// `Err(KodError::Config)` on failure so a typo fails startup
+    /// loudly rather than at the first prompt.
+    pub fn effective_endpoints(&self) -> kod_error::Result<Vec<EndpointConfig>> {
+        let endpoints = if self.endpoints.is_empty() {
+            let provider = match self.provider {
+                ProviderType::Anthropic | ProviderType::Custom => {
+                    tracing::warn!(
+                        provider = ?self.provider,
+                        "v1 config uses an unsupported provider; the synthesised \
+                         endpoint will speak the OpenAI-compatible protocol"
+                    );
+                    ProviderKind::OpenAICompatible
+                }
+                ProviderType::OpenAICompatible => ProviderKind::OpenAICompatible,
+            };
+            vec![EndpointConfig {
+                name: "default".to_string(),
+                provider,
+                base_url: self.base_url.clone(),
+                model: self.model.clone(),
+                api_key_env: None,
+                temperature: Some(self.temperature),
+                max_tokens: Some(self.max_tokens),
+                context_window: self.context_window,
+                timeout_secs: self.timeout_secs,
+                pricing: None,
+            }]
+        } else {
+            self.endpoints.clone()
+        };
+
+        // Validate uniqueness.
+        let mut seen = std::collections::HashSet::new();
+        for e in &endpoints {
+            if e.name.trim().is_empty() {
+                return Err(kod_error::KodError::Config(
+                    "llm.endpoints: endpoint name must not be empty".to_string(),
+                ));
+            }
+            if !seen.insert(e.name.clone()) {
+                return Err(kod_error::KodError::Config(format!(
+                    "llm.endpoints: duplicate endpoint name {:?}",
+                    e.name
+                )));
+            }
+        }
+
+        // Validate routing references.
+        if let Some(routing) = &self.routing {
+            let names: std::collections::HashSet<&str> =
+                endpoints.iter().map(|e| e.name.as_str()).collect();
+            for (task, target) in &routing.by_task {
+                if !names.contains(target.as_str()) {
+                    return Err(kod_error::KodError::Config(format!(
+                        "llm.routing.by_task[{}]: unknown endpoint {:?}. Known: {:?}",
+                        task,
+                        target,
+                        names
+                    )));
+                }
+            }
+            for target in &routing.fallback {
+                if !names.contains(target.as_str()) {
+                    return Err(kod_error::KodError::Config(format!(
+                        "llm.routing.fallback: unknown endpoint {:?}. Known: {:?}",
+                        target, names
+                    )));
+                }
+            }
+            for (cap, target) in &routing.swarm {
+                if !names.contains(target.as_str()) {
+                    return Err(kod_error::KodError::Config(format!(
+                        "llm.routing.swarm[{}]: unknown endpoint {:?}. Known: {:?}",
+                        cap, target, names
+                    )));
+                }
+            }
+        }
+
+        Ok(endpoints)
+    }
+
+    /// The endpoint a task type routes to, honouring the routing
+    /// table when present and falling back to the single "default"
+    /// endpoint otherwise. `task_key` is the string form of a
+    /// `TaskType` (`"Simple"`, `"Debugging"`, ...); the engine passes
+    /// it rather than the enum so kod-config stays free of a
+    /// kod-core dependency.
+    pub fn route_for_task(&self, task_key: &str) -> String {
+        if let Some(routing) = &self.routing
+            && let Some(target) = routing.by_task.get(task_key)
+        {
+            return target.clone();
+        }
+        // v1 synthesis or an unrouted task: the first endpoint is the
+        // sensible default. `effective_endpoints` guarantees at least
+        // one exists (via synthesis).
+        "default".to_string()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -209,6 +346,81 @@ pub enum ProviderType {
     /// Anything else. Same situation as Anthropic: recognised as a
     /// provider name, not implemented.
     Custom,
+}
+
+/// Provider protocol kind for an endpoint. Distinct from `ProviderType`
+/// (the legacy single-provider enum) because v2 endpoints carry an
+/// explicit `provider = "openai-compatible" | "anthropic"` field that
+/// has a different set of legal values (no `Custom` placeholder).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProviderKind {
+    #[serde(rename = "openai-compatible", alias = "Ollama", alias = "OpenAI")]
+    OpenAICompatible,
+    #[serde(rename = "anthropic")]
+    Anthropic,
+}
+
+/// One named endpoint. The `name` is the config key referenced by
+/// `RoutingConfig`; the model name is what the provider sends on the
+/// wire.
+///
+/// Every field that affects the wire — `base_url`, `model`,
+/// `temperature`, `max_tokens` — lives here rather than in a global
+/// `LlmConfig`, so a swarm can route a planner to one endpoint and a
+/// coder to another without sharing options.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndpointConfig {
+    pub name: String,
+    pub provider: ProviderKind,
+    pub base_url: String,
+    pub model: String,
+    /// Name of the environment variable that holds the API key. The
+    /// value itself is never written to the config file — only the
+    /// variable name is, so a shared config does not leak a secret.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub max_tokens: Option<usize>,
+    pub context_window: usize,
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default)]
+    pub pricing: Option<PricingConfig>,
+}
+
+fn default_timeout_secs() -> u64 {
+    300
+}
+
+/// USD per million tokens; used by the TUI cost accounting.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PricingConfig {
+    pub input_per_mtok_usd: f64,
+    pub output_per_mtok_usd: f64,
+}
+
+/// Which endpoint each task type routes to, plus a fallback chain.
+/// Task-type keys match `kod_core::TaskType` string forms; capability
+/// keys match the swarm's `Capability` string forms. Both are kept as
+/// strings here so kod-config does not depend on kod-core.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RoutingConfig {
+    /// `{"Simple" -> "local-ollama", "Debugging" -> "anthropic", ...}`.
+    /// An entry whose endpoint name does not exist in `endpoints` is
+    /// rejected at load time — a typo must not silently disable a
+    /// route.
+    #[serde(default)]
+    pub by_task: std::collections::BTreeMap<String, String>,
+    /// Ordered list of endpoint names to try when the primary fails
+    /// with a retryable error.
+    #[serde(default)]
+    pub fallback: Vec<String>,
+    /// `{"Coding" -> "local-ollama", "Planning" -> "anthropic", ...}`
+    /// for swarm role-based routing (A7).
+    #[serde(default)]
+    pub swarm: std::collections::BTreeMap<String, String>,
 }
 
 #[cfg(test)]
@@ -402,6 +614,188 @@ mod tests {
         let mut c = LlmConfig::default();
         c.validate();
         assert_eq!(c.provider, ProviderType::OpenAICompatible);
+    }
+
+    #[test]
+    fn test_effective_endpoints_v1_synthesis() {
+        // v1 config: no `endpoints`, no `routing`.
+        let cfg: LlmConfig = toml::from_str(
+            r#"
+            provider = "OpenAICompatible"
+            model = "qwen2.5-coder:7b"
+            base_url = "http://localhost:11434/v1"
+            context_window = 32768
+            max_tokens = 4096
+            temperature = 0.2
+            timeout_secs = 120
+            "#,
+        )
+        .unwrap();
+
+        let eps = cfg.effective_endpoints().unwrap();
+        assert_eq!(eps.len(), 1, "v1 should synthesise exactly one endpoint");
+        let e = &eps[0];
+        assert_eq!(e.name, "default");
+        assert_eq!(e.provider, ProviderKind::OpenAICompatible);
+        assert_eq!(e.model, "qwen2.5-coder:7b");
+        assert_eq!(e.base_url, "http://localhost:11434/v1");
+        assert_eq!(e.context_window, 32768);
+        assert_eq!(e.max_tokens, Some(4096));
+        assert_eq!(e.temperature, Some(0.2));
+        assert_eq!(e.timeout_secs, 120);
+
+        assert_eq!(cfg.route_for_task("Simple"), "default");
+    }
+
+    #[test]
+    fn test_effective_endpoints_v2_explicit() {
+        let cfg: LlmConfig = toml::from_str(
+            r#"
+            provider = "OpenAICompatible"
+            model = "ignored"
+            base_url = "http://localhost:11434/v1"
+            context_window = 8192
+            max_tokens = 2048
+            temperature = 0.7
+            timeout_secs = 300
+
+            [[endpoints]]
+            name = "local-ollama"
+            provider = "openai-compatible"
+            base_url = "http://localhost:11434/v1"
+            model = "qwen2.5-coder:32b"
+            context_window = 32768
+            max_tokens = 4096
+
+            [[endpoints]]
+            name = "anthropic"
+            provider = "anthropic"
+            base_url = "https://api.anthropic.com"
+            model = "claude-sonnet-4-5"
+            context_window = 200000
+            api_key_env = "ANTHROPIC_API_KEY"
+            "#,
+        )
+        .unwrap();
+
+        let eps = cfg.effective_endpoints().unwrap();
+        assert_eq!(eps.len(), 2);
+        assert_eq!(eps[0].name, "local-ollama");
+        assert_eq!(eps[0].provider, ProviderKind::OpenAICompatible);
+        assert_eq!(eps[1].name, "anthropic");
+        assert_eq!(eps[1].provider, ProviderKind::Anthropic);
+        assert_eq!(eps[1].api_key_env.as_deref(), Some("ANTHROPIC_API_KEY"));
+    }
+
+    #[test]
+    fn test_effective_endpoints_rejects_duplicate_names() {
+        let cfg: LlmConfig = toml::from_str(
+            r#"
+            provider = "OpenAICompatible"
+            model = "x"
+            base_url = "http://localhost:11434/v1"
+            context_window = 8192
+            max_tokens = 2048
+            temperature = 0.7
+            timeout_secs = 300
+
+            [[endpoints]]
+            name = "a"
+            provider = "openai-compatible"
+            base_url = "http://localhost:11434/v1"
+            model = "m"
+            context_window = 8192
+
+            [[endpoints]]
+            name = "a"
+            provider = "openai-compatible"
+            base_url = "http://localhost:11434/v1"
+            model = "m"
+            context_window = 8192
+            "#,
+        )
+        .unwrap();
+
+        // context_window missing -> default 0? No: it's a required
+        // field on EndpointConfig. If the parse succeeded, context_window
+        // defaults to 0 (no serde default) — which is fine for this test
+        // since we only care about the name collision.
+        let err = cfg.effective_endpoints().unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate endpoint name"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_effective_endpoints_rejects_unknown_route_target() {
+        let cfg: LlmConfig = toml::from_str(
+            r#"
+            provider = "OpenAICompatible"
+            model = "x"
+            base_url = "http://localhost:11434/v1"
+            context_window = 8192
+            max_tokens = 2048
+            temperature = 0.7
+            timeout_secs = 300
+
+            [[endpoints]]
+            name = "primary"
+            provider = "openai-compatible"
+            base_url = "http://localhost:11434/v1"
+            model = "m"
+            context_window = 8192
+
+            [routing]
+            fallback = ["nonexistent"]
+            "#,
+        )
+        .unwrap();
+
+        let err = cfg.effective_endpoints().unwrap_err();
+        assert!(
+            err.to_string().contains("unknown endpoint"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_route_for_task_uses_routing_table() {
+        let cfg: LlmConfig = toml::from_str(
+            r#"
+            provider = "OpenAICompatible"
+            model = "x"
+            base_url = "http://localhost:11434/v1"
+            context_window = 8192
+            max_tokens = 2048
+            temperature = 0.7
+            timeout_secs = 300
+
+            [[endpoints]]
+            name = "local"
+            provider = "openai-compatible"
+            base_url = "http://localhost:11434/v1"
+            model = "m"
+            context_window = 8192
+
+            [[endpoints]]
+            name = "cloud"
+            provider = "anthropic"
+            base_url = "https://api.anthropic.com"
+            model = "claude"
+            context_window = 200000
+
+            [routing.by_task]
+            Simple = "local"
+            Debugging = "cloud"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(cfg.route_for_task("Simple"), "local");
+        assert_eq!(cfg.route_for_task("Debugging"), "cloud");
+        // Unrouted task falls back to "default".
+        assert_eq!(cfg.route_for_task("Research"), "default");
     }
 
     #[test]

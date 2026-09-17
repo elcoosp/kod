@@ -830,15 +830,12 @@ fn cap_lines(text: &str, max: usize) -> String {
     )
 }
 
-/// One remembered conversation turn. The engine is stateless per call by
-/// default — without this, every prompt arrives as a "fresh conversation"
-/// and any TUI trim wipes the model's memory mid-session.
-#[derive(Debug, Clone)]
-struct HistoryTurn {
-    /// `true` = user, `false` = assistant.
-    user: bool,
-    text: String,
-}
+// The engine's transcript used to be a private `HistoryTurn
+// { user: bool, text: String }`. It is now `Vec<ChatMessage>` so the
+// transcript can carry tool calls, tool results, and — from A4 on —
+// a system prompt that is not a fake user turn. The rendering is
+// preserved byte-for-byte via `ChatMessage::render_text`, guarded by
+// `crates/kod-core/tests/characterization_history.rs`.
 
 /// Cap the remembered transcript: last turns, each truncated, total render
 /// capped so history can never blow the context window on its own.
@@ -899,7 +896,7 @@ pub struct KodEngine {
     /// Transcripts, one per key. `DEFAULT_TRANSCRIPT_KEY` is the
     /// interactive session; a swarm agent uses `swarm:<agent-id>` so
     /// concurrent agents do not interleave their turns.
-    history: RwLock<HashMap<String, Vec<HistoryTurn>>>,
+    history: RwLock<HashMap<String, Vec<kod_types::ChatMessage>>>,
     /// Total chars of history rendered into a prompt. Defaults to
     /// [`DEFAULT_HISTORY_CHAR_BUDGET`]; the TUI and CLI set this from
     /// `LlmConfig::context_window` at startup so a 128k model actually
@@ -3098,9 +3095,20 @@ impl KodEngine {
         } else {
             text.to_string()
         };
+        let role = if user {
+            kod_types::MessageRole::User
+        } else {
+            kod_types::MessageRole::Assistant
+        };
+        let message = kod_types::ChatMessage::text(
+            kod_types::MessageId::new(),
+            role,
+            short,
+            time::OffsetDateTime::now_utc(),
+        );
         let mut history = self.history.write().await;
         let turns = history.entry(key.to_string()).or_default();
-        turns.push(HistoryTurn { user, text: short });
+        turns.push(message);
         let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
         if excess > 0 {
             turns.drain(..excess);
@@ -3120,12 +3128,13 @@ impl KodEngine {
         }
         let budget = self.history_budget();
         let mut out = String::new();
-        for turn in turns.iter().rev() {
-            let line = format!(
-                "{}: {}\n",
-                if turn.user { "User" } else { "Assistant" },
-                turn.text
-            );
+        for message in turns.iter().rev() {
+            // `ChatMessage::render_text` emits "User: {content}" /
+            // "Assistant: {content}" / "System: {content}" etc. —
+            // byte-identical to what `HistoryTurn` used to produce
+            // for user and assistant turns. The characterization test
+            // in tests/characterization_history.rs locks this.
+            let line = format!("{}\n", message.render_text());
             if out.len() + line.len() > budget {
                 break;
             }
