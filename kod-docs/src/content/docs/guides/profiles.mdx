@@ -5,39 +5,39 @@ sidebar:
   order: 4
 ---
 
-import { Aside, LinkCard, Steps } from '@astrojs/starlight/components';
+import { Aside, LinkCard } from '@astrojs/starlight/components';
 
 First-run friction is the single easiest adoption problem to fix, and KOD fixes it with **model profiles**: named presets that bundle a model name, base URL, context window, and generation settings. Instead of learning what a `context_window` is, you run `kod profile use local-fast` and get a working session.
 
 ## The built-in presets
 
-| Profile | Model | Endpoint | Notes |
-| --- | --- | --- | --- |
-| `local-fast` | `qwen3.8:27b-mlx` | `http://localhost:11434/v1` | Small local model for quick edits and questions. The recommended starting point. |
-| `local-capable` | `qwen3.8:27b-mlx` | `http://localhost:11434/v1` | Larger local model for harder tasks — needs roughly 20 GB VRAM. |
-| `local-reasoning` | `deepseek-r1:14b` | `http://localhost:11434/v1` | Reasoning-focused local model (DeepSeek-R1 14B). |
-| `cloud-openai` | `gpt-4o-mini` | `https://api.openai.com/v1` | OpenAI cloud; requires `OPENAI_API_KEY` in the environment. |
+| Profile | Model | Context | Endpoint | Notes |
+| --- | --- | --- | --- | --- |
+| `local-fast` | `qwen2.5-coder:7b` | 32k | `http://localhost:11434/v1` | Small local model for quick edits and questions. The recommended starting point. |
+| `local-capable` | `qwen2.5-coder:32b` | 32k | `http://localhost:11434/v1` | Larger local model for harder tasks — needs roughly 20 GB VRAM. |
+| `local-reasoning` | `deepseek-r1:14b` | 64k | `http://localhost:11434/v1` | Reasoning-focused local model (DeepSeek-R1 14B). |
+| `cloud-openai` | `gpt-4o-mini` | 128k | `https://api.openai.com/v1` | OpenAI cloud; requires `OPENAI_API_KEY` in the environment. |
 
-Every local profile carries a one-line install command (`ollama pull qwen3.8:27b-mlx`, and so on) so the model download is a copy-paste away from `kod profile list`. The presets are unit-tested for uniqueness and sanity — each name appears once, and each local profile names its install command.
+Every local profile carries a one-line install command (`ollama pull qwen2.5-coder:7b`, and so on) so the model download is a copy-paste away from `kod profile list`.
 
 ## The `kod profile` commands
 
 ```bash
-kod profile list           # show the built-in presets (add --json for scripts)
-kod profile show           # print the effective [llm] config
-kod profile use local-fast # write the preset's values into config.toml
+kod profile list             # show the built-in presets (add --json for scripts)
+kod profile show             # print the effective [llm] config
+kod profile use local-fast   # write the preset's values into config.toml
 kod profile use local-capable --dry-run   # print what would be written
 ```
 
-`use` edits the `[llm]` section of your config file in place. With `--dry-run` it prints the changes without touching anything, which is useful when you want to copy values into a custom config rather than apply them.
+`use` edits the first `[llm.endpoints]` block in your config file in place. With `--dry-run` it prints the changes without touching anything, which is useful when you want to copy values into a custom config rather than apply them.
 
 <Aside type="tip">
-  Prefer a backup instead of an edit? `kod config seed local-fast` backs up your current config to `config.toml.bak-<unix-ts>` and writes a fresh one seeded from the profile — a one-command reset that keeps your old file.
+  Prefer a backup instead of an edit? <code>kod config init-from local-fast</code> backs up your current config to <code>config.toml.bak-&lt;unix-ts&gt;</code> and writes a fresh one seeded from the profile — a one-command reset that keeps your old file.
 </Aside>
 
 ## What a profile does and does not set
 
-`profile use` writes only the `[llm]` block — provider, model, base URL, context window, max tokens, and generation settings. It does not touch `[memory]`, `[skills]`, `[swarm]`, `[hooks]`, or `[tools]`, and it does not create per-project overrides. Everything outside `[llm]` stays exactly as you configured it.
+`profile use` writes only the model endpoint — provider, model, base URL, context window, max tokens, and generation settings. It does not touch `[memory]`, `[skills]`, `[swarm]`, `[hooks]`, `[tools]`, or `[mcp]`, and it does not create per-project overrides. Everything else stays exactly as you configured it.
 
 ## Choosing between them
 
@@ -48,10 +48,14 @@ A practical decision guide:
 - **`local-reasoning`** when you want deliberation over speed: DeepSeek-R1 spends more tokens thinking and less time being wrong.
 - **`cloud-openai`** when quality matters more than locality and you have accepted the trade by setting `OPENAI_API_KEY`.
 
-You can switch mid-session from the TUI with `/model <name>` — the switch is instantaneous because the engine does not hold the provider read lock across a streaming round.
+You can switch mid-session from the TUI with `/model <name>` — completion lists the models your server actually offers — and the switch is instantaneous because the engine does not hold the provider read lock across a streaming round.
+
+## Beyond the presets
+
+A profile is just a starting point. Any OpenAI-compatible server is reachable by editing the endpoint block directly — see [LLM Providers](/concepts/providers/) for how base-URL normalisation works, and [Configuration](/guides/configuration/#endpoints-instead-of-a-single-model) for the multi-endpoint shape, including routing debug tasks to a cloud model while chat stays local. The `[llm.endpoints.pricing]` table (USD per million tokens) feeds the TUI's cost display for pay-per-token endpoints.
 
 <Aside type="note">
-  Profiles target specific models, not specific providers. Pointing KOD at any other OpenAI-compatible server is a matter of setting `base_url` (and `model`) — see [LLM Providers](/concepts/providers/) for how normalisation works.
+  Profiles target specific models, not specific providers. Pointing KOD at any other OpenAI-compatible server is a matter of setting <code>base_url</code> (and <code>model</code>) on an endpoint.
 </Aside>
 
 <LinkCard title="Next: Skills" href="/guides/skills/" description="Teach the agent reusable knowledge with Markdown files." />
