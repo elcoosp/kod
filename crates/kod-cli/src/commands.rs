@@ -7,8 +7,6 @@ use kod_core::KodEngine;
 use kod_core::{SwarmEvent, SwarmRunner};
 use kod_core::RouterConfig;
 use kod_error::{KodError, Result};
-use kod_provider::LlmProvider;
-use kod_provider_openai::OpenAICompatProvider;
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
@@ -754,27 +752,6 @@ pub enum Command {
     /// the running binary.
     Update,
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     /// Inspect or modify the long-term memory database.
     Memory {
         #[command(subcommand)]
@@ -952,7 +929,7 @@ pub async fn run_chat(
     let config = KodConfig::load_default()?;
 
     // Override model if specified
-    let model_name = model.unwrap_or_else(|| config.llm.model.clone());
+    let model_name = model.unwrap_or_else(|| config.llm.default_endpoint().model.clone());
 
     // Create the database path
     let home = dirs::home_dir()
@@ -965,7 +942,7 @@ pub async fn run_chat(
     // RouterConfig carries the token window itself so the memory manager
     // sizes its own budget from the same source.
     let router_config = RouterConfig {
-        context_window: config.llm.context_window,
+        context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
     };
@@ -973,7 +950,7 @@ pub async fn run_chat(
     // call `respond_to_approval` while `process_streaming` runs on the
     // same engine.
     let engine = Arc::new(KodEngine::new(router_config, db_path)?);
-    engine.set_history_budget(config.llm.context_window.saturating_mul(3));
+    engine.set_history_budget(config.llm.default_endpoint().context_window.saturating_mul(3));
 
     // Set up OpenAI-compatible provider (Ollama /v1, LM Studio, MLX, ...)
     let (registry, default_model, routing) =
@@ -984,10 +961,11 @@ pub async fn run_chat(
     engine.set_auto_check(config.tools.auto_check);
     engine.set_auto_lsp(config.tools.auto_lsp);
     engine.set_generation_defaults(
-        Some(config.llm.temperature),
-        Some(config.llm.max_tokens),
+        Some(config.llm.default_endpoint().temperature.unwrap_or(0.7)),
+        Some(config.llm.default_endpoint().max_tokens.unwrap_or(2048)),
     );
     install_policy_async(&engine, &config, cli_preset.as_deref()).await?;
+    kod_core::mcp_adapters::install_from_config(&engine, &config).await;
 
     // Start the engine
     engine.start().await?;
@@ -1281,7 +1259,7 @@ pub async fn run_swarm(
     merge: bool,
 ) -> Result<()> {
     let config = KodConfig::load_default()?;
-    let model_name = model.unwrap_or_else(|| config.llm.model.clone());
+    let model_name = model.unwrap_or_else(|| config.llm.default_endpoint().model.clone());
     let n = agents.unwrap_or(config.swarm.max_agents);
 
     let home = dirs::home_dir()
@@ -1290,16 +1268,17 @@ pub async fn run_swarm(
     let _ = std::fs::create_dir_all(db_path.parent().unwrap());
 
     let router_config = RouterConfig {
-        context_window: config.llm.context_window,
+        context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
-    engine.set_history_budget(config.llm.context_window.saturating_mul(3));
+    engine.set_history_budget(config.llm.default_endpoint().context_window.saturating_mul(3));
 
     let (registry, default_model, routing) =
         kod_core::build_registry(&config.llm, Some(&model_name))?;
     engine.set_registry(registry, default_model, routing).await;
+    kod_core::mcp_adapters::install_from_config(&engine, &config).await;
 
     engine.start().await?;
 
@@ -1454,19 +1433,19 @@ pub async fn run_agent(
     cli_preset: Option<String>,
 ) -> Result<()> {
     let config = KodConfig::load_default()?;
-    let model_name = model.unwrap_or_else(|| config.llm.model.clone());
+    let model_name = model.unwrap_or_else(|| config.llm.default_endpoint().model.clone());
 
     let home = dirs::home_dir()
         .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
     let db_path = home.join(".kod").join("data").join("kod.redb");
 
     let router_config = RouterConfig {
-        context_window: config.llm.context_window,
+        context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
-    engine.set_history_budget(config.llm.context_window.saturating_mul(3));
+    engine.set_history_budget(config.llm.default_endpoint().context_window.saturating_mul(3));
 
     let (registry, default_model, routing) =
         kod_core::build_registry(&config.llm, Some(&model_name))?;
@@ -1477,6 +1456,7 @@ pub async fn run_agent(
     engine.set_auto_check(config.tools.auto_check);
     engine.set_auto_lsp(config.tools.auto_lsp);
     install_policy_async(&engine, &config, cli_preset.as_deref()).await?;
+    kod_core::mcp_adapters::install_from_config(&engine, &config).await;
 
     engine.start().await?;
 
@@ -1561,12 +1541,15 @@ pub async fn run_config_display() -> Result<()> {
     println!("KOD Configuration:");
     println!();
     println!("LLM:");
-    println!("  Provider: {:?}", config.llm.provider);
-    println!("  Model: {}", config.llm.model);
-    println!("  Base URL: {}", config.llm.base_url);
-    println!("  Context Window: {}", config.llm.context_window);
-    println!("  Max Tokens: {}", config.llm.max_tokens);
-    println!("  Temperature: {}", config.llm.temperature);
+    {
+        let e = config.llm.default_endpoint();
+        println!("  Provider: {:?}", e.provider);
+    }
+    println!("  Model: {}", config.llm.default_endpoint().model);
+    println!("  Base URL: {}", config.llm.default_endpoint().base_url);
+    println!("  Context Window: {}", config.llm.default_endpoint().context_window);
+    println!("  Max Tokens: {}", config.llm.default_endpoint().max_tokens.unwrap_or(2048));
+    println!("  Temperature: {}", config.llm.default_endpoint().temperature.unwrap_or(0.7));
     println!(
         "  Network access: {}",
         if config.llm.network_access {
@@ -1576,12 +1559,7 @@ pub async fn run_config_display() -> Result<()> {
         }
     );
     println!(
-        "  Confirm writes: {}",
-        if config.tools.confirm_writes {
-            "enabled (write_file / patch_file require approval)"
-        } else {
-            "disabled"
-        }
+        "  Write approval: policy-gated (see [tools] and .kod/policy.toml)"
     );
     println!(
         "  Auto-check: {}",
@@ -1677,7 +1655,7 @@ pub async fn run_tests() -> Result<()> {
 
     // Test 1: Configuration loading
     let config = KodConfig::load_default()?;
-    println!("  Config: OK (model={})", config.llm.model);
+    println!("  Config: OK (model={})", config.llm.default_endpoint().model);
 
     // Test 2: Engine lifecycle.
     //
@@ -1717,9 +1695,12 @@ pub async fn run_tests() -> Result<()> {
     println!("  Engine lifecycle: OK");
 
     // Test 3: Provider setup
-    let provider = OpenAICompatProvider::from_config(&config.llm, None)?;
-    let provider_name = provider.name();
-    println!("  Provider setup: OK (name={})", provider_name);
+    {
+        let (registry, _default_model, _routing) =
+            kod_core::build_registry(&config.llm, None)?;
+        let endpoint_names = registry.names();
+        println!("  Provider setup: OK (endpoints={:?})", endpoint_names);
+    }
 
     // Test 4: Skill loading across all standard directories
     let skills_dirs = config.skills_dirs()?;
@@ -1811,7 +1792,7 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool) -> Result<()> {
     let config = KodConfig::load_default()?;
     let db_path = config.memory_db_path()?;
     let router_config = RouterConfig {
-        context_window: config.llm.context_window,
+        context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
     };
@@ -1901,13 +1882,16 @@ pub async fn run_profile(action: ProfileAction) -> Result<()> {
         ProfileAction::Show => {
             let config = KodConfig::load_default()?;
             println!("Effective [llm] config:");
-            println!("  provider       = {:?}", config.llm.provider);
-            println!("  model          = \"{}\"", config.llm.model);
-            println!("  base_url       = \"{}\"", config.llm.base_url);
-            println!("  context_window = {}", config.llm.context_window);
-            println!("  max_tokens     = {}", config.llm.max_tokens);
-            println!("  temperature    = {}", config.llm.temperature);
-            println!("  timeout_secs   = {}", config.llm.timeout_secs);
+            {
+                let e = config.llm.default_endpoint();
+                println!("  provider       = {:?}", e.provider);
+            }
+            println!("  model          = \"{}\"", config.llm.default_endpoint().model);
+            println!("  base_url       = \"{}\"", config.llm.default_endpoint().base_url);
+            println!("  context_window = {}", config.llm.default_endpoint().context_window);
+            println!("  max_tokens     = {}", config.llm.default_endpoint().max_tokens.unwrap_or(2048));
+            println!("  temperature    = {}", config.llm.default_endpoint().temperature.unwrap_or(0.7));
+            println!("  timeout_secs   = {}", config.llm.default_endpoint().timeout_secs);
             Ok(())
         }
         ProfileAction::Use { name, dry_run } => {
@@ -1919,10 +1903,10 @@ pub async fn run_profile(action: ProfileAction) -> Result<()> {
                 ))
             })?;
             let mut config = KodConfig::load_default()?;
-            config.llm.model = profile.model.to_string();
-            config.llm.base_url = profile.base_url.to_string();
-            config.llm.context_window = profile.context_window;
-            config.llm.max_tokens = profile.max_tokens;
+            config.llm.default_endpoint_mut().model = profile.model.to_string();
+            config.llm.default_endpoint_mut().base_url = profile.base_url.to_string();
+            config.llm.default_endpoint_mut().context_window = profile.context_window;
+            config.llm.default_endpoint_mut().max_tokens = Some(profile.max_tokens);
             let dir = KodConfig::config_dir()?;
             let path = dir.join("config.toml");
             if dry_run {
@@ -2061,8 +2045,8 @@ pub async fn run_init(force: bool) -> Result<()> {
     } else {
         println!("Config:   (in memory only — could not write {})", path.display());
     }
-    println!("Model:    {}", config.llm.model);
-    println!("Endpoint: {}", config.llm.base_url);
+    println!("Model:    {}", config.llm.default_endpoint().model);
+    println!("Endpoint: {}", config.llm.default_endpoint().base_url);
     println!(
         "Network:  {}",
         if config.llm.network_access {
@@ -2072,12 +2056,7 @@ pub async fn run_init(force: bool) -> Result<()> {
         }
     );
     println!(
-        "Writes:   {}",
-        if config.tools.confirm_writes {
-            "confirm (write_file / patch_file ask for approval)"
-        } else {
-            "auto (checkpoint rollback still available via /rollback)"
-        }
+        "Writes:   policy-gated (see [tools] and .kod/policy.toml)"
     );
     println!();
     println!("Built-in model profiles:");
@@ -2093,7 +2072,7 @@ pub async fn run_init(force: bool) -> Result<()> {
     println!();
     println!("Next steps:");
     println!("  1. Start the model server (e.g. `ollama serve`)");
-    println!("  2. Pull the model (e.g. `ollama pull {}`)", config.llm.model);
+    println!("  2. Pull the model (e.g. `ollama pull {}`)", config.llm.default_endpoint().model);
     println!("  3. Verify the setup:  kod doctor");
     println!("  4. Start a session:   kod tui    (interactive)");
     println!("                        kod chat   (plain REPL)");
@@ -2119,14 +2098,27 @@ pub async fn run_init(force: bool) -> Result<()> {
 /// command keeps the distinction visible.
 pub async fn run_models(filter: Option<String>) -> Result<()> {
     let config = KodConfig::load_default()?;
-    let provider = OpenAICompatProvider::from_config(&config.llm, None)?;
+    let (registry, default_model, _routing) =
+        kod_core::build_registry(&config.llm, None)?;
+
+    let provider = match registry.resolve(&default_model) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!(
+                "Could not resolve provider for {}: {}",
+                default_model.display(),
+                e
+            );
+            std::process::exit(1);
+        }
+    };
 
     let models = match provider.list_models().await {
         Ok(m) => m,
         Err(e) => {
             eprintln!(
                 "Could not list models from {}: {}",
-                config.llm.base_url, e
+                config.llm.default_endpoint().base_url, e
             );
             eprintln!();
             eprintln!("Check that the server is running and `base_url` in the config is correct.");
@@ -2147,11 +2139,11 @@ pub async fn run_models(filter: Option<String>) -> Result<()> {
     if models.is_empty() {
         println!(
             "The provider at {} is reachable but reports no models.",
-            config.llm.base_url
+            config.llm.default_endpoint().base_url
         );
         println!();
         println!("Pull one first, e.g.:");
-        println!("  ollama pull {}", config.llm.model);
+        println!("  ollama pull {}", config.llm.default_endpoint().model);
         return Ok(());
     }
 
@@ -2174,10 +2166,10 @@ pub async fn run_models(filter: Option<String>) -> Result<()> {
             n,
         );
     } else {
-        println!("{} model(s) on {}:", shown.len(), config.llm.base_url);
+        println!("{} model(s) on {}:", shown.len(), config.llm.default_endpoint().base_url);
     }
     for m in &shown {
-        if m.as_str() == config.llm.model {
+        if m.as_str() == config.llm.default_endpoint().model {
             println!("  - {}  (current)", m);
         } else {
             println!("  - {}", m);
@@ -2619,7 +2611,6 @@ pub async fn run_skills_validate() -> Result<()> {
     Ok(())
 }
 
-
 /// Check GitHub for a newer release of KOD.
 ///
 /// Hits the public `releases/latest` endpoint for the project repo
@@ -2744,7 +2735,6 @@ fn version_is_older(candidate: &str, running: &str) -> bool {
     (cm, cn, cp) < (rm, rn, rp) || ((cm, cn, cp) == (rm, rn, rp) && cpre && !rpre)
 }
 
-
 #[cfg(test)]
 mod update_tests {
     use super::{version_is_older, versions_equal};
@@ -2789,7 +2779,6 @@ mod update_tests {
         assert!(version_is_older("0.1.0", "v0.1.1"));
     }
 }
-
 
 /// Print just the config file path. Useful for `$(kod config path)`.
 pub async fn run_config_path() -> Result<()> {
@@ -2848,7 +2837,6 @@ pub async fn run_config_edit() -> Result<()> {
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
-
 
 /// Scaffold a new skill file. Writes into the first writable directory
 /// among the standard locations (project-local .agents/skills first,
@@ -2931,7 +2919,6 @@ fn to_title_case(s: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
-
 
 /// `kod memory <action>` — CRUD against the long-term memory store.
 ///
@@ -3091,7 +3078,6 @@ fn preview_line(s: &str, max: usize) -> String {
     }
 }
 
-
 /// Locate a skill file by name. Searches every skills directory; the
 /// first match wins (the same order discovery uses).
 async fn find_skill_path(name: &str) -> Result<Option<std::path::PathBuf>> {
@@ -3228,7 +3214,6 @@ pub async fn run_skills_edit(name: &str) -> Result<()> {
     }
 }
 
-
 /// Parse the config file and report whether it is valid.
 ///
 /// Differs from `kod config` (which shows the *effective* config,
@@ -3253,7 +3238,7 @@ pub async fn run_config_validate() -> Result<()> {
             println!("{}: valid.", path.display());
             println!(
                 "  model = {:?}, base_url = {:?}, context_window = {}",
-                cfg.llm.model, cfg.llm.base_url, cfg.llm.context_window,
+                cfg.llm.default_endpoint().model, cfg.llm.default_endpoint().base_url, cfg.llm.default_endpoint().context_window,
             );
             if !cfg.commands.is_empty() {
                 println!(
@@ -3274,7 +3259,6 @@ pub async fn run_config_validate() -> Result<()> {
     }
 }
 
-
 /// Print a skill's full markdown source (header + body). Unlike
 /// `kod skills` (which lists names), this reads the file directly so
 /// the output round-trips — piping it back into a file reproduces the
@@ -3294,7 +3278,6 @@ pub async fn run_skills_show(name: &str) -> Result<()> {
     }
     Ok(())
 }
-
 
 /// Report whether the sandbox primitive `kod chat --sandbox` uses is
 /// available on this platform. Read-only: never installs anything.
@@ -3346,7 +3329,6 @@ pub async fn run_sandbox_check() -> Result<()> {
     Ok(())
 }
 
-
 /// One-shot prompt. Reads `-` as stdin. Prints only the model's reply
 /// to stdout on success (no banner, no session log unless asked); any
 /// diagnostic goes to stderr. Exit code: 0 success, 1 error.
@@ -3372,19 +3354,19 @@ pub async fn run_prompt(
     }
 
     let config = KodConfig::load_default()?;
-    let model_name = model.unwrap_or_else(|| config.llm.model.clone());
+    let model_name = model.unwrap_or_else(|| config.llm.default_endpoint().model.clone());
 
     let home = dirs::home_dir()
         .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
     let db_path = home.join(".kod").join("data").join("kod.redb");
 
     let router_config = RouterConfig {
-        context_window: config.llm.context_window,
+        context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
-    engine.set_history_budget(config.llm.context_window.saturating_mul(3));
+    engine.set_history_budget(config.llm.default_endpoint().context_window.saturating_mul(3));
 
     let (registry, default_model, routing) =
         kod_core::build_registry(&config.llm, Some(&model_name))?;
@@ -3396,6 +3378,7 @@ pub async fn run_prompt(
     if sandbox {
         engine.set_sandbox_mode(kod_tools::context::SandboxMode::Require);
     }
+    kod_core::mcp_adapters::install_from_config(&engine, &config).await;
 
     engine.start().await?;
 
@@ -3418,7 +3401,6 @@ pub async fn run_prompt(
     engine.shutdown().await?;
     Ok(())
 }
-
 
 /// Copy a skill file to a destination. `dest` may be `-` for stdout.
 /// Refuses to overwrite a non-`-` destination unless `force`.
@@ -3469,7 +3451,6 @@ pub async fn run_skills_export(
     println!("Exported {} to {}", src.display(), target.display());
     Ok(())
 }
-
 
 /// Search skills by name, description, tags, or capabilities. Scores
 /// by where the query matched (name > tag > description) so the same
@@ -3545,7 +3526,6 @@ pub async fn run_skills_search(query: &str) -> Result<()> {
     }
     Ok(())
 }
-
 
 /// `kod tools [list|show <name>]`. Read-only: registers a fresh
 /// registry (the same list the engine installs) and prints it.
@@ -3646,7 +3626,6 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
     }
 }
 
-
 /// Back up the current config file and write a new one seeded from a
 /// named profile. Backs up to `config.toml.bak-<unix-ts>` so a user
 /// who runs this by mistake can restore their settings.
@@ -3676,10 +3655,10 @@ pub async fn run_config_init_from(name: &str) -> Result<()> {
 
     // Build from defaults, then apply the profile.
     let mut config = KodConfig::default();
-    config.llm.model = profile.model.to_string();
-    config.llm.base_url = profile.base_url.to_string();
-    config.llm.context_window = profile.context_window;
-    config.llm.max_tokens = profile.max_tokens;
+    config.llm.default_endpoint_mut().model = profile.model.to_string();
+    config.llm.default_endpoint_mut().base_url = profile.base_url.to_string();
+    config.llm.default_endpoint_mut().context_window = profile.context_window;
+    config.llm.default_endpoint_mut().max_tokens = Some(profile.max_tokens);
     config.save_to(&path)?;
 
     println!("Wrote new config from profile {:?} to {}", name, path.display());
@@ -3690,7 +3669,6 @@ pub async fn run_config_init_from(name: &str) -> Result<()> {
     }
     Ok(())
 }
-
 
 /// Same as `run_skills_validate` but uses `SkillParser::strict()`, so
 /// a skill missing its `version:` field is a failure. Useful in a
@@ -3747,7 +3725,6 @@ pub async fn run_skills_validate_strict() -> Result<()> {
     Ok(())
 }
 
-
 /// Print the raw config file verbatim. Distinct from `kod config` (which
 /// shows the parsed + defaulted effective values): this one includes
 /// whatever comments and formatting the user wrote.
@@ -3765,7 +3742,6 @@ pub async fn run_config_show_raw() -> Result<()> {
     }
     Ok(())
 }
-
 
 /// `kod doctor --fix`. Creates missing directories the standard session
 /// needs. Never modifies an existing config file — a run that overwrote
@@ -3858,7 +3834,6 @@ pub async fn run_doctor_fix(json: bool) -> Result<()> {
     Ok(())
 }
 
-
 /// Copy a skill file to a new name in the same directory, rewriting the
 /// `name:` field. Refuses if the destination already exists. Useful for
 /// branching a skill you want to tweak without losing the original.
@@ -3925,7 +3900,6 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
     Ok(())
 }
 
-
 /// Rename a skill file. Reuses `run_skills_copy` then removes the
 /// original. Refuses if the destination exists (a rename that
 /// overwrites a colleague's skill is worse than a slow copy).
@@ -3957,7 +3931,6 @@ pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
     Ok(())
 }
 
-
 /// Print the effective config as TOML. Unlike `kod config show-raw`
 /// (verbatim file, comments preserved), this one goes through
 /// `KodConfig::default()` → user file → serialize, so every field is
@@ -3973,7 +3946,6 @@ pub async fn run_config_show_merged() -> Result<()> {
     }
     Ok(())
 }
-
 
 /// Print the absolute path of a skill's file. Exits 1 when the skill
 /// is not found. Designed for shell pipelines:
@@ -3993,7 +3965,6 @@ pub async fn run_skills_source(name: &str) -> Result<()> {
         }
     }
 }
-
 
 /// Write the effective config (defaults + user) to `dest`. Refuses to
 /// overwrite unless `force`. `-` writes to stdout.
@@ -4029,7 +4000,6 @@ pub async fn run_config_export(
     Ok(())
 }
 
-
 /// Like `run_prompt` but streams text chunks live to stdout as they
 /// arrive. Turns are not separated by markers; the reply comes out as
 /// the model produces it, which is what makes this useful for
@@ -4050,18 +4020,18 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
     }
 
     let config = KodConfig::load_default()?;
-    let model_name = model.unwrap_or_else(|| config.llm.model.clone());
+    let model_name = model.unwrap_or_else(|| config.llm.default_endpoint().model.clone());
     let home = dirs::home_dir()
         .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
     let db_path = home.join(".kod").join("data").join("kod.redb");
 
     let router_config = RouterConfig {
-        context_window: config.llm.context_window,
+        context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
-    engine.set_history_budget(config.llm.context_window.saturating_mul(3));
+    engine.set_history_budget(config.llm.default_endpoint().context_window.saturating_mul(3));
     let (registry, default_model, routing) =
         kod_core::build_registry(&config.llm, Some(&model_name))?;
     engine.set_registry(registry, default_model, routing).await;
@@ -4069,6 +4039,7 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
     engine.set_network_access(config.llm.network_access);
     engine.set_auto_check(config.tools.auto_check);
     engine.set_auto_lsp(config.tools.auto_lsp);
+    kod_core::mcp_adapters::install_from_config(&engine, &config).await;
     engine.start().await?;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
@@ -4097,5 +4068,4 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
     engine.shutdown().await?;
     Ok(())
 }
-
 
