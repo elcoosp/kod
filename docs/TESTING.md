@@ -52,7 +52,7 @@ cargo test --workspace -- --list | tail -1
 | kod-mcp                | 5          |
 | kod-error              | 3          |
 | kod-provider           | 0          |
-| **Total (attributes)** | **341**    |
+| **Total (attributes)** | **353**    |
 
 ## Workspace Structure
 

@@ -62,6 +62,23 @@ OpenAI-compatible implementation (backed by `adk-model`):
 - Generation (streaming and non-streaming) with tool calling
 - Model listing via `GET /v1/models`
 
+#### kod-provider-anthropic
+Anthropic Messages API provider (backed by `adk-model`):
+- The same `LlmProvider` trait as the OpenAI-compatible provider
+- Wraps `adk_model::anthropic::Anthropic` — one code path per provider kind
+
+#### kod-lsp
+Minimal Language Server Protocol client for code intelligence:
+- **Transport**: JSON-RPC over a server's stdio, `Content-Length` framing
+- **Operations**: `initialize`, `didOpen`/`didChange`, `publishDiagnostics`, `definition`, `references`, `hover`
+- **Lifecycle**: one server per language, spawned lazily, killed on engine shutdown
+
+#### kod-mcp
+Minimal Model Context Protocol client:
+- **Transport**: newline-delimited JSON-RPC over a spawned server's stdio
+- **Operations**: `initialize`, `tools/list`, `tools/call`
+- **Registration**: tools surface on the engine's registry under the `mcp:<server>.<tool>` naming policy
+
 ### Skills Layer
 
 #### kod-skills
