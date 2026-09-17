@@ -113,7 +113,7 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
     report.push(
         "llm.base_url",
         CheckStatus::Ok,
-        format!("{} (model {})", config.llm.base_url, config.llm.model),
+        format!("{} (model {})", config.llm.default_endpoint().base_url, config.llm.default_endpoint().model),
     );
 
     match config.skills_dirs() {
@@ -179,18 +179,26 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
     // Sandbox primitive. Informational — a session without one still
     // runs `execute_command`, it just cannot require the sandbox.
     {
-        use kod_tools::context::{SandboxMode, sandbox_invocation};
+        use kod_tools::context::{SandboxMode, SandboxOpts, SandboxResolver};
         let cwd = std::env::current_dir()
             .unwrap_or_else(|_| std::path::PathBuf::from("."));
-        match sandbox_invocation(SandboxMode::Require, &cwd) {
+        let resolver = SandboxResolver::detect();
+        match resolver.invocation(
+            SandboxMode::Require,
+            &cwd,
+            SandboxOpts::default(),
+        ) {
             Ok(Some(inv)) => report.push(
                 "sandbox",
                 CheckStatus::Ok,
-                format!("{} available (kod chat --sandbox)", inv.program),
+                format!(
+                    "{} available (Auto uses it; Require enforces it)",
+                    inv.backend.name()
+                ),
             ),
             _ => {
                 #[cfg(target_os = "linux")]
-                let advice = "install bubblewrap to enable --sandbox";
+                let advice = "install bubblewrap (apt/dnf/pacman/apk) to enable sandboxing";
                 #[cfg(target_os = "macos")]
                 let advice = "sandbox-exec is not available; `xcode-select --install` may fix it";
                 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -230,17 +238,6 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
             "enabled — web_fetch may reach the network"
         } else {
             "disabled — set llm.network_access = true to enable web_fetch"
-        },
-    );
-
-    // Write confirmation. Informational.
-    report.push(
-        "tools.confirm_writes",
-        CheckStatus::Ok,
-        if config.tools.confirm_writes {
-            "enabled — write_file / patch_file ask for approval"
-        } else {
-            "disabled — writes proceed without a prompt (checkpoint rollback still available)"
         },
     );
 
@@ -300,12 +297,12 @@ mod tests {
             .find(|c| c.name == "llm.base_url")
             .unwrap();
         assert!(
-            check.message.contains(&cfg.llm.model),
+            check.message.contains(&cfg.llm.default_endpoint().model),
             "llm check should name the model: {}",
             check.message
         );
         assert!(
-            check.message.contains(&cfg.llm.base_url),
+            check.message.contains(&cfg.llm.default_endpoint().base_url),
             "llm check should name the base URL: {}",
             check.message
         );
