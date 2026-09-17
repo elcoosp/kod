@@ -10,10 +10,13 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 redb = { workspace = true }
+reqwest = { workspace = true }
+async-trait = "0.1"
 parking_lot = { workspace = true }
 tracing = { workspace = true }
 time = { workspace = true }
 kod-types = { path = "../kod-types" }
+kod-provider = { path = "../kod-provider" }
 kod-error = { path = "../kod-error" }
 
 [dev-dependencies]
