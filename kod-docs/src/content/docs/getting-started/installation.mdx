@@ -23,7 +23,7 @@ Three things must be present on your machine before you build:
 1. Clone the repository and build the workspace in release mode:
 
    ```bash
-   git clone https://github.com/kod-team/kod.git
+   git clone https://github.com/elcoosp/kod.git
    cd kod
    cargo build --release
    ```
@@ -69,7 +69,7 @@ Each check tells you what it tested and what it found. A config file that does n
 Model profiles bundle a model name, base URL, context window, and generation settings into a preset so a first-run user does not have to know what a `context_window` is. The built-in presets are `local-fast` (Qwen 2.5 Coder 7B), `local-capable` (32B), `local-reasoning` (DeepSeek-R1 14B), and `cloud-openai` (GPT-4o mini):
 
 ```bash
-ollama pull qwen2.5-coder:7b      # one-time model download
+ollama pull qwen3.8:27b-mlx      # one-time model download
 kod profile use local-fast        # writes the preset into config.toml
 ```
 
