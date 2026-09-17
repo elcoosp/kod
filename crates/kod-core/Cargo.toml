@@ -24,6 +24,7 @@ kod-provider = { path = "../kod-provider" }
 kod-skills = { path = "../kod-skills" }
 kod-memory = { path = "../kod-memory" }
 kod-tools = { path = "../kod-tools" }
+kod-lsp = { path = "../kod-lsp" }
 kod-swarm = { path = "../kod-swarm" }
 
 [dev-dependencies]
