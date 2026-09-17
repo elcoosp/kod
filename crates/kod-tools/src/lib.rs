@@ -40,6 +40,7 @@ pub mod git;
 pub mod patch;
 pub mod path_lock;
 pub mod registry;
+pub mod sandbox;
 pub mod search;
 pub mod swarm_tools;
 pub mod todo;
