@@ -33,7 +33,6 @@
 //! mode = "allow"` in `.kod/policy.toml`. The default preset is
 //! `standard`, under which MCP tools ask.
 
-use crate::engine::KodEngine;
 use kod_config::McpConfig;
 use kod_error::{KodError, Result};
 use kod_mcp::{McpClient, McpToolDef};
