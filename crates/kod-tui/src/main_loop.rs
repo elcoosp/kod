@@ -12,7 +12,6 @@ use crate::{
 use kod_config::{KodConfig, LlmConfig};
 use kod_core::{KodEngine, RouterConfig};
 use kod_error::{KodError, Result};
-use kod_provider_openai::OpenAICompatProvider;
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
@@ -59,6 +58,10 @@ pub struct TuiLoop {
     /// When true, shell commands require the platform sandbox.
     /// Set from the `--sandbox` CLI flag before `run`.
     sandbox_required: bool,
+    /// CLI `--preset` value, if any. Applied when the policy engine
+    /// loads in `init_engine`; overrides the config and project
+    /// policy layers.
+    cli_preset: Option<String>,
 }
 
 impl TuiLoop {
@@ -73,6 +76,7 @@ impl TuiLoop {
             keybindings: load_bindings(),
             persist_history: false,
             sandbox_required: false,
+            cli_preset: None,
         }
     }
 
@@ -88,10 +92,17 @@ impl TuiLoop {
         self.sandbox_required = required;
     }
 
+    /// Set the CLI `--preset` value. Applied by `init_engine` when the
+    /// policy engine is built. `None` means "use the config/project
+    /// layers only".
+    pub fn set_cli_preset(&mut self, preset: Option<String>) {
+        self.cli_preset = preset;
+    }
+
     /// Set up the engine with the OpenAI-compatible provider
     pub async fn init_engine(&mut self, model: Option<String>) -> Result<()> {
         let config = KodConfig::load_default()?;
-        let model_name = model.unwrap_or_else(|| config.llm.model.clone());
+        let model_name = model.unwrap_or_else(|| config.llm.default_endpoint().model.clone());
 
         // Compute skills_dirs before `config.llm` is moved into
         // self.llm_config below — skills_dirs() borrows &self.config, and
@@ -100,13 +111,13 @@ impl TuiLoop {
 
         // The meter + compaction threshold must use the real window from
         // config (e.g. 8k for a small local model), not DEFAULT_CONTEXT_LIMIT.
-        self.app.set_context_limit(config.llm.context_window);
+        self.app.set_context_limit(config.llm.default_endpoint().context_window);
 
         // History budget: roughly three chars per token of the model's
         // window. The engine clamps anything below its floor, so a tiny
         // or placeholder context_window cannot produce an engine that
         // forgets every turn.
-        let history_budget = config.llm.context_window.saturating_mul(3);
+        let history_budget = config.llm.default_endpoint().context_window.saturating_mul(3);
 
         // KOD_TEST_DB isolates integration tests from a live session's
         // database. When unset, the config's `memory.scope` decides:
@@ -122,22 +133,28 @@ impl TuiLoop {
         // memory manager sizes its own budget from the same number the
         // engine uses for history.
         let router_config = RouterConfig {
-            context_window: config.llm.context_window,
+            context_window: config.llm.default_endpoint().context_window,
             short_term_capacity: config.memory.short_term_capacity,
             ..RouterConfig::default()
         };
         let engine = KodEngine::new(router_config, db_path)?;
         engine.set_history_budget(history_budget);
 
-        let provider = OpenAICompatProvider::from_config(&config.llm, Some(&model_name))?;
-        engine.set_provider(Arc::new(provider)).await;
+        let (registry, default_model, routing) =
+        kod_core::build_registry(&config.llm, Some(&model_name))?;
+    engine
+        .set_registry(registry, default_model, routing)
+        .await;
         engine.set_hooks(config.hooks.clone());
         engine.set_network_access(config.llm.network_access);
-        engine.set_confirm_writes(config.tools.confirm_writes);
+        self.app
+            .set_network_access_enabled(config.llm.network_access);
         engine.set_auto_check(config.tools.auto_check);
+    engine.set_auto_lsp(config.tools.auto_lsp);
         if self.sandbox_required {
             engine.set_sandbox_mode(kod_tools::context::SandboxMode::Require);
         }
+        kod_core::mcp_adapters::install_from_config(&engine, &config).await;
 
         engine.start().await?;
         self.engine = Some(Arc::new(engine));
@@ -632,6 +649,35 @@ impl TuiLoop {
             Event::SwarmAgentFailed { id, error } => {
                 self.app.swarm_agent_failed(&id, &error);
             }
+            Event::SwarmAgentWorktree { path, branch, .. } => {
+                // Attach to the most recently started live agent that
+                // has no worktree yet. The engine's WorktreeCreated
+                // does not carry an id; a targeted id field is a
+                // follow-up.
+                let target = self
+                    .app
+                    .swarm_agents()
+                    .iter()
+                    .filter(|(_, v)| v.worktree.is_none() && !v.finished)
+                    .map(|(id, _)| id.clone())
+                    .last();
+                if let Some(id) = target {
+                    self.app.swarm_set_worktree(&id, path, branch);
+                }
+            }
+            Event::SwarmAgentRetrying {
+                id,
+                attempt,
+                max_attempts,
+                previous_error,
+            } => {
+                self.app.swarm_set_retrying(
+                    &id,
+                    attempt,
+                    max_attempts,
+                    &previous_error,
+                );
+            }
             Event::SwarmConflict { file, agents } => {
                 self.app.push_system_message(&format!(
                     "⚠ conflict: {} written by {}",
@@ -988,7 +1034,56 @@ impl TuiLoop {
                         kod_core::SwarmEvent::ConflictDetected { file, agents } => {
                             Event::SwarmConflict { file, agents }
                         }
+                        kod_core::SwarmEvent::AgentRetrying {
+                            id: _,
+                            name,
+                            attempt,
+                            max_attempts,
+                            previous_error,
+                        } => Event::AgentMessage(
+                            "swarm".to_string(),
+                            format!(
+                                "{} retrying ({}/{}): {}",
+                                name, attempt, max_attempts, previous_error,
+                            ),
+                        ),
                         kod_core::SwarmEvent::Merging => Event::SwarmMerging,
+                        kod_core::SwarmEvent::WorktreeCreated {
+                            agent_name,
+                            path,
+                            branch,
+                        } => Event::AgentMessage(
+                            "swarm".to_string(),
+                            format!(
+                                "{}: worktree {} (branch {})",
+                                agent_name,
+                                path.display(),
+                                branch,
+                            ),
+                        ),
+                        kod_core::SwarmEvent::WorktreesMerged {
+                            merged,
+                            conflicted,
+                            failed,
+                        } => {
+                            let summary = if conflicted.is_empty()
+                                && failed.is_empty()
+                            {
+                                format!(
+                                    "worktrees merged: {} ok",
+                                    merged.len()
+                                )
+                            } else {
+                                format!(
+                                    "worktrees merged: {} ok, {} conflict(s), \
+                                     {} failed",
+                                    merged.len(),
+                                    conflicted.len(),
+                                    failed.len(),
+                                )
+                            };
+                            Event::AgentMessage("swarm".to_string(), summary)
+                        }
                     };
                     let _ = event_tx_pump.send(tui_ev).await;
                 }
@@ -2426,8 +2521,8 @@ impl TuiLoop {
                     }
                     None => lines.push("Config:   (unknown — no config directory)".to_string()),
                 }
-                lines.push(format!("Model:    {}", config.llm.model));
-                lines.push(format!("Endpoint: {}", config.llm.base_url));
+                lines.push(format!("Model:    {}", config.llm.default_endpoint().model));
+                lines.push(format!("Endpoint: {}", config.llm.default_endpoint().base_url));
                 lines.push(format!(
                     "Network:  {}",
                     if config.llm.network_access {
@@ -2436,14 +2531,10 @@ impl TuiLoop {
                         "disabled (set llm.network_access = true to enable)"
                     }
                 ));
-                lines.push(format!(
-                    "Writes:   {}",
-                    if config.tools.confirm_writes {
-                        "confirm (write_file / patch_file ask for approval)"
-                    } else {
-                        "auto (checkpoint rollback still available via /rollback)"
-                    }
-                ));
+                lines.push(
+                    "Writes:   policy-gated (see [tools] and .kod/policy.toml)"
+                        .to_string(),
+                );
                 lines.push(String::new());
                 lines.push("Built-in model profiles:".to_string());
                 for p in kod_config::profiles::PRESETS {
@@ -2460,7 +2551,7 @@ impl TuiLoop {
                 lines.push("  1. Start the model server (e.g. `ollama serve`)".to_string());
                 lines.push(format!(
                     "  2. Pull the model (e.g. `ollama pull {}`)",
-                    config.llm.model
+                    config.llm.default_endpoint().model
                 ));
                 lines.push("  3. Verify the setup:  kod doctor (or /doctor)".to_string());
                 lines.push("  4. Read skills: /skills".to_string());
@@ -2567,7 +2658,7 @@ impl TuiLoop {
     /// Naming the mismatch at switch time lets the user correct it
     /// before wasting a prompt.
     async fn switch_model(&mut self, name: &str) -> Result<()> {
-        let (Some(engine), Some(config)) = (self.engine.clone(), self.llm_config.clone()) else {
+        let Some(engine) = self.engine.clone() else {
             self.app.push_system_message("Engine not initialized");
             return Ok(());
         };
@@ -2577,25 +2668,24 @@ impl TuiLoop {
         let available = self.app.available_models();
         let unknown = !available.is_empty() && !available.iter().any(|m| m == name);
 
-        match OpenAICompatProvider::from_config(&config, Some(name)) {
-            Ok(provider) => {
-                engine.set_provider(Arc::new(provider)).await;
-                self.app.set_model_name(name);
-                if unknown {
-                    self.app.push_system_message(&format!(
-                        "Switched to '{}' — not in the server's last model list. \
-                         If the next prompt fails, run `/model` (no args) to see what the \
-                         server has, or `ollama pull {}` to fetch it.",
-                        name, name
-                    ));
-                } else {
-                    self.app.push_system_message(&format!("Switched model to {}", name));
-                }
-            }
-            Err(e) => {
-                self.app
-                    .push_system_message(&format!("Could not switch model: {}", e));
-            }
+        // The registry is the source of truth: a model switch is a
+        // `ModelRef` change on the current endpoint, not a provider
+        // rebuild. The endpoint name comes from the current ModelRef.
+        let current = engine.current_model().await;
+        engine
+            .set_current_model(kod_provider::ModelRef::new(current.endpoint.clone(), name))
+            .await;
+        self.app.set_model_name(name);
+        if unknown {
+            self.app.push_system_message(&format!(
+                "Switched to '{}' — not in the server's last model list. \
+                 If the next prompt fails, run `/model` (no args) to see what the \
+                 server has, or `ollama pull {}` to fetch it.",
+                name, name
+            ));
+        } else {
+            self.app
+                .push_system_message(&format!("Switched model to {}", name));
         }
         Ok(())
     }
@@ -2697,43 +2787,41 @@ impl TuiLoop {
             return Ok(());
         }
 
-        // Approval dialog: while it is up, y / n / Esc / Ctrl+C
+        // Approval dialog: while it is up, y / n / a / Esc / Ctrl+C
         // answer the request; every other key is swallowed so the
         // user does not type past a modal they cannot dismiss.
+        //
+        //   y -> Approve (this call runs)
+        //   n -> Deny (this call is refused; the next matching call
+        //        prompts again)
+        //   a -> DenyAlways (this call is refused AND a session deny
+        //        rule is registered so the same tool / path pattern
+        //        does not prompt again for the rest of the process)
+        //   Esc / Ctrl+C -> Deny (same as n)
         if self.app.is_approving() {
-            match key {
+            let decision = match key {
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    if let Some(approval) = self.app.pending_approval() {
-                        let id = approval.id;
-                        self.app.clear_pending_approval();
-                        if let Some(engine) = &self.engine {
-                            engine
-                                .respond_to_approval(
-                                    id,
-                                    kod_core::engine::ApprovalDecision::Approve,
-                                )
-                                .await;
-                        }
+                    Some(kod_core::engine::ApprovalDecision::Approve)
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => {
+                    Some(kod_core::engine::ApprovalDecision::Deny)
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    Some(kod_core::engine::ApprovalDecision::DenyAlways)
+                }
+                KeyCode::Escape | KeyCode::CtrlC => {
+                    Some(kod_core::engine::ApprovalDecision::Deny)
+                }
+                _ => None,
+            };
+            if let Some(decision) = decision {
+                if let Some(approval) = self.app.pending_approval() {
+                    let id = approval.id;
+                    self.app.clear_pending_approval();
+                    if let Some(engine) = &self.engine {
+                        engine.respond_to_approval(id, decision).await;
                     }
                 }
-                KeyCode::Char('n')
-                | KeyCode::Char('N')
-                | KeyCode::Escape
-                | KeyCode::CtrlC => {
-                    if let Some(approval) = self.app.pending_approval() {
-                        let id = approval.id;
-                        self.app.clear_pending_approval();
-                        if let Some(engine) = &self.engine {
-                            engine
-                                .respond_to_approval(
-                                    id,
-                                    kod_core::engine::ApprovalDecision::Deny,
-                                )
-                                .await;
-                        }
-                    }
-                }
-                _ => {}
             }
             return Ok(());
         }
