@@ -30,7 +30,7 @@ use std::sync::Mutex;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SessionEntry {
     /// A tool call and its result.
-    ToolCall {
+    ToolCall { id: None,
         /// Unix milliseconds when the call started.
         timestamp_ms: u64,
         /// The engine-transcript key the call ran under (`session` for
@@ -59,6 +59,19 @@ pub enum SessionEntry {
         from: String,
         to: String,
         error: String,
+    },
+    /// Cost of one provider call, in USD. Written after every
+    /// completion that reported usage and an endpoint with
+    /// `pricing` configured. Endpoints without pricing log nothing
+    /// here — the field is not a guess.
+    Cost {
+        timestamp_ms: u64,
+        holder: String,
+        endpoint: String,
+        model: String,
+        prompt_tokens: usize,
+        completion_tokens: usize,
+        cost_usd: f64,
     },
     /// A policy decision made before a tool call (D3, AD-15).
     /// One entry per tool call, so the JSONL carries an audit trail
@@ -180,7 +193,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn sample_entry() -> SessionEntry {
-        SessionEntry::ToolCall {
+        SessionEntry::ToolCall { id: None,
             timestamp_ms: 1_700_000_000_000,
             holder: "session".to_string(),
             tool_name: "read_file".to_string(),
@@ -201,7 +214,7 @@ mod tests {
         let entries = read_session(&path).unwrap();
         assert_eq!(entries.len(), 2);
         match &entries[0] {
-            SessionEntry::ToolCall {
+            SessionEntry::ToolCall { id: None,
                 tool_name, holder, ..
             } => {
                 assert_eq!(tool_name, "read_file");
