@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-import { Steps, Aside, LinkCard } from '@astrojs/starlight/components';
+import { Steps, Aside } from '@astrojs/starlight/components';
 
 This guide takes you from a built binary to a working agent session in about five minutes. By the end you will have chatted with a local model, run a one-shot agent against a goal, and replayed the tool calls it made — the three interactions that cover most day-to-day use of KOD.
 
@@ -17,15 +17,15 @@ If you have not built the binary yet, start with [Installation](/getting-started
 1. Start the model server and download a small coding model:
 
    ```bash
-   ollama serve &                    # start the server
-   ollama pull qwen3.8:27b-mlx      # download a small coding model
+   ollama serve &                       # start the server
+   ollama pull qwen2.5-coder:7b        # small coding model, quick to pull
    ```
 
 2. Note the endpoint: the default config points at `http://localhost:11434/v1`, which is Ollama's OpenAI-compatible root. Base URLs are normalised automatically, so a server root or an `.../v1` root both work — the same is true for LM Studio, MLX Omni Serve, and vLLM.
 </Steps>
 
 <Aside type="tip">
-  Don't want to pull a model right now? `kod profile use cloud-openai` targets OpenAI instead (requires `OPENAI_API_KEY` in the environment).
+  Don't want to pull a model right now? <code>kod profile use cloud-openai</code> targets OpenAI instead (requires <code>OPENAI_API_KEY</code> in the environment).
 </Aside>
 
 ## 2. Verify the setup
@@ -34,7 +34,7 @@ If you have not built the binary yet, start with [Installation](/getting-started
 kod doctor
 ```
 
-`doctor` checks the config file, the model endpoint, discovered skills, the memory database, and git — and prints a one-line verdict for each. If anything is wrong, fix it here before moving on.
+`doctor` checks the config file, the model endpoint, discovered skills, the memory database, the sandbox primitive, and git — and prints a one-line verdict for each. If anything is wrong, fix it here before moving on.
 
 ## 3. Switch to the fast local profile
 
@@ -50,7 +50,13 @@ This writes the `local-fast` preset (Qwen 2.5 Coder 7B on `localhost:11434/v1`, 
 kod chat
 ```
 
-This starts a plain REPL with streaming output. Type a question, watch tokens arrive, and exit with Ctrl-C or `exit`. For the full interface — tool rows, agent panel, slash commands, search — launch `kod tui` instead.
+This starts a plain REPL with streaming output. Type a question, watch tokens arrive, and exit with `Ctrl-C`. For the full interface — tool rows, agent panel, slash commands, search — launch `kod tui` instead.
+
+For a single question without entering a REPL at all, use `kod prompt`:
+
+```bash
+kod prompt "what does the retry function in src/net.rs do?"
+```
 
 ## 5. Run an agent against a goal
 
@@ -65,12 +71,12 @@ kod agent -g "add a doc comment to every public function in src/lib.rs"
 Every session records its tool calls as JSONL under `~/.kod/sessions/`. `kod replay` re-executes those tool calls *without the model*, which turns any past session into a regression check:
 
 ```bash
-kod sessions list
+kod sessions latest                      # path of the newest session log
 kod replay ~/.kod/sessions/<session>.jsonl --execute
 ```
 
 <Aside type="caution">
-  `--execute` actually runs the recorded tool calls against your working tree. Drop the flag to print what *would* run — useful for reviewing a session before trusting it.
+  <code>--execute</code> actually runs the recorded tool calls against your working tree. Drop the flag to print what <em>would</em> run — useful for reviewing a session before trusting it.
 </Aside>
 
 ## Where to next
