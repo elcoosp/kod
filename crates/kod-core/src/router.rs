@@ -57,6 +57,12 @@ pub struct RouterConfig {
     /// Short-term memory capacity. Read from `MemoryConfig::short_term_capacity`.
     /// Defaults to 100 for callers that build RouterConfig directly.
     pub short_term_capacity: usize,
+    /// Minimum score for a skill to be considered a match. Read from
+    /// `SkillsConfig::match_threshold` by the CLI and TUI; the
+    /// builder default (0.3) matches the pre-config-plumbing
+    /// hardcoded value so a caller that ignores the field sees no
+    /// change.
+    pub skill_threshold: f32,
 }
 
 impl Default for RouterConfig {
@@ -67,6 +73,7 @@ impl Default for RouterConfig {
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             context_window: 8192,
             short_term_capacity: 100,
+            skill_threshold: 0.3,
         }
     }
 }
@@ -142,7 +149,9 @@ impl TaskRouter {
             None
         };
 
-        let skill_matcher = Some(Arc::new(SkillMatcher::new()));
+        let skill_matcher = Some(Arc::new(SkillMatcher::with_threshold(
+            config.skill_threshold,
+        )));
 
 
         Ok(Self {
