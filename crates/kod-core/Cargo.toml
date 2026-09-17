@@ -21,6 +21,8 @@ kod-config = { path = "../kod-config" }
 regex = { workspace = true }
 ignore = { workspace = true }
 kod-provider = { path = "../kod-provider" }
+kod-provider-openai = { path = "../kod-provider-openai" }
+kod-provider-anthropic = { path = "../kod-provider-anthropic" }
 kod-skills = { path = "../kod-skills" }
 kod-memory = { path = "../kod-memory" }
 kod-tools = { path = "../kod-tools" }
@@ -29,6 +31,7 @@ kod-swarm = { path = "../kod-swarm" }
 
 time = { workspace = true }
 [dev-dependencies]
+toml = { workspace = true }
 async-stream = { workspace = true }
 futures = { workspace = true }
 kod-swarm = { path = "../kod-swarm" }
