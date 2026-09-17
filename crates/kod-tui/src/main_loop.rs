@@ -581,6 +581,66 @@ impl TuiLoop {
                     self.app.save_session();
                 }
             }
+            Event::HandoffGenerated(text) => {
+                self.gen_task = None;
+                // Write the file under the engine's working directory
+                // — the one place both the TUI and the engine agree
+                // on. Best-effort: a failure to write still resets
+                // the session, because the value of /handoff is the
+                // fresh-context reset, not the artefact.
+                let mut written: Option<std::path::PathBuf> = None;
+                if let Some(engine) = &self.engine {
+                    let dir = engine.working_dir().join(".kod");
+                    if std::fs::create_dir_all(&dir).is_ok() {
+                        let stamp =
+                            chrono::Utc::now().format("%Y-%m-%d-%H%M").to_string();
+                        let path = dir.join(format!("handoff-{stamp}.md"));
+                        match std::fs::write(&path, text.as_bytes()) {
+                            Ok(()) => written = Some(path),
+                            Err(e) => self.app.push_system_message(&format!(
+                                "Could not write handoff to {}: {e}",
+                                path.display(),
+                            )),
+                        }
+                    }
+                }
+
+                // Reset both surfaces. Order matters: clear the
+                // display first so the user sees the chat empty while
+                // the seed is installed.
+                self.app.clear_messages();
+                if let Some(engine) = &self.engine {
+                    // `clear_history` also clears short-term memory —
+                    // appropriate here: /handoff is a fresh start.
+                    engine.clear_history().await;
+                    let seed = format!(
+                        "Context from previous session:\n\n{}",
+                        text.trim()
+                    );
+                    engine.seed_turn(true, &seed).await;
+                }
+
+                // Settle the generation state so the next prompt
+                // starts clean.
+                self.app.finish_response("");
+
+                match written {
+                    Some(p) => self.app.push_system_message(&format!(
+                        "Handoff written to {}\n\
+                         Session reset: the transcript above is the model's \
+                         only context for the next prompt.",
+                        p.display(),
+                    )),
+                    None => self.app.push_system_message(
+                        "Session reset: the handoff is the model's only \
+                         context for the next prompt. (No file was written.)",
+                    ),
+                }
+
+                if self.persist_history {
+                    self.app.save_session();
+                }
+            }
             Event::ToolCompleted(tool_name, result) => {
                 // Tool row first, then whatever streamed during the call:
                 // flushing before would drop post-tool text above the row.
@@ -1859,6 +1919,133 @@ impl TuiLoop {
             "/last-prompt" => {
                 // Shortcut for /debug last-prompt.
                 Box::pin(self.handle_command("/debug last-prompt")).await?;
+            }
+            "/pin" | "/unpin" => {
+                let pin = cmd == "/pin";
+                let arg = parts.next();
+                let Some(idx_str) = arg else {
+                    self.app.push_system_message(if pin {
+                        "Usage: /pin <n> — pin the message at 1-based index n. \
+                         User and assistant rows only; tool and system rows are \
+                         transcript-local."
+                    } else {
+                        "Usage: /unpin <n> — remove the pin from message n."
+                    });
+                    return Ok(());
+                };
+                let Ok(n) = idx_str.parse::<usize>() else {
+                    self.app.push_system_message(&format!(
+                        "Not a number: {:?}",
+                        idx_str,
+                    ));
+                    return Ok(());
+                };
+                if n == 0 {
+                    self.app.push_system_message(
+                        "Index is 1-based; try /pin 1 for the first message.",
+                    );
+                    return Ok(());
+                }
+                let (role, content, total) = {
+                    let msgs = self.app.messages();
+                    if n > msgs.len() {
+                        self.app.push_system_message(&format!(
+                            "No message at index {} (the session has {} messages).",
+                            n,
+                            msgs.len(),
+                        ));
+                        return Ok(());
+                    }
+                    let m = &msgs[n - 1];
+                    (m.role.clone(), m.content.clone(), msgs.len())
+                };
+                match role {
+                    kod_types::MessageRole::User | kod_types::MessageRole::Assistant => {}
+                    _ => {
+                        self.app.push_system_message(
+                            "Only user and assistant messages can be pinned — \
+                             tool, system, and agent rows are transcript-local.",
+                        );
+                        return Ok(());
+                    }
+                }
+                if let Some(engine) = &self.engine {
+                    let found = engine
+                        .set_turn_pinned_by_content("", &content, pin)
+                        .await;
+                    if !found {
+                        self.app.push_system_message(
+                            "The engine no longer has that turn in its \
+                             transcript (it may have been compacted). The pin \
+                             is set in the chat but will not affect the model's \
+                             prompt.",
+                        );
+                    }
+                }
+                self.app.set_message_pinned_at(n - 1, pin);
+                let verb = if pin { "Pinned" } else { "Unpinned" };
+                self.app.push_system_message(&format!(
+                    "{verb} message {n} of {total}.",
+                ));
+            }
+            "/handoff" => {
+                if self.app.is_generating() {
+                    self.app.push_system_message(
+                        "Wait for the current prompt to finish before running \
+                         /handoff.",
+                    );
+                    return Ok(());
+                }
+                let Some(engine) = self.engine.clone() else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                let transcript = self.app.export_markdown();
+                if transcript.trim().is_empty() {
+                    self.app.push_system_message(
+                        "Nothing to hand off — the session is empty.",
+                    );
+                    return Ok(());
+                }
+                self.app.begin_generation();
+                self.app.push_system_message(
+                    "Generating handoff document…",
+                );
+                let event_tx = self.event_handler.sender();
+                tokio::spawn(async move {
+                    let prompt = format!(
+                        "Produce a handoff document for the coding session \
+                         below. Use exactly these markdown sections, in this \
+                         order:\n\n\
+                         ## Decisions\n\
+                         ## Code state\n\
+                         ## Next steps\n\
+                         ## Key files\n\n\
+                         Rules:\n\
+                         - Decisions: one bullet per durable choice the \
+                           session made.\n\
+                         - Code state: what currently works, what is \
+                           half-done.\n\
+                         - Next steps: concrete, imperative, at most 6 \
+                           bullets.\n\
+                         - Key files: paths only, one per line, no prose.\n\
+                         - Be terse. No introduction, no closing.\n\n\
+                         Session:\n\n{transcript}",
+                    );
+                    match engine.process(&prompt).await {
+                        Ok(resp) => {
+                            let text = resp.text.unwrap_or_default();
+                            let _ = event_tx
+                                .send(Event::HandoffGenerated(text))
+                                .await;
+                        }
+                        Err(e) => {
+                            let _ = event_tx
+                                .send(Event::Error(format!("/handoff: {e}")))
+                                .await;
+                        }
+                    }
+                });
             }
             "/diff" => {
                 let Some(engine) = &self.engine else {
