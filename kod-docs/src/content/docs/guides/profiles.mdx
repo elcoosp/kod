@@ -13,12 +13,12 @@ First-run friction is the single easiest adoption problem to fix, and KOD fixes 
 
 | Profile | Model | Endpoint | Notes |
 | --- | --- | --- | --- |
-| `local-fast` | `qwen2.5-coder:7b` | `http://localhost:11434/v1` | Small local model for quick edits and questions. The recommended starting point. |
-| `local-capable` | `qwen2.5-coder:32b` | `http://localhost:11434/v1` | Larger local model for harder tasks — needs roughly 20 GB VRAM. |
+| `local-fast` | `qwen3.8:27b-mlx` | `http://localhost:11434/v1` | Small local model for quick edits and questions. The recommended starting point. |
+| `local-capable` | `qwen3.8:27b-mlx` | `http://localhost:11434/v1` | Larger local model for harder tasks — needs roughly 20 GB VRAM. |
 | `local-reasoning` | `deepseek-r1:14b` | `http://localhost:11434/v1` | Reasoning-focused local model (DeepSeek-R1 14B). |
 | `cloud-openai` | `gpt-4o-mini` | `https://api.openai.com/v1` | OpenAI cloud; requires `OPENAI_API_KEY` in the environment. |
 
-Every local profile carries a one-line install command (`ollama pull qwen2.5-coder:7b`, and so on) so the model download is a copy-paste away from `kod profile list`. The presets are unit-tested for uniqueness and sanity — each name appears once, and each local profile names its install command.
+Every local profile carries a one-line install command (`ollama pull qwen3.8:27b-mlx`, and so on) so the model download is a copy-paste away from `kod profile list`. The presets are unit-tested for uniqueness and sanity — each name appears once, and each local profile names its install command.
 
 ## The `kod profile` commands
 
