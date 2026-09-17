@@ -27,6 +27,7 @@ kod-skills = { path = "../kod-skills" }
 kod-memory = { path = "../kod-memory" }
 kod-tools = { path = "../kod-tools" }
 kod-lsp = { path = "../kod-lsp" }
+kod-mcp = { path = "../kod-mcp" }
 kod-swarm = { path = "../kod-swarm" }
 
 time = { workspace = true }
