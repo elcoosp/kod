@@ -20,6 +20,14 @@ pub struct SwarmConfig {
     /// When false — or when the synthesis call fails — the per-agent
     /// results are concatenated under their labels.
     pub merge_results: bool,
+    /// Per-agent wall-clock cap, in seconds. A stuck agent (a model
+    /// that stalls mid-stream, a tool that never returns) is cancelled
+    /// at this point and, if retries remain, restarted. Default 300.
+    /// Set to 0 to disable the cap.
+    pub agent_timeout_secs: u64,
+    /// How many additional attempts an agent gets after a timeout or a
+    /// provider error. 1 (default) means: up to two attempts total.
+    pub agent_retries: u32,
 }
 
 impl Default for SwarmConfig {
@@ -27,6 +35,8 @@ impl Default for SwarmConfig {
         Self {
             max_agents: 5,
             merge_results: true,
+            agent_timeout_secs: 300,
+            agent_retries: 1,
         }
     }
 }
