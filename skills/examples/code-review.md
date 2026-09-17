@@ -2,7 +2,7 @@
 name: code-review
 description: Comprehensive code review with security and performance analysis
 version: 1.0.0
-author: kod-team
+author: elcoosp
 category: review
 tags:
   - review
