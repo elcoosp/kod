@@ -1,6 +1,6 @@
 # KOD Documentation Site
 
-Documentation for [KOD](https://github.com/kod-team/kod) — the local-first AI coding agent harness for the terminal, written in Rust.
+Documentation for [KOD](https://github.com/elcoosp/kod) — the local-first AI coding agent harness for the terminal, written in Rust.
 
 Built with **Astro 7** and **@astrojs/starlight 0.42.0**.
 
