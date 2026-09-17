@@ -62,6 +62,20 @@ impl HeaderWidget {
             Style::default().fg(theme.dim),
         ));
 
+        // USD cost, when the endpoint carries a `[pricing]` block.
+        // Not shown at all when pricing is not configured — a fake
+        // `$0.0000` on an endpoint whose pricing we do not know is
+        // worse than showing nothing, because it teaches the user
+        // that the figure is meaningless.
+        if app.cost_known() {
+            let usd = app.session_cost_usd();
+            let formatted = format_cost(usd);
+            spans.push(Span::styled(
+                format!(" {formatted} "),
+                Style::default().fg(theme.dim),
+            ));
+        }
+
         spans.push(Span::styled(
             format!("[{}]", app.theme_name()),
             Style::default().fg(theme.dim),
@@ -109,5 +123,45 @@ impl HeaderWidget {
 impl Default for HeaderWidget {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_cost;
+
+    #[test]
+    fn format_cost_picks_precision_by_magnitude() {
+        assert_eq!(format_cost(0.0), "$0.0000");
+        assert_eq!(format_cost(0.0025), "$0.0025");
+        assert_eq!(format_cost(0.0099), "$0.0099");
+        assert_eq!(format_cost(0.01), "$0.010");
+        assert_eq!(format_cost(0.245), "$0.245");
+        assert_eq!(format_cost(0.999), "$0.999");
+        assert_eq!(format_cost(1.0), "$1.00");
+        assert_eq!(format_cost(3.14159), "$3.14");
+        assert_eq!(format_cost(1234.5), "$1234.50");
+    }
+}
+
+/// Format a USD amount with adaptive precision.
+///
+/// A local model configured with a very cheap price (a tenth of a
+/// cent per million tokens) would round to `$0.00` under two
+/// decimals; the same figure shown to four decimals is honest about
+/// the fact that a session's cost is, so far, negligibly small. The
+/// inverse — printing `$0.0000000` for a real fifty-cent session —
+/// is equally bad. Three tiers:
+///
+/// - `< $0.01` → 4 decimals (`$0.0025`)
+/// - `< $1.00` → 3 decimals (`$0.245`)
+/// - `>= $1.00` → 2 decimals (`$3.14`)
+fn format_cost(usd: f64) -> String {
+    if usd < 0.01 {
+        format!("${usd:.4}")
+    } else if usd < 1.0 {
+        format!("${usd:.3}")
+    } else {
+        format!("${usd:.2}")
     }
 }
