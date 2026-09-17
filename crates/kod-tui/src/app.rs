@@ -426,10 +426,11 @@ pub struct KodApp {
     /// start of each swarm run; a running agent appends its chunks to
     /// the chat message whose id is stored here.
     swarm_agents: std::collections::HashMap<kod_types::AgentId, SwarmAgentView>,
-    /// The approval request the TUI is currently showing a dialog for.
-    /// `None` when no dialog is up. Populated from an approval-marker
-    /// chunk; cleared when the user answers (y/n) or cancels (Esc).
-    pending_approval: Option<PendingApproval>,
+    /// The pending approval batch the TUI is showing a dialog for.
+    /// `None` when no dialog is up. Populated from an
+    /// approval-batch marker chunk; cleared when every item has been
+    /// decided (or Esc denies the remainder).
+    pending_batch: Option<PendingApprovalBatch>,
     /// The ask_user question the TUI is currently prompting for.
     /// Populated from a question-marker chunk; cleared on answer.
     pending_question: Option<PendingQuestion>,
@@ -483,6 +484,51 @@ pub struct PendingApproval {
     pub tool_name: String,
     pub summary: String,
     pub diff: Option<String>,
+}
+
+/// A batch of pending approvals — the shape the engine emits per
+/// round. The TUI shows the current item and walks the batch with
+/// y/n/a (which decide and advance) and ↑/↓ (which navigate without
+/// deciding).
+#[derive(Debug, Clone)]
+pub struct PendingApprovalBatch {
+    /// The engine's batch id, for logging.
+    pub batch_id: u64,
+    pub items: Vec<PendingApproval>,
+    /// Index of the item currently shown. Advanced past
+    /// `items.len()` when every item has been decided; the engine
+    /// treats a batch as closed once the caller stops sending
+    /// decisions.
+    pub current: usize,
+}
+
+impl PendingApprovalBatch {
+    pub fn current_item(&self) -> Option<&PendingApproval> {
+        self.items.get(self.current)
+    }
+    /// Move to the next item. Returns `true` when the move succeeded
+    /// (there was a next item), `false` when the batch was already on
+    /// its last item.
+    pub fn advance(&mut self) -> bool {
+        if self.current + 1 < self.items.len() {
+            self.current += 1;
+            true
+        } else {
+            // Move past the end so `current_item()` returns None and
+            // the caller knows the batch is exhausted.
+            self.current = self.items.len();
+            false
+        }
+    }
+    /// Move to the previous item. Returns `true` on success.
+    pub fn retreat(&mut self) -> bool {
+        if self.current > 0 {
+            self.current -= 1;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// A question currently waiting for a text answer in the TUI.
@@ -543,7 +589,7 @@ impl KodApp {
             last_error: None,
 
             swarm_agents: std::collections::HashMap::new(),
-            pending_approval: None,
+            pending_batch: None,
             pending_question: None,
             question_input: String::new(),
             session_system_prompt: None,
@@ -2745,25 +2791,39 @@ fn fuzzy_match(name: &str, query: &str) -> bool {
 
 /// Approval dialog state.
 impl KodApp {
-    /// Record an incoming approval request and show the dialog.
-    pub fn set_pending_approval(&mut self, approval: PendingApproval) {
-        self.pending_approval = Some(approval);
+    /// Install a batch of pending approvals and show the dialog.
+    pub fn set_pending_batch(&mut self, batch: PendingApprovalBatch) {
+        self.pending_batch = Some(batch);
     }
 
-    /// The approval currently awaiting an answer, if any.
+    /// The pending batch, if any.
+    pub fn pending_batch(&self) -> Option<&PendingApprovalBatch> {
+        self.pending_batch.as_ref()
+    }
+
+    /// Mutable access, used by the key handler to advance through
+    /// items without rebuilding the batch.
+    pub fn pending_batch_mut(&mut self) -> Option<&mut PendingApprovalBatch> {
+        self.pending_batch.as_mut()
+    }
+
+    /// The current item of the pending batch, if any. Provided as a
+    /// convenience for the widget, which only ever renders one item
+    /// at a time; the batch itself is exposed by `pending_batch()`.
     pub fn pending_approval(&self) -> Option<&PendingApproval> {
-        self.pending_approval.as_ref()
+        self.pending_batch.as_ref().and_then(|b| b.current_item())
     }
 
-    /// Clear the dialog. Called after the decision is dispatched.
+    /// Clear the dialog. Called after every item is decided or Esc
+    /// aborts the remainder.
     pub fn clear_pending_approval(&mut self) {
-        self.pending_approval = None;
+        self.pending_batch = None;
     }
 
     /// True when the approval dialog is up and normal key handling
     /// must be routed to it instead of the input box.
     pub fn is_approving(&self) -> bool {
-        self.pending_approval.is_some()
+        self.pending_batch.is_some()
     }
 }
 
@@ -2867,7 +2927,7 @@ impl KodApp {
         if !self.expanded_tools.is_empty() {
             cleared += 1;
         }
-        if self.pending_approval.is_some() {
+        if self.pending_batch.is_some() {
             cleared += 1;
         }
         if self.pending_question.is_some() {
@@ -2883,7 +2943,7 @@ impl KodApp {
         self.clear_input();
         self.clear_search();
         self.expanded_tools.clear();
-        self.pending_approval = None;
+        self.pending_batch = None;
         self.pending_question = None;
         self.question_input.clear();
         self.attached_files.clear();
