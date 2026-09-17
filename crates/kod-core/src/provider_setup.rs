@@ -61,13 +61,21 @@ pub fn build_registry(
 
     for endpoint in &endpoints {
         let provider = build_provider(endpoint)?;
+        // Capabilities are per-provider-kind plus the pricing the
+        // user configured on the endpoint. The conservative matrix
+        // covers the rest; a provider that reports its own matrix
+        // (A5+) overrides here.
+        let mut caps = kod_provider::ProviderCapabilities::conservative();
+        if let Some(p) = &endpoint.pricing {
+            caps.pricing = Some(kod_provider::ModelPricing::new(
+                p.input_per_mtok_usd,
+                p.output_per_mtok_usd,
+            ));
+        }
         registry.insert(
             endpoint.name.clone(),
             provider,
-            // `ProviderCapabilities` are per-provider-kind for now;
-            // when a provider carries its own capability matrix (A5),
-            // read it here instead of defaulting.
-            kod_provider::ProviderCapabilities::conservative(),
+            caps,
             endpoint.model.clone(),
         );
     }
