@@ -69,6 +69,7 @@ export default defineConfig({
             { label: 'Sessions, Replay & Checkpoints', slug: 'guides/sessions' },
             { label: 'Hooks', slug: 'guides/hooks' },
             { label: 'Troubleshooting', slug: 'guides/troubleshooting' },
+            { label: 'FAQ', slug: 'guides/faq' },
           ],
         },
         {
