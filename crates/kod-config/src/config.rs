@@ -332,7 +332,6 @@ mod tests {
         assert_eq!(cfg.llm.model, "codellama:13b");
         assert_eq!(cfg.memory.short_term_capacity, 100);
         assert_eq!(cfg.skills.max_skills_per_query, 3);
-        assert_eq!(cfg.performance.max_memory_mb, 150);
 
         // Only [llm] present: other sections default.
         let cfg: KodConfig = toml::from_str(

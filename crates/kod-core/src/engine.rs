@@ -1635,7 +1635,12 @@ impl KodEngine {
             self.remember_turn_for(key, true, input).await;
             let prompt = self
                 .router
-                .build_prompt(input, &task_type, &history)
+                .build_prompt_with_context(
+                    input,
+                    &task_type,
+                    &history,
+                    response.memory_context.clone(),
+                )
                 .await?;
 
             // Ground the model: where it runs and what it can touch.
@@ -1678,6 +1683,7 @@ impl KodEngine {
                 memory_used: response.memory_used,
                 execution_time_ms: response.execution_time_ms,
                 usage,
+                memory_context: response.memory_context,
             });
         }
 
@@ -1727,7 +1733,12 @@ impl KodEngine {
             self.remember_turn_for(key, true, input).await;
             let prompt = self
                 .router
-                .build_prompt(input, &task_type, &history)
+                .build_prompt_with_context(
+                    input,
+                    &task_type,
+                    &history,
+                    response.memory_context.clone(),
+                )
                 .await?;
             let definitions = self.tools.get_definitions().await;
             let mut pending = self.ground_prompt(prompt, &definitions);
@@ -1763,6 +1774,7 @@ impl KodEngine {
                 memory_used: response.memory_used,
                 execution_time_ms: response.execution_time_ms,
                 usage,
+                memory_context: response.memory_context,
             });
         }
 
@@ -1815,7 +1827,12 @@ impl KodEngine {
             self.remember_turn_for(key, true, input).await;
             let prompt = self
                 .router
-                .build_prompt(input, &task_type, &history)
+                .build_prompt_with_context(
+                    input,
+                    &task_type,
+                    &history,
+                    response.memory_context.clone(),
+                )
                 .await?;
             let definitions = self.tools.get_definitions().await;
             let mut pending = self.ground_prompt(prompt, &definitions);
@@ -1883,6 +1900,7 @@ impl KodEngine {
                 memory_used: response.memory_used,
                 execution_time_ms: response.execution_time_ms,
                 usage: last_usage,
+                memory_context: response.memory_context,
             });
         }
 
@@ -3427,6 +3445,7 @@ mod tests {
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -3484,6 +3503,7 @@ mod tests {
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -3507,6 +3527,7 @@ mod tests {
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -3528,6 +3549,7 @@ mod tests {
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -3555,6 +3577,7 @@ mod tests {
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
             enable_memory: true,
             max_skills_per_query: 3,
@@ -3593,6 +3616,7 @@ mod tests {
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
             enable_memory: true,
             max_skills_per_query: 3,
@@ -3752,6 +3776,7 @@ mod tests {
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -3789,6 +3814,7 @@ mod tests {
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -3816,6 +3842,7 @@ mod tests {
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -3858,6 +3885,7 @@ mod tests {
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -3919,6 +3947,7 @@ mod tests {
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -4228,6 +4257,7 @@ mod tests {
 
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -4281,6 +4311,7 @@ mod tests {
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -4474,6 +4505,7 @@ mod diff_attachment_tests {
         let db_path = tmp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -4590,6 +4622,7 @@ mod auto_check_tests {
         let db_path = tmp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -4643,6 +4676,7 @@ mod auto_check_tests {
         let db_path = tmp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -4693,6 +4727,7 @@ mod auto_check_tests {
         let db_path = tmp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -4751,6 +4786,7 @@ mod auto_check_tests {
         let db_path = tmp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,
@@ -4798,6 +4834,7 @@ mod auto_check_tests {
         let db_path = tmp.path().join("test.redb");
         let cfg = RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
             enable_memory: false,
             max_skills_per_query: 3,

@@ -91,6 +91,12 @@ pub struct TaskResponse {
     pub execution_time_ms: u64,
     /// Token usage the provider reported, when it did.
     pub usage: Option<kod_provider::TokenUsage>,
+    /// The memory context that was retrieved for this prompt. Carried in
+    /// the response so the engine can pass it to
+    /// [`TaskRouter::build_prompt_with_context`] without a second redb
+    /// scan — the single-retrieval path (D0.4). `None` when memory is
+    /// disabled or the caller supplied a context directly.
+    pub memory_context: Option<MemoryContext>,
 }
 
 /// Main task router that coordinates all subsystems
@@ -107,11 +113,17 @@ pub struct TaskRouter {
     /// because the router is behind an `Arc` and enabling happens
     /// through `&self`.
     skill_watchers: std::sync::Mutex<Vec<kod_skills::SkillWatcher>>,
-    /// Cached repository map, built lazily on first `build_prompt`
-    /// call. `OnceLock` because the map is read-only after
-    /// construction and every prompt would otherwise re-walk the
-    /// repository.
-    repo_map_cache: std::sync::OnceLock<String>,
+    /// Repository map cache with mtime-based invalidation. Stores the
+    /// structured `RepoMap` (not the pre-rendered string) so future
+    /// consumers — PageRank in D5, a `/map` command that wants counts —
+    /// can reuse the same build without another walk.
+    ///
+    /// Invalidation is checked at the start of every `build_prompt`
+    /// call, never mid-turn: the cacheable prefix of a single prompt
+    /// must stay byte-identical from the first provider call to the
+    /// last. This is the "prompt cache is a first-class resource"
+    /// principle (principle n°2 of the roadmap).
+    repo_map_cache: crate::router::RepoMapCache,
 }
 
 impl TaskRouter {
@@ -138,7 +150,7 @@ impl TaskRouter {
             memory_manager,
             skill_matcher,
             skill_watchers: std::sync::Mutex::new(Vec::new()),
-            repo_map_cache: std::sync::OnceLock::new(),
+            repo_map_cache: crate::router::RepoMapCache::new(),
         })
     }
 
@@ -477,10 +489,11 @@ impl TaskRouter {
             },
         };
 
-        // 3. Build context
-        let _context = self
-            .build_context(input, &memory_context, &task_type)
-            .await?;
+        // 3. Build context is deferred to `build_prompt_with_context`,
+        //    which the engine calls with the same `memory_context`
+        //    computed above. Building it here (as the previous code did
+        //    with `let _context = ...`) was a no-op whose only effect was
+        //    a second retrieval + context build inside `build_prompt`.
 
         // 4. Find relevant skills
         let skills_used = self.find_relevant_skills(input).await?;
@@ -526,6 +539,7 @@ impl TaskRouter {
             memory_used,
             execution_time_ms,
             usage: None,
+            memory_context,
         })
     }
 
@@ -607,22 +621,51 @@ impl TaskRouter {
     /// transcript of past turns (`(start of conversation)` on the first
     /// turn) — without it every prompt arrives context-free and the model
     /// opens with "this is a fresh conversation".
-    /// The rendered repository map, built once and cached for the
-    /// router's lifetime. `None` when the working directory has no
+    /// The rendered repository map. Rebuilds (and re-renders) if the
+    /// working tree has changed since the last call; otherwise returns
+    /// the cached string. `None` when the working directory has no
     /// source files to map (an empty project, a non-code directory).
-    fn repo_map_text(&self) -> Option<&str> {
-        let map = self.repo_map_cache.get_or_init(|| {
-            let m = crate::repomap::build_repo_map(&self.config.working_dir);
-            m.render(crate::repomap::DEFAULT_MAP_CHARS)
-        });
-        if map.is_empty() { None } else { Some(map.as_str()) }
+    ///
+    /// The returned `Arc<String>` is cheap to clone and lives as long as
+    /// the caller holds a reference, so it can be embedded in a
+    /// `PromptPlan` without forcing the caller to re-render.
+    fn repo_map_text(&self) -> Option<std::sync::Arc<String>> {
+        let rendered = self
+            .repo_map_cache
+            .get_or_rebuild(&self.config.working_dir)?;
+        if rendered.is_empty() {
+            None
+        } else {
+            Some(rendered)
+        }
     }
 
+    /// Build a full prompt for LLM generation, retrieving memory
+    /// internally. Kept for tests and callers that do not already hold a
+    /// memory context. The engine uses
+    /// [`TaskRouter::build_prompt_with_context`] with a context supplied
+    /// by `process_input_with_context` so the retrieval runs once per
+    /// prompt (D0.4).
     pub async fn build_prompt(
         &self,
         input: &str,
         task_type: &TaskType,
         history: &str,
+    ) -> Result<String> {
+        self.build_prompt_with_context(input, task_type, history, None)
+            .await
+    }
+
+    /// Build the full prompt for LLM generation with a caller-supplied
+    /// memory context. When `Some`, the retrieval is skipped — this is
+    /// the single-retrieval path the engine uses. When `None`, behaves
+    /// exactly like the old `build_prompt`: retrieves from the manager.
+    pub async fn build_prompt_with_context(
+        &self,
+        input: &str,
+        task_type: &TaskType,
+        history: &str,
+        memory_context: Option<MemoryContext>,
     ) -> Result<String> {
         let mut prompt = String::from(
             "## Identity\n\nYou are kod, a helpful AI assistant running inside the user's machine. \
@@ -648,13 +691,19 @@ impl TaskRouter {
         prompt.push_str("## Stable prefix (cacheable)\n\n");
         if let Some(map) = self.repo_map_text() {
             prompt.push_str("## Repository map\n\n");
-            prompt.push_str(map);
+            prompt.push_str(map.as_str());
             prompt.push_str("\n\n");
         }
         prompt.push_str("## Volatile suffix (not cached)\n\n");
-        let memory_context = match &self.memory_manager {
-            Some(manager) => Some(manager.retrieve_context(input).await?),
-            None => None,
+        // When the caller supplied a context, use it as-is; the retrieval
+        // already ran in `process_input_with_context`. When `None`,
+        // retrieve here (the legacy `build_prompt` path).
+        let memory_context = match memory_context {
+            Some(c) => Some(c),
+            None => match &self.memory_manager {
+                Some(manager) => Some(manager.retrieve_context(input).await?),
+                None => None,
+            },
         };
         prompt.push_str(&self.build_context(input, &memory_context, task_type).await?);
 
@@ -778,6 +827,141 @@ impl TaskRouter {
 
 }
 
+/// Repository map cache with mtime-based invalidation.
+///
+/// The map is not invalidated on every filesystem event — that would
+/// trigger an expensive re-walk mid-conversation for an editor that
+/// writes to a scratch file while a prompt is in flight. Instead, a
+/// cheap fingerprint is computed at the start of every prompt and
+/// compared to the last one; a mismatch triggers a rebuild of both the
+/// map and its rendered form. Between calls, the cache is a plain
+/// `Arc<RepoMap>` clone.
+///
+/// The fingerprint is FNV-1a over a sorted list of
+/// `(relative_path, mtime_secs, size)` triples, walked shallow
+/// (`max_depth = 3`) with .gitignore honored. Two constraints shape it:
+///
+/// - **Cheap.** A repo with 10 000 files would take tens of milliseconds
+///   to stat every one; a shallow walk of the source tree (skipping
+///   `target/`, `node_modules/`, `.git/`) sees a few hundred at most.
+/// - **Stable.** Equal content on equal mtimes produces the same hash;
+///   a subsequent `git checkout` restoring an identical tree is a
+///   no-op rebuild.
+struct RepoMapCache {
+    inner: std::sync::RwLock<Option<CachedRepoMap>>,
+}
+
+struct CachedRepoMap {
+    fingerprint: u64,
+    map: std::sync::Arc<crate::repomap::RepoMap>,
+    rendered: std::sync::Arc<String>,
+}
+
+impl RepoMapCache {
+    fn new() -> Self {
+        Self {
+            inner: std::sync::RwLock::new(None),
+        }
+    }
+
+    /// Return the rendered map, rebuilding if the fingerprint changed.
+    /// `None` when the working directory yields an empty map (no source
+    /// files recognized).
+    fn get_or_rebuild(&self, working_dir: &std::path::Path) -> Option<std::sync::Arc<String>> {
+        let fp = fingerprint_of(working_dir);
+        // Fast path: cached and unchanged.
+        if let Ok(guard) = self.inner.read()
+            && let Some(cached) = guard.as_ref()
+            && cached.fingerprint == fp
+        {
+            return Some(cached.rendered.clone());
+        }
+        // Slow path: rebuild under the write lock. A concurrent reader
+        // that wins the race sees the previous value (safe, may be
+        // stale for one prompt — the next prompt re-checks).
+        let map = crate::repomap::build_repo_map(working_dir);
+        if map.file_count() == 0 {
+            if let Ok(mut guard) = self.inner.write() {
+                *guard = None;
+            }
+            return None;
+        }
+        let rendered = std::sync::Arc::new(map.render(crate::repomap::DEFAULT_MAP_CHARS));
+        let map = std::sync::Arc::new(map);
+        if let Ok(mut guard) = self.inner.write() {
+            *guard = Some(CachedRepoMap {
+                fingerprint: fp,
+                map,
+                rendered: rendered.clone(),
+            });
+        }
+        Some(rendered)
+    }
+}
+
+/// Fingerprint a working directory by (path, mtime, size) of every file
+/// in a shallow walk. Uses `ignore::WalkBuilder` for the same
+/// .gitignore / .ignore honoring the map itself uses — a repo with a
+/// `target/` dir sees only the sources, not the build artifacts.
+fn fingerprint_of(root: &std::path::Path) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut h = FNV_OFFSET;
+
+    let mut builder = ignore::WalkBuilder::new(root);
+    builder
+        .hidden(false)
+        .git_ignore(true)
+        .ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .require_git(false)
+        .filter_entry(|e| {
+            let name = e.file_name().to_str().unwrap_or("");
+            name != ".git" && name != "target" && name != "node_modules"
+        })
+        .max_depth(Some(3));
+
+    // Collect (path, mtime_secs, size) into a Vec, then sort before
+    // hashing so the fingerprint does not depend on walk order.
+    let mut entries: Vec<(std::path::PathBuf, u64, u64)> = Vec::new();
+    for entry in builder.build().filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let meta = match std::fs::metadata(path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
+        entries.push((rel, mtime, meta.len()));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (path, mtime, size) in &entries {
+        for byte in path.to_string_lossy().as_bytes() {
+            h ^= *byte as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+        }
+        for byte in mtime.to_le_bytes() {
+            h ^= byte as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+        }
+        for byte in size.to_le_bytes() {
+            h ^= byte as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+        }
+    }
+    h
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -816,6 +1000,113 @@ mod tests {
     /// `memory_context.is_some()`, which is true whenever a manager
     /// exists — always, since enable_memory defaults on — so the flag
     /// reported "memory infrastructure present", not "memory used".
+    /// `build_prompt_with_context` must NOT retrieve when a context is
+    /// supplied — that is the entire point of D0.4. Guard: store a
+    /// sentinel fact, call the method with an empty supplied context,
+    /// and assert the sentinel does not appear in the prompt. Then call
+    /// with `None` and assert it does.
+    #[tokio::test]
+    async fn test_build_prompt_with_context_skips_retrieval_when_supplied() {
+        use kod_types::MemoryContext;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.redb");
+        let router = TaskRouter::new(
+            RouterConfig {
+                enable_memory: true,
+                max_skills_per_query: 3,
+                working_dir: temp_dir.path().to_path_buf(),
+                context_window: 8192,
+                short_term_capacity: 100,
+            },
+            db_path,
+        )
+        .unwrap();
+
+        let manager = router.memory_manager.as_ref().unwrap();
+        manager
+            .store(
+                kod_types::MemoryType::LongTerm,
+                "SECRET_MARKER_XYZ project fact.",
+            )
+            .await
+            .unwrap();
+
+        // Supplied empty context: retrieval must NOT run, marker absent.
+        let prompt = router
+            .build_prompt_with_context(
+                "tell me about the project",
+                &TaskType::Simple,
+                "(start of conversation)",
+                Some(MemoryContext::default()),
+            )
+            .await
+            .unwrap();
+        assert!(
+            !prompt.contains("SECRET_MARKER_XYZ"),
+            "build_prompt_with_context retrieved despite a supplied context"
+        );
+
+        // None: retrieval runs internally, marker present.
+        let prompt = router
+            .build_prompt_with_context(
+                "tell me about the project",
+                &TaskType::Simple,
+                "(start of conversation)",
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(
+            prompt.contains("SECRET_MARKER_XYZ"),
+            "None must trigger internal retrieval"
+        );
+    }
+
+    /// The repo-map cache must rebuild when the working tree changes.
+    /// Regression target: the previous `OnceLock<String>` never
+    /// invalidated, so a file added after the first prompt was invisible
+    /// to every subsequent prompt in the same session.
+    #[tokio::test]
+    async fn test_repo_map_cache_rebuilds_on_change() {
+        let temp_dir = TempDir::new().unwrap();
+        let wd = temp_dir.path().to_path_buf();
+        std::fs::write(wd.join("first.rs"), "pub fn first() {}\n").unwrap();
+
+        let db_path = wd.join("test.redb");
+        let router = TaskRouter::new(
+            RouterConfig {
+                enable_memory: false,
+                max_skills_per_query: 3,
+                working_dir: wd.clone(),
+                context_window: 8192,
+                short_term_capacity: 100,
+            },
+            db_path,
+        )
+        .unwrap();
+
+        let first = router.repo_map_text().expect("first.rs should map");
+        assert!(first.contains("first.rs"), "got: {first}");
+
+        // Sleep one second so mtime differs (filesystems have second
+        // granularity; without this the fingerprint can collide).
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        std::fs::write(wd.join("second.rs"), "pub fn second() {}\n").unwrap();
+
+        let second = router
+            .repo_map_text()
+            .expect("second.rs should be mapped after rebuild");
+        assert!(
+            second.contains("second.rs"),
+            "cache did not rebuild: {second}"
+        );
+        assert!(
+            second.contains("first.rs"),
+            "first.rs disappeared after rebuild: {second}"
+        );
+    }
+
     #[tokio::test]
     async fn test_memory_used_flag_reflects_contribution() {
         let temp_dir = TempDir::new().unwrap();
@@ -826,6 +1117,7 @@ mod tests {
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
                 context_window: 8192,
+                short_term_capacity: 100,
             },
             db_path,
         )
@@ -888,6 +1180,7 @@ mod tests {
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
                 context_window: 8192,
+                short_term_capacity: 100,
             },
             db_path,
         )
@@ -933,6 +1226,7 @@ mod tests {
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
                 context_window: 131_072,
+                short_term_capacity: 100,
             },
             db_path,
         )
@@ -1054,6 +1348,7 @@ mod tests {
             RouterConfig {
                 enable_memory: false,
                 context_window: 8192,
+                short_term_capacity: 100,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
             },
@@ -1079,6 +1374,7 @@ mod tests {
             RouterConfig {
                 enable_memory: false,
                 context_window: 8192,
+                short_term_capacity: 100,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
             },
@@ -1123,6 +1419,7 @@ mod tests {
             RouterConfig {
                 enable_memory: false,
                 context_window: 8192,
+                short_term_capacity: 100,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
             },

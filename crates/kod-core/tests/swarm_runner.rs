@@ -121,6 +121,7 @@ async fn build_engine(provider: Arc<dyn LlmProvider>) -> (Arc<KodEngine>, TempDi
     let db_path = temp.path().join("swarm.redb");
     let cfg = RouterConfig {
         context_window: 8192,
+        short_term_capacity: 100,
         max_skills_per_query: 3,
         working_dir: temp.path().to_path_buf(),
         enable_memory: false,

@@ -84,6 +84,7 @@ async fn test_seed_turn_feeds_history() {
     let db_path = tmp.path().join("test.redb");
     let cfg = RouterConfig {
         context_window: 8192,
+        short_term_capacity: 100,
         working_dir: tmp.path().to_path_buf(),
         enable_memory: false,
         max_skills_per_query: 3,

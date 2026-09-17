@@ -160,6 +160,7 @@ fn benchmark_task_classification(c: &mut Criterion) {
     let router = TaskRouter::new(
         RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             enable_memory: false,
             max_skills_per_query: 3,
             working_dir: env.working_dir.clone(),
@@ -206,6 +207,7 @@ fn benchmark_task_processing(c: &mut Criterion) {
     let router = TaskRouter::new(
         RouterConfig {
             context_window: 8192,
+            short_term_capacity: 100,
             enable_memory: false,
             max_skills_per_query: 3,
             working_dir: env.working_dir.clone(),

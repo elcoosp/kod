@@ -169,6 +169,7 @@ async fn test_router_configuration() {
 
     let config = RouterConfig {
         context_window: 8192,
+        short_term_capacity: 100,
         max_skills_per_query: 2,
         enable_memory: false,
         working_dir: temp_dir.path().to_path_buf(),
