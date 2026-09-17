@@ -52,12 +52,20 @@ pub struct ToolsConfig {
     /// has, with the safety net being the checkpoint system (see
     /// `kod checkpoint restore`).
     pub confirm_writes: bool,
+    /// When true, a successful `write_file` / `patch_file` in a tool
+    /// round triggers a project check (Cargo, tsc, ruff, go vet) and
+    /// the diagnostics are appended to the prompt the model sees on
+    /// its next turn. Default false — running `cargo check` after
+    /// every write is not free, and a session on a large workspace
+    /// may prefer to run `check` only when it decides to.
+    pub auto_check: bool,
 }
 
 impl Default for ToolsConfig {
     fn default() -> Self {
         Self {
             confirm_writes: false,
+            auto_check: false,
         }
     }
 }
