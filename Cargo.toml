@@ -6,6 +6,7 @@ members = [
     "crates/kod-config",
     "crates/kod-provider",
     "crates/kod-provider-openai",
+    "crates/kod-provider-anthropic",
     "crates/kod-skills",
     "crates/kod-memory",
     "crates/kod-lsp",
