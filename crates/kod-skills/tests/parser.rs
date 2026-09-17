@@ -4,7 +4,7 @@ const VALID_SKILL: &str = r#"---
 name: rust-refactoring
 description: Rust code refactoring with LSP integration
 version: 1.2.0
-author: kod-team
+author: elcoosp
 category: coding
 tags:
   - rust
@@ -68,7 +68,7 @@ fn test_parse_valid_skill() {
 
     assert_eq!(skill.metadata.name, "rust-refactoring");
     assert_eq!(skill.metadata.version, "1.2.0");
-    assert_eq!(skill.metadata.author, Some("kod-team".to_string()));
+    assert_eq!(skill.metadata.author, Some("elcoosp".to_string()));
     assert_eq!(skill.metadata.category, "coding");
 
     assert_eq!(skill.metadata.tags.len(), 3);
