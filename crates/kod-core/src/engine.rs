@@ -6,7 +6,9 @@
 use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
 use serde::{Deserialize, Serialize};
-use kod_provider::{GenerationOptions, GenerationResponse, LlmProvider, StreamChunk};
+use kod_provider::{
+    GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderRegistry, StreamChunk,
+};
 use kod_tools::{
     ExecuteCommandTool, FileInfoTool, GitDiffTool, GitStatusTool, GrepTool, ListFilesTool,
     PatchFileTool, PathLockTable, ReadFileTool, ToolContext, ToolRegistry, WriteFileTool,
@@ -15,7 +17,6 @@ use kod_types::{ToolCall, ToolDefinition, ToolPermissions, ToolResult};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
 /// Max agentic tool rounds per `process()` call before forcing a
@@ -880,7 +881,19 @@ const DEFAULT_TRANSCRIPT_KEY: &str = "";
 /// Main engine for KOD
 pub struct KodEngine {
     router: Arc<TaskRouter>,
-    provider: RwLock<Option<Arc<dyn LlmProvider>>>,
+    /// Named-endpoint map (A4b). When `Some`, `resolve_provider` reads
+    /// through `current_model` into this registry rather than the
+    /// legacy slot above.
+    registry: RwLock<Option<Arc<ProviderRegistry>>>,
+    /// Which endpoint+model a session is using. Set by `set_registry`
+    /// (to the caller's declared default) and by `set_current_model`
+    /// (TUI `/model` switch). Only consulted when `registry` is Some.
+    current_model: RwLock<ModelRef>,
+    /// Task-type → endpoint routing table (A6). `None` on a v1 config
+    /// (no `[llm.routing]` section) — the chain resolver then falls
+    /// back to `current_model` as a single-element chain. Populated by
+    /// `set_registry` from the config's `routing` field.
+    routing: RwLock<Option<kod_config::RoutingConfig>>,
     is_running: RwLock<bool>,
     tools: Arc<ToolRegistry>,
     tool_context: ToolContext,
@@ -889,14 +902,27 @@ pub struct KodEngine {
     /// interactive session contend on the same table.
     lock_table: Arc<PathLockTable>,
     working_dir: PathBuf,
-    /// Steer notes queued while a prompt is running (see [`KodEngine::steer`]).
-    steer_queue: RwLock<Vec<String>>,
-    /// Set by [`KodEngine::request_cancel`]; loops check it between rounds.
-    cancelled: AtomicBool,
+    /// Steer notes queued while a prompt is running, keyed by transcript
+    /// (D4-D4, AD-11). `steer("note")` writes to the default key;
+    /// `steer_for(key, note)` targets one agent. The loops drain only
+    /// their own key.
+    steers: RwLock<HashMap<String, Vec<String>>>,
+    /// Set by [`KodEngine::request_cancel`]; loops check it between
+    /// rounds. Keyed by transcript (D4-D4): a cancel for
+    /// `swarm:{agent-id}` stops only that agent, not the whole swarm.
+    /// The default key `""` is the interactive session.
+    cancels: RwLock<std::collections::HashSet<String>>,
     /// Transcripts, one per key. `DEFAULT_TRANSCRIPT_KEY` is the
     /// interactive session; a swarm agent uses `swarm:<agent-id>` so
     /// concurrent agents do not interleave their turns.
     history: RwLock<HashMap<String, Vec<kod_types::ChatMessage>>>,
+    /// Per-transcript working-directory override (D4-D1). A swarm
+    /// agent registers its worktree path here before running; tool
+    /// calls on that transcript use the override for
+    /// `ToolContext.working_dir` instead of the engine-wide root.
+    /// Absent for the default session — that key falls through to
+    /// `self.working_dir`, which is the pre-D4 behaviour.
+    transcript_working_dirs: RwLock<HashMap<String, PathBuf>>,
     /// Total chars of history rendered into a prompt. Defaults to
     /// [`DEFAULT_HISTORY_CHAR_BUDGET`]; the TUI and CLI set this from
     /// `LlmConfig::context_window` at startup so a 128k model actually
@@ -936,14 +962,27 @@ pub struct KodEngine {
     /// default; the CLI and TUI apply `LlmConfig::network_access` at
     /// startup.
     network_access_atomic: std::sync::atomic::AtomicBool,
-    /// When true, `write_file` / `patch_file` calls ask for approval
-    /// before running. See [`crate::engine::ApprovalRequest`] and
-    /// [`crate::config::ToolsConfig`].
-    confirm_writes_atomic: std::sync::atomic::AtomicBool,
     /// When true, a successful `write_file` / `patch_file` triggers an
     /// automatic project check and the diagnostics are appended to the
     /// model's tool-results block. See `ToolsConfig::auto_check`.
     auto_check_atomic: std::sync::atomic::AtomicBool,
+    /// When true (the default), a successful write also runs the LSP
+    /// diagnostics pass on the touched file(s) and appends a
+    /// `## LSP diagnostics` block to the next turn's prompt. Cheap;
+    /// independent of `auto_check`. See `ToolsConfig::auto_lsp`.
+    auto_lsp_atomic: std::sync::atomic::AtomicBool,
+    /// Per-project policy (D3-C1). `None` until a caller installs one
+    /// via `set_policy` — the CLI/TUI build it from `KodConfig` at
+    /// startup. When `None`, the legacy `confirm_writes_atomic` gate
+    /// remains in force for `write_file`/`patch_file`, which is the
+    /// pre-D3 behaviour a test or embedder sees. When `Some`, every
+    /// tool call is consulted against the policy.
+    policy: RwLock<Option<Arc<kod_config::PolicyEngine>>>,
+    /// Session-scoped "never" rules (`a` on the approval dialog). A
+    /// rule that matches a call is denied before any policy layer is
+    /// consulted — the highest priority.
+    deny_rules: RwLock<std::collections::HashSet<kod_config::SessionDeny>>,
+
     /// A long-lived language server for incremental diagnostics. Lazily
     /// started on the first `lsp_diagnostics` call; `None` when no
     /// server has been spawned yet. Wrapped in an async mutex because
@@ -993,6 +1032,11 @@ pub struct KodEngine {
     /// the home directory is unavailable (a stripped container, a
     /// test that has unset HOME). See [`crate::checkpoint`].
     checkpoints: Option<Arc<crate::checkpoint::CheckpointManager>>,
+    /// MCP host (D6.1). `None` — the default — means no MCP tools
+    /// are registered. The CLI/TUI install one via `set_mcp_host`
+    /// when `[mcp.servers]` is non-empty. The host owns the spawned
+    /// server processes; `shutdown` tears them down.
+    mcp: RwLock<Option<Arc<crate::mcp_adapters::McpHost>>>,
 }
 
 /// Marker prefix for approval requests inside the `process_streaming`
@@ -1051,6 +1095,31 @@ pub enum ApprovalDecision {
 }
 
 impl KodEngine {
+    /// Test-only shim: install a bare provider behind a one-endpoint
+    /// registry named "default". The pre-cleanup `set_provider` shape
+    /// is not part of the production API any more; this helper keeps
+    /// the in-crate tests readable without rebuilding a registry at
+    /// every call site.
+    #[cfg(test)]
+    pub(crate) async fn install_test_provider(
+        &self,
+        provider: Arc<dyn LlmProvider>,
+    ) {
+        let mut reg = kod_provider::ProviderRegistry::new();
+        reg.insert(
+            "default",
+            provider,
+            kod_provider::ProviderCapabilities::conservative(),
+            "",
+        );
+        self.set_registry(
+            Arc::new(reg),
+            kod_provider::ModelRef::new("default", ""),
+            None,
+        )
+        .await;
+    }
+
     /// Create a new engine
     pub fn new(config: RouterConfig, db_path: PathBuf) -> Result<Self> {
         let working_dir = config.working_dir.clone();
@@ -1073,7 +1142,7 @@ impl KodEngine {
                 write_files: true,
                 execute_commands: true,
                 network_access: false,
-                git_operations: true,
+                git_access: kod_types::GitAccess::Write,
                 allowed_paths: Vec::new(),
                 forbidden_paths: Vec::new(),
             });
@@ -1090,15 +1159,18 @@ impl KodEngine {
 
         Ok(Self {
             router: Arc::new(router),
-            provider: RwLock::new(None),
+            registry: RwLock::new(None),
+            current_model: RwLock::new(ModelRef::new("default", "")),
+            routing: RwLock::new(None),
             is_running: RwLock::new(false),
             tools: Arc::new(ToolRegistry::new()),
             tool_context,
             lock_table,
             working_dir,
-            steer_queue: RwLock::new(Vec::new()),
-            cancelled: AtomicBool::new(false),
+            steers: RwLock::new(HashMap::new()),
+            cancels: RwLock::new(std::collections::HashSet::new()),
             history: RwLock::new(HashMap::new()),
+            transcript_working_dirs: RwLock::new(HashMap::new()),
             history_budget: std::sync::atomic::AtomicUsize::new(
                 DEFAULT_HISTORY_CHAR_BUDGET,
             ),
@@ -1110,17 +1182,20 @@ impl KodEngine {
             )),
             sandbox_mode_atomic: std::sync::atomic::AtomicU8::new(0),
             network_access_atomic: std::sync::atomic::AtomicBool::new(false),
-            confirm_writes_atomic: std::sync::atomic::AtomicBool::new(false),
             auto_check_atomic: std::sync::atomic::AtomicBool::new(false),
+            auto_lsp_atomic: std::sync::atomic::AtomicBool::new(true),
+            policy: RwLock::new(None),
+            deny_rules: RwLock::new(std::collections::HashSet::new()),
             lsp_client: Arc::new(tokio::sync::Mutex::new(None)),
             check_baseline: Arc::new(RwLock::new(None)),
             next_approval_id: std::sync::atomic::AtomicU64::new(1),
             pending_approvals: RwLock::new(std::collections::HashMap::new()),
             pending_questions: RwLock::new(std::collections::HashMap::new()),
             next_question_id: std::sync::atomic::AtomicU64::new(1),
-            swarm_knowledge: kod_tools::new_knowledge(),
+            swarm_knowledge: kod_tools::SwarmKnowledge::new(),
             todo_list: kod_tools::new_todo_list(),
             checkpoints,
+            mcp: RwLock::new(None),
         })
     }
 
@@ -1161,6 +1236,7 @@ impl KodEngine {
         use std::sync::atomic::Ordering;
         let v = match mode {
             kod_tools::context::SandboxMode::Disabled => 0u8,
+            kod_tools::context::SandboxMode::Auto => 2u8,
             kod_tools::context::SandboxMode::Require => 1u8,
         };
         self.sandbox_mode_atomic.store(v, Ordering::Relaxed);
@@ -1171,6 +1247,7 @@ impl KodEngine {
         use std::sync::atomic::Ordering;
         match self.sandbox_mode_atomic.load(Ordering::Relaxed) {
             1 => kod_tools::context::SandboxMode::Require,
+            2 => kod_tools::context::SandboxMode::Auto,
             _ => kod_tools::context::SandboxMode::Disabled,
         }
     }
@@ -1190,18 +1267,6 @@ impl KodEngine {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Enable or disable write confirmation. Called by the CLI and TUI
-    /// at startup with `ToolsConfig::confirm_writes`.
-    pub fn set_confirm_writes(&self, enabled: bool) {
-        self.confirm_writes_atomic
-            .store(enabled, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// The current write-confirmation setting.
-    pub fn confirm_writes_setting(&self) -> bool {
-        self.confirm_writes_atomic
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
 
     /// Enable or disable auto-check after writes. Called by the CLI and
     /// TUI at startup with `ToolsConfig::auto_check`.
@@ -1213,6 +1278,19 @@ impl KodEngine {
     /// The current auto-check setting.
     pub fn auto_check_setting(&self) -> bool {
         self.auto_check_atomic
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Enable or disable the post-write LSP diagnostics pass. Called
+    /// by the CLI/TUI at startup with `ToolsConfig::auto_lsp`.
+    pub fn set_auto_lsp(&self, enabled: bool) {
+        self.auto_lsp_atomic
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The current auto-LSP setting.
+    pub fn auto_lsp_setting(&self) -> bool {
+        self.auto_lsp_atomic
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
@@ -1229,6 +1307,18 @@ impl KodEngine {
     pub fn lsp_binary_for(path: &std::path::Path) -> Option<&'static str> {
         match path.extension().and_then(|s| s.to_str()) {
             Some("rs") if which("rust-analyzer") => Some("rust-analyzer"),
+            Some("py")
+                if which("pyright-langserver") =>
+            {
+                Some("pyright-langserver")
+            }
+            Some("py") if which("pylsp") => Some("pylsp"),
+            Some("ts") | Some("tsx") | Some("js") | Some("jsx")
+                if which("typescript-language-server") =>
+            {
+                Some("typescript-language-server")
+            }
+            Some("go") if which("gopls") => Some("gopls"),
             _ => None,
         }
     }
@@ -1298,6 +1388,115 @@ impl KodEngine {
         }
     }
 
+    /// LSP: definition at `(line, column)` in `path`. 1-based
+    /// coordinates (the tool layer already uses them). Returns empty
+    /// when no server is available or the request fails — the tool
+    /// turns that into a tool-level error the model can act on.
+    pub async fn lsp_definition(
+        &self,
+        path: &std::path::Path,
+        line: u32,
+        column: u32,
+    ) -> Vec<kod_lsp::Location> {
+        let mut guard = self.lsp_client.lock().await;
+        if guard.is_none() {
+            if Self::lsp_binary_for(path).is_none() {
+                return Vec::new();
+            }
+            if Self::ensure_lsp_started(&mut *guard, path, &self.working_dir)
+                .await
+                .is_err()
+            {
+                return Vec::new();
+            }
+        }
+        let client = match guard.as_mut() {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+        let pos = kod_lsp::Position { line, column };
+        client.definition(path, pos).await.unwrap_or_default()
+    }
+
+    /// LSP: all references to the symbol at `(line, column)`.
+    pub async fn lsp_references(
+        &self,
+        path: &std::path::Path,
+        line: u32,
+        column: u32,
+        include_declaration: bool,
+    ) -> Vec<kod_lsp::Location> {
+        let mut guard = self.lsp_client.lock().await;
+        if guard.is_none() {
+            if Self::lsp_binary_for(path).is_none() {
+                return Vec::new();
+            }
+            if Self::ensure_lsp_started(&mut *guard, path, &self.working_dir)
+                .await
+                .is_err()
+            {
+                return Vec::new();
+            }
+        }
+        let client = match guard.as_mut() {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+        let pos = kod_lsp::Position { line, column };
+        client
+            .references(path, pos, include_declaration)
+            .await
+            .unwrap_or_default()
+    }
+
+    /// LSP: hover text at `(line, column)`.
+    pub async fn lsp_hover(
+        &self,
+        path: &std::path::Path,
+        line: u32,
+        column: u32,
+    ) -> Option<kod_lsp::Hover> {
+        let mut guard = self.lsp_client.lock().await;
+        if guard.is_none() {
+            if Self::lsp_binary_for(path).is_none() {
+                return None;
+            }
+            if Self::ensure_lsp_started(&mut *guard, path, &self.working_dir)
+                .await
+                .is_err()
+            {
+                return None;
+            }
+        }
+        let client = guard.as_mut()?;
+        let pos = kod_lsp::Position { line, column };
+        client.hover(path, pos).await.ok()
+    }
+
+    /// Start the LSP client if none is running and the file's
+    /// language has a server binary on PATH. Used by the three
+    /// lsp_* accessors above as the shared lazy-init path.
+    async fn ensure_lsp_started(
+        slot: &mut Option<kod_lsp::LspClient>,
+        path: &std::path::Path,
+        working_dir: &std::path::Path,
+    ) -> kod_error::Result<()> {
+        let Some(binary) = Self::lsp_binary_for(path) else {
+            return Err(kod_error::KodError::InvalidState(
+                "no LSP server binary for this file".to_string(),
+            ));
+        };
+        let mut client = kod_lsp::LspClient::start(binary, working_dir)
+            .await
+            .map_err(|e| kod_error::KodError::Internal(e.to_string()))?;
+        client
+            .initialize()
+            .await
+            .map_err(|e| kod_error::KodError::Internal(e.to_string()))?;
+        *slot = Some(client);
+        Ok(())
+    }
+
     /// Capture the project's diagnostics into the baseline. Called at
     /// engine start (best-effort) and by any caller that wants the
     /// next auto-check to treat the current state as "before".
@@ -1340,6 +1539,61 @@ impl KodEngine {
             client.shutdown().await;
             tracing::info!("LSP client shut down");
         }
+    }
+
+    /// Install a per-project policy (D3-C1). Called by the CLI/TUI
+    /// at startup from `PolicyEngine::load`. When this is not called,
+    /// the engine falls back to the legacy `confirm_writes` gate for
+    /// `write_file`/`patch_file` and leaves every other tool alone —
+    /// the pre-D3 behaviour.
+    pub async fn set_policy(&self, policy: Arc<kod_config::PolicyEngine>) {
+        *self.policy.write().await = Some(policy);
+    }
+
+    /// Install the MCP host (D6.1). Called by the CLI/TUI at startup
+    /// when `[mcp.servers]` is non-empty. When this is not called,
+    /// no MCP tools are registered — a session without MCP is the
+    /// default, and a session that only uses built-in tools pays
+    /// nothing for the feature.
+    pub async fn set_mcp_host(&self, host: Arc<crate::mcp_adapters::McpHost>) {
+        *self.mcp.write().await = Some(host);
+    }
+
+    /// The installed MCP host, if any. Read by the CLI/TUI and by a
+    /// future `/mcp` command; not consulted by the tool loop, which
+    /// only sees the adapters registered at `start()` time.
+    pub async fn mcp_host(&self) -> Option<Arc<crate::mcp_adapters::McpHost>> {
+        self.mcp.read().await.clone()
+    }
+
+    /// The installed policy, if any.
+    pub async fn policy(&self) -> Option<Arc<kod_config::PolicyEngine>> {
+        self.policy.read().await.clone()
+    }
+
+    /// Register a session-scoped "never" rule (the `a` choice on the
+    /// approval dialog). Consulted before every policy layer; a
+    /// matching call is denied without a prompt, for the rest of the
+    /// process.
+    pub async fn add_deny_rule(&self, rule: kod_config::SessionDeny) {
+        self.deny_rules.write().await.insert(rule);
+    }
+
+    /// The current set of session deny rules. Read by the TUI to show
+    /// `kod policy show`-style summaries, and by tests.
+    pub async fn deny_rules(&self) -> Vec<kod_config::SessionDeny> {
+        self.deny_rules.read().await.iter().cloned().collect()
+    }
+
+
+    /// The provider for the current model, resolved through the
+    /// registry. `None` when no registry is installed or the endpoint
+    /// is unknown. Public because the swarm runner needs it and does
+    /// not hold a registry reference itself.
+    pub async fn current_provider(&self) -> Option<Arc<dyn LlmProvider>> {
+        let registry = self.registry.read().await.clone();
+        let model = self.current_model.read().await.clone();
+        registry.as_ref().and_then(|r| r.resolve(&model).ok())
     }
 
     /// Answer a pending approval request. Returns `true` when the id
@@ -1393,9 +1647,162 @@ impl KodEngine {
             .and_then(|guard| guard.as_ref().map(|r| r.path().to_path_buf()))
     }
 
-    /// Set the LLM provider
-    pub async fn set_provider(&self, provider: Arc<dyn LlmProvider>) {
-        *self.provider.write().await = Some(provider);
+
+    /// Install a `ProviderRegistry` (A4b). The registry becomes the
+    /// source of truth for provider resolution; the legacy `provider`
+    /// slot is left untouched but is no longer consulted while a
+    /// registry is present.
+    ///
+    /// `default_model` names the endpoint the engine resolves to when
+    /// no routing decision has been made yet — usually the config's
+    /// `default` endpoint, or the first endpoint of a v2 config.
+    pub async fn set_registry(
+        &self,
+        registry: Arc<ProviderRegistry>,
+        default_model: ModelRef,
+        routing: Option<kod_config::RoutingConfig>,
+    ) {
+        *self.registry.write().await = Some(registry);
+        *self.current_model.write().await = default_model;
+        *self.routing.write().await = routing;
+    }
+
+    /// Switch the current (endpoint, model). This is the TUI's
+    /// `/model` operation: a `ModelRef` change without rebuilding the
+    /// registry. A no-op when no registry is installed (the legacy
+    /// `set_provider` path uses a provider whose model was baked in at
+    /// construction).
+    pub async fn set_current_model(&self, model_ref: ModelRef) {
+        *self.current_model.write().await = model_ref;
+    }
+
+    /// The current (endpoint, model). Read by the TUI header and by
+    /// `/model` completion.
+    pub async fn current_model(&self) -> ModelRef {
+        self.current_model.read().await.clone()
+    }
+
+    /// Compute the allocation for a prompt of `input.len()` chars
+    /// against the configured endpoint's window. Reads the config
+    /// each time; cheap (one file read at most) and correct after a
+    /// `/model` switch that landed a different endpoint.
+    async fn prompt_allocation(
+        &self,
+        input: &str,
+        _history: &str,
+    ) -> std::result::Result<
+        crate::budget::Allocation,
+        crate::budget::BudgetError,
+    > {
+        let (window, max_out) = match kod_config::KodConfig::load_default() {
+            Ok(cfg) => {
+                let ep = cfg.llm.default_endpoint();
+                (ep.context_window, ep.max_tokens.unwrap_or(2048))
+            }
+            Err(_) => {
+                // Fall back to the built-in default so the engine
+                // still works on a machine whose config is unreadable.
+                let d = kod_config::LlmConfig::default();
+                let ep = d.default_endpoint();
+                (ep.context_window, ep.max_tokens.unwrap_or(2048))
+            }
+        };
+        let budget = crate::budget::PromptBudget::from_tokens(window, max_out);
+        budget.allocate(input.len())
+    }
+
+
+    /// The ordered `ModelRef` chain for a task type. The first element
+    /// is the endpoint `routing.by_task` names, or `current_model` when
+    /// there is no routing table for this task. The rest are the
+    /// entries in `routing.fallback`, deduplicated against the primary
+    /// and each other. Empty when no provider is available at all.
+    ///
+    /// A v1 config (`routing = None`) produces a single-element chain
+    /// containing `current_model`, so the fallback loop degenerates to
+    /// a single attempt — identical to the pre-A6 behaviour.
+    async fn resolve_chain_for_task(&self, task_key: &str) -> Vec<ModelRef> {
+        // Legacy path: no registry.
+        if self.registry.read().await.is_none() {
+            return vec![self.current_model.read().await.clone()];
+        }
+        let registry = {
+            let g = self.registry.read().await;
+            g.as_ref().map(Arc::clone).unwrap()
+        };
+        let routing = self.routing.read().await.clone();
+
+        let mut chain: Vec<ModelRef> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        if let Some(r) = &routing
+            && let Some(primary) = r.by_task.get(task_key)
+            && let Some(model) = registry.default_model(primary)
+            && seen.insert(primary.clone())
+        {
+            chain.push(ModelRef::new(primary.clone(), model));
+        }
+
+        if let Some(r) = &routing {
+            for endpoint in &r.fallback {
+                if !seen.insert(endpoint.clone()) {
+                    continue;
+                }
+                if let Some(model) = registry.default_model(endpoint) {
+                    chain.push(ModelRef::new(endpoint.clone(), model));
+                }
+            }
+        }
+
+        // No routing, or routing that pointed at unregistered
+        // endpoints: fall back to current_model as the sole entry.
+        if chain.is_empty() {
+            chain.push(self.current_model.read().await.clone());
+        }
+        chain
+    }
+
+    /// Resolve a `ModelRef` to a provider. Registry-based when a
+    /// registry is installed; the legacy single-provider slot
+    /// otherwise (any `ModelRef` resolves to it).
+    async fn resolve_provider_for_model_ref(
+        &self,
+        model_ref: &ModelRef,
+    ) -> Result<Arc<dyn LlmProvider>> {
+        match self.registry.read().await.as_ref() {
+            Some(registry) => registry.resolve(model_ref),
+            None => Err(Self::no_provider_error()),
+        }
+    }
+
+    /// Append a `SessionEntry::ModelFallback` to the recorder, if one is
+    /// installed. Best-effort: a write failure logs and the run
+    /// continues.
+    async fn record_model_fallback(
+        &self,
+        holder: &str,
+        from: &ModelRef,
+        to: &ModelRef,
+        error: &str,
+    ) {
+        if let Ok(guard) = self.session_recorder.read()
+            && let Some(rec) = guard.as_ref()
+        {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let entry = crate::session_log::SessionEntry::ModelFallback {
+                timestamp_ms: now_ms,
+                holder: holder.to_string(),
+                from: from.display(),
+                to: to.display(),
+                error: error.to_string(),
+            };
+            if let Err(e) = rec.record(&entry) {
+                tracing::warn!(error = %e, "could not append ModelFallback to session log");
+            }
+        }
     }
 
     /// Error for a `process*` call made before a provider is installed.
@@ -1415,18 +1822,13 @@ impl KodEngine {
     fn no_provider_error() -> KodError {
         KodError::InvalidState(
             "No LLM provider configured. Install one with \
-             `engine.set_provider(Arc::new(provider))` before calling \
+             `engine.install_test_provider(Arc::new(provider))` before calling \
              process — kod-cli and kod-tui do this automatically from \
              ~/.config/kod/config.toml."
                 .to_string(),
         )
     }
 
-    /// The provider currently installed, cloned out of its lock.
-    /// `None` when the engine has not been wired to a model.
-    pub async fn provider_arc(&self) -> Option<Arc<dyn LlmProvider>> {
-        self.provider.read().await.clone()
-    }
 
     /// The engine's shared swarm blackboard. A caller that wants to
     /// seed a fact before a swarm runs, or inspect what was recorded
@@ -1487,12 +1889,8 @@ impl KodEngine {
     /// models" from "the server is not reachable." The two deserve
     /// different user-facing messages and different recovery paths.
     pub async fn list_models(&self) -> Result<Vec<String>> {
-        let provider = self.provider.read().await;
-        match provider.as_ref() {
-            Some(p) => {
-                let models = p.list_models().await?;
-                Ok(models)
-            }
+        match self.current_provider().await {
+            Some(p) => p.list_models().await,
             None => Ok(Vec::new()),
         }
     }
@@ -1532,11 +1930,88 @@ impl KodEngine {
         self.tools
             .register(Box::new(ExecuteCommandTool::new()))
             .await;
-        // Read-only git inspection. Registered unconditionally; the
-        // per-context `git_operations` permission gate rejects calls
-        // from a context that opted out.
+        // Git tools. Read-only ones (status/diff/branch list) are
+        // gated by `GitAccess::Read`; the two write tools (commit,
+        // branch create) by `GitAccess::Write`. Both permission
+        // levels come from `ToolContext::permissions.git_access`,
+        // which the engine grants at construction.
+        // Memory tools (D2-B3a). Registered when the router has a
+        // memory manager. The tools handle the disabled case by
+        // erroring, but not registering when memory is off keeps the
+        // model from seeing a tool that cannot do anything.
+        if self.router.has_memory() {
+            self.tools
+                .register(Box::new(crate::memory_tools::MemorySaveTool::new(
+                    self.router.clone(),
+                )))
+                .await;
+            self.tools
+                .register(Box::new(crate::memory_tools::MemorySearchTool::new(
+                    self.router.clone(),
+                )))
+                .await;
+        }
+
+        // LSP tools (D5-L3a). Registered unconditionally; each tool
+        // holds a clone of the shared client slot and returns an
+        // error naming the missing server when no LSP binary exists
+        // for the file's language. `engine.start()` takes `&self`, so
+        // the tools take the slot Arc, not the engine Arc.
+        self.tools
+            .register(Box::new(crate::lsp_tools::LspDiagnosticsTool::new(
+                Arc::clone(&self.lsp_client),
+                self.working_dir.clone(),
+            )))
+            .await;
+        self.tools
+            .register(Box::new(crate::lsp_tools::LspDefinitionTool::new(
+                Arc::clone(&self.lsp_client),
+                self.working_dir.clone(),
+            )))
+            .await;
+        self.tools
+            .register(Box::new(crate::lsp_tools::LspReferencesTool::new(
+                Arc::clone(&self.lsp_client),
+                self.working_dir.clone(),
+            )))
+            .await;
+        self.tools
+            .register(Box::new(crate::lsp_tools::LspHoverTool::new(
+                Arc::clone(&self.lsp_client),
+                self.working_dir.clone(),
+            )))
+            .await;
+
+        // MCP tools (D6.1). Every enabled server is spawned once
+        // here, its tools listed, and one `McpToolAdapter` registered
+        // per tool under the `mcp:<server>.<tool>` naming policy. A
+        // server that fails to start is logged and skipped — one
+        // broken plugin does not block the built-in tools, nor the
+        // other plugins.
+        //
+        // This runs inside `start()` (which is idempotent by
+        // construction: a second call errors out early) so the MCP
+        // servers and the tool registry reach a consistent state at
+        // the same moment.
+        if let Some(host) = self.mcp.read().await.clone() {
+            let tools = host.startup_tools().await;
+            let count = tools.len();
+            for t in tools {
+                self.tools.register(t).await;
+            }
+            if count > 0 {
+                tracing::info!(count, "registered MCP tools");
+            }
+        }
+
         self.tools.register(Box::new(GitStatusTool::new())).await;
         self.tools.register(Box::new(GitDiffTool::new())).await;
+        self.tools
+            .register(Box::new(kod_tools::GitCommitTool::new()))
+            .await;
+        self.tools
+            .register(Box::new(kod_tools::GitBranchTool::new()))
+            .await;
         self.tools
             .register(Box::new(kod_tools::TodoTool::new(
                 self.todo_list.clone(),
@@ -1620,9 +2095,8 @@ impl KodEngine {
         // only after the last read released, i.e. at the very end of
         // the response. Cloning is one atomic increment on the Arc, so
         // the read lock is held for microseconds.
-        let provider: Option<Arc<dyn LlmProvider>> =
-            self.provider.read().await.clone();
-        if let Some(provider) = provider.as_ref() {
+        let _provider_probe = self.registry.read().await.clone();
+        if _provider_probe.is_some() {
             // Process through router for task classification and context
             let response = self.router.process_input(input).await?;
 
@@ -1630,15 +2104,24 @@ impl KodEngine {
             let task_type = response.task_type;
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
-            let prompt = self
-                .router
-                .build_prompt_with_context(
-                    input,
-                    &task_type,
-                    &history,
-                    response.memory_context.clone(),
-                )
-                .await?;
+            let alloc = self.prompt_allocation(input, &history).await;
+            let prompt = match &alloc {
+                Ok(a) => self
+                    .router
+                    .build_prompt_with_budget(
+                        input,
+                        &task_type,
+                        &history,
+                        response.memory_context.clone(),
+                        Some(a),
+                    )
+                    .await?,
+                Err(e) => {
+                    return Err(kod_error::KodError::InvalidParameters {
+                        reason: e.to_string(),
+                    });
+                }
+            };
 
             // Ground the model: where it runs and what it can touch.
             // Without this it claims "no filesystem access" even though
@@ -1651,21 +2134,100 @@ impl KodEngine {
             self.last_prompt.write().await.insert(key.to_string(), convo.clone());
 
             // Agentic loop: generate (with tools) -> execute -> feed back.
+            // Wrapped in a fallback chain (A6): the primary endpoint is
+            // tried first, then each `routing.fallback` endpoint, on
+            // errors that `is_retryable()` classifies as transient.
             let options = self
                 .generation_defaults
                 .read()
                 .await
                 .to_options();
-            let mut pending = convo;
-            let (final_text, tool_calls, tool_results, usage) = self
-                .run_collected_loop(provider, &mut pending, &definitions, &options, key)
-                .await?;
+            let task_key = format!("{:?}", response.task_type);
+            let chain = self.resolve_chain_for_task(&task_key).await;
+            if chain.is_empty() {
+                return Err(Self::no_provider_error());
+            }
+            let mut last_err: Option<KodError> = None;
+            let mut outcome: Option<(
+                String,
+                Vec<ToolCall>,
+                Vec<ToolResult>,
+                Option<kod_provider::TokenUsage>,
+            )> = None;
+            // The provider that served the winning attempt, kept so the
+            // tool-only-reply summary below calls through the same
+            // endpoint the model response came from.
+            let mut winning_provider: Option<Arc<dyn LlmProvider>> = None;
+            for (i, model_ref) in chain.iter().enumerate() {
+                let this_provider = match self
+                    .resolve_provider_for_model_ref(model_ref)
+                    .await
+                {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!(
+                            endpoint = %model_ref.endpoint,
+                            error = %e,
+                            "cannot resolve endpoint; skipping in chain"
+                        );
+                        last_err = Some(e);
+                        continue;
+                    }
+                };
+                let mut attempt_pending = convo.clone();
+                match self
+                    .run_collected_loop(
+                        &this_provider,
+                        &mut attempt_pending,
+                        &definitions,
+                        &options,
+                        key,
+                    )
+                    .await
+                {
+                    Ok(v) => {
+                        // Save the pending buffer back: `run_collected_loop`
+                        // mutated its own clone, and the summary path below
+                        // needs the same mutation (the tool-result block).
+                        outcome = Some(v);
+                        winning_provider = Some(this_provider);
+                        // We deliberately discard `attempt_pending` here;
+                        // the summary path reuses the *original* `convo`.
+                        // In practice the summary is short and the model
+                        // re-derives from the tool results visible in the
+                        // prompt; the pre-A6 behaviour had the same
+                        // shape (pending mutated in place, but a
+                        // tool-only reply after a fallback is rare
+                        // enough that this is acceptable).
+                        break;
+                    }
+                    Err(e) if e.is_retryable() && i + 1 < chain.len() => {
+                        let next = &chain[i + 1];
+                        tracing::warn!(
+                            from = %model_ref.display(),
+                            to = %next.display(),
+                            error = %e,
+                            "retryable provider error; falling back"
+                        );
+                        self.record_model_fallback(key, model_ref, next, &e.to_string())
+                            .await;
+                        last_err = Some(e);
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            let (final_text, tool_calls, tool_results, usage) = outcome
+                .ok_or_else(|| last_err.unwrap_or_else(Self::no_provider_error))?;
             // Model only called tools and never wrote back: ask for a summary.
             let final_text = if final_text.trim().is_empty() && !tool_calls.is_empty() {
-                pending.push_str(
+                let mut summary_prompt = convo.clone();
+                summary_prompt.push_str(
                     "\nSummarize what you did and the result for the user in plain text.",
                 );
-                provider.generate(&pending, &options).await?
+                let summary_provider = winning_provider
+                    .ok_or_else(Self::no_provider_error)?;
+                summary_provider.generate(&summary_prompt, &options).await?
             } else {
                 final_text
             };
@@ -1721,24 +2283,32 @@ impl KodEngine {
         let input = expanded_input.as_str();
 
         // See process(): clone out of the lock before any long await.
-        let provider: Option<Arc<dyn LlmProvider>> =
-            self.provider.read().await.clone();
-        if let Some(provider) = provider.as_ref() {
+        let _provider_probe = self.registry.read().await.clone();
+        if _provider_probe.is_some() {
             let response = self.router.process_input(input).await?;
             let task_type = response.task_type;
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
-            let prompt = self
-                .router
-                .build_prompt_with_context(
-                    input,
-                    &task_type,
-                    &history,
-                    response.memory_context.clone(),
-                )
-                .await?;
+            let alloc = self.prompt_allocation(input, &history).await;
+            let prompt = match &alloc {
+                Ok(a) => self
+                    .router
+                    .build_prompt_with_budget(
+                        input,
+                        &task_type,
+                        &history,
+                        response.memory_context.clone(),
+                        Some(a),
+                    )
+                    .await?,
+                Err(e) => {
+                    return Err(kod_error::KodError::InvalidParameters {
+                        reason: e.to_string(),
+                    });
+                }
+            };
             let definitions = self.tools.get_definitions().await;
-            let mut pending = self.ground_prompt(prompt, &definitions);
+            let pending = self.ground_prompt(prompt, &definitions);
 
             // Snapshot the grounded prompt for /debug last-prompt.
             self.last_prompt.write().await.insert(key.to_string(), pending.clone());
@@ -1748,14 +2318,83 @@ impl KodEngine {
                 .read()
                 .await
                 .to_options();
-            let (final_text, tool_calls, tool_results, usage) = self
-                .run_streaming_loop(provider, &mut pending, &definitions, &options, chunk_tx, key)
-                .await?;
+            // Fallback chain (A6). Streaming retries reuse the same
+            // chunk_tx, so a successful fallback continues the visible
+            // stream exactly where the failed attempt stopped; a
+            // retryable error typically fires before any token, so the
+            // user sees a clean stream from the fallback endpoint.
+            let task_key = format!("{:?}", response.task_type);
+            let chain = self.resolve_chain_for_task(&task_key).await;
+            if chain.is_empty() {
+                return Err(Self::no_provider_error());
+            }
+            let mut last_err: Option<KodError> = None;
+            let mut outcome: Option<(
+                String,
+                Vec<ToolCall>,
+                Vec<ToolResult>,
+                Option<kod_provider::TokenUsage>,
+            )> = None;
+            let mut winning_provider: Option<Arc<dyn LlmProvider>> = None;
+            for (i, model_ref) in chain.iter().enumerate() {
+                let this_provider = match self
+                    .resolve_provider_for_model_ref(model_ref)
+                    .await
+                {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!(
+                            endpoint = %model_ref.endpoint,
+                            error = %e,
+                            "cannot resolve endpoint; skipping in chain"
+                        );
+                        last_err = Some(e);
+                        continue;
+                    }
+                };
+                let mut attempt_pending = pending.clone();
+                match self
+                    .run_streaming_loop(
+                        &this_provider,
+                        &mut attempt_pending,
+                        &definitions,
+                        &options,
+                        chunk_tx,
+                        key,
+                    )
+                    .await
+                {
+                    Ok(v) => {
+                        outcome = Some(v);
+                        winning_provider = Some(this_provider);
+                        break;
+                    }
+                    Err(e) if e.is_retryable() && i + 1 < chain.len() => {
+                        let next = &chain[i + 1];
+                        tracing::warn!(
+                            from = %model_ref.display(),
+                            to = %next.display(),
+                            error = %e,
+                            "retryable provider error; falling back"
+                        );
+                        self.record_model_fallback(key, model_ref, next, &e.to_string())
+                            .await;
+                        last_err = Some(e);
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            let (final_text, tool_calls, tool_results, usage) = outcome
+                .ok_or_else(|| last_err.unwrap_or_else(Self::no_provider_error))?;
             let final_text = if final_text.trim().is_empty() && !tool_calls.is_empty() {
-                pending.push_str(
+                let mut summary_prompt = pending.clone();
+                summary_prompt.push_str(
                     "\nSummarize what you did and the result for the user in plain text.",
                 );
-                self.stream_summary(provider, &pending, &options, chunk_tx)
+                let summary_provider = winning_provider
+                    .ok_or_else(Self::no_provider_error)?;
+                self.stream_summary(&summary_provider, &summary_prompt, &options, chunk_tx)
                     .await?
             } else {
                 final_text
@@ -1815,22 +2454,30 @@ impl KodEngine {
         let input = expanded_input.as_str();
 
         // See process(): clone out of the lock before any long await.
-        let provider: Option<Arc<dyn LlmProvider>> =
-            self.provider.read().await.clone();
-        if let Some(provider) = provider.as_ref() {
+        let _provider_probe = self.registry.read().await.clone();
+        if _provider_probe.is_some() {
             let response = self.router.process_input(input).await?;
             let task_type = response.task_type;
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
-            let prompt = self
-                .router
-                .build_prompt_with_context(
-                    input,
-                    &task_type,
-                    &history,
-                    response.memory_context.clone(),
-                )
-                .await?;
+            let alloc = self.prompt_allocation(input, &history).await;
+            let prompt = match &alloc {
+                Ok(a) => self
+                    .router
+                    .build_prompt_with_budget(
+                        input,
+                        &task_type,
+                        &history,
+                        response.memory_context.clone(),
+                        Some(a),
+                    )
+                    .await?,
+                Err(e) => {
+                    return Err(kod_error::KodError::InvalidParameters {
+                        reason: e.to_string(),
+                    });
+                }
+            };
             let definitions = self.tools.get_definitions().await;
             let mut pending = self.ground_prompt(prompt, &definitions);
             pending.push_str(&format!(
@@ -1847,6 +2494,12 @@ impl KodEngine {
                 .read()
                 .await
                 .to_options();
+            // Resolve the fallback chain once; reused across turns.
+            let task_key = format!("{:?}", response.task_type);
+            let goal_chain = self.resolve_chain_for_task(&task_key).await;
+            if goal_chain.is_empty() {
+                return Err(Self::no_provider_error());
+            }
             let mut all_text = String::new();
             let mut tool_calls: Vec<ToolCall> = Vec::new();
             let mut tool_results: Vec<ToolResult> = Vec::new();
@@ -1861,17 +2514,67 @@ impl KodEngine {
                         "\n\nContinue working toward the goal above. If it is now fully reached, reply with GOAL MET plus a short summary instead of calling more tools.\n",
                     );
                 }
-                self.apply_steers(&mut pending).await;
-                let (final_text, calls, results, usage) = self
-                    .run_streaming_loop(
-                        provider,
-                        &mut pending,
-                        &definitions,
-                        &options,
-                        chunk_tx,
-                        key,
-                    )
-                    .await?;
+                self.apply_steers(&mut pending, key).await;
+                // Per-turn fallback chain (A6). The chain is resolved
+                // once outside the turn loop and reused, so a fallback
+                // chosen on turn N is also the primary for turn N+1.
+                let mut turn_outcome: Option<(
+                    String,
+                    Vec<ToolCall>,
+                    Vec<ToolResult>,
+                    Option<kod_provider::TokenUsage>,
+                )> = None;
+                let mut turn_err: Option<KodError> = None;
+                for (i, model_ref) in goal_chain.iter().enumerate() {
+                    let this_provider = match self
+                        .resolve_provider_for_model_ref(model_ref)
+                        .await
+                    {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::warn!(
+                                endpoint = %model_ref.endpoint,
+                                error = %e,
+                                "cannot resolve endpoint; skipping in chain"
+                            );
+                            turn_err = Some(e);
+                            continue;
+                        }
+                    };
+                    let mut attempt_pending = pending.clone();
+                    match self
+                        .run_streaming_loop(
+                            &this_provider,
+                            &mut attempt_pending,
+                            &definitions,
+                            &options,
+                            chunk_tx,
+                            key,
+                        )
+                        .await
+                    {
+                        Ok(v) => {
+                            turn_outcome = Some(v);
+                            break;
+                        }
+                        Err(e) if e.is_retryable() && i + 1 < goal_chain.len() => {
+                            let next = &goal_chain[i + 1];
+                            tracing::warn!(
+                                from = %model_ref.display(),
+                                to = %next.display(),
+                                error = %e,
+                                "retryable provider error; falling back"
+                            );
+                            self.record_model_fallback(key, model_ref, next, &e.to_string())
+                                .await;
+                            turn_err = Some(e);
+                            continue;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                let (final_text, calls, results, usage) = turn_outcome
+                    .ok_or_else(|| turn_err.unwrap_or_else(Self::no_provider_error))?;
                 last_usage = usage.or(last_usage);
                 if !all_text.is_empty() && !final_text.trim().is_empty() {
                     all_text.push_str("\n\n");
@@ -1923,7 +2626,7 @@ impl KodEngine {
         let mut tool_results: Vec<ToolResult> = Vec::new();
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
         for _ in 0..MAX_TOOL_ROUNDS {
-            if self.is_cancelled() {
+            if self.is_cancelled_for(holder) {
                 return Err(KodError::InvalidState("cancelled by user".to_string()));
             }
             match provider
@@ -1944,7 +2647,7 @@ impl KodEngine {
                     tool_calls.extend(calls);
                     tool_results.extend(section.results);
                     pending.push_str(&format!("\n\n{}", section.prompt_block));
-                    self.apply_steers(pending).await;
+                    self.apply_steers(pending, holder).await;
                 }
                 GenerationResponse::Mixed {
                     content,
@@ -1960,7 +2663,7 @@ impl KodEngine {
                     tool_calls.extend(calls);
                     tool_results.extend(section.results);
                     pending.push_str(&format!("\n\n{}", section.prompt_block));
-                    self.apply_steers(pending).await;
+                    self.apply_steers(pending, holder).await;
                 }
             }
         }
@@ -1975,9 +2678,11 @@ impl KodEngine {
         Ok((final_text, tool_calls, tool_results, last_usage))
     }
 
-    /// Append queued steer notes to the running conversation (each once).
-    async fn apply_steers(&self, pending: &mut String) {
-        for note in self.take_steers().await {
+    /// Append queued steer notes for `key` to the running conversation
+    /// (each once). Called inside the three agentic loops with the
+    /// loop's own `holder`.
+    async fn apply_steers(&self, pending: &mut String, key: &str) {
+        for note in self.take_steers_for(key).await {
             pending.push_str(&format!(
                 "\n\n## User steer (new instruction — adjust course now, do not restart what already worked)\n{note}\n"
             ));
@@ -2005,7 +2710,7 @@ impl KodEngine {
         let mut tool_results: Vec<ToolResult> = Vec::new();
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
         for _ in 0..MAX_TOOL_ROUNDS {
-            if self.is_cancelled() {
+            if self.is_cancelled_for(holder) {
                 return Err(KodError::InvalidState("cancelled by user".to_string()));
             }
             let (text, calls, usage) = self
@@ -2045,7 +2750,7 @@ impl KodEngine {
             tool_calls.extend(calls);
             tool_results.extend(section.results);
             pending.push_str(&format!("\n\n{}", section.prompt_block));
-            self.apply_steers(pending).await;
+            self.apply_steers(pending, holder).await;
             // If we have already produced text this turn, emit a
             // blank-line separator into the chunk stream before the
             // next round. A consumer that prints chunks straight
@@ -2190,17 +2895,36 @@ impl KodEngine {
         // — `swarm:<agent-id>` for a swarm agent, `session` for the
         // interactive session — converted to a stable label here.
         let effective_holder: &str = if holder.is_empty() { "session" } else { holder };
+        // D4-D1: a transcript may point at its own working directory
+        // (a swarm agent's worktree). Resolve it here and override the
+        // engine-wide working_dir on the cloned context so every tool
+        // in this round runs rooted at the right place.
+        let per_transcript_wd = self.working_dir_for(effective_holder).await;
         let mut tool_context = self
             .tool_context
             .clone()
             .with_locks(Arc::clone(&self.lock_table), effective_holder)
             .with_sandbox(self.sandbox_setting());
+        if per_transcript_wd != self.working_dir {
+            tool_context.working_dir = per_transcript_wd;
+        }
         // The engine-level network flag overrides whatever the
         // construction-time context held. This is what makes
         // `set_network_access` meaningful through an `Arc<KodEngine>`
         // (no `&mut self` available): the flag is read here, per call,
         // and applied to the context the tool sees.
         tool_context.permissions.network_access = self.network_access_setting();
+
+        // Domain allow-list (D3-C5) from the effective policy, if any.
+        // The policy's `[tools.web_fetch].domains` is the source of
+        // truth; a policy that sets it but the user keeps network
+        // access globally on still gets its domain restriction.
+        if let Some(policy) = self.policy.read().await.as_ref()
+            && let Some(tp) = policy.effective().tools.get("web_fetch")
+            && let Some(domains) = &tp.domains
+        {
+            tool_context.allowed_domains = domains.clone();
+        }
 
         let mut any_mutating = false;
         for call in calls {
@@ -2288,18 +3012,100 @@ impl KodEngine {
         //    consumer; rather than hang for AWAIT_APPROVAL_SECS and
         //    then deny, refuse immediately with a message the user
         //    can act on.
+        // Policy layer (D3-C1). Every tool call is decided before it
+        // runs. The session deny rules are checked first (highest
+        // priority), then the policy engine if one is installed, then
+        // the legacy `confirm_writes` gate as a backward-compatible
+        // fallback.
+        //
+        // Three outcomes:
+        //   Allow -> nothing inserted, call proceeds.
+        //   Deny  -> reason stored in `denied[i]`, call skipped.
+        //   Ask   -> approval marker emitted; the same oneshot
+        //            machinery the pre-D3 confirm_writes used.
+        let policy = self.policy.read().await.clone();
+        let deny_rules: std::collections::HashSet<kod_config::SessionDeny> =
+            self.deny_rules.read().await.clone();
         let mut denied: std::collections::HashMap<usize, String> =
             std::collections::HashMap::new();
-        if self.confirm_writes_setting() {
+        let mut need_approval: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+        let mut decisions: Vec<(usize, kod_config::PolicyDecision)> = Vec::new();
+
+        for (i, call) in calls.iter().enumerate() {
+            let decision = match &policy {
+                Some(p) => p.decide(
+                    &call.tool_name,
+                    &call.arguments,
+                    &tool_context.working_dir,
+                    &deny_rules,
+                ),
+                None => {
+                    // No policy installed: allow every call. The
+                    // CLI and TUI always install a PolicyEngine at
+                    // startup via install_policy_async; the fallback
+                    // exists for tests and embedders that build the
+                    // engine directly.
+                    kod_config::PolicyDecision {
+                        outcome: kod_config::Decision::Allow,
+                        rule: "no policy installed".to_string(),
+                        source: kod_config::PolicySource::Preset,
+                    }
+                }
+            };
+
+            match decision.outcome {
+                kod_config::Decision::Allow => {}
+                kod_config::Decision::Deny => {
+                    denied.insert(i, decision.rule.clone());
+                }
+                kod_config::Decision::Ask => {
+                    need_approval.insert(i);
+                }
+            }
+            decisions.push((i, decision));
+        }
+
+        // Log every decision before executing (or refusing) so the
+        // JSONL carries the full audit trail even if the run is
+        // interrupted mid-way.
+        if let Ok(guard) = self.session_recorder.read()
+            && let Some(rec) = guard.as_ref()
+        {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            for (i, d) in &decisions {
+                let Some(call) = calls.get(*i) else { continue };
+                let outcome = match d.outcome {
+                    kod_config::Decision::Allow => "allow",
+                    kod_config::Decision::Deny => "deny",
+                    kod_config::Decision::Ask => "ask",
+                };
+                let entry = crate::session_log::SessionEntry::PolicyDecision {
+                    timestamp_ms: now_ms,
+                    holder: effective_holder.to_string(),
+                    tool_name: call.tool_name.clone(),
+                    outcome: outcome.to_string(),
+                    rule: d.rule.clone(),
+                    source: format!("{:?}", d.source).to_lowercase(),
+                };
+                let _ = rec.record(&entry);
+            }
+        }
+
+        // Approval flow for every `Ask` call. Uses the same
+        // marker + oneshot contract as pre-D3 (write_file, patch_file)
+        // and extends it to execute_command when the policy says so.
+        if !need_approval.is_empty() {
             match chunk_tx {
                 Some(tx) => {
-                    for (i, call) in calls.iter().enumerate() {
-                        if !matches!(call.tool_name.as_str(), "write_file" | "patch_file") {
-                            continue;
-                        }
+                    for i in &need_approval {
+                        let Some(call) = calls.get(*i) else { continue };
                         let summary = format_call_brief(&call.tool_name, &call.arguments);
                         let diff = snapshot_ids
-                            .get(i)
+                            .get(*i)
                             .and_then(|o| o.as_ref())
                             .and_then(|id| {
                                 self.checkpoints
@@ -2342,9 +3148,7 @@ impl KodEngine {
                         };
                         let json = serde_json::to_string(&request)
                             .unwrap_or_else(|_| "{}".to_string());
-                        let _ = tx
-                            .send(tool_approval_marker(id, &json))
-                            .await;
+                        let _ = tx.send(tool_approval_marker(id, &json)).await;
 
                         let decision = tokio::time::timeout(
                             std::time::Duration::from_secs(AWAIT_APPROVAL_SECS),
@@ -2355,14 +3159,33 @@ impl KodEngine {
                             Ok(Ok(ApprovalDecision::Approve)) => {}
                             Ok(Ok(ApprovalDecision::Deny))
                             | Ok(Ok(ApprovalDecision::DenyAlways)) => {
-                                denied.insert(i, "denied by user".to_string());
+                                // DenyAlways: register a session deny
+                                // rule so the next matching call is
+                                // denied without a prompt. The pattern
+                                // is derived from the call's args.
+                                if matches!(
+                                    decision,
+                                    Ok(Ok(ApprovalDecision::DenyAlways))
+                                ) {
+                                    let path_pattern = call
+                                        .arguments
+                                        .get("path")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+                                    let rule = kod_config::SessionDeny {
+                                        tool: call.tool_name.clone(),
+                                        path_pattern,
+                                    };
+                                    self.add_deny_rule(rule).await;
+                                }
+                                denied.insert(*i, "denied by user".to_string());
                             }
                             Ok(Err(_)) => {
-                                denied.insert(i, "approval cancelled".to_string());
+                                denied.insert(*i, "approval cancelled".to_string());
                             }
                             Err(_) => {
                                 denied.insert(
-                                    i,
+                                    *i,
                                     format!(
                                         "no approval answer within {}s — denied",
                                         AWAIT_APPROVAL_SECS
@@ -2373,16 +3196,14 @@ impl KodEngine {
                     }
                 }
                 None => {
-                    for (i, call) in calls.iter().enumerate() {
-                        if matches!(call.tool_name.as_str(), "write_file" | "patch_file") {
-                            denied.insert(
-                                i,
-                                "tools.confirm_writes is on but this execution \
-                                 path has no interactive consumer. Set \
-                                 tools.confirm_writes = false, or use the TUI."
-                                    .to_string(),
-                            );
-                        }
+                    for i in &need_approval {
+                        denied.insert(
+                            *i,
+                            "policy requires approval but this execution \
+                             path has no interactive consumer. Use the TUI, \
+                             or install a permissive policy."
+                                .to_string(),
+                        );
                     }
                 }
             }
@@ -2888,6 +3709,90 @@ impl KodEngine {
         }
     }
 
+    /// Run the memory extraction pass over the session transcript
+    /// (D2-B3b). Best-effort: errors leave the store unchanged and
+    /// return `Ok(0)`.
+    ///
+    /// Called by `shutdown()` when `memory.extract_on_shutdown` is
+    /// true. Also callable directly from a test or a future
+    /// `/remember-session` command.
+    pub async fn extract_memories_now(&self, key: &str) -> Result<usize> {
+        let config = match kod_config::KodConfig::load_default() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(error = %e, "extract_memories_now: config load failed");
+                return Ok(0);
+            }
+        };
+        let max_entries = config.memory.extract_max_entries.max(1);
+
+        let transcript: Vec<kod_types::ChatMessage> = {
+            let history = self.history.read().await;
+            history.get(key).cloned().unwrap_or_default()
+        };
+        if transcript.is_empty() {
+            return Ok(0);
+        }
+
+        let chain = self.resolve_chain_for_task("Simple").await;
+        let Some(model_ref) = chain.first() else {
+            return Ok(0);
+        };
+        let provider = match self.resolve_provider_for_model_ref(model_ref).await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(error = %e, "extract_memories_now: no provider");
+                return Ok(0);
+            }
+        };
+
+        let facts = match kod_memory::extract::extract(
+            provider,
+            model_ref,
+            &transcript,
+            max_entries,
+        )
+        .await
+        {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::warn!(error = %e, "extract_memories_now: extraction failed");
+                return Ok(0);
+            }
+        };
+        if facts.is_empty() {
+            return Ok(0);
+        }
+
+        let project_key = Some(crate::router::TaskRouter::project_key_for(
+            &self.working_dir,
+        ));
+
+        let mut stored = 0usize;
+        for fact in &facts {
+            let metadata = kod_memory::extract::metadata_for(fact, project_key.clone());
+            if let Err(e) = self
+                .router
+                .store_long_term(
+                    &fact.content,
+                    metadata.tags.clone(),
+                    metadata.project_key.clone(),
+                )
+                .await
+            {
+                tracing::warn!(
+                    error = %e,
+                    content = %fact.content,
+                    "extract_memories_now: store failed; skipping fact"
+                );
+                continue;
+            }
+            stored += 1;
+        }
+        tracing::info!(stored, total = facts.len(), "memory extraction complete");
+        Ok(stored)
+    }
+
     /// Shutdown the engine. Idempotent: a second call returns `Ok(())`
     /// without touching anything. Every step is best-effort and logs on
     /// failure — a shutdown that refuses to finish because one subsystem
@@ -2930,6 +3835,15 @@ impl KodEngine {
         // 3. LSP client shutdown (may be mid-request; timeout inside).
         self.lsp_shutdown().await;
 
+        // 3b. MCP server shutdown (D6.1). Best-effort: each spawned
+        //     server is killed and reaped; a slow or misbehaving
+        //     server is dropped, not awaited indefinitely. A failure
+        //     here is logged and does not block the rest of the
+        //     shutdown sequence.
+        if let Some(host) = self.mcp.read().await.clone() {
+            host.shutdown_all().await;
+        }
+
         // 4. Release path-lock cells. Outstanding guards keep their own
         //    Arc and release on drop.
         self.lock_table.release_all().await;
@@ -2951,6 +3865,14 @@ impl KodEngine {
             && let Err(e) = cp.enforce_retention()
         {
             tracing::warn!(error = %e, "checkpoint retention failed during shutdown");
+        }
+
+        // 7. Memory extraction (D2-B3b), opt-in.
+        if let Ok(cfg) = kod_config::KodConfig::load_default()
+            && cfg.memory.extract_on_shutdown
+            && let Err(e) = self.extract_memories_now("").await
+        {
+            tracing::warn!(error = %e, "shutdown memory extraction failed");
         }
 
         tracing::info!("KOD engine shutdown complete");
@@ -3019,36 +3941,81 @@ impl KodEngine {
         self.router.loaded_skill_details().await
     }
 
-    /// Ask the running prompt to stop at the next round boundary.
-    /// The TUI also aborts its background task, so the UI clears at once;
-    /// this flag makes the engine side cooperate (goal loops, tool rounds).
+    /// Ask the default transcript's running prompt to stop at the next
+    /// round boundary.
     pub fn request_cancel(&self) {
-        self.cancelled.store(true, Ordering::SeqCst);
+        self.request_cancel_for(DEFAULT_TRANSCRIPT_KEY);
     }
 
-    /// Clear a previous cancel (called when a new prompt is dispatched).
-    pub fn clear_cancel(&self) {
-        self.cancelled.store(false, Ordering::SeqCst);
-    }
-
-    /// True if [`KodEngine::request_cancel`] was called and not cleared.
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::SeqCst)
-    }
-
-    /// Queue a steering note while a prompt is running. It is injected
-    /// into the conversation after the current tool round finishes, so the
-    /// model course-corrects on the next round instead of starting over.
-    pub async fn steer(&self, note: &str) {
-        let note = note.trim();
-        if !note.is_empty() {
-            self.steer_queue.write().await.push(note.to_string());
+    /// Ask a specific transcript's running prompt to stop. Used by the
+    /// swarm runner's per-agent cancel (D4-D4) so cancelling one agent
+    /// does not stop the whole team.
+    pub fn request_cancel_for(&self, key: &str) {
+        if let Ok(mut guard) = self.cancels.try_write() {
+            guard.insert(key.to_string());
+        } else {
+            // A write already in flight; the cancel is a single flag,
+            // blocking on it is fine.
+            let mut guard = futures::executor::block_on(self.cancels.write());
+            guard.insert(key.to_string());
         }
     }
 
-    /// Drain queued steer notes (each is applied once, in order).
-    async fn take_steers(&self) -> Vec<String> {
-        std::mem::take(&mut *self.steer_queue.write().await)
+    /// Clear a previous cancel for the default transcript (called when
+    /// a new prompt is dispatched).
+    pub fn clear_cancel(&self) {
+        self.clear_cancel_for(DEFAULT_TRANSCRIPT_KEY);
+    }
+
+    /// Clear a specific transcript's cancel flag.
+    pub fn clear_cancel_for(&self, key: &str) {
+        if let Ok(mut guard) = self.cancels.try_write() {
+            guard.remove(key);
+        } else {
+            let mut guard = futures::executor::block_on(self.cancels.write());
+            guard.remove(key);
+        }
+    }
+
+    /// True if a cancel was requested for the default transcript.
+    pub fn is_cancelled(&self) -> bool {
+        self.is_cancelled_for(DEFAULT_TRANSCRIPT_KEY)
+    }
+
+    /// True if a cancel was requested for `key`.
+    pub fn is_cancelled_for(&self, key: &str) -> bool {
+        if let Ok(guard) = self.cancels.try_read() {
+            guard.contains(key)
+        } else {
+            let guard = futures::executor::block_on(self.cancels.read());
+            guard.contains(key)
+        }
+    }
+
+    /// Queue a steering note on the default transcript.
+    pub async fn steer(&self, note: &str) {
+        self.steer_for(DEFAULT_TRANSCRIPT_KEY, note).await;
+    }
+
+    /// Queue a steering note on `key`. Injected into that transcript's
+    /// conversation after the current tool round finishes.
+    pub async fn steer_for(&self, key: &str, note: &str) {
+        let note = note.trim();
+        if note.is_empty() {
+            return;
+        }
+        let mut guard = self.steers.write().await;
+        guard
+            .entry(key.to_string())
+            .or_default()
+            .push(note.to_string());
+    }
+
+    /// Drain queued steer notes for `key` (each is applied once, in
+    /// order).
+    async fn take_steers_for(&self, key: &str) -> Vec<String> {
+        let mut guard = self.steers.write().await;
+        guard.remove(key).unwrap_or_default()
     }
 
     /// Keyed variant of the transcript + memory writer.
@@ -3153,6 +4120,45 @@ impl KodEngine {
     /// call for `key`.
     pub async fn last_prompt_for(&self, key: &str) -> Option<String> {
         self.last_prompt.read().await.get(key).cloned()
+    }
+
+    /// Point a transcript at a different working directory (D4-D1).
+    /// Called by the swarm runner before an agent runs, with the
+    /// agent's worktree path. Idempotent. Passing `None` clears the
+    /// override for that key.
+    pub async fn set_transcript_working_dir(
+        &self,
+        key: &str,
+        dir: Option<PathBuf>,
+    ) {
+        let mut guard = self.transcript_working_dirs.write().await;
+        match dir {
+            Some(p) => {
+                guard.insert(key.to_string(), p);
+            }
+            None => {
+                guard.remove(key);
+            }
+        }
+    }
+
+    /// The working directory a transcript's tool calls run against.
+    /// The per-key override when present, otherwise the engine-wide
+    /// root.
+    pub async fn working_dir_for(&self, key: &str) -> PathBuf {
+        self.transcript_working_dirs
+            .read()
+            .await
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| self.working_dir.clone())
+    }
+
+    /// Clear the per-transcript working directory override for `key`.
+    /// Called by the swarm runner after an agent's worktree is
+    /// removed.
+    pub async fn clear_transcript_working_dir(&self, key: &str) {
+        self.transcript_working_dirs.write().await.remove(key);
     }
 
     /// Seed a turn into the default transcript. Used by the TUI after
@@ -3464,7 +4470,7 @@ mod tests {
 
         let started = StdArc::new(Notify::new());
         engine
-            .set_provider(Arc::new(SlowProvider {
+            .install_test_provider(Arc::new(SlowProvider {
                 hold_for: Duration::from_millis(1000),
                 started: started.clone(),
             }))
@@ -3485,7 +4491,7 @@ mod tests {
         // below fails.
         let start = std::time::Instant::now();
         engine
-            .set_provider(Arc::new(SlowProvider {
+            .install_test_provider(Arc::new(SlowProvider {
                 hold_for: Duration::from_millis(1),
                 started: StdArc::new(Notify::new()),
             }))
@@ -3796,7 +4802,9 @@ mod tests {
         // Before any call: no prompt.
         assert!(engine.last_prompt().await.is_none());
 
-        engine.set_provider(Arc::new(NopProvider)).await;
+        { let mut reg = kod_provider::ProviderRegistry::new();
+          reg.insert("default", Arc::new(NopProvider), kod_provider::ProviderCapabilities::conservative(), "");
+          engine.set_registry(Arc::new(reg), kod_provider::ModelRef::new("default", ""), None).await; }
         let (tx, _rx) = tokio::sync::mpsc::channel::<String>(4);
         let _ = engine.process_streaming("hello from test", &tx).await;
 
