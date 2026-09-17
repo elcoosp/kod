@@ -4,7 +4,6 @@ use adk_core::{Content, GenerateContentConfig, Llm, LlmRequest, Part};
 use adk_model::openai_compatible::{OpenAICompatible, OpenAICompatibleConfig};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
-use kod_config::LlmConfig;
 use kod_error::{KodError, Result};
 use kod_provider::{GenerationOptions, GenerationResponse, LlmProvider, StreamChunk};
 use kod_types::{ToolCall, ToolDefinition};
@@ -121,18 +120,6 @@ impl OpenAICompatProvider {
             client,
             timeout_secs,
         })
-    }
-
-    /// Build a provider from kod's LLM config, optionally overriding the model
-    /// (e.g. from a `--model` CLI flag).
-    pub fn from_config(config: &LlmConfig, model_override: Option<&str>) -> Result<Self> {
-        let model = model_override.unwrap_or(&config.model);
-        Self::with_api_key_and_timeout(
-            &config.base_url,
-            model,
-            resolve_api_key(config.api_key.clone()),
-            config.timeout_secs,
-        )
     }
 
     /// Switch models, keeping the same endpoint, credentials, and

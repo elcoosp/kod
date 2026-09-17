@@ -4,7 +4,6 @@ use adk_core::{Content, GenerateContentConfig, Llm, LlmRequest, Part};
 use adk_model::anthropic::{AnthropicClient, AnthropicConfig};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
-use kod_config::LlmConfig;
 use kod_error::{KodError, Result};
 use kod_provider::{
     GenerationOptions, GenerationResponse, LlmProvider, PromptCacheKind, ProviderCapabilities,
@@ -14,27 +13,6 @@ use kod_types::{ToolCall, ToolDefinition};
 use std::collections::HashMap;
 use std::pin::Pin;
 
-/// Fallback API key resolution: explicit argument first, then
-/// `ANTHROPIC_API_KEY` from the environment. Unlike the local
-/// OpenAI-compatible servers, Anthropic requires a real key — a
-/// missing key is a startup error, not a fallback to a dummy value.
-fn resolve_api_key(explicit: Option<String>) -> Result<String> {
-    if let Some(k) = explicit
-        && !k.trim().is_empty()
-    {
-        return Ok(k);
-    }
-    match std::env::var("ANTHROPIC_API_KEY") {
-        Ok(k) if !k.trim().is_empty() => Ok(k),
-        _ => Err(KodError::Config(
-            "Anthropic provider needs an API key. Set \
-             ANTHROPIC_API_KEY in the environment, or add \
-             `api_key_env = \"ANTHROPIC_API_KEY\"` to the endpoint in the \
-             config."
-                .to_string(),
-        )),
-    }
-}
 
 /// Wrapper that implements kod's [`LlmProvider`] over the Anthropic
 /// Messages API.
@@ -62,14 +40,6 @@ impl AnthropicProvider {
             base_url,
             api_key,
         })
-    }
-
-    /// Create a provider, resolving the API key from the environment
-    /// when `config.api_key` is absent.
-    pub fn from_config(config: &LlmConfig, model_override: Option<&str>) -> Result<Self> {
-        let model = model_override.unwrap_or(&config.model);
-        let api_key = resolve_api_key(config.api_key.clone())?;
-        Self::with_api_key(&config.base_url, model, api_key)
     }
 
     /// Switch models on the same endpoint and credentials.
@@ -368,22 +338,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn resolve_api_key_prefers_explicit() {
-        let k = resolve_api_key(Some("explicit".into())).unwrap();
-        assert_eq!(k, "explicit");
-    }
 
-    #[test]
-    fn resolve_api_key_errors_when_missing() {
-        // SAFETY: single-threaded test.
-        unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
-        let err = resolve_api_key(None).unwrap_err();
-        assert!(
-            err.to_string().contains("ANTHROPIC_API_KEY"),
-            "got: {err}"
-        );
-    }
 
     #[test]
     fn capabilities_declare_explicit_prompt_cache() {
