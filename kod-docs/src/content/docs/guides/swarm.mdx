@@ -14,7 +14,7 @@ A swarm is KOD's answer to “this task is too big for one pass.” `kod swarm` 
 <Steps>
 1. **Decompose** — the runner asks the model to break your goal into subtasks, targeting `swarm.max_agents` pieces.
 2. **Spawn** — up to N agents start with their own subtask. The runner clamps N to the range **2–8**: a one-agent swarm is not a swarm, and eight concurrent agentic loops will saturate most local model servers.
-3. **Run** — agents loop independently (classify → ground → stream → tools), coordinated through a communication hub with a shared workspace and per-path locks.
+3. **Run** — agents loop independently (classify → ground → stream → tools), coordinated through a communication hub with a shared workspace and per-path locks. They share findings through the `swarm_note` / `swarm_read` blackboard tools.
 4. **Detect conflicts** — file-level locks and a conflict resolver surface agents that touched the same paths.
 5. **Merge** — when `swarm.merge_results` is true (the default), the model synthesizes one final answer from the per-agent results. When false — or when synthesis fails — the results are concatenated under their labels.
 </Steps>
@@ -25,21 +25,35 @@ A swarm is KOD's answer to “this task is too big for one pass.” `kod swarm` 
 kod swarm -g "implement and test a rate limiter for the HTTP client" -n 4
 ```
 
-Flags that matter: `-n, --agents` overrides the configured agent count (still clamped to 2–8); `--model` switches the model for the whole run; `--no-merge` disables synthesis so you get labeled per-agent output. Inside the TUI, `/swarm` starts the same flow interactively.
+Flags that matter: `-n, --agents` overrides the configured agent count (still clamped to 2–8) and `--model` switches the model for the whole run. Inside the TUI, `/swarm <goal>` starts the same flow interactively. Disabling result merging is a config decision, not a flag: set `swarm.merge_results = false` in `config.toml` to always get labeled per-agent output.
 
 <Aside type="tip">
-  Swarms shine when subtasks are *file-disjoint* — “module A”, “module B”, “tests”. You get real parallelism and no merge conflicts. When subtasks must touch the same files, prefer a single `kod agent` run or keep `-n` small.
+  Swarms shine when subtasks are <em>file-disjoint</em> — “module A”, “module B”, “tests”. You get real parallelism and no merge conflicts. When subtasks must touch the same files, prefer a single <code>kod agent</code> run or keep <code>-n</code> small.
 </Aside>
 
 ## Configuration
 
 ```toml
 [swarm]
-max_agents     = 5     # the decompose step targets this; runner clamps to 2–8
-merge_results  = true  # false = concatenate per-agent results under labels
+max_agents         = 5     # the decompose step targets this; runner clamps to 2–8
+merge_results      = true  # false = concatenate per-agent results under labels
+agent_timeout_secs = 300   # per-agent wall clock; a stuck agent is cancelled; 0 disables
+agent_retries      = 1     # extra attempts after a timeout or provider error
 ```
 
-The config section is minimal on purpose — it carries only the two values the swarm runner actually consumes. Coordination strategy and lock timeouts are not tunable because they are not parameters worth exposing; the defaults encode one opinionated, tested pipeline.
+The config section is minimal on purpose — it carries only the values the swarm runner actually consumes. Coordination strategy and lock timeouts are not tunable because they are not parameters worth exposing; the defaults encode one opinionated pipeline.
+
+## Routing swarm roles to different models
+
+If your config defines multiple endpoints, `[llm.routing].swarm` maps swarm capabilities to endpoints — the same multi-model routing that `by_task` provides for ordinary prompts:
+
+```toml
+[llm.routing.swarm]
+Planning = "cloud"   # the decompose/merge step thinks with the bigger model
+Coding   = "local"   # the per-agent implementation work stays local
+```
+
+See [Configuration](/guides/configuration/#endpoints-instead-of-a-single-model) for the endpoint blocks these names refer to.
 
 ## Shared workspace and safety
 
@@ -51,7 +65,7 @@ The workspace coordinator keeps agents from stomping each other through two mech
 Policy applies per agent: every agent's tool calls go through the same [policy engine](/guides/policy/) as single-agent runs. `--sandbox` (on `kod swarm` like `kod agent`) confines every agent's shell commands, and `--preset read-only` turns a swarm into a read-only analysis crew.
 
 <Aside type="caution">
-  A swarm with `yolo` and no sandbox multiplies unsupervised write access by N. For unattended runs, the safe posture is `--preset read-only` plus `--sandbox`, or a strict `.kod/policy.toml`.
+  A swarm with <code>yolo</code> and no sandbox multiplies unsupervised write access by N. For unattended runs, the safe posture is <code>--preset read-only</code> plus <code>--sandbox</code>, or a strict <code>.kod/policy.toml</code>.
 </Aside>
 
 <LinkCard title="Concepts: The Agent Loop" href="/concepts/agent-loop/" description="What each swarm agent is doing per round." />
