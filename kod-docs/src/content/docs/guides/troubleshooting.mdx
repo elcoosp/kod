@@ -5,13 +5,13 @@ sidebar:
   order: 13
 ---
 
-import { Aside, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
-Most KOD problems have short causes: a model server that is not running, a config typo, a policy rule doing exactly what you asked it to do. This page collects the frequent ones, in the order you are likely to meet them.
+Most KOD problems have short causes: a model server that is not running, a config typo, a policy rule doing exactly what you asked it to do. This page collects the frequent ones, in the order you are likely to meet them. For question-shaped problems (“where are my sessions?”, “how do I reset X?”), see the [FAQ](/guides/faq/).
 
 ## Start with `kod doctor`
 
-`kod doctor` is the triage tool. It checks the config file, the model endpoint, discovered skills, the memory database, and git availability, and prints a verdict for each. Run it before anything else; half of the entries below are “doctor would have told you.”
+`kod doctor` is the triage tool. It checks the config file, the model endpoint, discovered skills, the memory database, the sandbox primitive, and git availability, and prints a verdict for each. Run it before anything else; half of the entries below are “doctor would have told you.” `kod doctor --fix` creates missing directories and writes a default config if none exists — it never touches an existing config.
 
 ## The endpoint is not reachable
 
@@ -21,57 +21,46 @@ Most KOD problems have short causes: a model server that is not running, a confi
 
 1. The model server is not running. Start it — `ollama serve` — or start LM Studio's server / MLX Omni Serve / vLLM.
 2. Wrong base URL. Ollama's OpenAI-compatible root is `http://localhost:11434/v1`; the default config points there. `kod profile show` prints the effective `[llm]` block so you can see what KOD actually uses.
-3. The model name does not exist on the server. `kod models` lists what the provider offers (`--filter` narrows). Note the server name is what counts (`qwen3.8:27b-mlx`), not the profile name.
+3. The model name does not exist on the server. `kod models` lists what the provider offers (`--filter` narrows). Note the server's model name is what counts (`qwen2.5-coder:7b`), not the profile name.
+4. A cloud endpoint returns 401. `api_key_env` names the environment variable that must hold the key — check the variable is set *in the shell you launched KOD from*.
 
 ## Config problems
 
 **Symptom:** warnings at startup, or values not behaving as you expect.
 
-- Out-of-range values (temperature, context window, max tokens, timeout) are **clamped with a warning at load time** — read the warning; it names the key and the corrected value.
+- Out-of-range values (temperature, context window, max tokens, timeout) are **clamped with a warning at load time** — read the warning; it names the endpoint and the corrected value.
 - A corrupt config file does not brick anything: KOD warns and falls back to defaults. `kod config validate` exits non-zero on invalid TOML, which makes it easy to check a hand-edit before starting a session.
-- To see *effective* configuration rather than the raw file, `kod config toml` prints defaults merged with your settings — self-documenting and reproducible.
+- To see *effective* configuration rather than the raw file, `kod config show-merged` prints defaults merged with your settings — self-documenting and reproducible.
+- Old keys are silently ignored rather than erroring — if a `[llm]` block from an older example seems to do nothing, rewrite it as an `[[llm.endpoints]]` block (see [Configuration](/guides/configuration/)).
 
 ## “The agent refused to write / run anything”
 
 That is the [policy engine](/guides/policy/) working as configured:
 
 - **`read-only` preset** denies `write_file`, `patch_file`, and `execute_command` without asking. If you launched with `--preset read-only`, that is why. Unset it or use `standard`.
-- **`.kod/policy.toml`** in the project root may deny a path (`forbidden` globs) or a binary (`forbidden_binaries`). The decision is logged with its rule and source layer — check the session log entry.
-- **`confirm_writes = true`** (default under `standard`) *asks* before writes; in an unattended context there is no one to answer, so the call stalls or fails. For scripts, prefer an explicit `--preset read-only` run design instead of leaving prompts to time out.
+- **`.kod/policy.toml`** in the project root may deny a path (`forbidden` globs) or a binary (`forbidden_binaries`). The decision is logged with its rule and source layer — check the session log entry, or run `kod policy explain <tool> <args>` to see the verdict without a session.
+- **`standard` preset with nobody to approve**: `kod agent` and `kod prompt` cannot answer approval prompts, so approved-required calls are refused immediately with a message. For scripts, prefer an explicit `--preset read-only` run design.
 
 ## Memory errors
 
 **Symptom:** the long-term store errors on open.
 
-- A stale or corrupt `redb` file is fixed by deleting it — it is a plain file under `~/.kod/` (global scope) or `<cwd>/.kod/` (project scope), and it will be recreated on next use.
-- Running tests with an in-process router should disable memory (`enable_memory=false`) to avoid DB contention — the workspace's own test setup does this.
+- A stale or corrupt `redb` file is fixed by deleting it — it lives at `~/.kod/data/kod.redb` (global scope) or `<cwd>/.kod/memory.redb` (project scope), and it will be recreated on next use. Your sessions and checkpoints are stored elsewhere and survive.
+- `kod memory clear` empties entries without touching the file itself.
 
-## Live-model tests fail or are skipped
+## TUI state trouble
 
-Tests that exercise the real provider are `#[ignore]`-gated so `cargo test` stays fast and offline. To run them you must opt in with environment variables and a running server:
+**Symptom:** the TUI reopens a conversation you wanted gone, or a corrupt state file breaks startup.
 
-<Tabs>
-<TabItem label="Provider tests">
-  ```bash
-  KOD_TEST_MODEL=qwen2.5:0.5b \
-    cargo test -p kod-provider-openai -- --ignored --nocapture
-  ```
-</TabItem>
-<TabItem label="TUI main-loop test">
-  ```bash
-  KOD_TEST_MODEL=qwen2.5:0.5b KOD_TEST_DB=/tmp/kod-test.redb \
-    cargo test -p kod-tui --test main_loop -- --ignored --nocapture
-  ```
-</TabItem>
-</Tabs>
-
-If they fail with connection errors, the server is down or `KOD_TEST_MODEL` names a model you have not pulled.
+- The TUI resumes from `~/.kod/tui_session.json` (directory overridable with `KOD_TUI_STATE_DIR`). `kod sessions clear` removes it deliberately.
+- If the state file is corrupt, delete it — history and sessions on disk are unaffected. Note that `kod tui --no-resume` currently prints a hint rather than skipping the file; moving the file aside is the reliable fresh start.
 
 ## Where to look next
 
-- `kod sessions list` + the JSONL log — what actually happened, including every policy decision with its source.
+- `kod sessions latest` + the JSONL log — what actually happened, including every policy decision with its source.
+- `kod tools list` — what the model can actually call right now (MCP and LSP tools appear here when available).
 - `kod skills` — whether the skills you expect are actually loaded and matched (`--json` for scripts).
-- `kod map` — what the engine can see of your repository; surprising routing often traces to a surprising repo map.
+- `kod map` — what the engine can see of your repository; surprising answers often trace to a surprising repo map.
 
 <Aside type="note">
   If a fix here does not cover it, the [CONTRIBUTING guide](/developers/contributing/) explains what to include in a bug report — session log excerpts make reports dramatically easier to act on.
