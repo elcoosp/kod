@@ -19,7 +19,6 @@ pub mod agent;
 pub mod communication;
 pub mod coordination;
 pub mod swarm;
-pub mod workspace;
 
 pub use agent::{Agent, AgentBuilder, AgentState, Capability, ModelConfig};
 pub use communication::{
@@ -27,7 +26,6 @@ pub use communication::{
 };
 pub use coordination::{TaskAssignment, TaskCoordinator};
 pub use swarm::AgentSwarm;
-pub use workspace::{FileLock, LockType, SharedWorkspace};
 
 #[cfg(test)]
 mod tests {

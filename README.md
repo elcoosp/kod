@@ -7,7 +7,7 @@
   <p>
     <img src="https://img.shields.io/badge/Rust-1.85%2B%20%7C%202024-000000?style=flat-square&logo=rust" alt="Rust"/>
     <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License MIT"/>
-    <img src="https://img.shields.io/badge/Crates-12-6F4E37?style=flat-square" alt="Crates"/>
+    <img src="https://img.shields.io/badge/Crates-15-6F4E37?style=flat-square" alt="Crates"/>
     <img src="https://img.shields.io/badge/Backend-Ollama%20%7C%20OpenAI--Compatible-6A0DAD?style=flat-square" alt="Backend"/>
     <img src="https://img.shields.io/badge/Interface-TUI%20%2B%20CLI-4B32C3?style=flat-square" alt="Interface"/>
     <img src="https://img.shields.io/badge/Skills-Markdown%20%2B%20Hot%20Reload-00BFFF?style=flat-square" alt="Skills"/>
@@ -98,6 +98,9 @@ KOD is a Cargo workspace. Each crate has a single responsibility and a narrow pu
 | `kod-config` | `KodConfig`, `LlmConfig`, `MemoryConfig`, `SkillsConfig`, `SwarmConfig`, model profiles. |
 | `kod-provider` | `LlmProvider` trait, `GenerationOptions`, streaming chunk types. |
 | `kod-provider-openai` | OpenAI-compatible implementation (backed by `adk-model`). |
+| `kod-provider-anthropic` | Anthropic Messages API provider (backed by `adk-model`). |
+| `kod-lsp` | Minimal Language Server Protocol client: JSON-RPC over stdio, diagnostics, definition, references, hover. |
+| `kod-mcp` | Minimal Model Context Protocol client: spawns MCP servers, lists and calls their tools. |
 | `kod-skills` | Skill parser, loader, matcher, and hot-reload watcher. |
 | `kod-memory` | Short-term memory and long-term `redb` storage. |
 | `kod-tools` | `Tool` trait, registry, built-in tools, per-path lock table, sandbox invocation. |
@@ -457,10 +460,11 @@ See [`docs/TESTING.md`](docs/TESTING.md) for the full testing guide, including p
 
 ### Tracked gaps
 
-- Only the OpenAI-compatible protocol is implemented. `Anthropic` and `Custom` provider variants are recognised in config but will fail at the first prompt; `LlmConfig::validate` warns at startup.
-- Episodic memory and embeddings are not yet wired (`fastembed` is declared but the write path is inert). Long-term retrieval uses word-overlap heuristics today.
-- `--lto=thin` (LLVM) is out of scope for the current provider — KOD is a client, not a compiler.
-- Some docs (`docs/SPEC.md`) describe a larger aspirational system than the workspace implements. That file is kept as a design reference; `docs/ARCHITECTURE.md` and `docs/TESTING.md` describe the code as it exists.
+- **`kod chat --remote` / `kod prompt --remote` / `kod agent --remote` attach to a running `kod serve` daemon**, but approval and `ask_user` prompts are not yet routed over the socket — a strict policy on the daemon side will time out to deny. The daemon works cleanly with permissive presets.
+- **`kod swarm --remote`** is not wired. A swarm run streams many events (agent start, chunk, complete, conflict, merge); streaming that over the NDJSON socket needs a request shape the daemon does not yet expose.
+- **The swarm runner dispatches one agent per subtask index-1:1.** `TaskCoordinator::least_loaded_agent` and `find_agents_with_capability` exist but the runner does not consult them; a work-stealing dispatch is a follow-up.
+- **No per-agent heartbeat watchdog.** A stuck agent times out; a swarm whose N agents each finish just under their cap is bounded by the overall run timeout (`swarm_timeout_secs`, default 30 min).
+- **`docs/SPEC.md`** describes a larger aspirational system than the workspace implements. It is kept as a design reference; `docs/ARCHITECTURE.md` and `docs/TESTING.md` describe the code as it exists.
 
 > [!WARNING]
 > KOD is not a drop-in replacement for a full-featured IDE agent. It is a working harness whose goal is auditability and local-first control. Expect rough edges.

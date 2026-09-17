@@ -13,7 +13,18 @@ use std::path::{Path, PathBuf};
 // care about, leave the rest out.
 #[serde(default)]
 pub struct KodConfig {
-    pub llm: LlmConfig,
+        /// Config schema version. Absent means "v1" — the shape that
+    /// predates named endpoints, `[mcp]`, `[tools]`, and the
+    /// policy engine's layering. The loader accepts both; `kod config
+    /// migrate` writes a `2` here and rewrites the file into the v2
+    /// shape.
+    ///
+    /// `#[serde(default)]` rather than a bare `u32`: a file without
+    /// the key must still parse. `0` means "unset"; the effective
+    /// version is `version == 0 ? 1 : version`.
+    #[serde(default)]
+    pub config_version: u32,
+pub llm: LlmConfig,
     pub memory: MemoryConfig,
     pub skills: SkillsConfig,
     pub swarm: SwarmConfig,
@@ -138,7 +149,12 @@ impl KodConfig {
                 }
             }
         } else {
-            let config = Self::default();
+            // Fresh install: stamp v2 so the file the user opens is
+            // the shape the current release reads. A file that
+            // predates this change and lacks `config_version` loads
+            // as v1 via `effective_version()`.
+            let mut config = Self::default();
+            config.config_version = 2;
             if let Err(e) = config.save_to(&config_path) {
                 tracing::warn!(
                     path = %config_path.display(),
@@ -264,6 +280,22 @@ impl KodConfig {
             cwd.join(".kod").join("skills"),
             cwd.join(".agents").join("skills"),
         ])
+    }
+
+    /// Effective schema version: `1` for a config that never named
+    /// one, the stored value otherwise. Callers that need to branch
+    /// on the shape check this, not the raw field.
+    pub fn effective_version(&self) -> u32 {
+        if self.config_version == 0 {
+            1
+        } else {
+            self.config_version
+        }
+    }
+
+    /// True when the config file (as loaded) predates the v2 layout.
+    pub fn needs_migration(&self) -> bool {
+        self.effective_version() < 2
     }
 }
 

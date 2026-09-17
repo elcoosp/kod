@@ -19,6 +19,7 @@ pub mod repomap;
 pub mod router;
 pub mod serve;
 pub mod session_log;
+pub mod swarm_adapters;
 pub mod swarm_runner;
 pub mod worktree;
 

@@ -205,6 +205,12 @@ pub struct SwarmRunner {
     agent_timeout_secs: u64,
     /// Additional attempts after a failure.
     agent_retries: u32,
+    /// Overall run timeout in seconds. `0` disables it. Unlike the
+    /// per-agent cap, this bounds the total wall-clock time of the
+    /// entire swarm run, including the merge phase. Default 1800
+    /// (30 minutes) — long enough for a large run, short enough that
+    /// a hung agent does not wedge a terminal forever.
+    swarm_timeout_secs: u64,
 }
 
 impl SwarmRunner {
@@ -231,6 +237,7 @@ impl SwarmRunner {
             merge_results,
             agent_timeout_secs: 300,
             agent_retries: 1,
+            swarm_timeout_secs: 1800,
         })
     }
 
@@ -243,6 +250,12 @@ impl SwarmRunner {
     /// Set the retry budget. 0 means no retries.
     pub fn with_agent_retries(mut self, retries: u32) -> Self {
         self.agent_retries = retries;
+        self
+    }
+
+    /// Set the overall run timeout in seconds. 0 disables it.
+    pub fn with_swarm_timeout_secs(mut self, secs: u64) -> Self {
+        self.swarm_timeout_secs = secs;
         self
     }
 
@@ -350,8 +363,17 @@ impl SwarmRunner {
         }
 
         // 2. Spawn agents and register tasks.
-        let working_dir = self.engine.working_dir().to_path_buf();
-        let swarm = AgentSwarm::new(working_dir);
+        let _working_dir = self.engine.working_dir().to_path_buf();
+        // Build the swarm on the engine's hub (D4.3). The note and
+        // read tools the engine registers talk to the same hub, so a
+        // fact one agent broadcasts is visible to the tool layer and
+        // vice versa.
+        // Bind the hub locally so the per-agent tasks below can
+        // broadcast on it. Cloning an `AgentCommunicationHub`
+        // shares the underlying maps; every clone talks to the
+        // same blackboard.
+        let hub = self.engine.swarm_hub();
+        let swarm = AgentSwarm::with_hub(self.engine.swarm_hub());
         let mut handles: Vec<AgentHandle> = Vec::new();
         for (i, st) in subtasks.iter().enumerate() {
             let name = format!("agent-{}-{}", i + 1, sanitize(&st.name));
@@ -423,12 +445,30 @@ impl SwarmRunner {
             let name = h.name.clone();
             let subtask = h.subtask.clone();
             let out = chunk_tx.clone();
+            let hub = hub.clone();
             tasks.push(async move {
                 // Role preamble is computed once — retries use the
                 // same shaped prompt.
                 let per_agent_role = capability_for(&subtask.description);
                 let role_prefix = role_preamble(per_agent_role);
                 let transcript_key = format!("swarm:{id}");
+
+                // Announce this agent's start to its peers before it
+                // begins work (D4.3). A terminal-only lifecycle left
+                // an agent whose subtask depends on another's output
+                // with no way to know a peer was working on it; a
+                // start broadcast closes that gap. Best-effort: a hub
+                // that is not yet populated accepts the broadcast
+                // silently.
+                let _ = hub
+                    .broadcast_lifecycle(
+                        &id,
+                        &format!(
+                            "started: {}",
+                            subtask.description.lines().next().unwrap_or("")
+                        ),
+                    )
+                    .await;
 
                 let mut last_error: Option<String> = None;
                 let mut attempt: u32 = 0;
@@ -540,8 +580,24 @@ impl SwarmRunner {
                                     name: name.clone(),
                                     attempt: attempt + 1,
                                     max_attempts,
-                                    previous_error: err,
+                                    previous_error: err.clone(),
                                 })
+                                .await;
+                            // Tell the peers this agent is retrying
+                            // (D4.3). A peer that is waiting on a
+                            // fact this agent was going to produce
+                            // learns there is a delay, not a silent
+                            // failure.
+                            let _ = hub
+                                .broadcast_lifecycle(
+                                    &id,
+                                    &format!(
+                                        "retrying ({}/{}): {}",
+                                        attempt + 1,
+                                        max_attempts,
+                                        err.lines().next().unwrap_or("")
+                                    ),
+                                )
                                 .await;
                         }
                     }
@@ -549,7 +605,52 @@ impl SwarmRunner {
             });
         }
 
-        let raw = join_all(tasks).await;
+        // Overall run cap (D4.3). The per-agent timeout above covers
+        // a stuck agent, but N agents that each finish just under
+        // their cap can still make a run far longer than the user
+        // asked for. The overall cap is a hard ceiling; when it
+        // fires the agents are cancelled (their futures dropped)
+        // and the run proceeds to the merge with whatever results
+        // have arrived. A duration of zero disables the cap.
+        let raw = if self.swarm_timeout_secs == 0 {
+            join_all(tasks).await
+        } else {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(self.swarm_timeout_secs),
+                join_all(tasks),
+            )
+            .await
+            {
+                Ok(v) => v,
+                Err(_) => {
+                    tracing::warn!(
+                        secs = self.swarm_timeout_secs,
+                        "swarm: overall run timeout reached; aborting agents"
+                    );
+                    let _ = chunk_tx
+                        .send(SwarmEvent::AgentFailed {
+                            id: kod_types::AgentId::new(),
+                            name: "(run)".to_string(),
+                            error: format!(
+                                "overall run timeout ({}s) reached; \
+                                 the swarm stopped with whatever results \
+                                 had arrived",
+                                self.swarm_timeout_secs
+                            ),
+                        })
+                        .await;
+                    // The futures are dropped when the timeout fires;
+                    // join_all's partial collection is not retrievable,
+                    // so the merge runs on empty results. That is the
+                    // safe shape: the user sees a clear "timed out"
+                    // message rather than a run that hangs.
+                    return Err(KodError::Internal(format!(
+                        "swarm exceeded the {}s overall timeout",
+                        self.swarm_timeout_secs
+                    )));
+                }
+            }
+        };
 
         // 3b. Merge the worktrees back into the base branch (D4-D2).
         //     The merge is deterministic (git, not a model call) and

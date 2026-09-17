@@ -42,7 +42,6 @@ pub mod path_lock;
 pub mod registry;
 pub mod sandbox;
 pub mod search;
-pub mod swarm_tools;
 pub mod todo;
 pub mod tools;
 pub mod web;
@@ -59,7 +58,6 @@ pub use tools::{
 
 pub use context::ToolContext;
 pub use path_lock::{LockError, PathLockGuard, PathLockTable};
-pub use swarm_tools::{SwarmKnowledge, SwarmNoteTool, SwarmReadTool};
 pub use registry::ToolRegistry;
 
 // Re-export tool trait and result for convenience

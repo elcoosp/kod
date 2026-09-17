@@ -13,11 +13,11 @@
 //!
 //! **The lock is process-local.** Two `kod` processes writing the same
 //! file do not see each other's locks. Cross-process coordination needs
-//! the OS-level file locks `kod-swarm`'s `SharedWorkspace` provides
-//! (via `fs4`); that crate is the right home for cross-process locks,
-//! and the two systems compose: a caller can hold an OS-level lock for
-//! the duration and take this advisory lock for in-process ordering.
-//! The two do not share state today.
+//! the OS-level advisory locks `fs4` provides; `kod-swarm` was the
+//! historical home for that, but as of D4.3 the swarm delegates to
+//! this table. The two systems compose: a caller can hold an
+//! OS-level lock for the duration and take this advisory lock for
+//! in-process ordering.
 //!
 //! # Data structure
 //!

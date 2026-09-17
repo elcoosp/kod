@@ -1029,10 +1029,16 @@ pub struct KodEngine {
     /// sends a decision. A request that is never answered is dropped
     /// when its wait times out (see `AWAIT_APPROVAL_SECS`).
     pending_approvals: RwLock<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<ApprovalDecision>>>,
-    /// Shared key-value blackboard for swarm agents. Every agent
-    /// running under this engine reads and writes the same store
-    /// through the cloned `Arc`.
-    swarm_knowledge: kod_tools::SwarmKnowledge,
+    /// The communication hub every swarm agent registers on
+    /// (D4.3). Owned by the engine so the note/read tools (which
+    /// live at this composition root) have a single hub to talk to,
+    /// and so the swarm runner has one to spawn its `AgentSwarm`
+    /// with. Replaced per-run by the runner calling `clear_all()`.
+    swarm_hub: Arc<kod_swarm::AgentCommunicationHub>,
+    /// The engine's own identity on the hub. Stable for the life of
+    /// the engine — the runner registers its own per-agent ids on
+    /// top, and the note/read tools broadcast as this id.
+    swarm_coordinator_id: kod_types::AgentId,
     /// The session's todo list. Shared across swarm agents and across
     /// every turn of the same engine.
     todo_list: kod_tools::TodoList,
@@ -1240,7 +1246,8 @@ impl KodEngine {
             pending_approvals: RwLock::new(std::collections::HashMap::new()),
             pending_questions: RwLock::new(std::collections::HashMap::new()),
             next_question_id: std::sync::atomic::AtomicU64::new(1),
-            swarm_knowledge: kod_tools::SwarmKnowledge::new(),
+            swarm_hub: Arc::new(kod_swarm::AgentCommunicationHub::new()),
+            swarm_coordinator_id: kod_types::AgentId::new(),
             todo_list: kod_tools::new_todo_list(),
             checkpoints,
             mcp: RwLock::new(None),
@@ -1928,11 +1935,18 @@ impl KodEngine {
     }
 
 
-    /// The engine's shared swarm blackboard. A caller that wants to
-    /// seed a fact before a swarm runs, or inspect what was recorded
-    /// after, reads and writes this directly.
-    pub fn swarm_knowledge(&self) -> &kod_tools::SwarmKnowledge {
-        &self.swarm_knowledge
+    /// The communication hub the swarm's blackboard lives on.
+    /// Cloning the `Arc` gives a caller a handle to the same hub the
+    /// note/read tools talk to, and that a `SwarmRunner` uses to
+    /// spawn its agents.
+    pub fn swarm_hub(&self) -> Arc<kod_swarm::AgentCommunicationHub> {
+        Arc::clone(&self.swarm_hub)
+    }
+
+    /// The engine's identity on the hub — the sender id the note
+    /// tool broadcasts as. Stable across the engine's lifetime.
+    pub fn swarm_coordinator_id(&self) -> &kod_types::AgentId {
+        &self.swarm_coordinator_id
     }
 
     /// The engine's shared todo list. A caller that wants to seed it
@@ -2009,17 +2023,20 @@ impl KodEngine {
         self.tools.register(Box::new(ReadFileTool::new())).await;
         self.tools.register(Box::new(WriteFileTool::new())).await;
         self.tools.register(Box::new(PatchFileTool::new())).await;
-        // Swarm coordination tools. Always registered — they cost one
-        // HashMap. Agents running concurrently under this engine share
-        // the same blackboard through the cloned `Arc`.
+        // Swarm coordination tools (D4.3). The blackboard is the
+        // engine's `AgentCommunicationHub` — the note tool broadcasts
+        // a `KnowledgeShare` and the read tool filters the coordinator's
+        // received history.
         self.tools
-            .register(Box::new(kod_tools::SwarmNoteTool::new(
-                self.swarm_knowledge.clone(),
+            .register(Box::new(crate::swarm_adapters::SwarmNoteTool::new(
+                self.swarm_hub(),
+                self.swarm_coordinator_id.clone(),
             )))
             .await;
         self.tools
-            .register(Box::new(kod_tools::SwarmReadTool::new(
-                self.swarm_knowledge.clone(),
+            .register(Box::new(crate::swarm_adapters::SwarmReadTool::new(
+                self.swarm_hub(),
+                self.swarm_coordinator_id.clone(),
             )))
             .await;
         self.tools.register(Box::new(ListFilesTool::new())).await;

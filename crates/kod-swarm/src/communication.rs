@@ -369,6 +369,41 @@ impl AgentCommunicationHub {
             entry.drain(..excess);
         }
     }
+    /// Drop every registered agent and its history. Used by the
+    /// swarm runner at the start of a run: the blackboard is a
+    /// run-scoped store, and a new run starts from a clean slate.
+    ///
+    /// A caller that holds an `AgentMessageReceiver` obtained before
+    /// the clear sees its channel close (the sender is gone). That
+    /// is the correct behaviour — the receiver belonged to an agent
+    /// that no longer exists.
+    pub async fn clear_all(&self) {
+        let mut agents = self.agents.write().await;
+        agents.clear();
+        drop(agents);
+        let mut history = self.history.write().await;
+        history.clear();
+    }
+
+    /// Broadcast a `KnowledgeShare` from `from` to every other
+    /// online agent. The convenience the note tool calls; separate
+    /// from `broadcast_lifecycle` so the two message kinds do not
+    /// have to be distinguished by inspecting the payload.
+    pub async fn post_knowledge(
+        &self,
+        from: &AgentId,
+        information: &str,
+        tags: Vec<String>,
+    ) -> Result<()> {
+        self.broadcast(
+            from,
+            MessageContent::KnowledgeShare {
+                information: information.to_string(),
+                tags,
+            },
+        )
+        .await
+    }
 }
 
 

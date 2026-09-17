@@ -152,6 +152,26 @@ pub enum ConfigAction {
         /// Profile name (see `kod profile list`).
         name: String,
     },
+    /// Read the config file, resolve every v1 field into its v2
+    /// equivalent, back up the original to
+    /// `config.toml.bak-<unix-ts>`, and write a `config_version = 2`
+    /// file. Idempotent: a v2 file is reported as already current
+    /// and is not rewritten.
+    ///
+    /// The v1→v2 transformation is entirely syntactic — a v1 file's
+    /// `[llm]` block already has a `provider` / `model` /
+    /// `base_url`; the effective v2 config synthesises an endpoint
+    /// named `"default"` from those. `kod config export` already
+    /// prints the effective v2 shape, so this command is simply
+    /// that plus a backup and a version stamp.
+    ///
+    /// `--dry-run` prints the v2 TOML to stdout without writing
+    /// anything, so a user can review the change before applying it.
+    Migrate {
+        /// Print the migrated config to stdout without writing.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+    },
 }
 
 /// KOD - Terminal-native AI coding agent
@@ -176,19 +196,25 @@ impl Cli {
                 sandbox,
                 system_prompt,
                 preset,
+                remote,
+                socket,
             }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async {
-                    run_chat(
-                        model.clone(),
-                        *temperature,
-                        *interactive,
-                        *sandbox,
-                        system_prompt.clone(),
-                        preset.clone(),
-                    )
-                    .await
+                    if *remote {
+                        run_chat_remote(socket.clone()).await
+                    } else {
+                        run_chat(
+                            model.clone(),
+                            *temperature,
+                            *interactive,
+                            *sandbox,
+                            system_prompt.clone(),
+                            preset.clone(),
+                        )
+                        .await
+                    }
                 })
             }
             Some(Command::Agent {
@@ -196,17 +222,24 @@ impl Cli {
                 goal,
                 model,
                 preset,
+                remote,
+                socket,
             }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async {
-                    run_agent(
-                        name.clone(),
-                        goal.clone(),
-                        model.clone(),
-                        preset.clone(),
-                    )
-                    .await
+                    if *remote {
+                        run_agent_remote(name.clone(), goal.clone(), socket.clone())
+                            .await
+                    } else {
+                        run_agent(
+                            name.clone(),
+                            goal.clone(),
+                            model.clone(),
+                            preset.clone(),
+                        )
+                        .await
+                    }
                 })
             }
             Some(Command::Swarm {
@@ -272,6 +305,9 @@ impl Cli {
                         Some(ConfigAction::Validate) => run_config_validate().await,
                         Some(ConfigAction::InitFrom { name }) => {
                             run_config_init_from(name).await
+                        }
+                        Some(ConfigAction::Migrate { dry_run }) => {
+                            run_config_migrate(*dry_run).await
                         }
                         Some(ConfigAction::ShowRaw) => run_config_show_raw().await,
                         Some(ConfigAction::Export { path: dest, force }) => {
@@ -569,6 +605,19 @@ pub enum Command {
         /// when `tools.confirm_writes = true`).
         #[arg(long)]
         preset: Option<String>,
+
+        /// Attach to a running `kod serve` daemon instead of building
+        /// an in-process engine. The daemon keeps one session alive
+        /// across many `kod chat` invocations, so the transcript,
+        /// model, and memory survive a terminal that is closed and
+        /// reopened. Requires `kod serve` to be running.
+        #[arg(long, default_value_t = false)]
+        remote: bool,
+
+        /// Socket path to attach to when `--remote` is set. Defaults
+        /// to `kod serve`'s default path.
+        #[arg(long)]
+        socket: Option<std::path::PathBuf>,
     },
 
     /// Run a multi-agent swarm on a goal: decompose, spawn N agents,
@@ -610,6 +659,18 @@ pub enum Command {
         /// Policy preset (read-only | standard | yolo).
         #[arg(long)]
         preset: Option<String>,
+
+        /// Send the goal to a running `kod serve` daemon instead of
+        /// building an in-process engine. Uses the daemon's `process`
+        /// (non-streaming) method, so the answer arrives in one piece
+        /// — a `kod agent` run does not print live tokens even in
+        /// the embedded path.
+        #[arg(long, default_value_t = false)]
+        remote: bool,
+
+        /// Socket path to attach to when `--remote` is set.
+        #[arg(long)]
+        socket: Option<std::path::PathBuf>,
     },
 
     /// Work with skills. `kod skills` (no subcommand) lists them;
@@ -846,7 +907,6 @@ pub enum Command {
         cmd: Vec<String>,
     },
 
-
     /// Run a prompt and stream the reply to stdout as it is generated.
     /// Unlike `kod prompt`, prints text chunks as they arrive. `-` reads
     /// the prompt from stdin.
@@ -1019,6 +1079,207 @@ pub enum SessionsAction {
     Latest,
     /// Print the number of session logs and their combined size.
     Count,
+}
+
+/// `kod chat --remote` — attach an interactive REPL to a running
+/// `kod serve` daemon.
+///
+/// # Why a separate function from `run_chat`
+///
+/// The embedded path builds an engine, loads skills, wires the
+/// provider registry, and runs the agentic loop in-process. The
+/// remote path does none of that: it opens a Unix socket, sends
+/// NDJSON requests, and prints chunks. Folding them together would
+/// mean either the daemon checks `--remote` in fifty places or the
+/// embedded path pays for a transport it does not use.
+///
+/// # Session continuity
+///
+/// The daemon keeps one transcript keyed by `transcript_key`. This
+/// function uses `"chat"` — a fixed key distinct from the empty
+/// key `kod prompt --remote` uses, so an interactive REPL attached
+/// to a daemon and a one-shot prompt attached to the same daemon do
+/// not interleave their transcripts.
+///
+/// # Approval and question markers
+///
+/// A `kod serve` daemon currently cannot route approvals or
+/// `ask_user` questions to a remote client — the daemon's engine
+/// would have to pause on a request and wait for a client that may
+/// not be there. The current behaviour when a policy requires an
+/// approval is: the daemon times out at `AWAIT_APPROVAL_SECS` and
+/// denies. A `chat --remote` session therefore works with
+/// `[tools.*] mode = "allow"` policies (or `--preset yolo` on the
+/// daemon side) and produces a clean denial in strict modes.
+/// Routing approvals over the socket is a follow-up; the NDJSON
+/// protocol already carries the markers unchanged, so the daemon
+/// change is a `select!` on the approval channel and this client's
+/// change is a prompt printout.
+pub async fn run_chat_remote(socket: Option<std::path::PathBuf>) -> Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let socket_path = socket.unwrap_or_else(kod_core::serve::default_socket_path);
+    if !socket_path.exists() {
+        return Err(KodError::InvalidState(format!(
+            "no daemon listening at {}. Start one with `kod serve`, \
+             or drop --remote to run an embedded session.",
+            socket_path.display(),
+        )));
+    }
+
+    println!(
+        "KOD Chat (remote: {}) - Type 'quit' or Ctrl+D to exit",
+        socket_path.display()
+    );
+    println!();
+
+    let stdin = io::stdin();
+    let mut input = String::new();
+    // Monotonic request ids; the daemon does not care what the id is,
+    // only that the client can match responses back. A counter keeps
+    // the stream human-readable in a debug log.
+    let mut next_id: u64 = 1;
+
+    loop {
+        print!("> ");
+        let _ = io::stdout().flush();
+        input.clear();
+
+        match stdin.lock().read_line(&mut input) {
+            Ok(0) => break, // EOF (Ctrl+D)
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Input error: {e}");
+                break;
+            }
+        }
+        let line = input.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line == "quit" || line == "exit" {
+            break;
+        }
+
+        // Fresh connection per prompt. A long-lived connection would
+        // be marginally cheaper, but a server that dies mid-session
+        // would leave the client printing nothing with no clear
+        // reason; a fresh connect per turn surfaces "connection
+        // refused" on the prompt that follows the daemon's death,
+        // which is where the user looks for it.
+        let stream = match tokio::net::UnixStream::connect(&socket_path).await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!(
+                    "Could not reach the daemon at {}: {e}. \
+                     It may have stopped; restart with `kod serve`, \
+                     or drop --remote to run embedded.",
+                    socket_path.display(),
+                );
+                break;
+            }
+        };
+        let (read_half, mut write_half) = stream.into_split();
+
+        let id = format!("chat-{next_id}");
+        next_id += 1;
+        let req = serde_json::json!({
+            "v": 1,
+            "id": id,
+            "method": "process_streaming",
+            "params": { "input": line, "transcript_key": "chat" },
+        });
+        let mut frame = match serde_json::to_string(&req) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("could not serialize request: {e}");
+                continue;
+            }
+        };
+        frame.push('\n');
+        if let Err(e) = write_half.write_all(frame.as_bytes()).await {
+            eprintln!("could not send request: {e}");
+            continue;
+        }
+        if let Err(e) = write_half.flush().await {
+            eprintln!("could not flush request: {e}");
+            continue;
+        }
+
+        let mut reader = BufReader::new(read_half).lines();
+        let mut printed_any = false;
+        let mut answered = false;
+        loop {
+            let line = match reader.next_line().await {
+                Ok(Some(l)) => l,
+                Ok(None) => break,
+                Err(e) => {
+                    eprintln!("daemon read error: {e}");
+                    break;
+                }
+            };
+            let v: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if v.get("id").and_then(|x| x.as_str()) != Some(id.as_str()) {
+                continue;
+            }
+            match v.get("type").and_then(|t| t.as_str()) {
+                Some("chunk") => {
+                    let Some(data) = v.get("data").and_then(|d| d.as_str()) else {
+                        continue;
+                    };
+                    // The daemon forwards every engine chunk
+                    // verbatim, including the `\0kod-*` markers. The
+                    // CLI drops them the same way the embedded path
+                    // does — except for tool-args, which the
+                    // embedded path surfaces as a short notice so
+                    // the user sees activity between two stretches
+                    // of text. Keep that parity here.
+                    if let Some(brief) = kod_core::engine::parse_tool_args(data) {
+                        print!("\n[{brief}]\n");
+                        let _ = io::stdout().flush();
+                        continue;
+                    }
+                    if is_control_marker(data) {
+                        continue;
+                    }
+                    print!("{data}");
+                    let _ = io::stdout().flush();
+                    printed_any = true;
+                }
+                Some("done") => {
+                    answered = true;
+                    if printed_any {
+                        println!();
+                        println!();
+                    }
+                    break;
+                }
+                Some("error") => {
+                    let msg = v
+                        .get("data")
+                        .and_then(|d| d.get("message"))
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("(no message)");
+                    eprintln!("Error: {msg}");
+                    answered = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        // A response stream that closes without a `done` or `error`
+        // is the daemon dying mid-turn. Say so instead of looping
+        // back to a prompt that would then fail on connect.
+        if !answered {
+            eprintln!("(daemon closed the connection before completing this turn)");
+            break;
+        }
+    }
+
+    Ok(())
 }
 
 /// Run the chat command
@@ -1583,6 +1844,110 @@ pub async fn run_swarm(
 
     engine.shutdown().await?;
     Ok(())
+}
+
+/// `kod agent --remote` — send a goal to a running `kod serve`
+/// daemon and print the reply in one piece.
+///
+/// Uses the daemon's non-streaming `process` method. Streaming a
+/// single agent's reply to a client that runs unattended and prints
+/// the final answer is not useful — the interesting artifact is the
+/// complete reply, not the token cadence. `kod chat --remote` is the
+/// streaming surface for interactive use.
+///
+/// The transcript key is `"agent:<name>"`, distinct from the chat
+/// and one-shot keys, so a named agent run and an interactive chat
+/// attached to the same daemon keep separate transcripts.
+pub async fn run_agent_remote(
+    name: String,
+    goal: String,
+    socket: Option<std::path::PathBuf>,
+) -> Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    if goal.trim().is_empty() {
+        return Err(KodError::Config("empty goal".to_string()));
+    }
+
+    let socket_path = socket.unwrap_or_else(kod_core::serve::default_socket_path);
+    if !socket_path.exists() {
+        return Err(KodError::InvalidState(format!(
+            "no daemon listening at {}. Start one with `kod serve`, \
+             or drop --remote to run an embedded agent.",
+            socket_path.display(),
+        )));
+    }
+
+    let stream = tokio::net::UnixStream::connect(&socket_path)
+        .await
+        .map_err(|e| {
+            KodError::InvalidState(format!(
+                "could not connect to daemon at {}: {e}",
+                socket_path.display()
+            ))
+        })?;
+    let (read_half, mut write_half) = stream.into_split();
+
+    let req = serde_json::json!({
+        "v": 1,
+        "id": "agent-1",
+        "method": "process",
+        "params": {
+            "input": goal,
+            "transcript_key": format!("agent:{name}"),
+        },
+    });
+    let mut frame = serde_json::to_string(&req)
+        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    frame.push('\n');
+    write_half
+        .write_all(frame.as_bytes())
+        .await
+        .map_err(KodError::Io)?;
+    write_half.flush().await.map_err(KodError::Io)?;
+
+    let mut reader = BufReader::new(read_half).lines();
+    while let Some(line) = reader.next_line().await.map_err(KodError::Io)? {
+        let v: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v.get("id").and_then(|x| x.as_str()) != Some("agent-1") {
+            continue;
+        }
+        match v.get("type").and_then(|t| t.as_str()) {
+            Some("done") => {
+                // The reply is in `data` as a serialized
+                // TaskResponse; the `text` field inside is the
+                // model's answer. A `null` text (tool-only reply)
+                // leaves the agent's output empty, matching the
+                // embedded path's behaviour of not printing an
+                // empty string as a result.
+                let text = v
+                    .get("data")
+                    .and_then(|d| d.get("text"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+                if !text.trim().is_empty() {
+                    println!("Agent {}: {}", name, text);
+                }
+                return Ok(());
+            }
+            Some("error") => {
+                let msg = v
+                    .get("data")
+                    .and_then(|d| d.get("message"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("(no message)");
+                return Err(KodError::Provider(format!("daemon error: {msg}")));
+            }
+            _ => {}
+        }
+    }
+
+    Err(KodError::InvalidState(
+        "daemon closed the connection before answering".to_string(),
+    ))
 }
 
 /// Run the agent command
@@ -2752,7 +3117,6 @@ pub fn run_sandbox_exec(
     }
 }
 
-
 /// `kod checkpoint <action>`.
 ///
 /// Operates on the checkpoint directory for the current working
@@ -3538,6 +3902,92 @@ pub async fn run_skills_edit(name: &str) -> Result<()> {
     }
 }
 
+/// `kod config migrate [--dry-run]` — bring a v1 config up to v2.
+///
+/// Read the file at the standard location, resolve it through the
+/// same effective-endpoint synthesis a v1 config uses at load time,
+/// stamp `config_version = 2`, and write it back after a backup.
+/// The original is never destroyed: the backup file carries the
+/// original bytes, and a failed write leaves the original in place.
+///
+/// A v2 file is reported as current and not rewritten — running the
+/// command twice does not create two backups, and does not reorder
+/// a hand-formatted file.
+pub async fn run_config_migrate(dry_run: bool) -> Result<()> {
+    let dir = KodConfig::config_dir()?;
+    std::fs::create_dir_all(&dir).map_err(KodError::Io)?;
+    let path = dir.join("config.toml");
+
+    if !path.exists() {
+        let mut fresh = KodConfig::default();
+        fresh.config_version = 2;
+        if dry_run {
+            let s = toml::to_string_pretty(&fresh)
+                .map_err(|e| KodError::Serialization(e.to_string()))?;
+            print!("{}", s);
+            return Ok(());
+        }
+        fresh.save_to(&path)?;
+        println!(
+            "No config found; wrote a fresh v2 default to {}.",
+            path.display()
+        );
+        return Ok(());
+    }
+
+    let mut cfg = KodConfig::load_from(&path)?;
+    let original = std::fs::read_to_string(&path).map_err(KodError::Io)?;
+
+    if !cfg.needs_migration() {
+        println!(
+            "{} is already at config_version = {}; nothing to migrate.",
+            path.display(),
+            cfg.effective_version()
+        );
+        return Ok(());
+    }
+
+    cfg.config_version = 2;
+
+    let migrated = toml::to_string_pretty(&cfg)
+        .map_err(|e| KodError::Serialization(e.to_string()))?;
+
+    if dry_run {
+        eprintln!(
+            "# dry run: would back up {} and write the config below",
+            path.display()
+        );
+        print!("{}", migrated);
+        return Ok(());
+    }
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let backup = dir.join(format!("config.toml.bak-{ts}"));
+    std::fs::write(&backup, original.as_bytes()).map_err(KodError::Io)?;
+
+    let tmp = dir.join(format!("config.toml.migrate-{ts}.tmp"));
+    std::fs::write(&tmp, migrated.as_bytes()).map_err(KodError::Io)?;
+    std::fs::rename(&tmp, &path).map_err(KodError::Io)?;
+
+    println!("Migrated {} to config_version = 2.", path.display());
+    println!("Backup: {}", backup.display());
+    println!();
+    println!("The v2 shape is:");
+    println!("  - [[llm.endpoints]] blocks with an explicit `name`,");
+    println!("    `provider`, `base_url`, and `model` — a v1 config's flat");
+    println!("    fields are now one endpoint named `default`.");
+    println!("  - [llm.routing] for per-task-type endpoints (absent here;");
+    println!("    every task routes to `default` until you add one).");
+    println!("  - [mcp.servers.*] for MCP plugins (absent unless you added them).");
+    println!();
+    println!("Use `kod config show-merged` to see the effective v2 shape.");
+    Ok(())
+}
+
+
 /// Parse the config file and report whether it is valid.
 ///
 /// Differs from `kod config` (which shows the *effective* config,
@@ -4099,20 +4549,31 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
     registry
         .register(Box::new(kod_tools::AskUserTool::new()))
         .await;
-    let blackboard = kod_tools::SwarmKnowledge::new();
-    registry
-        .register(Box::new(kod_tools::SwarmNoteTool::new(blackboard.clone())))
-        .await;
-    registry
-        .register(Box::new(kod_tools::SwarmReadTool::new(blackboard)))
-        .await;
+    // The note/read tools are hub-backed and live in `kod-core`
+    // now (D4.3). `kod tools` builds a *bare* registry for listing;
+    // it does not have a hub. Registering a hub-less pair here would
+    // mislead: the list would advertise tools that would panic at
+    // call time. Instead, list the two tool names via a small
+    // listing-only definition so `kod tools` remains accurate
+    // without inventing a hub.
 
     match action {
         None | Some(ToolsAction::List) => {
             let defs = registry.get_definitions().await;
-            println!("Registered tools ({}):", defs.len());
+            // The listing includes the built-in tools plus the two
+            // swarm-hub tools, which live in kod-core and are not
+            // constructible here without an engine. Naming them
+            // keeps the list complete without a live hub.
+            const CORE_ONLY: &[(&str, &str)] = &[
+                ("swarm_note", "record a fact for the other swarm agents (D4.3, hub-backed)"),
+                ("swarm_read", "read facts recorded by other swarm agents (D4.3, hub-backed)"),
+            ];
+            println!("Registered tools ({}):", defs.len() + CORE_ONLY.len());
             for d in &defs {
                 println!("  {:<16} {}", d.name, d.description);
+            }
+            for (name, desc) in CORE_ONLY {
+                println!("  {:<16} {}", name, desc);
             }
             Ok(())
         }

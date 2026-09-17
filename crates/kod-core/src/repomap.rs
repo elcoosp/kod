@@ -365,32 +365,7 @@ fn extract_imports(ext: &str, content: &str) -> Vec<String> {
     out
 }
 
-fn extract_symbols(path: &Path) -> Vec<Symbol> {
-    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-    // Cap per-file bytes read. A generated source file larger than this
-    // is not worth mapping — its symbol-to-byte ratio is tiny and the
-    // map budget is better spent on the dozens of files around it.
-    const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
-    if let Ok(meta) = std::fs::metadata(path)
-        && meta.len() > MAX_FILE_BYTES
-    {
-        return Vec::new();
-    }
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
-    match ext {
-        "rs" => extract_rust(&content),
-        "py" => extract_python(&content),
-        "js" | "jsx" | "ts" | "tsx" => extract_js(&content),
-        "go" => extract_go(&content),
-        "rb" => extract_ruby(&content),
-        "java" => extract_java(&content),
-        "c" | "h" | "cc" | "cpp" | "hpp" | "cxx" => extract_c(&content),
-        _ => Vec::new(),
-    }
-}
+
 
 fn scan(content: &str, patterns: &[(&'static str, &Regex)]) -> Vec<Symbol> {
     let mut out = Vec::new();

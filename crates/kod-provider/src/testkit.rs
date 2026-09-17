@@ -43,8 +43,7 @@
 //!   tests the classification, not the phrase.
 
 use crate::request::{
-    CompletionRequest, ModelRef, PromptCacheKind, ProviderCapabilities,
-    SystemPrompt,
+    CompletionRequest, ModelRef, ProviderCapabilities, SystemPrompt,
 };
 use crate::traits::{GenerationOptions, LlmProvider};
 use crate::types::{GenerationResponse, StreamChunk, TokenUsage};

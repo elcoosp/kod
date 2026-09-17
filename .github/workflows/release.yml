@@ -5,35 +5,37 @@ on:
     tags:
       - 'v*'
 
+# Every build uses --locked so a release cannot silently drift on a
+# transitive dependency. A Cargo.lock that does not satisfy Cargo.toml
+# is a hard failure, not a warning.
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   release:
-    name: Release
+    name: Release (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        target:
-          - x86_64-unknown-linux-gnu
-          - x86_64-apple-darwin
-          - aarch64-apple-darwin
-          - x86_64-pc-windows-msvc
-        exclude:
+        include:
+          # glibc builds: the primary Linux artifact.
           - os: ubuntu-latest
-            target: x86_64-apple-darwin
-          - os: ubuntu-latest
-            target: aarch64-apple-darwin
-          - os: ubuntu-latest
-            target: x86_64-pc-windows-msvc
-          - os: macos-latest
             target: x86_64-unknown-linux-gnu
+          # Static musl: works on any Linux regardless of glibc
+          # version. The README promises ≤ 15 MB; the bloat gate at
+          # the end of this job enforces it.
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          # ARM64 Linux: Pi, AWS Graviton, Apple Silicon Linux VMs.
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
           - os: macos-latest
-            target: x86_64-pc-windows-msvc
-          - os: windows-latest
-            target: x86_64-unknown-linux-gnu
-          - os: windows-latest
             target: x86_64-apple-darwin
-          - os: windows-latest
+          - os: macos-latest
             target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
 
     steps:
     - uses: actions/checkout@v4
@@ -44,38 +46,204 @@ jobs:
         toolchain: stable
         targets: ${{ matrix.target }}
 
+    # Cross-compilation toolchains for the two non-native Linux
+    # targets. `musl-tools` provides `musl-gcc` for the static build;
+    # `gcc-aarch64-linux-gnu` provides the C cross-compiler the Rust
+    # `aarch64-unknown-linux-gnu` target links through.
+    - name: Install cross toolchains (musl)
+      if: matrix.target == 'x86_64-unknown-linux-musl'
+      run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+    - name: Install cross toolchains (aarch64)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
+
+    - name: Configure aarch64 linker
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        mkdir -p .cargo
+        cat >> .cargo/config.toml <<'CARGO'
+        [target.aarch64-unknown-linux-gnu]
+        linker = "aarch64-linux-gnu-gcc"
+        CARGO
+
     - name: Build release binary
-      run: cargo build --release --target ${{ matrix.target }}
+      run: cargo build --release --locked --target ${{ matrix.target }}
 
     - name: Package binary (Unix)
       if: runner.os != 'Windows'
+      shell: bash
       run: |
+        set -euo pipefail
         cd target/${{ matrix.target }}/release
-        tar -czf kod-${{ matrix.target }}.tar.gz kod
+        # Archive name carries the target triple; the checksum and
+        # signature files are named after the archive so they sit
+        # side-by-side in the release.
+        ARCHIVE="kod-${{ matrix.target }}.tar.gz"
+        tar -czf "$ARCHIVE" kod
+        # `.sha256` file in the standard `<hash>  <name>` shape that
+        # `sha256sum -c` consumes. A user who downloads both files
+        # and runs `sha256sum -c kod-<target>.tar.gz.sha256` gets a
+        # one-line answer.
+        shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
 
     - name: Package binary (Windows)
       if: runner.os == 'Windows'
+      shell: pwsh
       run: |
         cd target/${{ matrix.target }}/release
-        Compress-Archive -Path kod.exe -DestinationPath kod-${{ matrix.target }}.zip
+        $archive = "kod-${{ matrix.target }}.zip"
+        Compress-Archive -Path kod.exe -DestinationPath $archive
+        # CertUtil writes a non-standard format; use Get-FileHash
+        # and write the standard `hash  name` line ourselves.
+        $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+        "$hash  $archive" | Out-File -Encoding ascii -NoNewline "$archive.sha256"
+
+    # minisign signing. Opt-in: if `MINISIGN_SECRET_KEY` is not set
+    # in the repository secrets, the step is skipped with a warning
+    # instead of failing. A maintainer setting up signatures for the
+    # first time runs `minisign -G` locally, commits the public key
+    # under `docs/minisign.pub`, and puts the private key in the
+    # repository secret. The release continues to work for a fork
+    # that has not configured a key.
+    - name: Sign artifacts (minisign)
+      if: env.MINISIGN_SECRET_KEY != ''
+      shell: bash
+      env:
+        MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+      run: |
+        set -euo pipefail
+        # Install minisign. The apt package exists on Ubuntu 22.04+;
+        # macOS ships a formula; Windows uses a prebuilt binary.
+        case "${{ runner.os }}" in
+          Linux)
+            sudo apt-get update
+            sudo apt-get install -y minisign
+            ;;
+          macOS)
+            brew install minisign
+            ;;
+          Windows)
+            # Skip the Windows signing step on this runner: minisign
+            # has no first-class Windows install path in the
+            # Actions image, and users who want to verify the
+            # Windows artifact can compare it against the Linux
+            # signature after downloading. A follow-up can add a
+            # prebuilt binary download here.
+            echo "skipping minisign on Windows (no package in the image)"
+            exit 0
+            ;;
+        esac
+        # The secret is the *contents* of the secret key file, not a
+        # path. Write it to a temp file with restrictive permissions
+        # so minisign can read it.
+        KEY_FILE="$RUNNER_TEMP/minisign.key"
+        umask 077
+        printf '%s' "$MINISIGN_SECRET_KEY" > "$KEY_FILE"
+        cd target/${{ matrix.target }}/release
+        shopt -s nullglob
+        for f in kod-*.tar.gz kod-*.zip; do
+          # `-S` signs, `-s` names the secret key file, `-t` sets the
+          # comment minisign embeds. Password comes from
+          # `MINISIGN_PASSWORD`, or is empty for an unencrypted key.
+          minisign -Sm "$f" -s "$KEY_FILE" -t "kod release ${{ github.ref_name }}" \
+            < "${MINISIGN_PASSWORD:-/dev/null}" || {
+              echo "minisign failed for $f" >&2
+              exit 1
+            }
+        done
+        rm -f "$KEY_FILE"
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: kod-${{ matrix.target }}
+        # The glob includes the archive, the `.sha256`, and the
+        # `.minisig` when signing ran. A missing `.minisig` is not an
+        # error — the signing step is opt-in.
         path: |
-          target/${{ matrix.target }}/release/kod-*
+          target/${{ matrix.target }}/release/kod-*.tar.gz
+          target/${{ matrix.target }}/release/kod-*.tar.gz.sha256
+          target/${{ matrix.target }}/release/kod-*.tar.gz.minisig
+          target/${{ matrix.target }}/release/kod-*.zip
+          target/${{ matrix.target }}/release/kod-*.zip.sha256
+          target/${{ matrix.target }}/release/kod-*.zip.minisig
+        if-no-files-found: error
+
+  # The bloat gate runs on the primary glibc build only. musl and
+  # aarch64 have their own baseline sizes that are less stable in CI;
+  # the glibc x86_64 binary is the one the README's size promise is
+  # stated against.
+  bloat:
+    name: Bloat gate
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-bloat
+      run: cargo install cargo-bloat --version "^0.12"
+
+    - name: Build the release binary
+      run: cargo build --release --locked
+
+    - name: Report the largest code units (informational)
+      run: cargo bloat --release --crates --n 20 || true
+
+    - name: Enforce the binary size gate
+      run: |
+        set -euo pipefail
+        BIN=target/release/kod
+        SIZE=$(stat -c%s "$BIN")
+        MAX=$((15 * 1024 * 1024))  # 15 MB, the README's documented ceiling
+        echo "binary size: $SIZE bytes ($(( SIZE / 1024 )) KiB)"
+        if [ "$SIZE" -gt "$MAX" ]; then
+          echo "binary exceeds the documented 15 MB ceiling" >&2
+          echo "see the bloat report above for the largest contributors" >&2
+          exit 1
+        fi
 
   create-release:
     name: Create Release
-    needs: release
+    needs: [release, bloat]
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: write
     steps:
     - name: Download artifacts
       uses: actions/download-artifact@v4
       with:
         path: artifacts
+        merge-multiple: true
+
+    - name: Verify at least one artifact per platform landed
+      run: |
+        set -euo pipefail
+        # Every target in the matrix produces at least one archive.
+        # A missing one means a build silently failed; the
+        # `if-no-files-found: error` on upload is the primary guard,
+        # this is a belt-and-braces check.
+        for target in \
+          x86_64-unknown-linux-gnu \
+          x86_64-unknown-linux-musl \
+          aarch64-unknown-linux-gnu \
+          x86_64-apple-darwin \
+          aarch64-apple-darwin \
+          x86_64-pc-windows-msvc
+        do
+          if ! ls artifacts/kod-$target* > /dev/null 2>&1; then
+            echo "no artifact for $target" >&2
+            exit 1
+          fi
+        done
+        echo "all targets present:"
+        ls -la artifacts/
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2

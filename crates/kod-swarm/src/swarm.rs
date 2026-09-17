@@ -9,23 +9,38 @@ use tokio::sync::RwLock;
 use crate::agent::{Agent, Capability};
 use crate::communication::AgentCommunicationHub;
 use crate::coordination::TaskCoordinator;
-use crate::workspace::SharedWorkspace;
 
 /// The agent swarm orchestrator
 pub struct AgentSwarm {
     agents: Arc<RwLock<HashMap<AgentId, std::sync::Arc<Agent>>>>,
     communication: AgentCommunicationHub,
     coordinator: TaskCoordinator,
-    workspace: SharedWorkspace,
 }
 
 impl AgentSwarm {
+    /// Create a swarm that owns its own `AgentCommunicationHub`.
+    /// Kept for callers (a bench, a test) that have no engine to
+    /// share a hub with; the `workspace_root` argument is retained
+    /// for API compatibility and is otherwise unused.
     pub fn new(workspace_root: std::path::PathBuf) -> Self {
+        let _ = workspace_root;
+        Self::with_hub(Arc::new(AgentCommunicationHub::new()))
+    }
+
+    /// Create a swarm that shares `hub` with the caller. The
+    /// note/read tools (D4.3) live on the same hub, so a swarm
+    /// spawned with this constructor has a blackboard visible to
+    /// every tool and every agent.
+    ///
+    /// Cloning the inner `AgentCommunicationHub` (which is itself
+    /// two `Arc`-wrapped maps) gives both callers a handle to the
+    /// same state — the runner registers its agents on this hub,
+    /// and the tools the engine holds read from it.
+    pub fn with_hub(hub: Arc<AgentCommunicationHub>) -> Self {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
-            communication: AgentCommunicationHub::new(),
+            communication: (*hub).clone(),
             coordinator: TaskCoordinator::new(),
-            workspace: SharedWorkspace::new(workspace_root),
         }
     }
 
@@ -216,10 +231,6 @@ impl AgentSwarm {
         &self.coordinator
     }
 
-    /// Get the shared workspace
-    pub fn workspace(&self) -> &SharedWorkspace {
-        &self.workspace
-    }
 }
 
 
