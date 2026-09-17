@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-import { Steps, Aside, LinkCard, Tabs, TabItem, FileTree } from '@astrojs/starlight/components';
+import { Steps, Aside, LinkCard, FileTree } from '@astrojs/starlight/components';
 
 Skills are KOD's knowledge-reuse mechanism: plain Markdown files with YAML front matter that get matched against your prompts and injected into the grounded prompt. They are how you teach the harness *your* conventions — your refactoring patterns, your testing style, your house rules — in files you can read, diff, and version like any other text.
 
@@ -57,7 +57,7 @@ You are an expert Rust refactoring assistant...
 
 What each part does:
 
-- **`triggers`** — phrases that should activate the skill. Matching considers triggers, tags, capabilities, and the name; the [Task Router](/concepts/router/) decides which skills ride along with a prompt.
+- **`triggers`** — phrases that should activate the skill. Matching considers triggers, tags, capabilities, and the name, scored against a threshold (`skills.match_threshold`, default 0.7); the [Task Router](/concepts/router/) decides which skills ride along with a prompt.
 - **`tags` and `capabilities`** — coarser activation signals, useful when a skill should attach to a *kind* of task rather than a phrase.
 - **Instructions** — the operating guidance injected into the prompt.
 - **Examples** — concrete input/output demonstrations; they cost tokens but sharpen behaviour.
@@ -80,10 +80,10 @@ kod skills export my-skill -     # write to stdout / a path
 kod skills remove my-skill       # refuses without --yes outside cwd
 ```
 
-`new` refuses to overwrite an existing file, `rename`/`copy` rewrite the `name:` field inside the file so the front matter never drifts, and `remove` asks for `--yes` unless the target is inside the current directory. For CI, `kod skills-validate` exits non-zero on malformed skills, so broken front matter fails your pipeline instead of silently not matching.
+`new` refuses to overwrite an existing file, `rename`/`copy` rewrite the `name:` field inside the file so the front matter never drifts, and `remove` asks for `--yes` unless the target is inside the current directory. For CI, `kod validate-skills` exits non-zero on malformed skills — and `kod validate-skills-strict` also fails skills that omit a `version` — so broken front matter fails your pipeline instead of silently not matching.
 
 <Aside type="tip">
-  Hot reload is on by default (`skills.enable_hot_reload`). Keep a project skill open in one pane, edit it, and the next prompt in the other pane sees the change — the fastest loop for tuning triggers and constraints.
+  Hot reload is on by default (<code>skills.enable_hot_reload</code>). Keep a project skill open in one pane, edit it, and the next prompt in the other pane sees the change — the fastest loop for tuning triggers and constraints.
 </Aside>
 
 ## A practical first skill
@@ -106,8 +106,17 @@ kod skills remove my-skill       # refuses without --yes outside cwd
 
 Examples of the format — including `python-testing` and `code-review` — ship in the repository under `skills/examples/`.
 
+<FileTree>
+- ~/.kod/skills/
+  - rust-refactoring.md
+  - python-testing.md
+  - code-review.md
+- my-project/.kod/skills/
+  - house-style.md
+</FileTree>
+
 <Aside type="note">
-  The workspace's skills crate (parser, loader, matcher, and hot-reload watcher) carries 34 test attributes, including full-pipeline tests. The format is stable precisely because it is exercised end-to-end.
+  If a skill never seems to fire, check what the matcher sees: <code>kod skills show &lt;name&gt;</code> prints the file as parsed, and <code>kod skills search "&lt;words from your prompt&gt;"</code> tells you whether the trigger text overlaps at all. Both are covered in the [FAQ](/guides/faq/#why-is-my-skill-never-matched).
 </Aside>
 
 <LinkCard title="Reference: Skill File Format" href="/reference/skill-format/" description="The exact front matter schema, section parsing rules, and shadowing order." />
