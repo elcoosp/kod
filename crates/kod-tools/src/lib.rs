@@ -49,7 +49,7 @@ pub use check::CheckTool;
 pub use ask::{AskUserTool, QUESTION_MARKER, QuestionRequest, parse_question, question_marker};
 pub use search::SearchFilesTool;
 pub use todo::{TodoItem, TodoList, TodoStatus, TodoTool, new_list as new_todo_list};
-pub use git::{GitDiffTool, GitStatusTool};
+pub use git::{GitBranchTool, GitCommitTool, GitDiffTool, GitStatusTool};
 pub use web::WebFetchTool;
 pub use tools::{
     ExecuteCommandTool, FileInfoTool, GrepTool, ListFilesTool, PatchFileTool, ReadFileTool,
@@ -58,7 +58,7 @@ pub use tools::{
 
 pub use context::ToolContext;
 pub use path_lock::{LockError, PathLockGuard, PathLockTable};
-pub use swarm_tools::{SwarmKnowledge, SwarmNoteTool, SwarmReadTool, new_knowledge};
+pub use swarm_tools::{SwarmKnowledge, SwarmNoteTool, SwarmReadTool};
 pub use registry::ToolRegistry;
 
 // Re-export tool trait and result for convenience
