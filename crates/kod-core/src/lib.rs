@@ -3,6 +3,7 @@
 //! This crate integrates skills, memory, tools, and LLM providers
 //! into a unified task routing and execution engine.
 
+pub mod acp;
 pub mod budget;
 pub mod checkpoint;
 pub mod citations;
