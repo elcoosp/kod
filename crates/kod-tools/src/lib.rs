@@ -34,6 +34,7 @@
 //! ```
 
 pub mod ask;
+pub mod check;
 pub mod context;
 pub mod git;
 pub mod patch;
@@ -45,6 +46,7 @@ pub mod swarm_tools;
 pub mod todo;
 pub mod tools;
 pub mod web;
+pub use check::CheckTool;
 pub use ask::{AskUserTool, QUESTION_MARKER, QuestionRequest, parse_question, question_marker};
 pub use search::SearchFilesTool;
 pub use todo::{TodoItem, TodoList, TodoStatus, TodoTool, new_list as new_todo_list};

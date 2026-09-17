@@ -912,6 +912,31 @@ pub struct KodEngine {
     /// before running. See [`crate::engine::ApprovalRequest`] and
     /// [`crate::config::ToolsConfig`].
     confirm_writes_atomic: std::sync::atomic::AtomicBool,
+    /// When true, a successful `write_file` / `patch_file` triggers an
+    /// automatic project check and the diagnostics are appended to the
+    /// model's tool-results block. See `ToolsConfig::auto_check`.
+    auto_check_atomic: std::sync::atomic::AtomicBool,
+    /// A long-lived language server for incremental diagnostics. Lazily
+    /// started on the first `lsp_diagnostics` call; `None` when no
+    /// server has been spawned yet. Wrapped in an async mutex because
+    /// every LSP method takes `&mut self` — the client is mutated on
+    /// each call (next_id, buffered reader, etc.).
+    ///
+    /// The mutex is per-engine. Two concurrent auto-checks serialize,
+    /// which is the correct behavior: one language server handles one
+    /// request at a time.
+    lsp_client: Arc<tokio::sync::Mutex<Option<kod_lsp::LspClient>>>,
+    /// The project's diagnostics as of the last check. `None` until a
+    /// baseline has been captured. Used by auto-check to distinguish
+    /// the model's contribution from pre-existing problems: a write
+    /// that introduces no new errors should not be reported as
+    /// though it did.
+    ///
+    /// Identity is `(file, code, message)` — line and column drift
+    /// (an edit earlier in a file shifting a later error) does not
+    /// make a diagnostic "new". A same-message error at a different
+    /// line is the same error.
+    check_baseline: Arc<RwLock<Option<Vec<kod_tools::check::Diagnostic>>>>,
     /// Monotonic counter for approval request ids. Ids are only unique
     /// within an engine's lifetime, which is all the consumer needs.
     next_approval_id: std::sync::atomic::AtomicU64,
@@ -1057,6 +1082,9 @@ impl KodEngine {
             sandbox_mode_atomic: std::sync::atomic::AtomicU8::new(0),
             network_access_atomic: std::sync::atomic::AtomicBool::new(false),
             confirm_writes_atomic: std::sync::atomic::AtomicBool::new(false),
+            auto_check_atomic: std::sync::atomic::AtomicBool::new(false),
+            lsp_client: Arc::new(tokio::sync::Mutex::new(None)),
+            check_baseline: Arc::new(RwLock::new(None)),
             next_approval_id: std::sync::atomic::AtomicU64::new(1),
             pending_approvals: RwLock::new(std::collections::HashMap::new()),
             pending_questions: RwLock::new(std::collections::HashMap::new()),
@@ -1135,6 +1163,145 @@ impl KodEngine {
     pub fn confirm_writes_setting(&self) -> bool {
         self.confirm_writes_atomic
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Enable or disable auto-check after writes. Called by the CLI and
+    /// TUI at startup with `ToolsConfig::auto_check`.
+    pub fn set_auto_check(&self, enabled: bool) {
+        self.auto_check_atomic
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The current auto-check setting.
+    pub fn auto_check_setting(&self) -> bool {
+        self.auto_check_atomic
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Is a language server available for this path?
+    ///
+    /// Returns the server binary name (e.g. `rust-analyzer`) when one
+    /// is on PATH and can serve this file's language, or `None` when
+    /// the caller should fall back to the compiler-based `check`.
+    ///
+    /// Only Rust is supported today. Adding Python (`pyright-langserver`
+    /// or `pylsp`), TypeScript (`typescript-language-server`), or Go
+    /// (`gopls`) is a match arm on the extension plus the binary name;
+    /// the LSP crate already speaks the protocol.
+    pub fn lsp_binary_for(path: &std::path::Path) -> Option<&'static str> {
+        match path.extension().and_then(|s| s.to_str()) {
+            Some("rs") if which("rust-analyzer") => Some("rust-analyzer"),
+            _ => None,
+        }
+    }
+
+    /// Return LSP diagnostics for `path`.
+    ///
+    /// The first call spawns and initializes the server; subsequent
+    /// calls reuse the same process, which is where the value is —
+    /// rust-analyzer's indexing cost is paid once and then per-file
+    /// diagnostics are milliseconds. On any failure (no binary, spawn
+    /// error, protocol error, timeout) the client is dropped so the
+    /// next call retries cleanly, and the method returns an empty vec.
+    /// The caller treats empty as "no LSP feedback" and falls back to
+    /// `CheckTool::run_check`.
+    ///
+    /// `content` is what to analyze. The caller reads the file it just
+    /// wrote; passing the content avoids a re-read that could race a
+    /// concurrent write.
+    pub async fn lsp_diagnostics(
+        &self,
+        path: &std::path::Path,
+        content: &str,
+        overall_timeout: std::time::Duration,
+    ) -> Vec<kod_lsp::Diagnostic> {
+        let Some(binary) = Self::lsp_binary_for(path) else {
+            return Vec::new();
+        };
+
+        let mut guard = self.lsp_client.lock().await;
+
+        // Lazy spawn + initialize.
+        if guard.is_none() {
+            match kod_lsp::LspClient::start(binary, &self.working_dir).await {
+                Ok(mut client) => {
+                    if let Err(e) = client.initialize().await {
+                        tracing::debug!(
+                            error = %e,
+                            binary,
+                            "LSP initialize failed; disabling LSP for this session"
+                        );
+                        return Vec::new();
+                    }
+                    tracing::info!(binary, "LSP client started");
+                    *guard = Some(client);
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, binary, "could not spawn LSP server");
+                    return Vec::new();
+                }
+            }
+        }
+
+        let Some(client) = guard.as_mut() else {
+            return Vec::new();
+        };
+
+        // `client.diagnostics` handles the first-call / subsequent-call
+        // distinction internally: didOpen the first time, didChange
+        // after. The caller does not track which files are open.
+        match client.diagnostics(path, content, overall_timeout).await {
+            Ok(diags) => diags,
+            Err(e) => {
+                tracing::debug!(error = %e, "LSP diagnostics failed; dropping client");
+                *guard = None;
+                Vec::new()
+            }
+        }
+    }
+
+    /// Capture the project's diagnostics into the baseline. Called at
+    /// engine start (best-effort) and by any caller that wants the
+    /// next auto-check to treat the current state as "before".
+    ///
+    /// Silent on failure: no project, no toolchain, or a timeout all
+    /// leave the baseline at its previous value. A `None` baseline
+    /// means the next auto-check reports every diagnostic it sees;
+    /// that is the correct behavior for a session that never had a
+    /// chance to establish a baseline.
+    pub async fn refresh_check_baseline(&self) {
+        match kod_tools::CheckTool::run_check(&self.working_dir, 60).await {
+            Ok(outcome) => {
+                let n = outcome.diagnostics.len();
+                *self.check_baseline.write().await = Some(outcome.diagnostics);
+                tracing::debug!(count = n, "check baseline refreshed");
+            }
+            Err(e) => {
+                tracing::debug!(
+                    error = %e,
+                    "check baseline not refreshed (no project or toolchain)"
+                );
+            }
+        }
+    }
+
+    /// The current baseline, if one has been captured. Public for
+    /// tests and for a caller that wants to display what the engine
+    /// considers "pre-existing".
+    pub async fn check_baseline(
+        &self,
+    ) -> Option<Vec<kod_tools::check::Diagnostic>> {
+        self.check_baseline.read().await.clone()
+    }
+
+    /// Shut down the LSP client if one is running. Called by
+    /// `shutdown()`.
+    async fn lsp_shutdown(&self) {
+        let mut guard = self.lsp_client.lock().await;
+        if let Some(client) = guard.take() {
+            client.shutdown().await;
+            tracing::info!("LSP client shut down");
+        }
     }
 
     /// Answer a pending approval request. Returns `true` when the id
@@ -1349,6 +1516,35 @@ impl KodEngine {
         // caller that wants to enable network access for one agent
         // does not have to re-register the tool.
         self.tools.register(Box::new(kod_tools::WebFetchTool::new())).await;
+        // `check` runs the project's compiler/linter and returns
+        // structured diagnostics. Registered alongside the other
+        // code-aware tools so a model that just wrote a file can ask
+        // "did that break the build?" without grepping compiler
+        // output.
+        self.tools
+            .register(Box::new(kod_tools::CheckTool::new()))
+            .await;
+
+        // Capture the check baseline in the background. Runs the
+        // project's compiler once; the result is stored so the first
+        // auto-check can distinguish the model's errors from
+        // pre-existing ones. Non-blocking: a big workspace can take
+        // tens of seconds and delaying `start` for it would slow the
+        // whole session.
+        //
+        // The handle is not joined on shutdown; the task ends when
+        // the compiler exits or the runtime drops. That is fine — the
+        // compiler is a child process and Rust's Drop on the engine
+        // does not affect it. A `check` running against a project
+        // after shutdown writes nothing the session cares about.
+        let this = BaselineRefresher {
+            working_dir: self.working_dir.clone(),
+            check_baseline: Arc::clone(&self.check_baseline),
+        };
+        tokio::spawn(async move {
+            this.refresh_check_baseline().await;
+            tracing::debug!("baseline refresh spawned");
+        });
 
         tracing::info!("KOD engine started");
         Ok(())
@@ -2397,6 +2593,226 @@ impl KodEngine {
             ));
             results.push(result);
         }
+        // Auto-check: when enabled, and at least one of the calls was
+        // a successful write_file / patch_file, run the project's
+        // compiler/linter and append its diagnostics to the prompt
+        // block. The model sees breakage on the same turn as the write,
+        // instead of having to ask for a check itself.
+        //
+        // Failures are silent except for a `tracing::debug!`: a
+        // missing toolchain, an empty directory, or a timeout should
+        // not make the write itself look like a problem.
+        if self.auto_check_setting() {
+            // Every successful write in this round. We read the file
+            // from disk rather than trusting the call's `content`
+            // argument: `patch_file` does not carry one, and a
+            // `write_file` may have been transformed by a hook.
+            let writes: Vec<(std::path::PathBuf, String)> = calls
+                .iter()
+                .zip(results.iter())
+                .filter_map(|(c, r)| {
+                    if !matches!(c.tool_name.as_str(), "write_file" | "patch_file") {
+                        return None;
+                    }
+                    if !matches!(r, ToolResult::Success(_)) {
+                        return None;
+                    }
+                    let p = c.arguments.get("path").and_then(|v| v.as_str())?;
+                    let abs = if std::path::Path::new(p).is_absolute() {
+                        std::path::PathBuf::from(p)
+                    } else {
+                        tool_context.working_dir.join(p)
+                    };
+                    let content = std::fs::read_to_string(&abs).unwrap_or_default();
+                    Some((abs, content))
+                })
+                .collect();
+
+            if !writes.is_empty() {
+                // Preferred path: a single Rust file and a server on
+                // PATH. Every other shape — several files, a
+                // non-Rust file — goes to the whole-workspace
+                // compiler, which sees every file the round touched
+                // and the cross-file effects between them.
+                //
+                // A per-file LSP check on one file of a multi-file
+                // round would miss the other files' breakage.
+                let lsp_eligible =
+                    writes.len() == 1 && Self::lsp_binary_for(&writes[0].0).is_some();
+
+                let diags: Vec<kod_tools::check::Diagnostic>;
+                let source: String;
+
+                if lsp_eligible {
+                    let (path, content) = &writes[0];
+                    let binary = Self::lsp_binary_for(path).unwrap_or("lsp");
+                    let lsp_diags = self
+                        .lsp_diagnostics(
+                            path,
+                            content,
+                            std::time::Duration::from_secs(30),
+                        )
+                        .await;
+                    if !lsp_diags.is_empty() {
+                        diags = lsp_diags
+                            .iter()
+                            .map(|d| kod_tools::check::Diagnostic {
+                                file: d.file.clone(),
+                                line: d.line,
+                                column: d.column,
+                                severity: d.severity.clone(),
+                                code: d.code.clone(),
+                                message: d.message.clone(),
+                            })
+                            .collect();
+                        source = binary.to_string();
+                    } else {
+                        // Empty LSP answer: could mean "clean" or
+                        // "unreachable". Fall through to the
+                        // compiler, which disambiguates.
+                        match kod_tools::CheckTool::run_check(
+                            &self.working_dir,
+                            60,
+                        )
+                        .await
+                        {
+                            Ok(outcome) => {
+                                source = outcome.command.clone();
+                                diags = outcome.diagnostics;
+                            }
+                            Err(e) => {
+                                tracing::debug!(
+                                    error = %e,
+                                    "auto-check compiler fallback did not run"
+                                );
+                                return ToolRound {
+                                    results,
+                                    prompt_block: block,
+                                    elapsed_ms,
+                                };
+                            }
+                        }
+                    }
+                } else {
+                    match kod_tools::CheckTool::run_check(&self.working_dir, 60).await
+                    {
+                        Ok(outcome) => {
+                            source = outcome.command.clone();
+                            diags = outcome.diagnostics;
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                error = %e,
+                                "auto-check compiler did not run"
+                            );
+                            return ToolRound {
+                                results,
+                                prompt_block: block,
+                                elapsed_ms,
+                            };
+                        }
+                    }
+                }
+
+                // Diff against the baseline. A diagnostic whose
+                // `(file, code, message)` was already present is
+                // pre-existing; only the model's *new* errors should
+                // drive the feedback loop.
+                let baseline = self.check_baseline.read().await.clone();
+                let baseline_keys: std::collections::HashSet<(
+                    String,
+                    Option<String>,
+                    String,
+                )> = baseline
+                    .as_ref()
+                    .map(|v| v.iter().map(diag_key).collect())
+                    .unwrap_or_default();
+                let current_keys: std::collections::HashSet<(
+                    String,
+                    Option<String>,
+                    String,
+                )> = diags.iter().map(diag_key).collect();
+
+                let new_diags: Vec<&kod_tools::check::Diagnostic> = diags
+                    .iter()
+                    .filter(|d| !baseline_keys.contains(&diag_key(d)))
+                    .collect();
+                let resolved_count = if baseline.is_some() {
+                    baseline_keys
+                        .iter()
+                        .filter(|k| !current_keys.contains(*k))
+                        .count()
+                } else {
+                    0
+                };
+
+                // Render. The message is deliberately different for
+                // each case so the model knows what its write did:
+                // introduced N errors, resolved M errors, or neither.
+                block.push_str("\n## Auto-check\n\n");
+                match baseline {
+                    None => {
+                        // First auto-check in this session; no
+                        // baseline. Report everything, note that the
+                        // state is unknown.
+                        if diags.is_empty() {
+                            block.push_str(&format!("`{}` is clean.\n", source));
+                        } else {
+                            block.push_str(&format!(
+                                "`{}` reported {} diagnostic(s). \\
+                                 (No baseline was captured, so all are shown — \
+                                 some may pre-date this write.)\n\n",
+                                source,
+                                diags.len(),
+                            ));
+                            render_diagnostics(&mut block, &diags, 20);
+                        }
+                    }
+                    Some(_) if !new_diags.is_empty() => {
+                        block.push_str(&format!(
+                            "`{}` reported {} NEW diagnostic(s) from this write:\n\n",
+                            source,
+                            new_diags.len(),
+                        ));
+                        let owned: Vec<kod_tools::check::Diagnostic> = new_diags
+                            .iter()
+                            .map(|d| (*d).clone())
+                            .collect();
+                        render_diagnostics(&mut block, &owned, 20);
+                        if resolved_count > 0 {
+                            block.push_str(&format!(
+                                "\n({} pre-existing diagnostic(s) resolved.)\n",
+                                resolved_count,
+                            ));
+                        }
+                        block.push_str("\nFix the new errors before continuing.\n");
+                    }
+                    Some(_) if resolved_count > 0 => {
+                        block.push_str(&format!(
+                            "`{}`: your write introduced no new errors and \
+                             resolved {} pre-existing diagnostic(s).\n",
+                            source, resolved_count,
+                        ));
+                    }
+                    Some(_) if diags.is_empty() => {
+                        block.push_str(&format!("`{}` is clean.\n", source));
+                    }
+                    Some(_) => {
+                        block.push_str(&format!(
+                            "`{}`: your write introduced no new errors. \
+                             {} pre-existing diagnostic(s) remain, \
+                             unrelated to this change.\n",
+                            source,
+                            diags.len(),
+                        ));
+                    }
+                }
+
+                // The post-write state becomes the new baseline.
+                *self.check_baseline.write().await = Some(diags);
+            }
+        }
+
         ToolRound {
             results,
             prompt_block: block,
@@ -2418,6 +2834,13 @@ impl KodEngine {
         // - Stop all agents
         // - Release all locks
         // - Flush memory
+
+        // Drop the LSP client last: it may be mid-request from a
+        // just-finished tool round, and shutting it down before the
+        // engine's own bookkeeping completes would leave a stray
+        // process. `kill_on_drop` in LspClient is the safety net if
+        // this shutdown call itself is skipped.
+        self.lsp_shutdown().await;
 
         tracing::info!("KOD engine shutdown");
         Ok(())
@@ -2674,6 +3097,86 @@ fn finish_stream_call(name: String, args: &str) -> ToolCall {
         arguments,
     }
 }
+
+
+/// `true` if `program` is on PATH. Used by
+/// [`KodEngine::lsp_binary_for`] to avoid promising a language server
+/// the process cannot spawn.
+fn which(program: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    for dir in std::env::split_paths(&path) {
+        if dir.join(program).is_file() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Identity of a diagnostic for diffing between two check runs.
+/// Ignores line and column: an edit that shifts a later error down by
+/// a line did not create a new error.
+fn diag_key(d: &kod_tools::check::Diagnostic) -> (String, Option<String>, String) {
+    (d.file.clone(), d.code.clone(), d.message.clone())
+}
+
+/// Append up to `max` diagnostics to `block`, one per line, in the
+/// format `severity [code] file:line:col — message`.
+fn render_diagnostics(
+    block: &mut String,
+    diags: &[kod_tools::check::Diagnostic],
+    max: usize,
+) {
+    for d in diags.iter().take(max) {
+        let code = d
+            .code
+            .as_deref()
+            .map(|c| format!("[{c}]"))
+            .unwrap_or_default();
+        let short = if d.message.chars().count() > 160 {
+            let s: String = d.message.chars().take(160).collect();
+            format!("{s}…")
+        } else {
+            d.message.clone()
+        };
+        block.push_str(&format!(
+            "  {} {} {}:{}:{} — {}\n",
+            d.severity, code, d.file, d.line, d.column, short,
+        ));
+    }
+    if diags.len() > max {
+        block.push_str(&format!("  … and {} more.\n", diags.len() - max));
+    }
+}
+
+
+/// Small owned snapshot of the parts of `KodEngine` that the baseline
+/// refresh needs. Exists because `KodEngine::start` takes `&self` and
+/// therefore cannot wrap `self` in an `Arc` for a background task.
+struct BaselineRefresher {
+    working_dir: std::path::PathBuf,
+    check_baseline: Arc<RwLock<Option<Vec<kod_tools::check::Diagnostic>>>>,
+}
+
+impl BaselineRefresher {
+    async fn refresh_check_baseline(&self) {
+        match kod_tools::CheckTool::run_check(&self.working_dir, 60).await {
+            Ok(outcome) => {
+                let n = outcome.diagnostics.len();
+                *self.check_baseline.write().await = Some(outcome.diagnostics);
+                tracing::debug!(count = n, "baseline captured");
+            }
+            Err(e) => {
+                tracing::debug!(
+                    error = %e,
+                    "baseline not captured (no project or toolchain)"
+                );
+            }
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -3936,6 +4439,223 @@ mod diff_attachment_tests {
         assert!(
             rendered.contains("no change"),
             "expected a no-change notice: {rendered}"
+        );
+    }
+}
+
+
+#[cfg(test)]
+mod auto_check_tests {
+    //! Tests for the auto-check injection in `run_tool_calls`.
+    //!
+    //! The feature is subtle: after a write_file succeeds, the engine
+    //! runs the project's compiler and appends its diagnostics to the
+    //! prompt the model sees on the next round. These tests drive a
+    //! real tool round against a real tempfile workspace, so a
+    //! regression in the injection shows up here rather than in
+    //! production.
+
+    use super::*;
+    use kod_types::ToolCall;
+    use tempfile::TempDir;
+
+    /// A clean project: the write is followed by "Auto-check … is
+    /// clean." in the prompt block.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_auto_check_clean_project() {
+        let tmp = TempDir::new().unwrap();
+        // Minimal Cargo project so CheckTool detects "cargo" and runs
+        // `cargo check` — but the file has no errors, so the diagnostics
+        // list is empty.
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("src/lib.rs"), "pub fn ok() {}\n").unwrap();
+
+        let db_path = tmp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.set_auto_check(true);
+        engine.start().await.unwrap();
+
+        let calls = vec![ToolCall {
+            tool_name: "write_file".to_string(),
+            arguments: serde_json::json!({
+                "path": "src/lib.rs",
+                "content": "pub fn ok() {}\n// added a harmless comment\n"
+            }),
+        }];
+        let round = engine.run_tool_calls(&calls, "test", None).await;
+        assert_eq!(round.results.len(), 1);
+
+        // The write succeeded (auto-check runs only on success).
+        assert!(matches!(&round.results[0], ToolResult::Success(_)));
+
+        // The prompt block should carry the auto-check section. We do
+        // not assert "clean" text exactly because the cargo output
+        // format may evolve; the presence of `## Auto-check` is the
+        // contract.
+        assert!(
+            round.prompt_block.contains("## Auto-check"),
+            "clean auto-check block missing: {}",
+            round.prompt_block
+        );
+        assert!(
+            round.prompt_block.contains("is clean"),
+            "clean auto-check should say so: {}",
+            round.prompt_block
+        );
+    }
+
+    /// Auto-check is disabled by default: the block does not appear
+    /// even when a write succeeds.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_auto_check_disabled_by_default() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("src/lib.rs"), "pub fn ok() {}\n").unwrap();
+
+        let db_path = tmp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        // Intentionally NOT calling set_auto_check(true).
+        engine.start().await.unwrap();
+
+        let calls = vec![ToolCall {
+            tool_name: "write_file".to_string(),
+            arguments: serde_json::json!({
+                "path": "src/lib.rs",
+                "content": "pub fn ok() {}\n"
+            }),
+        }];
+        let round = engine.run_tool_calls(&calls, "test", None).await;
+        assert!(
+            !round.prompt_block.contains("## Auto-check"),
+            "auto-check must not run when disabled: {}",
+            round.prompt_block
+        );
+    }
+
+    /// A round that writes two files must fall through to the
+    /// compiler, which sees both. The per-file LSP path would answer
+    /// for only one of them.
+    ///
+    /// This test works without rust-analyzer on PATH: the multi-file
+    /// shape makes `lsp_eligible` false regardless, so the compiler
+    /// path runs on every machine. What it proves is that the
+    /// multi-file case never short-circuits through LSP.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_auto_check_multi_file_round_uses_compiler() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("src/lib.rs"), "pub mod extra;\n").unwrap();
+        std::fs::write(
+            tmp.path().join("src/extra.rs"),
+            "pub fn bad() -> u32 { 42 }\n",
+        )
+        .unwrap();
+
+        let db_path = tmp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.set_auto_check(true);
+        engine.start().await.unwrap();
+
+        // The round writes both files: lib.rs unchanged in spirit,
+        // extra.rs introduces a type error. Only the compiler sees
+        // both.
+        let calls = vec![
+            ToolCall {
+                tool_name: "write_file".to_string(),
+                arguments: serde_json::json!({
+                    "path": "src/lib.rs",
+                    "content": "pub mod extra;\n// harmless comment\n"
+                }),
+            },
+            ToolCall {
+                tool_name: "write_file".to_string(),
+                arguments: serde_json::json!({
+                    "path": "src/extra.rs",
+                    "content": "pub fn bad() -> u32 { \"not a number\" }\n"
+                }),
+            },
+        ];
+        let round = engine.run_tool_calls(&calls, "test", None).await;
+        assert_eq!(round.results.len(), 2);
+
+        assert!(
+            round.prompt_block.contains("## Auto-check"),
+            "multi-file round should trigger auto-check: {}",
+            round.prompt_block
+        );
+        assert!(
+            round.prompt_block.contains("extra.rs"),
+            "the compiler should name the file with the error: {}",
+            round.prompt_block
+        );
+    }
+
+    /// Auto-check with a non-write tool call must not trigger. The
+    /// engine should not run `cargo check` for a `read_file`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_auto_check_skips_read_only_round() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("src/lib.rs"), "pub fn ok() {}\n").unwrap();
+
+        let db_path = tmp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.set_auto_check(true);
+        engine.start().await.unwrap();
+
+        let calls = vec![ToolCall {
+            tool_name: "read_file".to_string(),
+            arguments: serde_json::json!({ "path": "src/lib.rs" }),
+        }];
+        let round = engine.run_tool_calls(&calls, "test", None).await;
+        assert!(
+            !round.prompt_block.contains("## Auto-check"),
+            "read-only round must not trigger auto-check: {}",
+            round.prompt_block
         );
     }
 }

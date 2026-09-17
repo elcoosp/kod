@@ -26,7 +26,11 @@ dirs.workspace = true
 chrono = { workspace = true }
 reqwest = { workspace = true }
 walkdir = { workspace = true }
+similar = { workspace = true }
+ignore = { workspace = true }
 
+globset = { workspace = true }
+toml = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3.8"

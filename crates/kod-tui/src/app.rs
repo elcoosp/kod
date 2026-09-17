@@ -289,6 +289,66 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/clearall",
         hint: "clear chat + memory + checkpoints (asks for confirmation)",
     },
+    SlashCommand {
+        name: "/wc",
+        hint: "word/line/char count of the chat, per role",
+    },
+    SlashCommand {
+        name: "/stats",
+        hint: "per-session statistics: roles, tools, tokens, elapsed",
+    },
+    SlashCommand {
+        name: "/export-html",
+        hint: "export session as self-contained HTML: /export-html <path>",
+    },
+    SlashCommand {
+        name: "/git-status",
+        hint: "git status --porcelain=v2 in the current directory",
+    },
+    SlashCommand {
+        name: "/welcome",
+        hint: "reprint the session-start banner",
+    },
+    SlashCommand {
+        name: "/reset",
+        hint: "reset transient state: input, search, expansions, attachments",
+    },
+    SlashCommand {
+        name: "/man",
+        hint: "show help for one slash command: /man <command>",
+    },
+    SlashCommand {
+        name: "/env",
+        hint: "show environment variables KOD reads",
+    },
+    SlashCommand {
+        name: "/load-latest",
+        hint: "load the most recent JSON session from ~/.kod",
+    },
+    SlashCommand {
+        name: "/config-diff",
+        hint: "diff config file against effective config",
+    },
+    SlashCommand {
+        name: "/cmd",
+        hint: "run a shell command and print its output: /cmd <shell>",
+    },
+    SlashCommand {
+        name: "/sys-prompt",
+        hint: "friendly /system: show, set, or clear the system prompt override",
+    },
+    SlashCommand {
+        name: "/fork",
+        hint: "save the current chat as a restorable fork: /fork [label]",
+    },
+    SlashCommand {
+        name: "/todo-add",
+        hint: "add a todo item: /todo-add <text>",
+    },
+    SlashCommand {
+        name: "/check",
+        hint: "run the project compiler/linter (Cargo, tsc, ruff, go vet)",
+    },
 ];
 
 /// What the generation is currently doing — shown in the header/status so
@@ -2751,6 +2811,152 @@ impl KodApp {
         self.messages = messages;
         self.scroll_to_bottom();
     }
+}
+
+/// Fork helpers (`/fork`).
+impl KodApp {
+    /// Save the current chat as a restorable fork. The current chat is
+    /// left in place; `/undo` will later restore this saved copy. A
+    /// subsequent `/clear` drops the live chat and leaves the fork on
+    /// `cleared_stack`, giving the user a way back.
+    pub fn fork_messages(&mut self) -> usize {
+        if self.messages.is_empty() {
+            return 0;
+        }
+        let snapshot = self.messages.clone();
+        let n = snapshot.len();
+        self.cleared_stack.push(snapshot);
+        // Keep the stack bounded.
+        while self.cleared_stack.len() > 5 {
+            self.cleared_stack.remove(0);
+        }
+        n
+    }
+
+    /// Number of saved forks available via /undo.
+    pub fn fork_count(&self) -> usize {
+        self.cleared_stack.len()
+    }
+}
+
+/// Reset transient UI state without touching chat or memory.
+impl KodApp {
+    /// Clear everything that is not the chat itself: the input box,
+    /// search state, tool expansion, attachments, dialogs, history
+    /// index, and completion state. Returns a count of the fields that
+    /// were actually non-empty before the reset, so a caller can tell
+    /// the user what was cleared.
+    ///
+    /// Distinct from `/clear` (which wipes the chat and the engine
+    /// transcript) and `/clearall` (which also wipes memory and
+    /// checkpoints). This one is the "reset my terminal to a clean
+    /// state" — no data is discarded.
+    pub fn reset_transient_state(&mut self) -> usize {
+        let mut cleared = 0usize;
+        if !self.input.is_empty() {
+            cleared += 1;
+        }
+        if !self.question_input.is_empty() {
+            cleared += 1;
+        }
+        if self.search_query.is_some() {
+            cleared += 1;
+        }
+        if !self.expanded_tools.is_empty() {
+            cleared += 1;
+        }
+        if self.pending_approval.is_some() {
+            cleared += 1;
+        }
+        if self.pending_question.is_some() {
+            cleared += 1;
+        }
+        if !self.attached_files.is_empty() {
+            cleared += 1;
+        }
+        if self.last_error.is_some() {
+            cleared += 1;
+        }
+
+        self.clear_input();
+        self.clear_search();
+        self.expanded_tools.clear();
+        self.pending_approval = None;
+        self.pending_question = None;
+        self.question_input.clear();
+        self.attached_files.clear();
+        self.last_error = None;
+        self.completion_index = 0;
+        self.history_index = None;
+        self.draft.clear();
+        self.set_input_mode(InputMode::Normal);
+        self.mode = AppMode::Normal;
+
+        cleared
+    }
+}
+
+/// HTML export helpers (`/export-html`).
+impl KodApp {
+    /// Render the current chat as a self-contained HTML document with
+    /// inline CSS. No external assets, no scripts — the output is a
+    /// single file a user can email or drop in a wiki.
+    pub fn export_html(&self) -> String {
+        let mut out = String::with_capacity(4096);
+        out.push_str("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">");
+        out.push_str("<title>KOD session</title>");
+        out.push_str("<style>");
+        out.push_str("body{font-family:system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;line-height:1.5;color:#111;background:#fff}");
+        out.push_str(".msg{margin:1.5rem 0;padding:.75rem 1rem;border-left:3px solid #ddd;background:#fafafa}");
+        out.push_str(".you{border-left-color:#3b82f6}");
+        out.push_str(".ai{border-left-color:#10b981}");
+        out.push_str(".sys{border-left-color:#f59e0b;color:#555}");
+        out.push_str(".tool{border-left-color:#a855f7;font-family:ui-monospace,monospace;font-size:.9em}");
+        out.push_str(".agent{border-left-color:#ec4899}");
+        out.push_str(".role{font-size:.8em;text-transform:uppercase;letter-spacing:.05em;color:#666;margin-bottom:.25rem}");
+        out.push_str(".time{font-size:.75em;color:#999;margin-left:.5rem}");
+        out.push_str("pre{white-space:pre-wrap;word-wrap:break-word;margin:0}");
+        out.push_str("</style></head><body>\n");
+        out.push_str("<h1>KOD session</h1>\n");
+
+        let mut ordered: Vec<&Message> = self.messages.iter().collect();
+        ordered.sort_by_key(|m| m.sequence);
+        for m in ordered {
+            let (cls, label) = match &m.role {
+                kod_types::MessageRole::User => ("you", "you"),
+                kod_types::MessageRole::Assistant => ("ai", "ai"),
+                kod_types::MessageRole::System => ("sys", "sys"),
+                kod_types::MessageRole::Tool => ("tool", "tool"),
+                kod_types::MessageRole::Agent(_) => ("agent", "agent"),
+            };
+            let escaped = html_escape(&m.content);
+            out.push_str(&format!(
+                "<div class=\"msg {}\"><div class=\"role\">{}<span class=\"time\">{}</span></div><pre>{}</pre></div>\n",
+                cls,
+                label,
+                m.timestamp.format("%Y-%m-%d %H:%M:%S"),
+                escaped,
+            ));
+        }
+        out.push_str("</body></html>\n");
+        out
+    }
+}
+
+/// Minimal HTML escape. Covers `&`, `<`, `>`, `"`, and `'`.
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 16);
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// File-attachment state.
