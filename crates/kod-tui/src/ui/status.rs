@@ -102,20 +102,24 @@ impl StatusWidget {
         //    seconds — they were duplicated across header/status and noisy.
         if app.is_generating() {
             let phase = app.phase_label().unwrap_or_else(|| "thinking…".to_string());
-            Widget::render(
-                Line::from(vec![
-                    Span::styled(
-                        format!("{} ", app.spinner_frame()),
-                        Style::default()
-                            .fg(theme.warning)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(phase, Style::default().fg(theme.warning)),
-                    Span::styled(" · Esc cancels", dim),
-                ]),
-                area,
-                buf,
-            );
+            let mut spans = vec![
+                Span::styled(
+                    format!("{} ", app.spinner_frame()),
+                    Style::default()
+                        .fg(theme.warning)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(phase, Style::default().fg(theme.warning)),
+            ];
+            // Time-to-first-token appears the moment the model
+            // starts answering. It is a per-turn measurement, so it
+            // disappears when the turn ends — the value is a
+            // latency observation, not a running total.
+            if let Some(ms) = app.ttft_ms() {
+                spans.push(Span::styled(format!(" · ttft {ms}ms"), dim));
+            }
+            spans.push(Span::styled(" · Esc cancels", dim));
+            Widget::render(Line::from(spans), area, buf);
             return;
         }
 
