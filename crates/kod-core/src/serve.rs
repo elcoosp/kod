@@ -305,14 +305,37 @@ fn current_uid() -> u32 {
 
 /// One connection's lifetime. Reads lines, dispatches methods,
 /// writes NDJSON responses.
+///
+/// # Concurrency
+///
+/// Every outgoing line goes through one `mpsc` channel drained by a
+/// single writer task, so a streaming response and a
+/// `respond_to_approval` sent on the same connection cannot
+/// interleave mid-line. `process_streaming` and `swarm` spawn a
+/// task; the read loop returns immediately, so a client that
+/// receives an approval marker mid-stream can send its answer
+/// while the engine is paused on the matching oneshot.
 async fn handle_connection(
     stream: UnixStream,
     engine: Arc<KodEngine>,
     shutdown: Arc<Notify>,
 ) -> Result<()> {
     check_peer_uid(&stream)?;
-    let (read_half, mut write_half) = stream.into_split();
+    let (read_half, write_half) = stream.into_split();
     let mut lines = BufReader::new(read_half).lines();
+
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(256);
+    let writer_task = tokio::spawn(async move {
+        let mut write_half = write_half;
+        while let Some(line) = out_rx.recv().await {
+            if write_half.write_all(line.as_bytes()).await.is_err() {
+                break;
+            }
+            if write_half.flush().await.is_err() {
+                break;
+            }
+        }
+    });
 
     while let Some(line) = lines.next_line().await.map_err(KodError::Io)? {
         let trimmed = line.trim();
@@ -322,7 +345,15 @@ async fn handle_connection(
         let req: Request = match serde_json::from_str(trimmed) {
             Ok(r) => r,
             Err(e) => {
-                write_error(&mut write_half, "", &format!("bad request: {e}")).await?;
+                let _ = send_response(
+                    &out_tx,
+                    &Response {
+                        id: "",
+                        kind: "error",
+                        data: Some(serde_json::json!({"message": format!("bad request: {e}")})),
+                    },
+                )
+                .await;
                 continue;
             }
         };
@@ -332,43 +363,97 @@ async fn handle_connection(
                 let input = string_param(&req.params, "input");
                 let key = string_param(&req.params, "transcript_key");
                 match engine.process_for(&key, &input).await {
-                    Ok(resp) => write_done(&mut write_half, &req.id, &resp).await?,
-                    Err(e) => write_error(&mut write_half, &req.id, &e.to_string()).await?,
+                    Ok(resp) => write_done(&out_tx, &req.id, &resp).await?,
+                    Err(e) => write_error(&out_tx, &req.id, &e.to_string()).await?,
                 }
             }
             "process_streaming" => {
+                let engine = engine.clone();
+                let out = out_tx.clone();
+                let id = req.id.clone();
                 let input = string_param(&req.params, "input");
                 let key = string_param(&req.params, "transcript_key");
-                let (chunk_tx, mut chunk_rx) =
-                    tokio::sync::mpsc::channel::<String>(64);
-                let engine_task = tokio::spawn({
-                    let engine = engine.clone();
-                    async move {
-                        engine.process_streaming_for(&key, &input, &chunk_tx).await
+                tokio::spawn(async move {
+                    if let Err(e) = run_streaming(&engine, &out, &id, &input, &key).await {
+                        let _ = send_response(
+                            &out,
+                            &Response {
+                                id: &id,
+                                kind: "error",
+                                data: Some(serde_json::json!({"message": e.to_string()})),
+                            },
+                        )
+                        .await;
                     }
                 });
-                while let Some(chunk) = chunk_rx.recv().await {
-                    write_chunk(&mut write_half, &req.id, &chunk).await?;
-                }
-                let outcome = engine_task
-                    .await
-                    .map_err(|e| KodError::Internal(format!("engine task panicked: {e}")))?;
-                match outcome {
-                    Ok(resp) => write_done(&mut write_half, &req.id, &resp).await?,
-                    Err(e) => write_error(&mut write_half, &req.id, &e.to_string()).await?,
-                }
             }
             "steer" => {
                 let note = string_param(&req.params, "note");
                 let key = string_param(&req.params, "transcript_key");
                 engine.steer_for(&key, &note).await;
-                write_ack(&mut write_half, &req.id).await?;
+                write_ack(&out_tx, &req.id).await?;
+            }
+            "cancel" => {
+                let key = string_param(&req.params, "transcript_key");
+                engine.request_cancel_for(&key);
+                write_ack(&out_tx, &req.id).await?;
+            }
+            "respond_to_approval" => {
+                let item_id = req.params.get("id").and_then(|v| v.as_u64());
+                let decision = match req.params.get("decision").and_then(|v| v.as_str()) {
+                    Some("approve") => Some(crate::engine::ApprovalDecision::Approve),
+                    Some("deny") => Some(crate::engine::ApprovalDecision::Deny),
+                    Some("deny_always") => Some(crate::engine::ApprovalDecision::DenyAlways),
+                    _ => None,
+                };
+                match (item_id, decision) {
+                    (Some(n), Some(d)) => {
+                        let delivered = engine.respond_to_approval(n, d).await;
+                        write_ok(
+                            &out_tx,
+                            &req.id,
+                            serde_json::json!({"delivered": delivered}),
+                        )
+                        .await?;
+                    }
+                    _ => {
+                        write_error(
+                            &out_tx,
+                            &req.id,
+                            "respond_to_approval requires 'id' (u64) and \
+                             'decision' (approve|deny|deny_always)",
+                        )
+                        .await?;
+                    }
+                }
+            }
+            "respond_to_question" => {
+                let item_id = req.params.get("id").and_then(|v| v.as_u64());
+                let answer = string_param(&req.params, "answer");
+                match item_id {
+                    Some(n) => {
+                        let delivered = engine.respond_to_question(n, answer).await;
+                        write_ok(
+                            &out_tx,
+                            &req.id,
+                            serde_json::json!({"delivered": delivered}),
+                        )
+                        .await?;
+                    }
+                    None => {
+                        write_error(
+                            &out_tx,
+                            &req.id,
+                            "respond_to_question requires 'id' (u64)",
+                        )
+                        .await?;
+                    }
+                }
             }
             "swarm" => {
                 let goal = string_param(&req.params, "goal");
                 if goal.trim().is_empty() {
-                    write_error(&mut write_half, &req.id, "swarm: 'goal' is required")
-                        .await?;
+                    write_error(&out_tx, &req.id, "swarm: 'goal' is required").await?;
                     continue;
                 }
                 let max_agents = req
@@ -382,82 +467,36 @@ async fn handle_connection(
                     .get("merge")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true);
-
-                let runner = match crate::swarm_runner::SwarmRunner::new(
-                    engine.clone(),
-                    max_agents,
-                    merge,
-                )
-                .await
-                {
-                    Ok(r) => r,
-                    Err(e) => {
-                        write_error(&mut write_half, &req.id, &e.to_string()).await?;
-                        continue;
+                let engine = engine.clone();
+                let out = out_tx.clone();
+                let id = req.id.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        run_swarm(&engine, &out, &id, &goal, max_agents, merge).await
+                    {
+                        let _ = send_response(
+                            &out,
+                            &Response {
+                                id: &id,
+                                kind: "error",
+                                data: Some(serde_json::json!({"message": e.to_string()})),
+                            },
+                        )
+                        .await;
                     }
-                };
-
-                let (evt_tx, mut evt_rx) =
-                    tokio::sync::mpsc::channel::<crate::swarm_runner::SwarmEvent>(256);
-                let goal_owned = goal.clone();
-                let run_handle =
-                    tokio::spawn(async move { runner.run(&goal_owned, &evt_tx).await });
-
-                // The event type derives Serialize, so the wire
-                // shape is produced by serde, not a hand-rolled
-                // match arm per variant.
-                while let Some(evt) = evt_rx.recv().await {
-                    let data = serde_json::to_value(&evt)
-                        .unwrap_or(serde_json::Value::Null);
-                    write_line(
-                        &mut write_half,
-                        &Response {
-                            id: &req.id,
-                            kind: "swarm_event",
-                            data: Some(data),
-                        },
-                    )
-                    .await?;
-                }
-
-                let outcome = run_handle.await.map_err(|e| {
-                    KodError::Internal(format!("swarm task panicked: {e}"))
-                })?;
-                match outcome {
-                    Ok(resp) => {
-                        let data = serde_json::json!({
-                            "merged": resp.merged,
-                            "merged_by_model": resp.merged_by_model,
-                            "conflicts": resp.conflicts.iter().map(|c| {
-                                serde_json::json!({
-                                    "file": c.file,
-                                    "agents": c.agents,
-                                })
-                            }).collect::<Vec<_>>(),
-                        });
-                        write_ok(&mut write_half, &req.id, data).await?;
-                    }
-                    Err(e) => {
-                        write_error(&mut write_half, &req.id, &e.to_string()).await?;
-                    }
-                }
-            }
-            "cancel" => {
-                let key = string_param(&req.params, "transcript_key");
-                engine.request_cancel_for(&key);
-                write_ack(&mut write_half, &req.id).await?;
+                });
             }
             "shutdown" => {
-                write_ack(&mut write_half, &req.id).await?;
+                write_ack(&out_tx, &req.id).await?;
                 shutdown.notify_one();
-                return Ok(());
+                break;
             }
             "list_models" => match engine.list_models().await {
                 Ok(models) => {
                     let data = serde_json::json!({ "models": models });
-                    write_ok(&mut write_half, &req.id, data).await?
+                    write_ok(&out_tx, &req.id, data).await?
                 }
-                Err(e) => write_error(&mut write_half, &req.id, &e.to_string()).await?,
+                Err(e) => write_error(&out_tx, &req.id, &e.to_string()).await?,
             },
             "set_model" => {
                 let endpoint = string_param(&req.params, "endpoint");
@@ -465,17 +504,96 @@ async fn handle_connection(
                 engine
                     .set_current_model(ModelRef::new(endpoint, model))
                     .await;
-                write_ack(&mut write_half, &req.id).await?;
+                write_ack(&out_tx, &req.id).await?;
             }
             other => {
-                write_error(
-                    &mut write_half,
-                    &req.id,
-                    &format!("unknown method: {other}"),
-                )
-                .await?;
+                write_error(&out_tx, &req.id, &format!("unknown method: {other}")).await?;
             }
         }
+    }
+
+    // Reader is done. Drop our own sender, then wait a bounded time
+    // for the writer task to drain what spawned pumps have already
+    // queued. Without the timeout a hung streaming task would keep
+    // the connection handler alive forever.
+    drop(out_tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), writer_task).await;
+    Ok(())
+}
+
+/// Pump one streaming call's chunks through the writer channel.
+/// Extracted from the main loop so `process_streaming` can spawn it.
+async fn run_streaming(
+    engine: &Arc<KodEngine>,
+    out: &tokio::sync::mpsc::Sender<String>,
+    req_id: &str,
+    input: &str,
+    key: &str,
+) -> Result<()> {
+    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<String>(64);
+    let engine_clone = engine.clone();
+    let input_owned = input.to_string();
+    let key_owned = key.to_string();
+    let call = tokio::spawn(async move {
+        engine_clone
+            .process_streaming_for(&key_owned, &input_owned, &chunk_tx)
+            .await
+    });
+    while let Some(chunk) = chunk_rx.recv().await {
+        write_chunk(out, req_id, &chunk).await?;
+    }
+    let outcome = call
+        .await
+        .map_err(|e| KodError::Internal(format!("engine task panicked: {e}")))?;
+    match outcome {
+        Ok(resp) => write_done(out, req_id, &resp).await?,
+        Err(e) => write_error(out, req_id, &e.to_string()).await?,
+    }
+    Ok(())
+}
+
+/// Same shape as `run_streaming`, for the `swarm` method.
+async fn run_swarm(
+    engine: &Arc<KodEngine>,
+    out: &tokio::sync::mpsc::Sender<String>,
+    req_id: &str,
+    goal: &str,
+    max_agents: usize,
+    merge: bool,
+) -> Result<()> {
+    let runner =
+        crate::swarm_runner::SwarmRunner::new(engine.clone(), max_agents, merge).await?;
+    let (evt_tx, mut evt_rx) =
+        tokio::sync::mpsc::channel::<crate::swarm_runner::SwarmEvent>(256);
+    let goal_owned = goal.to_string();
+    let run_handle = tokio::spawn(async move { runner.run(&goal_owned, &evt_tx).await });
+    while let Some(evt) = evt_rx.recv().await {
+        let data = serde_json::to_value(&evt).unwrap_or(serde_json::Value::Null);
+        send_response(
+            out,
+            &Response {
+                id: req_id,
+                kind: "swarm_event",
+                data: Some(data),
+            },
+        )
+        .await?;
+    }
+    let outcome = run_handle
+        .await
+        .map_err(|e| KodError::Internal(format!("swarm task panicked: {e}")))?;
+    match outcome {
+        Ok(resp) => {
+            let data = serde_json::json!({
+                "merged": resp.merged,
+                "merged_by_model": resp.merged_by_model,
+                "conflicts": resp.conflicts.iter().map(|c| {
+                    serde_json::json!({"file": c.file, "agents": c.agents})
+                }).collect::<Vec<_>>(),
+            });
+            write_ok(out, req_id, data).await?;
+        }
+        Err(e) => write_error(out, req_id, &e.to_string()).await?,
     }
     Ok(())
 }
@@ -488,25 +606,26 @@ fn string_param(params: &Value, key: &str) -> String {
         .to_string()
 }
 
-async fn write_line<W: AsyncWriteExt + Unpin>(
-    w: &mut W,
+/// Serialize one response and send it through the writer channel.
+async fn send_response(
+    tx: &tokio::sync::mpsc::Sender<String>,
     response: &Response<'_>,
 ) -> Result<()> {
     let mut s = serde_json::to_string(response)
         .map_err(|e| KodError::Serialization(e.to_string()))?;
     s.push('\n');
-    w.write_all(s.as_bytes()).await.map_err(KodError::Io)?;
-    w.flush().await.map_err(KodError::Io)?;
-    Ok(())
+    tx.send(s)
+        .await
+        .map_err(|_| KodError::Internal("writer channel closed".to_string()))
 }
 
-async fn write_chunk<W: AsyncWriteExt + Unpin>(
-    w: &mut W,
+async fn write_chunk(
+    tx: &tokio::sync::mpsc::Sender<String>,
     id: &str,
     chunk: &str,
 ) -> Result<()> {
-    write_line(
-        w,
+    send_response(
+        tx,
         &Response {
             id,
             kind: "chunk",
@@ -516,15 +635,14 @@ async fn write_chunk<W: AsyncWriteExt + Unpin>(
     .await
 }
 
-async fn write_done<W: AsyncWriteExt + Unpin>(
-    w: &mut W,
+async fn write_done(
+    tx: &tokio::sync::mpsc::Sender<String>,
     id: &str,
     resp: &crate::router::TaskResponse,
 ) -> Result<()> {
-    let data = serde_json::to_value(resp)
-        .unwrap_or(Value::Null);
-    write_line(
-        w,
+    let data = serde_json::to_value(resp).unwrap_or(Value::Null);
+    send_response(
+        tx,
         &Response {
             id,
             kind: "done",
@@ -534,13 +652,13 @@ async fn write_done<W: AsyncWriteExt + Unpin>(
     .await
 }
 
-async fn write_error<W: AsyncWriteExt + Unpin>(
-    w: &mut W,
+async fn write_error(
+    tx: &tokio::sync::mpsc::Sender<String>,
     id: &str,
     message: &str,
 ) -> Result<()> {
-    write_line(
-        w,
+    send_response(
+        tx,
         &Response {
             id,
             kind: "error",
@@ -550,9 +668,9 @@ async fn write_error<W: AsyncWriteExt + Unpin>(
     .await
 }
 
-async fn write_ack<W: AsyncWriteExt + Unpin>(w: &mut W, id: &str) -> Result<()> {
-    write_line(
-        w,
+async fn write_ack(tx: &tokio::sync::mpsc::Sender<String>, id: &str) -> Result<()> {
+    send_response(
+        tx,
         &Response {
             id,
             kind: "done",
@@ -562,13 +680,13 @@ async fn write_ack<W: AsyncWriteExt + Unpin>(w: &mut W, id: &str) -> Result<()> 
     .await
 }
 
-async fn write_ok<W: AsyncWriteExt + Unpin>(
-    w: &mut W,
+async fn write_ok(
+    tx: &tokio::sync::mpsc::Sender<String>,
     id: &str,
     data: Value,
 ) -> Result<()> {
-    write_line(
-        w,
+    send_response(
+        tx,
         &Response {
             id,
             kind: "done",
@@ -577,6 +695,8 @@ async fn write_ok<W: AsyncWriteExt + Unpin>(
     )
     .await
 }
+
+
 
 #[cfg(test)]
 mod tests {

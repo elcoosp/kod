@@ -191,6 +191,25 @@ pub fn read_session(path: &Path) -> Result<Vec<SessionEntry>> {
         match serde_json::from_str::<SessionEntry>(line) {
             Ok(e) => out.push(e),
             Err(e) => {
+                // Distinguish "a well-formed JSON line whose `kind`
+                // this build does not know" from "a corrupt line".
+                //
+                // The session format is extensible (AD-15): a newer
+                // build can add variants and an older build reading
+                // the file must not refuse to open it. A line that
+                // parses as JSON but fails to deserialize as
+                // `SessionEntry` is a forward-compat case, skipped
+                // with a warning. A line that is not JSON at all is
+                // a corrupt log — a hard error, because skipping
+                // it would hide a real truncation.
+                if serde_json::from_str::<serde_json::Value>(line).is_ok() {
+                    tracing::warn!(
+                        line = i + 1,
+                        "session log line has an unknown kind; \
+                         skipping (forward-compat)"
+                    );
+                    continue;
+                }
                 return Err(KodError::Deserialization(format!(
                     "line {}: {}",
                     i + 1,

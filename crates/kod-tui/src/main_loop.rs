@@ -62,6 +62,13 @@ pub struct TuiLoop {
     /// loads in `init_engine`; overrides the config and project
     /// policy layers.
     cli_preset: Option<String>,
+    /// When true, `init_engine` skips loading `~/.kod/tui_session.json`
+    /// and starts with an empty chat. Set by `kod tui --no-resume`.
+    ///
+    /// A field on the loop, not a parameter threaded through every
+    /// method: `init_engine` is the only consumer, and the CLI sets
+    /// it once at construction time.
+    no_resume: bool,
     /// Whether mouse capture is currently enabled. Tracked here so
     /// the `m` key can toggle it without querying the terminal
     /// (crossterm has no "is capture enabled?" query on all
@@ -83,6 +90,7 @@ impl TuiLoop {
             persist_history: false,
             sandbox_required: false,
             cli_preset: None,
+            no_resume: false,
             mouse_captured: true,
         }
     }
@@ -104,6 +112,13 @@ impl TuiLoop {
     /// layers only".
     pub fn set_cli_preset(&mut self, preset: Option<String>) {
         self.cli_preset = preset;
+    }
+
+    /// When true, skip loading the saved session on startup. Called by
+    /// `kod tui --no-resume`. The TUI still writes a session on exit;
+    /// `--no-resume` only affects the *restore* half.
+    pub fn set_no_resume(&mut self, no_resume: bool) {
+        self.no_resume = no_resume;
     }
 
     /// Open `initial` in `$EDITOR` (falling back to `$VISUAL` then
@@ -324,7 +339,17 @@ impl TuiLoop {
         // views agree on the next prompt — without the seed, the model
         // opens the next turn with "this is a fresh conversation" while
         // the screen is full of history.
-        let restored = self.app.load_session();
+        //
+        // `--no-resume` short-circuits the restore entirely. The saved
+        // file is left on disk — a user who asked for a fresh session
+        // today may want the old one tomorrow, and silently deleting
+        // their transcript is the kind of surprise this flag exists to
+        // avoid.
+        let restored = if self.no_resume {
+            0
+        } else {
+            self.app.load_session()
+        };
         if restored > 0 {
             if let Some(engine) = &self.engine {
                 for m in self.app.messages() {

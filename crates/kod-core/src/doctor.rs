@@ -209,6 +209,100 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
         }
     }
 
+    // MCP servers. Informational: the count of configured (spawnable)
+    // servers, so a user who wrote a `[mcp.servers.*]` block sees
+    // whether it parsed and is enabled. The doctor does not spawn the
+    // servers — that would make a diagnostic slow and side-effecting.
+    {
+        let configured = config.mcp.servers.len();
+        let spawnable = config
+            .mcp
+            .servers
+            .iter()
+            .filter(|(_, s)| s.is_spawnable())
+            .count();
+        if configured == 0 {
+            report.push(
+                "mcp",
+                CheckStatus::Ok,
+                "no MCP servers configured (add [mcp.servers.<name>] to enable)",
+            );
+        } else if spawnable == 0 {
+            report.push(
+                "mcp",
+                CheckStatus::Warn,
+                format!(
+                    "{configured} server(s) configured but none is spawnable                      (disabled, or missing `command`)",
+                ),
+            );
+        } else {
+            let names: Vec<String> = config
+                .mcp
+                .servers
+                .iter()
+                .filter(|(_, s)| s.is_spawnable())
+                .map(|(n, _)| n.clone())
+                .collect();
+            report.push(
+                "mcp",
+                CheckStatus::Ok,
+                format!(
+                    "{spawnable} server(s) configured: {}",
+                    names.join(", "),
+                ),
+            );
+        }
+    }
+
+    // Serve daemon. Informational: report whether a daemon is
+    // listening on the default socket. A user who expects one and
+    // finds none needs the hint; a user who does not use the daemon
+    // sees a quiet "no".
+    {
+        let socket = crate::serve::default_socket_path();
+        if socket.exists() {
+            report.push(
+                "serve",
+                CheckStatus::Ok,
+                format!("daemon socket present at {}", socket.display()),
+            );
+        } else {
+            report.push(
+                "serve",
+                CheckStatus::Ok,
+                format!(
+                    "no daemon (start one with `kod serve` to enable --remote)",
+                ),
+            );
+        }
+    }
+
+    // Swarm routing. Informational: name the endpoints a planner and
+    // a coder route to, when the user configured `[llm.routing.swarm]`.
+    // Empty table means every capability routes to the default
+    // endpoint, which is what a v1 config produces.
+    {
+        let swarm_routes = config
+            .llm
+            .routing
+            .as_ref()
+            .map(|r| r.swarm.len())
+            .unwrap_or(0);
+        if swarm_routes == 0 {
+            report.push(
+                "swarm.routing",
+                CheckStatus::Ok,
+                "no per-capability routing (every swarm role uses the default endpoint)",
+            );
+        } else {
+            report.push(
+                "swarm.routing",
+                CheckStatus::Ok,
+                format!("{swarm_routes} capability route(s) configured"),
+            );
+        }
+    }
+
     // Git availability. Only a warning — KOD runs fine without git,
     // but a user who intends to use git_status / git_diff needs git
     // installed and on PATH.
