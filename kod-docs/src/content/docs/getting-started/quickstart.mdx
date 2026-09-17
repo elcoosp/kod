@@ -18,7 +18,7 @@ If you have not built the binary yet, start with [Installation](/getting-started
 
    ```bash
    ollama serve &                    # start the server
-   ollama pull qwen2.5-coder:7b      # download a small coding model
+   ollama pull qwen3.8:27b-mlx      # download a small coding model
    ```
 
 2. Note the endpoint: the default config points at `http://localhost:11434/v1`, which is Ollama's OpenAI-compatible root. Base URLs are normalised automatically, so a server root or an `.../v1` root both work — the same is true for LM Studio, MLX Omni Serve, and vLLM.
