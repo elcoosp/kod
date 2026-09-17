@@ -2,7 +2,7 @@
 name: rust-refactoring
 description: Rust code refactoring with idiomatic patterns and best practices
 version: 1.0.0
-author: kod-team
+author: elcoosp
 category: coding
 tags:
   - rust
