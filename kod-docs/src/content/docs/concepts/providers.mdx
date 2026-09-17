@@ -1,6 +1,6 @@
 ---
 title: LLM Providers
-description: KOD's provider layer — the LlmProvider trait, the single OpenAI-compatible code path, base-URL normalisation, and streaming with live tool-call assembly.
+description: KOD's provider layer — endpoints, the single OpenAI-compatible code path, base-URL normalisation, and streaming with live tool-call assembly.
 sidebar:
   order: 4
 ---
@@ -16,38 +16,56 @@ All of these work unchanged, on the same code path:
 <Tabs>
 <TabItem label="Ollama (default)">
   ```toml
-  [llm]
+  [[llm.endpoints]]
+  name     = "local"
+  provider = "openai-compatible"
   base_url = "http://localhost:11434/v1"
-  model    = "qwen3.8:27b-mlx"
+  model    = "qwen2.5-coder:7b"
+  context_window = 32768
   ```
 </TabItem>
 <TabItem label="LM Studio">
   ```toml
-  [llm]
+  [[llm.endpoints]]
+  name     = "lmstudio"
+  provider = "openai-compatible"
   base_url = "http://localhost:1234/v1"
+  model    = "your-model"
+  context_window = 16384
   ```
 </TabItem>
 <TabItem label="vLLM">
   ```toml
-  [llm]
+  [[llm.endpoints]]
+  name     = "vllm"
+  provider = "openai-compatible"
   base_url = "http://localhost:8000/v1"
+  model    = "your-model"
+  context_window = 32768
   ```
 </TabItem>
 <TabItem label="OpenAI (cloud)">
   ```toml
-  [llm]
-  provider  = "OpenAI"          # alias of OpenAICompatible
-  base_url  = "https://api.openai.com/v1"
-  model     = "gpt-4o-mini"
+  [[llm.endpoints]]
+  name     = "openai"
+  provider = "openai-compatible"   # "OpenAI" works too — same thing
+  base_url = "https://api.openai.com/v1"
+  model    = "gpt-4o-mini"
+  api_key_env = "OPENAI_API_KEY"   # the key lives in the environment
+  context_window = 128000
   ```
 </TabItem>
 </Tabs>
 
-The `provider` field accepts `OpenAICompatible`, `Ollama`, and `OpenAI` — the last two are aliases for the first. `Anthropic` and `Custom` variants are recognised in config but will fail at the first prompt; `LlmConfig::validate` warns at startup so the gap is visible before a session, not during one.
+The `provider` field accepts `openai-compatible` (aliases `Ollama` and `OpenAI`). An `anthropic` kind is recognised in config but not implemented yet — it fails at the first prompt, and a startup warning makes the gap visible before the session rather than during one.
+
+## Endpoints, not a single model
+
+Endpoints are a list, and the first one is the default. Everything that affects the wire — `base_url`, `model`, `temperature`, `max_tokens`, `timeout_secs` — lives on the endpoint, which is what lets [routing](/guides/configuration/#endpoints-instead-of-a-single-model) send a swarm's planning to one server and its coding to another. API keys are referenced by environment-variable *name* (`api_key_env`), so a committed config cannot leak a secret, and optional `[llm.endpoints.pricing]` (USD per million tokens) feeds the TUI's cost display.
 
 ## Base-URL normalisation
 
-Base URLs are normalised automatically: a server root (`http://localhost:11434`) or an `.../v1` root (`http://localhost:11434/v1`) both work. KOD composes the correct chat-completions endpoint either way, which removes the most common "connection works but requests 404" footgun when switching servers. This behaviour is pinned by tests in the provider crate.
+Base URLs are normalised automatically: a server root (`http://localhost:11434`) or an `.../v1` root (`http://localhost:11434/v1`) both work. KOD composes the correct chat-completions endpoint either way, which removes the most common "connection works but requests 404" footgun when switching servers.
 
 ## Streaming and tool calls
 
@@ -57,14 +75,14 @@ Non-streaming generation exists too, but the engine's loop uses streaming everyw
 
 ## Model discovery
 
-`kod models` calls the provider's `list_models()` (`GET /v1/models` upstream) with `--filter` to narrow the list. Errors are surfaced rather than collapsed into an empty list — a bad endpoint shows up as an error here instead of mysteriously showing "no models".
+`kod models` calls the provider's `list_models()` (`GET /v1/models` upstream) with `--filter` to narrow the list. Errors are surfaced rather than collapsed into an empty list — a bad endpoint shows up as an error here instead of mysteriously showing "no models". The TUI's `/model` completion uses the same source, so the names it offers are the ones your server actually serves.
 
 ## What a provider must provide
 
-The trait surface is deliberately small: generation (streaming and not) with tool calling, plus model listing. `GenerationOptions` carries temperature, token caps, and friends. That smallness is why adding a new provider is tractable, and why the OpenAI-compatible path can be tested end-to-end with a live model behind an `#[ignore]` gate (see [Testing](/developers/testing/)).
+The trait surface is deliberately small: generation (streaming and not) with tool calling, plus model listing. `GenerationOptions` carries temperature, token caps, and friends. That smallness is why the OpenAI-compatible path covers so many servers — and why a future second implementation (Anthropic's native protocol, for instance) has a clear shape to slot into.
 
 <Aside type="note">
-  Engine detail worth knowing: the agentic loop no longer holds the provider read lock across the streaming round, so `/model` mid-prompt switches instantly. Provider correctness and engine concurrency were two separate bugs; both are fixed and tested.
+  Engine detail worth knowing: the agentic loop does not hold the provider read lock across a streaming round, so <code>/model</code> mid-prompt switches instantly — one endpoint's stream can wind down while the next spins up.
 </Aside>
 
 <LinkCard title="Guides: Model Profiles" href="/guides/profiles/" description="The four presets that make switching models a one-liner." />
