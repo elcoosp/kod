@@ -19,7 +19,7 @@ export default defineConfig({
         {
           icon: 'github',
           label: 'KOD on GitHub',
-          href: 'https://github.com/kod-team/kod',
+          href: 'https://github.com/elcoosp/kod',
         },
       ],
       lastUpdated: false,
