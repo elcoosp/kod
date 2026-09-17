@@ -10,6 +10,7 @@ members = [
     "crates/kod-skills",
     "crates/kod-memory",
     "crates/kod-lsp",
+    "crates/kod-mcp",
     "crates/kod-tools",
     "crates/kod-swarm",
     "crates/kod-tui",
