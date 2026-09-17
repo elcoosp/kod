@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: How KOD reads config.toml — locations, every section ([llm], [memory], [skills], [swarm], [hooks], [tools]), clamping behaviour, and the config subcommands.
+description: How KOD reads config.toml — locations, every section ([llm] endpoints, [memory], [skills], [swarm], [tools], [hooks], [mcp], [commands]), clamping behaviour, and the config subcommands.
 sidebar:
   order: 3
 ---
@@ -14,60 +14,132 @@ KOD reads its configuration from a single TOML file, auto-generated on first run
 - **Linux:** `~/.config/kod/config.toml`
 - **macOS:** `~/Library/Application Support/kod/config.toml`
 
-`kod config path` prints the exact location; `kod config edit` opens it in `$EDITOR`; `kod config validate` parses it and exits non-zero when it is invalid — useful in CI or after a hand-edit. Corrupt files are not fatal: `load_default()` warns and falls back to defaults instead of exiting, so a bad edit never bricks your session.
+`kod config path` prints the exact location; `kod config edit` opens it in `$EDITOR`; `kod config validate` parses it and exits non-zero when it is invalid — useful in CI or after a hand-edit. Corrupt files are not fatal: KOD warns and falls back to defaults instead of exiting, so a bad edit never bricks your session.
 
-## The full file, annotated
+## The shape of the file
 
-This is the complete set of sections KOD reads today:
+A config only needs the blocks you care about — every omitted section fills from defaults. The example below is a realistic *complete* file:
 
 ```toml
+# ── Models ─────────────────────────────────────────────────────
 [llm]
-provider        = "OpenAICompatible"   # or "Ollama" / "OpenAI" (aliases)
-model           = "qwen3.8:27b-mlx"
-base_url        = "http://localhost:11434/v1"
-context_window  = 32768
-max_tokens      = 4096
-temperature     = 0.2
-timeout_secs    = 120
-# network_access = false               # opt-in network access for web_fetch
+network_access = false          # opt-in network access for web_fetch
 
+[[llm.endpoints]]               # one block per model server
+name         = "local"
+provider     = "openai-compatible"   # or "anthropic" (declared, not implemented yet)
+base_url     = "http://localhost:11434/v1"
+model        = "qwen2.5-coder:7b"
+context_window = 32768
+# api_key_env = "MY_API_KEY"    # env var NAME holding the key — never the key itself
+# temperature = 0.7
+# max_tokens  = 4096
+# timeout_secs = 300
+# [llm.endpoints.pricing]       # USD per million tokens, for TUI cost display
+# input_per_mtok_usd = 0.15
+# output_per_mtok_usd = 0.60
+
+# ── Memory ─────────────────────────────────────────────────────
 [memory]
 short_term_capacity = 100
-scope               = "global"         # or "project"
-# long_term_db_path = "/custom/path.redb"  # overrides scope
+scope               = "global"  # or "project" → <cwd>/.kod/memory.redb
+# extract_on_shutdown = false   # one LLM pass to save durable facts at exit
 
+# ── Skills ─────────────────────────────────────────────────────
 [skills]
 enable_hot_reload     = true
 max_skills_per_query  = 3
-# skills_dir = "/custom/skills"        # overrides the standard search paths
+match_threshold       = 0.7
+# skills_dir = "/custom/skills" # overrides the standard search paths
 
+# ── Swarms ─────────────────────────────────────────────────────
 [swarm]
-max_agents     = 5                     # clamped to 2–8 by the runner
-merge_results  = true
+max_agents         = 5          # clamped to 2–8 by the runner
+merge_results      = true
+agent_timeout_secs = 300        # per-agent wall clock; 0 disables
+agent_retries      = 1
 
+# ── Write follow-ups ───────────────────────────────────────────
 [tools]
-confirm_writes = true                  # approval dialog / stdin prompt before writes
+auto_check = false              # run compiler/linter after writes (cargo, tsc, ruff, go vet)
+auto_lsp   = true               # run language-server diagnostics after writes
 
+# ── Hooks ──────────────────────────────────────────────────────
 [hooks]
 enabled = false
 # pre_tool_use  = { write_file = "rustfmt {path}" }
 # post_tool_use = { write_file = "cargo check" }
+
+# ── MCP servers (optional) ─────────────────────────────────────
+# [mcp.servers.filesystem]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+# enabled = true
+# call_timeout_secs = 60
+# [mcp.servers.filesystem.env]
+# LOG_LEVEL = "info"
+
+# ── Custom slash commands (optional) ───────────────────────────
+# [commands]
+# review = "Review the last change in {cwd} and point out risks."
+# explain = "Explain what this code does:\n\n{args}"
 ```
 
-<Aside type="note">
-  The `provider` field accepts `OpenAICompatible`, `Ollama`, and `OpenAI` — the last two are aliases for the first. Any server that speaks the OpenAI chat-completions protocol works on the same code path. `Anthropic` and `Custom` variants are recognised in config but will fail at the first prompt; `LlmConfig::validate` warns at startup.
-</Aside>
+## Endpoints instead of a single model
+
+The `[llm]` section holds a **list of named endpoints**, not one flat model. The first endpoint is the default; everything that affects the wire — `base_url`, `model`, `temperature`, `max_tokens` — lives on the endpoint. That is what lets you point different work at different servers:
+
+```toml
+[llm.routing]
+by_task  = { Debugging = "cloud", Simple = "local" }
+fallback = ["local", "cloud"]     # try in order when the primary fails
+swarm    = { Planning = "cloud", Coding = "local" }
+```
+
+- `by_task` maps a [task type](/concepts/router/) (`Simple`, `Debugging`, …) to an endpoint name.
+- `fallback` is the ordered retry chain for retryable errors.
+- `swarm` maps swarm capabilities (`Planning`, `Coding`, …) to endpoints, so a swarm can think with one model and code with another.
+
+Names that do not match a defined endpoint are dropped with a warning at load time — a typo cannot silently disable a route.
+
+## API keys live in the environment
+
+Endpoint blocks never contain key material — only the *name* of the environment variable that holds it:
+
+```toml
+[[llm.endpoints]]
+name        = "openai"
+provider    = "openai-compatible"
+base_url    = "https://api.openai.com/v1"
+model       = "gpt-4o-mini"
+api_key_env = "OPENAI_API_KEY"
+```
+
+A shared or committed config therefore cannot leak a secret. The memory section has the same pattern for the optional embedding API (`memory.embedding_api_key_env`).
 
 ## Out-of-range values are clamped, not fatal
 
-`LlmConfig::validate()` clamps out-of-range values — temperature, context window, max tokens, timeout, base URL, model — with a warning at load time. A typo does not produce a mysterious failure three prompts later; you get a warning naming the key and the corrected value. This is a deliberate philosophy: be forgiving at load, loud about it, and precise once running.
+At load time every endpoint is validated: temperature is clamped to 0.0–2.0, `context_window` has a coherent floor (2000), `max_tokens = 0` falls back to the default, timeouts are floored at 1s, and empty `base_url`/`model` values are replaced. Each adjustment logs a warning naming the endpoint and the corrected value. The philosophy: be forgiving at load, loud about it, and precise once running.
 
 ## Per-project overrides: `.kod/`
 
-Two things can be scoped to a project directory instead of your home directory:
+Three things can be scoped to a project directory instead of your home directory:
 
 1. **Policy** — `.kod/policy.toml` in the project root is committed to the repo like an `.editorconfig` and layers over your global config. See [Policy & Permissions](/guides/policy/).
-2. **Memory** — `memory.scope = "project"` puts the long-term database under `<cwd>/.kod/` instead of `~/.kod/`, giving each project its own memory.
+2. **Memory** — `memory.scope = "project"` puts the long-term database under `<cwd>/.kod/memory.redb` instead of `~/.kod/data/kod.redb`, giving each project its own memory.
+3. **Keybindings** — a `.kod-keys.toml` in the project remaps TUI keys for that repo only. See [TUI Keybindings](/reference/tui-keys/#rebinding-keys).
+
+## Custom slash commands
+
+The `[commands]` block registers your own TUI slash commands. Each key becomes `/key`, and its value is the prompt that gets sent:
+
+```toml
+[commands]
+review  = "Review the last change in {cwd} and point out risks."
+explain = "Explain what this code does:\n\n{args}"
+```
+
+`{args}` is replaced by everything typed after the command name; `{cwd}` by the current working directory. `/review` needs no arguments; `/explain foo.bar` sends the template with `foo.bar` substituted in.
 
 ## Inspecting what actually applies
 
@@ -76,25 +148,25 @@ Because configuration comes from defaults plus your edits, the useful question i
 <Tabs>
 <TabItem label="Effective config">
   ```bash
-  kod config toml    # defaults merged with user config, reproducible
+  kod config show-merged   # defaults merged with user config, reproducible
   ```
 </TabItem>
 <TabItem label="Raw file">
   ```bash
-  kod config raw     # verbatim file contents, comments included
+  kod config show-raw      # verbatim file contents, comments included
   ```
 </TabItem>
 <TabItem label="Just the LLM block">
   ```bash
-  kod profile show   # the effective [llm] section
+  kod profile show         # the effective [llm] section
   ```
 </TabItem>
 </Tabs>
 
-`kod config write [path]` dumps the effective config to a file (refuses to overwrite without `--force`), which gives you a fully self-documenting starting point: dump it, read the defaults as comments-free TOML, edit what you need.
+`kod config export [path]` dumps the effective config to a file (or stdout with `-`; refuses to overwrite without `--force`), which gives you a fully self-documenting starting point.
 
 <Aside type="tip">
-  Piping `kod config toml` into a file and committing it is a clean way to version your baseline and diff future changes against it.
+  Piping <code>kod config show-merged</code> into a file and committing it is a clean way to version your baseline and diff future changes against it.
 </Aside>
 
 <LinkCard title="Reference: Config Reference" href="/reference/config/" description="Every key, type, default, and valid range in table form." />
