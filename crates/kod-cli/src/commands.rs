@@ -1825,7 +1825,7 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool) -> Result<()> {
     let tool_calls: Vec<_> = entries
         .iter()
         .filter_map(|e| match e {
-            kod_core::session_log::SessionEntry::ToolCall { id: None,
+            kod_core::session_log::SessionEntry::ToolCall {
                 tool_name,
                 arguments,
                 result,
