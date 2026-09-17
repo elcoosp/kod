@@ -1,13 +1,13 @@
 ---
 title: Testing
-description: How KOD is tested — the suite layout, per-crate coverage, offline-by-default design, live-model tests, benchmarks, and the pre-release checklist.
+description: How KOD is tested — the suite layout, offline-by-default design, live-model tests, benchmarks, and the pre-release checklist.
 sidebar:
   order: 1
 ---
 
 import { Aside, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The workspace contains roughly **356 test attributes** (`#[test]`, `#[tokio::test]`, `#[rstest]`) across 11 crates. `cargo test --workspace` runs unit tests, integration tests, and doc tests **without external services** — the suite is designed to be fast and offline, with live-model tests opt-in behind `#[ignore]`.
+The workspace's test suite runs unit tests, integration tests, and doc tests **without external services** — it is designed to be fast and offline, with live-model tests opt-in behind `#[ignore]`. `cargo test --workspace` is the single entry point; CI runs the same suite on every push.
 
 ## Quick start
 
@@ -20,23 +20,7 @@ cargo test --workspace --tests   # integration tests only
 cargo test --workspace -- --list | tail -1     # exact current total
 ```
 
-The attribute count is illustrative, not canonical — `#[rstest]` cases expand into multiple tests at runtime, and ordinary development adds tests without updating the count.
-
-## Coverage by crate
-
-| Crate | Attributes | What is pinned |
-| --- | --- | --- |
-| `kod-tui` | 105 | App state, events, keybindings, completion, search, streaming, main loop |
-| `kod-core` | 79 | Engine lifecycle, task classification, memory wiring, prompt grounding, tool rounds, session log, swarm runner |
-| `kod-tools` | 47 | Built-in tools, path resolution, sandbox invocation, permission enforcement |
-| `kod-skills` | 34 | Parser, loader, matcher, watcher, full pipeline |
-| `kod-memory` | 25 | FIFO eviction, `redb` round-trips, retrieval, compaction |
-| `kod-config` | 18 | Defaults, partial-config parsing, LLM validation, profiles, memory scope |
-| `kod-cli` | 15 | Doctor checks, command dispatch, in-process engine tests |
-| `kod-types` | 9 | IDs, message serialisation, tool and skill types |
-| `kod-provider-openai` | 6 | Endpoint normalisation, config wiring, model switching |
-| `kod-error` | 3 | Error creation, display, conversion |
-| `kod-provider` | 0 | Trait-only crate — no tests |
+Per-crate, the dense suites are `kod-tui` (app state, events, keybindings, completion, search, streaming, main loop), `kod-core` (engine lifecycle, classification, memory wiring, grounding, tool rounds, session log, swarm runner), `kod-tools` (built-in tools, path resolution, sandbox invocation, permission enforcement), `kod-skills` (parser, loader, matcher, watcher, full pipeline), and `kod-memory` (FIFO eviction, `redb` round-trips, retrieval, compaction). `kod-provider` is trait-only and has no tests by design.
 
 ## Live model tests
 
@@ -57,6 +41,8 @@ Tests that exercise the real provider are `#[ignore]`-gated so `cargo test` stay
 </TabItem>
 </Tabs>
 
+`KOD_TEST_MODEL` names a model the server has already pulled; `KOD_TEST_DB` points the TUI test at a disposable memory database. Connection errors here mean the server is down or the model is missing — not that the code is wrong.
+
 In-process tests build the router with `enable_memory=false` to avoid database contention — mirroring how the engine wires memory in production but keeping tests hermetic.
 
 ## Benchmarks
@@ -65,7 +51,7 @@ In-process tests build the router with `enable_memory=false` to avoid database c
 cargo bench --workspace          # or: just bench
 ```
 
-Benchmarks live under `kod-core/benches/` and cover the engine's hot paths. `just bench` is the shortcut.
+Benchmarks live under `kod-core/benches/` and cover the engine's hot paths.
 
 ## Debugging a failing test
 
