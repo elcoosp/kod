@@ -196,6 +196,62 @@ impl TaskRouter {
         Ok(())
     }
 
+    /// Store a long-term memory entry with a project scope and tags
+    /// (D2-B3a). Called by the `memory_save` tool. Returns the new
+    /// entry's id. Errors when memory is disabled.
+    pub async fn store_long_term(
+        &self,
+        content: &str,
+        tags: Vec<String>,
+        project_key: Option<String>,
+    ) -> Result<kod_types::MemoryId> {
+        let Some(manager) = &self.memory_manager else {
+            return Err(kod_error::KodError::Config(
+                "memory is disabled in this session (RouterConfig::enable_memory = false)"
+                    .to_string(),
+            ));
+        };
+        let metadata = kod_types::MemoryMetadata {
+            tags,
+            project_key,
+            ..Default::default()
+        };
+        manager
+            .store_with_metadata(kod_types::MemoryType::LongTerm, content, metadata)
+            .await
+    }
+
+    /// Search long-term memory with the hybrid retrieval (D2-B2) and
+    /// return the top-k entries. Called by the `memory_search` tool.
+    /// Empty result for a query with no match; empty result when memory
+    /// is disabled.
+    pub async fn search_long_term(
+        &self,
+        query: &str,
+        k: usize,
+    ) -> Vec<kod_types::MemoryEntry> {
+        let Some(manager) = &self.memory_manager else {
+            return Vec::new();
+        };
+        match manager.retrieve_long_term_hybrid(query).await {
+            Ok(v) => v.into_iter().take(k).collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "memory search failed");
+                Vec::new()
+            }
+        }
+    }
+
+    /// FNV-1a hash of a canonical working directory, for scoping
+    /// entries written via `memory_save` (D2-B3a). Same hash function
+    /// the checkpoint manager uses for its per-project directory —
+    /// one identity, one hash.
+    pub fn project_key_for(working_dir: &std::path::Path) -> String {
+        let canonical = std::fs::canonicalize(working_dir)
+            .unwrap_or_else(|_| working_dir.to_path_buf());
+        crate::checkpoint::fnv1a_hex(&canonical.to_string_lossy())
+    }
+
     /// Load skills from a directory (matcher uses interior mutability,
     /// so this works through the shared `Arc` in the engine).
     pub async fn load_skills(&self, skills_dir: &std::path::Path) -> Result<usize> {
@@ -210,6 +266,13 @@ impl TaskRouter {
         }
 
         Ok(count)
+    }
+
+    /// Whether a memory manager was built (i.e. `enable_memory` was
+    /// true at construction). Read by the engine to decide whether to
+    /// register the memory tools.
+    pub fn has_memory(&self) -> bool {
+        self.memory_manager.is_some()
     }
 
     /// Number of entries currently in short-term memory (0 when
@@ -667,6 +730,37 @@ impl TaskRouter {
         history: &str,
         memory_context: Option<MemoryContext>,
     ) -> Result<String> {
+        self.build_prompt_with_budget(input, task_type, history, memory_context, None)
+            .await
+    }
+
+    /// Full form: caller passes an explicit [`crate::budget::Allocation`]
+    /// so each section is truncated to its share. The engine computes
+    /// the allocation from the endpoint's window and the request size;
+    /// a caller that does not care (a test, the CLI's plain path) uses
+    /// the two shorter forms.
+    pub async fn build_prompt_with_budget(
+        &self,
+        input: &str,
+        task_type: &TaskType,
+        history: &str,
+        memory_context: Option<MemoryContext>,
+        budget: Option<&crate::budget::Allocation>,
+    ) -> Result<String> {
+        // Truncate the request when it is over its share. The engine
+        // refuses an over-budget request before reaching this point;
+        // truncating here is a belt-and-braces guard so a
+        // non-engine caller cannot ship an oversized prompt.
+        let input = match budget {
+            Some(a) if input.len() > a.request => {
+                crate::engine::truncate_chars(input, a.request)
+            }
+            _ => input,
+        };
+        let history = match budget {
+            Some(a) => crate::engine::truncate_chars(history, a.history),
+            None => history,
+        };
         let mut prompt = String::from(
             "## Identity\n\nYou are kod, a helpful AI assistant running inside the user's machine. \
              You have filesystem tools (function calls, listed under ## Tool use) and a library of \
@@ -690,21 +784,47 @@ impl TaskRouter {
         // slice, both no-ops for a fresh session.
         prompt.push_str("## Stable prefix (cacheable)\n\n");
         if let Some(map) = self.repo_map_text() {
+            let map_str = map.as_str();
+            let shown = match budget {
+                Some(a) => crate::engine::truncate_chars(map_str, a.repomap),
+                None => map_str,
+            };
             prompt.push_str("## Repository map\n\n");
-            prompt.push_str(map.as_str());
+            prompt.push_str(shown);
             prompt.push_str("\n\n");
         }
         prompt.push_str("## Volatile suffix (not cached)\n\n");
         // When the caller supplied a context, use it as-is; the retrieval
         // already ran in `process_input_with_context`. When `None`,
         // retrieve here (the legacy `build_prompt` path).
-        let memory_context = match memory_context {
+        let mut memory_context = match memory_context {
             Some(c) => Some(c),
             None => match &self.memory_manager {
                 Some(manager) => Some(manager.retrieve_context(input).await?),
                 None => None,
             },
         };
+        // Truncate memory entries to the memory share.
+        if let (Some(a), Some(ctx)) = (budget, memory_context.as_mut()) {
+            let mut used = 0usize;
+            ctx.working_memory.retain(|e| {
+                if used + e.content.len() > a.memory {
+                    false
+                } else {
+                    used += e.content.len();
+                    true
+                }
+            });
+            let mut used = 0usize;
+            ctx.long_term.retain(|e| {
+                if used + e.content.len() > a.memory {
+                    false
+                } else {
+                    used += e.content.len();
+                    true
+                }
+            });
+        }
         prompt.push_str(&self.build_context(input, &memory_context, task_type).await?);
 
         // Skill knowledge, two layers: the full name+description inventory is
@@ -742,8 +862,18 @@ impl TaskRouter {
             let matches = matcher.find_relevant_skills(input).await;
             if !matches.is_empty() {
                 prompt.push_str("## Relevant Skills\n\n");
+                let skill_budget = budget.map(|a| a.skills).unwrap_or(usize::MAX);
+                let mut skill_used = 0usize;
                 for skill_match in matches.iter().take(self.config.max_skills_per_query) {
                     let skill = &skill_match.skill;
+                    // Each skill's instructions count against the
+                    // skills share. When the share is exhausted, stop
+                    // adding skills rather than truncate one mid-way.
+                    let cost = skill.instructions.len() + skill.metadata.name.len();
+                    if skill_used + cost > skill_budget {
+                        break;
+                    }
+                    skill_used += cost;
                     // Tell the agent where the skill lives so it can read
                     // reference files with the correct absolute path instead of
                     // guessing relative to the project root.
