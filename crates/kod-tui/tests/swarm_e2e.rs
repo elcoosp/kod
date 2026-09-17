@@ -93,7 +93,9 @@ async fn swarm_command_runs_end_to_end() {
     };
     let engine = KodEngine::new(cfg, temp.path().join("swarm.redb")).unwrap();
     engine.start().await.unwrap();
-    engine.set_provider(Arc::new(ScriptedProvider)).await;
+    { let mut reg = kod_provider::ProviderRegistry::new();
+          reg.insert("default", Arc::new(ScriptedProvider), kod_provider::ProviderCapabilities::conservative(), "");
+          engine.set_registry(Arc::new(reg), kod_provider::ModelRef::new("default", ""), None).await; }
 
     // Wire it into a TuiLoop without going through init_engine (which
     // would need a real config file and network).
@@ -166,7 +168,9 @@ async fn swarm_command_refuses_when_busy() {
     };
     let engine = KodEngine::new(cfg, temp.path().join("swarm.redb")).unwrap();
     engine.start().await.unwrap();
-    engine.set_provider(Arc::new(ScriptedProvider)).await;
+    { let mut reg = kod_provider::ProviderRegistry::new();
+          reg.insert("default", Arc::new(ScriptedProvider), kod_provider::ProviderCapabilities::conservative(), "");
+          engine.set_registry(Arc::new(reg), kod_provider::ModelRef::new("default", ""), None).await; }
 
     let mut tui = TuiLoop::new();
     tui.set_engine(Arc::new(engine));
