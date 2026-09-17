@@ -14,26 +14,22 @@
 //! 2. The cited line number is within the file's line count.
 //!
 //! Both must hold for a citation to be "verified". A citation that
-//! fails either check is annotated with `⚠` and the reason. The
-//! whole block is appended to the reply and also (in the streaming
-//! path) emitted as a live chunk so the user sees it in context.
+//! fails either check is annotated with `⚠` and the reason.
 //!
 //! # What is deliberately not checked
 //!
-//! The architecture document mentions an optional "content match"
-//! heuristic — does the cited line contain a token from the
-//! surrounding prose? Implementing it well requires understanding
-//! the model's intent, which is exactly what a heuristic cannot do.
-//! A wrong "unverified" annotation on a real citation is worse than
-//! no annotation at all, so this pass reports only what it can prove:
-//! the location exists, or it does not.
+//! A "does the cited line contain a token from the surrounding
+//! prose" heuristic sounds attractive and is not implemented. A
+//! wrong "unverified" annotation on a real citation is worse than no
+//! annotation at all — a user who sees ⚠ on a correct citation
+//! learns to ignore ⚠. The pass reports only what it can prove: the
+//! location exists, or it does not.
 //!
 //! # When the block appears
 //!
 //! `check_and_annotate` returns `block: None` when either (a) there
 //! are no citations in the reply, or (b) every citation verified.
-//! A clean reply stays clean. The block is only materialized when
-//! at least one citation could not be verified.
+//! A clean reply stays clean.
 
 use regex::Regex;
 use std::path::{Path, PathBuf};
@@ -94,17 +90,10 @@ pub struct AnnotatedReply {
 
 /// The one compiled citation regex, built once.
 ///
-/// Extensions are ordered longest-first. Rust's regex engine uses
-/// leftmost-first semantics with backtracking-equivalent behaviour,
-/// so ordering is not strictly required for correctness — but it
-/// makes the intent explicit and avoids relying on the engine's
-/// backtracking for a case a reviewer might reasonably expect to
-/// fail.
-///
 /// The path prefix character class includes `.`, `/`, and `-` so
 /// `./foo.rs`, `../foo.rs`, and `my-dir/foo.rs` all match. The
-/// engine walks the greedy prefix back to the last dot that allows
-/// a valid extension + `:` + digits to follow.
+/// greedy prefix walks back to the last dot that allows a valid
+/// extension + `:` + digits to follow.
 fn citation_regex() -> &'static Regex {
     use std::sync::OnceLock;
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -119,8 +108,7 @@ fn citation_regex() -> &'static Regex {
 /// Every distinct citation in `text`, in the order they first appear.
 ///
 /// Duplicates (same path, same line) collapse to one entry: a reply
-/// that references the same line twice does not need two checks, and
-/// the block reads better without them.
+/// that references the same line twice does not need two checks.
 pub fn extract_citations(text: &str) -> Vec<Citation> {
     let re = citation_regex();
     let mut out: Vec<Citation> = Vec::new();
@@ -155,8 +143,7 @@ pub fn extract_citations(text: &str) -> Vec<Citation> {
 ///
 /// A relative path is resolved against `root`; an absolute path is
 /// used as-is. Both are legal — a reply may cite the project
-/// (`src/lib.rs:1`) or a system file (`/etc/hosts:1`) — and checking
-/// either is informative.
+/// (`src/lib.rs:1`) or a system file (`/etc/hosts:1`).
 pub fn verify(citation: &Citation, root: &Path) -> Verification {
     let candidate: PathBuf = if Path::new(&citation.raw_path).is_absolute() {
         PathBuf::from(&citation.raw_path)
@@ -193,8 +180,8 @@ pub fn verify(citation: &Citation, root: &Path) -> Verification {
 }
 
 /// Render the `## Citation check (N/M verified)` block for a list of
-/// checks. Callers pass at least one non-verified check; the
-/// block is not produced for an all-clean reply.
+/// checks. Callers pass at least one non-verified check; the block
+/// is not produced for an all-clean reply.
 pub fn render_block(checks: &[CitationCheck]) -> String {
     let total = checks.len();
     let ok = checks
@@ -270,7 +257,6 @@ pub fn check_and_annotate(text: &str, root: &Path) -> AnnotatedReply {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use tempfile::TempDir;
 
     #[test]
@@ -365,7 +351,6 @@ mod tests {
         let b = r.block.expect("block");
         // One verified (real.rs:1), two failures.
         assert!(b.contains("1/3 verified"), "got: {b}");
-        // The verified one is still listed, with ✓.
         assert!(b.contains("✓ real.rs:1"), "got: {b}");
         assert!(b.contains("⚠ ghost.rs:1"), "got: {b}");
         assert!(b.contains("⚠ real.rs:99"), "got: {b}");
@@ -417,9 +402,6 @@ mod tests {
         assert!(block.contains("⚠ b.rs:10"));
     }
 
-    /// The rewritten reply is the original text with the block
-    /// appended; the block is separated by a blank line so it reads
-    /// as a distinct section, not as a continuation of the sentence.
     #[test]
     fn annotated_reply_appends_block_after_blank_line() {
         let tmp = TempDir::new().unwrap();
@@ -430,10 +412,4 @@ mod tests {
             r.text
         );
     }
-
-    // A `Path` re-export for the tests above that use `Path::new`.
-    use std::path::Path;
-    // Silence unused-import warnings when only some tests run.
-    #[allow(dead_code)]
-    fn _pathbuf_marker(_: PathBuf) {}
 }
