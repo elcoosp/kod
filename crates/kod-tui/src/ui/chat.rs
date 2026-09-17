@@ -54,24 +54,27 @@ impl ChatWidget {
     /// Falls back to a plain header when the viewport is too narrow.
     /// Plain text — no markdown parsing. Long rows reflow mid-word exactly
     /// like `Paragraph` with `Wrap { trim: false }` so scroll math stays exact.
-    fn assistant_block<'a>(
-        content: &'a str,
+    fn assistant_block(
+        content: &str,
         width: usize,
-        style: Style,
+        _style: Style,
         app: &KodApp,
-    ) -> Vec<Line<'a>> {
+    ) -> Vec<Line<'static>> {
         let theme = app.theme();
         let frame = Style::default().fg(theme.accent);
         let title_style = Style::default()
             .fg(theme.accent)
             .add_modifier(Modifier::BOLD);
         let inner = width.saturating_sub(4).max(1); // "│ " + content + " │"
-        let base = Style::default().fg(theme.assistant);
-        let mut body: Vec<Line<'a>> = Vec::new();
-        for raw in content.split('\n') {
-            let line = Line::from(vec![Span::styled(raw.to_string(), base)]);
-            body.extend(Self::reflow_line(line, inner));
-        }
+
+        // Markdown rendering (D6.5). Headers, code fences, lists,
+        // blockquotes, inline code, bold, and italic get their own
+        // styling; paragraphs are reflowed to the inner width. The
+        // renderer owns the wrapping, so no per-line `reflow_line`
+        // call is needed — the markdown module is the single place
+        // that decides where a line breaks.
+        let body: Vec<Line<'static>> = crate::markdown::render(content, inner, theme);
+
         if width < 20 {
             let mut lines = vec![Line::from(vec![Span::styled("ai ", title_style)])];
             for row in body {
@@ -101,13 +104,13 @@ impl ChatWidget {
             format!("╰{}╯", "─".repeat(width.saturating_sub(2))),
             frame,
         )]));
-        let _ = style;
         lines
     }
 
     /// Reflow one styled line into rows of at most `width` cells, keeping
     /// each char's style. Breaks mid-word like the plain wrapper so mixed
     /// Markdown/code rows measure exactly.
+    #[allow(dead_code)]
     fn reflow_line<'a>(line: Line<'a>, width: usize) -> Vec<Line<'a>> {
         let width = width.max(1);
         let mut rows: Vec<Vec<Span<'a>>> = vec![Vec::new()];
