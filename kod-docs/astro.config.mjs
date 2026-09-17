@@ -14,7 +14,7 @@ export default defineConfig({
         src: './src/assets/logo.png',
         alt: 'KOD logo',
       },
-      favicon: '/favicon.svg',
+      favicon: '/favicon.png',
       social: [
         {
           icon: 'github',

@@ -631,9 +631,9 @@ main kbd,
 }
 .card:hover,
 .card-grid .card:hover {
-  transform: translateY(-2px) !important;
-  border-color: color-mix(in srgb, var(--kod-purple-600) 45%, var(--kod-panel-border)) !important;
-  box-shadow: 0 12px 30px -16px var(--kod-glow) !important;
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--kod-purple-600) 55%, var(--kod-panel-border));
+  box-shadow: 0 14px 34px -14px var(--kod-glow);
 }
 .card .title {
   color: var(--sl-color-text);
