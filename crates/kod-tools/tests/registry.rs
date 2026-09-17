@@ -29,7 +29,7 @@ impl Tool for EchoTool {
                 write_files: false,
                 execute_commands: false,
                 network_access: false,
-                git_operations: false,
+                git_access: kod_types::GitAccess::None,
                 allowed_paths: Vec::new(),
                 forbidden_paths: Vec::new(),
             },
