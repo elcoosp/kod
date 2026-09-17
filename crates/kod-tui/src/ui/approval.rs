@@ -11,7 +11,7 @@
 //! machinery is only visible when there is more than one decision to
 //! make.
 
-use crate::app::{KodApp, PendingApprovalBatch};
+use crate::app::KodApp;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -196,8 +196,3 @@ fn truncate(s: &str, max: usize) -> String {
     out.push('…');
     out
 }
-
-// Silence an unused-import warning while the batch type is only
-// referenced through `KodApp` methods elsewhere.
-#[allow(dead_code)]
-fn _batch_marker(_: &PendingApprovalBatch) {}
