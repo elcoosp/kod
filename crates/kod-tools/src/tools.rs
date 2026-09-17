@@ -100,7 +100,7 @@ impl ReadFileTool {
                     write_files: false,
                     execute_commands: false,
                     network_access: false,
-                    git_operations: false,
+                    git_access: kod_types::GitAccess::None,
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
@@ -271,7 +271,7 @@ impl WriteFileTool {
                     write_files: true,
                     execute_commands: false,
                     network_access: false,
-                    git_operations: false,
+                    git_access: kod_types::GitAccess::None,
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
@@ -417,7 +417,7 @@ impl ExecuteCommandTool {
                     write_files: false,
                     execute_commands: true,
                     network_access: false,
-                    git_operations: false,
+                    git_access: kod_types::GitAccess::None,
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
@@ -462,13 +462,16 @@ impl Tool for ExecuteCommandTool {
             ("sh", "-c")
         };
 
-        // When sandbox mode is Require, wrap the shell invocation in the
-        // platform primitive (`bwrap` on Linux, `sandbox-exec` on macOS).
-        // A missing primitive fails the call loudly rather than silently
-        // running un-sandboxed.
-        let sandbox_inv = match crate::context::sandbox_invocation(
+        // Wrap the shell invocation in the platform primitive when the
+        // context's sandbox mode says so. `Auto` (the default) uses the
+        // best available primitive or silently falls through to no
+        // sandbox; `Require` fails loudly when nothing is available.
+        // See `SandboxResolver`.
+        let resolver = crate::context::default_resolver();
+        let sandbox_inv = match resolver.invocation(
             context.sandbox,
             &context.working_dir,
+            crate::context::SandboxOpts::default(),
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -480,10 +483,23 @@ impl Tool for ExecuteCommandTool {
 
         // Spawn with piped stdio so each stream is capped independently
         // and the child is killed the moment output runs away.
+        //
+        // Sandboxed path: the sandbox invocation ends with `--`
+        // (separator between the sandbox's own args and the command to
+        // run inside). The command to run is the platform shell
+        // (`sh`/`cmd`) followed by its flag and the user's command —
+        // so the shell program must be appended before the flag.
+        //
+        // Unsandboxed path: the shell program IS the program the
+        // `Command` was built with, so only the flag and the command
+        // follow.
         let mut spawn = match &sandbox_inv {
             Some(inv) => {
                 let mut c = tokio::process::Command::new(&inv.program);
                 c.args(&inv.args);
+                // The `--` was already pushed by the sandbox builder;
+                // the shell program comes next.
+                c.arg(shell);
                 c
             }
             None => tokio::process::Command::new(shell),
@@ -656,7 +672,7 @@ impl ListFilesTool {
                     write_files: false,
                     execute_commands: false,
                     network_access: false,
-                    git_operations: false,
+                    git_access: kod_types::GitAccess::None,
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
@@ -873,7 +889,7 @@ impl PatchFileTool {
                     write_files: true,
                     execute_commands: false,
                     network_access: false,
-                    git_operations: false,
+                    git_access: kod_types::GitAccess::None,
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
@@ -1006,7 +1022,7 @@ impl GrepTool {
                     write_files: false,
                     execute_commands: false,
                     network_access: false,
-                    git_operations: false,
+                    git_access: kod_types::GitAccess::None,
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
@@ -1185,7 +1201,7 @@ impl FileInfoTool {
                     write_files: false,
                     execute_commands: false,
                     network_access: false,
-                    git_operations: false,
+                    git_access: kod_types::GitAccess::None,
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
@@ -1234,12 +1250,19 @@ mod tests {
     use kod_types::ToolPermissions;
 
     fn full_context(dir: &std::path::Path) -> ToolContext {
-        ToolContext::new(dir).with_permissions(ToolPermissions {
-            read_files: true,
-            write_files: true,
-            execute_commands: true,
-            ..Default::default()
-        })
+        // These tests exercise the raw shell path — the sandbox wraps
+        // the command in bwrap / sandbox-exec on hosts where one is
+        // available, changing stdout, timing, and truncation. Opt out
+        // explicitly; the sandbox itself is exercised by its own
+        // integration tests.
+        ToolContext::new(dir)
+            .with_permissions(ToolPermissions {
+                read_files: true,
+                write_files: true,
+                execute_commands: true,
+                ..Default::default()
+            })
+            .with_sandbox(crate::context::SandboxMode::Disabled)
     }
 
     #[tokio::test]
