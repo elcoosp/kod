@@ -152,9 +152,15 @@ pub enum Event {
     /// Separate from `TokenUsage` because the two track different
     /// things: the meter is a window snapshot, this is a running total
     /// that only grows.
+    ///
+    /// `cost_usd` is the dollar cost of this one call, computed by
+    /// the dispatcher from `TaskResponse::pricing`. `None` when the
+    /// endpoint has no `[pricing]` block — the counter simply does
+    /// not advance for this turn rather than showing a guess.
     SessionUsage {
         prompt_tokens: usize,
         completion_tokens: usize,
+        cost_usd: Option<f64>,
     },
     /// Post-tool thinking phase (tool result reinjected, LLM reasoning again)
     Thinking,
