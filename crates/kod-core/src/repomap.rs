@@ -26,7 +26,18 @@ pub struct Symbol {
 /// The full repository map.
 #[derive(Debug, Clone, Default)]
 pub struct RepoMap {
+    /// Symbols per file, kept for callers that want them directly.
     pub entries: BTreeMap<PathBuf, Vec<Symbol>>,
+    /// Cross-file references: for each file, the paths it imports
+    /// (via `use`, `mod`, `import`, `#include`, `from ... import`,
+    /// ...). Populated by `build_repo_map` when the language is
+    /// recognized; empty otherwise.
+    pub imports: BTreeMap<PathBuf, Vec<PathBuf>>,
+    /// Per-file PageRank score computed from `imports`. Higher means
+    /// more files depend on it. All files present in `entries` have
+    /// an entry here (default 1.0 when they have no inbound or
+    /// outbound references).
+    pub rank: BTreeMap<PathBuf, f32>,
 }
 
 /// Default character budget for the rendered map. At the workspace's
@@ -35,10 +46,23 @@ pub struct RepoMap {
 pub const DEFAULT_MAP_CHARS: usize = 16_000;
 
 impl RepoMap {
-    /// Render as a compact text block, one file per line.
+    /// Render as a compact text block, one file per line, ordered by
+    /// PageRank descending with a lexical tie-break. The budget goes
+    /// to the files that matter, not to whichever happens to sort
+    /// first alphabetically.
     pub fn render(&self, max_chars: usize) -> String {
+        // Sort: rank desc, then path asc.
+        let mut files: Vec<(&PathBuf, &Vec<Symbol>)> = self.entries.iter().collect();
+        files.sort_by(|a, b| {
+            let ra = self.rank.get(a.0).copied().unwrap_or(0.0);
+            let rb = self.rank.get(b.0).copied().unwrap_or(0.0);
+            rb.partial_cmp(&ra)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(b.0))
+        });
+
         let mut out = String::new();
-        for (path, symbols) in &self.entries {
+        for (path, symbols) in files {
             let mut line = format!("{}:", path.display());
             for s in symbols {
                 line.push_str(&format!(" {} {}", s.kind, s.name));
@@ -65,7 +89,10 @@ impl RepoMap {
 /// Walk `root` honoring .gitignore and skipping the usual build trees,
 /// extracting top-level symbols per recognized source file.
 pub fn build_repo_map(root: &Path) -> RepoMap {
-    let mut entries = BTreeMap::new();
+    let mut entries: BTreeMap<PathBuf, Vec<Symbol>> = BTreeMap::new();
+    let mut raw_imports: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
+    let mut all_files: BTreeMap<PathBuf, PathBuf> = BTreeMap::new(); // rel -> abs
+
     let mut builder = ignore::WalkBuilder::new(root);
     builder
         .hidden(false)
@@ -84,12 +111,258 @@ pub fn build_repo_map(root: &Path) -> RepoMap {
             continue;
         }
         let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
-        let symbols = extract_symbols(path);
+        all_files.insert(rel.clone(), path.to_path_buf());
+        let (symbols, imports) = extract_symbols_and_imports(path);
         if !symbols.is_empty() {
-            entries.insert(rel, symbols);
+            entries.insert(rel.clone(), symbols);
+        }
+        if !imports.is_empty() {
+            raw_imports.insert(rel, imports);
         }
     }
-    RepoMap { entries }
+
+    // Resolve import tokens ("crate::foo::bar", "./sibling", "foo.h")
+    // into paths that exist in `all_files`. Resolution is fuzzy: we
+    // try several candidates per token and take the first match.
+    let mut imports: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+    for (from, tokens) in &raw_imports {
+        let mut targets: Vec<PathBuf> = Vec::new();
+        for token in tokens {
+            for candidate in resolve_import_candidates(from, token) {
+                if all_files.contains_key(&candidate) {
+                    if !targets.contains(&candidate) {
+                        targets.push(candidate);
+                    }
+                    break;
+                }
+            }
+        }
+        if !targets.is_empty() {
+            imports.insert(from.clone(), targets);
+        }
+    }
+
+    let rank = compute_pagerank(&entries, &imports);
+
+    RepoMap {
+        entries,
+        imports,
+        rank,
+    }
+}
+
+/// Resolve an import token into one or more candidate paths, tried in
+/// order. Language-agnostic: each language produces tokens in its own
+/// shape and the candidate list covers the common cases.
+fn resolve_import_candidates(from: &Path, token: &str) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let from_dir = from.parent().unwrap_or(Path::new(""));
+
+    // C family: "foo/bar.h" or "foo.h" — the token is a relative path.
+    let token_no_quotes = token.trim_matches(|c| c == '"' || c == '<' || c == '>');
+    if token_no_quotes.contains('.') || token_no_quotes.contains('/') {
+        out.push(from_dir.join(token_no_quotes));
+    }
+
+    // Rust: "crate::a::b" or "crate::a::b::Item" — the module path
+    // maps to `src/a/b.rs` or `src/a/b/mod.rs`.
+    let cleaned = token
+        .trim_start_matches("crate::")
+        .trim_start_matches("self::")
+        .trim_start_matches("super::");
+    let parts: Vec<&str> = cleaned.split("::").collect();
+    // Try progressive truncations: drop the last component (which is
+    // usually the imported item, not the module).
+    for drop in 0..parts.len().min(3) {
+        let take = parts.len() - drop;
+        if take == 0 {
+            continue;
+        }
+        let path_parts: Vec<&str> = parts[..take].to_vec();
+        let module = path_parts.join("/");
+        // src/<module>.rs
+        out.push(PathBuf::from(format!("src/{module}.rs")));
+        // <from_dir>/<module>.rs — relative within the same tree
+        out.push(from_dir.join(format!("{module}.rs")));
+        // <module>/mod.rs
+        out.push(PathBuf::from(format!("src/{module}/mod.rs")));
+        out.push(from_dir.join(&module).join("mod.rs"));
+    }
+
+    // Python: "a.b.c" or "from a.b import c" — the token may be a
+    // package path with dots or a relative "..pkg".
+    if token.contains('.') && !token.contains('/') {
+        let path = token.replace('.', "/");
+        out.push(PathBuf::from(format!("{path}.py")));
+        out.push(PathBuf::from(format!("{path}/__init__.py")));
+        out.push(from_dir.join(format!("{path}.py")));
+    }
+
+    // JS/TS: "./sibling" or "../other/mod" — resolve against
+    // from_dir; extensions tried by the caller's exists check.
+    if token.starts_with("./") || token.starts_with("../") {
+        let base = from_dir.join(token);
+        out.push(base.with_extension("ts"));
+        out.push(base.with_extension("tsx"));
+        out.push(base.with_extension("js"));
+        out.push(base.with_extension("jsx"));
+        out.push(base.join("index.ts"));
+        out.push(base.join("index.tsx"));
+        out.push(base.join("index.js"));
+    }
+
+    out
+}
+
+/// PageRank-lite: rank scores proportional to incoming references,
+/// iterated 20 times with damping 0.85. Files with no references at
+/// all converge to a base score of `(1 - damping) / N`, giving the
+/// lexical tie-break a chance to order them without rank noise.
+fn compute_pagerank(
+    entries: &BTreeMap<PathBuf, Vec<Symbol>>,
+    imports: &BTreeMap<PathBuf, Vec<PathBuf>>,
+) -> BTreeMap<PathBuf, f32> {
+    const DAMPING: f32 = 0.85;
+    const ITERATIONS: usize = 20;
+
+    let n = entries.len().max(1) as f32;
+    let base = (1.0 - DAMPING) / n;
+
+    // Build the incoming-edges map: for each path, the set of files
+    // that import it.
+    let mut incoming: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+    let mut out_degree: BTreeMap<PathBuf, f32> = BTreeMap::new();
+    for (from, targets) in imports {
+        let deg = targets.len() as f32;
+        if deg == 0.0 {
+            continue;
+        }
+        *out_degree.entry(from.clone()).or_insert(0.0) = deg;
+        for t in targets {
+            incoming
+                .entry(t.clone())
+                .or_default()
+                .push(from.clone());
+        }
+    }
+
+    // Initialize to 1/N.
+    let mut rank: BTreeMap<PathBuf, f32> = entries
+        .keys()
+        .map(|k| (k.clone(), 1.0 / n))
+        .collect();
+
+    for _ in 0..ITERATIONS {
+        let mut next: BTreeMap<PathBuf, f32> =
+            entries.keys().map(|k| (k.clone(), base)).collect();
+        for (path, sources) in &incoming {
+            if !next.contains_key(path) {
+                continue;
+            }
+            let contrib: f32 = sources
+                .iter()
+                .map(|src| {
+                    let r = rank.get(src).copied().unwrap_or(0.0);
+                    let deg = out_degree.get(src).copied().unwrap_or(1.0);
+                    if deg > 0.0 {
+                        DAMPING * r / deg
+                    } else {
+                        0.0
+                    }
+                })
+                .sum();
+            if let Some(slot) = next.get_mut(path) {
+                *slot += contrib;
+            }
+        }
+        rank = next;
+    }
+
+    rank
+}
+
+/// Extract (symbols, import tokens) from one file. The imports are
+/// raw tokens from the file — the caller resolves them against the
+/// set of files it knows about. Empty imports when the extension has
+/// no import extractor.
+fn extract_symbols_and_imports(path: &Path) -> (Vec<Symbol>, Vec<String>) {
+    const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+    if let Ok(meta) = std::fs::metadata(path)
+        && meta.len() > MAX_FILE_BYTES
+    {
+        return (Vec::new(), Vec::new());
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return (Vec::new(), Vec::new()),
+    };
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+    let symbols = match ext {
+        "rs" => extract_rust(&content),
+        "py" => extract_python(&content),
+        "js" | "jsx" | "ts" | "tsx" => extract_js(&content),
+        "go" => extract_go(&content),
+        "rb" => extract_ruby(&content),
+        "java" => extract_java(&content),
+        "c" | "h" | "cc" | "cpp" | "hpp" | "cxx" => extract_c(&content),
+        _ => Vec::new(),
+    };
+    let imports = extract_imports(ext, &content);
+    (symbols, imports)
+}
+
+/// Pull every import-like token from a source file. Deliberately
+/// crude: one regex per common language shape, results deduplicated.
+/// A real parser is a follow-up; today's goal is enough signal for
+/// PageRank to prefer the hubs over alphabetically-first files.
+fn extract_imports(ext: &str, content: &str) -> Vec<String> {
+    use regex::Regex;
+    // A small set of patterns keyed by language family.
+    let patterns: &[&str] = match ext {
+        "rs" => &[
+            r"(?m)^\s*use\s+([a-zA-Z_][a-zA-Z0-9_:]*)\s*[;{]",
+            r"(?m)^\s*(?:pub\s+)?mod\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*;",
+        ],
+        "py" => &[
+            r"(?m)^\s*from\s+([a-zA-Z_][a-zA-Z0-9_.]*)\s+import",
+            r"(?m)^\s*import\s+([a-zA-Z_][a-zA-Z0-9_.]*)",
+        ],
+        "js" | "jsx" | "ts" | "tsx" => &[
+            r#"(?m)^\s*import\s+(?:[^'"]+\s+from\s+)?['"]([^'"]+)['"]"#,
+            r#"(?m)require\(\s*['"]([^'"]+)['"]\s*\)"#,
+        ],
+        "go" => &[
+            r#"(?m)^\s*import\s+['"]([^'"]+)['"]"#,
+            r#"(?m)^\s*import\s*\(\s*
+(?:\s*['"]([^'"]+)['"]\s*
+)*"#,
+        ],
+        "c" | "h" | "cc" | "cpp" | "hpp" | "cxx" => &[
+            r#"(?m)^\s*#\s*include\s+["<]([^">]+)[">]"#,
+        ],
+        "rb" => &[
+            r#"(?m)^\s*require(?:_relative)?\s+['"]([^'"]+)['"]"#,
+        ],
+        "java" => &[
+            r"(?m)^\s*import\s+([a-zA-Z_][a-zA-Z0-9_.]*)\s*;",
+        ],
+        _ => return Vec::new(),
+    };
+
+    let mut out: Vec<String> = Vec::new();
+    for pat in patterns {
+        if let Ok(re) = Regex::new(pat) {
+            for cap in re.captures_iter(content) {
+                if let Some(m) = cap.get(1) {
+                    let s = m.as_str().trim().to_string();
+                    if !s.is_empty() && !out.contains(&s) {
+                        out.push(s);
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 fn extract_symbols(path: &Path) -> Vec<Symbol> {
@@ -277,6 +550,121 @@ impl Engine {
         assert!(names.contains(&"Engine"), "got: {:?}", names);
         assert!(names.contains(&"State"), "got: {:?}", names);
         assert!(names.contains(&"run"), "got: {:?}", names);
+    }
+
+    /// Regression target for D5-L4: the repomap sorts by PageRank, not
+    /// alphabetically. A file imported by three others must appear
+    /// before a file no one imports, even if the latter sorts first
+    /// lexically.
+    #[test]
+    fn test_rank_favors_hubs() {
+        let tmp = TempDir::new().unwrap();
+        // Create a "hub" and three "spokes" that import it.
+        std::fs::write(
+            tmp.path().join("hub.rs"),
+            "pub fn shared() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("aaa.rs"),
+            "use crate::hub;\npub fn a() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("bbb.rs"),
+            "use crate::hub;\npub fn b() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("ccc.rs"),
+            "use crate::hub;\npub fn c() {}\n",
+        )
+        .unwrap();
+        // A lexical-first file that nothing imports. Its rank must be
+        // lower than the hub's.
+        std::fs::write(
+            tmp.path().join("aaa_only.rs"),
+            "pub fn alone() {}\n",
+        )
+        .unwrap();
+
+        let map = build_repo_map(tmp.path());
+        let hub_rank = map
+            .rank
+            .iter()
+            .find(|(k, _)| k.ends_with("hub.rs"))
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0);
+        let alone_rank = map
+            .rank
+            .iter()
+            .find(|(k, _)| k.ends_with("aaa_only.rs"))
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0);
+        assert!(
+            hub_rank > alone_rank,
+            "hub ({hub_rank}) should outrank an unimported file ({alone_rank})"
+        );
+
+        // And render puts the hub before the unimported file even
+        // though alphabetical order would put `aaa_only.rs` first.
+        let rendered = map.render(DEFAULT_MAP_CHARS);
+        let hub_pos = rendered.find("hub.rs").unwrap_or(usize::MAX);
+        let alone_pos = rendered.find("aaa_only.rs").unwrap_or(usize::MAX);
+        assert!(
+            hub_pos < alone_pos,
+            "hub should render before unimported file: {rendered}"
+        );
+    }
+
+    /// Budget goes to the hubs: with a tight cap, the hub is
+    /// rendered and the low-rank files are dropped.
+    #[test]
+    fn test_render_budget_goes_to_hubs() {
+        let tmp = TempDir::new().unwrap();
+        // Hub imported by many spokes; each file is one line, so a
+        // small cap fits only the first few lines.
+        std::fs::write(
+            tmp.path().join("hub.rs"),
+            "pub fn shared() {}\n",
+        )
+        .unwrap();
+        for i in 0..20 {
+            std::fs::write(
+                tmp.path().join(format!("spoke{i:02}.rs")),
+                "use crate::hub;\npub fn s() {}\n",
+            )
+            .unwrap();
+        }
+        let map = build_repo_map(tmp.path());
+        // Budget that fits roughly three lines.
+        let rendered = map.render(200);
+        assert!(
+            rendered.contains("hub.rs"),
+            "hub must be in the first lines under a tight budget: {rendered}"
+        );
+        assert!(
+            rendered.contains("truncated"),
+            "tight budget should report truncation: {rendered}"
+        );
+    }
+
+    /// `extract_imports` finds Rust use/mod tokens.
+    #[test]
+    fn test_extract_imports_rust() {
+        let content = "use crate::foo::bar;\npub mod baz;\n";
+        let imports = extract_imports("rs", content);
+        assert!(imports.iter().any(|s| s == "crate::foo::bar"), "got: {imports:?}");
+        assert!(imports.iter().any(|s| s == "baz"), "got: {imports:?}");
+    }
+
+    /// `extract_imports` finds C include tokens.
+    #[test]
+    fn test_extract_imports_c() {
+        let content = "#include <stdio.h>\n#include \"local.h\"\n";
+        let imports = extract_imports("c", content);
+        assert!(imports.iter().any(|s| s == "stdio.h"), "got: {imports:?}");
+        assert!(imports.iter().any(|s| s == "local.h"), "got: {imports:?}");
     }
 
     #[test]
