@@ -17,7 +17,6 @@ pub struct KodConfig {
     pub memory: MemoryConfig,
     pub skills: SkillsConfig,
     pub swarm: SwarmConfig,
-    pub performance: PerformanceConfig,
     pub hooks: HooksConfig,
     pub tools: ToolsConfig,
     /// User-defined slash commands. A key `foo` registers `/foo <args>`,
@@ -76,24 +75,6 @@ pub struct HooksConfig {
     pub pre_tool_use: std::collections::HashMap<String, String>,
     pub post_tool_use: std::collections::HashMap<String, String>,
     pub enabled: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct PerformanceConfig {
-    pub max_memory_mb: usize,
-    pub target_response_time_ms: u64,
-    pub enable_object_pooling: bool,
-}
-
-impl Default for PerformanceConfig {
-    fn default() -> Self {
-        Self {
-            max_memory_mb: 150,
-            target_response_time_ms: 200,
-            enable_object_pooling: true,
-        }
-    }
 }
 
 impl KodConfig {

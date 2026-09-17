@@ -210,10 +210,6 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "attach a file to the next prompt: /attach <path>",
     },
     SlashCommand {
-        name: "/paste",
-        hint: "paste the system clipboard into the input box",
-    },
-    SlashCommand {
         name: "/refine",
         hint: "refine the last assistant reply: /refine <instruction>",
     },
@@ -228,10 +224,6 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/load",
         hint: "load session from a JSON file: /load <path>",
-    },
-    SlashCommand {
-        name: "/history",
-        hint: "show recent prompt history",
     },
     SlashCommand {
         name: "/branch",
@@ -250,100 +242,28 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "LLM-summarize the session so far",
     },
     SlashCommand {
-        name: "/autocompact",
-        hint: "toggle auto-compaction: /autocompact on|off",
-    },
-    SlashCommand {
         name: "/whoami",
         hint: "session summary: model, skills, context, paths",
-    },
-    SlashCommand {
-        name: "/copy-history",
-        hint: "copy the Nth-last assistant reply: /copy-history <n>",
-    },
-    SlashCommand {
-        name: "/tools-list",
-        hint: "list registered tools",
-    },
-    SlashCommand {
-        name: "/notify",
-        hint: "toggle terminal bell on completion: /notify on|off",
-    },
-    SlashCommand {
-        name: "/tools-status",
-        hint: "show tool policy: network, confirm_writes, sandbox",
-    },
-    SlashCommand {
-        name: "/diff-staged",
-        hint: "git diff --staged in the current directory",
-    },
-    SlashCommand {
-        name: "/diff-unstaged",
-        hint: "git diff of unstaged changes",
-    },
-    SlashCommand {
-        name: "/prompt-history",
-        hint: "load the nth prompt from history: /prompt-history <n>",
     },
     SlashCommand {
         name: "/clearall",
         hint: "clear chat + memory + checkpoints (asks for confirmation)",
     },
     SlashCommand {
-        name: "/wc",
-        hint: "word/line/char count of the chat, per role",
-    },
-    SlashCommand {
         name: "/stats",
         hint: "per-session statistics: roles, tools, tokens, elapsed",
-    },
-    SlashCommand {
-        name: "/export-html",
-        hint: "export session as self-contained HTML: /export-html <path>",
     },
     SlashCommand {
         name: "/git-status",
         hint: "git status --porcelain=v2 in the current directory",
     },
     SlashCommand {
-        name: "/welcome",
-        hint: "reprint the session-start banner",
-    },
-    SlashCommand {
         name: "/reset",
         hint: "reset transient state: input, search, expansions, attachments",
     },
     SlashCommand {
-        name: "/man",
-        hint: "show help for one slash command: /man <command>",
-    },
-    SlashCommand {
-        name: "/env",
-        hint: "show environment variables KOD reads",
-    },
-    SlashCommand {
-        name: "/load-latest",
-        hint: "load the most recent JSON session from ~/.kod",
-    },
-    SlashCommand {
-        name: "/config-diff",
-        hint: "diff config file against effective config",
-    },
-    SlashCommand {
-        name: "/cmd",
-        hint: "run a shell command and print its output: /cmd <shell>",
-    },
-    SlashCommand {
-        name: "/sys-prompt",
-        hint: "friendly /system: show, set, or clear the system prompt override",
-    },
-    SlashCommand {
         name: "/fork",
         hint: "save the current chat as a restorable fork: /fork [label]",
-    },
-    SlashCommand {
-        name: "/todo-add",
-        hint: "add a todo item: /todo-add <text>",
     },
     SlashCommand {
         name: "/check",

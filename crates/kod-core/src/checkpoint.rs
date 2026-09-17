@@ -278,7 +278,10 @@ impl CheckpointManager {
 
     /// Trim the directory to `max_snapshots`, dropping the oldest.
     /// Best-effort: a failed removal is logged, not propagated.
-    fn enforce_retention(&self) -> Result<()> {
+    ///
+    /// Public so `KodEngine::shutdown()` can run it explicitly rather
+    /// than relying on the next snapshot write to trigger it.
+    pub fn enforce_retention(&self) -> Result<()> {
         let mut entries: Vec<PathBuf> = std::fs::read_dir(&self.dir)
             .map_err(KodError::Io)?
             .filter_map(|e| e.ok().map(|e| e.path()))

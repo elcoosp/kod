@@ -54,6 +54,9 @@ pub struct RouterConfig {
     /// the field still gets a sane memory budget rather than the
     /// `MemoryManager`'s own 4096 hardcode.
     pub context_window: usize,
+    /// Short-term memory capacity. Read from `MemoryConfig::short_term_capacity`.
+    /// Defaults to 100 for callers that build RouterConfig directly.
+    pub short_term_capacity: usize,
 }
 
 impl Default for RouterConfig {
@@ -63,6 +66,7 @@ impl Default for RouterConfig {
             max_skills_per_query: 3,
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             context_window: 8192,
+            short_term_capacity: 100,
         }
     }
 }
@@ -119,7 +123,7 @@ impl TaskRouter {
             // retrieve-side cap does not throw away memory entries that
             // would have fit — the failure mode is invisible (memory
             // silently under-populates rather than erroring).
-            let mut manager = MemoryManager::new(db_path, 100)?;
+            let mut manager = MemoryManager::new(db_path, config.short_term_capacity.max(1))?;
             manager.set_context_window(config.context_window.max(1_000));
             Some(manager)
         } else {

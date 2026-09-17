@@ -1,9 +1,8 @@
-# Build optimizations for release
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=native"]
-
-[target.x86_64-apple-darwin]
-rustflags = ["-C", "target-cpu=native"]
-
-[target.aarch64-apple-darwin]
-rustflags = ["-C", "target-cpu=native"]
+# Build configuration.
+#
+# target-cpu=native was removed from the default build config. It caused
+# CI release binaries to require the exact CPU features of the GitHub
+# Actions runner, producing SIGILL on older CPUs when users ran them.
+#
+# For local native builds use:  cargo build --release -C target-cpu=native
+# (or the `just build-native` recipe).

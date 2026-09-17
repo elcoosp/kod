@@ -28,7 +28,7 @@ use std::time::Duration;
 /// `test_slash_help_lists_every_command` — adding a command to
 /// `SLASH_COMMANDS` without updating this string fails the test, so
 /// the help output and the `/` autocomplete cannot drift apart.
-const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/doctor — print a diagnostics report (same as `kod doctor`)\n/init — onboarding info: config path, model profiles, next steps\n/regenerate — regenerate the last assistant reply\n/delete — remove the last user+assistant exchange\n/export [path] — export session as markdown (stdout when no path)\n/rollback [id] — restore a file from a checkpoint (newest when no id)\n/checkpoints — list file checkpoints for this project\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\n/check [<file>] — project check (LSP for a file, compiler for the whole workspace)\n/todo-add <text> — add a todo item to the session list\n/todo-add <text> — add a todo item to the session list\n/fork [label] — save the current chat as a restorable fork\n/sys-prompt [<text>|clear] — friendly /system\n/cmd <shell> — run a shell command and print its output\n/config-diff — diff config file against effective config\n/load-latest — load the most recent JSON session from ~/.kod\n/env — show environment variables KOD reads\n/man <command> — show help for one slash command\n/reset — reset transient state: input, search, expansions, attachments\n/welcome — reprint the session-start banner\n/git-status — git status --porcelain=v2 in the current directory\n/export-html <path> — export session as self-contained HTML\n/stats — per-session statistics: roles, tools, tokens, elapsed\n/wc — word/line/char count of the chat, per role\n/clearall — clear chat + long-term memory + checkpoints (asks for confirmation)\n/prompt-history <n> — load the nth prompt from history\n/diff-unstaged — git diff of unstaged changes\n/diff-staged — git diff --staged in the current directory\n/tools-status — show tool policy: network, confirm_writes, sandbox\n/notify on|off — toggle terminal bell on long turn completion\n/tools-list — list registered tools\n/copy-history <n> — copy the Nth-last assistant reply\n/whoami — session summary: model, skills, context, paths\n/autocompact on|off — toggle auto-compaction\n/summarize — ask the model to summarize the session so far\n/grep <regex> — regex search the chat history\n/system <text> — override the system prompt for this session\n/branch [label] — drop a branch-point marker in the chat\n/history — show recent prompt history\n/load <path> — load a JSON session file\n/save <path> — save session markdown to a file\n/raw — print the last assistant reply raw (no decoration)\n/refine <instruction> — refine the last assistant reply\n/paste — paste clipboard into the input box\n/attach <path> — attach a file to the next prompt\n/diff — show the most recent file change (from checkpoints)\n/last-prompt — write the most recent prompt to ~/.kod/last_prompt.txt\n/context — visualize context window usage and session totals\n/memory [search <q> | delete <id> | clear] — long-term memory store\n/map [max-chars] — repository map (top-level symbols per file)\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
+const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/doctor — print a diagnostics report (same as `kod doctor`)\n/init — onboarding info: config path, model profiles, next steps\n/regenerate — regenerate the last assistant reply\n/delete — remove the last user+assistant exchange\n/export [path] — export session as markdown (stdout when no path)\n/rollback [id] — restore a file from a checkpoint (newest when no id)\n/checkpoints — list file checkpoints for this project\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\n/check [<file>] — project check (LSP for a file, compiler for the whole workspace)\n/todo-add <text> — add a todo item to the session list\n/fork [label] — save the current chat as a restorable fork\n/reset — reset transient state: input, search, expansions, attachments\n/git-status — git status --porcelain=v2 in the current directory\n/stats — per-session statistics: roles, tools, tokens, elapsed\n/clearall — clear chat + long-term memory + checkpoints (asks for confirmation)\n/whoami — session summary: model, skills, context, paths\n/summarize — ask the model to summarize the session so far\n/grep <regex> — regex search the chat history\n/system <text> — override the system prompt for this session\n/branch [label] — drop a branch-point marker in the chat\n/load <path> — load a JSON session file\n/save <path> — save session markdown to a file\n/raw — print the last assistant reply raw (no decoration)\n/refine <instruction> — refine the last assistant reply\n/attach <path> — attach a file to the next prompt\n/diff — show the most recent file change (from checkpoints)\n/last-prompt — write the most recent prompt to ~/.kod/last_prompt.txt\n/context — visualize context window usage and session totals\n/memory [search <q> | delete <id> | clear] — long-term memory store\n/map [max-chars] — repository map (top-level symbols per file)\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
 
 /// Main TUI application loop
 pub struct TuiLoop {
@@ -123,6 +123,7 @@ impl TuiLoop {
         // engine uses for history.
         let router_config = RouterConfig {
             context_window: config.llm.context_window,
+            short_term_capacity: config.memory.short_term_capacity,
             ..RouterConfig::default()
         };
         let engine = KodEngine::new(router_config, db_path)?;
@@ -1849,35 +1850,6 @@ impl TuiLoop {
                     }
                 }
             }
-            "/paste" => {
-                // Read the clipboard and place its contents into the
-                // input box, at the cursor. Nothing is sent.
-                match crate::clipboard::read_clipboard() {
-                    Some(text) if !text.is_empty() => {
-                        let lines = text.lines().count();
-                        let bytes = text.len();
-                        for c in text.chars() {
-                            if c == '\n' {
-                                self.app.insert_newline();
-                            } else {
-                                self.app.add_char(c);
-                            }
-                        }
-                        self.app.set_input_mode(InputMode::Insert);
-                        self.app.push_system_message(&format!(
-                            "Pasted {} line(s), {} byte(s) into the input box. \
-                             Edit as needed, Enter sends.",
-                            lines,
-                            bytes,
-                        ));
-                    }
-                    Some(_) => self.app.push_system_message("Clipboard is empty."),
-                    None => self.app.push_system_message(
-                        "Could not read the clipboard. On Linux, install xclip, xsel, \
-                         or wl-clipboard.",
-                    ),
-                }
-            }
             "/refine" => {
                 if self.app.is_generating() {
                     self.app.push_system_message(
@@ -1989,32 +1961,6 @@ impl TuiLoop {
                         .push_system_message(&format!("Load failed: {e}")),
                 }
             }
-            "/history" => {
-                let hist = self.app.input_history();
-                if hist.is_empty() {
-                    self.app.push_system_message("No prompt history yet.");
-                } else {
-                    // Show up to the last 30 prompts with a re-run hint.
-                    let start = hist.len().saturating_sub(30);
-                    let mut msg = format!(
-                        "Prompt history ({} total, showing last {}):\n",
-                        hist.len(),
-                        hist.len() - start,
-                    );
-                    for (i, p) in hist[start..].iter().enumerate() {
-                        let n = start + i + 1;
-                        let one = p.lines().next().unwrap_or("");
-                        let shown: String = if one.chars().count() > 100 {
-                            one.chars().take(100).collect::<String>() + "…"
-                        } else {
-                            one.to_string()
-                        };
-                        msg.push_str(&format!("  {:>3}. {}\n", n, shown));
-                    }
-                    msg.push_str("\nUp-arrow in insert mode recalls history.");
-                    self.app.push_system_message(&msg);
-                }
-            }
             "/branch" => {
                 // Drop a system marker in the chat. A subsequent
                 // /save <path> captures everything up to this point,
@@ -2106,31 +2052,6 @@ impl TuiLoop {
                     }
                 });
             }
-            "/autocompact" => {
-                match parts.next() {
-                    Some("on") | Some("true") => {
-                        self.app.set_autocompact(true);
-                        self.app.push_system_message("Auto-compaction enabled.");
-                    }
-                    Some("off") | Some("false") => {
-                        self.app.set_autocompact(false);
-                        self.app.push_system_message(
-                            "Auto-compaction disabled. Use /compact to compact manually.",
-                        );
-                    }
-                    Some("status") | None => {
-                        let on = self.app.autocompact();
-                        let status = if on { "enabled" } else { "disabled" };
-                        self.app.push_system_message(&format!(
-                            "Auto-compaction is {status}. Toggle with /autocompact on|off.",
-                        ));
-                    }
-                    Some(other) => self.app.push_system_message(&format!(
-                        "Unknown argument {:?}. Use /autocompact on|off|status.",
-                        other,
-                    )),
-                }
-            }
             "/whoami" => {
                 // Session summary: everything a user wants to see in
                 // one place when they forget where they are.
@@ -2176,232 +2097,6 @@ impl TuiLoop {
                 msg.push_str(&format!("  session: {}\n", session_path));
                 self.app.push_system_message(&msg.trim_end().to_string());
             }
-            "/copy-history" => {
-                // Copy the Nth-last assistant reply to the clipboard.
-                let n = parts
-                    .next()
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(1);
-                if n == 0 {
-                    self.app
-                        .push_system_message("Nth-last means 1 for the most recent.");
-                    return Ok(());
-                }
-                let assistants: Vec<&str> = self
-                    .app
-                    .messages()
-                    .iter()
-                    .rev()
-                    .filter(|m| matches!(m.role, kod_types::MessageRole::Assistant))
-                    .map(|m| m.content.as_str())
-                    .collect();
-                match assistants.get(n - 1) {
-                    Some(text) => {
-                        if crate::clipboard::write_clipboard(text) {
-                            self.app.push_system_message(&format!(
-                                "Copied assistant reply #{} ({} chars) to the clipboard.",
-                                n,
-                                text.len(),
-                            ));
-                        } else {
-                            self.app.push_system_message(
-                                "Clipboard write failed — no pbcopy/xclip/xsel available.",
-                            );
-                        }
-                    }
-                    None => {
-                        let total = assistants.len();
-                        self.app.push_system_message(&format!(
-                            "No assistant reply #{} — there are {} total.",
-                            n, total,
-                        ));
-                    }
-                }
-            }
-            "/tools-list" => {
-                let Some(engine) = &self.engine else {
-                    self.app.push_system_message("Engine not initialized.");
-                    return Ok(());
-                };
-                let defs = engine.router().tool_definitions().await;
-                if defs.is_empty() {
-                    self.app.push_system_message("No tools registered.");
-                } else {
-                    let mut msg = format!("Registered tools ({}):\n", defs.len());
-                    for d in &defs {
-                        let short = if d.description.len() > 80 {
-                            format!("{}…", &d.description[..80])
-                        } else {
-                            d.description.clone()
-                        };
-                        msg.push_str(&format!("  {:<16} {}\n", d.name, short));
-                    }
-                    self.app.push_system_message(msg.trim_end());
-                }
-            }
-            "/notify" => {
-                match parts.next() {
-                    Some("on") | Some("true") => {
-                        self.app.set_notify_bell(true);
-                        self.app.push_system_message(
-                            "Terminal bell on completion enabled.",
-                        );
-                    }
-                    Some("off") | Some("false") => {
-                        self.app.set_notify_bell(false);
-                        self.app.push_system_message(
-                            "Terminal bell disabled.",
-                        );
-                    }
-                    Some("status") | None => {
-                        let on = self.app.notify_bell();
-                        self.app.push_system_message(&format!(
-                            "Completion bell is {}. Toggle with /notify on|off.",
-                            if on { "enabled" } else { "disabled" },
-                        ));
-                    }
-                    Some(other) => self.app.push_system_message(&format!(
-                        "Unknown argument {:?}. Use /notify on|off|status.",
-                        other,
-                    )),
-                }
-            }
-            "/tools-status" => {
-                let Some(engine) = &self.engine else {
-                    self.app.push_system_message("Engine not initialized.");
-                    return Ok(());
-                };
-                let net = engine.network_access_setting();
-                let confirm = engine.confirm_writes_setting();
-                let sandbox = engine.sandbox_setting();
-                let config_path = KodConfig::config_dir()
-                    .ok()
-                    .map(|d| d.join("config.toml").display().to_string())
-                    .unwrap_or_else(|| "(unknown)".to_string());
-                let msg = format!(
-                    "Tool policy\n\
-                       network_access: {}\n\
-                       confirm_writes: {}\n\
-                       sandbox:        {:?}\n\
-                       config:         {}\n\
-                     \n\
-                     Change these with `tools.confirm_writes` / `llm.network_access`\
-                     in the config, or `kod chat --sandbox`.\n\
-                     `kod tools` lists every registered tool.",
-                    if net { "enabled" } else { "disabled" },
-                    if confirm { "enabled (writes prompt)" } else { "disabled" },
-                    sandbox,
-                    config_path,
-                );
-                self.app.push_system_message(&msg);
-            }
-            "/diff-staged" => {
-                // Run `git diff --staged` in the working directory and
-                // print the result as a system message. Read-only.
-                let cwd = std::env::current_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                match std::process::Command::new("git")
-                    .args(["diff", "--staged", "--no-color", "--no-ext-diff"])
-                    .current_dir(&cwd)
-                    .output()
-                {
-                    Ok(out) if out.status.success() => {
-                        let text = String::from_utf8_lossy(&out.stdout);
-                        let trimmed = text.trim_end();
-                        if trimmed.is_empty() {
-                            self.app.push_system_message(
-                                "No staged changes. Use `git add` first.",
-                            );
-                        } else {
-                            self.app.push_system_message(&format!(
-                                "git diff --staged ({}):\n\n{}",
-                                cwd.display(),
-                                trimmed,
-                            ));
-                        }
-                    }
-                    Ok(out) => {
-                        let err = String::from_utf8_lossy(&out.stderr);
-                        self.app.push_system_message(&format!(
-                            "git diff --staged failed: {}",
-                            err.trim(),
-                        ));
-                    }
-                    Err(e) => self.app.push_system_message(&format!(
-                        "Could not run git: {e} — is git on PATH?",
-                    )),
-                }
-            }
-            "/diff-unstaged" => {
-                let cwd = std::env::current_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                match std::process::Command::new("git")
-                    .args(["diff", "--no-color", "--no-ext-diff"])
-                    .current_dir(&cwd)
-                    .output()
-                {
-                    Ok(out) if out.status.success() => {
-                        let text = String::from_utf8_lossy(&out.stdout);
-                        let trimmed = text.trim_end();
-                        if trimmed.is_empty() {
-                            self.app.push_system_message(
-                                "No unstaged changes.",
-                            );
-                        } else {
-                            self.app.push_system_message(&format!(
-                                "git diff (unstaged) ({}):\n\n{}",
-                                cwd.display(),
-                                trimmed,
-                            ));
-                        }
-                    }
-                    Ok(out) => {
-                        let err = String::from_utf8_lossy(&out.stderr);
-                        self.app.push_system_message(&format!(
-                            "git diff failed: {}",
-                            err.trim(),
-                        ));
-                    }
-                    Err(e) => self.app.push_system_message(&format!(
-                        "Could not run git: {e} — is git on PATH?",
-                    )),
-                }
-            }
-            "/prompt-history" => {
-                let n = parts.next().and_then(|s| s.parse::<usize>().ok());
-                match n {
-                    Some(n) if n >= 1 => {
-                        let hist = self.app.input_history();
-                        if n > hist.len() {
-                            self.app.push_system_message(&format!(
-                                "History has {} entries — /prompt-history {} is out of range.",
-                                hist.len(),
-                                n,
-                            ));
-                        } else {
-                            let prompt = hist[n - 1].clone();
-                            if self.app.is_generating() {
-                                self.app.push_system_message(
-                                    "A generation is already running — cancel it first.",
-                                );
-                            } else {
-                                self.app.set_input(prompt);
-                                self.app.set_input_mode(InputMode::Insert);
-                                self.app.push_system_message(&format!(
-                                    "Loaded prompt #{} into the input box. Enter resends.",
-                                    n,
-                                ));
-                            }
-                        }
-                    }
-                    _ => {
-                        self.app.push_system_message(
-                            "Usage: /prompt-history <n> — load the nth prompt from history. \
-                             /history lists them.",
-                        );
-                    }
-                }
-            }
             "/clearall" => {
                 if self.app.is_generating() {
                     self.app.push_system_message(
@@ -2410,53 +2105,6 @@ impl TuiLoop {
                 } else {
                     self.app.request_confirm(ConfirmKind::ClearAll);
                 }
-            }
-            "/wc" => {
-                // Word/line/char counts for the whole chat, per role.
-                use std::collections::HashMap;
-                let mut per_role: HashMap<&str, (usize, usize, usize, usize)> = HashMap::new();
-                let mut total = (0usize, 0usize, 0usize, 0usize); // msgs, lines, words, chars
-                for m in self.app.messages() {
-                    let role = match &m.role {
-                        kod_types::MessageRole::User => "you",
-                        kod_types::MessageRole::Assistant => "ai",
-                        kod_types::MessageRole::System => "sys",
-                        kod_types::MessageRole::Tool => "tool",
-                        kod_types::MessageRole::Agent(_) => "agent",
-                    };
-                    let lines = m.content.lines().count();
-                    let words = m.content.split_whitespace().count();
-                    let chars = m.content.chars().count();
-                    let entry = per_role.entry(role).or_insert((0, 0, 0, 0));
-                    entry.0 += 1;
-                    entry.1 += lines;
-                    entry.2 += words;
-                    entry.3 += chars;
-                    total.0 += 1;
-                    total.1 += lines;
-                    total.2 += words;
-                    total.3 += chars;
-                }
-                let mut msg = String::from("Chat word count\n");
-                let mut keys: Vec<&&str> = per_role.keys().collect();
-                keys.sort();
-                for k in keys {
-                    let (msgs, lines, words, chars) = per_role[k];
-                    msg.push_str(&format!(
-                        "  {:<6} {:>4} msg  {:>6} lines  {:>7} words  {:>8} chars\n",
-                        k, msgs, lines, words, chars,
-                    ));
-                }
-                msg.push_str(&format!(
-                    "  {:<6} {:>4} msg  {:>6} lines  {:>7} words  {:>8} chars",
-                    "total", total.0, total.1, total.2, total.3,
-                ));
-                // Rough token estimate.
-                msg.push_str(&format!(
-                    "\n\nApproximate tokens (chars/4): ~{}",
-                    total.3 / 4,
-                ));
-                self.app.push_system_message(&msg);
             }
             "/stats" => {
                 // Per-session statistics, distinct from /context.
@@ -2516,36 +2164,6 @@ impl TuiLoop {
                 }
                 self.app.push_system_message(msg.trim_end());
             }
-            "/export-html" => {
-                let arg = parts.next().map(|s| s.to_string());
-                let html = self.app.export_html();
-                match arg {
-                    None => {
-                        self.app.push_system_message(&format!(
-                            "HTML export ready ({} bytes). To write to a file, run /export-html <path>.\nThe document is self-contained: no external assets.",
-                            html.len(),
-                        ));
-                    }
-                    Some(path) => {
-                        let p = std::path::PathBuf::from(&path);
-                        if let Some(parent) = p.parent()
-                            && !parent.as_os_str().is_empty()
-                        {
-                            let _ = std::fs::create_dir_all(parent);
-                        }
-                        match std::fs::write(&p, html.as_bytes()) {
-                            Ok(()) => self.app.push_system_message(&format!(
-                                "Exported {} bytes of HTML to {}",
-                                html.len(),
-                                p.display(),
-                            )),
-                            Err(e) => self
-                                .app
-                                .push_system_message(&format!("Export failed: {e}")),
-                        }
-                    }
-                }
-            }
             "/git-status" => {
                 // `git status --porcelain=v2 -b` in the working
                 // directory, printed as a system message.
@@ -2583,25 +2201,6 @@ impl TuiLoop {
                     )),
                 }
             }
-            "/welcome" => {
-                // Reprint the same "Connected · model … · N skill(s)"
-                // banner that init_engine emitted at startup. Handy
-                // after a terminal scrollback wiped the original.
-                let model = self.app.model_label().to_string();
-                let skills = self.app.loaded_skills().len();
-                let config_dir = KodConfig::config_dir()
-                    .ok()
-                    .map(|d| d.display().to_string())
-                    .unwrap_or_else(|| "(unknown)".to_string());
-                let session_path = crate::app::KodApp::session_path()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "(unavailable)".to_string());
-                self.app.push_system_message(&format!(
-                    "Connected · model {model} · {skills} skill(s) · type /help for commands\n\
-                     config:  {config_dir}\n\
-                     session: {session_path}",
-                ));
-            }
             "/reset" => {
                 // Refuse while a generation is running: cancelling
                 // state mid-turn would desync the input box from the
@@ -2618,256 +2217,6 @@ impl TuiLoop {
                     cleared,
                     if cleared == 1 { "" } else { "s" },
                 ));
-            }
-            "/man" => {
-                let topic = parts.next().map(|s| s.trim_start_matches('/').to_string());
-                match topic {
-                    None => {
-                        // No topic: dump the full help, same as /help.
-                        Box::pin(self.handle_command("/help")).await?;
-                    }
-                    Some(name) => {
-                        let with_slash = format!("/{name}");
-                        // Look up in SLASH_COMMANDS for the hint.
-                        let known = crate::SLASH_COMMANDS
-                            .iter()
-                            .find(|c| c.name == with_slash);
-                        match known {
-                            Some(cmd) => {
-                                let mut msg = format!("{}\n\n{}\n\nUsage details also in /help.", cmd.name, cmd.hint);
-                                // Add a short usage example for the
-                                // common argument-taking commands.
-                                let example = match cmd.name {
-                                    "/model" => Some("/model qwen2.5-coder:7b"),
-                                    "/goal" => Some("/goal implement the auth flow"),
-                                    "/steer" => Some("/steer keep the public API stable"),
-                                    "/swarm" => Some("/swarm refactor the parser"),
-                                    "/search" => Some("/search TODO"),
-                                    "/theme" => Some("/theme light"),
-                                    "/attach" => Some("/attach src/main.rs"),
-                                    "/memory" => Some("/memory search rust"),
-                                    "/export" => Some("/export session.md"),
-                                    "/save" => Some("/save session.md"),
-                                    "/load" => Some("/load session.json"),
-                                    "/system" => Some("/system You are a Rust expert."),
-                                    "/prompt-history" => Some("/prompt-history 3"),
-                                    "/grep" => Some("/grep fn main"),
-                                    _ => None,
-                                };
-                                if let Some(ex) = example {
-                                    msg.push_str(&format!("\n\nExample:\n  {}", ex));
-                                }
-                                self.app.push_system_message(&msg);
-                            }
-                            None => {
-                                let known_names: Vec<&str> = crate::SLASH_COMMANDS
-                                    .iter()
-                                    .map(|c| c.name)
-                                    .collect();
-                                self.app.push_system_message(&format!(
-                                    "No command {}. Known commands:\n  {}\n\nRun /man <command> for a specific one.",
-                                    with_slash,
-                                    known_names.join(", "),
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-            "/env" => {
-                let vars: &[(&str, &str)] = &[
-                    ("EDITOR", "editor for /config edit and /skills edit"),
-                    ("VISUAL", "fallback for EDITOR"),
-                    ("OPENAI_API_KEY", "fallback API key"),
-                    ("KOD_TEST_DB", "memory db override (tests)"),
-                    ("KOD_TUI_STATE_DIR", "~/.kod override for TUI state"),
-                    ("KOD_SESSION_LOG", "session-log path override"),
-                    ("KOD_UPDATE_REPO", "`kod update` repo override"),
-                ];
-                let mut msg = String::from("Environment variables KOD reads\n");
-                for (name, purpose) in vars {
-                    let val = std::env::var(name).ok();
-                    let shown = match val {
-                        Some(v) if v.len() > 60 => format!("{}…", &v[..60]),
-                        Some(v) => v,
-                        None => "(unset)".to_string(),
-                    };
-                    msg.push_str(&format!("  {:<20} {}\n", name, shown));
-                    msg.push_str(&format!("  {:<20}   {}\n", "", purpose));
-                }
-                self.app.push_system_message(msg.trim_end());
-            }
-            "/load-latest" => {
-                // Find the newest .json session file in ~/.kod and load
-                // it. Prefers tui_session.json if present; otherwise
-                // any *.json with a valid session shape.
-                let home = match dirs::home_dir() {
-                    Some(h) => h,
-                    None => {
-                        self.app
-                            .push_system_message("Could not determine home directory.");
-                        return Ok(());
-                    }
-                };
-                let candidates = [
-                    home.join(".kod").join("tui_session.json"),
-                ];
-                let mut loaded = false;
-                for c in &candidates {
-                    if c.is_file() {
-                        match std::fs::read_to_string(c)
-                            .ok()
-                            .and_then(|s| serde_json::from_str::<Vec<crate::app::Message>>(&s).ok())
-                        {
-                            Some(msgs) => {
-                                let n = msgs.len();
-                                self.app.replace_messages(msgs);
-                                self.app.push_system_message(&format!(
-                                    "Loaded {} message(s) from {}",
-                                    n,
-                                    c.display(),
-                                ));
-                                loaded = true;
-                                break;
-                            }
-                            None => {}
-                        }
-                    }
-                }
-                if !loaded {
-                    self.app.push_system_message(
-                        "No JSON session found. Use /save <path> or `kod sessions export --format json <path>` first.",
-                    );
-                }
-            }
-            "/config-diff" => {
-                // Compare the raw config file with the effective
-                // (defaults-merged) config. Lines that differ are
-                // printed with `-` (file) / `+` (effective) markers.
-                let dir = match KodConfig::config_dir() {
-                    Ok(d) => d,
-                    Err(_) => {
-                        self.app
-                            .push_system_message("Could not determine config dir.");
-                        return Ok(());
-                    }
-                };
-                let path = dir.join("config.toml");
-                let config = match KodConfig::load_default() {
-                    Ok(c) => c,
-                    Err(e) => {
-                        self.app
-                            .push_system_message(&format!("Could not load config: {e}"));
-                        return Ok(());
-                    }
-                };
-                let raw = if path.exists() {
-                    std::fs::read_to_string(&path).unwrap_or_default()
-                } else {
-                    String::from("(no config file)\n")
-                };
-                let merged = toml::to_string_pretty(&config).unwrap_or_default();
-                let diff = kod_tools::patch::render_unified_diff(
-                    &raw,
-                    &merged,
-                    &path.display().to_string(),
-                );
-                if diff.trim().is_empty() {
-                    self.app.push_system_message(
-                        "Config file already matches effective config exactly.",
-                    );
-                } else {
-                    self.app.push_system_message(&format!(
-                        "Config diff (file → effective):\n\n{}",
-                        diff,
-                    ));
-                }
-            }
-            "/cmd" => {
-                // Run a shell command via `sh -c` and print the
-                // combined stdout+stderr as a system message. Read-only
-                // in the sense that it does not touch the session; the
-                // user is responsible for what the command does.
-                let command: String = parts.collect::<Vec<_>>().join(" ");
-                if command.trim().is_empty() {
-                    self.app.push_system_message(
-                        "Usage: /cmd <shell command> — runs the command and prints its output.",
-                    );
-                    return Ok(());
-                }
-                let cwd = std::env::current_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                let out = std::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(&command)
-                    .current_dir(&cwd)
-                    .output();
-                match out {
-                    Ok(o) => {
-                        let stdout = String::from_utf8_lossy(&o.stdout);
-                        let stderr = String::from_utf8_lossy(&o.stderr);
-                        let code = o.status.code().unwrap_or(-1);
-                        let mut msg = format!(
-                            "$ {}\n(exit {})\n",
-                            command, code,
-                        );
-                        if !stdout.is_empty() {
-                            msg.push_str("\n");
-                            msg.push_str(&stdout);
-                            if !stdout.ends_with('\n') {
-                                msg.push('\n');
-                            }
-                        }
-                        if !stderr.is_empty() {
-                            msg.push_str("\nstderr:\n");
-                            msg.push_str(&stderr);
-                            if !stderr.ends_with('\n') {
-                                msg.push('\n');
-                            }
-                        }
-                        self.app.push_system_message(msg.trim_end());
-                    }
-                    Err(e) => self.app.push_system_message(&format!(
-                        "Could not run command: {e}",
-                    )),
-                }
-            }
-            "/sys-prompt" => {
-                // A friendlier spelling of /system: open the override
-                // in a multiline input box, or clear / show it.
-                let rest: String = parts.collect::<Vec<_>>().join(" ");
-                let rest = rest.trim();
-                if rest.is_empty() {
-                    match self.app.session_system_prompt() {
-                        Some(s) => {
-                            self.app.set_input(s.to_string());
-                            self.app.set_input_mode(InputMode::Insert);
-                            self.app.push_system_message(
-                                "Active system prompt loaded into the input box. Edit and press Enter to update, or run /sys-prompt clear to remove.",
-                            );
-                        }
-                        None => self.app.push_system_message(
-                            "No system prompt override. Send /sys-prompt <text>, or /sys-prompt clear to no-op.",
-                        ),
-                    }
-                } else if rest.eq_ignore_ascii_case("clear")
-                    || rest.eq_ignore_ascii_case("off")
-                {
-                    self.app.clear_session_system_prompt();
-                    self.app
-                        .push_system_message("System prompt override cleared.");
-                } else {
-                    self.app.set_session_system_prompt(rest.to_string());
-                    let shown = if rest.len() > 80 {
-                        format!("{}…", &rest[..80])
-                    } else {
-                        rest.to_string()
-                    };
-                    self.app.push_system_message(&format!(
-                        "System prompt override set: {}\nPrepended to every subsequent prompt.",
-                        shown,
-                    ));
-                }
             }
             "/fork" => {
                 let label = parts.next().map(|s| s.to_string());
@@ -2890,31 +2239,6 @@ impl TuiLoop {
                     };
                     self.app.push_system_message(&msg);
                 }
-            }
-            "/todo-add" => {
-                let text: String = parts.collect::<Vec<_>>().join(" ");
-                let text = text.trim();
-                if text.is_empty() {
-                    self.app
-                        .push_system_message("Usage: /todo-add <text>");
-                    return Ok(());
-                }
-                let Some(engine) = &self.engine else {
-                    self.app.push_system_message("Engine not initialized.");
-                    return Ok(());
-                };
-                let list = engine.todo_list();
-                let mut guard = list.write().await;
-                let id = guard.len() as u64 + 1;
-                guard.push(kod_tools::TodoItem {
-                    id,
-                    text: text.to_string(),
-                    status: kod_tools::TodoStatus::Pending,
-                });
-                self.app.push_system_message(&format!(
-                    "Added todo #{}: {}",
-                    id, text
-                ));
             }
             "/check" => {
                 // No argument: whole-project compiler check.

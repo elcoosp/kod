@@ -90,6 +90,18 @@ impl SessionRecorder {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Flush any buffered bytes. `record()` already flushes per line, so
+    /// this is a belt-and-braces call from `shutdown()`: it is a no-op
+    /// when there is nothing pending, and it makes the shutdown contract
+    /// explicit ("everything written by this recorder is on disk when
+    /// this returns") without relying on the per-line flush not
+    /// regressing later.
+    pub fn flush(&self) -> Result<()> {
+        let mut w = self.writer.lock().unwrap();
+        w.flush().map_err(KodError::Io)?;
+        Ok(())
+    }
 }
 
 /// Read every entry in `path`, in file order. A malformed line is a

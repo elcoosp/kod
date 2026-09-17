@@ -29,6 +29,15 @@ impl SkillMatcher {
         }
     }
 
+    /// Construct with a caller-supplied minimum score.
+    pub fn with_threshold(min_score: f32) -> Self {
+        Self {
+            skills: RwLock::new(HashMap::new()),
+            max_results: 3,
+            min_score,
+        }
+    }
+
     /// Set maximum number of results to return
     pub fn set_max_results(&mut self, max: usize) {
         self.max_results = max;

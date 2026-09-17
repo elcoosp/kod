@@ -898,6 +898,7 @@ pub async fn run_chat(
     // sizes its own budget from the same source.
     let router_config = RouterConfig {
         context_window: config.llm.context_window,
+        short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
     };
     // Arc because the approval forwarder task (spawned below) needs to
@@ -913,6 +914,10 @@ pub async fn run_chat(
     engine.set_network_access(config.llm.network_access);
     engine.set_confirm_writes(config.tools.confirm_writes);
     engine.set_auto_check(config.tools.auto_check);
+    engine.set_generation_defaults(
+        Some(config.llm.temperature),
+        Some(config.llm.max_tokens),
+    );
 
     // Start the engine
     engine.start().await?;
@@ -1217,6 +1222,7 @@ pub async fn run_swarm(
 
     let router_config = RouterConfig {
         context_window: config.llm.context_window,
+        short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
@@ -1331,6 +1337,7 @@ pub async fn run_agent(name: String, goal: String, model: Option<String>) -> Res
 
     let router_config = RouterConfig {
         context_window: config.llm.context_window,
+        short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
@@ -1678,6 +1685,7 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool) -> Result<()> {
     let db_path = config.memory_db_path()?;
     let router_config = RouterConfig {
         context_window: config.llm.context_window,
+        short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
@@ -3243,6 +3251,7 @@ pub async fn run_prompt(
 
     let router_config = RouterConfig {
         context_window: config.llm.context_window,
+        short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
@@ -3918,6 +3927,7 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
 
     let router_config = RouterConfig {
         context_window: config.llm.context_window,
+        short_term_capacity: config.memory.short_term_capacity,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;

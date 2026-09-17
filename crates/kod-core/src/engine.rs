@@ -480,6 +480,32 @@ pub fn format_call_brief(name: &str, args: &serde_json::Value) -> String {
     format!("{name} {short}")
 }
 
+/// Default generation options captured from `LlmConfig`.
+/// Transitional until D1 replaces this with per-endpoint config.
+#[derive(Debug, Clone)]
+pub struct GenerationDefaults {
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<usize>,
+}
+
+impl Default for GenerationDefaults {
+    fn default() -> Self {
+        Self { temperature: None, max_tokens: None }
+    }
+}
+
+impl GenerationDefaults {
+    fn to_options(&self) -> GenerationOptions {
+        GenerationOptions {
+            model: None,
+            max_tokens: self.max_tokens,
+            temperature: self.temperature,
+            top_p: None,
+            stop_sequences: Vec::new(),
+        }
+    }
+}
+
 /// Max result lines kept per tool message; the rest collapses to a counter.
 pub const TOOL_RESULT_LINES: usize = 12;
 
@@ -888,6 +914,11 @@ pub struct KodEngine {
     /// by the prompt builder's own caps.
     /// Same keying as `history`.
     last_prompt: RwLock<HashMap<String, String>>,
+    /// Provider options captured from `LlmConfig` at engine construction.
+    /// Transitional until D1 (endpoint config per ModelRef). Kept in an
+    /// `RwLock<Option<...>>` so `set_generation_defaults` works through
+    /// `&self` (the engine is shared as `Arc<KodEngine>`).
+    generation_defaults: RwLock<GenerationDefaults>,
     /// Optional session log. When `Some`, every tool call and its result
     /// are appended as one JSONL entry, `kod replay`-able. `None` (the
     /// default) is the right shape for a test or a one-shot command.
@@ -1075,6 +1106,7 @@ impl KodEngine {
                 DEFAULT_HISTORY_CHAR_BUDGET,
             ),
             last_prompt: RwLock::new(HashMap::new()),
+            generation_defaults: RwLock::new(GenerationDefaults::default()),
             session_recorder: std::sync::RwLock::new(None),
             hooks: std::sync::RwLock::new(std::sync::Arc::new(
                 crate::hooks::HookRunner::disabled(),
@@ -1108,6 +1140,15 @@ impl KodEngine {
         let clamped = chars.max(MIN_HISTORY_CHAR_BUDGET);
         self.history_budget
             .store(clamped, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Set the generation defaults the engine will pass to the provider
+    /// on each call. Called by the CLI/TUI after construction from
+    /// `LlmConfig`. Transitional until D1.
+    pub fn set_generation_defaults(&self, temperature: Option<f32>, max_tokens: Option<usize>) {
+        if let Ok(mut guard) = self.generation_defaults.try_write() {
+            *guard = GenerationDefaults { temperature, max_tokens };
+        }
     }
 
     /// The current history budget in chars (for `/debug` and tests).
@@ -1608,7 +1649,11 @@ impl KodEngine {
             self.last_prompt.write().await.insert(key.to_string(), convo.clone());
 
             // Agentic loop: generate (with tools) -> execute -> feed back.
-            let options = GenerationOptions::default();
+            let options = self
+                .generation_defaults
+                .read()
+                .await
+                .to_options();
             let mut pending = convo;
             let (final_text, tool_calls, tool_results, usage) = self
                 .run_collected_loop(provider, &mut pending, &definitions, &options, key)
@@ -1690,7 +1735,11 @@ impl KodEngine {
             // Snapshot the grounded prompt for /debug last-prompt.
             self.last_prompt.write().await.insert(key.to_string(), pending.clone());
 
-            let options = GenerationOptions::default();
+            let options = self
+                .generation_defaults
+                .read()
+                .await
+                .to_options();
             let (final_text, tool_calls, tool_results, usage) = self
                 .run_streaming_loop(provider, &mut pending, &definitions, &options, chunk_tx, key)
                 .await?;
@@ -1779,7 +1828,11 @@ impl KodEngine {
             // goal run misbehaves.
             self.last_prompt.write().await.insert(key.to_string(), pending.clone());
 
-            let options = GenerationOptions::default();
+            let options = self
+                .generation_defaults
+                .read()
+                .await
+                .to_options();
             let mut all_text = String::new();
             let mut tool_calls: Vec<ToolCall> = Vec::new();
             let mut tool_results: Vec<ToolResult> = Vec::new();
@@ -2820,29 +2873,72 @@ impl KodEngine {
         }
     }
 
-    /// Shutdown the engine
+    /// Shutdown the engine. Idempotent: a second call returns `Ok(())`
+    /// without touching anything. Every step is best-effort and logs on
+    /// failure — a shutdown that refuses to finish because one subsystem
+    /// misbehaved is worse than one that reports the problem and
+    /// continues.
+    ///
+    /// Order matters:
+    /// 1. Flip the running flag and drop the lock early so callers
+    ///    blocked on `is_running()` do not stall behind the teardown.
+    /// 2. Signal cancellation so any in-flight tool round / goal loop
+    ///    observes the stop at its next check.
+    /// 3. Shut down the LSP client (may be mid-request).
+    /// 4. Release every path-lock cell.
+    /// 5. Flush the session recorder (per-line already, belt-and-braces).
+    /// 6. Trim checkpoints to their retention cap.
+    ///
+    /// Redb is intentionally not closed here: `Arc<Database>` closes on
+    /// last reference drop, and forcing it would require unwinding the
+    /// `Arc<TaskRouter>` held by callers of this engine. Documented in
+    /// `LongTermMemory` — the OS will flush on process exit, which is
+    /// sufficient for redb's durability guarantee (fsync per commit).
     pub async fn shutdown(&self) -> Result<()> {
-        let mut running = self.is_running.write().await;
-
-        if !*running {
-            return Ok(()); // Already stopped
+        let was_running = {
+            let mut running = self.is_running.write().await;
+            if !*running {
+                return Ok(());
+            }
+            *running = false;
+            true
+        };
+        if !was_running {
+            return Ok(());
         }
 
-        *running = false;
+        // 2. Signal stop to any running loop. `request_cancel` is safe to
+        //    call twice; a subsequent `clear_cancel` (from a new prompt)
+        //    would only matter if the engine is reused, which it is not.
+        self.request_cancel();
 
-        // Cleanup
-        // - Stop all agents
-        // - Release all locks
-        // - Flush memory
-
-        // Drop the LSP client last: it may be mid-request from a
-        // just-finished tool round, and shutting it down before the
-        // engine's own bookkeeping completes would leave a stray
-        // process. `kill_on_drop` in LspClient is the safety net if
-        // this shutdown call itself is skipped.
+        // 3. LSP client shutdown (may be mid-request; timeout inside).
         self.lsp_shutdown().await;
 
-        tracing::info!("KOD engine shutdown");
+        // 4. Release path-lock cells. Outstanding guards keep their own
+        //    Arc and release on drop.
+        self.lock_table.release_all().await;
+
+        // 5. Session recorder flush — best-effort.
+        if let Ok(guard) = self.session_recorder.read()
+            && let Some(recorder) = guard.as_ref()
+            && let Err(e) = recorder.flush()
+        {
+            tracing::warn!(
+                error = %e,
+                path = %recorder.path().display(),
+                "session log flush failed during shutdown"
+            );
+        }
+
+        // 6. Checkpoint retention — best-effort.
+        if let Some(cp) = self.checkpoints.as_ref()
+            && let Err(e) = cp.enforce_retention()
+        {
+            tracing::warn!(error = %e, "checkpoint retention failed during shutdown");
+        }
+
+        tracing::info!("KOD engine shutdown complete");
         Ok(())
     }
 
@@ -3198,6 +3294,22 @@ mod tests {
         assert!(engine.is_running().await);
 
         // Shutdown
+        engine.shutdown().await.unwrap();
+        assert!(!engine.is_running().await);
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_is_idempotent() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.redb");
+        let engine = KodEngine::new(RouterConfig::default(), db_path).unwrap();
+        engine.start().await.unwrap();
+        assert!(engine.is_running().await);
+
+        engine.shutdown().await.unwrap();
+        assert!(!engine.is_running().await);
+
+        // Second call must be a no-op and return Ok.
         engine.shutdown().await.unwrap();
         assert!(!engine.is_running().await);
     }
@@ -4658,4 +4770,82 @@ mod auto_check_tests {
             round.prompt_block
         );
     }
+    /// A fixture with a pre-existing error. A write that introduces
+    /// nothing new must produce a prompt that says so, not one that
+    /// lists the pre-existing error as though the write caused it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_auto_check_reports_only_new_diagnostics() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        // `src/existing.rs` has a type error. `src/touched.rs` is clean.
+        std::fs::write(
+            tmp.path().join("src/lib.rs"),
+            "pub mod existing;\npub mod touched;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("src/existing.rs"),
+            "pub fn bad() -> u32 { \"not a number\" }\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("src/touched.rs"), "pub fn ok() {}\n").unwrap();
+
+        let db_path = tmp.path().join("test.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.set_auto_check(true);
+        engine.start().await.unwrap();
+
+        // Capture the baseline: the fixture's pre-existing error goes in.
+        // Called explicitly so the test does not race the background task
+        // that `start()` spawns.
+        engine.refresh_check_baseline().await;
+        let baseline = engine.check_baseline().await;
+        assert!(
+            baseline.as_ref().is_some_and(|b| !b.is_empty()),
+            "baseline should have captured the pre-existing error"
+        );
+
+        // Now write only the clean file. The pre-existing error in
+        // existing.rs must NOT be reported as new.
+        let calls = vec![ToolCall {
+            tool_name: "write_file".to_string(),
+            arguments: serde_json::json!({
+                "path": "src/touched.rs",
+                "content": "pub fn ok() {}\n// harmless comment\n"
+            }),
+        }];
+        let round = engine.run_tool_calls(&calls, "test", None).await;
+        assert!(
+            round.prompt_block.contains("## Auto-check"),
+            "auto-check should have run: {}",
+            round.prompt_block
+        );
+        assert!(
+            !round.prompt_block.contains("NEW diagnostic"),
+            "a write that introduces nothing must not report NEW diagnostics: {}",
+            round.prompt_block
+        );
+        assert!(
+            !round.prompt_block.contains("existing.rs"),
+            "the pre-existing error must not appear in the auto-check block: {}",
+            round.prompt_block
+        );
+        assert!(
+            round.prompt_block.contains("no new errors"),
+            "the block should say the write is clean: {}",
+            round.prompt_block
+        );
+    }
+
 }

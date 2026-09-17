@@ -105,6 +105,55 @@ pub enum KodError {
 }
 
 impl KodError {
+    /// Construct a `RateLimited` from an HTTP 429 response.
+    /// `retry_after` is parsed from the `Retry-After` header, if present.
+    pub fn rate_limited(retry_after: Option<std::time::Duration>, status: u16, body: &str) -> Self {
+        let secs = retry_after.map(|d| d.as_secs()).unwrap_or(30);
+        let _ = (status, body);
+        KodError::RateLimited { retry_after_secs: secs }
+    }
+
+    /// Classify an HTTP error status + body into the closest typed variant.
+    pub fn provider_status(status: u16, body: &str) -> Self {
+        let snippet = if body.len() > 300 { &body[..300] } else { body };
+        match status {
+            401 | 403 => KodError::Provider(format!("auth error {status}: {snippet}")),
+            404 => KodError::Provider(format!("not found {status}: {snippet}")),
+            408 => KodError::ProviderTimeout { timeout_ms: 0 },
+            429 => KodError::RateLimited { retry_after_secs: 30 },
+            500..=599 => KodError::Provider(format!("server error {status}: {snippet}")),
+            _ => KodError::Provider(format!("http {status}: {snippet}")),
+        }
+    }
+
+    /// True iff a retry of the same request has a real chance of success.
+    /// 401/403/404/422 are permanent — retrying only wastes the user's time.
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            KodError::RateLimited { .. } | KodError::ProviderTimeout { .. } => true,
+            KodError::Provider(msg) => {
+                let m = msg.to_lowercase();
+                m.contains("429")
+                    || m.contains("rate limit")
+                    || m.contains("timeout")
+                    || m.contains("timed out")
+                    || m.contains("connection reset")
+                    || m.contains("connection closed")
+                    || m.contains("temporarily")
+                    || m.contains("try again")
+                    || m.contains("502")
+                    || m.contains("503")
+                    || m.contains("504")
+                    || m.contains("bad gateway")
+                    || m.contains("service unavailable")
+                    || m.contains("gateway timeout")
+                    || m.contains("server error 5")
+            }
+            KodError::Network(_) => true,
+            _ => false,
+        }
+    }
+
     /// Check if this error is recoverable (can retry)
     pub fn is_recoverable(&self) -> bool {
         matches!(

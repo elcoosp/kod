@@ -70,6 +70,7 @@ pub struct OpenAICompatProvider {
     /// in the TUI (or any other model change) now keeps the warm TCP
     /// and TLS state, which is what makes back-to-back switches cheap.
     client: reqwest::Client,
+    timeout_secs: u64,
 }
 
 impl OpenAICompatProvider {
@@ -83,6 +84,16 @@ impl OpenAICompatProvider {
         base_url: impl Into<String>,
         model: impl Into<String>,
         api_key: impl Into<String>,
+    ) -> Result<Self> {
+        Self::with_api_key_and_timeout(base_url, model, api_key, 300)
+    }
+
+    /// Like `with_api_key` but with a configurable request timeout.
+    pub fn with_api_key_and_timeout(
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+        api_key: impl Into<String>,
+        timeout_secs: u64,
     ) -> Result<Self> {
         let base_url = normalize_base_url(&base_url.into());
         let api_key = api_key.into();
@@ -98,6 +109,8 @@ impl OpenAICompatProvider {
         // worth keeping warm; the pool is also what makes back-to-back
         // `/model` switches cheap.
         let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .connect_timeout(std::time::Duration::from_secs(10))
             .build()
             .map_err(|e| KodError::Provider(format!("could not build http client: {e}")))?;
         Ok(Self {
@@ -106,6 +119,7 @@ impl OpenAICompatProvider {
             base_url,
             api_key,
             client,
+            timeout_secs,
         })
     }
 
@@ -113,10 +127,11 @@ impl OpenAICompatProvider {
     /// (e.g. from a `--model` CLI flag).
     pub fn from_config(config: &LlmConfig, model_override: Option<&str>) -> Result<Self> {
         let model = model_override.unwrap_or(&config.model);
-        Self::with_api_key(
+        Self::with_api_key_and_timeout(
             &config.base_url,
             model,
             resolve_api_key(config.api_key.clone()),
+            config.timeout_secs,
         )
     }
 
@@ -150,6 +165,7 @@ impl OpenAICompatProvider {
             // (it wraps an Arc internally), so this is an atomic
             // increment, not a rebuild.
             client: self.client,
+            timeout_secs: self.timeout_secs,
         })
     }
 

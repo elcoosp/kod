@@ -52,6 +52,18 @@ impl PathLockTable {
         Self::default()
     }
 
+    /// Drop every cell. Called by `KodEngine::shutdown()` so a long-lived
+    /// process does not keep `Arc<Mutex<()>>` cells alive after the
+    /// engine stops. Any outstanding `PathLockGuard` still holds its own
+    /// `Arc` and will release on drop — this only clears the table's
+    /// references so the process can exit cleanly.
+    ///
+    /// Not a force-unlock: a writer mid-critical-section is not interrupted.
+    /// The contract is "no new acquires see these cells", not "kill holders".
+    pub async fn release_all(&self) {
+        self.cells.write().await.clear();
+    }
+
     /// Acquire the lock for `path`, waiting up to `timeout` for a
     /// holder to release. Returns the guard on success.
     ///
@@ -140,6 +152,18 @@ pub enum LockError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn release_all_clears_cells_and_allows_reacquire() {
+        let table = PathLockTable::new();
+        let path = Path::new("/tmp/release-all-test");
+        let g = table.acquire(path, "h", Duration::from_millis(50)).await.unwrap();
+        drop(g);
+        table.release_all().await;
+        // Reacquire succeeds (cells were cleared; new cell created).
+        let g2 = table.acquire(path, "h2", Duration::from_millis(50)).await.unwrap();
+        drop(g2);
+    }
 
     #[tokio::test]
     async fn acquire_and_release() {
