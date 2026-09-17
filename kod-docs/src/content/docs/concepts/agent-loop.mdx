@@ -7,7 +7,7 @@ sidebar:
 
 import { Aside, LinkCard } from '@astrojs/starlight/components';
 
-Everything KOD does funnels through one loop: the engine takes an input, builds a grounded prompt, streams a response, executes any tool calls, feeds results back, and repeats — up to a configurable round cap. Understanding this loop makes the rest of the system legible: policy decisions, memory writes, skill matching, and session logging all hang off specific steps in it.
+Everything KOD does funnels through one loop: the engine takes an input, builds a grounded prompt, streams a response, executes any tool calls, feeds results back, and repeats. Understanding this loop makes the rest of the system legible: policy decisions, memory writes, skill matching, and session logging all hang off specific steps in it.
 
 ## One round, step by step
 
@@ -22,33 +22,35 @@ Everything KOD does funnels through one loop: the engine takes an input, builds 
 
 3. **Stream.** The provider streams tokens over SSE. Chunks reach the UI live — the TUI renders as the model speaks, not after. Tool calls are assembled from `ToolCallStart` / `ToolCallDelta` framing as they arrive.
 
-4. **Gate and run tools.** Each tool call passes the [policy engine](/guides/policy/) first (allow/deny/ask, with the decision logged). Allowed calls execute under a timeout with per-path locks; mutating calls take a checkpoint first.
+4. **Gate and run tools.** Each tool call passes the [policy engine](/guides/policy/) first (allow/deny/ask, with the decision logged). Allowed calls execute under a timeout with per-path locks; mutating calls take a checkpoint first. An `ask` decision opens the approval dialog — and if nobody answers within 120 seconds, the call is denied rather than left hanging.
 
 5. **Feed back.** Tool results become new context for the next model call. The loop returns to step 3 — stream again with the tool results in view — until the model answers without calling tools or the round cap is hit.
+
+## The round cap
+
+The loop runs at most **40 tool rounds** per prompt before the engine forces a wrap-up: one final call asks the model to summarise what was done and what remains. A typical non-trivial task uses 3–15 rounds, so 40 is a generous margin that still catches a runaway loop (a small model endlessly re-reading the same file) before you have waited minutes for nothing. The cap is fixed, not configurable — it is one of the few places KOD chooses a hard limit over unbounded adaptivity, and it is the reason a `kod agent` run always exits.
+
+The `/goal` loop is separately capped at **6 turns** before it stops and reports progress, which you can refine with `/goal` or `/steer`.
 
 ## Steering and cancellation
 
 Two controls make the loop interruptible mid-flight:
 
-- **Steering** — typing a plain prompt while a generation runs queues guidance for the model without discarding completed work. In the TUI this is identical to `/steer`; in `kod chat` it works the same way.
+- **Steering** — typing a plain prompt while a generation runs queues guidance for the model without discarding completed work. In the TUI this is identical to `/steer`; in `kod chat` it works the same way. Steer notes are applied between rounds, at a safe boundary.
 - **Cancellation** — `Esc` (TUI, normal mode) or `/cancel` stops the round. Completed tool results remain in the session, and the transcript records that the round was cut short.
 
-A fixed fix from the changelog matters here: the engine no longer holds the provider read lock across the streaming round, which is why `/model` switches are instantaneous even mid-prompt.
-
-## The round cap
-
-The loop's round count is configurable, which guarantees termination: no run can ping-pong between model and tools forever. The cap is one of the few places KOD chooses a hard limit over unbounded adaptivity, and it is the reason a `kod agent` run always exits.
+One fixed concurrency detail matters here: the engine does not hold the provider read lock across the streaming round, which is why `/model` switches are instantaneous even mid-prompt.
 
 ## The repository map
 
-Grounding includes a compact repository map — the same map `kod map` prints. It is how the model knows what exists in your project without reading every file: directories, key files, and structure. When routing or grounding surprises you, printing the map is the first diagnostic step; a map that misses a directory explains a lot.
+Grounding includes a compact repository map — the same map `kod map` prints. It is how the model knows what exists in your project without reading every file: directories, key files, and top-level symbols. When routing or grounding surprises you, printing the map is the first diagnostic step; a map that misses a directory explains a lot.
 
 ## What the loop does *not* do
 
 The loop is deliberately not a planner. It does not decompose goals (that is the [swarm runner's](/guides/swarm/) job), does not persist semantic memory (that is the memory manager's), and does not invent tool results — a refused tool call comes back to the model as a refusal, which is part of why policy denials change model behaviour rather than just failing silently.
 
 <Aside type="tip">
-  Watching the loop breathe: `kod chat --verbose` or the TUI's expanded tool rows (`t`) show each round's classification, matched skills, and tool calls in order. It is the fastest way to build an intuition for grounding.
+  Watching the loop breathe: <code>kod chat --verbose</code> or the TUI's expanded tool rows (<code>t</code>) show each round's classification, matched skills, and tool calls in order. It is the fastest way to build an intuition for grounding.
 </Aside>
 
 <LinkCard title="Reference: Tools Reference" href="/reference/tools/" description="What the loop can call, and what each call returns." />
