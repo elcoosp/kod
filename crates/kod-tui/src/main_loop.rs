@@ -541,20 +541,21 @@ impl TuiLoop {
             Event::Thinking => {
                 self.app.begin_thinking();
             }
-            Event::ApprovalRequested {
-                id,
-                tool_name,
-                summary,
-                diff,
-            } => {
-                self.app.set_pending_approval(
-                    crate::app::PendingApproval {
-                        id,
-                        tool_name,
-                        summary,
-                        diff,
-                    },
-                );
+            Event::ApprovalBatchRequested { batch_id, items } => {
+                let items: Vec<crate::app::PendingApproval> = items
+                    .into_iter()
+                    .map(|i| crate::app::PendingApproval {
+                        id: i.id,
+                        tool_name: i.tool_name,
+                        summary: i.summary,
+                        diff: i.diff,
+                    })
+                    .collect();
+                self.app.set_pending_batch(crate::app::PendingApprovalBatch {
+                    batch_id,
+                    items,
+                    current: 0,
+                });
             }
             Event::QuestionRequested {
                 id,
@@ -856,26 +857,33 @@ impl TuiLoop {
                                 placeholder: req.placeholder,
                             })
                             .await;
-                    } else if let Some((id, json)) =
-                        kod_core::engine::parse_tool_approval(&chunk)
+                    } else if let Some((batch_id, json)) =
+                        kod_core::engine::parse_tool_approval_batch(&chunk)
                     {
-                        let request: kod_core::engine::ApprovalRequest =
+                        let batch: kod_core::engine::ApprovalBatch =
                             serde_json::from_str(json).unwrap_or_else(|_| {
-                                kod_core::engine::ApprovalRequest {
-                                    tool_name: "?".to_string(),
-                                    arguments: serde_json::Value::Null,
-                                    diff: None,
-                                    summary: "(unparseable approval request)".to_string(),
-                                }
+                                kod_core::engine::ApprovalBatch { items: Vec::new() }
                             });
-                        let _ = event_tx_chunks
-                            .send(Event::ApprovalRequested {
-                                id,
-                                tool_name: request.tool_name,
-                                summary: request.summary,
-                                diff: request.diff,
+                        let items: Vec<crate::event::ApprovalItem> = batch
+                            .items
+                            .into_iter()
+                            .filter_map(|i| {
+                                Some(crate::event::ApprovalItem {
+                                    id: i.id?,
+                                    tool_name: i.tool_name,
+                                    summary: i.summary,
+                                    diff: i.diff,
+                                })
                             })
-                            .await;
+                            .collect();
+                        if !items.is_empty() {
+                            let _ = event_tx_chunks
+                                .send(Event::ApprovalBatchRequested {
+                                    batch_id,
+                                    items,
+                                })
+                                .await;
+                        }
                     } else if let Some(tool) = kod_core::engine::parse_tool_start(&chunk) {
                         let _ = event_tx_chunks
                             .send(Event::ToolStarted(tool.to_string()))
@@ -2787,18 +2795,69 @@ impl TuiLoop {
             return Ok(());
         }
 
-        // Approval dialog: while it is up, y / n / a / Esc / Ctrl+C
-        // answer the request; every other key is swallowed so the
-        // user does not type past a modal they cannot dismiss.
+        // Approval dialog (batch): the user walks the items.
         //
-        //   y -> Approve (this call runs)
-        //   n -> Deny (this call is refused; the next matching call
-        //        prompts again)
-        //   a -> DenyAlways (this call is refused AND a session deny
-        //        rule is registered so the same tool / path pattern
-        //        does not prompt again for the rest of the process)
-        //   Esc / Ctrl+C -> Deny (same as n)
+        //   y -> Approve current, advance
+        //   n -> Deny current, advance
+        //   a -> DenyAlways current, advance
+        //   ↑/k -> previous item (no decision)
+        //   ↓/j -> next item (no decision)
+        //   Esc / Ctrl+C -> deny current and every remaining item, close
+        //
+        // Every other key is swallowed so the user does not type past
+        // a modal they cannot dismiss.
         if self.app.is_approving() {
+            // Navigation keys — move without deciding.
+            if matches!(key, KeyCode::Up | KeyCode::Char('k')) {
+                if let Some(batch) = self.app.pending_batch_mut() {
+                    batch.retreat();
+                }
+                return Ok(());
+            }
+            if matches!(key, KeyCode::Down | KeyCode::Char('j')) {
+                if let Some(batch) = self.app.pending_batch_mut() {
+                    batch.advance();
+                }
+                return Ok(());
+            }
+
+            // Esc aborts the whole batch: deny current and everything
+            // after it. Done in one pass so the engine's awaits do
+            // not stall on an unanswered item.
+            if matches!(key, KeyCode::Escape | KeyCode::CtrlC) {
+                let ids: Vec<u64> = {
+                    let Some(batch) = self.app.pending_batch_mut() else {
+                        return Ok(());
+                    };
+                    let mut ids: Vec<u64> = Vec::new();
+                    loop {
+                        match batch.current_item() {
+                            Some(item) => {
+                                ids.push(item.id);
+                                if !batch.advance() {
+                                    break;
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                    ids
+                };
+                if let Some(engine) = &self.engine {
+                    for id in ids {
+                        engine
+                            .respond_to_approval(
+                                id,
+                                kod_core::engine::ApprovalDecision::Deny,
+                            )
+                            .await;
+                    }
+                }
+                self.app.clear_pending_approval();
+                return Ok(());
+            }
+
+            // Decision keys — decide current, advance.
             let decision = match key {
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
                     Some(kod_core::engine::ApprovalDecision::Approve)
@@ -2809,18 +2868,25 @@ impl TuiLoop {
                 KeyCode::Char('a') | KeyCode::Char('A') => {
                     Some(kod_core::engine::ApprovalDecision::DenyAlways)
                 }
-                KeyCode::Escape | KeyCode::CtrlC => {
-                    Some(kod_core::engine::ApprovalDecision::Deny)
-                }
                 _ => None,
             };
-            if let Some(decision) = decision {
-                if let Some(approval) = self.app.pending_approval() {
-                    let id = approval.id;
+            if let Some(d) = decision {
+                let (id, done) = {
+                    let Some(batch) = self.app.pending_batch_mut() else {
+                        return Ok(());
+                    };
+                    let Some(item) = batch.current_item() else {
+                        return Ok(());
+                    };
+                    let id = item.id;
+                    batch.advance();
+                    (id, batch.current_item().is_none())
+                };
+                if let Some(engine) = &self.engine {
+                    engine.respond_to_approval(id, d).await;
+                }
+                if done {
                     self.app.clear_pending_approval();
-                    if let Some(engine) = &self.engine {
-                        engine.respond_to_approval(id, decision).await;
-                    }
                 }
             }
             return Ok(());
