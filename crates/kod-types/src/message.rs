@@ -9,8 +9,54 @@ pub struct ChatMessage {
     pub id: MessageId,
     pub role: MessageRole,
     pub content: String,
+    /// Tool calls issued by an `Assistant` message. Empty for every
+    /// other role. Populated when the model responds with tool calls;
+    /// the assistant message is then followed by one `Role::Tool`
+    /// message per call (AD-02).
+    #[serde(default)]
+    pub tool_calls: Vec<crate::tool::ToolCall>,
+    /// For `Role::Tool` messages: the id of the tool call this message
+    /// answers. `None` for other roles, and `None` for legacy
+    /// transcripts written before the field existed.
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
     pub timestamp: OffsetDateTime,
     pub metadata: MessageMetadata,
+}
+
+impl ChatMessage {
+    /// Construct a message with no tool calls or tool-result linkage.
+    /// The common case for user / system / plain assistant turns.
+    pub fn text(
+        id: MessageId,
+        role: MessageRole,
+        content: impl Into<String>,
+        timestamp: OffsetDateTime,
+    ) -> Self {
+        Self {
+            id,
+            role,
+            content: content.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            timestamp,
+            metadata: MessageMetadata::default(),
+        }
+    }
+
+    /// Render this message as a single line for a plain-text prompt.
+    /// `Assistant` and `Tool` messages may span multiple lines; the
+    /// role prefix stays on the first line only.
+    pub fn render_text(&self) -> String {
+        let prefix = match &self.role {
+            MessageRole::User => "User",
+            MessageRole::Assistant => "Assistant",
+            MessageRole::System => "System",
+            MessageRole::Tool => "Tool",
+            MessageRole::Agent(_) => "Agent",
+        };
+        format!("{prefix}: {}", self.content)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,18 +157,51 @@ mod tests {
 
     #[test]
     fn test_chat_message_serialization() {
-        let msg = ChatMessage {
-            id: MessageId::new(),
-            role: MessageRole::User,
-            content: "Hello, world".to_string(),
-            timestamp: OffsetDateTime::now_utc(),
-            metadata: MessageMetadata::default(),
-        };
+        let msg = ChatMessage::text(
+            MessageId::new(),
+            MessageRole::User,
+            "Hello, world",
+            OffsetDateTime::now_utc(),
+        );
 
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: ChatMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(msg.id, deserialized.id);
         assert_eq!(msg.content, deserialized.content);
+        assert!(deserialized.tool_calls.is_empty());
+        assert!(deserialized.tool_call_id.is_none());
+    }
+
+    /// A legacy transcript (no `tool_calls` / `tool_call_id` keys) must
+    /// still parse. The `#[serde(default)]` attributes are the contract;
+    /// this test fails loudly if someone removes them.
+    ///
+    /// The test builds the JSON programmatically from a real
+    /// `ChatMessage`, then strips the two new keys — this is the only
+    /// safe way to hand-write the fixture, because `time::OffsetDateTime`
+    /// uses the `time` crate's own serde format (not ISO 8601) unless
+    /// the `serde-well-known` feature is on. Hand-writing the timestamp
+    /// in ISO would test the wrong format.
+    #[test]
+    fn test_chat_message_legacy_json_parses() {
+        let msg = ChatMessage::text(
+            MessageId::new(),
+            MessageRole::User,
+            "legacy",
+            OffsetDateTime::now_utc(),
+        );
+        let mut v: serde_json::Value =
+            serde_json::to_value(&msg).expect("serialize");
+        let obj = v.as_object_mut().expect("object");
+        obj.remove("tool_calls");
+        obj.remove("tool_call_id");
+
+        let legacy = serde_json::to_string(&v).expect("re-serialize");
+        let parsed: ChatMessage =
+            serde_json::from_str(&legacy).expect("legacy json must parse");
+        assert_eq!(parsed.content, "legacy");
+        assert!(parsed.tool_calls.is_empty());
+        assert!(parsed.tool_call_id.is_none());
     }
 
     #[test]

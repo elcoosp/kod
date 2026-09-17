@@ -39,7 +39,6 @@ pub mod context;
 pub mod git;
 pub mod patch;
 pub mod path_lock;
-pub mod executor;
 pub mod registry;
 pub mod search;
 pub mod swarm_tools;
@@ -59,7 +58,6 @@ pub use tools::{
 
 pub use context::ToolContext;
 pub use path_lock::{LockError, PathLockGuard, PathLockTable};
-pub use executor::ToolExecutor;
 pub use swarm_tools::{SwarmKnowledge, SwarmNoteTool, SwarmReadTool, new_knowledge};
 pub use registry::ToolRegistry;
 

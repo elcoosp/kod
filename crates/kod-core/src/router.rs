@@ -853,7 +853,11 @@ struct RepoMapCache {
 
 struct CachedRepoMap {
     fingerprint: u64,
-    map: std::sync::Arc<crate::repomap::RepoMap>,
+    /// Rendered form only. The structured `RepoMap` was stored here in
+    /// the original P6 design "for D5 PageRank" but had no reader, so it
+    /// was dropped (YAGNI). D5 will add it back with its first consumer;
+    /// the rebuild cost is one shallow walk, already paid at
+    /// invalidation time.
     rendered: std::sync::Arc<String>,
 }
 
@@ -887,11 +891,9 @@ impl RepoMapCache {
             return None;
         }
         let rendered = std::sync::Arc::new(map.render(crate::repomap::DEFAULT_MAP_CHARS));
-        let map = std::sync::Arc::new(map);
         if let Ok(mut guard) = self.inner.write() {
             *guard = Some(CachedRepoMap {
                 fingerprint: fp,
-                map,
                 rendered: rendered.clone(),
             });
         }

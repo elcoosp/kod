@@ -27,7 +27,6 @@ authors = ["KOD Team"]
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.19"
-anyhow = "1.0.104"
 bytes = "1.11.1"
 
 # Async
@@ -57,7 +56,6 @@ clap_complete = "4.6.6"
 toml = "1.1.2"
 
 # Git & GitHub
-octocrab = "0.54.1"
 git2 = "0.19"
 chrono = { version = "0.4", features = ["serde"] }
 
@@ -65,7 +63,6 @@ chrono = { version = "0.4", features = ["serde"] }
 similar = "2.7"
 
 # Tools & schema
-schemars = "1.2.2"
 walkdir = "2.5.0"
 ignore = "0.4.25"
 globset = "0.4.20"

@@ -27,6 +27,7 @@ kod-tools = { path = "../kod-tools" }
 kod-lsp = { path = "../kod-lsp" }
 kod-swarm = { path = "../kod-swarm" }
 
+time = { workspace = true }
 [dev-dependencies]
 async-stream = { workspace = true }
 futures = { workspace = true }

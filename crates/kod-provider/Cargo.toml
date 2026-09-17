@@ -14,3 +14,6 @@ futures = { workspace = true }
 tracing = { workspace = true }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
+
+[dev-dependencies]
+time = { workspace = true }
