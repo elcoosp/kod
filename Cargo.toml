@@ -8,6 +8,7 @@ members = [
     "crates/kod-provider-openai",
     "crates/kod-skills",
     "crates/kod-memory",
+    "crates/kod-lsp",
     "crates/kod-tools",
     "crates/kod-swarm",
     "crates/kod-tui",
