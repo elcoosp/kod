@@ -47,7 +47,16 @@ pub fn build_registry(
     llm: &LlmConfig,
     model_override: Option<&str>,
 ) -> Result<(Arc<ProviderRegistry>, ModelRef, Option<kod_config::RoutingConfig>)> {
-    let endpoints = llm.effective_endpoints()?;
+    // Endpoints come straight from the config; a v2 config always
+    // carries them. An empty list is invalid (validate() reports it,
+    // and Default synthesises one), so this is a defensive check.
+    if llm.endpoints.is_empty() {
+        return Err(KodError::Config(
+            "llm.endpoints is empty; add at least one [[llm.endpoints]] block"
+                .to_string(),
+        ));
+    }
+    let endpoints = llm.endpoints.clone();
     let mut registry = ProviderRegistry::new();
 
     for endpoint in &endpoints {
