@@ -25,6 +25,18 @@ pub struct MemoryMetadata {
     pub session_id: Option<SessionId>,
     pub tags: Vec<String>,
     pub embedding: Option<Vec<f32>>,
+    /// FNV-1a hash of the canonical working directory. Used by the
+    /// hybrid retrieval to scope a "global" memory store per project
+    /// (D2-B2). `None` for legacy entries and for entries written
+    /// outside a project scope.
+    #[serde(default)]
+    pub project_key: Option<String>,
+    /// Unix milliseconds of the last successful retrieval that
+    /// returned this entry. Drives the archival heuristic — an
+    /// untouched entry older than 60 days is a candidate for
+    /// `kod memory forget` (D2-B5, not in this PR).
+    #[serde(default)]
+    pub last_retrieved_at_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
