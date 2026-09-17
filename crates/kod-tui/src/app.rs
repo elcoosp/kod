@@ -287,6 +287,18 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/check",
         hint: "run the project compiler/linter (Cargo, tsc, ruff, go vet)",
     },
+    SlashCommand {
+        name: "/pin",
+        hint: "pin a message so it survives history compaction: /pin <n>",
+    },
+    SlashCommand {
+        name: "/unpin",
+        hint: "remove a pin: /unpin <n>",
+    },
+    SlashCommand {
+        name: "/handoff",
+        hint: "write a handoff document and start a fresh session with it as context",
+    },
 ];
 
 /// What the generation is currently doing — shown in the header/status so
@@ -813,6 +825,30 @@ impl KodApp {
                 self.set_input(self.input_history[index + 1].clone());
             }
         }
+    }
+
+    /// Set the pinned flag on the message at `idx` (0-based index into
+    /// the full message list, so tool and system rows count). Returns
+    /// `true` when the index was in range.
+    ///
+    /// The engine keeps its own copy of the pin state (a turn's
+    /// `metadata.pinned`); the TUI mirrors it here so the display
+    /// stays in sync without a round-trip. The two can drift if the
+    /// engine compacts a turn the TUI still shows; the pin marker is
+    /// cosmetic in that case — the model still gets the pinned text.
+    pub fn set_message_pinned_at(&mut self, idx: usize, pinned: bool) -> bool {
+        match self.messages.get_mut(idx) {
+            Some(m) => {
+                m.metadata.pinned = pinned;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// True when the message at `idx` is pinned.
+    pub fn is_message_pinned(&self, idx: usize) -> bool {
+        self.messages.get(idx).map(|m| m.metadata.pinned).unwrap_or(false)
     }
 
     /// Load your last user message back into the input box for editing.
