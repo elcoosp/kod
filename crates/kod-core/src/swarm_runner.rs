@@ -49,6 +49,23 @@ use tokio::sync::mpsc;
 pub struct Subtask {
     pub name: String,
     pub description: String,
+    /// Path globs the subtask is expected to write (D4.2). Read by
+    /// the runner to detect overlapping claims before spawning and
+    /// enforced on each agent's `ToolContext::allowed_write_globs`.
+    ///
+    /// A planner that produces good globs is the difference between
+    /// a swarm that parallelizes and one that serializes on a
+    /// shared file. The decompose prompt asks for the list; when
+    /// the model returns an empty list (or the fallback path is
+    /// taken), the runner falls back to a permissive default and
+    /// relies on the merge-time conflict detector.
+    pub expected_writes: Vec<String>,
+    /// Capability the planner assigned to this subtask. The
+    /// runner uses it to route the subtask to an endpoint via
+    /// `routing.swarm`; the previous inference (`capability_for`)
+    /// remains as a fallback for the case where the planner omits
+    /// the field.
+    pub capability: Capability,
 }
 
 /// Progress events a swarm run emits while it works. The consumer
@@ -265,7 +282,43 @@ impl SwarmRunner {
         }
 
         // 1. Decompose.
-        let subtasks = self.decompose(goal).await?;
+        let mut subtasks = self.decompose(goal).await?;
+
+        // 1a. Overlap check (D4.2). A pair of subtasks with
+        //     intersecting write claims is a plan the runner cannot
+        //     parallelize safely. The remedy is one re-plan — the
+        //     hint names the colliding globs so the model
+        //     redistributes. A second overlap after the retry is
+        //     accepted: the claims are enforced at the tool-call
+        //     boundary regardless, and the merge-time conflict
+        //     detector is the second line of defence.
+        if let Some((i, j, common)) = detect_overlap(&subtasks) {
+            tracing::warn!(
+                first = %subtasks[i].name,
+                second = %subtasks[j].name,
+                globs = ?common,
+                "swarm: write-claim overlap; asking the planner to redistribute"
+            );
+            let replan_hint = format!(
+                "Your previous reply had two subtasks whose write sets \
+                 overlap:\n  \"{}\" claims {}\n  \"{}\" claims {}\n\
+                 Paths in the overlap: {}\n\nRedistribute so no two \
+                 subtasks touch the same file. Either split the file's \
+                 contents along a different axis (a schema, an \
+                 interface, a test fixture), or merge the two subtasks \
+                 into one.",
+                subtasks[i].name,
+                subtasks[i].expected_writes.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(", "),
+                subtasks[j].name,
+                subtasks[j].expected_writes.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(", "),
+                common.join(", "),
+            );
+            if let Ok(replanned) = self.decompose_with_hint(goal, &replan_hint).await
+                && !replanned.is_empty()
+            {
+                subtasks = replanned;
+            }
+        }
         let _ = chunk_tx.send(SwarmEvent::Decomposed(subtasks.clone())).await;
 
         // 1b. Create one worktree per subtask. All-or-nothing: a
@@ -330,6 +383,18 @@ impl SwarmRunner {
                         path: wt.path.clone(),
                         branch: wt.branch.clone(),
                     })
+                    .await;
+            }
+            // Register this agent's declared write set on its
+            // transcript, whether or not a worktree was created
+            // (D4.2). The claim applies in the non-worktree case
+            // too — that is where the enforcement matters most,
+            // because the agents share a filesystem.
+            if !st.expected_writes.is_empty() {
+                let key = format!("swarm:{id}");
+                let _ = self
+                    .engine
+                    .set_transcript_write_globs(&key, Some(st.expected_writes.clone()))
                     .await;
             }
 
@@ -517,12 +582,14 @@ impl SwarmRunner {
                 None
             };
 
-        // 3c. Clear the per-transcript working dir overrides so a
-        //     reused engine (a second swarm run) does not inherit a
-        //     stale worktree path.
+        // 3c. Clear the per-transcript working dir overrides and
+        //     write sets so a reused engine (a second swarm run)
+        //     does not inherit a stale worktree path or a stale
+        //     claim.
         for h in &handles {
             let key = format!("swarm:{}", h.id);
             let _ = self.engine.clear_transcript_working_dir(&key).await;
+            self.engine.clear_transcript_write_globs(&key).await;
         }
 
         // 4. Report terminal status. The coordinator's load accounting
@@ -751,6 +818,66 @@ impl SwarmRunner {
         Some(out)
     }
 
+    /// Decompose with an extra instruction appended to the prompt.
+    /// Used by the overlap re-plan to tell the model what went
+    /// wrong without rebuilding the whole prompt.
+    ///
+    /// Reuses `decompose`'s probe and prompt, appends the hint as a
+    /// postscript. A failure to reach the model returns the error
+    /// so the caller can decide whether to retry with the original
+    /// plan or abort; today the only caller falls through to the
+    /// original plan, which is the safe default.
+    async fn decompose_with_hint(
+        &self,
+        goal: &str,
+        hint: &str,
+    ) -> Result<Vec<Subtask>> {
+        // The probe is best-effort inside `decompose` — here we
+        // simply prepend a hint line and call the underlying
+        // provider with the same generation options `decompose`
+        // uses. To avoid duplicating the prompt construction, this
+        // method rebuilds a minimal prompt: the same goal, the same
+        // repo block, and the hint.
+        //
+        // The pragmatic trade: a re-plan that produces a *worse*
+        // prompt than the first pass is worse than keeping the
+        // original plan. The caller checks for an empty or
+        // malformed reply and keeps the original on failure.
+        let repo_context = self.probe_repo(goal).await;
+        let repo_block = match &repo_context {
+            Some(s) if !s.is_empty() => format!(
+                "\nWorking directory context:\n{}\n\nReference the \
+                 concrete files above where a subtask touches them, \
+                 instead of naming files you have not seen.\n",
+                s
+            ),
+            _ => String::new(),
+        };
+        let prompt = format!(
+            "You are decomposing a task for a team of AI agents.\n\n\
+             Goal: {goal}\n{repo}\
+             \nYour previous attempt had a problem:\n\n{hint}\n\n\
+             Produce a new decomposition with the same JSON shape: \
+             \"name\", \"description\", \"capability\", \
+             \"expected_writes\". This time, no two subtasks may \
+             share a path prefix in their write sets.\n",
+            goal = goal,
+            repo = repo_block,
+            hint = hint,
+        );
+        let text = self
+            .provider
+            .generate(
+                &prompt,
+                &GenerationOptions {
+                    temperature: Some(0.2),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        Ok(parse_subtasks(&text, self.max_agents).unwrap_or_default())
+    }
+
     /// Ask the model to split `goal` into at most `max_agents` subtasks.
     /// Falls back to N angle-hinted copies of the goal when the reply is
     /// not the requested JSON — a malformed reply should still produce a
@@ -783,10 +910,29 @@ impl SwarmRunner {
              commands, must be able to complete it without seeing the \
              others.\n\n\
              Reply with a single JSON array and nothing else. Each element \
-             has a \"name\" (short, kebab-case, 2-4 words) and a \
-             \"description\" (one or two sentences, imperative). Example:\n\
+             has these fields:\n\
+             - \"name\": short, kebab-case, 2-4 words.\n\
+             - \"description\": one or two sentences, imperative.\n\
+             - \"capability\": one of coding, testing, documentation, \
+               code-review, planning, research, debugging, refactoring. \
+               Pick the one that best describes the subtask's deliverable.\n\
+             - \"expected_writes\": an array of path globs the subtask will \
+               write to. Use specific paths (`src/parser.rs`) or narrow \
+               prefixes (`src/parser/**`). Do NOT use `**` or `*` alone — \
+               that tells the coordinator nothing and will force the whole \
+               swarm to serialize. If a subtask genuinely does not write \
+               files (research, review, planning), return an empty array.\n\
+             \n\
+             Two subtasks may not share a prefix in their write sets. If \
+             you find yourself wanting to write the same file from two \
+             subtasks, either split the file's contents along a different \
+             axis, or merge the subtasks.\n\
+             \n\
+             Example:\n\
              [{{\"name\":\"design-schema\",\"description\":\"Write the SQL \
-             schema for a users table with id, email, created_at.\"}}]\n",
+             schema for a users table with id, email, created_at.\", \
+             \"capability\":\"coding\", \
+             \"expected_writes\":[\"migrations/001_users.sql\"]}}]\n",
             goal = goal,
             repo = repo_block,
             n = self.max_agents,
@@ -825,6 +971,17 @@ impl SwarmRunner {
                     i = i + 1,
                     n = self.max_agents,
                 ),
+                // No claim: the fallback path is what runs when
+                // the planner could not be trusted to produce a
+                // JSON array, so trusting it to produce a write
+                // set would be worse. Empty means the merge-time
+                // conflict detector is the only defence.
+                expected_writes: Vec::new(),
+                // Infer from the goal rather than the (identical)
+                // description — the description here is a
+                // permutation of the goal, not a subtask-specific
+                // hint.
+                capability: capability_for(goal),
             })
             .collect())
     }
@@ -1032,6 +1189,97 @@ fn sanitize(s: &str) -> String {
         .collect()
 }
 
+/// Detect a pairwise overlap between two subtasks' write claims.
+///
+/// Returns the indices of the first pair whose claims can touch the
+/// same file, and the globs that produce the intersection — enough
+/// for a diagnostic that names the offending paths.
+///
+/// The check is **conservative**: a false positive (two globs that
+/// look like they might overlap but in practice would not) triggers
+/// one re-plan, which is cheap; a false negative would let two
+/// agents race on the same file, which is the entire failure mode
+/// this function exists to prevent. The comparison over-approximates
+/// by design.
+///
+/// The algorithm:
+///
+/// 1. `**` matches anything under the current directory and any
+///    descendant — treat it as "claims the whole tree" and short-
+///    circuit to a positive.
+/// 2. Two paths overlap if one is a path-component prefix of the
+///    other (`src/` vs `src/parser.rs`, `src/a` vs `src/a/b.rs`).
+///    A wildcard segment inside either glob is truncated at the
+///    first wildcard, and the resulting prefixes are compared as
+///    above. This is what makes `src/parser/**` and `src/parser.rs`
+///    overlap without comparing wildcard semantics.
+/// 3. Two identical globs overlap trivially.
+///
+/// A claim that is an empty list never overlaps anything — the
+/// planner has said "this subtask will not write files".
+fn detect_overlap(subtasks: &[Subtask]) -> Option<(usize, usize, Vec<String>)> {
+    for i in 0..subtasks.len() {
+        for j in (i + 1)..subtasks.len() {
+            let mut common: Vec<String> = Vec::new();
+            for a in &subtasks[i].expected_writes {
+                for b in &subtasks[j].expected_writes {
+                    if globs_overlap(a, b) {
+                        // Record both spellings so the diagnostic
+                        // can show the two authors what collided.
+                        common.push(format!("{a} ∩ {b}"));
+                    }
+                }
+            }
+            if !common.is_empty() {
+                return Some((i, j, common));
+            }
+        }
+    }
+    None
+}
+
+/// Does either glob imply the other, at a path-component level?
+fn globs_overlap(a: &str, b: &str) -> bool {
+    // A `**` anywhere in either glob means the subtask claims the
+    // whole tree under the current prefix. That is exactly the
+    // pattern the decompose prompt tells the model not to produce,
+    // and treating it as "overlaps everything" is what makes the
+    // prompt's advice load-bearing.
+    if a.contains("**") || b.contains("**") {
+        return true;
+    }
+    let na = normalize_glob(a);
+    let nb = normalize_glob(b);
+    if na.is_empty() || nb.is_empty() {
+        return false;
+    }
+    na == nb
+        || na.starts_with(&format!("{nb}/"))
+        || nb.starts_with(&format!("{na}/"))
+}
+
+/// Truncate a glob at its first wildcard segment. `src/parser/*.rs`
+/// becomes `src/parser`; `src/*/tests` becomes `src`; `README.md`
+/// stays `README.md`.
+///
+/// A wildcard at the very start (`*.rs`) truncates to the empty
+/// string, which `globs_overlap` treats as "no claim" — correct for
+/// the case where the planner wrote a pattern that names no
+/// directory.
+fn normalize_glob(glob: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in glob.trim_start_matches("./").split('/') {
+        if seg.contains('*') || seg.contains('?') || seg.contains('[') {
+            break;
+        }
+        if seg.is_empty() {
+            continue;
+        }
+        parts.push(seg);
+    }
+    parts.join("/")
+}
+
 /// Best-effort capability from the subtask description. The coordinator
 /// uses capabilities for its "find the right agent" queries; the runner
 /// currently spawns one agent per subtask, so this is metadata rather
@@ -1075,7 +1323,38 @@ fn parse_subtasks(text: &str, max: usize) -> Option<Vec<Subtask>> {
         if description.trim().is_empty() {
             continue;
         }
-        out.push(Subtask { name, description });
+        // `expected_writes` is a required field of the prompt's
+        // JSON shape; a malformed value (a string instead of an
+        // array, an array with non-string entries) degrades to an
+        // empty list. An empty list means "no claim" — the merge-
+        // time conflict detector is the fallback, so a bad value
+        // here is a warning, not a failure.
+        let expected_writes: Vec<String> = item
+            .get("expected_writes")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        // `capability` is a hint; a missing or unknown value falls
+        // back to the description-based inference the runner used
+        // before this field existed. That inference is not removed
+        // — it stays as the fallback path.
+        let capability = item
+            .get("capability")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<Capability>().ok())
+            .unwrap_or_else(|| capability_for(&description));
+        out.push(Subtask {
+            name,
+            description,
+            expected_writes,
+            capability,
+        });
         if out.len() >= max {
             break;
         }
@@ -1148,6 +1427,100 @@ mod tests {
                     {\"name\":\"b\",\"description\":\"b\"},\
                     {\"name\":\"c\",\"description\":\"c\"}]";
         assert_eq!(parse_subtasks(text, 2).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn globs_overlap_catches_prefix_relations() {
+        // Identical globs.
+        assert!(globs_overlap("src/parser.rs", "src/parser.rs"));
+        // One is a component-prefix of the other.
+        assert!(globs_overlap("src/parser.rs", "src/parser"));
+        assert!(globs_overlap("src/parser", "src/parser.rs"));
+        assert!(globs_overlap("src/a/b.rs", "src/a/b.rs"));
+        // A `**` anywhere overlaps everything.
+        assert!(globs_overlap("src/**", "src/parser.rs"));
+        assert!(globs_overlap("docs/x.md", "**"));
+        // Unrelated prefixes do not overlap.
+        assert!(!globs_overlap("src/parser.rs", "src/http.rs"));
+        assert!(!globs_overlap("src/a/b.rs", "src/c/d.rs"));
+        // A wildcard segment truncates to its prefix.
+        assert!(globs_overlap("src/parser/*.rs", "src/parser.rs"));
+        assert!(globs_overlap("src/*/lib.rs", "src/api/lib.rs"));
+    }
+
+    #[test]
+    fn detect_overlap_finds_first_colliding_pair() {
+        let clean = vec![
+            Subtask {
+                name: "a".to_string(),
+                description: "a".to_string(),
+                expected_writes: vec!["src/parser.rs".to_string()],
+                capability: Capability::Coding,
+            },
+            Subtask {
+                name: "b".to_string(),
+                description: "b".to_string(),
+                expected_writes: vec!["src/http.rs".to_string()],
+                capability: Capability::Coding,
+            },
+        ];
+        assert!(detect_overlap(&clean).is_none());
+
+        let dirty = vec![
+            Subtask {
+                name: "a".to_string(),
+                description: "a".to_string(),
+                expected_writes: vec!["src/parser.rs".to_string()],
+                capability: Capability::Coding,
+            },
+            Subtask {
+                name: "b".to_string(),
+                description: "b".to_string(),
+                expected_writes: vec!["src/parser.rs".to_string()],
+                capability: Capability::Coding,
+            },
+        ];
+        let (i, j, common) = detect_overlap(&dirty).expect("collision");
+        assert_eq!((i, j), (0, 1));
+        assert!(!common.is_empty());
+    }
+
+    #[test]
+    fn empty_write_set_never_overlaps() {
+        let subtasks = vec![
+            Subtask {
+                name: "a".to_string(),
+                description: "a".to_string(),
+                expected_writes: Vec::new(),
+                capability: Capability::Research,
+            },
+            Subtask {
+                name: "b".to_string(),
+                description: "b".to_string(),
+                expected_writes: Vec::new(),
+                capability: Capability::Planning,
+            },
+        ];
+        assert!(detect_overlap(&subtasks).is_none());
+    }
+
+    #[test]
+    fn parse_subtasks_reads_the_new_fields() {
+        let text = r#"[{"name":"n","description":"d","capability":"testing","expected_writes":["src/a.rs","docs/**"]}]"#;
+        let v = parse_subtasks(text, 5).expect("parse");
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].capability, Capability::Testing);
+        assert_eq!(v[0].expected_writes, vec!["src/a.rs".to_string(), "docs/**".to_string()]);
+    }
+
+    #[test]
+    fn parse_subtasks_degrades_missing_fields_gracefully() {
+        // Capability omitted: falls back to description inference.
+        // expected_writes omitted: empty list.
+        let text = r#"[{"name":"n","description":"write tests for auth"}]"#;
+        let v = parse_subtasks(text, 5).expect("parse");
+        assert_eq!(v[0].capability, Capability::Testing);
+        assert!(v[0].expected_writes.is_empty());
     }
 
     #[test]

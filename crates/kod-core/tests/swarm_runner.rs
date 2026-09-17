@@ -382,11 +382,9 @@ async fn test_swarm_detects_file_conflicts() {
             // a text reply. The engine loop sees the tool call and runs
             // it, then gets Text and stops.
             Box::pin(futures::stream::iter(vec![
-                Ok(StreamChunk::ToolCallStart {
-                    name: "write_file".to_string(),
+                Ok(StreamChunk::ToolCallStart { index: 0, id: None, name: "write_file".to_string(),
                 }),
-                Ok(StreamChunk::ToolCallDelta {
-                    arguments: serde_json::json!({
+                Ok(StreamChunk::ToolCallDelta { index: 0, arguments: serde_json::json!({
                         "path": "shared.txt",
                         "content": "from one agent"
                     })

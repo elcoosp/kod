@@ -27,7 +27,7 @@ fn truncate_chars(s: &str, max: usize) -> &str {
 }
 
 /// Types of tasks that can be routed
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TaskType {
     Simple,
     CodeModification,
@@ -79,7 +79,7 @@ impl Default for RouterConfig {
 }
 
 /// Response from task processing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TaskResponse {
     pub task_type: TaskType,
     /// Model-generated reply text. `None` when produced by
@@ -97,13 +97,28 @@ pub struct TaskResponse {
     /// Wall-clock time from `process_input` entry to response.
     pub execution_time_ms: u64,
     /// Token usage the provider reported, when it did.
+    #[serde(default)]
     pub usage: Option<kod_provider::TokenUsage>,
     /// The memory context that was retrieved for this prompt. Carried in
     /// the response so the engine can pass it to
     /// [`TaskRouter::build_prompt_with_context`] without a second redb
     /// scan — the single-retrieval path (D0.4). `None` when memory is
     /// disabled or the caller supplied a context directly.
+    #[serde(default)]
     pub memory_context: Option<MemoryContext>,
+    /// USD pricing of the endpoint that served this response, when
+    /// the endpoint has a `[pricing]` block. `None` for a local
+    /// endpoint (no cost), a remote endpoint without a pricing
+    /// block, or a response that never reached a provider.
+    ///
+    /// Carried on the response rather than looked up from the
+    /// engine at display time because the model that served the
+    /// call is known only inside `process_*`, after the fallback
+    /// chain resolves. A later lookup would report the *current*
+    /// model's pricing, which after a `/model` switch is not the
+    /// one that produced the tokens.
+    #[serde(default)]
+    pub pricing: Option<kod_provider::ModelPricing>,
 }
 
 /// Main task router that coordinates all subsystems
@@ -612,6 +627,9 @@ impl TaskRouter {
             execution_time_ms,
             usage: None,
             memory_context,
+            // The router classifies; it does not call a provider,
+            // so it has no pricing to report.
+            pricing: None,
         })
     }
 
@@ -1153,7 +1171,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
-            RouterConfig {
+            RouterConfig { skill_threshold: 0.3,
                 enable_memory: true,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
@@ -1216,7 +1234,7 @@ mod tests {
 
         let db_path = wd.join("test.redb");
         let router = TaskRouter::new(
-            RouterConfig {
+            RouterConfig { skill_threshold: 0.3,
                 enable_memory: false,
                 max_skills_per_query: 3,
                 working_dir: wd.clone(),
@@ -1253,7 +1271,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
-            RouterConfig {
+            RouterConfig { skill_threshold: 0.3,
                 enable_memory: true,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
@@ -1316,7 +1334,7 @@ mod tests {
 
         // enable_memory on so the router constructs a MemoryManager.
         let router = TaskRouter::new(
-            RouterConfig {
+            RouterConfig { skill_threshold: 0.3,
                 enable_memory: true,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
@@ -1362,7 +1380,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
-            RouterConfig {
+            RouterConfig { skill_threshold: 0.3,
                 enable_memory: true,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
@@ -1486,7 +1504,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
-            RouterConfig {
+            RouterConfig { skill_threshold: 0.3,
                 enable_memory: false,
                 context_window: 8192,
                 short_term_capacity: 100,
@@ -1512,7 +1530,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
-            RouterConfig {
+            RouterConfig { skill_threshold: 0.3,
                 enable_memory: false,
                 context_window: 8192,
                 short_term_capacity: 100,
@@ -1557,7 +1575,7 @@ mod tests {
 
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
-            RouterConfig {
+            RouterConfig { skill_threshold: 0.3,
                 enable_memory: false,
                 context_window: 8192,
                 short_term_capacity: 100,

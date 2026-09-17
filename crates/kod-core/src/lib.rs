@@ -17,6 +17,7 @@ pub mod memory_tools;
 pub mod provider_setup;
 pub mod repomap;
 pub mod router;
+pub mod serve;
 pub mod session_log;
 pub mod swarm_runner;
 pub mod worktree;
