@@ -141,7 +141,9 @@ impl SandboxResolver {
     /// `invocation` method returns `None` for `Auto` and errors for
     /// `Require`, matching what a host without primitives would do.
     pub fn empty() -> Self {
-        Self { available: Vec::new() }
+        Self {
+            available: Vec::new(),
+        }
     }
 
     pub fn has_any(&self) -> bool {
@@ -179,9 +181,7 @@ impl SandboxResolver {
         }
         let Some(backend) = self.best() else {
             return match mode {
-                SandboxMode::Require => Err(KodError::SandboxViolation(
-                    missing_backend_message(),
-                )),
+                SandboxMode::Require => Err(KodError::SandboxViolation(missing_backend_message())),
                 _ => Ok(None),
             };
         };
@@ -247,10 +247,8 @@ fn landlock_invocation(wd: &Path, opts: SandboxOpts) -> Result<SandboxInvocation
         }
     }
 
-    let profile_path = std::env::temp_dir().join(format!(
-        "kod-sandbox-{}.json",
-        std::process::id(),
-    ));
+    let profile_path =
+        std::env::temp_dir().join(format!("kod-sandbox-{}.json", std::process::id(),));
     std::fs::write(&profile_path, profile.to_json()).map_err(|e| {
         KodError::SandboxViolation(format!(
             "could not write sandbox profile to {}: {e}",
@@ -315,13 +313,25 @@ fn missing_backend_message() -> String {
 fn bwrap_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
     let wd_str = wd.to_string_lossy().to_string();
     let mut args: Vec<String> = vec![
-        "--ro-bind".into(), "/usr".into(), "/usr".into(),
-        "--ro-bind".into(), "/lib".into(), "/lib".into(),
-        "--ro-bind".into(), "/lib64".into(), "/lib64".into(),
-        "--ro-bind".into(), "/bin".into(), "/bin".into(),
-        "--ro-bind".into(), "/etc".into(), "/etc".into(),
-        "--dev".into(), "/dev".into(),
-        "--proc".into(), "/proc".into(),
+        "--ro-bind".into(),
+        "/usr".into(),
+        "/usr".into(),
+        "--ro-bind".into(),
+        "/lib".into(),
+        "/lib".into(),
+        "--ro-bind".into(),
+        "/lib64".into(),
+        "/lib64".into(),
+        "--ro-bind".into(),
+        "/bin".into(),
+        "/bin".into(),
+        "--ro-bind".into(),
+        "/etc".into(),
+        "/etc".into(),
+        "--dev".into(),
+        "/dev".into(),
+        "--proc".into(),
+        "/proc".into(),
     ];
     // .git read-only: mount it RO *after* the workspace bind so the
     // narrower rule wins. Order matters in bwrap — later binds override
@@ -331,14 +341,15 @@ fn bwrap_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
         // Only bind when the .git directory actually exists; a bwrap
         // invocation with a bind on a non-existent source fails hard.
         if std::path::Path::new(&git).is_dir() {
-            args.extend([
-                "--ro-bind".into(), git.clone(), git.clone(),
-            ]);
+            args.extend(["--ro-bind".into(), git.clone(), git.clone()]);
         }
     }
     args.extend([
-        "--bind".into(), wd_str.clone(), wd_str.clone(),
-        "--chdir".into(), wd_str,
+        "--bind".into(),
+        wd_str.clone(),
+        wd_str.clone(),
+        "--chdir".into(),
+        wd_str,
     ]);
     if opts.net_deny {
         args.push("--unshare-net".into());
@@ -414,7 +425,6 @@ fn bwrap_invocation(_wd: &Path, _opts: SandboxOpts) -> SandboxInvocation {
     unreachable!("bwrap_invocation called on a non-Linux platform")
 }
 
-
 /// Stub for platforms without Seatbelt. Same reasoning as the bwrap
 /// stub above.
 #[cfg(not(target_os = "macos"))]
@@ -425,10 +435,7 @@ fn seatbelt_invocation(_wd: &Path, _opts: SandboxOpts) -> SandboxInvocation {
 /// Backward-compatible free function that matches the pre-C3a shape.
 /// Uses a one-shot resolver; prefer holding a `SandboxResolver` when
 /// the caller invokes multiple times.
-pub fn sandbox_invocation(
-    mode: SandboxMode,
-    wd: &Path,
-) -> Result<Option<SandboxInvocation>> {
+pub fn sandbox_invocation(mode: SandboxMode, wd: &Path) -> Result<Option<SandboxInvocation>> {
     SandboxResolver::detect().invocation(mode, wd, SandboxOpts::default())
 }
 
@@ -567,9 +574,11 @@ impl ToolContext {
                 let parent = joined.parent().ok_or_else(|| KodError::InvalidParameters {
                     reason: format!("Path has no parent: {}", joined.display()),
                 })?;
-                let name = joined.file_name().ok_or_else(|| KodError::InvalidParameters {
-                    reason: format!("Path has no file name: {}", joined.display()),
-                })?;
+                let name = joined
+                    .file_name()
+                    .ok_or_else(|| KodError::InvalidParameters {
+                        reason: format!("Path has no file name: {}", joined.display()),
+                    })?;
                 let canon_parent = std::fs::canonicalize(parent).map_err(KodError::Io)?;
                 canon_parent.join(name)
             }
@@ -687,9 +696,7 @@ impl ToolContext {
             });
         }
         if let Some(globs) = &self.allowed_write_globs {
-            let matched = globs
-                .iter()
-                .any(|g| Self::matches_pattern(path, g));
+            let matched = globs.iter().any(|g| Self::matches_pattern(path, g));
             if !matched {
                 return Err(KodError::PermissionDenied {
                     action: "write".to_string(),
@@ -749,10 +756,7 @@ impl ToolContext {
     /// `GitAccess::Read` for a query, `GitAccess::Write` for a
     /// mutation. A context granted `Write` also satisfies `Read`
     /// (see the enum's `Ord`).
-    pub fn can_git_operation(
-        &self,
-        required: kod_types::GitAccess,
-    ) -> Result<()> {
+    pub fn can_git_operation(&self, required: kod_types::GitAccess) -> Result<()> {
         if !self.permissions.git_access.is_at_least(required) {
             return Err(KodError::PermissionDenied {
                 action: "git".to_string(),
@@ -767,8 +771,7 @@ impl ToolContext {
 
     /// Does `path` fall under `pattern`?
     fn matches_pattern(path: &Path, pattern: &str) -> bool {
-        let has_wildcard =
-            pattern.contains('*') || pattern.contains('?') || pattern.contains('[');
+        let has_wildcard = pattern.contains('*') || pattern.contains('?') || pattern.contains('[');
         let mut builder = globset::GlobSetBuilder::new();
         match globset::Glob::new(pattern) {
             Ok(g) => {
@@ -776,9 +779,7 @@ impl ToolContext {
             }
             Err(_) => return false,
         }
-        if !has_wildcard
-            && let Ok(g) = globset::Glob::new(&format!("{}/**", pattern))
-        {
+        if !has_wildcard && let Ok(g) = globset::Glob::new(&format!("{}/**", pattern)) {
             builder.add(g);
         }
         match builder.build() {
@@ -837,7 +838,11 @@ mod tests {
     fn test_sandbox_require_macos() {
         let resolver = SandboxResolver::detect();
         let inv = resolver
-            .invocation(SandboxMode::Require, Path::new("/tmp"), SandboxOpts::default())
+            .invocation(
+                SandboxMode::Require,
+                Path::new("/tmp"),
+                SandboxOpts::default(),
+            )
             .expect("sandbox-exec should be available on macOS")
             .expect("Require must return Some");
         assert_eq!(inv.program, "sandbox-exec");
@@ -845,7 +850,10 @@ mod tests {
         assert_eq!(inv.args.last().map(|s| s.as_str()), Some("--"));
         let profile = &inv.args[1];
         assert!(profile.contains("/tmp"), "profile missing wd: {profile}");
-        assert!(!profile.contains("{wd}"), "profile has unexpanded {{wd}}: {profile}");
+        assert!(
+            !profile.contains("{wd}"),
+            "profile has unexpanded {{wd}}: {profile}"
+        );
         // The .git read-only rule must be present by default.
         assert!(
             profile.contains(".git"),
@@ -933,8 +941,16 @@ mod tests {
 
         assert!(context.can_read(Path::new("/tmp/allowed/test.txt")).is_ok());
         assert!(context.can_read(Path::new("/tmp/allowed")).is_ok());
-        assert!(context.can_read(Path::new("/tmp/allowed/forbidden/secret.txt")).is_err());
-        assert!(context.can_read(Path::new("/tmp/allowed/forbidden")).is_err());
+        assert!(
+            context
+                .can_read(Path::new("/tmp/allowed/forbidden/secret.txt"))
+                .is_err()
+        );
+        assert!(
+            context
+                .can_read(Path::new("/tmp/allowed/forbidden"))
+                .is_err()
+        );
     }
 
     #[cfg(unix)]
@@ -948,8 +964,7 @@ mod tests {
             write_files: true,
             ..Default::default()
         };
-        let ctx = ToolContext::new(&root)
-            .with_permissions(perms);
+        let ctx = ToolContext::new(&root).with_permissions(perms);
         let mut ctx = ctx;
         ctx.allowed_write_globs = Some(vec!["src/parser.rs".to_string()]);
 
@@ -961,10 +976,7 @@ mod tests {
         let err = ctx.can_write(&root.join("src/http.rs")).unwrap_err();
         match err {
             KodError::PermissionDenied { reason, .. } => {
-                assert!(
-                    reason.contains("declared write set"),
-                    "got: {reason}"
-                );
+                assert!(reason.contains("declared write set"), "got: {reason}");
                 assert!(
                     reason.contains("swarm_note"),
                     "message should point at the correction path: {reason}"
@@ -1037,11 +1049,7 @@ mod tests {
     fn auto_with_empty_resolver_returns_none() {
         let resolver = SandboxResolver::empty();
         let r = resolver
-            .invocation(
-                SandboxMode::Auto,
-                Path::new("/tmp"),
-                SandboxOpts::default(),
-            )
+            .invocation(SandboxMode::Auto, Path::new("/tmp"), SandboxOpts::default())
             .unwrap();
         assert!(r.is_none(), "Auto must gracefully fall through");
     }
@@ -1079,5 +1087,4 @@ mod tests {
         assert!(!resolver.has_any());
         assert!(resolver.backend_name().is_none());
     }
-
 }
