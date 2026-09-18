@@ -268,3 +268,112 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod coverage_lock_errors {
+    //! The lock table is the coordination primitive a swarm
+    //! relies on for serialized writes. Its error path is what
+    //! tells the model "the file is busy, try again" — a
+    //! regression that swapped a timeout for a silent success
+    //! would let two writers race.
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn lock_error_display_names_the_path_and_wait() {
+        let e = LockError::Timeout {
+            path: PathBuf::from("/tmp/x"),
+            waited: Duration::from_millis(250),
+        };
+        let s = e.to_string();
+        assert!(s.contains("/tmp/x"), "path missing: {s}");
+        assert!(s.contains("250"), "wait duration missing: {s}");
+        assert!(s.contains("timed out"), "cause missing: {s}");
+    }
+
+    #[tokio::test]
+    async fn guard_reports_path_and_holder() {
+        let table = PathLockTable::new();
+        let p = Path::new("/tmp/observable");
+        let g = table
+            .acquire(p, "holder-x", Duration::from_millis(100))
+            .await
+            .unwrap();
+        assert_eq!(g.path(), p);
+        assert_eq!(g.holder(), "holder-x");
+    }
+
+    #[tokio::test]
+    async fn a_second_acquire_after_the_first_guard_drops_succeeds() {
+        // The core guarantee: releasing a guard makes the lock
+        // available. A regression that leaked the guard's Arc into
+        // the table forever (instead of dropping the outer
+        // reference) would make every subsequent acquire wait for
+        // the timeout.
+        let table = PathLockTable::new();
+        let p = Path::new("/tmp/serialized");
+        {
+            let _g = table
+                .acquire(p, "first", Duration::from_millis(100))
+                .await
+                .unwrap();
+        }
+        let g = table
+            .acquire(p, "second", Duration::from_millis(100))
+            .await
+            .expect("acquire after release should succeed");
+        assert_eq!(g.holder(), "second");
+    }
+
+    #[tokio::test]
+    async fn many_paths_do_not_contend_with_each_other() {
+        let table = PathLockTable::new();
+        let mut guards = Vec::new();
+        for i in 0..20 {
+            let p = PathBuf::from(format!("/tmp/p{i}"));
+            guards.push(
+                table
+                    .acquire(&p, &format!("h{i}"), Duration::from_millis(50))
+                    .await
+                    .unwrap(),
+            );
+        }
+        // All 20 guards held simultaneously; no contention.
+        assert_eq!(guards.len(), 20);
+    }
+
+    #[tokio::test]
+    async fn release_all_does_not_force_unlock_holders() {
+        // `release_all` drops the table's *references* to cells;
+        // it does not kill outstanding holders. A guard held
+        // across `release_all` still keeps its own Arc, and a new
+        // acquire after that guard drops must succeed against a
+        // fresh cell.
+        let table = PathLockTable::new();
+        let p = Path::new("/tmp/survives-release");
+        let g = table
+            .acquire(p, "h", Duration::from_millis(50))
+            .await
+            .unwrap();
+        table.release_all().await;
+        drop(g);
+        let _g = table
+            .acquire(p, "h2", Duration::from_millis(50))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn zero_timeout_still_acquires_when_uncontended() {
+        // A zero-duration timeout must succeed when nobody holds
+        // the lock — a regression that short-circuited on 0
+        // would make the "wait zero, give up if busy" idiom
+        // impossible.
+        let table = PathLockTable::new();
+        let g = table
+            .acquire(Path::new("/tmp/zero"), "h", Duration::ZERO)
+            .await
+            .unwrap();
+        assert_eq!(g.holder(), "h");
+    }
+}
