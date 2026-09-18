@@ -250,13 +250,10 @@ impl LspClient {
                 break;
             }
             let remaining = deadline.saturating_duration_since(now);
-            let read = tokio::time::timeout(remaining, self.read_handling_server_requests())
-                .await;
+            let read = tokio::time::timeout(remaining, self.read_handling_server_requests()).await;
             let msg = match read {
                 Ok(Ok(m)) => m,
-                Ok(Err(LspError::Io(e)))
-                    if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-                {
+                Ok(Err(LspError::Io(e))) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                     break;
                 }
                 Ok(Err(e)) => return Err(e),
@@ -269,9 +266,7 @@ impl LspClient {
                     .and_then(|p| p.get("uri"))
                     .and_then(|v| v.as_str())
                     == Some(&target_uri);
-            if is_our_diags
-                && let Some(params) = msg.get("params")
-            {
+            if is_our_diags && let Some(params) = msg.get("params") {
                 latest = Some(parse_diagnostics(params, &target_uri));
                 last_diag_at = Some(tokio::time::Instant::now());
             }
@@ -400,12 +395,9 @@ impl LspClient {
                 return Err(LspError::Timeout);
             }
             let remaining = deadline - now;
-            let msg = tokio::time::timeout(
-                remaining,
-                self.read_handling_server_requests(),
-            )
-            .await
-            .map_err(|_| LspError::Timeout)??;
+            let msg = tokio::time::timeout(remaining, self.read_handling_server_requests())
+                .await
+                .map_err(|_| LspError::Timeout)??;
             if msg.get("id").and_then(|v| v.as_i64()) == Some(id) {
                 if let Some(err) = msg.get("error") {
                     return Err(LspError::Protocol(format!(
@@ -433,11 +425,7 @@ impl LspClient {
     // Protocol plumbing
     // ---------------------------------------------------------------------
 
-    async fn request(
-        &mut self,
-        method: &str,
-        params: serde_json::Value,
-    ) -> Result<i64, LspError> {
+    async fn request(&mut self, method: &str, params: serde_json::Value) -> Result<i64, LspError> {
         let id = self.next_id;
         self.next_id += 1;
         self.send_message(&serde_json::json!({
@@ -450,11 +438,7 @@ impl LspClient {
         Ok(id)
     }
 
-    async fn notify(
-        &mut self,
-        method: &str,
-        params: serde_json::Value,
-    ) -> Result<(), LspError> {
+    async fn notify(&mut self, method: &str, params: serde_json::Value) -> Result<(), LspError> {
         self.send_message(&serde_json::json!({
             "jsonrpc": "2.0",
             "method": method,
@@ -476,9 +460,7 @@ impl LspClient {
     /// `id` and `method`) is answered with `{"result": null}` and the
     /// loop continues; a notification or a response to one of our
     /// requests is returned to the caller.
-    async fn read_handling_server_requests(
-        &mut self,
-    ) -> Result<serde_json::Value, LspError> {
+    async fn read_handling_server_requests(&mut self) -> Result<serde_json::Value, LspError> {
         loop {
             let msg = self.read_message().await?;
             if let (Some(id), Some(_method)) = (
@@ -515,14 +497,14 @@ impl LspClient {
                 break;
             }
             if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
-                content_length = Some(rest.trim().parse().map_err(|_| {
-                    LspError::Protocol(format!("bad Content-Length: {rest:?}"))
-                })?);
+                content_length =
+                    Some(rest.trim().parse().map_err(|_| {
+                        LspError::Protocol(format!("bad Content-Length: {rest:?}"))
+                    })?);
             }
         }
-        let n = content_length.ok_or_else(|| {
-            LspError::Protocol("missing Content-Length header".to_string())
-        })?;
+        let n = content_length
+            .ok_or_else(|| LspError::Protocol("missing Content-Length header".to_string()))?;
         let mut buf = vec![0u8; n];
         self.stdout.read_exact(&mut buf).await?;
         Ok(serde_json::from_slice(&buf)?)
@@ -654,10 +636,9 @@ fn parse_hover(v: &serde_json::Value) -> crate::types::Hover {
             .iter()
             .filter_map(|it| match it {
                 serde_json::Value::String(s) => Some(s.clone()),
-                serde_json::Value::Object(_) => it
-                    .get("value")
-                    .and_then(|x| x.as_str())
-                    .map(String::from),
+                serde_json::Value::Object(_) => {
+                    it.get("value").and_then(|x| x.as_str()).map(String::from)
+                }
                 _ => None,
             })
             .collect::<Vec<_>>()
