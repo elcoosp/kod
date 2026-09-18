@@ -58,12 +58,12 @@
 
 use crate::engine::{ApprovalDecision, KodEngine};
 use kod_error::{KodError, Result};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 /// Largest JSON-RPC body we will read. Matches the LSP client's
 /// ceiling; a frame larger than this is a protocol bug or an attack.
@@ -235,10 +235,7 @@ pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
             }
         } else if has_method {
             // Client → agent notification (no response expected).
-            let method = frame
-                .get("method")
-                .and_then(|m| m.as_str())
-                .unwrap_or("");
+            let method = frame.get("method").and_then(|m| m.as_str()).unwrap_or("");
             let params = frame.get("params").cloned().unwrap_or(Value::Null);
             if method == "session/cancel" {
                 let session_id = params
@@ -263,12 +260,7 @@ pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
 /// Dispatch one client→agent request. Every arm either responds or
 /// deliberately does not (a notification is filtered out in the read
 /// loop before reaching here).
-async fn dispatch_request(
-    server: Arc<Server>,
-    id: Value,
-    method: &str,
-    params: Value,
-) {
+async fn dispatch_request(server: Arc<Server>, id: Value, method: &str, params: Value) {
     match method {
         "initialize" => {
             // Version negotiation: echo the client's version if we
@@ -456,18 +448,13 @@ async fn run_prompt(server: Arc<Server>, req_id: Value, session_id: String, prom
 async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Result<()> {
     // Approval batch: one `session/request_permission` per item,
     // await each in turn, forward the decision to the engine.
-    if let Some((_batch_id, json_str)) =
-        crate::engine::parse_tool_approval_batch(chunk)
-    {
+    if let Some((_batch_id, json_str)) = crate::engine::parse_tool_approval_batch(chunk) {
         let batch: crate::engine::ApprovalBatch =
             serde_json::from_str(json_str).unwrap_or_default();
         for item in batch.items {
             let Some(item_id) = item.id else { continue };
             let decision = request_permission(server, session_id, &item).await;
-            let _ = server
-                .engine
-                .respond_to_approval(item_id, decision)
-                .await;
+            let _ = server.engine.respond_to_approval(item_id, decision).await;
         }
         return Ok(());
     }
@@ -482,8 +469,7 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
             .engine
             .respond_to_question(
                 qid,
-                "(the editor client has no answer channel for this question)"
-                    .to_string(),
+                "(the editor client has no answer channel for this question)".to_string(),
             )
             .await;
         return Ok(());
@@ -516,8 +502,12 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
         return Ok(());
     }
     if let Some(brief) = crate::engine::parse_tool_args(chunk) {
-        if let Some(tool_call_id) =
-            server.last_tool_call_id.lock().await.get(session_id).cloned()
+        if let Some(tool_call_id) = server
+            .last_tool_call_id
+            .lock()
+            .await
+            .get(session_id)
+            .cloned()
         {
             server
                 .notify(
@@ -537,8 +527,12 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
         return Ok(());
     }
     if let Some((header, summary, _ms)) = crate::engine::parse_tool_done(chunk) {
-        if let Some(tool_call_id) =
-            server.last_tool_call_id.lock().await.get(session_id).cloned()
+        if let Some(tool_call_id) = server
+            .last_tool_call_id
+            .lock()
+            .await
+            .get(session_id)
+            .cloned()
         {
             let is_error = summary.trim_start().starts_with("Error:");
             server
@@ -676,11 +670,14 @@ async fn read_frame<R: tokio::io::AsyncRead + Unpin>(
             break;
         }
         if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
-            content_length = Some(rest.trim().parse().map_err(|_| {
-                KodError::InvalidParameters {
-                    reason: format!("bad Content-Length: {rest:?}"),
-                }
-            })?);
+            content_length =
+                Some(
+                    rest.trim()
+                        .parse()
+                        .map_err(|_| KodError::InvalidParameters {
+                            reason: format!("bad Content-Length: {rest:?}"),
+                        })?,
+                );
         }
     }
     let n = content_length.ok_or_else(|| KodError::InvalidParameters {
@@ -699,12 +696,8 @@ async fn read_frame<R: tokio::io::AsyncRead + Unpin>(
 }
 
 /// Write one `Content-Length`-framed JSON-RPC message.
-async fn write_frame<W: tokio::io::AsyncWrite + Unpin>(
-    writer: &mut W,
-    msg: &Value,
-) -> Result<()> {
-    let body =
-        serde_json::to_vec(msg).map_err(|e| KodError::Serialization(e.to_string()))?;
+async fn write_frame<W: tokio::io::AsyncWrite + Unpin>(writer: &mut W, msg: &Value) -> Result<()> {
+    let body = serde_json::to_vec(msg).map_err(|e| KodError::Serialization(e.to_string()))?;
     let header = format!("Content-Length: {}\r\n\r\n", body.len());
     writer
         .write_all(header.as_bytes())
@@ -778,7 +771,13 @@ mod tests {
         // emits are all in the ACP v1 StopReason union:
         // end_turn, max_tokens, max_turn_requests, refusal, cancelled.
         let emitted = ["end_turn", "cancelled", "refusal"];
-        let acp_v1 = ["end_turn", "max_tokens", "max_turn_requests", "refusal", "cancelled"];
+        let acp_v1 = [
+            "end_turn",
+            "max_tokens",
+            "max_turn_requests",
+            "refusal",
+            "cancelled",
+        ];
         for s in emitted {
             assert!(acp_v1.contains(&s), "{s} is not an ACP v1 stop reason");
         }
