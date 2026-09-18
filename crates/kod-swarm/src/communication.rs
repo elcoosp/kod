@@ -259,11 +259,7 @@ impl AgentCommunicationHub {
     /// hub without inventing a second message shape: the runner's
     /// events are progress notifications, and
     /// `AgentMessageContent::ProgressUpdate` carries exactly that.
-    pub async fn broadcast_lifecycle(
-        &self,
-        from: &AgentId,
-        note: &str,
-    ) -> Result<()> {
+    pub async fn broadcast_lifecycle(&self, from: &AgentId, note: &str) -> Result<()> {
         self.broadcast(
             from,
             MessageContent::ProgressUpdate {
@@ -406,11 +402,10 @@ impl AgentCommunicationHub {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::MessageContent;
+    use super::*;
 
     /// Regression: the original broadcast moved `message` into the
     /// delivery loop, so a swarm with two online recipients other than
@@ -498,9 +493,7 @@ mod tests {
         // about history, not delivery.
         let rx_b = hub.get_agent_receiver(&b).await.unwrap();
         // Spawn a drain task so unbounded sends do not block.
-        let drain = tokio::spawn(async move {
-            while rx_b.recv().await.is_some() {}
-        });
+        let drain = tokio::spawn(async move { while rx_b.recv().await.is_some() {} });
 
         // Send more than the cap. Send from a to b: each message
         // records in both a's and b's history.
@@ -621,11 +614,8 @@ mod tests {
 
         // The sender's own receiver should see nothing within a short
         // window — the broadcast filter excludes the sender.
-        let recv = tokio::time::timeout(
-            std::time::Duration::from_millis(50),
-            rx_sender.recv(),
-        )
-        .await;
+        let recv =
+            tokio::time::timeout(std::time::Duration::from_millis(50), rx_sender.recv()).await;
         assert!(recv.is_err(), "sender should not receive its own broadcast");
     }
 }
