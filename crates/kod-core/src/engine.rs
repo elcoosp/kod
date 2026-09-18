@@ -5,16 +5,16 @@
 
 use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
-use serde::{Deserialize, Serialize};
+use kod_provider::request::{CompletionRequest, SystemPrompt};
 use kod_provider::{
     GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderRegistry, StreamChunk,
 };
-use kod_provider::request::{CompletionRequest, SystemPrompt};
 use kod_tools::{
     ExecuteCommandTool, FileInfoTool, GitDiffTool, GitStatusTool, GrepTool, ListFilesTool,
     PatchFileTool, PathLockTable, ReadFileTool, ToolContext, ToolRegistry, WriteFileTool,
 };
 use kod_types::{ToolCall, ToolDefinition, ToolPermissions, ToolResult};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -36,8 +36,7 @@ const MAX_TOOL_ROUNDS: usize = 40;
 /// happened." Without it the last tool-result block is the only
 /// context for the summary, and a small model tends to summarize
 /// that one result rather than the whole run.
-const TOOL_ROUNDS_EXHAUSTED_NOTE: &str =
-    "\n\n[tool-round limit reached — no further tool calls will run this turn. \
+const TOOL_ROUNDS_EXHAUSTED_NOTE: &str = "\n\n[tool-round limit reached — no further tool calls will run this turn. \
      Summarize what has been done so far and what remains.]";
 /// Max turns of the `/goal` loop before it stops and reports progress.
 const MAX_GOAL_TURNS: usize = 6;
@@ -213,9 +212,7 @@ pub(crate) fn cap_rendered_result(result: &ToolResult, cap: usize) -> String {
                 changed = true;
             }
         }
-        if changed
-            && let Ok(reserialized) = serde_json::to_string(&trimmed)
-        {
+        if changed && let Ok(reserialized) = serde_json::to_string(&trimmed) {
             if reserialized.len() <= cap {
                 return reserialized;
             }
@@ -248,19 +245,13 @@ pub(crate) fn cap_rendered_result(result: &ToolResult, cap: usize) -> String {
 /// `GOAL MET`. A reply that only mentions the phrase mid-paragraph is
 /// not a completion signal.
 pub(crate) fn reply_declares_goal_met(text: &str) -> bool {
-    let last_line = text
-        .lines()
-        .rev()
-        .map(|l| l.trim())
-        .find(|l| !l.is_empty());
+    let last_line = text.lines().rev().map(|l| l.trim()).find(|l| !l.is_empty());
     let Some(line) = last_line else {
         return false;
     };
     // Strip surrounding emphasis and leading quote / list markers.
     let stripped: String = line
-        .trim_matches(|c: char| {
-            c.is_whitespace() || c == '*' || c == '`' || c == '>' || c == '-'
-        })
+        .trim_matches(|c: char| c.is_whitespace() || c == '*' || c == '`' || c == '>' || c == '-')
         .trim_start_matches(|c: char| c.is_whitespace() || c == '—' || c == ':')
         .trim_end_matches(|c: char| c.is_whitespace() || c == '.' || c == '!' || c == ':')
         .to_string();
@@ -300,8 +291,7 @@ pub fn expand_at_references(input: &str, working_dir: &std::path::Path) -> Strin
     while i < bytes.len() {
         // An @ starts a reference only at a word boundary: previous
         // byte must be whitespace or start of input.
-        let at_word_start = i == 0
-            || matches!(bytes[i - 1], b' ' | b'\t' | b'\n' | b'\r');
+        let at_word_start = i == 0 || matches!(bytes[i - 1], b' ' | b'\t' | b'\n' | b'\r');
         if bytes[i] == b'@' && at_word_start {
             // Scan the token: everything up to whitespace.
             let mut j = i + 1;
@@ -313,9 +303,7 @@ pub fn expand_at_references(input: &str, working_dir: &std::path::Path) -> Strin
             // contains `/`, `.`, or `~`. This filters out `@user`
             // mentions that are not paths.
             let looks_like_path = !token.is_empty()
-                && (token.contains('/')
-                    || token.contains('.')
-                    || token.starts_with('~'));
+                && (token.contains('/') || token.contains('.') || token.starts_with('~'));
             if looks_like_path && inserted < MAX_AT_REFS {
                 let expanded = expand_one_at_ref(token, working_dir, MAX_AT_REF_BYTES);
                 if let Some(text) = expanded {
@@ -515,16 +503,10 @@ pub fn format_call_brief(name: &str, args: &serde_json::Value) -> String {
 
 /// Default generation options captured from `LlmConfig`.
 /// Transitional until D1 replaces this with per-endpoint config.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GenerationDefaults {
     pub temperature: Option<f32>,
     pub max_tokens: Option<usize>,
-}
-
-impl Default for GenerationDefaults {
-    fn default() -> Self {
-        Self { temperature: None, max_tokens: None }
-    }
 }
 
 impl GenerationDefaults {
@@ -619,7 +601,9 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
         if diff.is_empty() {
             return format!(
                 "{}: no change (content identical)",
-                v.get("path").and_then(|p| p.as_str()).map(shorten_path)
+                v.get("path")
+                    .and_then(|p| p.as_str())
+                    .map(shorten_path)
                     .unwrap_or_else(|| name.to_string())
             );
         }
@@ -635,22 +619,14 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
     // Binary read_file: no text preview, just a name-and-size line.
     // The model sees the hex preview through the tool-result feedback
     // block; the chat row is a one-liner.
-    if name == "read_file"
-        && v.get("binary").and_then(|b| b.as_bool()).unwrap_or(false)
-    {
+    if name == "read_file" && v.get("binary").and_then(|b| b.as_bool()).unwrap_or(false) {
         let path = v
             .get("path")
             .and_then(|p| p.as_str())
             .map(shorten_path)
             .unwrap_or_else(|| name.to_string());
-        let size = v
-            .get("size_bytes")
-            .and_then(|s| s.as_u64())
-            .unwrap_or(0);
-        return format!(
-            "{} · binary ({} bytes) — not shown as text",
-            path, size
-        );
+        let size = v.get("size_bytes").and_then(|s| s.as_u64()).unwrap_or(0);
+        return format!("{} · binary ({} bytes) — not shown as text", path, size);
     }
 
     // read_file: path + size + short preview only. The full content still
@@ -694,9 +670,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
         return out;
     }
     // list_files on a file: report "is a file", not "1 entry in …".
-    if name == "list_files"
-        && v.get("path_kind").and_then(|k| k.as_str()) == Some("file")
-    {
+    if name == "list_files" && v.get("path_kind").and_then(|k| k.as_str()) == Some("file") {
         let path = v
             .get("path")
             .and_then(|p| p.as_str())
@@ -714,10 +688,7 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
         // it from each absolute entry — which never matched, so the
         // row showed full absolute paths for every entry. Keep both
         // forms: `dir_full` for the strip, `dir_short` for the header.
-        let dir_full = v
-            .get("path")
-            .and_then(|p| p.as_str())
-            .unwrap_or("");
+        let dir_full = v.get("path").and_then(|p| p.as_str()).unwrap_or("");
         let dir_short = if dir_full.is_empty() {
             String::new()
         } else {
@@ -745,7 +716,11 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             "{} entr{} in {}:",
             files.len(),
             if files.len() == 1 { "y" } else { "ies" },
-            if dir_short.is_empty() { name } else { &dir_short }
+            if dir_short.is_empty() {
+                name
+            } else {
+                &dir_short
+            }
         );
         if !shown.is_empty() {
             out.push('\n');
@@ -801,15 +776,9 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             .get("timed_out")
             .and_then(|t| t.as_bool())
             .unwrap_or(false);
-        let timeout_secs = v
-            .get("timeout_secs")
-            .and_then(|n| n.as_u64())
-            .unwrap_or(0);
+        let timeout_secs = v.get("timeout_secs").and_then(|n| n.as_u64()).unwrap_or(0);
         let truncated = stdout_trunc || stderr_trunc;
-        let signalled = v
-            .get("exit_signal")
-            .and_then(|s| s.as_i64())
-            .is_some();
+        let signalled = v.get("exit_signal").and_then(|s| s.as_i64()).is_some();
 
         if timed_out {
             out.push_str(&format!(
@@ -894,6 +863,22 @@ pub const DEFAULT_HISTORY_CHAR_BUDGET: usize = 32_000;
 /// worse than the small-window default it is trying to protect, so we
 /// clamp instead of silently dropping every turn.
 const MIN_HISTORY_CHAR_BUDGET: usize = 4_000;
+
+/// The turn-scoped parameters every round of the agentic loop needs.
+///
+/// Bundled because the two loop methods (`run_collected_loop`,
+/// `run_streaming_loop`) received the same five parameters on every
+/// call, pushing both signatures past the eight-argument limit
+/// `clippy::too_many_arguments` enforces and making the parameter list
+/// hard to read. Bundling loses nothing — the fields do not vary
+/// between rounds of a turn — and the caller builds the bundle once.
+struct RoundContext<'a> {
+    system_text: &'a str,
+    model_ref: &'a ModelRef,
+    definitions: &'a [ToolDefinition],
+    options: &'a GenerationOptions,
+    holder: &'a str,
+}
 
 /// Outcome of one tool-execution round: results for the response plus a
 /// prompt block feeding them back to the model. `elapsed_ms` parallels
@@ -999,7 +984,8 @@ pub struct KodEngine {
     /// Optional session log. When `Some`, every tool call and its result
     /// are appended as one JSONL entry, `kod replay`-able. `None` (the
     /// default) is the right shape for a test or a one-shot command.
-    session_recorder: std::sync::RwLock<Option<std::sync::Arc<crate::session_log::SessionRecorder>>>,
+    session_recorder:
+        std::sync::RwLock<Option<std::sync::Arc<crate::session_log::SessionRecorder>>>,
     /// Shell hooks around tool execution. `RwLock<Arc<...>>` so
     /// `set_hooks` works through `&self` — the engine is shared as
     /// `Arc<KodEngine>` by both the CLI and the TUI, so `&mut self`
@@ -1071,7 +1057,8 @@ pub struct KodEngine {
     /// takes the sender out via [`KodEngine::respond_to_approval`] and
     /// sends a decision. A request that is never answered is dropped
     /// when its wait times out (see `AWAIT_APPROVAL_SECS`).
-    pending_approvals: RwLock<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<ApprovalDecision>>>,
+    pending_approvals:
+        RwLock<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<ApprovalDecision>>>,
     /// The communication hub every swarm agent registers on
     /// (D4.3). Owned by the engine so the note/read tools (which
     /// live at this composition root) have a single hub to talk to,
@@ -1081,6 +1068,19 @@ pub struct KodEngine {
     /// The engine's own identity on the hub. Stable for the life of
     /// the engine — the runner registers its own per-agent ids on
     /// top, and the note/read tools broadcast as this id.
+    /// This engine's session identity. Generated once at
+
+    /// construction and stable for the engine's lifetime. Used to
+
+    /// attribute auto-extracted episodic facts to the session
+
+    /// that produced them (design D2.5). Swarm-agent transcripts
+
+    /// carry their own UUID in the transcript key, and that UUID
+
+    /// is preferred when present.
+    session_id: kod_types::SessionId,
+
     swarm_coordinator_id: kod_types::AgentId,
     /// The session's todo list. Shared across swarm agents and across
     /// every turn of the same engine.
@@ -1204,10 +1204,7 @@ impl KodEngine {
     /// the in-crate tests readable without rebuilding a registry at
     /// every call site.
     #[cfg(test)]
-    pub(crate) async fn install_test_provider(
-        &self,
-        provider: Arc<dyn LlmProvider>,
-    ) {
+    pub(crate) async fn install_test_provider(&self, provider: Arc<dyn LlmProvider>) {
         let mut reg = kod_provider::ProviderRegistry::new();
         reg.insert(
             "default",
@@ -1255,10 +1252,8 @@ impl KodEngine {
         // still runs, it just cannot roll back. The manager is
         // per-working-directory, so two sessions on different projects
         // do not see each other's checkpoints.
-        let checkpoints = crate::checkpoint::CheckpointManager::for_working_dir(
-            &working_dir,
-        )
-        .map(Arc::new);
+        let checkpoints =
+            crate::checkpoint::CheckpointManager::for_working_dir(&working_dir).map(Arc::new);
 
         Ok(Self {
             router: Arc::new(router),
@@ -1275,15 +1270,13 @@ impl KodEngine {
             history: RwLock::new(HashMap::new()),
             transcript_working_dirs: RwLock::new(HashMap::new()),
             transcript_write_globs: RwLock::new(HashMap::new()),
-            history_budget: std::sync::atomic::AtomicUsize::new(
-                DEFAULT_HISTORY_CHAR_BUDGET,
-            ),
+            history_budget: std::sync::atomic::AtomicUsize::new(DEFAULT_HISTORY_CHAR_BUDGET),
             last_prompt: RwLock::new(HashMap::new()),
             generation_defaults: RwLock::new(GenerationDefaults::default()),
             session_recorder: std::sync::RwLock::new(None),
-            hooks: std::sync::RwLock::new(std::sync::Arc::new(
-                crate::hooks::HookRunner::disabled(),
-            )),
+            hooks: std::sync::RwLock::new(
+                std::sync::Arc::new(crate::hooks::HookRunner::disabled()),
+            ),
             // 2 == SandboxMode::Auto: use the best platform primitive
             // when available, silently fall through otherwise. The CLI
             // and TUI escalate to Require via `--sandbox`; a caller
@@ -1301,6 +1294,8 @@ impl KodEngine {
             pending_questions: RwLock::new(std::collections::HashMap::new()),
             next_question_id: std::sync::atomic::AtomicU64::new(1),
             swarm_hub: Arc::new(kod_swarm::AgentCommunicationHub::new()),
+            session_id: kod_types::SessionId::new(),
+
             swarm_coordinator_id: kod_types::AgentId::new(),
             todo_list: kod_tools::new_todo_list(),
             checkpoints,
@@ -1329,7 +1324,10 @@ impl KodEngine {
     /// `LlmConfig`. Transitional until D1.
     pub fn set_generation_defaults(&self, temperature: Option<f32>, max_tokens: Option<usize>) {
         if let Ok(mut guard) = self.generation_defaults.try_write() {
-            *guard = GenerationDefaults { temperature, max_tokens };
+            *guard = GenerationDefaults {
+                temperature,
+                max_tokens,
+            };
         }
     }
 
@@ -1361,9 +1359,7 @@ impl KodEngine {
     /// available, or `None` when the caller has Auto mode and no
     /// primitive is installed — the honest "off" case the design's
     /// AD-10 wants visible.
-    pub fn sandbox_status(
-        &self,
-    ) -> (kod_tools::context::SandboxMode, Option<&'static str>) {
+    pub fn sandbox_status(&self) -> (kod_tools::context::SandboxMode, Option<&'static str>) {
         let mode = self.sandbox_setting();
         // `Disabled` never queries the resolver; the caller asked for
         // no sandbox and that is what they get.
@@ -1398,7 +1394,6 @@ impl KodEngine {
         self.network_access_atomic
             .load(std::sync::atomic::Ordering::Relaxed)
     }
-
 
     /// Enable or disable auto-check after writes. Called by the CLI and
     /// TUI at startup with `ToolsConfig::auto_check`.
@@ -1537,9 +1532,7 @@ impl KodEngine {
     /// The current baseline, if one has been captured. Public for
     /// tests and for a caller that wants to display what the engine
     /// considers "pre-existing".
-    pub async fn check_baseline(
-        &self,
-    ) -> Option<Vec<kod_tools::check::Diagnostic>> {
+    pub async fn check_baseline(&self) -> Option<Vec<kod_tools::check::Diagnostic>> {
         self.check_baseline.read().await.clone()
     }
 
@@ -1629,7 +1622,6 @@ impl KodEngine {
         self.deny_rules.write().await.remove(rule)
     }
 
-
     /// The provider for the current model, resolved through the
     /// registry. `None` when no registry is installed or the endpoint
     /// is unknown. Public because the swarm runner needs it and does
@@ -1674,10 +1666,7 @@ impl KodEngine {
     /// Install a session log. Every tool call and its result is
     /// appended to the file the recorder holds. A caller that never
     /// calls this gets no log.
-    pub fn set_session_recorder(
-        &self,
-        recorder: Arc<crate::session_log::SessionRecorder>,
-    ) {
+    pub fn set_session_recorder(&self, recorder: Arc<crate::session_log::SessionRecorder>) {
         if let Ok(mut slot) = self.session_recorder.write() {
             *slot = Some(recorder);
         }
@@ -1690,7 +1679,6 @@ impl KodEngine {
             .ok()
             .and_then(|guard| guard.as_ref().map(|r| r.path().to_path_buf()))
     }
-
 
     /// Install a `ProviderRegistry` (A4b). The registry becomes the
     /// source of truth for provider resolution; the legacy `provider`
@@ -1732,10 +1720,7 @@ impl KodEngine {
     /// Public so the CLI's `kod models` (and any future cost-report
     /// surface) can read the same number the engine uses when it
     /// populates `TaskResponse::pricing`.
-    pub async fn pricing_for(
-        &self,
-        model_ref: &ModelRef,
-    ) -> Option<kod_provider::ModelPricing> {
+    pub async fn pricing_for(&self, model_ref: &ModelRef) -> Option<kod_provider::ModelPricing> {
         let reg = self.registry.read().await;
         reg.as_ref()
             .and_then(|r| r.capabilities(&model_ref.endpoint))
@@ -1750,10 +1735,7 @@ impl KodEngine {
         &self,
         input: &str,
         _history: &str,
-    ) -> std::result::Result<
-        crate::budget::Allocation,
-        crate::budget::BudgetError,
-    > {
+    ) -> std::result::Result<crate::budget::Allocation, crate::budget::BudgetError> {
         let (window, max_out) = match kod_config::KodConfig::load_default() {
             Ok(cfg) => {
                 let ep = cfg.llm.default_endpoint();
@@ -1770,7 +1752,6 @@ impl KodEngine {
         let budget = crate::budget::PromptBudget::from_tokens(window, max_out);
         budget.allocate(input.len())
     }
-
 
     /// The ordered `ModelRef` chain for a task type. The first element
     /// is the endpoint `routing.by_task` names, or `current_model` when
@@ -1910,8 +1891,7 @@ impl KodEngine {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
-            let cost = pricing
-                .cost_usd(usage.prompt_tokens, usage.completion_tokens);
+            let cost = pricing.cost_usd(usage.prompt_tokens, usage.completion_tokens);
             let entry = crate::session_log::SessionEntry::Cost {
                 timestamp_ms: now_ms,
                 holder: holder.to_string(),
@@ -1980,7 +1960,6 @@ impl KodEngine {
                 .to_string(),
         )
     }
-
 
     /// The communication hub the swarm's blackboard lives on.
     /// Cloning the `Arc` gives a caller a handle to the same hub the
@@ -2135,9 +2114,9 @@ impl KodEngine {
             )))
             .await;
         self.tools
-            .register(Box::new(crate::lsp_tools::LspHoverTool::new(
-                Arc::clone(&self.lsp_manager),
-            )))
+            .register(Box::new(crate::lsp_tools::LspHoverTool::new(Arc::clone(
+                &self.lsp_manager,
+            ))))
             .await;
 
         // MCP tools (D6.1). Every enabled server is spawned once
@@ -2171,9 +2150,7 @@ impl KodEngine {
             .register(Box::new(kod_tools::GitBranchTool::new()))
             .await;
         self.tools
-            .register(Box::new(kod_tools::TodoTool::new(
-                self.todo_list.clone(),
-            )))
+            .register(Box::new(kod_tools::TodoTool::new(self.todo_list.clone())))
             .await;
         self.tools
             .register(Box::new(kod_tools::SearchFilesTool::new()))
@@ -2186,7 +2163,9 @@ impl KodEngine {
         // the same shape the git tools use, and it means a future
         // caller that wants to enable network access for one agent
         // does not have to re-register the tool.
-        self.tools.register(Box::new(kod_tools::WebFetchTool::new())).await;
+        self.tools
+            .register(Box::new(kod_tools::WebFetchTool::new()))
+            .await;
         // `check` runs the project's compiler/linter and returns
         // structured diagnostics. Registered alongside the other
         // code-aware tools so a model that just wrote a file can ask
@@ -2270,10 +2249,7 @@ impl KodEngine {
             }
         });
         *self.memory_consolidation_task.write().await = Some(handle);
-        tracing::debug!(
-            interval_secs,
-            "memory consolidation task started",
-        );
+        tracing::debug!(interval_secs, "memory consolidation task started",);
     }
 
     /// Stop the consolidation task (if any) and wait for it to actually
@@ -2331,16 +2307,17 @@ impl KodEngine {
             self.remember_turn_for(key, true, input).await;
             let alloc = self.prompt_allocation(input, &history).await;
             let prompt = match &alloc {
-                Ok(a) => self
-                    .router
-                    .build_prompt_with_budget(
-                        input,
-                        &task_type,
-                        &history,
-                        response.memory_context.clone(),
-                        Some(a),
-                    )
-                    .await?,
+                Ok(a) => {
+                    self.router
+                        .build_prompt_with_budget(
+                            input,
+                            &task_type,
+                            &history,
+                            response.memory_context.clone(),
+                            Some(a),
+                        )
+                        .await?
+                }
                 Err(e) => {
                     return Err(kod_error::KodError::InvalidParameters {
                         reason: e.to_string(),
@@ -2361,7 +2338,10 @@ impl KodEngine {
                     text: convo.clone(),
                     alloc: alloc.as_ref().ok().copied(),
                 };
-                self.last_prompt.write().await.insert(key.to_string(), trace);
+                self.last_prompt
+                    .write()
+                    .await
+                    .insert(key.to_string(), trace);
             }
 
             // The structured system prompt the provider will see: the
@@ -2371,14 +2351,16 @@ impl KodEngine {
             // `pending` string in the loop; the two are byte-compatible
             // up to the grounding block.
             let system_text = {
-                let plan = self.router.build_prompt_plan(
-                    input,
-                    &task_type,
-                    &history,
-                    response.memory_context.clone(),
-                    alloc.as_ref().ok(),
-                )
-                .await?;
+                let plan = self
+                    .router
+                    .build_prompt_plan(
+                        input,
+                        &task_type,
+                        &history,
+                        response.memory_context.clone(),
+                        alloc.as_ref().ok(),
+                    )
+                    .await?;
                 plan.render_text()
             };
 
@@ -2394,11 +2376,7 @@ impl KodEngine {
             // Wrapped in a fallback chain (A6): the primary endpoint is
             // tried first, then each `routing.fallback` endpoint, on
             // errors that `is_retryable()` classifies as transient.
-            let options = self
-                .generation_defaults
-                .read()
-                .await
-                .to_options();
+            let options = self.generation_defaults.read().await.to_options();
             let task_key = format!("{:?}", response.task_type);
             let chain = self.resolve_chain_for_task(&task_key).await;
             if chain.is_empty() {
@@ -2417,10 +2395,7 @@ impl KodEngine {
             let mut winning_provider: Option<Arc<dyn LlmProvider>> = None;
             let mut winning_model: Option<ModelRef> = None;
             for (i, model_ref) in chain.iter().enumerate() {
-                let this_provider = match self
-                    .resolve_provider_for_model_ref(model_ref)
-                    .await
-                {
+                let this_provider = match self.resolve_provider_for_model_ref(model_ref).await {
                     Ok(p) => p,
                     Err(e) => {
                         tracing::warn!(
@@ -2434,16 +2409,19 @@ impl KodEngine {
                 };
                 let mut attempt_pending = convo.clone();
                 let mut attempt_messages = initial_messages.clone();
+                let round = RoundContext {
+                    system_text: &system_text,
+                    model_ref,
+                    definitions: &definitions,
+                    options: &options,
+                    holder: key,
+                };
                 match self
                     .run_collected_loop(
                         &this_provider,
                         &mut attempt_pending,
-                        &system_text,
                         &mut attempt_messages,
-                        model_ref,
-                        &definitions,
-                        &options,
-                        key,
+                        &round,
                     )
                     .await
                 {
@@ -2480,8 +2458,8 @@ impl KodEngine {
                     Err(e) => return Err(e),
                 }
             }
-            let (final_text, tool_calls, tool_results, usage) = outcome
-                .ok_or_else(|| last_err.unwrap_or_else(Self::no_provider_error))?;
+            let (final_text, tool_calls, tool_results, usage) =
+                outcome.ok_or_else(|| last_err.unwrap_or_else(Self::no_provider_error))?;
             // The winning endpoint's configured pricing. `None` for
             // a local endpoint (no cost), a remote endpoint without
             // a `[pricing]` block, or a response that never reached
@@ -2494,19 +2472,29 @@ impl KodEngine {
             // pricing. One line per call, not per session — a session
             // log read later can reconstruct the total by summing,
             // and a per-turn figure is what a debug pass needs.
-            if let (Some(m), Some(p), Some(u)) =
-                (winning_model.as_ref(), pricing, usage.as_ref())
-            {
+            if let (Some(m), Some(p), Some(u)) = (winning_model.as_ref(), pricing, usage.as_ref()) {
                 self.record_cost(key, m, u, p).await;
             }
             // Model only called tools and never wrote back: ask for a summary.
             let final_text = if final_text.trim().is_empty() && !tool_calls.is_empty() {
                 let mut summary_prompt = convo.clone();
+                // Serialize the round's tool results into the prompt:
+                // the summary call goes through the legacy
+                // `generate(&str)` API, so the model has to see them
+                // as text here. Regression guard: an earlier shape
+                // sent only `convo`, which is the *pre-loop* prompt,
+                // so the model was asked to summarize work it could
+                // not see.
+                if !tool_results.is_empty() {
+                    summary_prompt.push_str("\n\n## Tool results from this turn\n");
+                    for (i, r) in tool_results.iter().enumerate() {
+                        summary_prompt.push_str(&format!("\n### Result {}\n{:?}\n", i + 1, r));
+                    }
+                }
                 summary_prompt.push_str(
                     "\nSummarize what you did and the result for the user in plain text.",
                 );
-                let summary_provider = winning_provider
-                    .ok_or_else(Self::no_provider_error)?;
+                let summary_provider = winning_provider.ok_or_else(Self::no_provider_error)?;
                 summary_provider.generate(&summary_prompt, &options).await?
             } else {
                 final_text
@@ -2516,15 +2504,8 @@ impl KodEngine {
             // returning. Purely local — no extra LLM call, no
             // network. The block appears only when at least one
             // citation fails to verify; a clean reply stays clean.
-            let final_text = if matches!(
-                task_type,
-                crate::router::TaskType::Research
-            ) {
-                crate::citations::check_and_annotate(
-                    &final_text,
-                    &self.working_dir,
-                )
-                .text
+            let final_text = if matches!(task_type, crate::router::TaskType::Research) {
+                crate::citations::check_and_annotate(&final_text, &self.working_dir).text
             } else {
                 final_text
             };
@@ -2615,16 +2596,17 @@ impl KodEngine {
             self.remember_turn_for(key, true, input).await;
             let alloc = self.prompt_allocation(input, &history).await;
             let prompt = match &alloc {
-                Ok(a) => self
-                    .router
-                    .build_prompt_with_budget(
-                        input,
-                        &task_type,
-                        &history,
-                        response.memory_context.clone(),
-                        Some(a),
-                    )
-                    .await?,
+                Ok(a) => {
+                    self.router
+                        .build_prompt_with_budget(
+                            input,
+                            &task_type,
+                            &history,
+                            response.memory_context.clone(),
+                            Some(a),
+                        )
+                        .await?
+                }
                 Err(e) => {
                     return Err(kod_error::KodError::InvalidParameters {
                         reason: e.to_string(),
@@ -2641,20 +2623,25 @@ impl KodEngine {
                     text: pending.clone(),
                     alloc: alloc.as_ref().ok().copied(),
                 };
-                self.last_prompt.write().await.insert(key.to_string(), trace);
+                self.last_prompt
+                    .write()
+                    .await
+                    .insert(key.to_string(), trace);
             }
 
             // Structured system prompt and initial messages: same
             // shape as the collected path (see `process_for`).
             let system_text = {
-                let plan = self.router.build_prompt_plan(
-                    input,
-                    &task_type,
-                    &history,
-                    response.memory_context.clone(),
-                    alloc.as_ref().ok(),
-                )
-                .await?;
+                let plan = self
+                    .router
+                    .build_prompt_plan(
+                        input,
+                        &task_type,
+                        &history,
+                        response.memory_context.clone(),
+                        alloc.as_ref().ok(),
+                    )
+                    .await?;
                 plan.render_text()
             };
             let initial_messages: Vec<kod_types::ChatMessage> = {
@@ -2662,11 +2649,7 @@ impl KodEngine {
                 guard.get(key).cloned().unwrap_or_default()
             };
 
-            let options = self
-                .generation_defaults
-                .read()
-                .await
-                .to_options();
+            let options = self.generation_defaults.read().await.to_options();
             // Fallback chain (A6). Streaming retries reuse the same
             // chunk_tx, so a successful fallback continues the visible
             // stream exactly where the failed attempt stopped; a
@@ -2689,10 +2672,7 @@ impl KodEngine {
             let mut winning_provider: Option<Arc<dyn LlmProvider>> = None;
             let mut winning_model: Option<ModelRef> = None;
             for (i, model_ref) in chain.iter().enumerate() {
-                let this_provider = match self
-                    .resolve_provider_for_model_ref(model_ref)
-                    .await
-                {
+                let this_provider = match self.resolve_provider_for_model_ref(model_ref).await {
                     Ok(p) => p,
                     Err(e) => {
                         tracing::warn!(
@@ -2706,17 +2686,20 @@ impl KodEngine {
                 };
                 let mut attempt_pending = pending.clone();
                 let mut attempt_messages = initial_messages.clone();
+                let round = RoundContext {
+                    system_text: &system_text,
+                    model_ref,
+                    definitions: &definitions,
+                    options: &options,
+                    holder: key,
+                };
                 match self
                     .run_streaming_loop(
                         &this_provider,
                         &mut attempt_pending,
-                        &system_text,
                         &mut attempt_messages,
-                        model_ref,
-                        &definitions,
-                        &options,
                         chunk_tx,
-                        key,
+                        &round,
                     )
                     .await
                 {
@@ -2742,8 +2725,8 @@ impl KodEngine {
                     Err(e) => return Err(e),
                 }
             }
-            let (final_text, tool_calls, tool_results, usage) = outcome
-                .ok_or_else(|| last_err.unwrap_or_else(Self::no_provider_error))?;
+            let (final_text, tool_calls, tool_results, usage) =
+                outcome.ok_or_else(|| last_err.unwrap_or_else(Self::no_provider_error))?;
             // The winning endpoint's configured pricing. `None` for
             // a local endpoint (no cost), a remote endpoint without
             // a `[pricing]` block, or a response that never reached
@@ -2756,18 +2739,24 @@ impl KodEngine {
             // pricing. One line per call, not per session — a session
             // log read later can reconstruct the total by summing,
             // and a per-turn figure is what a debug pass needs.
-            if let (Some(m), Some(p), Some(u)) =
-                (winning_model.as_ref(), pricing, usage.as_ref())
-            {
+            if let (Some(m), Some(p), Some(u)) = (winning_model.as_ref(), pricing, usage.as_ref()) {
                 self.record_cost(key, m, u, p).await;
             }
             let final_text = if final_text.trim().is_empty() && !tool_calls.is_empty() {
                 let mut summary_prompt = pending.clone();
+                // Same treatment as the collected path: the summary
+                // call cannot see the structured messages, so the
+                // results are rendered into the text prompt.
+                if !tool_results.is_empty() {
+                    summary_prompt.push_str("\n\n## Tool results from this turn\n");
+                    for (i, r) in tool_results.iter().enumerate() {
+                        summary_prompt.push_str(&format!("\n### Result {}\n{:?}\n", i + 1, r));
+                    }
+                }
                 summary_prompt.push_str(
                     "\nSummarize what you did and the result for the user in plain text.",
                 );
-                let summary_provider = winning_provider
-                    .ok_or_else(Self::no_provider_error)?;
+                let summary_provider = winning_provider.ok_or_else(Self::no_provider_error)?;
                 self.stream_summary(&summary_provider, &summary_prompt, &options, chunk_tx)
                     .await?
             } else {
@@ -2778,14 +2767,9 @@ impl KodEngine {
             // as the collected path, plus a chunk over the stream so
             // the TUI shows the block as part of the reply, not as
             // a separate message. A clean reply emits nothing.
-            let final_text = if matches!(
-                task_type,
-                crate::router::TaskType::Research
-            ) {
-                let annotated = crate::citations::check_and_annotate(
-                    &final_text,
-                    &self.working_dir,
-                );
+            let final_text = if matches!(task_type, crate::router::TaskType::Research) {
+                let annotated =
+                    crate::citations::check_and_annotate(&final_text, &self.working_dir);
                 if let Some(block) = &annotated.block {
                     let _ = chunk_tx.send(format!("\n\n{block}")).await;
                 }
@@ -2858,16 +2842,17 @@ impl KodEngine {
             self.remember_turn_for(key, true, input).await;
             let alloc = self.prompt_allocation(input, &history).await;
             let prompt = match &alloc {
-                Ok(a) => self
-                    .router
-                    .build_prompt_with_budget(
-                        input,
-                        &task_type,
-                        &history,
-                        response.memory_context.clone(),
-                        Some(a),
-                    )
-                    .await?,
+                Ok(a) => {
+                    self.router
+                        .build_prompt_with_budget(
+                            input,
+                            &task_type,
+                            &history,
+                            response.memory_context.clone(),
+                            Some(a),
+                        )
+                        .await?
+                }
                 Err(e) => {
                     return Err(kod_error::KodError::InvalidParameters {
                         reason: e.to_string(),
@@ -2888,7 +2873,10 @@ impl KodEngine {
                     text: pending.clone(),
                     alloc: alloc.as_ref().ok().copied(),
                 };
-                self.last_prompt.write().await.insert(key.to_string(), trace);
+                self.last_prompt
+                    .write()
+                    .await
+                    .insert(key.to_string(), trace);
             }
 
             // Structured inputs for the streaming loop. The goal text
@@ -2896,14 +2884,16 @@ impl KodEngine {
             // turn of the goal loop does not create a duplicate user
             // message every iteration.
             let system_text = {
-                let plan = self.router.build_prompt_plan(
-                    input,
-                    &task_type,
-                    &history,
-                    response.memory_context.clone(),
-                    alloc.as_ref().ok(),
-                )
-                .await?;
+                let plan = self
+                    .router
+                    .build_prompt_plan(
+                        input,
+                        &task_type,
+                        &history,
+                        response.memory_context.clone(),
+                        alloc.as_ref().ok(),
+                    )
+                    .await?;
                 let base = plan.render_text();
                 format!(
                     "{base}\n\n## Goal\n\n{goal}\n\nWork turn by turn toward this goal using tools. Do not ask the user for confirmation — act. When the goal is fully reached, end your reply with a line containing exactly GOAL MET and summarize what was done. If a tool errors, work around it and keep going.\n"
@@ -2913,16 +2903,18 @@ impl KodEngine {
             // re-uses the same structured base across iterations; the
             // `pending` text grows per turn, but the message list is
             // rebuilt from the transcript + this user turn.
-            let initial_messages_base: Vec<kod_types::ChatMessage> = {
+            // The goal loop runs turn by turn; each turn's request
+            // must include everything the previous turns produced
+            // (assistant text, tool calls, tool results). Pre-migration
+            // the text `pending` was mutated in place across turns, so
+            // turn 2 saw turn 1; the structured path needs the same
+            // accumulation to preserve that behaviour.
+            let mut goal_messages: Vec<kod_types::ChatMessage> = {
                 let guard = self.history.read().await;
                 guard.get(key).cloned().unwrap_or_default()
             };
 
-            let options = self
-                .generation_defaults
-                .read()
-                .await
-                .to_options();
+            let options = self.generation_defaults.read().await.to_options();
             // Resolve the fallback chain once; reused across turns.
             let task_key = format!("{:?}", response.task_type);
             let goal_chain = self.resolve_chain_for_task(&task_key).await;
@@ -2939,11 +2931,20 @@ impl KodEngine {
                 }
                 if turn > 1 {
                     let _ = chunk_tx.send(format!("\n\n—— turn {turn} ——\n")).await;
-                    pending.push_str(
-                        "\n\nContinue working toward the goal above. If it is now fully reached, reply with GOAL MET plus a short summary instead of calling more tools.\n",
-                    );
+                    let nudge = "Continue working toward the goal above. If it is now fully reached, reply with GOAL MET plus a short summary instead of calling more tools.";
+                    pending.push_str(&format!("\n\n{nudge}\n"));
+                    // The nudge is what tells the model to *continue*;
+                    // on the structured path it has to be a message
+                    // for the provider to see it.
+                    goal_messages.push(kod_types::ChatMessage::text(
+                        kod_types::MessageId::new(),
+                        kod_types::MessageRole::User,
+                        nudge.to_string(),
+                        time::OffsetDateTime::now_utc(),
+                    ));
                 }
-                self.apply_steers(&mut pending, key).await;
+                self.apply_steers(&mut pending, &mut goal_messages, key)
+                    .await;
                 // Per-turn fallback chain (A6). The chain is resolved
                 // once outside the turn loop and reused, so a fallback
                 // chosen on turn N is also the primary for turn N+1.
@@ -2955,10 +2956,7 @@ impl KodEngine {
                 )> = None;
                 let mut turn_err: Option<KodError> = None;
                 for (i, model_ref) in goal_chain.iter().enumerate() {
-                    let this_provider = match self
-                        .resolve_provider_for_model_ref(model_ref)
-                        .await
-                    {
+                    let this_provider = match self.resolve_provider_for_model_ref(model_ref).await {
                         Ok(p) => p,
                         Err(e) => {
                             tracing::warn!(
@@ -2971,22 +2969,30 @@ impl KodEngine {
                         }
                     };
                     let mut attempt_pending = pending.clone();
-                    let mut attempt_messages = initial_messages_base.clone();
+                    let mut attempt_messages = goal_messages.clone();
+                    let round = RoundContext {
+                        system_text: &system_text,
+                        model_ref,
+                        definitions: &definitions,
+                        options: &options,
+                        holder: key,
+                    };
                     match self
                         .run_streaming_loop(
                             &this_provider,
                             &mut attempt_pending,
-                            &system_text,
                             &mut attempt_messages,
-                            model_ref,
-                            &definitions,
-                            &options,
                             chunk_tx,
-                            key,
+                            &round,
                         )
                         .await
                     {
                         Ok(v) => {
+                            // Fold this turn's extended messages back
+                            // so the next turn starts from the full
+                            // accumulated conversation, not the
+                            // pre-loop snapshot.
+                            goal_messages = attempt_messages;
                             turn_outcome = Some(v);
                             break;
                         }
@@ -3006,8 +3012,8 @@ impl KodEngine {
                         Err(e) => return Err(e),
                     }
                 }
-                let (final_text, calls, results, usage) = turn_outcome
-                    .ok_or_else(|| turn_err.unwrap_or_else(Self::no_provider_error))?;
+                let (final_text, calls, results, usage) =
+                    turn_outcome.ok_or_else(|| turn_err.unwrap_or_else(Self::no_provider_error))?;
                 last_usage = usage.or(last_usage);
                 if !all_text.is_empty() && !final_text.trim().is_empty() {
                     all_text.push_str("\n\n");
@@ -3051,12 +3057,8 @@ impl KodEngine {
         &self,
         provider: &Arc<dyn LlmProvider>,
         pending: &mut String,
-        system_text: &str,
         messages: &mut Vec<kod_types::ChatMessage>,
-        model_ref: &ModelRef,
-        definitions: &[ToolDefinition],
-        options: &GenerationOptions,
-        holder: &str,
+        round: &RoundContext<'_>,
     ) -> Result<(
         String,
         Vec<ToolCall>,
@@ -3068,18 +3070,22 @@ impl KodEngine {
         let mut tool_results: Vec<ToolResult> = Vec::new();
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
         for _ in 0..MAX_TOOL_ROUNDS {
-            if self.is_cancelled_for(holder) {
+            if self.is_cancelled_for(round.holder) {
                 return Err(KodError::InvalidState("cancelled by user".to_string()));
             }
+            // Pre-queued steers reach round 1. `apply_steers`
+            // also runs after a tool round; both calls are safe
+            // because it drains.
+            self.apply_steers(pending, messages, round.holder).await;
             // Rebuild the structured request every round. Only the
             // `messages` field changes; the system prompt, tools,
             // options and model are constant for the turn.
             let req = self.build_grounded_request(
-                system_text,
+                round.system_text,
                 messages.clone(),
-                definitions,
-                options,
-                model_ref,
+                round.definitions,
+                round.options,
+                round.model_ref,
             );
             match provider.complete(&req).await? {
                 GenerationResponse::Text { content, usage } => {
@@ -3092,7 +3098,7 @@ impl KodEngine {
                     if calls.is_empty() {
                         break;
                     }
-                    let section = self.run_tool_calls(&calls, holder, None).await;
+                    let section = self.run_tool_calls(&calls, round.holder, None).await;
                     tool_calls.extend(calls);
                     tool_results.extend(section.results.clone());
                     messages.extend(section.messages.iter().cloned());
@@ -3101,7 +3107,21 @@ impl KodEngine {
                     // exhausted-rounds note). The provider no longer
                     // sees this string on the primary path.
                     pending.push_str(&format!("\n\n{}", section.prompt_block));
-                    self.apply_steers(pending, holder).await;
+                    // Persist the structured slice (AD-02): the next
+                    // `process_*` call reads `self.history[key]` as
+                    // its starting messages, so the tool round-trip
+                    // has to survive past this call to be visible
+                    // there.
+                    if !section.messages.is_empty() {
+                        let mut hist = self.history.write().await;
+                        let turns = hist.entry(round.holder.to_string()).or_default();
+                        turns.extend(section.messages.iter().cloned());
+                        let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
+                        if excess > 0 {
+                            turns.drain(..excess);
+                        }
+                    }
+                    self.apply_steers(pending, messages, round.holder).await;
                 }
                 GenerationResponse::Mixed {
                     content,
@@ -3113,12 +3133,26 @@ impl KodEngine {
                     if calls.is_empty() {
                         break;
                     }
-                    let section = self.run_tool_calls(&calls, holder, None).await;
+                    let section = self.run_tool_calls(&calls, round.holder, None).await;
                     tool_calls.extend(calls);
                     tool_results.extend(section.results.clone());
                     messages.extend(section.messages.iter().cloned());
                     pending.push_str(&format!("\n\n{}", section.prompt_block));
-                    self.apply_steers(pending, holder).await;
+                    // Persist the structured slice (AD-02): the next
+                    // `process_*` call reads `self.history[key]` as
+                    // its starting messages, so the tool round-trip
+                    // has to survive past this call to be visible
+                    // there.
+                    if !section.messages.is_empty() {
+                        let mut hist = self.history.write().await;
+                        let turns = hist.entry(round.holder.to_string()).or_default();
+                        turns.extend(section.messages.iter().cloned());
+                        let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
+                        if excess > 0 {
+                            turns.drain(..excess);
+                        }
+                    }
+                    self.apply_steers(pending, messages, round.holder).await;
                 }
             }
         }
@@ -3129,6 +3163,12 @@ impl KodEngine {
         // tool result.
         if final_text.trim().is_empty() && !tool_calls.is_empty() {
             pending.push_str(TOOL_ROUNDS_EXHAUSTED_NOTE);
+            messages.push(kod_types::ChatMessage::text(
+                kod_types::MessageId::new(),
+                kod_types::MessageRole::User,
+                TOOL_ROUNDS_EXHAUSTED_NOTE.trim().to_string(),
+                time::OffsetDateTime::now_utc(),
+            ));
         }
         Ok((final_text, tool_calls, tool_results, last_usage))
     }
@@ -3136,10 +3176,35 @@ impl KodEngine {
     /// Append queued steer notes for `key` to the running conversation
     /// (each once). Called inside the three agentic loops with the
     /// loop's own `holder`.
-    async fn apply_steers(&self, pending: &mut String, key: &str) {
+    ///
+    /// Two destinations, on purpose:
+    ///
+    /// - `messages`: a structured `User` message. This is what the
+    ///   provider actually receives on the AD-01 path. A regression
+    ///   that only appended to `pending` (the pre-migration shape)
+    ///   left the steer invisible to the model; the test in
+    ///   `crates/kod-core/tests/steers_reach_the_provider.rs` pins
+    ///   the structured form.
+    /// - `pending`: the text trace. Kept so `/debug last-prompt`
+    ///   shows the steer in the exact position the pre-migration
+    ///   path would have placed it, which is what users have learned
+    ///   to read.
+    async fn apply_steers(
+        &self,
+        pending: &mut String,
+        messages: &mut Vec<kod_types::ChatMessage>,
+        key: &str,
+    ) {
         for note in self.take_steers_for(key).await {
-            pending.push_str(&format!(
-                "\n\n## User steer (new instruction — adjust course now, do not restart what already worked)\n{note}\n"
+            let body = format!(
+                "## User steer (new instruction — adjust course now, do not restart what already worked)\n{note}"
+            );
+            pending.push_str(&format!("\n\n{body}\n"));
+            messages.push(kod_types::ChatMessage::text(
+                kod_types::MessageId::new(),
+                kod_types::MessageRole::User,
+                body,
+                time::OffsetDateTime::now_utc(),
             ));
         }
     }
@@ -3150,13 +3215,9 @@ impl KodEngine {
         &self,
         provider: &Arc<dyn LlmProvider>,
         pending: &mut String,
-        system_text: &str,
         messages: &mut Vec<kod_types::ChatMessage>,
-        model_ref: &ModelRef,
-        definitions: &[ToolDefinition],
-        options: &GenerationOptions,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
-        holder: &str,
+        round: &RoundContext<'_>,
     ) -> Result<(
         String,
         Vec<ToolCall>,
@@ -3168,17 +3229,20 @@ impl KodEngine {
         let mut tool_results: Vec<ToolResult> = Vec::new();
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
         for _ in 0..MAX_TOOL_ROUNDS {
-            if self.is_cancelled_for(holder) {
+            if self.is_cancelled_for(round.holder) {
                 return Err(KodError::InvalidState("cancelled by user".to_string()));
             }
+            // Pre-queued steers reach round 1. See the same comment in
+            // `run_collected_loop`.
+            self.apply_steers(pending, messages, round.holder).await;
             let (text, calls, usage) = self
                 .stream_round(
                     provider,
-                    system_text,
+                    round.system_text,
                     messages,
-                    model_ref,
-                    definitions,
-                    options,
+                    round.model_ref,
+                    round.definitions,
+                    round.options,
                     chunk_tx,
                 )
                 .await?;
@@ -3197,7 +3261,9 @@ impl KodEngine {
                     )))
                     .await;
             }
-            let section = self.run_tool_calls(&calls, holder, Some(chunk_tx)).await;
+            let section = self
+                .run_tool_calls(&calls, round.holder, Some(chunk_tx))
+                .await;
             // Each call finished: hand the TUI its completion live (header
             // + summary + wall time) so the "running …" row fills in now,
             // not when the whole loop returns. Markers travel the same
@@ -3221,7 +3287,18 @@ impl KodEngine {
             // sync for `apply_steers` and the exhausted-rounds note.
             messages.extend(section.messages.iter().cloned());
             pending.push_str(&format!("\n\n{}", section.prompt_block));
-            self.apply_steers(pending, holder).await;
+            // Persist the structured slice (AD-02). Same rationale as
+            // the collected loop above.
+            if !section.messages.is_empty() {
+                let mut hist = self.history.write().await;
+                let turns = hist.entry(round.holder.to_string()).or_default();
+                turns.extend(section.messages.iter().cloned());
+                let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
+                if excess > 0 {
+                    turns.drain(..excess);
+                }
+            }
+            self.apply_steers(pending, messages, round.holder).await;
             // If we have already produced text this turn, emit a
             // blank-line separator into the chunk stream before the
             // next round. A consumer that prints chunks straight
@@ -3243,6 +3320,15 @@ impl KodEngine {
         // short of a final answer.
         if final_text.trim().is_empty() && !tool_calls.is_empty() {
             pending.push_str(TOOL_ROUNDS_EXHAUSTED_NOTE);
+            // Same treatment as a steer: the note must be visible to
+            // the summary call on the structured path, not just in
+            // the text trace.
+            messages.push(kod_types::ChatMessage::text(
+                kod_types::MessageId::new(),
+                kod_types::MessageRole::User,
+                TOOL_ROUNDS_EXHAUSTED_NOTE.trim().to_string(),
+                time::OffsetDateTime::now_utc(),
+            ));
             let _ = chunk_tx
                 .send(format!(
                     "\n\n[tool-round limit ({MAX_TOOL_ROUNDS}) reached — summarising progress]\n"
@@ -3404,10 +3490,7 @@ impl KodEngine {
         // makes that breakpoint meaningful.
         const VOLATILE_MARKER: &str = "## Volatile suffix";
         let (cacheable, volatile_tail) = match head.find(VOLATILE_MARKER) {
-            Some(i) => (
-                head[..i].trim_end().to_string(),
-                head[i..].to_string(),
-            ),
+            Some(i) => (head[..i].trim_end().to_string(), head[i..].to_string()),
             None => {
                 // No marker (custom-built prompt): the whole thing is
                 // volatile. Honest degradation — a caller that lost
@@ -3563,9 +3646,7 @@ impl KodEngine {
         // so the diff the user reviews and the diff attached to the
         // result are computed against the same "before" state.
         let mut snapshot_ids: Vec<Option<String>> = vec![None; calls.len()];
-        if any_mutating
-            && let Some(cp) = self.checkpoints.as_ref()
-        {
+        if any_mutating && let Some(cp) = self.checkpoints.as_ref() {
             for (i, call) in calls.iter().enumerate() {
                 if matches!(call.tool_name.as_str(), "write_file" | "patch_file")
                     && let Some(p) = call.arguments.get("path").and_then(|v| v.as_str())
@@ -3618,10 +3699,8 @@ impl KodEngine {
         let policy = self.policy.read().await.clone();
         let deny_rules: std::collections::HashSet<kod_config::SessionDeny> =
             self.deny_rules.read().await.clone();
-        let mut denied: std::collections::HashMap<usize, String> =
-            std::collections::HashMap::new();
-        let mut need_approval: std::collections::HashSet<usize> =
-            std::collections::HashSet::new();
+        let mut denied: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+        let mut need_approval: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let mut decisions: Vec<(usize, kod_config::PolicyDecision)> = Vec::new();
 
         for (i, call) in calls.iter().enumerate() {
@@ -3779,13 +3858,9 @@ impl KodEngine {
                             .map(|c| c.tool_name.clone())
                             .unwrap_or_default();
                         let (log_decision, allow) = match decision {
-                            Ok(Ok(ApprovalDecision::Approve)) => {
-                                ("approve", true)
-                            }
+                            Ok(Ok(ApprovalDecision::Approve)) => ("approve", true),
                             Ok(Ok(ApprovalDecision::Deny)) => ("deny", false),
-                            Ok(Ok(ApprovalDecision::DenyAlways)) => {
-                                ("deny-always", false)
-                            }
+                            Ok(Ok(ApprovalDecision::DenyAlways)) => ("deny-always", false),
                             Ok(Err(_)) => ("cancelled", false),
                             Err(_) => ("timeout", false),
                         };
@@ -3879,8 +3954,7 @@ impl KodEngine {
                         question,
                         placeholder,
                     };
-                    let json = serde_json::to_string(&req)
-                        .unwrap_or_else(|_| "{}".to_string());
+                    let json = serde_json::to_string(&req).unwrap_or_else(|_| "{}".to_string());
                     let id = self
                         .next_question_id
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -3935,10 +4009,7 @@ impl KodEngine {
                     continue;
                 }
                 if let Some(reason) = denied.get(&i) {
-                    out.push((
-                        Ok(ToolResult::Error(format!("write denied: {reason}"))),
-                        0,
-                    ));
+                    out.push((Ok(ToolResult::Error(format!("write denied: {reason}"))), 0));
                     continue;
                 }
                 let start = std::time::Instant::now();
@@ -4063,10 +4134,7 @@ impl KodEngine {
                     && let Ok(ToolResult::Success(v)) = &mut entry.0
                     && let Some(obj) = v.as_object_mut()
                 {
-                    obj.insert(
-                        "diff".to_string(),
-                        serde_json::Value::String(diff),
-                    );
+                    obj.insert("diff".to_string(), serde_json::Value::String(diff));
                 }
             }
         }
@@ -4188,9 +4256,8 @@ impl KodEngine {
                     .unwrap_or(true);
                 let lsp_wanted = self.auto_lsp_setting() && lsp_config_auto;
                 let compiler_wanted = self.auto_check_setting();
-                let lsp_eligible = lsp_wanted
-                    && writes.len() == 1
-                    && Self::lsp_binary_for(&writes[0].0).is_some();
+                let lsp_eligible =
+                    lsp_wanted && writes.len() == 1 && Self::lsp_binary_for(&writes[0].0).is_some();
 
                 let diags: Vec<kod_tools::check::Diagnostic>;
                 let source: String;
@@ -4209,11 +4276,7 @@ impl KodEngine {
                         .map(|c| c.lsp.settle_ms)
                         .unwrap_or(1_500);
                     let lsp_diags = self
-                        .lsp_diagnostics(
-                            path,
-                            content,
-                            std::time::Duration::from_millis(settle_ms),
-                        )
+                        .lsp_diagnostics(path, content, std::time::Duration::from_millis(settle_ms))
                         .await;
                     if !lsp_diags.is_empty() {
                         diags = lsp_diags
@@ -4233,12 +4296,7 @@ impl KodEngine {
                         // Empty LSP answer: could mean "clean" or
                         // "unreachable". Fall through to the
                         // compiler, which disambiguates.
-                        match kod_tools::CheckTool::run_check(
-                            &self.working_dir,
-                            60,
-                        )
-                        .await
-                        {
+                        match kod_tools::CheckTool::run_check(&self.working_dir, 60).await {
                             Ok(outcome) => {
                                 source = outcome.command.clone();
                                 diags = outcome.diagnostics;
@@ -4272,8 +4330,7 @@ impl KodEngine {
                         };
                     }
                 } else if compiler_wanted {
-                    match kod_tools::CheckTool::run_check(&self.working_dir, 60).await
-                    {
+                    match kod_tools::CheckTool::run_check(&self.working_dir, 60).await {
                         Ok(outcome) => {
                             source = outcome.command.clone();
                             diags = outcome.diagnostics;
@@ -4314,10 +4371,7 @@ impl KodEngine {
                 if used_lsp {
                     block.push_str("\n## LSP diagnostics\n\n");
                     if diags.is_empty() {
-                        block.push_str(&format!(
-                            "`{}`: no diagnostics on this file.\n",
-                            source,
-                        ));
+                        block.push_str(&format!("`{}`: no diagnostics on this file.\n", source,));
                     } else {
                         block.push_str(&format!(
                             "`{}` reported {} diagnostic(s) on this file:\n\n",
@@ -4331,19 +4385,13 @@ impl KodEngine {
                     // the model sees *new* errors, not pre-existing
                     // ones.
                     let baseline = self.check_baseline.read().await.clone();
-                    let baseline_keys: std::collections::HashSet<(
-                        String,
-                        Option<String>,
-                        String,
-                    )> = baseline
-                        .as_ref()
-                        .map(|v| v.iter().map(diag_key).collect())
-                        .unwrap_or_default();
-                    let current_keys: std::collections::HashSet<(
-                        String,
-                        Option<String>,
-                        String,
-                    )> = diags.iter().map(diag_key).collect();
+                    let baseline_keys: std::collections::HashSet<(String, Option<String>, String)> =
+                        baseline
+                            .as_ref()
+                            .map(|v| v.iter().map(diag_key).collect())
+                            .unwrap_or_default();
+                    let current_keys: std::collections::HashSet<(String, Option<String>, String)> =
+                        diags.iter().map(diag_key).collect();
 
                     let new_diags: Vec<&kod_tools::check::Diagnostic> = diags
                         .iter()
@@ -4380,10 +4428,8 @@ impl KodEngine {
                                 source,
                                 new_diags.len(),
                             ));
-                            let owned: Vec<kod_tools::check::Diagnostic> = new_diags
-                                .iter()
-                                .map(|d| (*d).clone())
-                                .collect();
+                            let owned: Vec<kod_tools::check::Diagnostic> =
+                                new_diags.iter().map(|d| (*d).clone()).collect();
                             render_diagnostics(&mut block, &owned, 20);
                             if resolved_count > 0 {
                                 block.push_str(&format!(
@@ -4423,14 +4469,9 @@ impl KodEngine {
                         && let Some(rec) = guard.as_ref()
                     {
                         use std::collections::BTreeMap;
-                        let mut per_file: BTreeMap<
-                            String,
-                            (usize, usize),
-                        > = BTreeMap::new();
+                        let mut per_file: BTreeMap<String, (usize, usize)> = BTreeMap::new();
                         for d in &diags {
-                            let entry = per_file
-                                .entry(d.file.clone())
-                                .or_insert((0, 0));
+                            let entry = per_file.entry(d.file.clone()).or_insert((0, 0));
                             match d.severity.as_str() {
                                 "error" => entry.0 += 1,
                                 "warning" => entry.1 += 1,
@@ -4442,13 +4483,12 @@ impl KodEngine {
                             .map(|d| d.as_millis() as u64)
                             .unwrap_or(0);
                         for (file, (errs, warns)) in per_file {
-                            let entry =
-                                crate::session_log::SessionEntry::Diagnostics {
-                                    timestamp_ms: now_ms,
-                                    file,
-                                    error_count: errs,
-                                    warning_count: warns,
-                                };
+                            let entry = crate::session_log::SessionEntry::Diagnostics {
+                                timestamp_ms: now_ms,
+                                file,
+                                error_count: errs,
+                                warning_count: warns,
+                            };
                             let _ = rec.record(&entry);
                         }
                     }
@@ -4473,10 +4513,7 @@ impl KodEngine {
             time::OffsetDateTime::now_utc(),
         );
         for (i, call) in calls.iter().enumerate() {
-            let id = call
-                .id
-                .clone()
-                .unwrap_or_else(|| format!("call_{i}"));
+            let id = call.id.clone().unwrap_or_else(|| format!("call_{i}"));
             assistant_msg.tool_calls.push(kod_types::ToolCall {
                 id: Some(id.clone()),
                 tool_name: call.tool_name.clone(),
@@ -4594,20 +4631,15 @@ impl KodEngine {
             }
         };
 
-        let facts = match kod_memory::extract::extract(
-            provider,
-            model_ref,
-            &transcript,
-            max_entries,
-        )
-        .await
-        {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::warn!(error = %e, "extract_memories_now: extraction failed");
-                return Ok(0);
-            }
-        };
+        let facts =
+            match kod_memory::extract::extract(provider, model_ref, &transcript, max_entries).await
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!(error = %e, "extract_memories_now: extraction failed");
+                    return Ok(0);
+                }
+            };
         if facts.is_empty() {
             return Ok(0);
         }
@@ -4618,8 +4650,7 @@ impl KodEngine {
 
         let mut stored = 0usize;
         for fact in &facts {
-            let mut metadata =
-                kod_memory::extract::metadata_for(fact, project_key.clone());
+            let mut metadata = kod_memory::extract::metadata_for(fact, project_key.clone());
             // The design (D2.5) attributes every auto-extracted fact to
             // a session so consolidation can treat "an episode with no
             // touch in 60 days" as archivable without ever archiving a
@@ -4628,9 +4659,7 @@ impl KodEngine {
             // UUID newtype, so a hash-shaped key degrades to `None` —
             // the fact is still stored, it just loses the attribution
             // a per-session triage would need.
-            metadata.session_id = uuid::Uuid::parse_str(key)
-                .ok()
-                .map(kod_types::SessionId::from_uuid);
+            metadata.session_id = Some(self.session_id_for_holder(key));
             // Store as Episodic (not LongTerm): the extraction channel
             // is the auto path; only `memory_save` and the user's
             // `/remember` write the durable layer.
@@ -5074,11 +5103,7 @@ impl KodEngine {
     /// channels: extraction, tool, and user.
     ///
     /// No-op when no recorder is installed (the CLI default).
-    pub async fn record_user_memory_write(
-        &self,
-        memory_id: &str,
-        tags: Vec<String>,
-    ) {
+    pub async fn record_user_memory_write(&self, memory_id: &str, tags: Vec<String>) {
         if let Ok(guard) = self.session_recorder.read()
             && let Some(rec) = guard.as_ref()
         {
@@ -5094,6 +5119,32 @@ impl KodEngine {
             };
             let _ = rec.record(&entry);
         }
+    }
+
+    /// This engine's session identity. Stable across the engine's
+    /// lifetime; the value used to attribute auto-extracted episodic
+    /// facts (design D2.5).
+    pub fn session_id(&self) -> &kod_types::SessionId {
+        &self.session_id
+    }
+
+    /// The session id that a transcript key belongs to.
+    ///
+    /// A swarm-agent transcript key is `"swarm:<uuid>"`; the UUID is
+    /// the agent's, and an agent's auto-extracted facts are
+    /// attributable to that agent. Any other key (including the
+    /// interactive session's `""`) maps to the engine's own
+    /// `session_id`.
+    ///
+    /// Public so a caller (a filter, a debug command) can ask the
+    /// same question without knowing the key format.
+    pub fn session_id_for_holder(&self, key: &str) -> kod_types::SessionId {
+        if let Some(rest) = key.strip_prefix("swarm:")
+            && let Ok(uuid) = uuid::Uuid::parse_str(rest)
+        {
+            return kod_types::SessionId::from_uuid(uuid);
+        }
+        self.session_id.clone()
     }
 
     /// The prompt the provider received on the most recent `process*`
@@ -5116,10 +5167,7 @@ impl KodEngine {
     }
 
     /// The full prompt trace for `key`.
-    pub async fn last_prompt_trace_for(
-        &self,
-        key: &str,
-    ) -> Option<crate::budget::PromptTrace> {
+    pub async fn last_prompt_trace_for(&self, key: &str) -> Option<crate::budget::PromptTrace> {
         self.last_prompt.read().await.get(key).cloned()
     }
 
@@ -5127,11 +5175,7 @@ impl KodEngine {
     /// Called by the swarm runner before an agent runs, with the
     /// agent's worktree path. Idempotent. Passing `None` clears the
     /// override for that key.
-    pub async fn set_transcript_working_dir(
-        &self,
-        key: &str,
-        dir: Option<PathBuf>,
-    ) {
+    pub async fn set_transcript_working_dir(&self, key: &str, dir: Option<PathBuf>) {
         let mut guard = self.transcript_working_dirs.write().await;
         match dir {
             Some(p) => {
@@ -5167,11 +5211,7 @@ impl KodEngine {
     /// least one glob; `None` removes the restriction (the default
     /// for every transcript). Called by the swarm runner before
     /// each agent starts.
-    pub async fn set_transcript_write_globs(
-        &self,
-        key: &str,
-        globs: Option<Vec<String>>,
-    ) {
+    pub async fn set_transcript_write_globs(&self, key: &str, globs: Option<Vec<String>>) {
         let mut guard = self.transcript_write_globs.write().await;
         match globs {
             Some(g) if !g.is_empty() => {
@@ -5203,10 +5243,6 @@ impl KodEngine {
         self.transcript_write_globs.write().await.remove(key);
     }
 
-
-
-
-
     /// Seed a turn into the default transcript. Used by the TUI after
     /// restoring a saved session.
     pub async fn seed_turn(&self, user: bool, text: &str) {
@@ -5229,12 +5265,7 @@ impl KodEngine {
     /// list and the engine's transcript are not the same length (the
     /// TUI renders tool rows and system notices the engine never
     /// saw). Content equality is the one identity both sides share.
-    pub async fn set_turn_pinned_by_content(
-        &self,
-        key: &str,
-        content: &str,
-        pinned: bool,
-    ) -> bool {
+    pub async fn set_turn_pinned_by_content(&self, key: &str, content: &str, pinned: bool) -> bool {
         let mut history = self.history.write().await;
         let Some(turns) = history.get_mut(key) else {
             return false;
@@ -5276,7 +5307,8 @@ impl KodEngine {
 
     /// Compact the default transcript to the last `max_turns` turns.
     pub async fn compact_history(&self, max_turns: usize) {
-        self.compact_history_for(DEFAULT_TRANSCRIPT_KEY, max_turns).await
+        self.compact_history_for(DEFAULT_TRANSCRIPT_KEY, max_turns)
+            .await
     }
 
     /// Compact the transcript for `key` to the last `max_turns` turns.
@@ -5291,10 +5323,6 @@ impl KodEngine {
     }
 }
 
-/// Assemble one [`ToolCall`] from streamed `ToolCallStart`/`ToolCallDelta`
-
-
-
 // (The `which` helper moved to `kod_lsp::binary_for_path` when the
 // LSP pool was introduced; `lsp_binary_for` now delegates there.)
 
@@ -5307,11 +5335,7 @@ fn diag_key(d: &kod_tools::check::Diagnostic) -> (String, Option<String>, String
 
 /// Append up to `max` diagnostics to `block`, one per line, in the
 /// format `severity [code] file:line:col — message`.
-fn render_diagnostics(
-    block: &mut String,
-    diags: &[kod_tools::check::Diagnostic],
-    max: usize,
-) {
+fn render_diagnostics(block: &mut String, diags: &[kod_tools::check::Diagnostic], max: usize) {
     for d in diags.iter().take(max) {
         let code = d
             .code
@@ -5333,7 +5357,6 @@ fn render_diagnostics(
         block.push_str(&format!("  … and {} more.\n", diags.len() - max));
     }
 }
-
 
 /// Small owned snapshot of the parts of `KodEngine` that the baseline
 /// refresh needs. Exists because `KodEngine::start` takes `&self` and
@@ -5361,7 +5384,6 @@ impl BaselineRefresher {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5371,7 +5393,8 @@ mod tests {
     async fn grounded_request_splits_cacheable_and_volatile() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5395,7 +5418,10 @@ mod tests {
             2,
             "expected exactly two segments: cacheable head + volatile tail",
         );
-        assert!(req.system.segments[0].cacheable, "first segment must be cacheable");
+        assert!(
+            req.system.segments[0].cacheable,
+            "first segment must be cacheable"
+        );
         assert!(
             !req.system.segments[1].cacheable,
             "second segment must be volatile",
@@ -5421,8 +5447,102 @@ mod tests {
         );
         // The conversation tail must not appear anywhere.
         assert!(
-            !req.system.segments[1].text.contains("## Conversation so far"),
+            !req.system.segments[1]
+                .text
+                .contains("## Conversation so far"),
             "conversation tail must be stripped from the system prompt",
+        );
+    }
+
+    #[tokio::test]
+    async fn session_id_for_default_transcript_is_the_engine_id() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+            embedder: None,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        assert_eq!(
+            engine.session_id_for_holder(""),
+            *engine.session_id(),
+            "the default transcript must attribute facts to the engine's session",
+        );
+        assert_eq!(
+            engine.session_id_for_holder("swarm:not-a-uuid"),
+            *engine.session_id(),
+            "a non-UUID suffix falls back to the engine's session",
+        );
+    }
+
+    #[tokio::test]
+    async fn session_id_for_swarm_key_prefers_the_embedded_uuid() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+            embedder: None,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        let agent_uuid = uuid::Uuid::new_v4();
+        let key = format!("swarm:{agent_uuid}");
+        let sid = engine.session_id_for_holder(&key);
+        assert_eq!(
+            sid.as_uuid(),
+            &agent_uuid,
+            "a swarm transcript key must attribute facts to the agent's UUID",
+        );
+        assert_ne!(
+            sid,
+            *engine.session_id(),
+            "the agent's session must be distinct from the engine's",
+        );
+    }
+
+    #[tokio::test]
+    async fn two_engines_have_distinct_session_ids() {
+        let temp1 = TempDir::new().unwrap();
+        let temp2 = TempDir::new().unwrap();
+        let e1 = KodEngine::new(
+            RouterConfig {
+                skill_threshold: 0.3,
+                context_window: 8192,
+                short_term_capacity: 100,
+                working_dir: temp1.path().to_path_buf(),
+                enable_memory: false,
+                max_skills_per_query: 3,
+                embedder: None,
+            },
+            temp1.path().join("t.redb"),
+        )
+        .unwrap();
+        let e2 = KodEngine::new(
+            RouterConfig {
+                skill_threshold: 0.3,
+                context_window: 8192,
+                short_term_capacity: 100,
+                working_dir: temp2.path().to_path_buf(),
+                enable_memory: false,
+                max_skills_per_query: 3,
+                embedder: None,
+            },
+            temp2.path().join("t.redb"),
+        )
+        .unwrap();
+        assert_ne!(
+            e1.session_id(),
+            e2.session_id(),
+            "each engine must have a distinct session id",
         );
     }
 
@@ -5430,7 +5550,8 @@ mod tests {
     async fn deny_rule_at_zero_returns_none() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5448,7 +5569,8 @@ mod tests {
     async fn deny_rule_at_returns_the_sorted_index() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5511,7 +5633,8 @@ mod tests {
     async fn remove_deny_rule_is_by_value_and_reports_presence() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5688,7 +5811,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5747,7 +5871,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5772,7 +5897,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5783,10 +5909,7 @@ mod tests {
         engine.start().await.unwrap();
 
         let (tx, _rx) = tokio::sync::mpsc::channel::<String>(4);
-        let err = engine
-            .process_streaming("hello?", &tx)
-            .await
-            .unwrap_err();
+        let err = engine.process_streaming("hello?", &tx).await.unwrap_err();
         assert!(matches!(err, KodError::InvalidState(_)), "got {err:?}");
     }
 
@@ -5795,7 +5918,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5824,7 +5948,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5840,7 +5965,9 @@ mod tests {
             "short-term memory starts empty"
         );
 
-        engine.remember_turn(true, "the user asked about rust").await;
+        engine
+            .remember_turn(true, "the user asked about rust")
+            .await;
         engine
             .remember_turn(false, "the assistant answered with an example")
             .await;
@@ -5864,7 +5991,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -6025,7 +6153,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -6038,9 +6167,22 @@ mod tests {
         // Before any call: no prompt.
         assert!(engine.last_prompt().await.is_none());
 
-        { let mut reg = kod_provider::ProviderRegistry::new();
-          reg.insert("default", Arc::new(NopProvider), kod_provider::ProviderCapabilities::conservative(), "");
-          engine.set_registry(Arc::new(reg), kod_provider::ModelRef::new("default", ""), None).await; }
+        {
+            let mut reg = kod_provider::ProviderRegistry::new();
+            reg.insert(
+                "default",
+                Arc::new(NopProvider),
+                kod_provider::ProviderCapabilities::conservative(),
+                "",
+            );
+            engine
+                .set_registry(
+                    Arc::new(reg),
+                    kod_provider::ModelRef::new("default", ""),
+                    None,
+                )
+                .await;
+        }
         let (tx, _rx) = tokio::sync::mpsc::channel::<String>(4);
         let _ = engine.process_streaming("hello from test", &tx).await;
 
@@ -6066,7 +6208,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -6095,7 +6238,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -6139,7 +6283,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -6202,7 +6347,8 @@ mod tests {
 
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -6212,7 +6358,8 @@ mod tests {
         let engine = KodEngine::new(cfg, db_path).unwrap();
         engine.start().await.unwrap();
 
-        let calls = vec![ToolCall { id: None,
+        let calls = vec![ToolCall {
+            id: None,
             tool_name: "list_files".to_string(),
             arguments: serde_json::json!({ "path": "." }),
         }];
@@ -6513,7 +6660,8 @@ mod tests {
         let db_path = temp.path().join("test.redb");
 
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -6524,14 +6672,16 @@ mod tests {
         engine.start().await.unwrap();
 
         let calls = vec![
-            ToolCall { id: None,
+            ToolCall {
+                id: None,
                 tool_name: "write_file".to_string(),
                 arguments: serde_json::json!({
                     "path": "serialize_probe.txt",
                     "content": "hello-serial"
                 }),
             },
-            ToolCall { id: None,
+            ToolCall {
+                id: None,
                 tool_name: "read_file".to_string(),
                 arguments: serde_json::json!({ "path": "serialize_probe.txt" }),
             },
@@ -6568,7 +6718,8 @@ mod tests {
 
         let db_path = temp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -6579,11 +6730,13 @@ mod tests {
         engine.start().await.unwrap();
 
         let calls = vec![
-            ToolCall { id: None,
+            ToolCall {
+                id: None,
                 tool_name: "read_file".to_string(),
                 arguments: serde_json::json!({ "path": "a.txt" }),
             },
-            ToolCall { id: None,
+            ToolCall {
+                id: None,
                 tool_name: "read_file".to_string(),
                 arguments: serde_json::json!({ "path": "b.txt" }),
             },
@@ -6601,93 +6754,91 @@ mod tests {
         }
     }
 
+    /// A pinned turn must survive a budget that would otherwise drop
+    /// it. Regression: before this, the pin flag was stored but never
+    /// consulted — the budget scan dropped the oldest turn
+    /// unconditionally, so a pinned turn at the start of a long
+    /// session was lost exactly when it mattered.
+    #[tokio::test]
+    async fn test_render_history_keeps_pinned_turn() {
+        use tempfile::TempDir;
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            embedder: None,
+            skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+        // Tiny budget so most turns get dropped.
+        engine.set_history_budget(MIN_HISTORY_CHAR_BUDGET);
 
-/// A pinned turn must survive a budget that would otherwise drop
-/// it. Regression: before this, the pin flag was stored but never
-/// consulted — the budget scan dropped the oldest turn
-/// unconditionally, so a pinned turn at the start of a long
-/// session was lost exactly when it mattered.
-#[tokio::test]
-async fn test_render_history_keeps_pinned_turn() {
-    use tempfile::TempDir;
-    let temp = TempDir::new().unwrap();
-    let db_path = temp.path().join("test.redb");
-    let cfg = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
-        context_window: 8192,
-        short_term_capacity: 100,
-        working_dir: temp.path().to_path_buf(),
-        enable_memory: false,
-        max_skills_per_query: 3,
-    };
-    let engine = KodEngine::new(cfg, db_path).unwrap();
-    engine.start().await.unwrap();
-    // Tiny budget so most turns get dropped.
-    engine.set_history_budget(MIN_HISTORY_CHAR_BUDGET);
+        // The first turn is unique enough to identify in the output.
+        let first = "PINNED-CONTENT-UNIQUE-MARKER-that-fits";
+        engine.seed_turn(true, first).await;
+        assert!(
+            engine.set_turn_pinned_by_content("", first, true).await,
+            "pinning the first turn must succeed"
+        );
 
-    // The first turn is unique enough to identify in the output.
-    let first = "PINNED-CONTENT-UNIQUE-MARKER-that-fits";
-    engine.seed_turn(true, first).await;
-    assert!(
-        engine
-            .set_turn_pinned_by_content("", first, true)
-            .await,
-        "pinning the first turn must succeed"
-    );
+        // Flood the transcript so the first turn would be dropped.
+        for i in 0..40 {
+            engine
+                .seed_turn(true, &format!("filler-{i}-{}", "x".repeat(400)))
+                .await;
+        }
 
-    // Flood the transcript so the first turn would be dropped.
-    for i in 0..40 {
-        engine
-            .seed_turn(true, &format!("filler-{i}-{}", "x".repeat(400)))
-            .await;
+        // Render and check: the pinned turn must be present even
+        // though the budget cannot hold all 41 turns.
+        let rendered = engine.render_history().await;
+        assert!(
+            rendered.contains("PINNED-CONTENT-UNIQUE-MARKER"),
+            "pinned turn was dropped from rendered history: {}",
+            &rendered[..rendered.len().min(500)]
+        );
     }
 
-    // Render and check: the pinned turn must be present even
-    // though the budget cannot hold all 41 turns.
-    let rendered = engine.render_history().await;
-    assert!(
-        rendered.contains("PINNED-CONTENT-UNIQUE-MARKER"),
-        "pinned turn was dropped from rendered history: {}",
-        &rendered[..rendered.len().min(500)]
-    );
-}
+    /// Unpinning reverses the protection.
+    #[tokio::test]
+    async fn test_render_history_drops_unpinned_turn_again() {
+        use tempfile::TempDir;
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig {
+            embedder: None,
+            skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+        engine.set_history_budget(MIN_HISTORY_CHAR_BUDGET);
 
-/// Unpinning reverses the protection.
-#[tokio::test]
-async fn test_render_history_drops_unpinned_turn_again() {
-    use tempfile::TempDir;
-    let temp = TempDir::new().unwrap();
-    let db_path = temp.path().join("test.redb");
-    let cfg = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
-        context_window: 8192,
-        short_term_capacity: 100,
-        working_dir: temp.path().to_path_buf(),
-        enable_memory: false,
-        max_skills_per_query: 3,
-    };
-    let engine = KodEngine::new(cfg, db_path).unwrap();
-    engine.start().await.unwrap();
-    engine.set_history_budget(MIN_HISTORY_CHAR_BUDGET);
-
-    let first = "PINNED-THEN-UNPINNED-MARKER";
-    engine.seed_turn(true, first).await;
-    engine.set_turn_pinned_by_content("", first, true).await;
-    for i in 0..40 {
-        engine
-            .seed_turn(true, &format!("filler-{i}-{}", "x".repeat(400)))
-            .await;
+        let first = "PINNED-THEN-UNPINNED-MARKER";
+        engine.seed_turn(true, first).await;
+        engine.set_turn_pinned_by_content("", first, true).await;
+        for i in 0..40 {
+            engine
+                .seed_turn(true, &format!("filler-{i}-{}", "x".repeat(400)))
+                .await;
+        }
+        // Unpin and re-render.
+        engine.set_turn_pinned_by_content("", first, false).await;
+        let rendered = engine.render_history().await;
+        assert!(
+            !rendered.contains("PINNED-THEN-UNPINNED-MARKER"),
+            "unpinned turn should be dropped under a tight budget"
+        );
     }
-    // Unpin and re-render.
-    engine.set_turn_pinned_by_content("", first, false).await;
-    let rendered = engine.render_history().await;
-    assert!(
-        !rendered.contains("PINNED-THEN-UNPINNED-MARKER"),
-        "unpinned turn should be dropped under a tight budget"
-    );
 }
-}
-
 
 #[cfg(test)]
 mod prop_tests {
@@ -6849,7 +7000,8 @@ mod diff_attachment_tests {
 
         let db_path = tmp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -6867,7 +7019,8 @@ mod diff_attachment_tests {
             return;
         }
 
-        let calls = vec![ToolCall { id: None,
+        let calls = vec![ToolCall {
+            id: None,
             tool_name: "write_file".to_string(),
             arguments: serde_json::json!({
                 "path": "greet.txt",
@@ -6933,7 +7086,6 @@ mod diff_attachment_tests {
     }
 }
 
-
 #[cfg(test)]
 mod auto_check_tests {
     //! Tests for the auto-check injection in `run_tool_calls`.
@@ -6967,7 +7119,8 @@ mod auto_check_tests {
 
         let db_path = tmp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -6978,7 +7131,8 @@ mod auto_check_tests {
         engine.set_auto_check(true);
         engine.start().await.unwrap();
 
-        let calls = vec![ToolCall { id: None,
+        let calls = vec![ToolCall {
+            id: None,
             tool_name: "write_file".to_string(),
             arguments: serde_json::json!({
                 "path": "src/lib.rs",
@@ -7022,7 +7176,8 @@ mod auto_check_tests {
 
         let db_path = tmp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -7033,7 +7188,8 @@ mod auto_check_tests {
         // Intentionally NOT calling set_auto_check(true).
         engine.start().await.unwrap();
 
-        let calls = vec![ToolCall { id: None,
+        let calls = vec![ToolCall {
+            id: None,
             tool_name: "write_file".to_string(),
             arguments: serde_json::json!({
                 "path": "src/lib.rs",
@@ -7074,7 +7230,8 @@ mod auto_check_tests {
 
         let db_path = tmp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -7089,14 +7246,16 @@ mod auto_check_tests {
         // extra.rs introduces a type error. Only the compiler sees
         // both.
         let calls = vec![
-            ToolCall { id: None,
+            ToolCall {
+                id: None,
                 tool_name: "write_file".to_string(),
                 arguments: serde_json::json!({
                     "path": "src/lib.rs",
                     "content": "pub mod extra;\n// harmless comment\n"
                 }),
             },
-            ToolCall { id: None,
+            ToolCall {
+                id: None,
                 tool_name: "write_file".to_string(),
                 arguments: serde_json::json!({
                     "path": "src/extra.rs",
@@ -7134,7 +7293,8 @@ mod auto_check_tests {
 
         let db_path = tmp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -7145,7 +7305,8 @@ mod auto_check_tests {
         engine.set_auto_check(true);
         engine.start().await.unwrap();
 
-        let calls = vec![ToolCall { id: None,
+        let calls = vec![ToolCall {
+            id: None,
             tool_name: "read_file".to_string(),
             arguments: serde_json::json!({ "path": "src/lib.rs" }),
         }];
@@ -7183,7 +7344,8 @@ mod auto_check_tests {
 
         let db_path = tmp.path().join("test.redb");
         let cfg = RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -7206,7 +7368,8 @@ mod auto_check_tests {
 
         // Now write only the clean file. The pre-existing error in
         // existing.rs must NOT be reported as new.
-        let calls = vec![ToolCall { id: None,
+        let calls = vec![ToolCall {
+            id: None,
             tool_name: "write_file".to_string(),
             arguments: serde_json::json!({
                 "path": "src/touched.rs",
@@ -7235,5 +7398,4 @@ mod auto_check_tests {
             round.prompt_block
         );
     }
-
 }
