@@ -110,7 +110,9 @@ impl KodError {
     pub fn rate_limited(retry_after: Option<std::time::Duration>, status: u16, body: &str) -> Self {
         let secs = retry_after.map(|d| d.as_secs()).unwrap_or(30);
         let _ = (status, body);
-        KodError::RateLimited { retry_after_secs: secs }
+        KodError::RateLimited {
+            retry_after_secs: secs,
+        }
     }
 
     /// Classify an HTTP error status + body into the closest typed variant.
@@ -120,7 +122,9 @@ impl KodError {
             401 | 403 => KodError::Provider(format!("auth error {status}: {snippet}")),
             404 => KodError::Provider(format!("not found {status}: {snippet}")),
             408 => KodError::ProviderTimeout { timeout_ms: 0 },
-            429 => KodError::RateLimited { retry_after_secs: 30 },
+            429 => KodError::RateLimited {
+                retry_after_secs: 30,
+            },
             500..=599 => KodError::Provider(format!("server error {status}: {snippet}")),
             _ => KodError::Provider(format!("http {status}: {snippet}")),
         }
