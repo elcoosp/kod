@@ -74,10 +74,7 @@ impl ApprovalWidget {
                 lines.push(Line::from(vec![
                     Span::styled(format!(" {marker} {:>2}. ", i + 1), style),
                     Span::styled(item.tool_name.clone(), style),
-                    Span::styled(
-                        format!("  ({})", truncate(&item.summary, 40)),
-                        dim_style,
-                    ),
+                    Span::styled(format!("  ({})", truncate(&item.summary, 40)), dim_style),
                 ]));
             }
             if total > MAX_LISTED_ITEMS {
