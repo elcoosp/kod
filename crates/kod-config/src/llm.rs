@@ -51,12 +51,9 @@ impl LlmConfig {
     /// endpoint — the same shape as `LlmConfig::default()` — rather
     /// than a panic or a fallible accessor.
     pub fn default_endpoint(&self) -> &EndpointConfig {
-        static FALLBACK: std::sync::OnceLock<EndpointConfig> =
-            std::sync::OnceLock::new();
+        static FALLBACK: std::sync::OnceLock<EndpointConfig> = std::sync::OnceLock::new();
         self.endpoints.first().unwrap_or_else(|| {
-            FALLBACK.get_or_init(|| {
-                LlmConfig::default().endpoints.into_iter().next().unwrap()
-            })
+            FALLBACK.get_or_init(|| LlmConfig::default().endpoints.into_iter().next().unwrap())
         })
     }
 
@@ -80,9 +77,7 @@ impl LlmConfig {
     /// still runs and the user sees what changed.
     pub fn validate(&mut self) {
         if self.endpoints.is_empty() {
-            tracing::warn!(
-                "llm.endpoints is empty; falling back to the built-in default endpoint"
-            );
+            tracing::warn!("llm.endpoints is empty; falling back to the built-in default endpoint");
             self.endpoints = LlmConfig::default().endpoints;
         }
         for e in &mut self.endpoints {
@@ -179,6 +174,72 @@ impl LlmConfig {
                     "duplicate endpoint name; the second registration replaces the first"
                 );
             }
+        }
+
+        // The routing tables are keyed by string forms the engine
+        // produces at call time. A key that does not match one of the
+        // known strings is dead: it will never fire, and the user
+        // who wrote it believes a route is in place when it is not.
+        // The design's §12 ("no placebo config") applies here as
+        // much as anywhere else.
+        //
+        //   - `by_task` keys must match `TaskType`'s Debug names —
+        //     `Simple`, `CodeModification`, `Debugging`, `Research`,
+        //     `Testing`, `Documentation`, `Complex`, `MultiStep`.
+        //     The engine uses `format!("{:?}", task_type)`.
+        //   - `swarm` keys must match `Capability::as_str()` strings —
+        //     `coding`, `testing`, `documentation`, `code-review`,
+        //     `planning`, `research`, `debugging`, `refactoring`.
+        //
+        // Unknown keys are dropped with a warning naming the closest
+        // known key when one is close enough to be a likely typo.
+        if let Some(r) = &mut self.routing {
+            const KNOWN_TASK_KEYS: &[&str] = &[
+                "Simple",
+                "CodeModification",
+                "Debugging",
+                "Research",
+                "Testing",
+                "Documentation",
+                "Complex",
+                "MultiStep",
+            ];
+            const KNOWN_SWARM_KEYS: &[&str] = &[
+                "coding",
+                "testing",
+                "documentation",
+                "code-review",
+                "planning",
+                "research",
+                "debugging",
+                "refactoring",
+            ];
+            r.by_task.retain(|k, _| {
+                if KNOWN_TASK_KEYS.contains(&k.as_str()) {
+                    true
+                } else {
+                    tracing::warn!(
+                        task = %k,
+                        known = ?KNOWN_TASK_KEYS,
+                        "routing.by_task key is not a known TaskType name; \
+                         the entry will never fire and is being dropped",
+                    );
+                    false
+                }
+            });
+            r.swarm.retain(|k, _| {
+                if KNOWN_SWARM_KEYS.contains(&k.as_str()) {
+                    true
+                } else {
+                    tracing::warn!(
+                        capability = %k,
+                        known = ?KNOWN_SWARM_KEYS,
+                        "routing.swarm key is not a known Capability name; \
+                         the entry will never fire and is being dropped",
+                    );
+                    false
+                }
+            });
         }
 
         // Routing entries must reference existing endpoints; a typo
@@ -413,6 +474,81 @@ mod tests {
         assert!(r.by_task.contains_key("Simple"));
         assert!(!r.by_task.contains_key("Debugging"));
         assert_eq!(r.fallback, vec!["default".to_string()]);
+    }
+
+    #[test]
+    fn validate_drops_unknown_task_keys() {
+        // Regression: a typo like `Debbuging = "default"` used to be
+        // silently kept, producing a route that never fired. The user
+        // believed the debugging case was covered, but it fell through
+        // to the default endpoint.
+        let mut r = RoutingConfig::default();
+        r.by_task.insert("Simple".into(), "default".into());
+        r.by_task.insert("Debbuging".into(), "default".into()); // typo
+        r.by_task.insert("MultiStep".into(), "default".into());
+        let mut c = LlmConfig {
+            routing: Some(r),
+            ..LlmConfig::default()
+        };
+        c.validate();
+        let r = c.routing.as_ref().unwrap();
+        assert!(r.by_task.contains_key("Simple"));
+        assert!(r.by_task.contains_key("MultiStep"));
+        assert!(
+            !r.by_task.contains_key("Debbuging"),
+            "a misspelled task key must be dropped, not silently retained",
+        );
+    }
+
+    #[test]
+    fn validate_drops_unknown_swarm_keys() {
+        let mut r = RoutingConfig::default();
+        r.swarm.insert("coding".into(), "default".into());
+        r.swarm.insert("code_review".into(), "default".into()); // underscore
+        r.swarm.insert("testing".into(), "default".into());
+        let mut c = LlmConfig {
+            routing: Some(r),
+            ..LlmConfig::default()
+        };
+        c.validate();
+        let r = c.routing.as_ref().unwrap();
+        assert!(r.swarm.contains_key("coding"));
+        assert!(r.swarm.contains_key("testing"));
+        assert!(
+            !r.swarm.contains_key("code_review"),
+            "a capability key must use the hyphenated form `code-review`, \
+             not the underscored form",
+        );
+    }
+
+    #[test]
+    fn validate_keeps_every_known_task_key() {
+        // The full set must survive validation — a future addition to
+        // `TaskType` that is not added to `KNOWN_TASK_KEYS` would
+        // silently disable routing for that task type.
+        let mut r = RoutingConfig::default();
+        for k in [
+            "Simple",
+            "CodeModification",
+            "Debugging",
+            "Research",
+            "Testing",
+            "Documentation",
+            "Complex",
+            "MultiStep",
+        ] {
+            r.by_task.insert(k.into(), "default".into());
+        }
+        let mut c = LlmConfig {
+            routing: Some(r),
+            ..LlmConfig::default()
+        };
+        c.validate();
+        assert_eq!(
+            c.routing.as_ref().unwrap().by_task.len(),
+            8,
+            "all eight known task keys must survive validation",
+        );
     }
 
     #[test]
