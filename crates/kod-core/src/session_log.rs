@@ -514,8 +514,8 @@ mod coverage_session_paths {
         // well-formed. The test records the contract rather than
         // asserting non-determinism.
         if let (Some(a), Some(b)) = (default_session_path(), default_session_path()) {
-            assert!(a.ends_with(".jsonl"));
-            assert!(b.ends_with(".jsonl"));
+            assert!(a.extension().and_then(|s| s.to_str()) == Some("jsonl"));
+            assert!(b.extension().and_then(|s| s.to_str()) == Some("jsonl"));
         }
     }
 
