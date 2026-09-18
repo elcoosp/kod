@@ -71,7 +71,6 @@ pub fn write_clipboard(text: &str) -> bool {
     false
 }
 
-
 /// Read the system clipboard into a string. Mirrors
 /// [`write_clipboard`]: same backends, same best-effort contract.
 /// Returns `None` when the clipboard is unreachable or empty.
