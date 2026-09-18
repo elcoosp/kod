@@ -62,16 +62,60 @@ pub trait LlmProvider: Send + Sync {
         self.generate_with_tools(&prompt, &req.tools, &req.options).await
     }
 
-    // NOTE (A2): a `stream_completion(&CompletionRequest)` counterpart
-    // to `complete` cannot have a working default implementation. Its
-    // stream borrows the prompt for the stream's lifetime, and the
-    // prompt is a temporary owned by the default body — the borrow
-    // checker rejects it. Providers that stream will implement
-    // `stream_completion` directly in A4, where the engine migrates its
-    // call sites and the exact lifetime shape becomes concrete. Until
-    // then, the streaming call sites continue to use `stream_with_tools`
-    // with a rendered text prompt, which is the same behaviour the
-    // default adapter would have produced.
+    /// Structured streaming completion (design §2 AD-01).
+    ///
+    /// The streaming counterpart of [`LlmProvider::complete`]: takes a
+    /// [`CompletionRequest`] instead of a rendered prompt, and yields
+    /// the same [`StreamChunk`] framing [`LlmProvider::stream_with_tools`]
+    /// does. Providers that support the structured form override this;
+    /// the default yields a single error naming the missing override.
+    ///
+    /// ## Default: collect then replay
+    ///
+    /// A lazy default — forwarding to `stream_with_tools` and holding
+    /// the rendered prompt alive for the stream's lifetime — cannot be
+    /// written: the async block that would own the prompt has a
+    /// lifetime shorter than `'a`, and the borrow checker rejects it.
+    /// The *eager* default is fine: `complete()` already collects a
+    /// reply, and this default replays that reply as chunks. The
+    /// collection happens inside the returned stream, so the caller
+    /// still sees `StreamChunk` framing rather than a blocking call.
+    ///
+    /// This is the same shape `stream_with_tools` has by default
+    /// (`futures::stream::unfold` over `generate_with_tools`); the
+    /// two methods are symmetric. A provider with real SSE overrides
+    /// it (OpenAI-compatible and Anthropic do) and pays no collection
+    /// cost.
+    ///
+    /// ## Implementing
+    ///
+    /// The borrow on `req` is a lower bound, not an obligation: an
+    /// implementor that converts the request into its own owned form
+    /// (for the OpenAI-compatible and Anthropic wrappers,
+    /// `adk_core::LlmRequest`) before yielding any chunk does not need
+    /// to hold the request alive for the whole stream.
+    fn stream_completion<'a>(
+        &'a self,
+        req: &'a CompletionRequest,
+    ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
+        // The rendering cost is paid once, inside the stream; the
+        // design's `render_text` is byte-stable for the same request,
+        // so the underlying `complete()` sees the same prompt a
+        // direct `generate_with_tools` call would have.
+        let prompt = req.render_text();
+        let tools = req.tools.clone();
+        let options = req.options.clone();
+        Box::pin(async_stream::stream! {
+            match self.generate_with_tools(&prompt, &tools, &options).await {
+                Ok(response) => {
+                    for chunk in crate::response_chunks(response) {
+                        yield Ok(chunk);
+                    }
+                }
+                Err(e) => yield Err(e),
+            }
+        })
+    }
 
     fn stream_with_tools<'a>(
         &'a self,
