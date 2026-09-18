@@ -67,7 +67,8 @@ async fn test_task_routers_config() {
 
     let router = kod_core::router::TaskRouter::new(
         kod_core::router::RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             enable_memory: true,
@@ -89,7 +90,8 @@ async fn test_task_classification_full() {
 
     let router = kod_core::router::TaskRouter::new(
         kod_core::router::RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             enable_memory: false,
@@ -148,7 +150,8 @@ async fn test_engine_lifecycle() {
 
     let engine = kod_core::engine::KodEngine::new(
         kod_core::router::RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             enable_memory: false,
@@ -221,11 +224,7 @@ impl kod_provider::LlmProvider for NoOpProvider {
         _prompt: &str,
         _options: &kod_provider::GenerationOptions,
     ) -> std::pin::Pin<
-        Box<
-            dyn futures::Stream<Item = kod_error::Result<kod_provider::StreamChunk>>
-                + Send
-                + '_,
-        >,
+        Box<dyn futures::Stream<Item = kod_error::Result<kod_provider::StreamChunk>> + Send + '_>,
     > {
         Box::pin(futures::stream::empty())
     }
@@ -238,7 +237,8 @@ async fn test_engine_process_input() {
 
     let engine = kod_core::engine::KodEngine::new(
         kod_core::router::RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             enable_memory: false,
@@ -254,9 +254,13 @@ async fn test_engine_process_input() {
     // Install a no-op provider. Without one the engine rejects the
     // call — see the `no_provider_error` doc in kod-core. This test
     // exercises the real processing path with a canned reply.
-    common::install_test_provider(&engine, std::sync::Arc::new(NoOpProvider {
+    common::install_test_provider(
+        &engine,
+        std::sync::Arc::new(NoOpProvider {
             reply: "I can help with code.".to_string(),
-        })).await;
+        }),
+    )
+    .await;
 
     // Process a simple input.
     let response = engine.process("Hello, what can you do?").await.unwrap();
@@ -281,7 +285,8 @@ async fn test_engine_rejects_prompt_without_provider() {
 
     let engine = kod_core::engine::KodEngine::new(
         kod_core::router::RouterConfig {
-            embedder: None, skill_threshold: 0.3,
+            embedder: None,
+            skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             enable_memory: false,
