@@ -187,9 +187,9 @@ impl TaskCoordinator {
     async fn finish_task(&self, task_id: &TaskId, status: TaskStatus) -> Result<TaskFinish> {
         let (from, assigned_to) = {
             let mut tasks = self.tasks.write().await;
-            let task = tasks.get_mut(task_id).ok_or_else(|| {
-                KodError::InvalidState(format!("Task {} not found", task_id))
-            })?;
+            let task = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| KodError::InvalidState(format!("Task {} not found", task_id)))?;
             let from = task.status;
             if from == status {
                 return Ok(TaskFinish::AlreadyInState);
@@ -240,9 +240,9 @@ impl TaskCoordinator {
     pub async fn unassign_task(&self, task_id: &TaskId) -> Result<TaskFinish> {
         let (from, was_assigned) = {
             let mut tasks = self.tasks.write().await;
-            let task = tasks.get_mut(task_id).ok_or_else(|| {
-                KodError::InvalidState(format!("Task {} not found", task_id))
-            })?;
+            let task = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| KodError::InvalidState(format!("Task {} not found", task_id)))?;
             let from = task.status;
             if matches!(from, TaskStatus::Completed | TaskStatus::Failed) {
                 return Err(KodError::InvalidState(format!(
@@ -328,7 +328,6 @@ impl TaskCoordinator {
         self.assignments.read().await.values().cloned().collect()
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -457,10 +456,7 @@ mod tests {
         // The rejected transition must not have decremented the load.
         assert_eq!(coord.agent_load(&agent).await, 0);
         // And the task status must be unchanged.
-        assert_eq!(
-            coord.task_status(&t_id).await,
-            Some(TaskStatus::Completed)
-        );
+        assert_eq!(coord.task_status(&t_id).await, Some(TaskStatus::Completed));
     }
 
     /// A Pending task can be completed without ever being assigned.
@@ -514,10 +510,7 @@ mod tests {
         // Load stayed at 0 — no second decrement.
         assert_eq!(coord.agent_load(&agent).await, 0);
         // Status stayed Completed — no resurrection.
-        assert_eq!(
-            coord.task_status(&t_id).await,
-            Some(TaskStatus::Completed)
-        );
+        assert_eq!(coord.task_status(&t_id).await, Some(TaskStatus::Completed));
     }
 
     /// unassign_task on an InProgress task returns Transitioned and
@@ -540,10 +533,7 @@ mod tests {
             }
         );
         assert_eq!(coord.agent_load(&agent).await, 0);
-        assert_eq!(
-            coord.task_status(&t_id).await,
-            Some(TaskStatus::Pending)
-        );
+        assert_eq!(coord.task_status(&t_id).await, Some(TaskStatus::Pending));
         assert!(coord.all_assignments().await.is_empty());
     }
 
@@ -559,10 +549,7 @@ mod tests {
 
         let outcome = coord.unassign_task(&t_id).await.unwrap();
         assert_eq!(outcome, TaskFinish::AlreadyInState);
-        assert_eq!(
-            coord.task_status(&t_id).await,
-            Some(TaskStatus::Pending)
-        );
+        assert_eq!(coord.task_status(&t_id).await, Some(TaskStatus::Pending));
     }
 
     #[tokio::test]
