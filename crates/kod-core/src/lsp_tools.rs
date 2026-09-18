@@ -1,20 +1,19 @@
-//! LSP tools exposed to the model (D5-L3a).
+//! LSP tools exposed to the model (design D5-L3).
 //!
-//! Four read-only tools that reach the engine's shared LSP client:
-//!
-//! - `lsp_diagnostics(path)` — errors and warnings for one file.
-//! - `lsp_definition(path, line, column)` — where a symbol is defined.
-//! - `lsp_references(path, line, column)` — every mention of a symbol.
-//! - `lsp_hover(path, line, column)` — the server's type/doc summary.
+//! Four read-only tools that reach the engine's shared LSP pool
+//! (`kod_lsp::LspManager`): one client per language, lazily started on
+//! the first request for its language. The manager is the same one the
+//! engine uses for the post-write diagnostics hook (D5.2), so a server
+//! started by the hook is reused by the tool and vice versa.
 //!
 //! Coordinates are 1-based in the tool JSON (matching `grep`,
-//! compilers, editors). The engine's methods pass them through to
-//! `LspClient`, which converts to LSP's 0-based wire form.
+//! compilers, editors). The manager's methods take `kod_lsp::Position`
+//! and the client converts to LSP's 0-based wire form internally.
 //!
-//! Every tool returns a structured `ToolResult::Error` when no
-//! server is available for the file's language, so the model sees an
-//! honest "not available" rather than an empty result it might read
-//! as "no errors".
+//! Every tool returns a structured `ToolResult::Error` when no server
+//! is available for the file's language, so the model sees an honest
+//! "not available" rather than an empty result it might read as "no
+//! errors".
 
 use kod_tools::{Tool, ToolContext};
 use kod_error::{KodError, Result};
@@ -22,13 +21,13 @@ use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResul
 use serde_json::Value;
 use std::sync::Arc;
 
-/// Read a file's contents for the diagnostics tool. A missing file is
-/// a tool-level error the model can act on.
+/// Read a file's contents. A missing file is a tool-level error the
+/// model can act on.
 fn read_file(path: &std::path::Path) -> std::result::Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// The shared `ToolDefinition` shape for the LSP tools — same
+/// The shared `ToolPermissions` shape for the LSP tools — same
 /// permissions, same category. The name, description, and schema are
 /// per-tool.
 fn lsp_permissions() -> ToolPermissions {
@@ -46,15 +45,11 @@ fn lsp_permissions() -> ToolPermissions {
 /// `lsp_diagnostics(path)`.
 pub struct LspDiagnosticsTool {
     pub definition: ToolDefinition,
-    slot: Arc<tokio::sync::Mutex<Option<kod_lsp::LspClient>>>,
-    working_dir: std::path::PathBuf,
+    manager: Arc<kod_lsp::LspManager>,
 }
 
 impl LspDiagnosticsTool {
-    pub fn new(
-        slot: Arc<tokio::sync::Mutex<Option<kod_lsp::LspClient>>>,
-        working_dir: std::path::PathBuf,
-    ) -> Self {
+    pub fn new(manager: Arc<kod_lsp::LspManager>) -> Self {
         Self {
             definition: ToolDefinition {
                 id: ToolId::new(),
@@ -75,8 +70,7 @@ impl LspDiagnosticsTool {
                 }),
                 permissions: lsp_permissions(),
             },
-            slot,
-            working_dir,
+            manager,
         }
     }
 }
@@ -95,7 +89,7 @@ impl Tool for LspDiagnosticsTool {
         })?;
         let path = context.resolve_path(path_arg)?;
         context.can_read(&path)?;
-        if crate::engine::KodEngine::lsp_binary_for(&path).is_none() {
+        if kod_lsp::binary_for_path(&path).is_none() {
             return Ok(ToolResult::Error(format!(
                 "no language server for {} — install rust-analyzer / \
                  pyright-langserver / typescript-language-server / gopls",
@@ -106,21 +100,10 @@ impl Tool for LspDiagnosticsTool {
             Ok(c) => c,
             Err(e) => return Ok(ToolResult::Error(e)),
         };
-        if let Err(e) = ensure_started(&self.slot, &self.working_dir, &path).await {
-            return Ok(ToolResult::Error(e));
-        }
-        let diags = {
-            let mut guard = self.slot.lock().await;
-            let client = guard.as_mut().expect("ensure_started set Some");
-            client
-                .diagnostics(
-                    &path,
-                    &content,
-                    std::time::Duration::from_secs(30),
-                )
-                .await
-                .unwrap_or_default()
-        };
+        let diags = self
+            .manager
+            .diagnostics(&path, &content, std::time::Duration::from_secs(30))
+            .await;
         let arr: Vec<Value> = diags
             .iter()
             .map(|d| {
@@ -144,15 +127,11 @@ impl Tool for LspDiagnosticsTool {
 /// `lsp_definition(path, line, column)`.
 pub struct LspDefinitionTool {
     pub definition: ToolDefinition,
-    slot: Arc<tokio::sync::Mutex<Option<kod_lsp::LspClient>>>,
-    working_dir: std::path::PathBuf,
+    manager: Arc<kod_lsp::LspManager>,
 }
 
 impl LspDefinitionTool {
-    pub fn new(
-        slot: Arc<tokio::sync::Mutex<Option<kod_lsp::LspClient>>>,
-        working_dir: std::path::PathBuf,
-    ) -> Self {
+    pub fn new(manager: Arc<kod_lsp::LspManager>) -> Self {
         Self {
             definition: ToolDefinition {
                 id: ToolId::new(),
@@ -174,8 +153,7 @@ impl LspDefinitionTool {
                 }),
                 permissions: lsp_permissions(),
             },
-            slot,
-            working_dir,
+            manager,
         }
     }
 }
@@ -201,21 +179,13 @@ impl Tool for LspDefinitionTool {
         }
         let path = context.resolve_path(path_arg)?;
         context.can_read(&path)?;
-        if crate::engine::KodEngine::lsp_binary_for(&path).is_none() {
+        if kod_lsp::binary_for_path(&path).is_none() {
             return Ok(ToolResult::Error(format!(
                 "no language server for {}",
                 path.display()
             )));
         }
-        if let Err(e) = ensure_started(&self.slot, &self.working_dir, &path).await {
-            return Ok(ToolResult::Error(e));
-        }
-        let locations = {
-            let mut guard = self.slot.lock().await;
-            let client = guard.as_mut().expect("ensure_started set Some");
-            let pos = kod_lsp::Position { line, column };
-            client.definition(&path, pos).await.unwrap_or_default()
-        };
+        let locations = self.manager.definition(&path, kod_lsp::Position { line, column }).await;
         let arr: Vec<Value> = locations
             .iter()
             .map(|loc| {
@@ -236,15 +206,11 @@ impl Tool for LspDefinitionTool {
 /// `lsp_references(path, line, column, include_declaration?)`.
 pub struct LspReferencesTool {
     pub definition: ToolDefinition,
-    slot: Arc<tokio::sync::Mutex<Option<kod_lsp::LspClient>>>,
-    working_dir: std::path::PathBuf,
+    manager: Arc<kod_lsp::LspManager>,
 }
 
 impl LspReferencesTool {
-    pub fn new(
-        slot: Arc<tokio::sync::Mutex<Option<kod_lsp::LspClient>>>,
-        working_dir: std::path::PathBuf,
-    ) -> Self {
+    pub fn new(manager: Arc<kod_lsp::LspManager>) -> Self {
         Self {
             definition: ToolDefinition {
                 id: ToolId::new(),
@@ -271,8 +237,7 @@ impl LspReferencesTool {
                 }),
                 permissions: lsp_permissions(),
             },
-            slot,
-            working_dir,
+            manager,
         }
     }
 }
@@ -301,24 +266,16 @@ impl Tool for LspReferencesTool {
             .unwrap_or(true);
         let path = context.resolve_path(path_arg)?;
         context.can_read(&path)?;
-        if crate::engine::KodEngine::lsp_binary_for(&path).is_none() {
+        if kod_lsp::binary_for_path(&path).is_none() {
             return Ok(ToolResult::Error(format!(
                 "no language server for {}",
                 path.display()
             )));
         }
-        if let Err(e) = ensure_started(&self.slot, &self.working_dir, &path).await {
-            return Ok(ToolResult::Error(e));
-        }
-        let locations = {
-            let mut guard = self.slot.lock().await;
-            let client = guard.as_mut().expect("ensure_started set Some");
-            let pos = kod_lsp::Position { line, column };
-            client
-                .references(&path, pos, include_declaration)
-                .await
-                .unwrap_or_default()
-        };
+        let locations = self
+            .manager
+            .references(&path, kod_lsp::Position { line, column }, include_declaration)
+            .await;
         let arr: Vec<Value> = locations
             .iter()
             .map(|loc| {
@@ -339,15 +296,11 @@ impl Tool for LspReferencesTool {
 /// `lsp_hover(path, line, column)`.
 pub struct LspHoverTool {
     pub definition: ToolDefinition,
-    slot: Arc<tokio::sync::Mutex<Option<kod_lsp::LspClient>>>,
-    working_dir: std::path::PathBuf,
+    manager: Arc<kod_lsp::LspManager>,
 }
 
 impl LspHoverTool {
-    pub fn new(
-        slot: Arc<tokio::sync::Mutex<Option<kod_lsp::LspClient>>>,
-        working_dir: std::path::PathBuf,
-    ) -> Self {
+    pub fn new(manager: Arc<kod_lsp::LspManager>) -> Self {
         Self {
             definition: ToolDefinition {
                 id: ToolId::new(),
@@ -369,8 +322,7 @@ impl LspHoverTool {
                 }),
                 permissions: lsp_permissions(),
             },
-            slot,
-            working_dir,
+            manager,
         }
     }
 }
@@ -396,21 +348,16 @@ impl Tool for LspHoverTool {
         }
         let path = context.resolve_path(path_arg)?;
         context.can_read(&path)?;
-        if crate::engine::KodEngine::lsp_binary_for(&path).is_none() {
+        if kod_lsp::binary_for_path(&path).is_none() {
             return Ok(ToolResult::Error(format!(
                 "no language server for {}",
                 path.display()
             )));
         }
-        if let Err(e) = ensure_started(&self.slot, &self.working_dir, &path).await {
-            return Ok(ToolResult::Error(e));
-        }
-        let hover = {
-            let mut guard = self.slot.lock().await;
-            let client = guard.as_mut().expect("ensure_started set Some");
-            let pos = kod_lsp::Position { line, column };
-            client.hover(&path, pos).await.ok()
-        };
+        let hover = self
+            .manager
+            .hover(&path, kod_lsp::Position { line, column })
+            .await;
         match hover {
             Some(h) => Ok(ToolResult::Success(serde_json::json!({
                 "text": h.text,
@@ -422,31 +369,3 @@ impl Tool for LspHoverTool {
         }
     }
 }
-
-/// Start the LSP client if none is running and the file's language has
-/// a server binary. The slot is shared with the engine, so the client
-/// started here is what `kod doctor` and any auto-diagnostics hook
-/// also see.
-async fn ensure_started(
-    slot: &Arc<tokio::sync::Mutex<Option<kod_lsp::LspClient>>>,
-    working_dir: &std::path::Path,
-    path: &std::path::Path,
-) -> std::result::Result<(), String> {
-    let mut guard = slot.lock().await;
-    if guard.is_some() {
-        return Ok(());
-    }
-    let Some(binary) = crate::engine::KodEngine::lsp_binary_for(path) else {
-        return Err(format!("no language server for {}", path.display()));
-    };
-    let mut client = kod_lsp::LspClient::start(binary, working_dir)
-        .await
-        .map_err(|e| e.to_string())?;
-    client
-        .initialize()
-        .await
-        .map_err(|e| e.to_string())?;
-    *guard = Some(client);
-    Ok(())
-}
-
