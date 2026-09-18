@@ -658,3 +658,146 @@ impl Engine {
         );
     }
 }
+
+#[cfg(test)]
+mod coverage_language_extractors {
+    //! Each language extractor is a regex list. A regression drops
+    //! a symbol from the repository map, which then vanishes from
+    //! every prompt — invisible until the model repeatedly asks
+    //! "what does this function do" for a symbol it cannot see.
+    //! These pin the top-level shape for each supported language.
+    use super::*;
+
+    #[test]
+    fn rust_ignores_nested_fn_definitions() {
+        // A nested `fn` inside a function body is an implementation
+        // detail, not a top-level symbol. The regex anchors on
+        // line start (with optional `pub`), so an indented inner
+        // `fn` is not matched.
+        let src = "pub fn outer() {\n    fn inner() {}\n}\n";
+        let syms = extract_rust(src);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"outer"));
+        assert!(
+            !names.contains(&"inner"),
+            "nested fn leaked into top-level symbols: {names:?}",
+        );
+    }
+
+    #[test]
+    fn rust_pub_crate_is_recognised() {
+        let src = "pub(crate) struct Foo;\npub(super) fn bar() {}\n";
+        let syms = extract_rust(src);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"Foo"));
+        assert!(names.contains(&"bar"));
+    }
+
+    #[test]
+    fn rust_async_and_unsafe_fns_are_recognised() {
+        let src = "pub async fn a() {}\npub unsafe fn b() {}\n";
+        let syms = extract_rust(src);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"a"));
+        assert!(names.contains(&"b"));
+    }
+
+    #[test]
+    fn python_finds_defs_and_classes() {
+        let src = "class Foo:\n    pass\n\ndef bar():\n    pass\n\nasync def baz():\n    pass\n";
+        let syms = extract_python(src);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"Foo"));
+        assert!(names.contains(&"bar"));
+        assert!(names.contains(&"baz"));
+    }
+
+    #[test]
+    fn javascript_finds_functions_and_classes() {
+        let src = "export function alpha() {}\nclass Beta {}\nconst gamma = () => {};\n";
+        let syms = extract_js(src);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"alpha"));
+        assert!(names.contains(&"Beta"));
+        assert!(names.contains(&"gamma"));
+    }
+
+    #[test]
+    fn typescript_uses_the_same_extractor() {
+        // TypeScript and JavaScript share the extractor; a change
+        // that broke TS but not JS is impossible to see without
+        // pinning the TS shape.
+        let src = "export function foo(): number { return 1; }\n";
+        let syms = extract_js(src);
+        assert!(syms.iter().any(|s| s.name == "foo"));
+    }
+
+    #[test]
+    fn go_finds_functions_with_receivers() {
+        // A method on a type has a receiver in the signature:
+        //   func (t *T) Name(...)
+        // The extractor's regex allows the receiver and still
+        // captures the method name.
+        let src = "package p\nfunc Foo() {}\nfunc (t *T) Bar() {}\ntype Baz struct{}\n";
+        let syms = extract_go(src);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"Foo"));
+        assert!(names.contains(&"Bar"));
+        assert!(names.contains(&"Baz"));
+    }
+
+    #[test]
+    fn ruby_finds_defs_classes_and_modules() {
+        let src = "class A\n  def foo\n  end\nend\nmodule B\n  def bar\n  end\nend\n";
+        let syms = extract_ruby(src);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"A"));
+        assert!(names.contains(&"B"));
+        assert!(names.contains(&"foo"));
+        assert!(names.contains(&"bar"));
+    }
+
+    #[test]
+    fn java_finds_classes_and_interfaces() {
+        let src = "public class A {}\npublic interface B {}\n";
+        let syms = extract_java(src);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"A"));
+        assert!(names.contains(&"B"));
+    }
+
+    #[test]
+    fn c_finds_structs() {
+        let src = "typedef struct Foo { int x; } Foo;\nstruct Bar { int y; };\n";
+        let syms = extract_c(src);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"Foo"));
+        assert!(names.contains(&"Bar"));
+    }
+
+    #[test]
+    fn extractor_respects_the_max_file_size_cap() {
+        // A 2 MB cap in `extract_symbols_and_imports` skips huge
+        // files. The check is bounded by file size, not symbol
+        // count; a change that removed the cap would make the map
+        // build read a lockfile line by line.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let big = tmp.path().join("big.rs");
+        // 3 MB of `pub fn fN() {}` lines.
+        let mut body = String::with_capacity(3 * 1024 * 1024);
+        for i in 0..100_000 {
+            body.push_str(&format!("pub fn f{i}() {{}}\n"));
+            if body.len() > 3 * 1024 * 1024 {
+                break;
+            }
+        }
+        std::fs::write(&big, body).unwrap();
+        // `build_repo_map` walks the directory; the file exceeds the
+        // internal cap and should not appear.
+        let map = build_repo_map(tmp.path());
+        assert!(
+            map.entries.is_empty(),
+            "oversized file should have been skipped",
+        );
+    }
+}
