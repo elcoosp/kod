@@ -5733,3 +5733,222 @@ mod update_tests {
         assert!(version_is_older("0.1.0", "v0.1.1"));
     }
 }
+
+#[cfg(test)]
+mod coverage_cli_helpers {
+    //! The command handlers in this file are thin wrappers over
+    //! helper functions that do the actual work. The helpers are
+    //! pure and easy to test in isolation; a regression in any of
+    //! them shows up as a subtly wrong message, a wrong shell
+    //! command, or a wrong skill filename — never as a crash.
+    use super::*;
+
+    #[test]
+    fn shell_quote_wraps_in_single_quotes() {
+        assert_eq!(shell_quote("abc"), "'abc'");
+        assert_eq!(shell_quote("a b"), "'a b'");
+        assert_eq!(shell_quote(""), "''");
+    }
+
+    #[test]
+    fn shell_quote_escapes_embedded_single_quotes() {
+        // The POSIX idiom `'\''` closes the quote, emits a literal
+        // quote, and reopens it. A regression that used double
+        // quotes would break on `$` and backtick expansion.
+        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+        assert_eq!(shell_quote("''"), "''\\'''\\'''");
+    }
+
+    #[test]
+    fn preview_takes_the_first_line_only() {
+        assert_eq!(preview("line one\nline two", 80), "line one");
+    }
+
+    #[test]
+    fn preview_returns_short_strings_unchanged() {
+        assert_eq!(preview("short", 10), "short");
+    }
+
+    #[test]
+    fn preview_appends_an_ellipsis_when_cut() {
+        let long = "a".repeat(100);
+        let out = preview(&long, 10);
+        assert!(out.ends_with('…'), "got: {out}");
+        // 10 chars + the ellipsis.
+        assert_eq!(out.chars().count(), 11);
+    }
+
+    #[test]
+    fn preview_handles_empty_input() {
+        assert_eq!(preview("", 10), "");
+    }
+
+    #[test]
+    fn to_title_case_capitalises_each_hyphen_segment() {
+        assert_eq!(to_title_case("rust-refactoring"), "Rust Refactoring");
+        assert_eq!(to_title_case("a-b-c"), "A B C");
+        assert_eq!(to_title_case("single"), "Single");
+    }
+
+    #[test]
+    fn to_title_case_of_empty_is_empty() {
+        assert_eq!(to_title_case(""), "");
+    }
+
+    #[test]
+    fn parse_kv_args_parses_numbers_and_booleans_as_json() {
+        let args = vec!["a=1".to_string(), "b=true".to_string()];
+        let v = parse_kv_args(&args).unwrap();
+        assert_eq!(v["a"], 1);
+        assert_eq!(v["b"], true);
+    }
+
+    #[test]
+    fn parse_kv_args_falls_back_to_strings() {
+        let args = vec!["a=hello".to_string(), "b=with spaces".to_string()];
+        let v = parse_kv_args(&args).unwrap();
+        assert_eq!(v["a"], "hello");
+        assert_eq!(v["b"], "with spaces");
+    }
+
+    #[test]
+    fn parse_kv_args_accepts_a_quoted_json_string() {
+        let args = vec!["a=\"quoted\"".to_string()];
+        let v = parse_kv_args(&args).unwrap();
+        assert_eq!(v["a"], "quoted");
+    }
+
+    #[test]
+    fn parse_kv_args_rejects_a_bare_token() {
+        let args = vec!["noequals".to_string()];
+        let err = parse_kv_args(&args).unwrap_err();
+        assert!(err.to_string().contains("key=value"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_kv_args_rejects_an_empty_key() {
+        let args = vec!["=value".to_string()];
+        let err = parse_kv_args(&args).unwrap_err();
+        assert!(err.to_string().contains("empty key"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_kv_args_of_empty_slice_is_an_empty_object() {
+        let v = parse_kv_args(&[]).unwrap();
+        assert!(v.as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn format_timestamp_ms_produces_a_readable_date() {
+        // The exact string depends on the local timezone; the
+        // contract is "a plausible date string", not a specific
+        // value. Anchor on the shape.
+        let s = format_timestamp_ms(1_700_000_000_000);
+        assert!(s.len() >= 10, "too short to be a date: {s}");
+        assert!(
+            s.contains('-') && s.contains(':'),
+            "not a plausible date: {s}",
+        );
+    }
+}
+
+#[cfg(test)]
+mod coverage_cli_actions {
+    //! `parse_preset` and `is_control_marker` are the two pure
+    //! helpers the CLI's policy paths depend on. A regression in
+    //! either is user-facing: a typo'd `--preset` silently falls
+    //! back to the default (bad — the flag exists to override) or
+    //! a `\0kod-*` marker leaks into the printed chat (a stray
+    //! control sequence in the user's terminal).
+    use super::*;
+
+    #[test]
+    fn parse_preset_returns_none_for_absent_flag() {
+        assert!(parse_preset(None).unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_preset_accepts_the_canonical_spellings() {
+        assert_eq!(
+            parse_preset(Some("read-only")).unwrap(),
+            Some(kod_config::Preset::ReadOnly),
+        );
+        assert_eq!(
+            parse_preset(Some("standard")).unwrap(),
+            Some(kod_config::Preset::Standard),
+        );
+        assert_eq!(
+            parse_preset(Some("yolo")).unwrap(),
+            Some(kod_config::Preset::Yolo),
+        );
+    }
+
+    #[test]
+    fn parse_preset_accepts_the_documented_aliases() {
+        assert_eq!(
+            parse_preset(Some("readonly")).unwrap(),
+            Some(kod_config::Preset::ReadOnly),
+        );
+        assert_eq!(
+            parse_preset(Some("default")).unwrap(),
+            Some(kod_config::Preset::Standard),
+        );
+        assert_eq!(
+            parse_preset(Some("unrestricted")).unwrap(),
+            Some(kod_config::Preset::Yolo),
+        );
+    }
+
+    #[test]
+    fn parse_preset_rejects_unknown_names_with_a_helpful_message() {
+        // A typo must fail loudly, not silently fall back. The
+        // error must name the valid presets so the user can fix
+        // the invocation without consulting the docs.
+        let err = parse_preset(Some("paranoid")).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("paranoid"), "should name the bad value: {msg}");
+        assert!(msg.contains("read-only"), "should list valid values: {msg}");
+        assert!(msg.contains("standard"), "should list valid values: {msg}");
+        assert!(msg.contains("yolo"), "should list valid values: {msg}");
+    }
+
+    #[test]
+    fn parse_preset_is_case_sensitive() {
+        // The canonical spelling is kebab-case. `Read-Only` is a
+        // typo; accepting it would silently broaden the accepted
+        // set and make a future rename a breaking change.
+        assert!(parse_preset(Some("Read-Only")).is_err());
+        assert!(parse_preset(Some("YOLO")).is_err());
+    }
+
+    #[test]
+    fn is_control_marker_recognizes_the_kod_prefix() {
+        // The engine's markers all start with a NUL byte. The
+        // predicate's contract is "this chunk is not user text".
+        assert!(is_control_marker("\0kod-tool:read_file\0"));
+        assert!(is_control_marker("\0kod-args:path=a\0"));
+        assert!(is_control_marker("\0kod-done:h\0s\07"));
+        assert!(is_control_marker("\0kod-thinking\0"));
+        assert!(is_control_marker("\0kod-approval:1:{}\0"));
+        assert!(is_control_marker("\0kod-question:1:{}\0"));
+    }
+
+    #[test]
+    fn is_control_marker_rejects_ordinary_text() {
+        assert!(!is_control_marker("hello world"));
+        assert!(!is_control_marker(""));
+        assert!(!is_control_marker("kod-tool:read_file"));
+        assert!(!is_control_marker("prefix \0kod"));
+    }
+
+    #[test]
+    fn is_control_marker_accepts_any_nul_prefixed_chunk() {
+        // The predicate is intentionally broad: any NUL-prefixed
+        // chunk is a marker. A regression that narrowed it to the
+        // specific prefixes would break the moment a new marker is
+        // added — the CLI would print the marker's bytes to the
+        // user's terminal.
+        assert!(is_control_marker("\0anything"));
+        assert!(is_control_marker("\0"));
+    }
+}
