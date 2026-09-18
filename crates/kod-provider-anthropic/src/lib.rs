@@ -29,5 +29,6 @@
 //! today.
 
 mod provider;
+pub mod wire;
 
 pub use provider::AnthropicProvider;
