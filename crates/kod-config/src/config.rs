@@ -605,3 +605,88 @@ mod tests {
         assert_eq!(defaults.llm.default_endpoint().model, "codellama:13b");
     }
 }
+
+#[cfg(test)]
+mod coverage_hooks_config {
+    //! `HooksConfig` is empty and disabled by default. A regression
+    //! that flipped `enabled` or seeded a default hook would make
+    //! every session shell out to a command the user never
+    //! configured.
+    use super::*;
+
+    #[test]
+    fn default_is_empty_and_disabled() {
+        let h = HooksConfig::default();
+        assert!(!h.enabled);
+        assert!(h.pre_tool_use.is_empty());
+        assert!(h.post_tool_use.is_empty());
+    }
+
+    #[test]
+    fn absent_section_in_toml_defaults_to_disabled() {
+        // A config.toml without a `[hooks]` block produces the
+        // default. The container-level `#[serde(default)]` is what
+        // makes that work.
+        let cfg: KodConfig = toml::from_str("").unwrap();
+        assert!(!cfg.hooks.enabled);
+        assert!(cfg.hooks.pre_tool_use.is_empty());
+        assert!(cfg.hooks.post_tool_use.is_empty());
+    }
+
+    #[test]
+    fn a_partial_hooks_block_keeps_the_missing_fields_at_their_defaults() {
+        let cfg: KodConfig = toml::from_str(
+            r#"
+            [hooks]
+            enabled = true
+            "#,
+        )
+        .unwrap();
+        assert!(cfg.hooks.enabled);
+        assert!(cfg.hooks.pre_tool_use.is_empty());
+        assert!(cfg.hooks.post_tool_use.is_empty());
+    }
+
+    #[test]
+    fn hook_maps_parse_from_toml() {
+        let cfg: KodConfig = toml::from_str(
+            r#"
+            [hooks]
+            enabled = true
+
+            [hooks.pre_tool_use]
+            write_file = "rustfmt {path}"
+
+            [hooks.post_tool_use]
+            "write_file.fmt" = "cargo check"
+            "#,
+        )
+        .unwrap();
+        assert!(cfg.hooks.enabled);
+        assert_eq!(
+            cfg.hooks.pre_tool_use.get("write_file").map(String::as_str),
+            Some("rustfmt {path}"),
+        );
+        assert_eq!(
+            cfg.hooks
+                .post_tool_use
+                .get("write_file.fmt")
+                .map(String::as_str),
+            Some("cargo check"),
+        );
+    }
+
+    #[test]
+    fn hooks_config_round_trips_through_toml() {
+        let mut h = HooksConfig::default();
+        h.enabled = true;
+        h.pre_tool_use.insert("write_file".into(), "fmt".into());
+        let s = toml::to_string(&h).unwrap();
+        let parsed: HooksConfig = toml::from_str(&s).unwrap();
+        assert!(parsed.enabled);
+        assert_eq!(
+            parsed.pre_tool_use.get("write_file").map(String::as_str),
+            Some("fmt"),
+        );
+    }
+}
