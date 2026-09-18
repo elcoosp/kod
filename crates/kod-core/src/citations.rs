@@ -124,10 +124,7 @@ pub fn extract_citations(text: &str) -> Vec<Citation> {
             continue;
         }
         let raw_path = format!("{path}.{ext}");
-        if out
-            .iter()
-            .any(|c| c.raw_path == raw_path && c.line == line)
-        {
+        if out.iter().any(|c| c.raw_path == raw_path && c.line == line) {
             continue;
         }
         out.push(Citation {
@@ -200,15 +197,10 @@ pub fn render_block(checks: &[CitationCheck]) -> String {
                     c.citation.line
                 ),
             ),
-            Verification::Unreadable => {
-                ("⚠", " (file could not be read)".to_string())
-            }
+            Verification::Unreadable => ("⚠", " (file could not be read)".to_string()),
         };
         let line_range = match c.citation.end_line {
-            Some(end) => format!(
-                "{}:{}-{}",
-                c.citation.raw_path, c.citation.line, end
-            ),
+            Some(end) => format!("{}:{}-{}", c.citation.raw_path, c.citation.line, end),
             None => format!("{}:{}", c.citation.raw_path, c.citation.line),
         };
         out.push_str(&format!("{marker} {line_range}{note}\n"));
