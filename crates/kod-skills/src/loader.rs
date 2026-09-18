@@ -303,3 +303,85 @@ Test.
         assert_eq!(count, 1);
     }
 }
+
+#[cfg(test)]
+mod coverage_multi_dir_loading {
+    //! `load_from_dirs` is the entry point the CLI and TUI use. The
+    //! shadowing contract — later directories override earlier ones
+    //! by name — is what makes "project-local overrides global"
+    //! work; a regression that flipped the order or appended rather
+    //! than inserted would silently serve the wrong skill to a
+    //! project that explicitly overrode it.
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write_skill(dir: &std::path::Path, name: &str, body: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join(format!("{name}.md")),
+            format!(
+                "---\nname: {name}\ndescription: desc for {name}\nversion: 1.0.0\ncategory: test\n---\n\n{body}\n",
+            ),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn load_from_dirs_merges_every_directory() {
+        let tmp = TempDir::new().unwrap();
+        let a = tmp.path().join("a");
+        let b = tmp.path().join("b");
+        write_skill(&a, "alpha", "A body");
+        write_skill(&b, "beta", "B body");
+        let skills = load_from_dirs(&[a, b]).await.unwrap();
+        assert_eq!(skills.len(), 2);
+        let names: Vec<&str> = skills.iter().map(|s| s.metadata.name.as_str()).collect();
+        assert!(names.contains(&"alpha"));
+        assert!(names.contains(&"beta"));
+    }
+
+    #[tokio::test]
+    async fn later_directory_shadows_earlier_by_name() {
+        let tmp = TempDir::new().unwrap();
+        let global = tmp.path().join("global");
+        let project = tmp.path().join("project");
+        write_skill(&global, "same", "GLOBAL BODY");
+        write_skill(&project, "same", "PROJECT BODY");
+        let skills = load_from_dirs(&[global, project]).await.unwrap();
+        assert_eq!(skills.len(), 1, "expected one surviving skill");
+        assert!(
+            skills[0].instructions.contains("PROJECT BODY"),
+            "project did not shadow global: {}",
+            skills[0].instructions,
+        );
+    }
+
+    #[tokio::test]
+    async fn nonexistent_directory_is_skipped_without_error() {
+        let tmp = TempDir::new().unwrap();
+        let real = tmp.path().join("real");
+        let missing = tmp.path().join("does-not-exist");
+        write_skill(&real, "alpha", "body");
+        let skills = load_from_dirs(&[real, missing]).await.unwrap();
+        assert_eq!(skills.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn empty_directory_list_returns_empty() {
+        let skills = load_from_dirs(&[]).await.unwrap();
+        assert!(skills.is_empty());
+    }
+
+    #[tokio::test]
+    async fn malformed_file_in_one_dir_does_not_hide_a_good_file_elsewhere() {
+        let tmp = TempDir::new().unwrap();
+        let bad = tmp.path().join("bad");
+        let good = tmp.path().join("good");
+        std::fs::create_dir_all(&bad).unwrap();
+        std::fs::write(bad.join("broken.md"), "no front matter at all").unwrap();
+        write_skill(&good, "good", "body");
+        let skills = load_from_dirs(&[bad, good]).await.unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].metadata.name, "good");
+    }
+}
