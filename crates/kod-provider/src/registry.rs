@@ -75,7 +75,9 @@ impl ProviderRegistry {
 
     /// The default model name configured for an endpoint.
     pub fn default_model(&self, endpoint: &str) -> Option<String> {
-        self.endpoints.get(endpoint).map(|e| e.default_model.clone())
+        self.endpoints
+            .get(endpoint)
+            .map(|e| e.default_model.clone())
     }
 
     /// The provider that speaks for `model_ref.endpoint`. The `model`
@@ -132,9 +134,9 @@ impl ProviderRegistry {
 mod tests {
     use super::*;
     use crate::request::PromptCacheKind;
-    use async_trait::async_trait;
     use crate::traits::GenerationOptions;
     use crate::{GenerationResponse, StreamChunk};
+    use async_trait::async_trait;
     use futures::Stream;
     use kod_types::ToolDefinition;
     use std::pin::Pin;
