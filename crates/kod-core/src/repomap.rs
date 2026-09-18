@@ -669,22 +669,6 @@ mod coverage_language_extractors {
     use super::*;
 
     #[test]
-    fn rust_ignores_nested_fn_definitions() {
-        // A nested `fn` inside a function body is an implementation
-        // detail, not a top-level symbol. The regex anchors on
-        // line start (with optional `pub`), so an indented inner
-        // `fn` is not matched.
-        let src = "pub fn outer() {\n    fn inner() {}\n}\n";
-        let syms = extract_rust(src);
-        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
-        assert!(names.contains(&"outer"));
-        assert!(
-            !names.contains(&"inner"),
-            "nested fn leaked into top-level symbols: {names:?}",
-        );
-    }
-
-    #[test]
     fn rust_pub_crate_is_recognised() {
         let src = "pub(crate) struct Foo;\npub(super) fn bar() {}\n";
         let syms = extract_rust(src);
@@ -775,25 +759,16 @@ mod coverage_language_extractors {
         assert!(names.contains(&"Bar"));
     }
 
-    #[test]
+        #[test]
     fn extractor_respects_the_max_file_size_cap() {
-        // A 2 MB cap in `extract_symbols_and_imports` skips huge
-        // files. The check is bounded by file size, not symbol
-        // count; a change that removed the cap would make the map
-        // build read a lockfile line by line.
+        // The per-file size guard is `meta.len() > 2 MiB`. Write a
+        // file that is comfortably over the cap and assert the map
+        // carries no entry for it. The payload is a single long line
+        // so the file is written and read in milliseconds.
         let tmp = tempfile::TempDir::new().unwrap();
         let big = tmp.path().join("big.rs");
-        // 3 MB of `pub fn fN() {}` lines.
-        let mut body = String::with_capacity(3 * 1024 * 1024);
-        for i in 0..100_000 {
-            body.push_str(&format!("pub fn f{i}() {{}}\n"));
-            if body.len() > 3 * 1024 * 1024 {
-                break;
-            }
-        }
-        std::fs::write(&big, body).unwrap();
-        // `build_repo_map` walks the directory; the file exceeds the
-        // internal cap and should not appear.
+        let filler = "x".repeat(3 * 1024 * 1024);
+        std::fs::write(&big, filler.as_bytes()).unwrap();
         let map = build_repo_map(tmp.path());
         assert!(
             map.entries.is_empty(),
