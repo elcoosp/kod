@@ -74,3 +74,133 @@ mod tests {
         assert_eq!(entry.id, deserialized.id);
     }
 }
+
+#[cfg(test)]
+mod coverage_memory_metadata {
+    //! `MemoryMetadata` gained `project_key` and
+    //! `last_retrieved_at_ms` after the initial release. Both are
+    //! `#[serde(default)]` so an existing redb store reads
+    //! cleanly; a regression that dropped either attribute would
+    //! make an existing install fail to open its own database.
+    use super::*;
+
+    #[test]
+    fn empty_json_yields_a_fully_default_metadata() {
+        let m: MemoryMetadata = serde_json::from_str("{}").unwrap();
+        assert!(m.session_id.is_none());
+        assert!(m.tags.is_empty());
+        assert!(m.embedding.is_none());
+        assert!(m.project_key.is_none());
+        assert!(m.last_retrieved_at_ms.is_none());
+    }
+
+    #[test]
+    fn project_key_round_trips_when_set() {
+        let m = MemoryMetadata {
+            project_key: Some("abc123".into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("abc123"));
+        let parsed: MemoryMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.project_key.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn last_retrieved_at_ms_round_trips_when_set() {
+        let m = MemoryMetadata {
+            last_retrieved_at_ms: Some(1_700_000_000_000),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let parsed: MemoryMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.last_retrieved_at_ms, Some(1_700_000_000_000));
+    }
+
+    #[test]
+    fn a_legacy_entry_parses_without_the_new_fields() {
+        // A pre-D2.5 entry has only session_id, tags, and embedding.
+        // The two new fields must default cleanly.
+        let legacy = r#"{"session_id":null,"tags":[],"embedding":null}"#;
+        let m: MemoryMetadata = serde_json::from_str(legacy).unwrap();
+        assert!(m.project_key.is_none());
+        assert!(m.last_retrieved_at_ms.is_none());
+    }
+
+    #[test]
+    fn memory_context_default_is_all_empty() {
+        let c = MemoryContext::default();
+        assert!(c.working_memory.is_empty());
+        assert!(c.long_term.is_empty());
+        assert_eq!(c.total_tokens, 0);
+    }
+}
+
+#[cfg(test)]
+mod coverage_memory_type {
+    //! `MemoryType` selects the storage layer a write goes to.
+    //! The three variants have distinct semantics — short-term
+    //! FIFO, long-term durable, episodic aging — and a regression
+    //! that swapped one for another in the serializer would send
+    //! a fact to the wrong layer.
+    use super::*;
+
+    #[test]
+    fn every_variant_round_trips_through_json() {
+        for v in [
+            MemoryType::ShortTerm,
+            MemoryType::LongTerm,
+            MemoryType::Episodic,
+        ] {
+            let json = serde_json::to_string(&v).unwrap();
+            let parsed: MemoryType = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, parsed, "roundtrip mismatch for {json}");
+        }
+    }
+
+    #[test]
+    fn variant_names_appear_in_the_serialized_form() {
+        // The default derive serializes as the variant name. A
+        // caller (a log viewer, a filter) relies on the exact
+        // spelling.
+        let json = serde_json::to_string(&MemoryType::Episodic).unwrap();
+        assert!(json.contains("Episodic"), "got: {json}");
+    }
+
+    #[test]
+    fn entry_with_every_field_populated_round_trips() {
+        let e = MemoryEntry {
+            id: MemoryId::new(),
+            memory_type: MemoryType::Episodic,
+            content: "café".to_string(),
+            timestamp: OffsetDateTime::now_utc(),
+            relevance: 0.85,
+            metadata: MemoryMetadata {
+                session_id: Some(SessionId::new()),
+                tags: vec!["a".into(), "b".into()],
+                embedding: Some(vec![0.1, 0.2, 0.3]),
+                project_key: Some("proj".into()),
+                last_retrieved_at_ms: Some(1_700_000_000_000),
+            },
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let parsed: MemoryEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.memory_type, e.memory_type);
+        assert_eq!(parsed.content, e.content);
+        assert_eq!(parsed.metadata.tags, e.metadata.tags);
+        assert_eq!(parsed.metadata.embedding, e.metadata.embedding);
+        assert_eq!(parsed.metadata.project_key, e.metadata.project_key);
+        assert_eq!(
+            parsed.metadata.last_retrieved_at_ms,
+            e.metadata.last_retrieved_at_ms,
+        );
+    }
+
+    #[test]
+    fn memory_context_default_is_all_empty() {
+        let c = MemoryContext::default();
+        assert!(c.working_memory.is_empty());
+        assert!(c.long_term.is_empty());
+        assert_eq!(c.total_tokens, 0);
+    }
+}
