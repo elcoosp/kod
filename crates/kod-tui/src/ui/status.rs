@@ -118,6 +118,14 @@ impl StatusWidget {
             if let Some(ms) = app.ttft_ms() {
                 spans.push(Span::styled(format!(" · ttft {ms}ms"), dim));
             }
+            // Streaming rate. Only appears once the second chunk
+            // lands (a single chunk has no measurable interval); the
+            // value decays toward 0 when the stream stalls, which is
+            // exactly the signal a user staring at a frozen spinner
+            // wants.
+            if let Some(rate) = app.tokens_per_sec() {
+                spans.push(Span::styled(format!(" · {:.0} tok/s", rate), dim));
+            }
             spans.push(Span::styled(" · Esc cancels", dim));
             Widget::render(Line::from(spans), area, buf);
             return;
