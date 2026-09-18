@@ -5952,3 +5952,720 @@ mod coverage_cli_actions {
         assert!(is_control_marker("\0"));
     }
 }
+
+/// Parse-surface coverage for the clap derive tree. Each test asserts
+/// that one documented invocation parses — this catches a silently
+/// renamed subcommand, a missing `#[arg]` on a required field, or a
+/// short/long alias that drifted. The negative cases are equally
+/// important: an unknown subcommand, missing required positionals, and
+/// bogus flags must all be rejected.
+#[cfg(test)]
+mod coverage_cli_parsing {
+    use super::*;
+
+    fn parse_ok(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).unwrap_or_else(|e| {
+            panic!("expected `{}` to parse, got error: {e}", args.join(" "))
+        })
+    }
+
+    fn parse_err(args: &[&str]) {
+        assert!(
+            Cli::try_parse_from(args).is_err(),
+            "expected `{}` to be rejected, but it parsed",
+            args.join(" ")
+        );
+    }
+
+    // ---- top-level shape -----------------------------------------------
+
+    #[test]
+    fn no_subcommand_is_accepted_and_leaves_command_none() {
+        // `kod` with no args must not error: `Cli.command` is
+        // `Option<Command>` and the binary chooses what to do.
+        let cli = parse_ok(&["kod"]);
+        assert!(cli.command.is_none());
+        assert!(!cli.verbose);
+    }
+
+    #[test]
+    fn verbose_flag_is_accepted_before_the_subcommand() {
+        let cli = parse_ok(&["kod", "--verbose", "test"]);
+        assert!(cli.verbose);
+        assert!(matches!(cli.command, Some(Command::Test)));
+        // Short form too.
+        let cli = parse_ok(&["kod", "-v", "test"]);
+        assert!(cli.verbose);
+    }
+
+    // ---- chat ----------------------------------------------------------
+
+    #[test]
+    fn chat_parses_with_no_flags() {
+        assert!(matches!(
+            parse_ok(&["kod", "chat"]).command,
+            Some(Command::Chat { .. })
+        ));
+    }
+
+    #[test]
+    fn chat_parses_every_documented_flag() {
+        let cli = parse_ok(&[
+            "kod", "chat",
+            "--model", "claude-sonnet-4-5",
+            "--system-prompt", "be terse",
+            "--sandbox",
+            "--preset", "yolo",
+            "--remote",
+            "--socket", "/tmp/kod.sock",
+        ]);
+        match cli.command {
+            Some(Command::Chat {
+                model,
+                system_prompt,
+                sandbox,
+                preset,
+                remote,
+                socket,
+            }) => {
+                assert_eq!(model.as_deref(), Some("claude-sonnet-4-5"));
+                assert_eq!(system_prompt.as_deref(), Some("be terse"));
+                assert!(sandbox);
+                assert_eq!(preset.as_deref(), Some("yolo"));
+                assert!(remote);
+                assert_eq!(
+                    socket.as_deref(),
+                    Some(std::path::Path::new("/tmp/kod.sock"))
+                );
+            }
+            other => panic!("expected Chat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn chat_model_short_alias_works() {
+        match parse_ok(&["kod", "chat", "-m", "gpt-5"]).command {
+            Some(Command::Chat { model, .. }) => {
+                assert_eq!(model.as_deref(), Some("gpt-5"));
+            }
+            _ => panic!("expected Chat"),
+        }
+    }
+
+    // ---- skills + skills actions --------------------------------------
+
+    #[test]
+    fn skills_with_no_action_parses() {
+        assert!(matches!(
+            parse_ok(&["kod", "skills"]).command,
+            Some(Command::Skills { action: None, json: false })
+        ));
+    }
+
+    #[test]
+    fn skills_json_flag_sits_on_the_parent() {
+        // `--json` is a flag on `Skills`, not on `List`; `kod skills
+        // --json` (no action) is the shape that exercises it
+        // independently of subcommand ordering.
+        assert!(matches!(
+            parse_ok(&["kod", "skills", "--json"]).command,
+            Some(Command::Skills { action: None, json: true })
+        ));
+    }
+
+    #[test]
+    fn skills_list_subcommand_parses() {
+        match parse_ok(&["kod", "skills", "list"]).command {
+            Some(Command::Skills { action: Some(SkillsAction::List), json }) => {
+                assert!(!json);
+            }
+            _ => panic!("expected Skills::List"),
+        }
+    }
+
+    #[test]
+    fn skills_new_takes_a_positional_name() {
+        match parse_ok(&["kod", "skills", "new", "my-skill"]).command {
+            Some(Command::Skills { action: Some(SkillsAction::New { name }), .. }) => {
+                assert_eq!(name, "my-skill");
+            }
+            _ => panic!("expected Skills::New"),
+        }
+    }
+
+    #[test]
+    fn skills_remove_takes_a_name_and_optional_yes_flag() {
+        match parse_ok(&["kod", "skills", "remove", "old", "--yes"]).command {
+            Some(Command::Skills {
+                action: Some(SkillsAction::Remove { name, yes }),
+                ..
+            }) => {
+                assert_eq!(name, "old");
+                assert!(yes);
+            }
+            _ => panic!("expected Skills::Remove"),
+        }
+        // `--yes` is optional; default false.
+        match parse_ok(&["kod", "skills", "remove", "old"]).command {
+            Some(Command::Skills {
+                action: Some(SkillsAction::Remove { yes, .. }),
+                ..
+            }) => assert!(!yes),
+            _ => panic!("expected Skills::Remove"),
+        }
+    }
+
+    #[test]
+    fn skills_export_takes_a_name_and_a_destination_path() {
+        match parse_ok(&["kod", "skills", "export", "my-skill", "/tmp/out.md"]).command {
+            Some(Command::Skills {
+                action: Some(SkillsAction::Export { name, dest, force }),
+                ..
+            }) => {
+                assert_eq!(name, "my-skill");
+                assert_eq!(dest, std::path::PathBuf::from("/tmp/out.md"));
+                assert!(!force);
+            }
+            _ => panic!("expected Skills::Export"),
+        }
+    }
+
+    #[test]
+    fn skills_rename_and_copy_take_two_positionals() {
+        match parse_ok(&["kod", "skills", "rename", "old", "new"]).command {
+            Some(Command::Skills {
+                action: Some(SkillsAction::Rename { name, new_name }),
+                ..
+            }) => {
+                assert_eq!(name, "old");
+                assert_eq!(new_name, "new");
+            }
+            _ => panic!("expected Skills::Rename"),
+        }
+        assert!(matches!(
+            parse_ok(&["kod", "skills", "copy", "a", "b"]).command,
+            Some(Command::Skills { action: Some(SkillsAction::Copy { .. }), .. })
+        ));
+    }
+
+    #[test]
+    fn skills_search_takes_a_query() {
+        match parse_ok(&["kod", "skills", "search", "rust"]).command {
+            Some(Command::Skills {
+                action: Some(SkillsAction::Search { query }),
+                ..
+            }) => assert_eq!(query, "rust"),
+            _ => panic!("expected Skills::Search"),
+        }
+    }
+
+    #[test]
+    fn skills_source_show_and_edit_take_a_name() {
+        for verb in ["source", "show", "edit"] {
+            assert!(
+                Cli::try_parse_from(["kod", "skills", verb, "x"]).is_ok(),
+                "`skills {verb} x` must parse"
+            );
+        }
+    }
+
+    // ---- config actions ------------------------------------------------
+
+    #[test]
+    fn config_with_no_action_parses() {
+        assert!(matches!(
+            parse_ok(&["kod", "config"]).command,
+            Some(Command::Config { action: None })
+        ));
+    }
+
+    #[test]
+    fn config_leaf_actions_parse() {
+        for verb in ["path", "validate", "show-merged", "show-raw", "edit"] {
+            assert!(
+                Cli::try_parse_from(["kod", "config", verb]).is_ok(),
+                "`config {verb}` must parse"
+            );
+        }
+    }
+
+    #[test]
+    fn config_export_defaults_path_to_dash() {
+        match parse_ok(&["kod", "config", "export"]).command {
+            Some(Command::Config {
+                action: Some(ConfigAction::Export { path, force }),
+            }) => {
+                assert_eq!(path, std::path::PathBuf::from("-"));
+                assert!(!force);
+            }
+            _ => panic!("expected Config::Export"),
+        }
+    }
+
+    #[test]
+    fn config_export_accepts_a_path_and_force() {
+        match parse_ok(&["kod", "config", "export", "/tmp/c.toml", "--force"]).command {
+            Some(Command::Config {
+                action: Some(ConfigAction::Export { path, force }),
+            }) => {
+                assert_eq!(path, std::path::PathBuf::from("/tmp/c.toml"));
+                assert!(force);
+            }
+            _ => panic!("expected Config::Export"),
+        }
+    }
+
+    #[test]
+    fn config_init_from_takes_a_profile_name() {
+        match parse_ok(&["kod", "config", "init-from", "ollama"]).command {
+            Some(Command::Config {
+                action: Some(ConfigAction::InitFrom { name }),
+            }) => assert_eq!(name, "ollama"),
+            _ => panic!("expected Config::InitFrom"),
+        }
+    }
+
+    // ---- top-level leaf commands --------------------------------------
+
+    #[test]
+    fn simple_leaf_commands_parse() {
+        for verb in [
+            "test",
+            "update",
+            "validate-skills",
+            "validate-skills-strict",
+        ] {
+            assert!(
+                Cli::try_parse_from(["kod", verb]).is_ok(),
+                "`{verb}` must parse"
+            );
+        }
+    }
+
+    // ---- swarm / agent -------------------------------------------------
+
+    #[test]
+    fn swarm_requires_goal() {
+        parse_err(&["kod", "swarm"]);
+        assert!(Cli::try_parse_from(["kod", "swarm", "-g", "refactor"]).is_ok());
+        assert!(Cli::try_parse_from(["kod", "swarm", "--goal", "refactor"]).is_ok());
+    }
+
+    #[test]
+    fn swarm_accepts_agents_and_model() {
+        match parse_ok(&["kod", "swarm", "-g", "x", "-n", "4", "-m", "gpt-5"]).command {
+            Some(Command::Swarm { agents, model, .. }) => {
+                assert_eq!(agents, Some(4));
+                assert_eq!(model.as_deref(), Some("gpt-5"));
+            }
+            _ => panic!("expected Swarm"),
+        }
+    }
+
+    #[test]
+    fn agent_requires_goal_and_defaults_name() {
+        parse_err(&["kod", "agent"]);
+        match parse_ok(&["kod", "agent", "-g", "fix bug"]).command {
+            Some(Command::Agent { name, goal, .. }) => {
+                assert_eq!(name, "kod-agent");
+                assert_eq!(goal, "fix bug");
+            }
+            _ => panic!("expected Agent"),
+        }
+        match parse_ok(&["kod", "agent", "-g", "fix", "--name", "alice"]).command {
+            Some(Command::Agent { name, .. }) => assert_eq!(name, "alice"),
+            _ => panic!("expected Agent"),
+        }
+    }
+
+    // ---- prompt / run --------------------------------------------------
+
+    #[test]
+    fn prompt_requires_a_positional() {
+        parse_err(&["kod", "prompt"]);
+        match parse_ok(&["kod", "prompt", "hello"]).command {
+            Some(Command::Prompt { prompt, .. }) => assert_eq!(prompt, "hello"),
+            _ => panic!("expected Prompt"),
+        }
+    }
+
+    #[test]
+    fn prompt_dash_is_a_valid_positional() {
+        // `-` is a literal positional (means "read from stdin"); it
+        // must not be parsed as a flag.
+        match parse_ok(&["kod", "prompt", "-"]).command {
+            Some(Command::Prompt { prompt, .. }) => assert_eq!(prompt, "-"),
+            _ => panic!("expected Prompt"),
+        }
+    }
+
+    #[test]
+    fn prompt_accepts_no_log_remote_and_socket() {
+        match parse_ok(&[
+            "kod", "prompt", "hi",
+            "--no-log", "--remote",
+            "--socket", "/tmp/k.sock",
+        ])
+        .command
+        {
+            Some(Command::Prompt { no_log, remote, socket, .. }) => {
+                assert!(no_log);
+                assert!(remote);
+                assert_eq!(socket.as_deref(), Some(std::path::Path::new("/tmp/k.sock")));
+            }
+            _ => panic!("expected Prompt"),
+        }
+    }
+
+    #[test]
+    fn run_takes_a_prompt_and_optional_model() {
+        parse_err(&["kod", "run"]);
+        assert!(Cli::try_parse_from(["kod", "run", "hi"]).is_ok());
+        assert!(Cli::try_parse_from(["kod", "run", "hi", "-m", "x"]).is_ok());
+    }
+
+    // ---- tui / doctor / init / models ---------------------------------
+
+    #[test]
+    fn tui_parses_no_flags_and_all_flags() {
+        assert!(Cli::try_parse_from(["kod", "tui"]).is_ok());
+        match parse_ok(&[
+            "kod", "tui",
+            "--model", "x",
+            "--no-resume",
+            "--sandbox",
+            "--preset", "read-only",
+        ])
+        .command
+        {
+            Some(Command::Tui { no_resume, sandbox, .. }) => {
+                assert!(no_resume);
+                assert!(sandbox);
+            }
+            _ => panic!("expected Tui"),
+        }
+    }
+
+    #[test]
+    fn doctor_json_and_fix_are_independent_flags() {
+        assert!(matches!(
+            parse_ok(&["kod", "doctor"]).command,
+            Some(Command::Doctor { json: false, fix: false })
+        ));
+        assert!(matches!(
+            parse_ok(&["kod", "doctor", "--json"]).command,
+            Some(Command::Doctor { json: true, .. })
+        ));
+        assert!(matches!(
+            parse_ok(&["kod", "doctor", "--fix"]).command,
+            Some(Command::Doctor { fix: true, .. })
+        ));
+    }
+
+    #[test]
+    fn init_force_flag_is_optional() {
+        assert!(matches!(
+            parse_ok(&["kod", "init"]).command,
+            Some(Command::Init { force: false })
+        ));
+        assert!(matches!(
+            parse_ok(&["kod", "init", "--force"]).command,
+            Some(Command::Init { force: true })
+        ));
+    }
+
+    #[test]
+    fn models_filter_is_optional_and_has_a_short_alias() {
+        assert!(matches!(
+            parse_ok(&["kod", "models"]).command,
+            Some(Command::Models { filter: None })
+        ));
+        match parse_ok(&["kod", "models", "-f", "qwen"]).command {
+            Some(Command::Models { filter }) => assert_eq!(filter.as_deref(), Some("qwen")),
+            _ => panic!("expected Models"),
+        }
+    }
+
+    // ---- map / replay --------------------------------------------------
+
+    #[test]
+    fn map_defaults_max_chars_to_16000() {
+        match parse_ok(&["kod", "map"]).command {
+            Some(Command::Map { max_chars }) => assert_eq!(max_chars, 16000),
+            _ => panic!("expected Map"),
+        }
+        match parse_ok(&["kod", "map", "--max-chars", "8000"]).command {
+            Some(Command::Map { max_chars }) => assert_eq!(max_chars, 8000),
+            _ => panic!("expected Map"),
+        }
+    }
+
+    #[test]
+    fn replay_requires_a_path_and_has_an_optional_execute_flag() {
+        parse_err(&["kod", "replay"]);
+        match parse_ok(&["kod", "replay", "/tmp/log.jsonl"]).command {
+            Some(Command::Replay { execute, .. }) => assert!(!execute),
+            _ => panic!("expected Replay"),
+        }
+        match parse_ok(&["kod", "replay", "/tmp/log.jsonl", "--execute"]).command {
+            Some(Command::Replay { execute, .. }) => assert!(execute),
+            _ => panic!("expected Replay"),
+        }
+    }
+
+    // ---- completions ---------------------------------------------------
+
+    #[test]
+    fn completions_accepts_every_supported_shell() {
+        for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
+            assert!(
+                Cli::try_parse_from(["kod", "completions", shell]).is_ok(),
+                "completions {shell} must parse"
+            );
+        }
+        // An unknown shell must be rejected by clap's value parser.
+        parse_err(&["kod", "completions", "tcsh"]);
+    }
+
+    // ---- serve / acp ---------------------------------------------------
+
+    #[test]
+    fn serve_stop_is_a_flag_and_socket_overrides_the_default() {
+        assert!(matches!(
+            parse_ok(&["kod", "serve"]).command,
+            Some(Command::Serve { stop: false, socket: None })
+        ));
+        match parse_ok(&["kod", "serve", "--stop", "--socket", "/tmp/k.sock"]).command {
+            Some(Command::Serve { stop, socket }) => {
+                assert!(stop);
+                assert_eq!(socket, Some(std::path::PathBuf::from("/tmp/k.sock")));
+            }
+            _ => panic!("expected Serve"),
+        }
+    }
+
+    #[test]
+    fn acp_preset_is_optional() {
+        assert!(matches!(
+            parse_ok(&["kod", "acp"]).command,
+            Some(Command::Acp { preset: None })
+        ));
+        match parse_ok(&["kod", "acp", "--preset", "standard"]).command {
+            Some(Command::Acp { preset }) => assert_eq!(preset.as_deref(), Some("standard")),
+            _ => panic!("expected Acp"),
+        }
+    }
+
+    // ---- hidden sandbox-exec ------------------------------------------
+
+    #[test]
+    fn sandbox_exec_is_hidden_but_still_parses() {
+        // Hidden from `--help` but reachable as `kod __sandbox-exec`.
+        // The command after `--` is captured verbatim.
+        match parse_ok(&[
+            "kod", "__sandbox-exec", "/tmp/profile.json",
+            "--", "echo", "hi",
+        ])
+        .command
+        {
+            Some(Command::SandboxExec { profile, cmd }) => {
+                assert_eq!(profile, std::path::PathBuf::from("/tmp/profile.json"));
+                assert_eq!(cmd, vec!["echo".to_string(), "hi".to_string()]);
+            }
+            _ => panic!("expected SandboxExec"),
+        }
+    }
+
+    // ---- negative cases ------------------------------------------------
+
+    #[test]
+    fn unknown_subcommand_is_rejected() {
+        parse_err(&["kod", "not-a-command"]);
+    }
+
+    #[test]
+    fn unknown_flag_is_rejected() {
+        parse_err(&["kod", "chat", "--no-such-flag"]);
+    }
+
+    #[test]
+    fn skills_new_without_a_name_is_rejected() {
+        parse_err(&["kod", "skills", "new"]);
+    }
+
+    #[test]
+    fn skills_export_without_a_destination_is_rejected() {
+        parse_err(&["kod", "skills", "export", "name-only"]);
+    }
+}
+
+/// Coverage for the pure rendering helpers that turn messages into
+/// session-log markdown and one-line previews. No I/O, no engine, no
+/// fixtures — the timestamp is frozen so output comparison is exact.
+#[cfg(test)]
+mod coverage_cli_render {
+    use super::*;
+    use chrono::{DateTime, Utc};
+    use kod_tui::app::Message;
+    use kod_types::{AgentId, MessageId, MessageRole};
+
+    fn frozen_ts() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2024-01-01T12:00:00Z")
+            .expect("frozen timestamp")
+            .with_timezone(&Utc)
+    }
+
+    fn msg(role: MessageRole, content: &str) -> Message {
+        Message {
+            id: MessageId::new(),
+            role,
+            content: content.to_string(),
+            timestamp: frozen_ts(),
+            metadata: Default::default(),
+            sequence: 0,
+        }
+    }
+
+    // ---- count_roles ---------------------------------------------------
+
+    #[test]
+    fn count_roles_of_empty_is_all_zero() {
+        assert_eq!(count_roles(&[]), (0, 0, 0));
+    }
+
+    #[test]
+    fn count_roles_partitions_user_assistant_other() {
+        let msgs = vec![
+            msg(MessageRole::User, "u1"),
+            msg(MessageRole::User, "u2"),
+            msg(MessageRole::Assistant, "a1"),
+            msg(MessageRole::System, "s1"),
+            msg(MessageRole::Tool, "t1"),
+            msg(MessageRole::Agent(AgentId::new()), "ag1"),
+        ];
+        assert_eq!(count_roles(&msgs), (2, 1, 3));
+    }
+
+    // ---- render_session_markdown ---------------------------------------
+
+    #[test]
+    fn render_session_markdown_empty_has_only_the_header() {
+        assert_eq!(render_session_markdown(&[]), "# KOD session\n\n");
+    }
+
+    #[test]
+    fn render_session_markdown_user_section_has_no_fence() {
+        let out = render_session_markdown(&[msg(MessageRole::User, "hello")]);
+        assert!(out.starts_with("# KOD session\n\n"));
+        assert!(out.contains("## you · 2024-01-01 12:00:00"));
+        assert!(out.contains("\n\nhello\n\n"));
+        assert!(!out.contains("```"));
+    }
+
+    #[test]
+    fn render_session_markdown_assistant_section_is_fenced() {
+        let out = render_session_markdown(&[msg(MessageRole::Assistant, "reply")]);
+        assert!(out.contains("## ai · 2024-01-01 12:00:00"));
+        assert!(out.contains("```\nreply\n```"));
+    }
+
+    #[test]
+    fn render_session_markdown_system_section_is_not_fenced() {
+        let out = render_session_markdown(&[msg(MessageRole::System, "sys")]);
+        assert!(out.contains("## sys · 2024-01-01 12:00:00"));
+        assert!(!out.contains("```"));
+    }
+
+    #[test]
+    fn render_session_markdown_tool_section_is_fenced() {
+        let out = render_session_markdown(&[msg(MessageRole::Tool, "tool out")]);
+        assert!(out.contains("## tool · 2024-01-01 12:00:00"));
+        assert!(out.contains("```\ntool out\n```"));
+    }
+
+    #[test]
+    fn render_session_markdown_agent_section_uses_the_id_and_is_unfenced() {
+        let out = render_session_markdown(&[msg(
+            MessageRole::Agent(AgentId::new()),
+            "planning",
+        )]);
+        // Assert on the prefix rather than the full id form so a
+        // future change to AgentId's Display does not silently break
+        // the assertion here.
+        assert!(out.contains("## agent "));
+        assert!(out.contains("planning"));
+        assert!(!out.contains("```"));
+    }
+
+    #[test]
+    fn render_session_markdown_appends_a_newline_before_the_closing_fence() {
+        // Fenced content that does not already end in `\n` gets one
+        // inserted before the closing fence; otherwise the fence
+        // marker sits on the same line as the last content char.
+        let out = render_session_markdown(&[msg(MessageRole::Assistant, "no trailing newline")]);
+        assert!(
+            out.contains("no trailing newline\n```"),
+            "expected a newline before the closing fence, got: {out:?}"
+        );
+    }
+
+    #[test]
+    fn render_session_markdown_preserves_content_that_already_ends_in_newline() {
+        // Content that already ends in `\n` must NOT get an extra
+        // newline; the fence sits directly under it, not two lines
+        // below.
+        let out = render_session_markdown(&[msg(MessageRole::Assistant, "with newline\n")]);
+        assert!(
+            out.contains("with newline\n```"),
+            "fence must follow the content's own newline, got: {out:?}"
+        );
+        assert!(
+            !out.contains("with newline\n\n```"),
+            "must not insert a second newline, got: {out:?}"
+        );
+    }
+
+    #[test]
+    fn render_session_markdown_orders_messages_as_given() {
+        let msgs = vec![
+            msg(MessageRole::User, "first"),
+            msg(MessageRole::Assistant, "second"),
+            msg(MessageRole::User, "third"),
+        ];
+        let out = render_session_markdown(&msgs);
+        let i_first = out.find("first").expect("first present");
+        let i_second = out.find("second").expect("second present");
+        let i_third = out.find("third").expect("third present");
+        assert!(i_first < i_second, "first must precede second");
+        assert!(i_second < i_third, "second must precede third");
+    }
+
+    // ---- preview_line --------------------------------------------------
+
+    #[test]
+    fn preview_line_returns_short_input_unchanged() {
+        assert_eq!(preview_line("hello", 10), "hello");
+    }
+
+    #[test]
+    fn preview_line_takes_only_the_first_line() {
+        assert_eq!(preview_line("first\nsecond", 20), "first");
+    }
+
+    #[test]
+    fn preview_line_truncates_with_an_ellipsis() {
+        assert_eq!(preview_line("abcdefghij", 4), "abcd…");
+    }
+
+    #[test]
+    fn preview_line_handles_empty_input() {
+        assert_eq!(preview_line("", 10), "");
+    }
+
+    #[test]
+    fn preview_line_counts_chars_not_bytes() {
+        // A multi-byte character is one char. The clip is char-aware:
+        // max=3 keeps three chars, not three bytes.
+        assert_eq!(preview_line("日本語です", 3), "日本語…");
+    }
+}
