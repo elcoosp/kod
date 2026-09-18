@@ -225,8 +225,8 @@ impl PolicyEngine {
         // `[tools] preset = "..."` field; today it is unused.
         let _ = cfg;
         effective.preset = match cli_preset {
-            Some(_) => Preset::Standard,
-            None => Preset::Yolo,
+            Some(p) => p,
+            None => Preset::Standard,
         };
         sources.insert("preset".to_string(), PolicySource::GlobalConfig);
 
