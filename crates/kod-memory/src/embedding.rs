@@ -83,9 +83,7 @@ impl OllamaEmbedder {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()
-            .map_err(|e| {
-                KodError::Config(format!("could not build embedder http client: {e}"))
-            })?;
+            .map_err(|e| KodError::Config(format!("could not build embedder http client: {e}")))?;
         Ok(Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             model: model.into(),
@@ -120,9 +118,7 @@ impl EmbeddingClient for OllamaEmbedder {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| {
-                    KodError::Network(format!("ollama embedder: POST {url}: {e}"))
-                })?;
+                .map_err(|e| KodError::Network(format!("ollama embedder: POST {url}: {e}")))?;
             let status = resp.status();
             if !status.is_success() {
                 let text = resp.text().await.unwrap_or_default();
@@ -130,16 +126,15 @@ impl EmbeddingClient for OllamaEmbedder {
                     "ollama embedder: {url} returned {status}: {text}"
                 )));
             }
-            let parsed: serde_json::Value = resp.json().await.map_err(|e| {
-                KodError::Provider(format!("ollama embedder: bad JSON: {e}"))
-            })?;
+            let parsed: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| KodError::Provider(format!("ollama embedder: bad JSON: {e}")))?;
             let embeddings = parsed
                 .get("embeddings")
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| {
-                    KodError::Provider(
-                        "ollama embedder: response missing 'embeddings'".to_string(),
-                    )
+                    KodError::Provider("ollama embedder: response missing 'embeddings'".to_string())
                 })?;
             for emb in embeddings {
                 let vec = parse_float_array(emb)?;
@@ -173,9 +168,7 @@ impl OpenAIEmbedder {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()
-            .map_err(|e| {
-                KodError::Config(format!("could not build embedder http client: {e}"))
-            })?;
+            .map_err(|e| KodError::Config(format!("could not build embedder http client: {e}")))?;
         Ok(Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             model: model.into(),
@@ -212,9 +205,7 @@ impl EmbeddingClient for OpenAIEmbedder {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| {
-                    KodError::Network(format!("openai embedder: POST {url}: {e}"))
-                })?;
+                .map_err(|e| KodError::Network(format!("openai embedder: POST {url}: {e}")))?;
             let status = resp.status();
             if !status.is_success() {
                 let text = resp.text().await.unwrap_or_default();
@@ -222,22 +213,19 @@ impl EmbeddingClient for OpenAIEmbedder {
                     "openai embedder: {url} returned {status}: {text}"
                 )));
             }
-            let parsed: serde_json::Value = resp.json().await.map_err(|e| {
-                KodError::Provider(format!("openai embedder: bad JSON: {e}"))
-            })?;
+            let parsed: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| KodError::Provider(format!("openai embedder: bad JSON: {e}")))?;
             let data = parsed
                 .get("data")
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| {
-                    KodError::Provider(
-                        "openai embedder: response missing 'data'".to_string(),
-                    )
+                    KodError::Provider("openai embedder: response missing 'data'".to_string())
                 })?;
             for entry in data {
                 let emb = entry.get("embedding").ok_or_else(|| {
-                    KodError::Provider(
-                        "openai embedder: entry missing 'embedding'".to_string(),
-                    )
+                    KodError::Provider("openai embedder: entry missing 'embedding'".to_string())
                 })?;
                 let vec = parse_float_array(emb)?;
                 if self.dims_cache.load(std::sync::atomic::Ordering::Relaxed) == 0 {
@@ -369,9 +357,9 @@ fn derive_ollama_root(base_url: &str) -> String {
 /// arrays (defensive — a server returning 10⁶ floats is a bug).
 fn parse_float_array(v: &serde_json::Value) -> Result<Vec<f32>> {
     const MAX_DIMS: usize = 8192;
-    let arr = v.as_array().ok_or_else(|| {
-        KodError::Provider("embedding: expected an array of numbers".to_string())
-    })?;
+    let arr = v
+        .as_array()
+        .ok_or_else(|| KodError::Provider("embedding: expected an array of numbers".to_string()))?;
     if arr.len() > MAX_DIMS {
         return Err(KodError::Provider(format!(
             "embedding: {} dims exceeds the {MAX_DIMS} cap",
@@ -380,9 +368,9 @@ fn parse_float_array(v: &serde_json::Value) -> Result<Vec<f32>> {
     }
     let mut out = Vec::with_capacity(arr.len());
     for x in arr {
-        let f = x.as_f64().ok_or_else(|| {
-            KodError::Provider(format!("embedding: non-numeric entry {x}"))
-        })?;
+        let f = x
+            .as_f64()
+            .ok_or_else(|| KodError::Provider(format!("embedding: non-numeric entry {x}")))?;
         out.push(f as f32);
     }
     Ok(out)
@@ -407,10 +395,7 @@ mod tests {
             .await
             .expect_err("NoEmbedder must always error");
         let msg = err.to_string();
-        assert!(
-            msg.contains("no embedding endpoint"),
-            "got: {msg}"
-        );
+        assert!(msg.contains("no embedding endpoint"), "got: {msg}");
         assert!(msg.contains("memory.embedding_endpoint"), "got: {msg}");
     }
 
@@ -443,8 +428,7 @@ mod tests {
 
     #[test]
     fn ollama_embedder_normalizes_trailing_slash() {
-        let e = OllamaEmbedder::new("http://localhost:11434/", "nomic-embed-text")
-            .unwrap();
+        let e = OllamaEmbedder::new("http://localhost:11434/", "nomic-embed-text").unwrap();
         // Fields are private; assert via name() as a light smoke test.
         assert_eq!(e.name(), "ollama");
     }
@@ -458,9 +442,11 @@ mod tests {
 
     #[test]
     fn from_config_ollama_derives_url_from_llm_base() {
-        let mut cfg = kod_config::MemoryConfig::default();
-        cfg.embedding_endpoint = kod_config::EmbeddingEndpoint::Ollama;
-        cfg.embedding_model = "nomic-embed-text".to_string();
+        let cfg = kod_config::MemoryConfig {
+            embedding_endpoint: kod_config::EmbeddingEndpoint::Ollama,
+            embedding_model: "nomic-embed-text".to_string(),
+            ..Default::default()
+        };
         let embedder = from_config(&cfg, Some("http://localhost:11434/v1"));
         let embedder = embedder.expect("ollama embedder should build");
         assert_eq!(embedder.name(), "ollama");
@@ -474,8 +460,10 @@ mod tests {
         // SAFETY: single-threaded test; the removal is restored below.
         unsafe { std::env::remove_var("OPENAI_API_KEY") };
 
-        let mut cfg = kod_config::MemoryConfig::default();
-        cfg.embedding_endpoint = kod_config::EmbeddingEndpoint::OpenAI;
+        let cfg = kod_config::MemoryConfig {
+            embedding_endpoint: kod_config::EmbeddingEndpoint::OpenAI,
+            ..Default::default()
+        };
         let embedder = from_config(&cfg, None);
         assert!(embedder.is_none(), "missing API key must yield None");
 
@@ -488,11 +476,23 @@ mod tests {
 
     #[test]
     fn derive_ollama_root_strips_v1_suffix() {
-        assert_eq!(derive_ollama_root("http://localhost:11434/v1"), "http://localhost:11434");
-        assert_eq!(derive_ollama_root("http://localhost:11434/v1/"), "http://localhost:11434");
-        assert_eq!(derive_ollama_root("http://localhost:11434"), "http://localhost:11434");
+        assert_eq!(
+            derive_ollama_root("http://localhost:11434/v1"),
+            "http://localhost:11434"
+        );
+        assert_eq!(
+            derive_ollama_root("http://localhost:11434/v1/"),
+            "http://localhost:11434"
+        );
+        assert_eq!(
+            derive_ollama_root("http://localhost:11434"),
+            "http://localhost:11434"
+        );
         // A path-carrying URL is left alone (proxy case).
-        assert_eq!(derive_ollama_root("https://proxy.example/ollama"), "https://proxy.example/ollama");
+        assert_eq!(
+            derive_ollama_root("https://proxy.example/ollama"),
+            "https://proxy.example/ollama"
+        );
     }
 
     #[test]
