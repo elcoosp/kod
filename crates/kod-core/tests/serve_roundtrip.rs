@@ -80,7 +80,17 @@ async fn shutdown_request_terminates_the_daemon() {
     );
 
     // Connect and send a shutdown request.
-    let stream = UnixStream::connect(&sock).await.expect("connect to daemon");
+    let __connect_deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(5);
+    let stream = loop {
+        match UnixStream::connect(&sock).await {
+            Ok(s) => break s,
+            Err(e) if std::time::Instant::now() < __connect_deadline => {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            Err(e) => panic!("connect to daemon: {e}"),
+        }
+    };
     let (read_half, mut write_half) = stream.into_split();
 
     let req = serde_json::json!({

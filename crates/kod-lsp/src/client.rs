@@ -753,7 +753,6 @@ mod tests {
     /// "document already open" and returns the *stale* diagnostics
     /// from step 2. The assertion on emptiness catches that.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore = "requires rust-analyzer on PATH; slow"]
     async fn test_rust_analyzer_did_change_clears_error() {
         if !binary_on_path("rust-analyzer") {
             eprintln!("skipping: rust-analyzer not on PATH");
@@ -772,10 +771,29 @@ mod tests {
         let good = "pub fn f() -> u32 { 42 }\n";
         std::fs::write(&src, bad).unwrap();
 
-        let mut client = LspClient::start("rust-analyzer", tmp.path())
-            .await
-            .expect("spawn rust-analyzer");
-        client.initialize().await.expect("initialize");
+        // Real runtime guard: `binary_on_path` only proves a file named
+        // `rust-analyzer` exists on `$PATH`. On a host where rustup is
+        // the source of that file, it is a shim that dies at
+        // `initialize` with "Unknown binary 'rust-analyzer' in official
+        // toolchain". The test then fails on a machine that does not
+        // actually have a working rust-analyzer — the exact failure the
+        // previous `#[ignore]` was hiding. Probing the handshake is
+        // the honest precondition.
+        let mut client = match LspClient::start("rust-analyzer", tmp.path()).await {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("skipping: could not spawn rust-analyzer: {e}");
+                return;
+            }
+        };
+        if let Err(e) = client.initialize().await {
+            eprintln!(
+                "skipping: rust-analyzer did not complete the LSP handshake ({e}); \
+                 the binary on PATH is likely a rustup shim with no real toolchain installed"
+            );
+            client.shutdown().await;
+            return;
+        }
 
         // First call: didOpen. Expect a diagnostic.
         let first = client

@@ -76,7 +76,6 @@ fn build_invocation(
 /// working directory must fail. `Require` + a primitive → the write is
 /// refused at the OS level; the shell reports a non-zero status.
 #[test]
-#[ignore = "requires a sandbox primitive; run explicitly with --ignored"]
 fn write_outside_workspace_is_refused() {
     let Some(backend) = has_backend() else {
         eprintln!(
@@ -88,7 +87,19 @@ fn write_outside_workspace_is_refused() {
     eprintln!("running with backend {backend:?}");
 
     let wd = tempdir();
-    let outside = std::env::temp_dir().join(format!("kod-sandbox-escape-{}", std::process::id(),));
+    // The escape target must live somewhere the *default* SandboxOpts
+    // profile does NOT allow. `SandboxOpts::default()` sets
+    // `tmp_rw = true`, and the Seatbelt profile (and its bwrap
+    // counterpart) deliberately allows writes under `$TMPDIR` — a
+    // build tool that stages through `/tmp` would otherwise break.
+    // Using `$TMPDIR` as the escape path therefore proved nothing:
+    // the write succeeded because it was allowed by design, not
+    // because the sandbox leaked. The escape target is now under
+    // `$HOME`, which the default profile leaves denied.
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let outside = home.join(format!("kod-sandbox-escape-{}", std::process::id()));
     let _ = std::fs::remove_file(&outside);
 
     // The command: try to create a file outside the sandbox. On a
@@ -123,7 +134,6 @@ fn write_outside_workspace_is_refused() {
 /// directory must succeed. This is the counterpart: the sandbox is not
 /// so tight that it blocks legitimate work.
 #[test]
-#[ignore = "requires a sandbox primitive; run explicitly with --ignored"]
 fn write_inside_workspace_succeeds() {
     let Some(backend) = has_backend() else {
         eprintln!("skipping: no sandbox primitive on this host.",);
@@ -159,7 +169,6 @@ fn write_inside_workspace_succeeds() {
 /// (`SandboxOpts::git_readonly = true`). A command that tries to write
 /// there must fail even though it is inside the working directory.
 #[test]
-#[ignore = "requires a sandbox primitive; run explicitly with --ignored"]
 fn write_to_dot_git_is_refused() {
     let Some(backend) = has_backend() else {
         eprintln!("skipping: no sandbox primitive on this host.");

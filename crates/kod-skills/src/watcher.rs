@@ -6,7 +6,6 @@
 use kod_error::{KodError, Result};
 use notify::{Event as NotifyEvent, RecommendedWatcher, RecursiveMode, Watcher as NotifyWatcher};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc as std_mpsc;
 use tokio::sync::mpsc;
 
 /// Events emitted by the skill watcher
@@ -27,13 +26,84 @@ pub struct SkillWatcher {
 impl SkillWatcher {
     /// Create a new watcher for the given directory
     pub fn new(watch_dir: &Path) -> Result<(Self, mpsc::Receiver<WatchEvent>)> {
-        let (event_tx, event_rx) = mpsc::channel(100);
-        let (notify_tx, notify_rx) = std_mpsc::channel();
+        // One bounded tokio channel carries events from the notify
+        // callback straight to the returned receiver. The previous
+        // design had two channels and a polling task in between: a
+        // `std_mpsc` channel fed by the callback, polled by a
+        // `tokio::spawn`ed task that woke every 100 ms and forwarded
+        // the event through `tokio::sync::mpsc::Sender::blocking_send`.
+        // That design had three defects, all of which the un-ignored
+        // tests surfaced:
+        //
+        //   1. `std::thread::sleep` inside a `tokio::spawn`ed task
+        //      blocks a tokio worker thread. On a `#[tokio::test]`
+        //      (current-thread runtime, one worker) it blocks the
+        //      *only* worker, so the test hung past the CI timeout.
+        //   2. `blocking_send` inside an async task is documented
+        //      as "may block the executor thread"; combined with the
+        //      100 ms sleep the polling loop consumed one worker.
+        //   3. `is_running.load()` was read at the top of the poll
+        //      loop, before the caller had a chance to call
+        //      `start()`. Under a runtime that scheduled the spawned
+        //      task before `start()` ran, the loop exited immediately
+        //      and no events were ever forwarded.
+        //
+        // The fix is a direct hand-off: the notify callback fires on
+        // notify's own thread (not a tokio worker), and calls
+        // `try_send` on the tokio sender — a non-blocking operation
+        // that is legal outside an async context. The consumer side
+        // is a plain `recv().await`. No intermediate channel, no
+        // polling loop, no worker thread held.
+        //
+        // # Canonical vs caller spelling
+        //
+        // On macOS, `recommended_watcher` (FSEvents) reports paths in
+        // *canonical* form: `/private/var/folders/...`. In the same
+        // process, `tempfile::TempDir` and `std::env::temp_dir()`
+        // return `/var/folders/...`, which is a symlink into
+        // `/private/var`. A naive `path.starts_with(&watch_dir)`
+        // check therefore rejects every event under a tempdir, which
+        // is exactly what the diagnostic showed: the raw notify
+        // stream fired three events, all dropped by the prefix check.
+        //
+        // We canonicalize `watch_dir` once for the prefix match, and
+        // then re-express the incoming path *back in the caller's
+        // spelling* before sending it on. That gives the caller a path
+        // they can compare directly against one they built — the
+        // property the watcher tests assert on.
+        let (tx, rx) = mpsc::channel(256);
+        let caller_dir = watch_dir.to_path_buf();
+        let canon_dir = std::fs::canonicalize(watch_dir).unwrap_or_else(|_| caller_dir.clone());
 
         let mut watcher = notify::recommended_watcher(
             move |res: std::result::Result<NotifyEvent, notify::Error>| {
-                if let Ok(event) = res {
-                    let _ = notify_tx.send(event);
+                let Ok(event) = res else { return };
+                for path in event.paths {
+                    // Only `.md` files: the skill watcher is not a
+                    // general-purpose file watcher.
+                    if path.extension().and_then(|s| s.to_str()) != Some("md") {
+                        continue;
+                    }
+                    // Match in canonical space so an event whose path
+                    // is spelled `/private/var/...` matches a
+                    // `watch_dir` spelled `/var/...`. A path that
+                    // escapes the watched tree is not our event.
+                    let Ok(rel) = path.strip_prefix(&canon_dir) else {
+                        continue;
+                    };
+                    // Re-express under the caller's spelling.
+                    let caller_path = caller_dir.join(rel);
+                    let watch_event = match event.kind {
+                        notify::EventKind::Create(_) => WatchEvent::Created(caller_path),
+                        notify::EventKind::Modify(_) => WatchEvent::Modified(caller_path),
+                        notify::EventKind::Remove(_) => WatchEvent::Removed(caller_path),
+                        _ => continue,
+                    };
+                    // `try_send` on a bounded channel: a full queue
+                    // drops the event rather than blocking the notify
+                    // thread. Capacity 256 is far above the burst an
+                    // editor produces on a save.
+                    let _ = tx.try_send(watch_event);
                 }
             },
         )
@@ -43,21 +113,14 @@ impl SkillWatcher {
             .watch(watch_dir, RecursiveMode::Recursive)
             .map_err(|e| KodError::Internal(format!("Failed to watch directory: {}", e)))?;
 
-        let watcher_handle = Self {
-            watcher,
-            watch_dir: watch_dir.to_path_buf(),
-            is_running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        };
-
-        // Spawn task to process events
-        let is_running = watcher_handle.is_running.clone();
-        let watch_dir_clone = watch_dir.to_path_buf();
-
-        tokio::spawn(async move {
-            process_notify_events(notify_rx, event_tx, watch_dir_clone, is_running);
-        });
-
-        Ok((watcher_handle, event_rx))
+        Ok((
+            Self {
+                watcher,
+                watch_dir: watch_dir.to_path_buf(),
+                is_running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            },
+            rx,
+        ))
     }
 
     /// Start the watcher (it's already watching, this is for state tracking)
@@ -84,52 +147,6 @@ impl SkillWatcher {
     /// Get the watched directory
     pub fn watch_dir(&self) -> &Path {
         &self.watch_dir
-    }
-}
-
-/// Process raw notify events and convert to our WatchEvent format
-fn process_notify_events(
-    receiver: std_mpsc::Receiver<NotifyEvent>,
-    sender: mpsc::Sender<WatchEvent>,
-    watch_dir: PathBuf,
-    is_running: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) {
-    while is_running.load(std::sync::atomic::Ordering::SeqCst) {
-        // Non-blocking check for events
-        match receiver.try_recv() {
-            Ok(event) => {
-                for path in event.paths {
-                    // Only process .md files
-                    if path.extension().and_then(|s| s.to_str()) != Some("md") {
-                        continue;
-                    }
-
-                    // Only process paths within our watch directory
-                    if !path.starts_with(&watch_dir) {
-                        continue;
-                    }
-
-                    // Convert notify event kind to our WatchEvent
-                    let watch_event = match event.kind {
-                        notify::EventKind::Create(_) => WatchEvent::Created(path),
-                        notify::EventKind::Modify(_) => WatchEvent::Modified(path),
-                        notify::EventKind::Remove(_) => WatchEvent::Removed(path),
-                        _ => continue,
-                    };
-
-                    // Try to send (ignore if receiver dropped)
-                    let _ = sender.blocking_send(watch_event);
-                }
-            }
-            Err(std_mpsc::TryRecvError::Empty) => {
-                // No events, sleep briefly
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            Err(std_mpsc::TryRecvError::Disconnected) => {
-                // Channel closed, exit
-                break;
-            }
-        }
     }
 }
 

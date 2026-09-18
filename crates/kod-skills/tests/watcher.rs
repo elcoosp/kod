@@ -1,157 +1,146 @@
-use kod_skills::loader::SkillLoader;
-use kod_skills::watcher::SkillWatcher;
-use kod_skills::watcher::WatchEvent;
-use std::fs;
-use std::time::Duration;
+//! Tests for the skill file watcher.
+//!
+//! macOS FSEvents reports an in-place rewrite (truncate + write) as
+//! `Created` rather than `Modified`, and delivers events with a
+//! configurable coalescing latency (about one second by default).
+//! Under load — a full `cargo nextest run --workspace`, for
+//! instance — the system-wide FSEvents service delays delivery
+//! further, so a test that asserts on the *first* event received
+//! flakes. These tests wait for the event they actually care about,
+//! skipping over platform-specific noise, and give the OS a
+//! generous settle window before the operation under test.
+
+use kod_skills::{SkillWatcher, WatchEvent};
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
+use tokio::sync::mpsc;
 
-async fn wait_for_event(
-    events: &mut tokio::sync::mpsc::Receiver<WatchEvent>,
-    timeout_secs: u64,
-) -> Result<WatchEvent, String> {
-    let timeout = Duration::from_secs(timeout_secs);
-    match tokio::time::timeout(timeout, events.recv()).await {
-        Ok(Some(event)) => Ok(event),
-        Ok(None) => Err("Channel closed".to_string()),
-        Err(_) => Err("Timeout waiting for event".to_string()),
-    }
-}
+/// Maximum time to wait for an event before failing.
+const EVENT_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// These tests require filesystem event notification which can be flaky
-/// depending on OS and filesystem. They are ignored by default.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "filesystem event notification can be flaky"]
-async fn test_hot_reload_on_file_change() {
-    let temp_dir = TempDir::new().unwrap();
-    let skills_dir = temp_dir.path().join("skills");
-    fs::create_dir_all(&skills_dir).unwrap();
+/// Time to wait after installing the watcher so the OS has a chance
+/// to deliver any events for files that already exist, and to
+/// establish the subscription itself. Two seconds covers the
+/// FSEvents default latency even on a loaded CI box.
+const WATCHER_SETTLE: Duration = Duration::from_millis(2_000);
 
-    // Create initial skill
-    let skill_file = skills_dir.join("test.md");
-    fs::write(
-        &skill_file,
-        r#"---
-name: test
-description: Original description
-version: 1.0.0
-category: test
----
-
-## Instructions
-
-Original.
-"#,
-    )
-    .unwrap();
-
-    // Set up loader and watcher
-    let mut loader = SkillLoader::new(&skills_dir);
-    loader.load_all().await.unwrap();
-
-    let (mut watcher, mut events) = SkillWatcher::new(&skills_dir).unwrap();
-    watcher.start().unwrap();
-
-    // Modify the file
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    fs::write(
-        &skill_file,
-        r#"---
-name: test
-description: Updated description
-version: 1.0.1
-category: test
----
-
-## Instructions
-
-Updated.
-"#,
-    )
-    .unwrap();
-
-    // Wait for watcher to detect change
-    let event = wait_for_event(&mut events, 5).await.unwrap();
-
-    match event {
-        WatchEvent::Modified(path) => {
-            assert_eq!(path, skill_file);
+/// Drain every queued event for `duration`, discarding what is
+/// found. Used to clear the initial burst so the wait below sees
+/// only events from the operation under test.
+async fn drain_for(rx: &mut mpsc::Receiver<WatchEvent>, duration: Duration) {
+    let deadline = Instant::now() + duration;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return;
         }
-        ref e => panic!("Expected Modified event, got {:?}", e),
+        match tokio::time::timeout(remaining, rx.recv()).await {
+            Ok(Some(_)) => continue,
+            Ok(None) | Err(_) => return,
+        }
     }
-
-    // Cleanup
-    watcher.stop().unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "filesystem event notification can be flaky"]
+/// Wait for an event matching `predicate`, skipping anything else.
+/// Returns `None` on timeout or channel close.
+async fn wait_for<F>(rx: &mut mpsc::Receiver<WatchEvent>, mut predicate: F) -> Option<WatchEvent>
+where
+    F: FnMut(&WatchEvent) -> bool,
+{
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+        match tokio::time::timeout(remaining, rx.recv()).await {
+            Ok(Some(ev)) => {
+                if predicate(&ev) {
+                    return Some(ev);
+                }
+            }
+            Ok(None) | Err(_) => return None,
+        }
+    }
+}
+
+#[tokio::test]
 async fn test_watch_new_file() {
-    let temp_dir = TempDir::new().unwrap();
-    let skills_dir = temp_dir.path().join("skills");
-    fs::create_dir_all(&skills_dir).unwrap();
+    let tmp = TempDir::new().unwrap();
+    let skills_dir = tmp.path().join("skills");
+    std::fs::create_dir_all(&skills_dir).unwrap();
 
-    let (mut watcher, mut events) = SkillWatcher::new(&skills_dir).unwrap();
-    watcher.start().unwrap();
+    let (_watcher, mut rx) = SkillWatcher::new(&skills_dir).unwrap();
+    tokio::time::sleep(WATCHER_SETTLE).await;
+    drain_for(&mut rx, Duration::from_millis(300)).await;
 
-    // Create a new skill file
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let new_skill = skills_dir.join("new.md");
-    fs::write(
-        &new_skill,
-        r#"---
-name: new
-description: New skill
-version: 1.0.0
-category: test
----
+    std::fs::write(skills_dir.join("brand_new.md"), "content\n").unwrap();
 
-## Instructions
-
-New.
-"#,
-    )
-    .unwrap();
-
-    // Wait for event
-    let event = wait_for_event(&mut events, 5).await.unwrap();
-
-    match event {
-        WatchEvent::Created(path) => {
-            assert_eq!(path, new_skill);
-        }
-        ref e => panic!("Expected Created event, got {:?}", e),
-    }
-
-    watcher.stop().unwrap();
+    let ev = wait_for(&mut rx, |e| {
+        matches!(e, WatchEvent::Created(p) if p.ends_with("brand_new.md"))
+    })
+    .await;
+    assert!(
+        ev.is_some(),
+        "expected a Created event for brand_new.md within {EVENT_TIMEOUT:?}"
+    );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "filesystem event notification can be flaky"]
+#[tokio::test]
+async fn test_hot_reload_on_file_change() {
+    let tmp = TempDir::new().unwrap();
+    let skills_dir = tmp.path().join("skills");
+    std::fs::create_dir_all(&skills_dir).unwrap();
+
+    // Create the file BEFORE installing the watcher. The initial
+    // write is not what this test measures; the modification below
+    // is. Anything the watcher reports for the pre-existing file is
+    // drained away.
+    let path = skills_dir.join("test.md");
+    std::fs::write(&path, "before\n").unwrap();
+
+    let (_watcher, mut rx) = SkillWatcher::new(&skills_dir).unwrap();
+    tokio::time::sleep(WATCHER_SETTLE).await;
+    drain_for(&mut rx, Duration::from_millis(300)).await;
+
+    std::fs::write(&path, "after\n").unwrap();
+
+    // Either Created or Modified is a valid "the file changed"
+    // signal: macOS FSEvents reports an in-place rewrite as Created
+    // (the truncate is treated as a fresh file), Linux inotify
+    // reports Modified. The consumer's reload path handles both.
+    let ev = wait_for(&mut rx, |e| match e {
+        WatchEvent::Created(p) | WatchEvent::Modified(p) => p.ends_with("test.md"),
+        _ => false,
+    })
+    .await;
+    assert!(
+        ev.is_some(),
+        "expected a change event for test.md within {EVENT_TIMEOUT:?}"
+    );
+}
+
+#[tokio::test]
 async fn test_watch_file_deletion() {
-    let temp_dir = TempDir::new().unwrap();
-    let skills_dir = temp_dir.path().join("skills");
-    fs::create_dir_all(&skills_dir).unwrap();
+    let tmp = TempDir::new().unwrap();
+    let skills_dir = tmp.path().join("skills");
+    std::fs::create_dir_all(&skills_dir).unwrap();
 
-    // Create a file to delete
-    let skill_file = skills_dir.join("to_delete.md");
-    fs::write(&skill_file, "test").unwrap();
+    let path = skills_dir.join("to_delete.md");
+    std::fs::write(&path, "content\n").unwrap();
 
-    let (mut watcher, mut events) = SkillWatcher::new(&skills_dir).unwrap();
-    watcher.start().unwrap();
+    let (_watcher, mut rx) = SkillWatcher::new(&skills_dir).unwrap();
+    tokio::time::sleep(WATCHER_SETTLE).await;
+    drain_for(&mut rx, Duration::from_millis(300)).await;
 
-    // Delete the file
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    fs::remove_file(&skill_file).unwrap();
+    std::fs::remove_file(&path).unwrap();
 
-    // Wait for event
-    let event = wait_for_event(&mut events, 5).await.unwrap();
-
-    match event {
-        WatchEvent::Removed(path) => {
-            assert_eq!(path, skill_file);
-        }
-        ref e => panic!("Expected Removed event, got {:?}", e),
-    }
-
-    watcher.stop().unwrap();
+    let ev = wait_for(&mut rx, |e| {
+        matches!(e, WatchEvent::Removed(p) if p.ends_with("to_delete.md"))
+    })
+    .await;
+    assert!(
+        ev.is_some(),
+        "expected a Removed event for to_delete.md within {EVENT_TIMEOUT:?}"
+    );
 }

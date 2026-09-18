@@ -77,7 +77,6 @@ fn simple_request(messages: Vec<ChatMessage>) -> CompletionRequest {
 }
 
 #[tokio::test]
-#[ignore = "live Anthropic API call; run with --ignored and ANTHROPIC_API_KEY set"]
 async fn live_complete_text() {
     let Some(key) = api_key_or_skip() else {
         return;
@@ -101,7 +100,6 @@ async fn live_complete_text() {
 }
 
 #[tokio::test]
-#[ignore = "live Anthropic API call; run with --ignored and ANTHROPIC_API_KEY set"]
 async fn live_stream_completion_text() {
     let Some(key) = api_key_or_skip() else {
         return;
@@ -129,7 +127,6 @@ async fn live_stream_completion_text() {
 }
 
 #[tokio::test]
-#[ignore = "live Anthropic API call; run with --ignored and ANTHROPIC_API_KEY set"]
 async fn live_tool_use_round_trip() {
     use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions};
     let Some(key) = api_key_or_skip() else {
@@ -166,7 +163,6 @@ async fn live_tool_use_round_trip() {
 }
 
 #[tokio::test]
-#[ignore = "live Anthropic API call; run with --ignored and ANTHROPIC_API_KEY set"]
 async fn live_cache_control_is_accepted_on_a_long_prompt() {
     // Two calls with the same cacheable prefix. The API accepts the
     // `cache_control` marker (a malformed one would 400), and on the

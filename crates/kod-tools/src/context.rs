@@ -366,7 +366,21 @@ fn bwrap_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
 
 #[cfg(target_os = "macos")]
 fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
-    let wd_str = wd.to_string_lossy().to_string();
+    // Seatbelt rules are matched against *canonical* paths. On macOS
+    // `/var` is a symlink to `/private/var`, and `tempfile::TempDir`
+    // returns paths in the `/var/folders/...` spelling, while
+    // `sandbox-exec` resolves rules under the `/private/var/...`
+    // spelling. A rule whose `subpath` argument is spelled the
+    // non-canonical way therefore never matches, which is how the
+    // `.git` deny silently became a no-op whenever the workspace
+    // lived under `$TMPDIR`: the allow matched, the deny did not.
+    //
+    // Canonicalizing once, here, is the fix. If `canonicalize` fails
+    // (a path that does not exist yet — a `.git` about to be created),
+    // fall back to the input; the caller's create then succeeds and
+    // the next invocation canonicalizes correctly.
+    let wd_canon = std::fs::canonicalize(wd).unwrap_or_else(|_| wd.to_path_buf());
+    let wd_str = wd_canon.to_string_lossy().to_string();
     // macOS sandbox profile: read access to the filesystem at large,
     // writes only under the working dir (with .git excluded when
     // git_readonly), temp dirs, and the standard macOS caches. Network
@@ -397,9 +411,17 @@ fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
         profile.push_str("(allow file-write* (subpath \"/tmp\") (subpath \"/private/tmp\") (subpath \"/private/var/folders\"))\n");
     }
     if opts.git_readonly {
+        // The `.git` path is canonicalized for the same reason the
+        // workspace is: `$TMPDIR` and `mkdtemp` return the
+        // `/var/folders/...` spelling while Seatbelt matches on
+        // `/private/var/folders/...`. Building the rule from the
+        // canonical workspace makes both halves of the same subtree
+        // share one spelling.
+        let git_canon = std::fs::canonicalize(wd.join(".git"))
+            .unwrap_or_else(|_| wd.join(".git"));
         profile.push_str(&format!(
-            "(deny file-write* (subpath \"{wd}/.git\"))\n",
-            wd = wd_str
+            "(deny file-write* (subpath \"{git}\"))\n",
+            git = git_canon.to_string_lossy(),
         ));
     }
 

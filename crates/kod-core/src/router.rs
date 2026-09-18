@@ -1813,7 +1813,6 @@ mod tests {
     /// vary across platforms and CI; run with `--ignored` when
     /// investigating hot reload locally.
     #[tokio::test]
-    #[ignore = "filesystem event notification can be flaky in CI"]
     async fn test_hot_reload_picks_up_new_skill() {
         use std::time::{Duration, Instant};
 
@@ -1857,7 +1856,7 @@ mod tests {
         // Poll for up to 2s for the matcher to include both. A fixed
         // sleep would be either too long on fast hosts or flaky on
         // loaded ones.
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(15);
         let mut names = router.loaded_skill_names().await;
         while Instant::now() < deadline && !names.contains(&"second".to_string()) {
             tokio::time::sleep(Duration::from_millis(50)).await;
