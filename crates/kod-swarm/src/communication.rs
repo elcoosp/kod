@@ -619,3 +619,82 @@ mod tests {
         assert!(recv.is_err(), "sender should not receive its own broadcast");
     }
 }
+
+#[cfg(test)]
+mod coverage_message_destination {
+    //! `MessageDestination` decides whether a message reaches one
+    //! agent, the whole swarm, or the coordinator. The three
+    //! variants must be distinguishable on the wire so a
+    //! `Broadcast` cannot be mistaken for a targeted message by a
+    //! filter that stringifies the destination.
+    use super::*;
+
+    #[test]
+    fn every_variant_round_trips_through_json() {
+        let agent = AgentId::new();
+        for d in [
+            MessageDestination::Agent(agent.clone()),
+            MessageDestination::Broadcast,
+            MessageDestination::Coordinator,
+        ] {
+            let json = serde_json::to_string(&d).unwrap();
+            let parsed: MessageDestination = serde_json::from_str(&json).unwrap();
+            assert_eq!(d, parsed, "roundtrip mismatch for {json}");
+        }
+    }
+
+    #[test]
+    fn variants_serialize_with_the_variant_name() {
+        // A downstream tool (a log viewer, a filter) that maps a
+        // JSON destination back to its kind depends on the exact
+        // spelling. Pin it.
+        assert_eq!(
+            serde_json::to_string(&MessageDestination::Broadcast).unwrap(),
+            "\"Broadcast\"",
+        );
+        assert_eq!(
+            serde_json::to_string(&MessageDestination::Coordinator).unwrap(),
+            "\"Coordinator\"",
+        );
+        let agent = AgentId::new();
+        let json = serde_json::to_string(&MessageDestination::Agent(agent.clone())).unwrap();
+        assert!(json.starts_with("{\"Agent\""), "got: {json}");
+        // The agent's UUID is what appears inside the tagged form.
+        assert!(
+            json.contains(&agent.as_uuid().to_string()),
+            "uuid missing from {json}",
+        );
+    }
+
+    #[test]
+    fn targeted_and_broadcast_destinations_are_not_equal() {
+        let agent = AgentId::new();
+        assert_ne!(
+            MessageDestination::Agent(agent.clone()),
+            MessageDestination::Broadcast,
+        );
+        assert_ne!(
+            MessageDestination::Agent(agent),
+            MessageDestination::Coordinator,
+        );
+        assert_ne!(
+            MessageDestination::Broadcast,
+            MessageDestination::Coordinator,
+        );
+    }
+
+    #[test]
+    fn the_alias_matches_the_original_type() {
+        // `MessageContent` is a re-export of `AgentMessageContent`
+        // for callers that prefer the shorter name. A regression
+        // that split them into two types would break the hub's
+        // internal consistency.
+        let c: MessageContent = MessageContent::ResultDelivery {
+            result: "ok".into(),
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let parsed: AgentMessageContent = serde_json::from_str(&json).unwrap();
+        let re = serde_json::to_string(&parsed).unwrap();
+        assert_eq!(json, re);
+    }
+}
