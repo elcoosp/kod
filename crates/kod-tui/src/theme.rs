@@ -198,3 +198,113 @@ mod tests {
         assert_eq!(parse_color("nope"), None);
     }
 }
+
+#[cfg(test)]
+mod coverage_color_parsing {
+    //! `parse_color` is the loader's only input parser. A silent
+    //! failure (returning `None` for a valid color) makes a theme
+    //! partially applied without a warning; a permissive one
+    //! (accepting malformed hex) sets a color the terminal cannot
+    //! render, and the widget falls back to a default that looks
+    //! like a bug.
+    use super::*;
+
+    #[test]
+    fn named_colors_parse_case_insensitively() {
+        for name in ["RED", "Red", "red"] {
+            assert_eq!(parse_color(name), Some(Color::Red), "{name}");
+        }
+        for name in ["CYAN", "Cyan", "cyan"] {
+            assert_eq!(parse_color(name), Some(Color::Cyan), "{name}");
+        }
+    }
+
+    #[test]
+    fn leading_and_trailing_whitespace_is_trimmed() {
+        assert_eq!(parse_color("  red  "), Some(Color::Red));
+        assert_eq!(parse_color("\tblue\n"), Some(Color::Blue));
+    }
+
+    #[test]
+    fn dark_gray_accepts_the_three_spellings() {
+        for name in ["darkgray", "dark-gray", "dark_grey"] {
+            assert_eq!(parse_color(name), Some(Color::DarkGray), "{name}");
+        }
+        // And the base gray.
+        for name in ["gray", "grey"] {
+            assert_eq!(parse_color(name), Some(Color::Gray), "{name}");
+        }
+    }
+
+    #[test]
+    fn hex_requires_exactly_six_digits() {
+        // A three-digit hex (#f00) is valid CSS but not accepted
+        // here; a regression that accepted it would silently set a
+        // color from the wrong digits.
+        assert_eq!(parse_color("#ff0000"), Some(Color::Rgb(255, 0, 0)));
+        assert_eq!(parse_color("#000000"), Some(Color::Rgb(0, 0, 0)));
+        assert_eq!(parse_color("#ffffff"), Some(Color::Rgb(255, 255, 255)));
+        // Wrong length.
+        assert_eq!(parse_color("#f00"), None);
+        assert_eq!(parse_color("#ff00001"), None);
+    }
+
+    #[test]
+    fn hex_requires_the_hash_prefix() {
+        assert_eq!(parse_color("ff0000"), None);
+    }
+
+    #[test]
+    fn hex_digits_must_be_valid_hex() {
+        assert_eq!(parse_color("#gg0000"), None);
+        assert_eq!(parse_color("#ff00zz"), None);
+        assert_eq!(parse_color("#ff 000"), None);
+    }
+
+    #[test]
+    fn hex_is_case_insensitive() {
+        assert_eq!(parse_color("#FF0000"), Some(Color::Rgb(255, 0, 0)));
+        assert_eq!(parse_color("#Ff0000"), Some(Color::Rgb(255, 0, 0)));
+    }
+
+    #[test]
+    fn unknown_name_returns_none() {
+        assert_eq!(parse_color("chartreuse"), None);
+        assert_eq!(parse_color(""), None);
+        assert_eq!(parse_color("reset"), None);
+    }
+
+    #[test]
+    fn from_name_is_light_on_exact_match_only() {
+        // The match is on the lowercased trimmed name, so " light"
+        // and "Light" both work but "lighting" does not.
+        assert_eq!(Theme::from_name("light").name, "light");
+        assert_eq!(Theme::from_name("LIGHT").name, "light");
+        assert_eq!(Theme::from_name("  light  ").name, "light");
+        assert_eq!(Theme::from_name("lighting").name, "dark");
+        assert_eq!(Theme::from_name("").name, "dark");
+    }
+
+    #[test]
+    fn light_and_dark_have_distinct_palettes() {
+        let d = Theme::dark();
+        let l = Theme::light();
+        assert_ne!(d.assistant, l.assistant);
+        assert_ne!(d.background, l.background);
+        assert_eq!(d.name, "dark");
+        assert_eq!(l.name, "light");
+    }
+
+    #[test]
+    fn default_theme_matches_dark() {
+        // The three ways to get "the default" — `Theme::dark()`,
+        // `Theme::from_name("dark")`, `Theme::from_name("unknown")`
+        // — must agree, or a typo in a config file silently produces
+        // a palette nothing else uses.
+        assert_eq!(Theme::dark().assistant, Theme::from_name("dark").assistant);
+        assert_eq!(
+            Theme::dark().assistant,
+            Theme::from_name("no-such-theme").assistant,
+        );
+    }
+}
