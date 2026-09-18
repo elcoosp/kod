@@ -66,7 +66,6 @@ pub struct MemoryConfig {
     pub scope: MemoryScope,
 
     // ---- D2-B1 embedding fields ----
-
     /// Where embeddings come from. Default `None`.
     pub embedding_endpoint: EmbeddingEndpoint,
     /// Explicit embedder URL. When `None`, a caller (the CLI/TUI)
@@ -77,7 +76,6 @@ pub struct MemoryConfig {
     pub embedding_api_key_env: Option<String>,
 
     // ---- D2-B3b extraction fields ----
-
     /// When true, `KodEngine::shutdown` runs a one-shot extraction
     /// pass over the session transcript: a cheap LLM call pulls
     /// durable facts out of the transcript and stores them as
