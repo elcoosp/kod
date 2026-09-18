@@ -703,3 +703,249 @@ mod tests {
         assert!(report.has_failures());
     }
 }
+
+/// Coverage for the pieces of `run_diagnostics` and `DiagnosticReport`
+/// that the existing tests do not reach: the JSON shape, the recursive
+/// `.md` walker, and the six checks (memory, sandbox, lsp-detected,
+/// mcp, serve, swarm.routing, git, network) that only the full-report
+/// tests exercised indirectly.
+#[cfg(test)]
+mod coverage_doctor {
+    use super::*;
+
+    fn find<'a>(report: &'a DiagnosticReport, name: &str) -> &'a Check {
+        report
+            .checks
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("check {name:?} missing from report"))
+    }
+
+    // ---- DiagnosticReport::to_json -------------------------------------
+
+    #[test]
+    fn to_json_empty_report_is_ok_and_has_empty_checks() {
+        let report = DiagnosticReport::default();
+        let v = report.to_json();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["has_failures"], false);
+        assert!(v["checks"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn to_json_serializes_each_status_with_the_documented_word() {
+        let mut report = DiagnosticReport::default();
+        report.push("a", CheckStatus::Ok, "fine");
+        report.push("b", CheckStatus::Warn, "meh");
+        report.push("c", CheckStatus::Fail, "broken");
+        let v = report.to_json();
+        let checks = v["checks"].as_array().unwrap();
+        assert_eq!(checks[0]["status"], "ok");
+        assert_eq!(checks[1]["status"], "warn");
+        assert_eq!(checks[2]["status"], "fail");
+    }
+
+    #[test]
+    fn to_json_ok_and_has_failures_are_opposites() {
+        // The CLI's exit code keys on `ok`. A regression that set
+        // them independently could report `ok: false, has_failures:
+        // false`, which no consumer would know how to read.
+        let mut report = DiagnosticReport::default();
+        report.push("a", CheckStatus::Ok, "fine");
+        assert_eq!(report.to_json()["ok"], true);
+        assert_eq!(report.to_json()["has_failures"], false);
+
+        report.push("b", CheckStatus::Fail, "broken");
+        assert_eq!(report.to_json()["ok"], false);
+        assert_eq!(report.to_json()["has_failures"], true);
+    }
+
+    #[test]
+    fn to_json_keeps_name_and_message_verbatim() {
+        let mut report = DiagnosticReport::default();
+        report.push("check.with.dots", CheckStatus::Ok, "a message with spaces");
+        let v = report.to_json();
+        let checks = v["checks"].as_array().unwrap();
+        assert_eq!(checks[0]["name"], "check.with.dots");
+        assert_eq!(checks[0]["message"], "a message with spaces");
+    }
+
+    #[test]
+    fn report_push_accepts_string_and_str() {
+        let mut report = DiagnosticReport::default();
+        report.push("a", CheckStatus::Ok, "static str");
+        report.push("b", CheckStatus::Ok, String::from("owned string"));
+        assert_eq!(report.checks.len(), 2);
+    }
+
+    // ---- collect_md_files ----------------------------------------------
+
+    #[test]
+    fn collect_md_files_on_a_missing_root_is_empty() {
+        let out = collect_md_files(std::path::Path::new("/no/such/dir/kod-doctor-xyz"));
+        assert!(out.is_empty(), "a missing root must yield nothing");
+    }
+
+    #[test]
+    fn collect_md_files_finds_top_level_markdown() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a.md"), "x").unwrap();
+        std::fs::write(tmp.path().join("b.txt"), "x").unwrap();
+        let out = collect_md_files(tmp.path());
+        assert_eq!(out.len(), 1, "only .md files, got: {out:?}");
+        assert!(out[0].ends_with("a.md"));
+    }
+
+    #[test]
+    fn collect_md_files_recurses_into_subdirectories() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir(tmp.path().join("nested")).unwrap();
+        std::fs::create_dir(tmp.path().join("nested").join("deeper")).unwrap();
+        std::fs::write(tmp.path().join("top.md"), "x").unwrap();
+        std::fs::write(tmp.path().join("nested").join("mid.md"), "x").unwrap();
+        std::fs::write(tmp.path().join("nested").join("deeper").join("deep.md"), "x").unwrap();
+        let out = collect_md_files(tmp.path());
+        assert_eq!(out.len(), 3, "must find all three, got: {out:?}");
+    }
+
+    #[test]
+    fn collect_md_files_accepts_a_nested_directory_as_root() {
+        // The caller may hand a subdirectory; the walk is rooted
+        // there and does not ascend.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir(tmp.path().join("only")).unwrap();
+        std::fs::write(tmp.path().join("only").join("x.md"), "x").unwrap();
+        let out = collect_md_files(&tmp.path().join("only"));
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn collect_md_files_ignores_files_with_other_extensions() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        for name in ["a.md", "b.txt", "c.rs", "d", "e.markdown"] {
+            std::fs::write(tmp.path().join(name), "x").unwrap();
+        }
+        let out = collect_md_files(tmp.path());
+        assert_eq!(out.len(), 1, "only `.md` counts: {out:?}");
+    }
+
+    // ---- checks the existing tests did not reach -----------------------
+
+    #[test]
+    fn memory_check_is_ok_or_warn() {
+        // Either the parent directory exists (Ok) or it will be
+        // created on first write (Warn). Never Fail on a default
+        // config — that would gate every CI run on a missing
+        // ~/.kod directory.
+        let report = run_diagnostics(&KodConfig::default());
+        let check = find(&report, "memory");
+        assert!(
+            matches!(check.status, CheckStatus::Ok | CheckStatus::Warn),
+            "memory check must not fail on a default config: {:?}",
+            check.status,
+        );
+    }
+
+    #[test]
+    fn sandbox_check_is_informational() {
+        // "Sandbox not available" must be a Warn, never a Fail —
+        // a machine without bubblewrap or sandbox-exec still runs
+        // kod, just without the sandbox.
+        let report = run_diagnostics(&KodConfig::default());
+        let check = find(&report, "sandbox");
+        assert!(
+            matches!(check.status, CheckStatus::Ok | CheckStatus::Warn),
+            "sandbox check must never fail: {:?} ({})",
+            check.status,
+            check.message,
+        );
+    }
+
+    #[test]
+    fn lsp_check_is_informational() {
+        // Same rule: no language server on PATH is a valid state
+        // (the diagnostics hook reports "no server" cleanly).
+        let report = run_diagnostics(&KodConfig::default());
+        let check = find(&report, "lsp");
+        assert_eq!(check.status, CheckStatus::Ok);
+        // The message names either the servers found or the "none
+        // on PATH" hint. Either is fine; the point is that the
+        // check always succeeds.
+        assert!(!check.message.is_empty());
+    }
+
+    #[test]
+    fn mcp_check_with_no_servers_is_ok() {
+        let report = run_diagnostics(&KodConfig::default());
+        let check = find(&report, "mcp");
+        assert_eq!(check.status, CheckStatus::Ok);
+        assert!(
+            check.message.contains("no MCP servers configured"),
+            "got: {}",
+            check.message,
+        );
+    }
+
+    #[test]
+    fn serve_check_is_always_ok() {
+        // Whether or not a daemon is running is informational. A
+        // missing daemon is a normal state for a user who never
+        // uses `--remote`.
+        let report = run_diagnostics(&KodConfig::default());
+        let check = find(&report, "serve");
+        assert_eq!(check.status, CheckStatus::Ok);
+    }
+
+    #[test]
+    fn swarm_routing_default_reports_no_capability_routes() {
+        let report = run_diagnostics(&KodConfig::default());
+        let check = find(&report, "swarm.routing");
+        assert_eq!(check.status, CheckStatus::Ok);
+        assert!(
+            check.message.contains("no per-capability routing"),
+            "got: {}",
+            check.message,
+        );
+    }
+
+    #[test]
+    fn git_check_is_ok_or_warn() {
+        // This machine has git on PATH (we run cargo from a git
+        // repo), so the check is Ok. On a machine without git it
+        // would be Warn. Never Fail.
+        let report = run_diagnostics(&KodConfig::default());
+        let check = find(&report, "git");
+        assert!(
+            matches!(check.status, CheckStatus::Ok | CheckStatus::Warn),
+            "git check must not fail: {:?}",
+            check.status,
+        );
+    }
+
+    #[test]
+    fn network_check_names_the_current_setting() {
+        let report = run_diagnostics(&KodConfig::default());
+        let check = find(&report, "llm.network_access");
+        assert_eq!(check.status, CheckStatus::Ok);
+        assert!(
+            check.message.starts_with("enabled") || check.message.starts_with("disabled"),
+            "message must state the current setting: {}",
+            check.message,
+        );
+    }
+
+    #[test]
+    fn every_check_has_a_non_empty_name_and_message() {
+        // The JSON consumer filters by name and prints the message;
+        // an empty either makes the row useless.
+        let report = run_diagnostics(&KodConfig::default());
+        for check in &report.checks {
+            assert!(!check.name.is_empty(), "empty check name: {check:?}");
+            assert!(
+                !check.message.is_empty(),
+                "empty message for check {:?}",
+                check.name,
+            );
+        }
+    }
+}

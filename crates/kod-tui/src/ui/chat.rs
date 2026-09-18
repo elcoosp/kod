@@ -569,3 +569,337 @@ impl Default for ChatWidget {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod coverage_chat_widget {
+    //! Coverage for the chat widget's helpers and render branches.
+    //! Uses `Buffer::empty` + the widget's public `render` (or the
+    //! private helpers, which a same-file test module can reach).
+    //! No terminal, no I/O.
+    use super::*;
+    use crate::app::Message;
+    use chrono::Utc;
+    use kod_types::{MessageId, MessageRole};
+
+    fn buffer_text(buf: &Buffer) -> String {
+        buf.content().iter().map(|c| c.symbol().to_string()).collect()
+    }
+
+    fn push_message(app: &mut KodApp, role: MessageRole, content: &str) {
+        app.add_message(Message {
+            id: MessageId::new(),
+            role,
+            content: content.to_string(),
+            timestamp: Utc::now(),
+            metadata: Default::default(),
+            sequence: 0,
+        });
+    }
+
+    fn render(app: &KodApp, w: u16, h: u16) -> String {
+        let area = ratatui::layout::Rect::new(0, 0, w, h);
+        let mut buf = Buffer::empty(area);
+        ChatWidget::new().render(app, area, &mut buf);
+        buffer_text(&buf)
+    }
+
+    // ---- wrap_text -----------------------------------------------------
+
+    #[test]
+    fn wrap_text_splits_on_newlines_verbatim() {
+        let rows = ChatWidget::wrap_text("line one\nline two", 80);
+        assert_eq!(rows, vec!["line one", "line two"]);
+    }
+
+    #[test]
+    fn wrap_text_breaks_long_rows_at_the_width() {
+        let rows = ChatWidget::wrap_text("abcdefghij", 4);
+        assert_eq!(rows, vec!["abcd", "efgh", "ij"]);
+    }
+
+    #[test]
+    fn wrap_text_handles_empty_input() {
+        assert_eq!(ChatWidget::wrap_text("", 10), vec![""]);
+    }
+
+    #[test]
+    fn wrap_text_zero_width_is_clamped_to_one() {
+        // `width.max(1)` at the top of `wrap_text` prevents an
+        // infinite loop. Each char occupies its own row.
+        let rows = ChatWidget::wrap_text("abc", 0);
+        assert_eq!(rows, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn wrap_text_multibyte_counts_display_cells_not_bytes() {
+        // CJK characters occupy two display cells each (per
+        // `unicode-width`). At width 4 exactly two fit per row —
+        // not four (which would be a byte-count bug) and not one
+        // (which would be a char-count bug). Three bytes per char,
+        // so a byte counter would put only one char per row; a raw
+        // char counter would put four.
+        let rows = ChatWidget::wrap_text("日本語です", 4);
+        assert_eq!(rows, vec!["日本", "語で", "す"]);
+    }
+
+    // ---- render: empty state -------------------------------------------
+
+    #[test]
+    fn render_empty_chat_shows_the_placeholder() {
+        let app = KodApp::new();
+        let text = render(&app, 80, 10);
+        assert!(
+            text.contains("No messages yet"),
+            "placeholder missing: {text}",
+        );
+        assert!(
+            text.contains("/help"),
+            "placeholder must point at /help: {text}",
+        );
+    }
+
+    #[test]
+    fn render_with_one_user_message_shows_the_content() {
+        let mut app = KodApp::new();
+        push_message(&mut app, MessageRole::User, "hello world");
+        let text = render(&app, 80, 10);
+        assert!(text.contains("hello world"), "message body: {text}");
+        assert!(text.contains("you"), "user prefix: {text}");
+    }
+
+    #[test]
+    fn render_with_a_system_message_shows_the_sys_prefix() {
+        let mut app = KodApp::new();
+        push_message(&mut app, MessageRole::System, "a system note");
+        let text = render(&app, 80, 10);
+        assert!(text.contains("a system note"));
+        assert!(text.contains("sys"));
+    }
+
+    #[test]
+    fn render_with_an_agent_message_shows_the_agent_prefix() {
+        let mut app = KodApp::new();
+        push_message(&mut app, MessageRole::Agent(kod_types::AgentId::new()), "agent reply");
+        let text = render(&app, 80, 10);
+        assert!(text.contains("agent reply"));
+        assert!(text.contains("agent"));
+    }
+
+    #[test]
+    fn render_assistant_message_includes_the_ai_frame() {
+        let mut app = KodApp::new();
+        push_message(&mut app, MessageRole::Assistant, "the reply");
+        let text = render(&app, 80, 20);
+        assert!(text.contains("ai"), "ai title: {text}");
+        // The rounded border chars prove the assistant block, not
+        // the plain-text path, rendered.
+        assert!(text.contains("╭") || text.contains("─"), "frame: {text}");
+    }
+
+    #[test]
+    fn render_assistant_message_on_a_narrow_viewport_falls_back_to_plain() {
+        // width < 20 skips the frame and emits "ai " as a plain
+        // prefix. This is the "no room for a border" branch.
+        let mut app = KodApp::new();
+        push_message(&mut app, MessageRole::Assistant, "hi");
+        let text = render(&app, 12, 20);
+        assert!(text.contains("ai"), "plain fallback title: {text}");
+    }
+
+    // ---- render: tool rows ---------------------------------------------
+
+    #[test]
+    fn render_tool_message_with_no_expansion_shows_the_header() {
+        let mut app = KodApp::new();
+        push_message(
+            &mut app,
+            MessageRole::Tool,
+            "[execute_command] cargo check\nline one\nline two",
+        );
+        let text = render(&app, 100, 40);
+        assert!(text.contains("execute_command"), "header: {text}");
+        assert!(text.contains("line one"), "body: {text}");
+        assert!(text.contains("⚙"), "tool icon: {text}");
+    }
+
+    #[test]
+    fn render_error_tool_uses_the_x_icon() {
+        let mut app = KodApp::new();
+        push_message(
+            &mut app,
+            MessageRole::Tool,
+            "[execute_command] cargo check\nError: exit status 1",
+        );
+        let text = render(&app, 100, 40);
+        assert!(text.contains("✗"), "error icon: {text}");
+    }
+
+    #[test]
+    fn render_tool_body_over_the_cap_collapses_with_a_count() {
+        // TOOL_DISPLAY_LINES is the collapse point; a body with
+        // more rows than that shows the summary line.
+        let mut app = KodApp::new();
+        let mut body = String::from("[run] a tool\n");
+        for i in 0..(TOOL_DISPLAY_LINES + 5) {
+            body.push_str(&format!("row {i}\n"));
+        }
+        push_message(&mut app, MessageRole::Tool, &body);
+        let text = render(&app, 120, 80);
+        assert!(
+            text.contains("more lines"),
+            "collapse summary missing: {text}",
+        );
+        assert!(text.contains("o expands"), "expand hint: {text}");
+    }
+
+    #[test]
+    fn render_tool_row_with_show_tools_off_hides_non_error_rows() {
+        let mut app = KodApp::new();
+        push_message(
+            &mut app,
+            MessageRole::Tool,
+            "[run] a tool\nbody text",
+        );
+        // `toggle_show_tools` flips from true to false by default.
+        app.toggle_show_tools();
+        let text = render(&app, 100, 40);
+        assert!(
+            !text.contains("body text"),
+            "hidden tool body must not render: {text}",
+        );
+        assert!(
+            text.contains("tool output(s) hidden"),
+            "hidden-tools footer missing: {text}",
+        );
+    }
+
+    #[test]
+    fn render_error_tool_remains_visible_when_show_tools_is_off() {
+        // The contract the collapsed view documents: a `t` toggle
+        // must not bury failures. Errors are never hidden.
+        let mut app = KodApp::new();
+        push_message(
+            &mut app,
+            MessageRole::Tool,
+            "[run] a tool\nError: something broke",
+        );
+        app.toggle_show_tools();
+        let text = render(&app, 100, 40);
+        assert!(
+            text.contains("something broke"),
+            "error tool body must render even when tools are hidden: {text}",
+        );
+    }
+
+    // ---- render: streaming --------------------------------------------
+
+    #[test]
+    fn render_streaming_body_appears_as_an_ai_block() {
+        let mut app = KodApp::new();
+        app.begin_generation();
+        app.start_response_stream();
+        app.add_response_chunk("partial reply");
+        let text = render(&app, 80, 20);
+        assert!(text.contains("partial reply"), "streaming body: {text}");
+    }
+
+    #[test]
+    fn render_empty_streaming_body_renders_nothing() {
+        // `start_response_stream` sets `is_streaming = true`, but
+        // with no chunks the body is whitespace-only. The widget
+        // must not emit an empty bubble.
+        let mut app = KodApp::new();
+        app.begin_generation();
+        app.start_response_stream();
+        let text = render(&app, 80, 10);
+        assert!(
+            !text.contains("ai "),
+            "no empty bubble when the stream is empty: {text}",
+        );
+    }
+
+    // ---- highlight_line ------------------------------------------------
+
+    #[test]
+    fn highlight_line_is_a_noop_for_an_empty_query() {
+        let line = Line::from("hello world");
+        let out = ChatWidget::highlight_line(line, "");
+        assert_eq!(out.spans.len(), 1);
+    }
+
+    #[test]
+    fn highlight_line_splits_a_matching_span() {
+        let line = Line::from("hello world");
+        let out = ChatWidget::highlight_line(line, "world");
+        // The output is at least: "hello " + "world" (2 spans, or
+        // 3 if the trailing whitespace is preserved).
+        let joined: String = out.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(joined, "hello world", "text preserved across the split");
+        assert!(out.spans.len() >= 2, "query must split the span");
+    }
+
+    #[test]
+    fn highlight_line_is_case_insensitive() {
+        let line = Line::from("Hello World");
+        let out = ChatWidget::highlight_line(line, "WORLD");
+        let joined: String = out.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(joined, "Hello World");
+        assert!(out.spans.len() >= 2, "case-folded hit must split: {out:?}");
+    }
+
+    #[test]
+    fn highlight_line_with_no_match_keeps_the_input() {
+        let line = Line::from("hello");
+        let out = ChatWidget::highlight_line(line, "absent");
+        let joined: String = out.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(joined, "hello");
+    }
+
+    // ---- apply_search via render ---------------------------------------
+
+    #[test]
+    fn render_highlights_a_search_hit() {
+        let mut app = KodApp::new();
+        push_message(&mut app, MessageRole::User, "find the needle here");
+        app.begin_search();
+        app.search_type('n');
+        app.search_type('e');
+        app.search_type('e');
+        app.search_type('d');
+        app.search_type('l');
+        app.search_type('e');
+        let text = render(&app, 100, 20);
+        // The styled hit is invisible in a text-only assertion, but
+        // the text must still be present. The point of this test is
+        // that the search-active code path does not panic and does
+        // not drop the message.
+        assert!(text.contains("needle"), "search path renders: {text}");
+    }
+
+    // ---- reflow_line ---------------------------------------------------
+
+    #[test]
+    fn reflow_line_wraps_a_long_span_at_the_width() {
+        let line = Line::from("abcdefghij");
+        let rows = ChatWidget::reflow_line(line, 4);
+        assert_eq!(rows.len(), 3, "got {} rows: {rows:?}", rows.len());
+        let joined: String = rows
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert_eq!(joined, "abcdefghij", "text preserved across the wrap");
+    }
+
+    #[test]
+    fn reflow_line_preserves_style_per_char() {
+        let line = Line::from(vec![
+            Span::styled("aa", Style::default().fg(Color::Red)),
+            Span::styled("bb", Style::default().fg(Color::Blue)),
+        ]);
+        let rows = ChatWidget::reflow_line(line, 1);
+        // One char per row, styles preserved.
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0].spans[0].style.fg, Some(Color::Red));
+        assert_eq!(rows[3].spans[0].style.fg, Some(Color::Blue));
+    }
+}
