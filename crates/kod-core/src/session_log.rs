@@ -153,8 +153,8 @@ impl SessionRecorder {
     /// should leave a complete log up to the last call, not a buffered
     /// prefix that `kod replay` cannot parse.
     pub fn record(&self, entry: &SessionEntry) -> Result<()> {
-        let line = serde_json::to_string(entry)
-            .map_err(|e| KodError::Serialization(e.to_string()))?;
+        let line =
+            serde_json::to_string(entry).map_err(|e| KodError::Serialization(e.to_string()))?;
         let mut w = self.writer.lock().unwrap();
         writeln!(w, "{}", line).map_err(KodError::Io)?;
         w.flush().map_err(KodError::Io)?;
@@ -210,11 +210,7 @@ pub fn read_session(path: &Path) -> Result<Vec<SessionEntry>> {
                     );
                     continue;
                 }
-                return Err(KodError::Deserialization(format!(
-                    "line {}: {}",
-                    i + 1,
-                    e
-                )));
+                return Err(KodError::Deserialization(format!("line {}: {}", i + 1, e)));
             }
         }
     }
@@ -290,6 +286,54 @@ mod tests {
         std::fs::write(&path, "{\"kind\":\"tool_call\"\n").unwrap();
         let err = read_session(&path).unwrap_err();
         assert!(err.to_string().contains("line 1"), "got: {err}");
+    }
+
+    #[test]
+    fn unknown_kind_line_is_skipped_not_fatal() {
+        // A future version of kod could add a new SessionEntry variant.
+        // An older build reading that file must not fail the whole
+        // read; it skips the unknown line with a warning and keeps the
+        // entries it understands. Regression guard for the
+        // forward-compat path in `read_session`.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("mixed.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                // A valid entry the current build understands.
+                "{\"kind\":\"tool_call\",\"timestamp_ms\":1,",
+                "\"holder\":\"s\",\"tool_name\":\"read_file\",",
+                "\"arguments\":{},\"duration_ms\":1,",
+                "\"result\":{\"success\":{}}}\n",
+                // A valid JSON line with an unknown `kind`.
+                "{\"kind\":\"future_thing\",\"payload\":42}\n",
+                // Another valid entry.
+                "{\"kind\":\"tool_call\",\"timestamp_ms\":2,",
+                "\"holder\":\"s\",\"tool_name\":\"write_file\",",
+                "\"arguments\":{},\"duration_ms\":2,",
+                "\"result\":{\"success\":{}}}\n"
+            ),
+        )
+        .unwrap();
+
+        let entries = read_session(&path).expect("forward-compat read must succeed");
+        assert_eq!(
+            entries.len(),
+            2,
+            "the unknown-kind line must be skipped, not surfaced",
+        );
+        match &entries[0] {
+            SessionEntry::ToolCall { tool_name, .. } => {
+                assert_eq!(tool_name, "read_file");
+            }
+            other => panic!("expected ToolCall, got {other:?}"),
+        }
+        match &entries[1] {
+            SessionEntry::ToolCall { tool_name, .. } => {
+                assert_eq!(tool_name, "write_file");
+            }
+            other => panic!("expected ToolCall, got {other:?}"),
+        }
     }
 
     #[test]
