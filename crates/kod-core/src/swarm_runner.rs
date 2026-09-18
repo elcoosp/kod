@@ -2033,3 +2033,155 @@ mod tests {
         assert!(parse_subtasks("[]", 5).unwrap().is_empty());
     }
 }
+
+#[cfg(test)]
+mod coverage_glob_overlap {
+    //! `globs_overlap` is the first line of defence against two
+    //! swarm agents racing on the same file. The function is
+    //! deliberately conservative: a false positive triggers one
+    //! re-plan (cheap), a false negative lets two agents write
+    //! the same file (the failure mode the design calls out).
+    //! These pin both the cases it must catch and the cases it
+    //! must not.
+    use super::*;
+
+    #[test]
+    fn identical_globs_overlap() {
+        assert!(globs_overlap("src/a.rs", "src/a.rs"));
+        assert!(globs_overlap("docs/**", "docs/**"));
+    }
+
+    #[test]
+    fn directory_prefix_overlaps_with_file_inside_it() {
+        assert!(globs_overlap("src", "src/a.rs"));
+        assert!(globs_overlap("src/a.rs", "src"));
+        assert!(globs_overlap("src/a", "src/a/b.rs"));
+    }
+
+    #[test]
+    fn stem_and_extension_collide() {
+        // `src/a` and `src/a.rs` name the same logical file: one
+        // gives the stem, the other gives the file. The design
+        // treats these as overlapping so the planner re-plans
+        // rather than letting two agents race on the same path.
+        assert!(globs_overlap("src/a", "src/a.rs"));
+        assert!(globs_overlap("src/parser", "src/parser.rs"));
+    }
+
+    #[test]
+    fn double_star_overlaps_with_everything() {
+        // `**` is the whole-tree glob. Treating it as "overlaps
+        // everything" is what makes the decompose prompt's "do
+        // not use `**` alone" advice load-bearing.
+        assert!(globs_overlap("**", "src/a.rs"));
+        assert!(globs_overlap("src/**", "docs/readme.md"));
+        assert!(globs_overlap("a/b/**", "x/y/z"));
+    }
+
+    #[test]
+    fn unrelated_prefixes_do_not_overlap() {
+        assert!(!globs_overlap("src/parser.rs", "src/http.rs"));
+        assert!(!globs_overlap("docs/a.md", "tests/b.rs"));
+        assert!(!globs_overlap("src/a/b.rs", "src/c/d.rs"));
+    }
+
+    #[test]
+    fn wildcard_segment_truncates_to_its_prefix() {
+        // `src/parser/*.rs` truncates to `src/parser`; a file at
+        // that prefix overlaps.
+        assert!(globs_overlap("src/parser/*.rs", "src/parser.rs"));
+        assert!(globs_overlap("src/parser/*.rs", "src/parser/foo.rs"));
+        // And does not reach a sibling prefix.
+        assert!(!globs_overlap("src/parser/*.rs", "src/http/x.rs"));
+    }
+
+    #[test]
+    fn wildcard_at_the_start_truncates_to_empty() {
+        // `*.rs` has no directory segment before the wildcard.
+        // `normalize_glob` truncates to the empty string, and the
+        // overlap check treats that as "no claim". The behaviour
+        // is documented rather than hidden.
+        assert!(!globs_overlap("*.rs", "src/a.rs"));
+    }
+
+    #[test]
+    fn leading_dot_slash_is_stripped() {
+        // `./src/a.rs` and `src/a.rs` name the same path. The
+        // normalizer strips the leading `./` so the comparison is
+        // on the canonical form.
+        assert!(globs_overlap("./src/a.rs", "src/a.rs"));
+    }
+
+    #[test]
+    fn detect_overlap_finds_the_first_pair() {
+        let subtasks = vec![
+            Subtask {
+                name: "a".into(),
+                description: "a".into(),
+                expected_writes: vec!["src/parser.rs".into()],
+                capability: Capability::Coding,
+                depends_on: vec![],
+            },
+            Subtask {
+                name: "b".into(),
+                description: "b".into(),
+                expected_writes: vec!["src/http.rs".into()],
+                capability: Capability::Coding,
+                depends_on: vec![],
+            },
+            Subtask {
+                name: "c".into(),
+                description: "c".into(),
+                expected_writes: vec!["src/parser.rs".into()],
+                capability: Capability::Coding,
+                depends_on: vec![],
+            },
+        ];
+        let hit = detect_overlap(&subtasks);
+        let (i, j, common) = hit.expect("expected a collision");
+        assert_eq!((i, j), (0, 2));
+        assert!(!common.is_empty());
+    }
+
+    #[test]
+    fn detect_overlap_returns_none_for_a_clean_plan() {
+        let subtasks = vec![
+            Subtask {
+                name: "a".into(),
+                description: "a".into(),
+                expected_writes: vec!["src/a.rs".into()],
+                capability: Capability::Coding,
+                depends_on: vec![],
+            },
+            Subtask {
+                name: "b".into(),
+                description: "b".into(),
+                expected_writes: vec!["docs/b.md".into()],
+                capability: Capability::Documentation,
+                depends_on: vec![],
+            },
+        ];
+        assert!(detect_overlap(&subtasks).is_none());
+    }
+
+    #[test]
+    fn empty_write_sets_never_overlap() {
+        let subtasks = vec![
+            Subtask {
+                name: "a".into(),
+                description: "a".into(),
+                expected_writes: vec![],
+                capability: Capability::Research,
+                depends_on: vec![],
+            },
+            Subtask {
+                name: "b".into(),
+                description: "b".into(),
+                expected_writes: vec![],
+                capability: Capability::Planning,
+                depends_on: vec![],
+            },
+        ];
+        assert!(detect_overlap(&subtasks).is_none());
+    }
+}
