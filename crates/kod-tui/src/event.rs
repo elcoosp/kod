@@ -121,11 +121,20 @@ pub enum Event {
         model: Option<String>,
     },
     /// A swarm agent produced a text chunk.
-    SwarmAgentChunk { id: kod_types::AgentId, text: String },
+    SwarmAgentChunk {
+        id: kod_types::AgentId,
+        text: String,
+    },
     /// A swarm agent finished with this result.
-    SwarmAgentCompleted { id: kod_types::AgentId, result: String },
+    SwarmAgentCompleted {
+        id: kod_types::AgentId,
+        result: String,
+    },
     /// A swarm agent failed; the others continue.
-    SwarmAgentFailed { id: kod_types::AgentId, error: String },
+    SwarmAgentFailed {
+        id: kod_types::AgentId,
+        error: String,
+    },
     /// A swarm agent's worktree was created (D4-D5).
     SwarmAgentWorktree {
         id: kod_types::AgentId,
@@ -140,7 +149,10 @@ pub enum Event {
         previous_error: String,
     },
     /// Two swarm agents wrote to the same file.
-    SwarmConflict { file: String, agents: Vec<String> },
+    SwarmConflict {
+        file: String,
+        agents: Vec<String>,
+    },
     /// All swarm agents done; the runner is calling the merge.
     SwarmMerging,
     /// Swarm run complete; this is the merged answer.
