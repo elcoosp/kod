@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 pub struct SkillsConfig {
     pub skills_dir: Option<String>,
     pub enable_hot_reload: bool,
-    pub max_cache_size_mb: usize,
     pub max_skills_per_query: usize,
     pub match_threshold: f32,
 }
@@ -17,7 +16,6 @@ impl Default for SkillsConfig {
         Self {
             skills_dir: None,
             enable_hot_reload: true,
-            max_cache_size_mb: 50,
             max_skills_per_query: 3,
             match_threshold: 0.7,
         }
