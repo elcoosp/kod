@@ -28,7 +28,8 @@ impl SearchFilesTool {
                 description: "Search file contents with a regex, returning each match \
                     with surrounding lines of context and a file:line header. Use this \
                     when grep's single-line output is not enough — reading a function \
-                    around a hit, checking a match's branch, etc.".to_string(),
+                    around a hit, checking a match's branch, etc."
+                    .to_string(),
                 category: ToolCategory::FileSystem,
                 parameters_schema: serde_json::json!({
                     "type": "object",
@@ -151,7 +152,10 @@ impl Tool for SearchFilesTool {
                         } else {
                             l.to_string()
                         };
-                        block.push_str(&format!("{} {:>5} | {}\n", marker, real_line, truncated_line));
+                        block.push_str(&format!(
+                            "{} {:>5} | {}\n",
+                            marker, real_line, truncated_line
+                        ));
                     }
                     hits.push(serde_json::json!({
                         "file": file.to_string_lossy(),
