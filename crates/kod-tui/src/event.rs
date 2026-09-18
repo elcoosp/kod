@@ -565,3 +565,220 @@ mod coverage_event_priority {
         }
     }
 }
+
+/// Behavioural coverage for `EventHandler`: how `push_event`
+/// classifies priority, that `push_priority_event` can override that
+/// classification, that `next_event` drains the priority queue before
+/// blocking on the channel, and that the full `KeyCode::from` mapping
+/// table is what the input loop relies on.
+#[cfg(test)]
+mod coverage_event_handler {
+    use super::*;
+
+    fn handler() -> EventHandler {
+        // Long tick so the timing tests can distinguish "queue drained"
+        // from "tick fired". Tests that need a short tick construct
+        // their own handler.
+        EventHandler::new(Duration::from_secs(60))
+    }
+
+    // ---- push_event priority classification ----------------------------
+
+    #[tokio::test]
+    async fn push_event_assigns_the_expected_priority_per_variant() {
+        // Push in an order that would be wrong if every event were
+        // Normal, then dequeue and check the order matches the
+        // documented mapping: Critical(Quit) > High(Error) >
+        // Normal(everything else) > Low(System(Low)).
+        let h = handler();
+        h.push_event(Event::Tick);
+        h.push_event(Event::Error("boom".into()));
+        h.push_event(Event::System(EventPriority::Low, "low".into()));
+        h.push_event(Event::Quit);
+
+        assert!(
+            matches!(h.next_event().await, Event::Quit),
+            "Critical (Quit) must come out first"
+        );
+        assert!(
+            matches!(h.next_event().await, Event::Error(_)),
+            "High (Error) must come out second"
+        );
+        assert!(
+            matches!(h.next_event().await, Event::Tick),
+            "Normal (Tick) must come out third"
+        );
+        assert!(
+            matches!(h.next_event().await, Event::System(p, _) if p == EventPriority::Low),
+            "Low (System(Low)) must come out last"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_event_respects_a_system_events_explicit_priority() {
+        // `Event::System(p, _)` uses `p`, not Normal. A High System
+        // must beat a Normal Tick even though Tick was pushed first.
+        let h = handler();
+        h.push_event(Event::Tick);
+        h.push_event(Event::System(EventPriority::High, "sys".into()));
+        assert!(
+            matches!(h.next_event().await, Event::System(EventPriority::High, _)),
+            "High System must beat a Normal Tick"
+        );
+        assert!(matches!(h.next_event().await, Event::Tick));
+    }
+
+    #[tokio::test]
+    async fn push_event_is_fifo_within_the_same_priority() {
+        let h = handler();
+        h.push_event(Event::System(EventPriority::Low, "a".into()));
+        h.push_event(Event::System(EventPriority::Low, "b".into()));
+        h.push_event(Event::System(EventPriority::Low, "c".into()));
+        for expected in ["a", "b", "c"] {
+            let ev = h.next_event().await;
+            match ev {
+                Event::System(_, msg) => assert_eq!(msg, expected),
+                _ => panic!("expected System, got something else"),
+            }
+        }
+    }
+
+    // ---- push_priority_event override ----------------------------------
+
+    #[tokio::test]
+    async fn push_priority_event_overrides_the_default_classification() {
+        let h = handler();
+        // A Tick is normally Normal; force it to Critical so it beats
+        // an Error (High) pushed afterwards.
+        h.push_priority_event(Event::Tick, EventPriority::Critical);
+        h.push_event(Event::Error("late".into()));
+        assert!(matches!(h.next_event().await, Event::Tick));
+        assert!(matches!(h.next_event().await, Event::Error(_)));
+    }
+
+    // ---- pending_events, sender, is_running, stop ----------------------
+
+    #[test]
+    fn pending_events_counts_the_queue() {
+        let h = handler();
+        assert_eq!(h.pending_events(), 0);
+        h.push_event(Event::Tick);
+        h.push_event(Event::Tick);
+        assert_eq!(h.pending_events(), 2);
+        // A priority push also lands in the same queue.
+        h.push_priority_event(Event::Quit, EventPriority::Critical);
+        assert_eq!(h.pending_events(), 3);
+    }
+
+    #[test]
+    fn is_running_is_true_on_a_fresh_handler() {
+        assert!(handler().is_running());
+    }
+
+    #[test]
+    fn stop_marks_the_handler_not_running() {
+        let h = handler();
+        h.stop();
+        assert!(!h.is_running());
+        // Idempotent — a second stop must not panic or flip back.
+        h.stop();
+        assert!(!h.is_running());
+    }
+
+    #[tokio::test]
+    async fn sender_returns_a_clone_that_reaches_next_event() {
+        let h = handler();
+        let tx = h.sender();
+        tx.send(Event::Quit).await.expect("send on live channel");
+        // The message went through the channel (not the queue); next_event
+        // sees it via the select! on `rx.recv()`.
+        assert!(matches!(h.next_event().await, Event::Quit));
+    }
+
+    // ---- next_event scheduling -----------------------------------------
+
+    #[tokio::test]
+    async fn next_event_drains_the_queue_before_touching_the_channel() {
+        let h = handler();
+        h.push_event(Event::Quit);
+        // A channel message is available too, but the queue wins.
+        h.sender().send(Event::Tick).await.expect("send");
+        assert!(matches!(h.next_event().await, Event::Quit));
+    }
+
+    #[tokio::test]
+    async fn next_event_waits_for_the_channel_then_returns_the_event() {
+        // tick_rate is 500ms; the channel send arrives at 10ms. If
+        // next_event ignored the channel it would return a Tick at
+        // 500ms — 50x later than the correct outcome.
+        let h = EventHandler::new(Duration::from_millis(500));
+        let tx = h.sender();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let _ = tx.send(Event::Quit).await;
+        });
+        assert!(matches!(h.next_event().await, Event::Quit));
+    }
+
+    #[tokio::test]
+    async fn next_event_returns_tick_when_the_queue_is_empty() {
+        // Short tick so the test runs fast; assert only a lower bound
+        // on the elapsed time, and a generous upper bound to catch a
+        // hang. Timing-sensitive branches like this one are why the
+        // upper bound is 2s and not tick_rate * 1.1.
+        let h = EventHandler::new(Duration::from_millis(30));
+        let start = std::time::Instant::now();
+        let ev = h.next_event().await;
+        let elapsed = start.elapsed();
+        assert!(matches!(ev, Event::Tick));
+        assert!(
+            elapsed >= Duration::from_millis(15),
+            "tick must wait for the deadline, elapsed = {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "tick must not hang, elapsed = {elapsed:?}"
+        );
+    }
+
+    // ---- KeyCode::from mapping table -----------------------------------
+
+    #[test]
+    fn keycode_from_crossterm_covers_every_mapped_variant() {
+        use crossterm::event::KeyCode as CK;
+        let cases: &[(CK, KeyCode)] = &[
+            (CK::Char('x'), KeyCode::Char('x')),
+            (CK::Char('\n'), KeyCode::Char('\n')),
+            (CK::Enter, KeyCode::Enter),
+            (CK::Esc, KeyCode::Escape),
+            (CK::Backspace, KeyCode::Backspace),
+            (CK::Delete, KeyCode::Delete),
+            (CK::Up, KeyCode::Up),
+            (CK::Down, KeyCode::Down),
+            (CK::Left, KeyCode::Left),
+            (CK::Right, KeyCode::Right),
+            (CK::Home, KeyCode::Home),
+            (CK::End, KeyCode::End),
+            (CK::PageUp, KeyCode::PageUp),
+            (CK::PageDown, KeyCode::PageDown),
+            (CK::Tab, KeyCode::Tab),
+            (CK::BackTab, KeyCode::BackTab),
+            (CK::F(1), KeyCode::F(1)),
+            (CK::F(12), KeyCode::F(12)),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(KeyCode::from(*input), *expected, "mapping for {input:?}");
+        }
+    }
+
+    #[test]
+    fn keycode_from_crossterm_unmapped_variants_fall_back_to_space() {
+        // The input loop only forwards `KeyEventKind::Press` events, so
+        // an unmapped `CrosstermKeyCode` (Null, Insert, media keys …)
+        // should reach the app as a harmless space, not panic or drop
+        // the event.
+        use crossterm::event::KeyCode as CK;
+        assert_eq!(KeyCode::from(CK::Null), KeyCode::Char(' '));
+        assert_eq!(KeyCode::from(CK::Insert), KeyCode::Char(' '));
+    }
+}

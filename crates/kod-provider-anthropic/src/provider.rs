@@ -611,3 +611,241 @@ mod tests {
         assert_eq!(p2.base_url(), "https://api.anthropic.com/v1");
     }
 }
+
+/// Coverage for the pure helpers that turn a Messages API body into
+/// a `GenerationResponse`, plus the full `ProviderCapabilities`
+/// matrix. `parse_response` is the only place the three response
+/// shapes (`Text` / `ToolCalls` / `Mixed`) are decided, and the
+/// tolerance branches (missing content, empty tool name, unknown
+/// block types, absent usage) are exactly what a real refusal or a
+/// truncated response hits.
+#[cfg(test)]
+mod coverage_provider_parse {
+    use super::*;
+    use serde_json::json;
+
+    fn text_of(r: &GenerationResponse) -> &str {
+        match r {
+            GenerationResponse::Text { content, .. } => content,
+            GenerationResponse::Mixed { content, .. } => content,
+            GenerationResponse::ToolCalls { .. } => {
+                panic!("expected a text-carrying variant")
+            }
+        }
+    }
+
+    // ---- parse_response ------------------------------------------------
+
+    #[test]
+    fn parse_response_text_only_with_usage() {
+        let v = json!({
+            "content": [{"type": "text", "text": "hello world"}],
+            "usage": {"input_tokens": 7, "output_tokens": 3}
+        });
+        match parse_response(&v).unwrap() {
+            GenerationResponse::Text { content, usage } => {
+                assert_eq!(content, "hello world");
+                let u = usage.expect("usage present");
+                assert_eq!(u.prompt_tokens, 7);
+                assert_eq!(u.completion_tokens, 3);
+                assert_eq!(u.total_tokens, 10);
+            }
+            _ => panic!("expected Text variant"),
+        }
+    }
+
+    #[test]
+    fn parse_response_concatenates_multiple_text_blocks() {
+        let v = json!({
+            "content": [
+                {"type": "text", "text": "first "},
+                {"type": "text", "text": "second"}
+            ]
+        });
+        let r = parse_response(&v).unwrap();
+        assert_eq!(text_of(&r), "first second");
+    }
+
+    #[test]
+    fn parse_response_tool_use_only() {
+        let v = json!({
+            "content": [{
+                "type": "tool_use",
+                "id": "toolu_abc",
+                "name": "read_file",
+                "input": {"path": "src/lib.rs"}
+            }]
+        });
+        match parse_response(&v).unwrap() {
+            GenerationResponse::ToolCalls { calls, .. } => {
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].id.as_deref(), Some("toolu_abc"));
+                assert_eq!(calls[0].tool_name, "read_file");
+                assert_eq!(calls[0].arguments["path"], "src/lib.rs");
+            }
+            _ => panic!("expected ToolCalls variant"),
+        }
+    }
+
+    #[test]
+    fn parse_response_mixed_text_and_tool_calls() {
+        let v = json!({
+            "content": [
+                {"type": "text", "text": "let me check that"},
+                {"type": "tool_use", "id": "x", "name": "grep", "input": {}}
+            ]
+        });
+        match parse_response(&v).unwrap() {
+            GenerationResponse::Mixed { content, calls, .. } => {
+                assert_eq!(content, "let me check that");
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].tool_name, "grep");
+            }
+            _ => panic!("expected Mixed variant"),
+        }
+    }
+
+    #[test]
+    fn parse_response_empty_content_array_is_empty_text() {
+        // Anthropic returns `content: []` on a refusal or an immediate
+        // stop. The engine treats an empty reply as "nothing to say",
+        // so this must not be an error.
+        let v = json!({ "content": [] });
+        match parse_response(&v).unwrap() {
+            GenerationResponse::Text { content, usage } => {
+                assert!(content.is_empty());
+                assert!(usage.is_none());
+            }
+            _ => panic!("expected Text variant"),
+        }
+    }
+
+    #[test]
+    fn parse_response_missing_content_key_is_empty_text() {
+        let v = json!({});
+        let r = parse_response(&v).unwrap();
+        assert_eq!(text_of(&r), "");
+    }
+
+    #[test]
+    fn parse_response_skips_tool_use_with_empty_name() {
+        // A malformed tool_use block (no `name`) is dropped; the
+        // remaining text block survives and the response is Text, not
+        // ToolCalls.
+        let v = json!({
+            "content": [
+                {"type": "tool_use", "id": "x", "name": "", "input": {}},
+                {"type": "text", "text": "fallback"}
+            ]
+        });
+        let r = parse_response(&v).unwrap();
+        assert_eq!(text_of(&r), "fallback");
+        assert!(
+            matches!(r, GenerationResponse::Text { .. }),
+            "a lone empty-named tool_use must not become ToolCalls"
+        );
+    }
+
+    #[test]
+    fn parse_response_tool_use_without_id_has_no_id() {
+        let v = json!({
+            "content": [{"type": "tool_use", "name": "grep", "input": {}}]
+        });
+        match parse_response(&v).unwrap() {
+            GenerationResponse::ToolCalls { calls, .. } => {
+                assert!(calls[0].id.is_none());
+            }
+            _ => panic!("expected ToolCalls variant"),
+        }
+    }
+
+    #[test]
+    fn parse_response_tool_use_without_input_uses_null() {
+        let v = json!({
+            "content": [{"type": "tool_use", "id": "x", "name": "grep"}]
+        });
+        match parse_response(&v).unwrap() {
+            GenerationResponse::ToolCalls { calls, .. } => {
+                assert_eq!(calls[0].arguments, serde_json::Value::Null);
+            }
+            _ => panic!("expected ToolCalls variant"),
+        }
+    }
+
+    #[test]
+    fn parse_response_skips_unknown_block_types() {
+        let v = json!({
+            "content": [
+                {"type": "thinking", "text": "hmm"},
+                {"type": "text", "text": "kept"}
+            ]
+        });
+        let r = parse_response(&v).unwrap();
+        assert_eq!(text_of(&r), "kept");
+    }
+
+    #[test]
+    fn parse_response_usage_missing_fields_default_to_zero() {
+        let v = json!({
+            "content": [{"type": "text", "text": "x"}],
+            "usage": {}
+        });
+        match parse_response(&v).unwrap() {
+            GenerationResponse::Text { usage, .. } => {
+                let u = usage.expect("usage object present");
+                assert_eq!(u.prompt_tokens, 0);
+                assert_eq!(u.completion_tokens, 0);
+                assert_eq!(u.total_tokens, 0);
+            }
+            _ => panic!("expected Text variant"),
+        }
+    }
+
+    // ---- capabilities --------------------------------------------------
+
+    #[test]
+    fn capabilities_full_matrix() {
+        // The existing tests check `tools`, `streaming_tools`, and
+        // `prompt_cache`; this one pins every field so a future
+        // capability flip is visible here, not in a router surprise.
+        let p = AnthropicProvider::with_api_key(
+            "https://api.anthropic.com",
+            "claude-sonnet-4-5",
+            "test-key",
+        )
+        .unwrap();
+        let caps = p.capabilities();
+        assert!(caps.tools);
+        assert!(caps.vision);
+        assert!(!caps.json_mode);
+        assert_eq!(caps.prompt_cache, PromptCacheKind::Explicit);
+        assert!(!caps.embeddings);
+        assert!(caps.streaming_tools);
+        assert!(caps.pricing.is_none());
+    }
+
+    // ---- normalize_base_url edges --------------------------------------
+
+    #[test]
+    fn normalize_base_url_handles_a_bare_host() {
+        // No scheme — the function does not validate, only normalises.
+        // The stored value is exactly what a caller passes in plus `/v1`.
+        assert_eq!(
+            normalize_base_url("api.anthropic.com"),
+            "api.anthropic.com/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_trims_multiple_trailing_slashes() {
+        assert_eq!(
+            normalize_base_url("https://api.anthropic.com///"),
+            "https://api.anthropic.com/v1"
+        );
+        // A `/v1` with trailing slashes is still recognised as `/v1`.
+        assert_eq!(
+            normalize_base_url("https://api.anthropic.com/v1///"),
+            "https://api.anthropic.com/v1"
+        );
+    }
+}
