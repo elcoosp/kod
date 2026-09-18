@@ -82,7 +82,11 @@ impl VectorIndex {
         let normalized: Vec<f32> = v.iter().map(|x| x / norm).collect();
 
         // Replace if present, else append.
-        if let Some(slot) = self.entries.iter_mut().find(|(existing, _)| existing == &id) {
+        if let Some(slot) = self
+            .entries
+            .iter_mut()
+            .find(|(existing, _)| existing == &id)
+        {
             slot.1 = normalized;
         } else {
             self.entries.push((id, normalized));
@@ -135,9 +139,7 @@ impl VectorIndex {
                 (id.clone(), dot)
             })
             .collect();
-        scored.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(k);
         Ok(scored)
     }
@@ -203,9 +205,7 @@ mod tests {
         idx.insert(b.clone(), vec![0.9, 0.1]).unwrap();
 
         // Exclude `a`; only `b` must come back.
-        let hits = idx
-            .search(&[1.0, 0.0], 5, |i| i != &a)
-            .unwrap();
+        let hits = idx.search(&[1.0, 0.0], 5, |i| i != &a).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].0, b);
     }
