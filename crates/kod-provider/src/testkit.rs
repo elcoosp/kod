@@ -42,9 +42,7 @@
 //!   `is_retryable() == false` for a permanent failure. The suite
 //!   tests the classification, not the phrase.
 
-use crate::request::{
-    CompletionRequest, ModelRef, ProviderCapabilities, SystemPrompt,
-};
+use crate::request::{CompletionRequest, ModelRef, ProviderCapabilities, SystemPrompt};
 use crate::traits::{GenerationOptions, LlmProvider};
 use crate::types::{GenerationResponse, StreamChunk, TokenUsage};
 use async_trait::async_trait;
@@ -101,7 +99,10 @@ impl MockProvider {
     /// A provider with a multi-element script; each call consumes the
     /// next entry, repeating the last entry once the list runs out.
     pub fn scripted(name: impl Into<String>, script: Vec<Script>) -> Self {
-        assert!(!script.is_empty(), "a scripted provider needs at least one entry");
+        assert!(
+            !script.is_empty(),
+            "a scripted provider needs at least one entry"
+        );
         Self {
             name: name.into(),
             capabilities: ProviderCapabilities::conservative(),
@@ -215,6 +216,11 @@ pub async fn run_trait_contracts(provider: Arc<dyn LlmProvider>) {
     contract_complete_renders_system_and_messages(&provider).await;
     contract_list_models_is_a_vec(&provider).await;
     contract_error_propagates(&provider).await;
+    // AD-01 (structured streaming). See the contract bodies below for
+    // what each one pins.
+    contract_stream_completion_text(&provider).await;
+    contract_stream_completion_calls(&provider).await;
+    contract_stream_completion_error(&provider).await;
 }
 
 fn contract_name_is_nonempty(provider: &Arc<dyn LlmProvider>) {
@@ -269,9 +275,7 @@ async fn contract_generate_with_tools_text(provider: &Arc<dyn LlmProvider>) {
         .await
     {
         Ok(GenerationResponse::Text { .. }) => {}
-        Ok(other) => panic!(
-            "generate_with_tools on a text-answering provider returned {other:?}",
-        ),
+        Ok(other) => panic!("generate_with_tools on a text-answering provider returned {other:?}",),
         Err(_) => {
             // Same tolerance as above.
         }
@@ -298,14 +302,11 @@ async fn contract_generate_with_tools_calls(provider: &Arc<dyn LlmProvider>) {
 async fn contract_generate_with_tools_mixed(provider: &Arc<dyn LlmProvider>) {
     let opts = GenerationOptions::default();
     let empty_tools: Vec<ToolDefinition> = Vec::new();
-    match provider
+    if let Ok(GenerationResponse::Mixed { calls, .. }) = provider
         .generate_with_tools("hello", &empty_tools, &opts)
         .await
     {
-        Ok(GenerationResponse::Mixed { calls, .. }) => {
-            assert!(!calls.is_empty(), "Mixed variant must carry ≥ 1 call");
-        }
-        Ok(_) | Err(_) => {}
+        assert!(!calls.is_empty(), "Mixed variant must carry ≥ 1 call");
     }
 }
 
@@ -382,13 +383,10 @@ async fn contract_complete_renders_system_and_messages(_provider: &Arc<dyn LlmPr
 }
 
 async fn contract_list_models_is_a_vec(provider: &Arc<dyn LlmProvider>) {
-    match provider.list_models().await {
-        Ok(v) => {
-            // An empty list is legal; a list with duplicates is not
-            // useful but not illegal. Just confirm the call returns.
-            let _ = v;
-        }
-        Err(_) => {}
+    if let Ok(v) = provider.list_models().await {
+        // An empty list is legal; a list with duplicates is not
+        // useful but not illegal. Just confirm the call returns.
+        let _ = v;
     }
 }
 
@@ -405,6 +403,127 @@ async fn contract_error_propagates(_provider: &Arc<dyn LlmProvider>) {
     assert!(
         err.to_string().contains("simulated transport failure"),
         "error text lost: {err}",
+    );
+}
+
+/// `stream_completion`'s default collects the reply and replays it as
+/// chunks. For a text-scripted provider that means:
+///
+/// - at least one `Text` chunk whose concatenation equals the scripted
+///   content;
+/// - a terminal `Done`.
+///
+/// A provider that returns an error instead, or that yields chunks
+/// without a terminator, fails here. The engine's assembly loop relies
+/// on both facts.
+async fn contract_stream_completion_text(_provider: &Arc<dyn LlmProvider>) {
+    let mock = MockProvider::new("stream-text", Script::Text("hello world".into()));
+    let mut req = CompletionRequest::new(ModelRef::new("mock", "m"));
+    req.system = SystemPrompt::new();
+    req.messages = vec![ChatMessage::text(
+        MessageId::new(),
+        MessageRole::User,
+        "hi",
+        OffsetDateTime::now_utc(),
+    )];
+
+    use futures::StreamExt;
+    let mut stream = mock.stream_completion(&req);
+    let mut saw_text = String::new();
+    let mut saw_done = false;
+    let mut saw_error: Option<KodError> = None;
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(StreamChunk::Text(t)) => saw_text.push_str(&t),
+            Ok(StreamChunk::Done) => {
+                saw_done = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                saw_error = Some(e);
+                break;
+            }
+        }
+    }
+    assert!(saw_error.is_none(), "unexpected error: {:?}", saw_error);
+    assert!(saw_done, "stream must terminate with `Done`");
+    assert_eq!(
+        saw_text, "hello world",
+        "the collected text must round-trip through the stream default",
+    );
+}
+
+/// Tool-call scripted response: the default stream yields one
+/// `ToolCallStart` + one `ToolCallDelta` per call, in order, and a
+/// terminal `Done`.
+async fn contract_stream_completion_calls(_provider: &Arc<dyn LlmProvider>) {
+    let call = ToolCall {
+        id: Some("call_1".into()),
+        tool_name: "read_file".into(),
+        arguments: serde_json::json!({"path": "a"}),
+    };
+    let mock = MockProvider::new("stream-calls", Script::Calls(vec![call]));
+    let mut req = CompletionRequest::new(ModelRef::new("mock", "m"));
+    req.system = SystemPrompt::new();
+    req.messages = vec![ChatMessage::text(
+        MessageId::new(),
+        MessageRole::User,
+        "read it",
+        OffsetDateTime::now_utc(),
+    )];
+
+    use futures::StreamExt;
+    let mut stream = mock.stream_completion(&req);
+    let mut starts = 0usize;
+    let mut deltas = 0usize;
+    let mut saw_done = false;
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(StreamChunk::ToolCallStart { .. }) => starts += 1,
+            Ok(StreamChunk::ToolCallDelta { .. }) => deltas += 1,
+            Ok(StreamChunk::Done) => {
+                saw_done = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    assert!(saw_done, "stream must terminate with `Done`");
+    assert_eq!(starts, 1, "one ToolCallStart per scripted call");
+    assert_eq!(deltas, 1, "one ToolCallDelta per scripted call");
+}
+
+/// A scripted error must surface as an `Err` chunk. `stream_completion`
+/// returning `Ok(empty)` for a failing call would strand the engine's
+/// loop; the contract is "either a chunk or an error, never silence".
+async fn contract_stream_completion_error(_provider: &Arc<dyn LlmProvider>) {
+    let mock = MockProvider::new(
+        "stream-err",
+        Script::Error("simulated transport failure".into()),
+    );
+    let mut req = CompletionRequest::new(ModelRef::new("mock", "m"));
+    req.system = SystemPrompt::new();
+    req.messages = vec![ChatMessage::text(
+        MessageId::new(),
+        MessageRole::User,
+        "hi",
+        OffsetDateTime::now_utc(),
+    )];
+
+    use futures::StreamExt;
+    let mut stream = mock.stream_completion(&req);
+    let mut saw_err = false;
+    while let Some(chunk) = stream.next().await {
+        if chunk.is_err() {
+            saw_err = true;
+            break;
+        }
+    }
+    assert!(
+        saw_err,
+        "a scripted error must surface as an `Err` chunk, not silence",
     );
 }
 
