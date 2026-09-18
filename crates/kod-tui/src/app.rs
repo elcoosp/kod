@@ -4834,3 +4834,289 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod coverage_approval_batch {
+    //! The batch navigation is what the y/n/a keys drive. A
+    //! regression in `advance`/`retreat` either skips an item (the
+    //! user approves the wrong call) or gets stuck on one (the
+    //! batch never completes and the engine's awaiting tasks time
+    //! out to deny). Both are worth pinning.
+    use super::{PendingApproval, PendingApprovalBatch};
+
+    fn item(id: u64) -> PendingApproval {
+        PendingApproval {
+            id,
+            tool_name: "write_file".into(),
+            summary: format!("write {id}"),
+            diff: None,
+        }
+    }
+
+    fn batch_of(ids: &[u64]) -> PendingApprovalBatch {
+        PendingApprovalBatch {
+            batch_id: 1,
+            items: ids.iter().copied().map(item).collect(),
+            current: 0,
+        }
+    }
+
+    #[test]
+    fn empty_batch_has_no_current_item() {
+        let b = batch_of(&[]);
+        assert!(b.current_item().is_none());
+    }
+
+    #[test]
+    fn a_fresh_batch_starts_at_the_first_item() {
+        let b = batch_of(&[10, 20, 30]);
+        assert_eq!(b.current_item().unwrap().id, 10);
+    }
+
+    #[test]
+    fn advance_walks_forward_then_past_the_end() {
+        let mut b = batch_of(&[10, 20]);
+        assert!(b.advance());
+        assert_eq!(b.current_item().unwrap().id, 20);
+        // Past the last item: `advance` returns false and
+        // `current_item` returns `None` so the caller knows the
+        // batch is exhausted.
+        assert!(!b.advance());
+        assert!(b.current_item().is_none());
+    }
+
+    #[test]
+    fn retreat_walks_backward_and_stops_at_the_start() {
+        let mut b = batch_of(&[10, 20, 30]);
+        b.current = 2;
+        assert!(b.retreat());
+        assert_eq!(b.current_item().unwrap().id, 20);
+        assert!(b.retreat());
+        assert_eq!(b.current_item().unwrap().id, 10);
+        // At the first item, `retreat` returns false and does not
+        // move. A regression that decremented past zero would
+        // underflow or jump to `items.len() - 1`.
+        assert!(!b.retreat());
+        assert_eq!(b.current_item().unwrap().id, 10);
+    }
+
+    #[test]
+    fn advance_after_exhaustion_does_not_panic() {
+        // Once `current` is past `items.len()`, a further advance
+        // must remain a no-op — not an arithmetic overflow, not a
+        // panic. The engine's awaiting oneshot has already timed
+        // out in this case; the batch object should stay quiet.
+        let mut b = PendingApprovalBatch {
+            batch_id: 1,
+            items: vec![item(1)],
+            current: 5,
+        };
+        assert!(!b.advance());
+        assert!(b.current_item().is_none());
+    }
+}
+
+#[cfg(test)]
+mod coverage_app_state {
+    //! Additional app state behaviours that the existing tests
+    //! did not exercise: the input history's draft handling, the
+    //! completion cycling, the pin/unpin round-trip, and the
+    //! fork/undo interplay. Each of these is user-facing and a
+    //! regression would be felt directly.
+    use super::*;
+    use kod_types::{MessageId, MessageMetadata, MessageRole};
+
+    fn user(text: &str) -> Message {
+        Message {
+            id: MessageId::new(),
+            role: MessageRole::User,
+            content: text.to_string(),
+            timestamp: Utc::now(),
+            metadata: MessageMetadata::default(),
+            sequence: 0,
+        }
+    }
+
+    #[test]
+    fn history_previous_stashes_the_draft_and_next_restores_it() {
+        let mut app = KodApp::new();
+        app.input_history.push("older".into());
+        app.input_history.push("newer".into());
+        app.set_input("draft in progress".into());
+
+        app.history_previous();
+        // The draft was saved and the newest entry loaded.
+        assert_eq!(app.input(), "newer");
+
+        app.history_previous();
+        assert_eq!(app.input(), "older");
+
+        // Down past the newest entry restores the draft, not "".
+        app.history_next();
+        assert_eq!(app.input(), "newer");
+        app.history_next();
+        assert_eq!(app.input(), "draft in progress");
+    }
+
+    #[test]
+    fn history_previous_with_no_history_is_a_no_op() {
+        let mut app = KodApp::new();
+        app.set_input("draft".into());
+        app.history_previous();
+        assert_eq!(app.input(), "draft");
+    }
+
+    #[test]
+    fn completion_cycling_wraps_around() {
+        // Slash commands provide a non-empty candidate list; the
+        // cycling must wrap and not stick.
+        let mut app = KodApp::new();
+        app.set_input_mode(InputMode::Insert);
+        app.set_input("/".into());
+        let n = app.active_completion_len();
+        assert!(n > 1, "need multiple candidates to test cycling");
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..n {
+            seen.insert(app.completion_index() % n);
+            app.completion_next();
+        }
+        assert_eq!(seen.len(), n, "cycling did not cover every candidate");
+        // Wrapping back to zero.
+        assert_eq!(app.completion_index() % n, 0);
+    }
+
+    #[test]
+    fn completion_previous_wraps_to_the_last_candidate() {
+        let mut app = KodApp::new();
+        app.set_input_mode(InputMode::Insert);
+        app.set_input("/".into());
+        let n = app.active_completion_len();
+        assert!(n > 1);
+        app.completion_prev();
+        assert_eq!(app.completion_index() % n, n - 1);
+    }
+
+    #[test]
+    fn pin_and_unpin_round_trip() {
+        let mut app = KodApp::new();
+        app.add_message(user("first"));
+        assert!(!app.is_message_pinned(0));
+        assert!(app.set_message_pinned_at(0, true));
+        assert!(app.is_message_pinned(0));
+        assert!(app.set_message_pinned_at(0, false));
+        assert!(!app.is_message_pinned(0));
+    }
+
+    #[test]
+    fn pin_on_out_of_range_index_is_a_no_op() {
+        let mut app = KodApp::new();
+        assert!(!app.set_message_pinned_at(0, true));
+        assert!(!app.is_message_pinned(0));
+    }
+
+    #[test]
+    fn fork_then_undo_restores_the_forked_chat() {
+        // The fork captures the current chat onto the cleared
+        // stack. A subsequent `/clear` drops the live chat; an
+        // `/undo` then restores the fork.
+        let mut app = KodApp::new();
+        app.add_message(user("first"));
+        app.add_message(user("second"));
+        let n = app.fork_messages();
+        assert_eq!(n, 2);
+        assert_eq!(app.fork_count(), 1);
+
+        app.clear_messages();
+        assert!(app.messages().is_empty());
+
+        assert!(app.undo_clear());
+        assert_eq!(app.messages().len(), 2);
+    }
+
+    #[test]
+    fn fork_on_an_empty_chat_does_nothing() {
+        let mut app = KodApp::new();
+        assert_eq!(app.fork_messages(), 0);
+        assert_eq!(app.fork_count(), 0);
+    }
+
+    #[test]
+    fn reset_transient_state_clears_input_and_search_but_not_messages() {
+        let mut app = KodApp::new();
+        app.add_message(user("keep me"));
+        app.set_input("half-typed".into());
+        app.begin_search();
+        app.search_type('x');
+        let cleared = app.reset_transient_state();
+        assert!(cleared > 0);
+        assert_eq!(app.input(), "");
+        assert!(!app.is_editing_search());
+        assert!(app.search_query().is_none());
+        // The chat was not touched.
+        assert_eq!(app.messages().len(), 1);
+    }
+
+    #[test]
+    fn edit_last_message_loads_the_newest_user_content() {
+        let mut app = KodApp::new();
+        app.add_message(user("first"));
+        app.add_message(Message {
+            id: MessageId::new(),
+            role: MessageRole::Assistant,
+            content: "reply".into(),
+            timestamp: Utc::now(),
+            metadata: MessageMetadata::default(),
+            sequence: 0,
+        });
+        app.add_message(user("second"));
+        assert!(app.edit_last_message());
+        assert_eq!(app.input(), "second");
+    }
+
+    #[test]
+    fn edit_last_message_on_an_empty_chat_returns_false() {
+        let mut app = KodApp::new();
+        assert!(!app.edit_last_message());
+        assert_eq!(app.input(), "");
+    }
+
+    #[test]
+    fn drop_last_exchange_removes_the_trailing_pair() {
+        let mut app = KodApp::new();
+        app.add_message(user("the question"));
+        app.add_message(Message {
+            id: MessageId::new(),
+            role: MessageRole::Assistant,
+            content: "the answer".into(),
+            timestamp: Utc::now(),
+            metadata: MessageMetadata::default(),
+            sequence: 0,
+        });
+        let dropped = app.drop_last_exchange();
+        assert_eq!(dropped.as_deref(), Some("the question"));
+        assert!(app.messages().is_empty());
+    }
+
+    #[test]
+    fn drop_last_exchange_on_an_empty_chat_returns_none() {
+        let mut app = KodApp::new();
+        assert!(app.drop_last_exchange().is_none());
+    }
+
+    #[test]
+    fn setting_then_clearing_the_goal_is_a_round_trip() {
+        let mut app = KodApp::new();
+        assert!(app.goal().is_none());
+        app.set_goal("ship the fix");
+        assert_eq!(app.goal(), Some("ship the fix"));
+        app.clear_goal();
+        assert!(app.goal().is_none());
+    }
+
+    #[test]
+    fn setting_a_whitespace_only_goal_is_a_no_op() {
+        let mut app = KodApp::new();
+        app.set_goal("   ");
+        assert!(app.goal().is_none());
+    }
+}
