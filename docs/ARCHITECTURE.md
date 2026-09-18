@@ -173,4 +173,14 @@ Core engine:
 - **Debugger Integration**: Debug Adapter Protocol for debugging.
 - **Vector Search**: external vector databases (the current brute-force `VectorIndex` is in-process only).
 - **Plugin System**: dynamic loading beyond MCP.
-- **`kod swarm --remote`**: streaming swarm events over the daemon socket.
+- **Prompt-plan migration**: the engine still renders the transcript
+  to text at the `LlmProvider` boundary; AD-01/AD-16 replace that with
+  a `CompletionRequest { system: SystemPrompt, messages: Vec<ChatMessage> }`
+  so prompt caching and per-message role semantics are preserved on the
+  wire. The types exist and are exercised by tests; the engine migration
+  is the remaining step.
+- **Anthropic `cache_control`**: `kod-provider-anthropic` currently
+  delegates to `adk-model`'s Anthropic client, which flattens the system
+  prompt to a single string before the wire call. Explicit cache
+  breakpoints need either an `adk-model` API that accepts segments or a
+  local wire module.
