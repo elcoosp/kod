@@ -113,13 +113,16 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
     report.push(
         "llm.base_url",
         CheckStatus::Ok,
-        format!("{} (model {})", config.llm.default_endpoint().base_url, config.llm.default_endpoint().model),
+        format!(
+            "{} (model {})",
+            config.llm.default_endpoint().base_url,
+            config.llm.default_endpoint().model
+        ),
     );
 
     match config.skills_dirs() {
         Ok(dirs) => {
-            let existing: Vec<&std::path::PathBuf> =
-                dirs.iter().filter(|d| d.is_dir()).collect();
+            let existing: Vec<&std::path::PathBuf> = dirs.iter().filter(|d| d.is_dir()).collect();
             if existing.is_empty() {
                 report.push(
                     "skills",
@@ -179,20 +182,14 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
                     let first = failed
                         .first()
                         .map(|(p, e)| {
-                            let name = p
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("?");
+                            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("?");
                             format!("{name}: {e}")
                         })
                         .unwrap_or_default();
                     report.push(
                         "skills",
                         CheckStatus::Warn,
-                        format!(
-                            "{parsed}/{total} parsed; {} failed — {first}",
-                            failed.len(),
-                        ),
+                        format!("{parsed}/{total} parsed; {} failed — {first}", failed.len(),),
                     );
                 }
             }
@@ -202,10 +199,7 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
 
     match config.memory_db_path() {
         Ok(path) => {
-            let parent_ok = path
-                .parent()
-                .map(|p| p.exists())
-                .unwrap_or(false);
+            let parent_ok = path.parent().map(|p| p.exists()).unwrap_or(false);
             if parent_ok {
                 report.push(
                     "memory",
@@ -230,14 +224,9 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
     // runs `execute_command`, it just cannot require the sandbox.
     {
         use kod_tools::context::{SandboxMode, SandboxOpts, SandboxResolver};
-        let cwd = std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let resolver = SandboxResolver::detect();
-        match resolver.invocation(
-            SandboxMode::Require,
-            &cwd,
-            SandboxOpts::default(),
-        ) {
+        match resolver.invocation(SandboxMode::Require, &cwd, SandboxOpts::default()) {
             Ok(Some(inv)) => report.push(
                 "sandbox",
                 CheckStatus::Ok,
@@ -290,14 +279,79 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
                  / gopls to enable)",
             );
         } else {
-            let names: Vec<String> = detected
-                .iter()
-                .map(|(b, l)| format!("{b} ({l})"))
-                .collect();
+            let names: Vec<String> = detected.iter().map(|(b, l)| format!("{b} ({l})")).collect();
             report.push(
                 "lsp",
                 CheckStatus::Ok,
-                format!("{} language server(s): {}", detected.len(), names.join(", ")),
+                format!(
+                    "{} language server(s): {}",
+                    detected.len(),
+                    names.join(", ")
+                ),
+            );
+        }
+    }
+
+    // LSP configuration. Two checks, one per knob:
+    //
+    //  - `auto_diagnostics`: is the post-write diagnostics pass
+    //    enabled? Reported with a hint when it is off, naming both
+    //    switches that can disable it so a user who forgot which one
+    //    they set has a next step.
+    //  - `settle_ms`: is the wait long enough for a language server to
+    //    publish on a cold file, and short enough to keep the
+    //    interactive loop snappy? Flags both extremes; the design's
+    //    default (1500 ms) is the middle.
+    {
+        let ad = config.lsp.auto_diagnostics;
+        let auto_lsp = config.tools.auto_lsp;
+        if ad && auto_lsp {
+            report.push(
+                "lsp.auto_diagnostics",
+                CheckStatus::Ok,
+                "enabled (a successful write runs the diagnostics pass)",
+            );
+        } else {
+            let mut disabled_by = Vec::new();
+            if !ad {
+                disabled_by.push("[lsp] auto_diagnostics = false");
+            }
+            if !auto_lsp {
+                disabled_by.push("[tools] auto_lsp = false");
+            }
+            report.push(
+                "lsp.auto_diagnostics",
+                CheckStatus::Warn,
+                format!("disabled — {}", disabled_by.join(" and "),),
+            );
+        }
+
+        let ms = config.lsp.settle_ms;
+        if ms < 200 {
+            report.push(
+                "lsp.settle_ms",
+                CheckStatus::Warn,
+                format!(
+                    "{ms} ms is very short — a cold language server will \
+                     usually not have published diagnostics yet; consider \
+                     at least 500 ms",
+                ),
+            );
+        } else if ms > 10_000 {
+            report.push(
+                "lsp.settle_ms",
+                CheckStatus::Warn,
+                format!(
+                    "{ms} ms is very long — the post-write diagnostics pass \
+                     will slow the interactive loop; consider at most \
+                     5000 ms",
+                ),
+            );
+        } else {
+            report.push(
+                "lsp.settle_ms",
+                CheckStatus::Ok,
+                format!("{ms} ms (within the recommended range)"),
             );
         }
     }
@@ -339,10 +393,7 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
             report.push(
                 "mcp",
                 CheckStatus::Ok,
-                format!(
-                    "{spawnable} server(s) configured: {}",
-                    names.join(", "),
-                ),
+                format!("{spawnable} server(s) configured: {}", names.join(", "),),
             );
         }
     }
@@ -363,9 +414,7 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
             report.push(
                 "serve",
                 CheckStatus::Ok,
-                format!(
-                    "no daemon (start one with `kod serve` to enable --remote)",
-                ),
+                "no daemon (start one with `kod serve` to enable --remote)".to_string(),
             );
         }
     }
@@ -431,6 +480,44 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
     report
 }
 
+/// Every `.md` file under `root`, recursively, following the same
+/// conventions the skill loader uses (no symlink traversal, no
+/// filtering by directory name — a skill can live in a nested
+/// folder).
+///
+/// `kod-core` does not depend on `walkdir`; the doctor's walk is the
+/// only place that needs one, and a dozen lines of `std::fs` do not
+/// justify the dependency. Errors on individual entries are
+/// swallowed: a permission-denied subdirectory is reported by the
+/// caller as a parse failure count, not as a crash.
+fn collect_md_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                // A symlinked directory is skipped rather than
+                // followed. The skill loader does the same with
+                // `follow_links(false)`; matching its behaviour here
+                // means the doctor sees exactly what the loader
+                // would see.
+                if meta.file_type().is_symlink() {
+                    continue;
+                }
+                stack.push(path);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -452,7 +539,10 @@ mod tests {
         let report = run_diagnostics(&cfg);
         let names: Vec<&str> = report.checks.iter().map(|c| c.name.as_str()).collect();
         assert!(names.contains(&"config"), "missing config check: {names:?}");
-        assert!(names.contains(&"llm.base_url"), "missing llm check: {names:?}");
+        assert!(
+            names.contains(&"llm.base_url"),
+            "missing llm check: {names:?}"
+        );
         assert!(names.contains(&"skills"), "missing skills check: {names:?}");
         assert!(names.contains(&"memory"), "missing memory check: {names:?}");
     }
@@ -520,6 +610,90 @@ mod tests {
     }
 
     #[test]
+    fn lsp_defaults_report_ok() {
+        // With the design's defaults — auto_diagnostics = true,
+        // auto_lsp = true, settle_ms = 1500 — both LSP checks are Ok.
+        let cfg = KodConfig::default();
+        let report = run_diagnostics(&cfg);
+        let ad = report
+            .checks
+            .iter()
+            .find(|c| c.name == "lsp.auto_diagnostics")
+            .expect("lsp.auto_diagnostics check present");
+        assert_eq!(
+            ad.status,
+            CheckStatus::Ok,
+            "default must report Ok: {}",
+            ad.message
+        );
+        let settle = report
+            .checks
+            .iter()
+            .find(|c| c.name == "lsp.settle_ms")
+            .expect("lsp.settle_ms check present");
+        assert_eq!(
+            settle.status,
+            CheckStatus::Ok,
+            "default must report Ok: {}",
+            settle.message
+        );
+    }
+
+    #[test]
+    fn lsp_disabled_reports_warn_naming_the_switch() {
+        let mut cfg = KodConfig::default();
+        cfg.lsp.auto_diagnostics = false;
+        let report = run_diagnostics(&cfg);
+        let ad = report
+            .checks
+            .iter()
+            .find(|c| c.name == "lsp.auto_diagnostics")
+            .unwrap();
+        assert_eq!(ad.status, CheckStatus::Warn);
+        assert!(
+            ad.message.contains("[lsp] auto_diagnostics"),
+            "must name the switch a user set: {}",
+            ad.message,
+        );
+    }
+
+    #[test]
+    fn lsp_short_settle_ms_reports_warn() {
+        let mut cfg = KodConfig::default();
+        cfg.lsp.settle_ms = 50;
+        let report = run_diagnostics(&cfg);
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name == "lsp.settle_ms")
+            .unwrap();
+        assert_eq!(check.status, CheckStatus::Warn);
+        assert!(
+            check.message.contains("50 ms"),
+            "must name the value: {}",
+            check.message
+        );
+    }
+
+    #[test]
+    fn lsp_long_settle_ms_reports_warn() {
+        let mut cfg = KodConfig::default();
+        cfg.lsp.settle_ms = 30_000;
+        let report = run_diagnostics(&cfg);
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name == "lsp.settle_ms")
+            .unwrap();
+        assert_eq!(check.status, CheckStatus::Warn);
+        assert!(
+            check.message.contains("30000 ms"),
+            "must name the value: {}",
+            check.message,
+        );
+    }
+
+    #[test]
     fn has_failures_only_when_a_check_failed() {
         let mut report = DiagnosticReport::default();
         report.push("a", CheckStatus::Ok, "fine");
@@ -528,42 +702,4 @@ mod tests {
         report.push("c", CheckStatus::Fail, "broken");
         assert!(report.has_failures());
     }
-}
-
-/// Every `.md` file under `root`, recursively, following the same
-/// conventions the skill loader uses (no symlink traversal, no
-/// filtering by directory name — a skill can live in a nested
-/// folder).
-///
-/// `kod-core` does not depend on `walkdir`; the doctor's walk is the
-/// only place that needs one, and a dozen lines of `std::fs` do not
-/// justify the dependency. Errors on individual entries are
-/// swallowed: a permission-denied subdirectory is reported by the
-/// caller as a parse failure count, not as a crash.
-fn collect_md_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let mut out = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(meta) = entry.metadata() else { continue };
-            if meta.is_dir() {
-                // A symlinked directory is skipped rather than
-                // followed. The skill loader does the same with
-                // `follow_links(false)`; matching its behaviour here
-                // means the doctor sees exactly what the loader
-                // would see.
-                if meta.file_type().is_symlink() {
-                    continue;
-                }
-                stack.push(path);
-            } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
-                out.push(path);
-            }
-        }
-    }
-    out
 }
