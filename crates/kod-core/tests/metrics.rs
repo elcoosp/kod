@@ -46,11 +46,7 @@ pub fn rss_bytes() -> Option<u64> {
         for line in status.lines() {
             if let Some(rest) = line.strip_prefix("VmRSS:") {
                 // Format: `VmRSS:\t   12345 kB`
-                let kb: u64 = rest
-                    .split_whitespace()
-                    .next()?
-                    .parse()
-                    .ok()?;
+                let kb: u64 = rest.split_whitespace().next()?.parse().ok()?;
                 return Some(kb.saturating_mul(1024));
             }
         }
@@ -65,10 +61,7 @@ pub fn rss_bytes() -> Option<u64> {
         if !out.status.success() {
             return None;
         }
-        let kb: u64 = String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .parse()
-            .ok()?;
+        let kb: u64 = String::from_utf8_lossy(&out.stdout).trim().parse().ok()?;
         Some(kb.saturating_mul(1024))
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
