@@ -323,8 +323,19 @@ mod coverage_message_render {
 
     #[test]
     fn metadata_without_pinned_key_defaults_to_false() {
-        // A session file written before `pinned` existed still parses.
-        let parsed: MessageMetadata = serde_json::from_str("{}").unwrap();
+        // `MessageMetadata` only carries a per-field default on
+        // `pinned`; the other five fields are required. A session
+        // file written before `pinned` existed carries those five
+        // and no `pinned` key; it must parse with `pinned` defaulting
+        // to false.
+        let legacy = r#"{
+            "skill_applied": null,
+            "tools_used": [],
+            "agent_id": null,
+            "thinking_time_ms": null,
+            "token_count": null
+        }"#;
+        let parsed: MessageMetadata = serde_json::from_str(legacy).unwrap();
         assert!(!parsed.pinned);
     }
 }
