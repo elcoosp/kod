@@ -656,3 +656,229 @@ mod tests {
         assert!(err.to_string().contains("no recognized project"));
     }
 }
+
+#[cfg(test)]
+mod coverage_diagnostic_parsing {
+    //! Additional cases for the compiler-output parsers. A parser
+    //! that drops a diagnostic silently reports a clean build; a
+    //! parser that mis-attributes one points the model at the wrong
+    //! file. The existing tests cover the happy path; these pin the
+    //! corners a real toolchain emits.
+    use super::*;
+
+    #[test]
+    fn rust_message_containing_a_colon_is_preserved() {
+        let line = "src/a.rs:10:5: error: unexpected token `:`";
+        let d = parse_rust_line(line).unwrap();
+        assert_eq!(d.file, "src/a.rs");
+        assert_eq!(d.line, 10);
+        assert_eq!(d.column, 5);
+        assert_eq!(d.message, "unexpected token `:`");
+    }
+
+    #[test]
+    fn rust_line_with_windows_path() {
+        let line = r"C:\src\a.rs:10:5: warning: unused variable `x`";
+        let d = parse_rust_line(line).unwrap();
+        assert_eq!(d.file, r"C:\src\a.rs");
+        assert_eq!(d.line, 10);
+        assert_eq!(d.severity, "warning");
+        assert_eq!(d.message, "unused variable `x`");
+    }
+
+    #[test]
+    fn tsc_warning_parses_with_code() {
+        let line = "src/a.ts(1,1): warning TS9999: something bad";
+        let d = parse_tsc_line(line).unwrap();
+        assert_eq!(d.severity, "warning");
+        assert_eq!(d.code.as_deref(), Some("TS9999"));
+        assert_eq!(d.message, "something bad");
+    }
+
+    #[test]
+    fn tsc_message_without_ts_prefix_has_no_code() {
+        let line = "src/a.ts(1,1): error: plain message";
+        let d = parse_tsc_line(line).unwrap();
+        assert!(d.code.is_none(), "should not invent a code: {:?}", d.code);
+        assert_eq!(d.message, "plain message");
+    }
+
+    #[test]
+    fn ruff_line_without_code_is_accepted() {
+        let line = "src/a.py:1:1: some plain message";
+        let d = parse_ruff_line(line).unwrap();
+        assert!(d.code.is_none(), "should not invent a code: {:?}", d.code);
+        assert_eq!(d.message, "some plain message");
+    }
+
+    #[test]
+    fn ruff_line_with_two_letter_code_is_accepted() {
+        // `I0` is not a real ruff code, but the parser's contract is
+        // "an uppercase-and-digit prefix of length >= 2 is a code",
+        // not "a code from a fixed list". A future ruff version that
+        // adds a new prefix must not require a parser change.
+        let line = "src/a.py:1:1: I001 import order";
+        let d = parse_ruff_line(line).unwrap();
+        assert_eq!(d.code.as_deref(), Some("I001"));
+        assert_eq!(d.message, "import order");
+    }
+
+    #[test]
+    fn go_line_preserves_colons_in_message() {
+        let line = "a.go:1:2: cannot use x: not a value";
+        let d = parse_go_line(line).unwrap();
+        assert_eq!(d.file, "a.go");
+        assert_eq!(d.line, 1);
+        assert_eq!(d.column, 2);
+        assert_eq!(d.message, "cannot use x: not a value");
+    }
+
+    #[test]
+    fn project_kind_names_are_stable() {
+        assert_eq!(ProjectKind::Cargo.name(), "cargo");
+        assert_eq!(ProjectKind::NodeTsc.name(), "tsc");
+        assert_eq!(ProjectKind::Ruff.name(), "ruff");
+        assert_eq!(ProjectKind::Go.name(), "go");
+    }
+
+    #[test]
+    fn project_kind_commands_are_the_expected_invocations() {
+        // The commands the parser feeds are the contract with the
+        // compiler; a wrong flag changes the output format and
+        // breaks every parser without a visible test failure.
+        let (prog, args) = ProjectKind::Cargo.command();
+        assert_eq!(prog, "cargo");
+        assert!(args.contains(&"check"));
+        assert!(args.iter().any(|a| a.starts_with("--message-format")));
+
+        let (prog, args) = ProjectKind::Go.command();
+        assert_eq!(prog, "go");
+        assert!(args.contains(&"vet"));
+
+        let (prog, args) = ProjectKind::Ruff.command();
+        assert_eq!(prog, "ruff");
+        assert!(args.iter().any(|a| a.starts_with("--output-format")));
+    }
+
+    #[test]
+    fn check_outcome_to_json_has_the_expected_shape() {
+        let outcome = CheckOutcome {
+            kind: "cargo".to_string(),
+            command: "cargo check".to_string(),
+            exit_code: 1,
+            diagnostics: vec![Diagnostic {
+                file: "a.rs".to_string(),
+                line: 1,
+                column: 2,
+                severity: "error".to_string(),
+                code: Some("E0308".to_string()),
+                message: "boom".to_string(),
+            }],
+            stdout: String::new(),
+            stderr: String::new(),
+            truncated: false,
+        };
+        let v = outcome.to_json();
+        assert_eq!(v["kind"], "cargo");
+        assert_eq!(v["command"], "cargo check");
+        assert_eq!(v["exit_code"], 1);
+        assert_eq!(v["diagnostic_count"], 1);
+        assert_eq!(v["diagnostics"][0]["file"], "a.rs");
+        assert_eq!(v["diagnostics"][0]["severity"], "error");
+        assert_eq!(v["diagnostics"][0]["code"], "E0308");
+        assert_eq!(v["truncated"], false);
+    }
+}
+
+#[cfg(test)]
+mod coverage_project_detection {
+    //! `ProjectKind::detect` picks one toolchain when several are
+    //! present. The priority is Cargo > Go > Ruff > NodeTsc. A
+    //! regression that reordered the checks would run `cargo check`
+    //! in a Go repo (silently a no-op) and report a clean build
+    //! where there is none.
+    use super::*;
+
+    fn dir_with(files: &[&str]) -> tempfile::TempDir {
+        let tmp = tempfile::TempDir::new().unwrap();
+        for f in files {
+            let p = tmp.path().join(f);
+            if let Some(parent) = p.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&p, "").unwrap();
+        }
+        tmp
+    }
+
+    #[test]
+    fn cargo_takes_priority_over_every_other_marker() {
+        let tmp = dir_with(&["Cargo.toml", "go.mod", "pyproject.toml", "package.json"]);
+        assert_eq!(
+            ProjectKind::detect(tmp.path()),
+            Some(ProjectKind::Cargo),
+        );
+    }
+
+    #[test]
+    fn go_takes_priority_over_ruff_and_node() {
+        let tmp = dir_with(&["go.mod", "pyproject.toml", "package.json"]);
+        assert_eq!(ProjectKind::detect(tmp.path()), Some(ProjectKind::Go));
+    }
+
+    #[test]
+    fn ruff_takes_priority_over_node() {
+        let tmp = dir_with(&["pyproject.toml", "package.json"]);
+        assert_eq!(ProjectKind::detect(tmp.path()), Some(ProjectKind::Ruff));
+    }
+
+    #[test]
+    fn ruff_toml_alone_is_recognized() {
+        let tmp = dir_with(&["ruff.toml"]);
+        assert_eq!(ProjectKind::detect(tmp.path()), Some(ProjectKind::Ruff));
+    }
+
+    #[test]
+    fn node_alone_is_recognized() {
+        let tmp = dir_with(&["package.json"]);
+        assert_eq!(ProjectKind::detect(tmp.path()), Some(ProjectKind::NodeTsc));
+    }
+
+    #[test]
+    fn empty_directory_returns_none() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        assert_eq!(ProjectKind::detect(tmp.path()), None);
+    }
+
+    #[test]
+    fn a_marker_file_in_a_subdirectory_is_not_a_match() {
+        // The detect function looks at `dir.join(marker).is_file()`,
+        // so a nested marker does not count. This is what keeps a
+        // Rust project's `vendor/other-lang/Cargo.toml` from
+        // confusing the top-level detection.
+        let tmp = dir_with(&["subdir/Cargo.toml"]);
+        assert_eq!(ProjectKind::detect(tmp.path()), None);
+    }
+
+    #[test]
+    fn a_marker_directory_does_not_count_as_a_file() {
+        // A directory named `Cargo.toml` is a mistake, but the
+        // detector must not treat it as a project marker.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir(tmp.path().join("Cargo.toml")).unwrap();
+        assert_eq!(ProjectKind::detect(tmp.path()), None);
+    }
+
+    #[test]
+    fn project_kind_derives_the_expected_traits() {
+        // `ProjectKind` is `Debug + Clone + Copy + PartialEq + Eq`.
+        // Losing Copy would break call sites that pass it by value
+        // multiple times; losing Eq would break the assertions
+        // throughout the module.
+        let a = ProjectKind::Cargo;
+        let b = a; // Copy
+        assert_eq!(a, b); // Eq + PartialEq
+        // Debug formatting works.
+        let _ = format!("{a:?}");
+    }
+}
