@@ -507,3 +507,108 @@ mod tests {
         assert_eq!(e.dims(), 0, "dims unknown until first call");
     }
 }
+
+#[cfg(test)]
+mod coverage_embedding_parsing {
+    //! `parse_float_array` is the boundary between a server's JSON
+    //! and the local vector index. A regression that accepted a
+    //! non-numeric entry would corrupt the index silently; one
+    //! that rejected a valid one would disable semantic scoring on
+    //! a working endpoint. `derive_ollama_root` is the other
+    //! boundary — one string transformation the whole embedder
+    //! path depends on.
+    use super::*;
+
+    #[test]
+    fn parse_float_array_accepts_integers_as_floats() {
+        let v: serde_json::Value = serde_json::from_str("[1, 2, 3]").unwrap();
+        let out = parse_float_array(&v).unwrap();
+        assert_eq!(out, vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn parse_float_array_accepts_mixed_int_and_float() {
+        let v: serde_json::Value = serde_json::from_str("[1, 2.5, 3]").unwrap();
+        let out = parse_float_array(&v).unwrap();
+        assert_eq!(out.len(), 3);
+        assert!((out[1] - 2.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parse_float_array_accepts_negative_values() {
+        let v: serde_json::Value = serde_json::from_str("[-0.5, -1.0, 0.5]").unwrap();
+        let out = parse_float_array(&v).unwrap();
+        assert_eq!(out[0], -0.5);
+        assert_eq!(out[1], -1.0);
+        assert_eq!(out[2], 0.5);
+    }
+
+    #[test]
+    fn parse_float_array_accepts_empty_array() {
+        let v: serde_json::Value = serde_json::from_str("[]").unwrap();
+        assert!(parse_float_array(&v).unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_float_array_rejects_null_entries() {
+        let v: serde_json::Value = serde_json::from_str("[1.0, null, 2.0]").unwrap();
+        assert!(parse_float_array(&v).is_err());
+    }
+
+    #[test]
+    fn parse_float_array_rejects_nested_arrays() {
+        let v: serde_json::Value = serde_json::from_str("[[1.0], [2.0]]").unwrap();
+        assert!(parse_float_array(&v).is_err());
+    }
+
+    #[test]
+    fn derive_ollama_root_preserves_port_and_scheme() {
+        assert_eq!(
+            derive_ollama_root("http://localhost:11434/v1"),
+            "http://localhost:11434",
+        );
+        assert_eq!(
+            derive_ollama_root("https://api.example.com:8080/v1"),
+            "https://api.example.com:8080",
+        );
+    }
+
+    #[test]
+    fn derive_ollama_root_only_strips_the_last_v1() {
+        // `http://host/v1/v1` is a config typo; the derivation
+        // strips exactly one `/v1` suffix so the result is
+        // predictable. Documenting this makes a future change
+        // deliberate.
+        assert_eq!(
+            derive_ollama_root("http://host/v1/v1"),
+            "http://host/v1",
+        );
+    }
+
+    #[test]
+    fn derive_ollama_root_leaves_a_no_v1_url_alone() {
+        assert_eq!(
+            derive_ollama_root("http://localhost:11434"),
+            "http://localhost:11434",
+        );
+        assert_eq!(
+            derive_ollama_root("http://localhost:11434/"),
+            "http://localhost:11434",
+        );
+    }
+
+    #[test]
+    fn derive_ollama_root_preserves_a_path_segment() {
+        // A proxy that fronts Ollama under a path segment must keep
+        // that segment; stripping to the root would break the embed
+        // URL for every such deployment.
+        assert_eq!(
+            derive_ollama_root("https://proxy.example/ollama"),
+            "https://proxy.example/ollama",
+        );
+        assert_eq!(
+            derive_ollama_root("https://proxy.example/ollama/v1"),
+            "https://proxy.example/ollama",
+        );
+    }
+}
