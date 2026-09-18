@@ -5270,3 +5270,317 @@ mod tests {
         assert!(bodies[2].contains("after text"), "got: {bodies:?}");
     }
 }
+
+/// Coverage for the slash-command dispatch arms in
+/// `TuiLoop::handle_command`. The existing `mod tests` covers a
+/// subset (check / map / grep / export-html / handoff / policy /
+/// theme / goal / search / swarm / retry / steer / compact / model);
+/// this module covers the rest.
+///
+/// Two assertion styles are used:
+///
+/// * **State-based** — the command mutates `KodApp` state that has
+///   a public getter, and the test asserts on that state. These are
+///   the strongest tests in the module; they do not depend on the
+///   exact wording of any message.
+/// * **Loose string match** — the command pushes a system message
+///   and the test asserts it contains at least one of several
+///   plausible substrings. These are weaker; the alternative
+///   (asserting an exact phrase) would make the tests brittle
+///   against harmless wording changes in a `push_system_message`
+///   call site.
+///
+/// The `"Engine not initialized"` pattern is copied from the
+/// existing tests in the sibling module, which is the canonical
+/// no-engine response.
+#[cfg(test)]
+mod coverage_slash_dispatch {
+    use super::*;
+
+    fn last_message(tui: &TuiLoop) -> String {
+        tui.app()
+            .messages()
+            .last()
+            .map(|m| m.content.clone())
+            .unwrap_or_default()
+    }
+
+    fn assert_last_contains_any(tui: &TuiLoop, needles: &[&str]) {
+        let last = last_message(tui);
+        let lower = last.to_lowercase();
+        if needles.iter().any(|n| lower.contains(&n.to_lowercase())) {
+            return;
+        }
+        panic!("last message matched none of {needles:?}; got: {last:?}");
+    }
+
+    // ---- state-based tests -------------------------------------------
+
+    #[tokio::test]
+    async fn clear_asks_for_confirmation_before_wiping_the_chat() {
+        // `/clear` is destructive, so it routes through the same
+        // confirmation flow the status widget renders
+        // (`Clear all messages? y = yes · n/Esc = keep`). The
+        // message history must be untouched until the user answers
+        // `y` — a regression that cleared immediately would make
+        // `n` a lie.
+        let mut tui = TuiLoop::new();
+        tui.app_mut().push_system_message("marker-before-clear");
+        tui.handle_command("/clear").await.unwrap();
+        assert!(
+            tui.app().pending_confirm().is_some(),
+            "/clear must ask before wiping the chat",
+        );
+        assert!(
+            tui.app()
+                .messages()
+                .iter()
+                .any(|m| m.content.contains("marker-before-clear")),
+            "the marker must survive until the user confirms",
+        );
+    }
+
+    // ---- engine-missing pattern --------------------------------------
+
+    #[tokio::test]
+    async fn regenerate_without_engine_reports() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/regenerate").await.unwrap();
+        // On an empty chat the "nothing to regenerate" guard runs
+        // before the engine check; both are honest non-silent
+        // failures.
+        assert_last_contains_any(
+            &tui,
+            &["Nothing to regenerate", "Engine not initialized"],
+        );
+    }
+
+    #[tokio::test]
+    async fn refine_without_engine_reports() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/refine make it shorter").await.unwrap();
+        // Same guard order as `/regenerate`: on an empty chat the
+        // "no assistant reply" check fires first.
+        assert_last_contains_any(
+            &tui,
+            &["Nothing to refine", "Engine not initialized"],
+        );
+    }
+
+    #[tokio::test]
+    async fn summarize_without_engine_reports() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/summarize").await.unwrap();
+        assert_last_contains_any(&tui, &["Engine not initialized"]);
+    }
+
+    #[tokio::test]
+    async fn remember_without_engine_reports() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/remember cats are nice").await.unwrap();
+        // Engine missing OR memory disabled — both are honest
+        // non-silent failures.
+        assert_last_contains_any(
+            &tui,
+            &["Engine not initialized", "memory"],
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_without_engine_reports() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/memory").await.unwrap();
+        assert_last_contains_any(
+            &tui,
+            &["Engine not initialized", "memory"],
+        );
+    }
+
+    // ---- loose-string tests ------------------------------------------
+
+    #[tokio::test]
+    async fn help_lists_the_command_verbs() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/help").await.unwrap();
+        assert_last_contains_any(
+            &tui,
+            &["/help", "/clear", "/quit"],
+        );
+    }
+
+    #[tokio::test]
+    async fn copy_without_an_assistant_reply_reports() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/copy").await.unwrap();
+        assert_last_contains_any(
+            &tui,
+            &["Nothing to copy", "no assistant reply", "clipboard"],
+        );
+    }
+
+    #[tokio::test]
+    async fn raw_without_an_assistant_reply_reports() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/raw").await.unwrap();
+        assert_last_contains_any(
+            &tui,
+            &["No assistant", "assistant reply", "nothing"],
+        );
+    }
+
+    #[tokio::test]
+    async fn last_prompt_without_a_prompt_reports() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/last-prompt").await.unwrap();
+        // `/last-prompt` forwards to `/debug last-prompt`, which
+        // consults the engine before reporting the absent prompt.
+        assert_last_contains_any(
+            &tui,
+            &[
+                "Engine not initialized",
+                "No last prompt",
+                "last prompt",
+                "no prompt",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn debug_last_prompt_without_a_prompt_reports() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/debug last-prompt").await.unwrap();
+        assert_last_contains_any(
+            &tui,
+            &[
+                "Engine not initialized",
+                "No last prompt",
+                "last prompt",
+                "no prompt",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn skills_lists_or_reports_no_skills() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/skills").await.unwrap();
+        assert_last_contains_any(
+            &tui,
+            &["skill", "loaded"],
+        );
+    }
+
+    #[tokio::test]
+    async fn stats_produces_a_summary() {
+        let mut tui = TuiLoop::new();
+        tui.app_mut().push_system_message("one");
+        tui.app_mut().push_system_message("two");
+        tui.handle_command("/stats").await.unwrap();
+        assert_last_contains_any(
+            &tui,
+            &["stat", "message", "session"],
+        );
+    }
+
+    #[tokio::test]
+    async fn whoami_produces_a_session_summary() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/whoami").await.unwrap();
+        assert_last_contains_any(
+            &tui,
+            &["session", "model", "skills", "context"],
+        );
+    }
+
+    #[tokio::test]
+    async fn context_visualizes_usage() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/context").await.unwrap();
+        assert_last_contains_any(
+            &tui,
+            &["context", "token", "session"],
+        );
+    }
+
+    #[tokio::test]
+    async fn init_produces_onboarding_output() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/init").await.unwrap();
+        assert_last_contains_any(
+            &tui,
+            &["config", "model", "next", "kod"],
+        );
+    }
+
+    #[tokio::test]
+    async fn log_lists_or_reports_no_entries() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/log").await.unwrap();
+        assert_last_contains_any(
+            &tui,
+            &["Engine not initialized", "log", "no "],
+        );
+    }
+
+    #[tokio::test]
+    async fn checkpoints_lists_or_reports_none() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/checkpoints").await.unwrap();
+        // `/checkpoints` consults the engine's checkpoint manager
+        // first; without an engine it reports the missing engine.
+        assert_last_contains_any(
+            &tui,
+            &["Engine not initialized", "checkpoint", "no "],
+        );
+    }
+
+    #[tokio::test]
+    async fn branch_drops_a_marker() {
+        let mut tui = TuiLoop::new();
+        tui.app_mut().push_system_message("before branch");
+        tui.handle_command("/branch test-label").await.unwrap();
+        assert_last_contains_any(
+            &tui,
+            &["branch", "marker"],
+        );
+    }
+
+    // ---- smoke tests: must not panic, must not silently no-op --------
+
+    #[tokio::test]
+    async fn attach_reports_the_outcome() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/attach /tmp/kod-test-nonexistent-file")
+            .await
+            .unwrap();
+        // Either "attached" or "not found" — either way, the
+        // command must say something.
+        let last = last_message(&tui);
+        assert!(
+            !last.is_empty(),
+            "/attach must report its outcome, not stay silent"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_reports_the_outcome() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/delete").await.unwrap();
+        let last = last_message(&tui);
+        assert!(
+            !last.is_empty(),
+            "/delete on an empty chat must report, not stay silent"
+        );
+    }
+
+    #[tokio::test]
+    async fn diff_reports_the_outcome() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/diff").await.unwrap();
+        let last = last_message(&tui);
+        assert!(
+            !last.is_empty(),
+            "/diff with no checkpoint must report, not stay silent"
+        );
+    }
+}
