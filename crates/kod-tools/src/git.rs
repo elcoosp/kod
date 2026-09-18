@@ -43,12 +43,7 @@ async fn run_git(args: &[&str], wd: &std::path::Path, timeout_secs: u64) -> Resu
 
     let fut = cmd.output();
     let effective = timeout_secs.max(1);
-    let output = match tokio::time::timeout(
-        std::time::Duration::from_secs(effective),
-        fut,
-    )
-    .await
-    {
+    let output = match tokio::time::timeout(std::time::Duration::from_secs(effective), fut).await {
         Ok(Ok(o)) => o,
         Ok(Err(e)) => {
             return Err(KodError::ToolExecution {
@@ -199,7 +194,9 @@ impl Tool for GitStatusTool {
                 // from the left on the first non-`?` boundary instead.
                 if let Some(rest) = line.strip_prefix("? ") {
                     changed_files.push(rest.to_string());
-                } else if let Some(rest) = line.strip_prefix("1 ").or_else(|| line.strip_prefix("2 ")) {
+                } else if let Some(rest) =
+                    line.strip_prefix("1 ").or_else(|| line.strip_prefix("2 "))
+                {
                     // Format: "<XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>"
                     // — path is after the 7th space-separated field.
                     let mut parts = rest.splitn(8, ' ');
@@ -465,9 +462,7 @@ impl Tool for GitCommitTool {
         {
             Ok(out) => out,
             Err(e) => {
-                return Ok(ToolResult::Error(format!(
-                    "git_commit: commit failed: {e}"
-                )));
+                return Ok(ToolResult::Error(format!("git_commit: commit failed: {e}")));
             }
         };
 
@@ -575,9 +570,7 @@ impl Tool for GitBranchTool {
                 {
                     Ok(o) => o,
                     Err(e) => {
-                        return Ok(ToolResult::Error(format!(
-                            "git_branch: list failed: {e}"
-                        )));
+                        return Ok(ToolResult::Error(format!("git_branch: list failed: {e}")));
                     }
                 };
                 let mut current: Option<String> = None;
@@ -606,8 +599,7 @@ impl Tool for GitBranchTool {
                     Some(n) if !n.trim().is_empty() => n.trim().to_string(),
                     _ => {
                         return Ok(ToolResult::Error(
-                            "git_branch: 'name' is required when action = 'create'"
-                                .to_string(),
+                            "git_branch: 'name' is required when action = 'create'".to_string(),
                         ));
                     }
                 };
@@ -640,9 +632,7 @@ impl Tool for GitBranchTool {
                 {
                     Ok(o) => o,
                     Err(e) => {
-                        return Ok(ToolResult::Error(format!(
-                            "git_branch: create failed: {e}"
-                        )));
+                        return Ok(ToolResult::Error(format!("git_branch: create failed: {e}")));
                     }
                 };
                 Ok(ToolResult::Success(serde_json::json!({
@@ -776,7 +766,10 @@ mod tests {
             ToolResult::Success(v) => {
                 assert_eq!(v["empty"], false);
                 let diff = v["diff"].as_str().unwrap();
-                assert!(diff.contains("+more"), "diff should show the addition: {diff}");
+                assert!(
+                    diff.contains("+more"),
+                    "diff should show the addition: {diff}"
+                );
             }
             other => panic!("expected success, got {other:?}"),
         }
