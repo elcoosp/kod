@@ -396,10 +396,8 @@ impl ChatWidget {
         // Maps each rendered message's id to the index of its first
         // line in `lines`. Used by the search-active scroll override
         // below to compute the target message's vertical position.
-        let mut message_line_offsets: std::collections::HashMap<
-            kod_types::MessageId,
-            usize,
-        > = std::collections::HashMap::new();
+        let mut message_line_offsets: std::collections::HashMap<kod_types::MessageId, usize> =
+            std::collections::HashMap::new();
         for (i, message) in ordered.iter().enumerate() {
             if app.search_query().is_none()
                 && !app.show_tools()
