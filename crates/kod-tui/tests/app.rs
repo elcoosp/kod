@@ -258,7 +258,6 @@ fn test_no_path_completion_for_plain_words() {
     assert!(!app.show_completions());
 }
 
-
 /// `KodApp::save_session` + `load_session` are the only persistence
 /// between TUI runs. Regression: both existed but neither was called
 /// from TuiLoop, so a restart silently lost the whole chat and the
@@ -274,10 +273,7 @@ fn test_session_persistence_roundtrip() {
     use kod_tui::app::{KodApp, Message};
     use kod_types::{MessageId, MessageMetadata, MessageRole};
 
-    let tmp = std::env::temp_dir().join(format!(
-        "kod-tui-session-test-{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("kod-tui-session-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     // SAFETY: tests that touch KOD_TUI_STATE_DIR are serialized below
@@ -332,7 +328,6 @@ fn session_state_dir_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-
 /// Friendly-error coverage: each branch of KodApp::friendly_error must
 /// fire on the phrasing OpenAI-compatible servers actually produce,
 /// and the raw error text must always be preserved.
@@ -341,18 +336,12 @@ fn test_friendly_error_advice() {
     use kod_tui::app::KodApp;
 
     // 1. Model not found — advice should name `ollama pull`.
-    let m = KodApp::friendly_error(
-        "provider error: model `codellama:13b` not found",
-        0,
-    );
+    let m = KodApp::friendly_error("provider error: model `codellama:13b` not found", 0);
     assert!(m.contains("Error:"), "raw text preserved: {m}");
     assert!(m.contains("ollama pull"), "model advice missing: {m}");
 
     // 2. Context length — advice should name /compact.
-    let m = KodApp::friendly_error(
-        "400 Bad Request: maximum context length is 8192 tokens",
-        0,
-    );
+    let m = KodApp::friendly_error("400 Bad Request: maximum context length is 8192 tokens", 0);
     assert!(m.contains("/compact"), "context advice missing: {m}");
 
     // 3. Malformed tool call — advice should mention tool calling.
@@ -366,10 +355,7 @@ fn test_friendly_error_advice() {
     );
 
     // 4. Connectivity — advice should mention ollama serve.
-    let m = KodApp::friendly_error(
-        "connection refused: 127.0.0.1:11434",
-        0,
-    );
+    let m = KodApp::friendly_error("connection refused: 127.0.0.1:11434", 0);
     assert!(m.contains("ollama serve"), "connection advice missing: {m}");
 
     // 5. Auth — advice should mention api_key.
@@ -391,10 +377,7 @@ fn test_friendly_error_advice() {
     // 9. Specific-branch precedence: a message containing both
     // "model not found" and "404" should pick the model-not-found
     // advice, not the endpoint-not-found one.
-    let m = KodApp::friendly_error(
-        "404 Not Found: model not found in registry",
-        0,
-    );
+    let m = KodApp::friendly_error("404 Not Found: model not found in registry", 0);
     assert!(
         m.contains("ollama pull"),
         "model-not-found should win over 404: {m}"
