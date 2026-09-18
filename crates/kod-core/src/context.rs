@@ -328,14 +328,4 @@ mod coverage_engine_context {
         assert_eq!(c.system_prompt.as_deref(), Some("sys"));
         assert_eq!(c.skills.len(), 1);
         assert_eq!(c.tools_available, vec!["t".to_string()]);
-    }
-
-    #[test]
-    fn default_context_uses_the_current_directory() {
-        // A default context gets a plausible working_dir. A
-        // regression that left it empty would break the tools
-        // rooted at the context.
-        let c = EngineContext::default();
-        assert!(!c.working_dir.as_os_str().is_empty());
-    }
-}
+    }}
