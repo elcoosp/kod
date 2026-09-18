@@ -144,7 +144,6 @@ pub fn create_mock_response(prompt: &str) -> String {
     )
 }
 
-
 /// Install a provider behind a one-endpoint registry named
 /// `"default"`. Integration-test utility: the engine's own
 /// `install_test_provider` is `#[cfg(test)]` (crate-local) and
