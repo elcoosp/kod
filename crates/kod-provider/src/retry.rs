@@ -41,9 +41,7 @@ impl Default for RetryPolicy {
             base_delay: Duration::from_millis(250),
             max_delay: Duration::from_secs(8),
             jitter_fraction: 0.25,
-            sleep_fn: Arc::new(|d: Duration| -> SleepFuture {
-                Box::pin(tokio::time::sleep(d))
-            }),
+            sleep_fn: Arc::new(|d: Duration| -> SleepFuture { Box::pin(tokio::time::sleep(d)) }),
         }
     }
 }
@@ -56,9 +54,7 @@ impl RetryPolicy {
             base_delay: Duration::ZERO,
             max_delay: Duration::ZERO,
             jitter_fraction: 0.0,
-            sleep_fn: Arc::new(|_: Duration| -> SleepFuture {
-                Box::pin(async {})
-            }),
+            sleep_fn: Arc::new(|_: Duration| -> SleepFuture { Box::pin(async {}) }),
         }
     }
 
@@ -121,8 +117,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc as StdArc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[tokio::test]
     async fn retries_transient_errors_until_success() {
@@ -169,7 +165,11 @@ mod tests {
         let policy = RetryPolicy::immediate();
         let result: Result<u32> = with_retry(&policy, || {
             calls_clone.fetch_add(1, Ordering::SeqCst);
-            async move { Err(KodError::RateLimited { retry_after_secs: 2 }) }
+            async move {
+                Err(KodError::RateLimited {
+                    retry_after_secs: 2,
+                })
+            }
         })
         .await;
         assert!(matches!(result, Err(KodError::RateLimited { .. })));
