@@ -9,6 +9,7 @@ use kod_provider::{
     GenerationOptions, GenerationResponse, LlmProvider, PromptCacheKind, ProviderCapabilities,
     StreamChunk,
 };
+use kod_provider::request::CompletionRequest;
 use kod_types::{ToolCall, ToolDefinition};
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -21,6 +22,14 @@ pub struct AnthropicProvider {
     model: String,
     base_url: String,
     api_key: String,
+    /// Transport for the native Messages API calls issued by
+    /// `complete()` (design §4 D1.2, A5b). `adk-model`'s client has its
+    /// own transport for the legacy methods; this one is only used for
+    /// the wire-native path, which needs to build the request body
+    /// itself to place `cache_control` on the right system segment.
+    /// A single client per provider keeps the connection pool warm
+    /// across calls.
+    client: reqwest::Client,
 }
 
 impl AnthropicProvider {
@@ -34,11 +43,21 @@ impl AnthropicProvider {
         let api_key = api_key.into();
         let model = model.into();
         let inner = build_client(&api_key, &model, &base_url)?;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| {
+                KodError::Provider(format!(
+                    "anthropic: could not build http client: {e}"
+                ))
+            })?;
         Ok(Self {
             inner,
             model,
             base_url,
             api_key,
+            client,
         })
     }
 
@@ -51,6 +70,10 @@ impl AnthropicProvider {
             model,
             base_url: self.base_url,
             api_key: self.api_key,
+            // `reqwest::Client` is `Clone` (an internal Arc); reusing
+            // the existing one keeps the connection pool and TLS
+            // session cache warm across `/model` switches.
+            client: self.client,
         })
     }
 
@@ -153,6 +176,46 @@ impl LlmProvider for AnthropicProvider {
         Ok(Vec::new())
     }
 
+    /// Native Messages API call (design §4 D1.2, A5b). Uses the wire
+    /// module to build a body with `cache_control` on the last cacheable
+    /// system segment, POSTs it, and parses the response. The other
+    /// trait methods (`generate`, `generate_with_tools`, `stream*`) stay
+    /// on the `adk-model` path — that is the pre-migration surface, and
+    /// this override only affects callers that have already migrated to
+    /// `CompletionRequest`.
+    async fn complete(
+        &self,
+        req: &CompletionRequest,
+    ) -> Result<GenerationResponse> {
+        let body = crate::wire::build_messages_body(req);
+        let url = format!("{}/messages", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                KodError::Provider(format!("anthropic: POST {url}: {e}"))
+            })?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            let snippet = if text.len() > 400 {
+                format!("{}…", &text[..text.floor_char_boundary(400)])
+            } else {
+                text
+            };
+            return Err(KodError::provider_status(status.as_u16(), &snippet));
+        }
+        let parsed: serde_json::Value = resp.json().await.map_err(|e| {
+            KodError::Provider(format!("anthropic: invalid JSON: {e}"))
+        })?;
+        parse_response(&parsed)
+    }
+
     async fn generate(&self, prompt: &str, options: &GenerationOptions) -> Result<String> {
         let request = self.text_request(prompt, options, &[]);
         let (text, _, _) = self.collect(request, false).await?;
@@ -200,6 +263,94 @@ impl LlmProvider for AnthropicProvider {
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
         let request = self.text_request(prompt, options, tools);
         self.stream_request(request)
+    }
+
+    /// Structured streaming (design §4 D1.2, A5b). Native Messages API
+    /// path: builds the wire body via `wire::build_streaming_body`,
+    /// POSTs it, and drives the SSE parser from `wire`. Same
+    /// `StreamChunk` framing as the OpenAI-compatible provider, so the
+    /// engine's assembly is provider-agnostic.
+    ///
+    /// The `LlmRequest`-shaped `adk-model` streaming path is still the
+    /// one used by `stream_with_tools`; this override only affects
+    /// callers that have migrated to `CompletionRequest`.
+    fn stream_completion<'a>(
+        &'a self,
+        req: &'a CompletionRequest,
+    ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
+        let body = crate::wire::build_streaming_body(req);
+        let url = format!("{}/messages", self.base_url);
+        let client = self.client.clone();
+        let api_key = self.api_key.clone();
+
+        Box::pin(async_stream::stream! {
+            let resp = match client
+                .post(&url)
+                .header("x-api-key", &api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("accept", "text/event-stream")
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    yield Err(KodError::Provider(format!(
+                        "anthropic stream: POST {url}: {e}"
+                    )));
+                    return;
+                }
+            };
+            let status = resp.status();
+            if !status.is_success() {
+                let text = resp.text().await.unwrap_or_default();
+                yield Err(KodError::provider_status(status.as_u16(), &text));
+                return;
+            }
+
+            use futures::StreamExt;
+            let mut stream = resp.bytes_stream();
+            let mut buf = String::new();
+            let mut state = crate::wire::AnthropicStreamState::default();
+            let mut done_sent = false;
+
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(bytes) => {
+                        buf.push_str(&String::from_utf8_lossy(&bytes));
+                        // SSE frames are separated by a blank line.
+                        // Process complete lines; a partial line stays
+                        // in `buf` until the next byte chunk arrives.
+                        while let Some(nl) = buf.find('\n') {
+                            let line = buf[..nl].trim_end_matches('\r').to_string();
+                            buf.drain(..=nl);
+                            for chunk in crate::wire::parse_sse_line(&mut state, &line) {
+                                if matches!(chunk, StreamChunk::Done) {
+                                    done_sent = true;
+                                }
+                                yield Ok(chunk);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        yield Err(KodError::Provider(format!(
+                            "anthropic stream: read error: {e}"
+                        )));
+                        return;
+                    }
+                }
+            }
+
+            // The spec says `message_stop` terminates; if the transport
+            // closes without one (a truncated stream), still emit a
+            // `Done` so the engine's assembly loop terminates instead
+            // of stalling on the last partial call.
+            if !done_sent && state.finished {
+                yield Ok(StreamChunk::Done);
+            } else if !done_sent {
+                yield Ok(StreamChunk::Done);
+            }
+        })
     }
 }
 
@@ -316,6 +467,91 @@ fn tool_declarations(tools: &[ToolDefinition]) -> HashMap<String, serde_json::Va
             )
         })
         .collect()
+}
+
+/// Turn a Messages API response body into a `GenerationResponse`.
+///
+/// The response shape:
+/// ```text
+/// {
+///   "content": [
+///     {"type": "text", "text": "…"},
+///     {"type": "tool_use", "id": "…", "name": "…", "input": {…}}
+///   ],
+///   "stop_reason": "end_turn" | "tool_use" | …,
+///   "usage": {"input_tokens": N, "output_tokens": M}
+/// }
+/// ```
+///
+/// Text-only → `Text`; tool_use only → `ToolCalls`; both → `Mixed`. An
+/// empty `content` array collapses to `Text { content: "" }` rather
+/// than erroring — Anthropic does return empty content on a refusal or
+/// an immediate stop, and the engine treats an empty reply as "nothing
+/// to say" rather than a transport failure.
+fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
+    let content = v
+        .get("content")
+        .and_then(|c| c.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut text = String::new();
+    let mut calls: Vec<kod_types::ToolCall> = Vec::new();
+    for block in &content {
+        match block.get("type").and_then(|t| t.as_str()) {
+            Some("text") => {
+                if let Some(t) = block.get("text").and_then(|s| s.as_str()) {
+                    text.push_str(t);
+                }
+            }
+            Some("tool_use") => {
+                let name = block
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                let id = block.get("id").and_then(|i| i.as_str()).map(String::from);
+                let input = block
+                    .get("input")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                calls.push(kod_types::ToolCall {
+                    id,
+                    tool_name: name,
+                    arguments: input,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let usage = v.get("usage").map(|u| kod_provider::TokenUsage {
+        prompt_tokens: u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0)
+            as usize,
+        completion_tokens: u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0)
+            as usize,
+        total_tokens: (u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0)
+            + u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0))
+            as usize,
+    });
+
+    if calls.is_empty() {
+        Ok(GenerationResponse::Text {
+            content: text,
+            usage,
+        })
+    } else if text.is_empty() {
+        Ok(GenerationResponse::ToolCalls { calls, usage })
+    } else {
+        Ok(GenerationResponse::Mixed {
+            content: text,
+            calls,
+            usage,
+        })
+    }
 }
 
 #[cfg(test)]
