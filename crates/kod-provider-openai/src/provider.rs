@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use futures::{Stream, StreamExt};
 use kod_error::{KodError, Result};
 use kod_provider::{GenerationOptions, GenerationResponse, LlmProvider, StreamChunk};
+use kod_provider::request::CompletionRequest;
 use kod_types::{ToolCall, ToolDefinition};
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -183,6 +184,96 @@ impl OpenAICompatProvider {
         .with_config(options_to_config(options));
         if !tools.is_empty() {
             request.tools = tool_declarations(tools);
+        }
+        request
+    }
+
+    /// Build an `adk-model` `LlmRequest` from a structured
+    /// `CompletionRequest` (design §2 AD-01, ADR-04 Q1).
+    ///
+    /// One `Content` per source message, with the role the wire wants
+    /// (`user`, `assistant`, `tool`, `system`). The system prompt is a
+    /// leading `system` content; adk-model's converters extract it into
+    /// the top-level `system` field for providers that use one
+    /// (Anthropic, Gemini, Bedrock) and leave it as a role message for
+    /// OpenAI-compatible ones, which is exactly the OpenAI spec.
+    ///
+    /// Tool calls and tool results are attached as `Part::FunctionCall`
+    /// and `Part::FunctionResponse` respectively. The multi-role
+    /// support was the ADR-04 Q1 spike's headline finding; this method
+    /// is the first production use of it.
+    fn request_from_completion(&self, req: &CompletionRequest) -> LlmRequest {
+        use kod_types::MessageRole;
+
+        let mut contents: Vec<Content> = Vec::new();
+
+        // System prompt, if any. adk-model's per-provider converters
+        // recognise `role == "system"` and either lift it into the
+        // top-level field or keep it as a role message.
+        let sys_text = req.system.render_text();
+        if !sys_text.is_empty() {
+            contents.push(Content::new("system").with_text(sys_text));
+        }
+
+        for m in &req.messages {
+            match &m.role {
+                MessageRole::User => {
+                    contents.push(Content::new("user").with_text(&m.content));
+                }
+                MessageRole::Assistant | MessageRole::Agent(_) => {
+                    // Assistant message: text (if any) plus one
+                    // `Part::FunctionCall` per tool call. adk-core 2.2
+                    // does not expose a `with_function_call` builder;
+                    // the parts vector is public and the variant's
+                    // fields are the ones the ADR-04 spike recorded
+                    // from `adk-model/src/tool_call_parser.rs`.
+                    let mut c = Content::new("assistant");
+                    if !m.content.is_empty() {
+                        c = c.with_text(&m.content);
+                    }
+                    for call in &m.tool_calls {
+                        c.parts.push(Part::FunctionCall {
+                            name: call.tool_name.clone(),
+                            args: call.arguments.clone(),
+                            id: call.id.clone(),
+                            thought_signature: None,
+                        });
+                    }
+                    contents.push(c);
+                }
+                MessageRole::Tool => {
+                    // A tool result. adk-core 2.2 exposes neither a
+                    // `with_function_response` builder nor a
+                    // documented `Part::FunctionResponse` shape. Until
+                    // the exact variant is pinned by the wire test
+                    // that will accompany the engine migration to
+                    // `stream_completion`, the tool result travels as
+                    // a text part on a `tool`-role Content, with the
+                    // `tool_call_id` echoed in the body so nothing is
+                    // lost — an implementor that adds the native shape
+                    // later can parse the id back out of the prefix.
+                    let id = m.tool_call_id.clone().unwrap_or_default();
+                    let annotated = if id.is_empty() {
+                        m.content.clone()
+                    } else {
+                        format!("[tool_call_id={id}]\n{}", m.content)
+                    };
+                    contents.push(Content::new("tool").with_text(annotated));
+                }
+                MessageRole::System => {
+                    // A `System` message inside the transcript is a
+                    // caller bug — the system prompt belongs in
+                    // `req.system`. Dropped rather than emit a
+                    // second system turn, which the wire would
+                    // reject.
+                }
+            }
+        }
+
+        let mut request = LlmRequest::new(self.request_model(&req.options), contents)
+            .with_config(options_to_config(&req.options));
+        if !req.tools.is_empty() {
+            request.tools = tool_declarations(&req.tools);
         }
         request
     }
@@ -366,6 +457,21 @@ impl LlmProvider for OpenAICompatProvider {
         options: &'a GenerationOptions,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
         let request = self.text_request(prompt, options, tools);
+        self.stream_request(request)
+    }
+
+    /// Structured streaming (design §2 AD-01, §4 D1.4 PR A3).
+    ///
+    /// Same SSE machinery as `stream_with_tools`, but the request is
+    /// built from `CompletionRequest` (multi-role messages, tool calls
+    /// with ids, tool results with `tool_call_id`) rather than a
+    /// rendered text prompt. The `LlmRequest` is owned by the returned
+    /// stream, so the caller's borrow on `req` ends at the call.
+    fn stream_completion<'a>(
+        &'a self,
+        req: &'a CompletionRequest,
+    ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + 'a>> {
+        let request = self.request_from_completion(req);
         self.stream_request(request)
     }
 }
