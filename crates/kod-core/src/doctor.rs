@@ -135,16 +135,66 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
                     ),
                 );
             } else {
-                report.push(
-                    "skills",
-                    CheckStatus::Ok,
-                    format!(
-                        "{} of {} standard director{} present",
-                        existing.len(),
-                        dirs.len(),
-                        if dirs.len() == 1 { "y" } else { "ies" },
-                    ),
-                );
+                // Directories exist: walk each one, count the .md
+                // files, and count how many parse. A directory that
+                // exists but holds a malformed skill is a worse
+                // surprise than a directory that does not exist —
+                // the loader logs a warning and silently skips the
+                // file, and the user only finds out when the skill
+                // they wrote does nothing.
+                let parser = kod_skills::SkillParser::new();
+                let mut total = 0usize;
+                let mut parsed = 0usize;
+                let mut failed: Vec<(std::path::PathBuf, String)> = Vec::new();
+                for dir in &existing {
+                    for path in collect_md_files(dir) {
+                        total += 1;
+                        match parser.parse_file(&path) {
+                            Ok(_) => parsed += 1,
+                            Err(e) => failed.push((path, e.to_string())),
+                        }
+                    }
+                }
+                if total == 0 {
+                    report.push(
+                        "skills",
+                        CheckStatus::Ok,
+                        format!(
+                            "{} director{} present, no .md skills yet",
+                            existing.len(),
+                            if existing.len() == 1 { "y" } else { "ies" },
+                        ),
+                    );
+                } else if failed.is_empty() {
+                    report.push(
+                        "skills",
+                        CheckStatus::Ok,
+                        format!(
+                            "{parsed} skill file(s) parsed across {} director{}",
+                            existing.len(),
+                            if existing.len() == 1 { "y" } else { "ies" },
+                        ),
+                    );
+                } else {
+                    let first = failed
+                        .first()
+                        .map(|(p, e)| {
+                            let name = p
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("?");
+                            format!("{name}: {e}")
+                        })
+                        .unwrap_or_default();
+                    report.push(
+                        "skills",
+                        CheckStatus::Warn,
+                        format!(
+                            "{parsed}/{total} parsed; {} failed — {first}",
+                            failed.len(),
+                        ),
+                    );
+                }
             }
         }
         Err(e) => report.push("skills", CheckStatus::Fail, format!("{e}")),
@@ -206,6 +256,49 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
 
                 report.push("sandbox", CheckStatus::Warn, advice);
             }
+        }
+    }
+
+    // LSP servers. Informational: which language servers are on PATH.
+    // One row per detected binary so a user knows whether the D5.2
+    // diagnostic hook and the lsp_* tools will actually fire for
+    // their language. The doctor does not spawn the servers — that
+    // is the engine's job at first use.
+    {
+        let detected: Vec<(&str, &str)> = [
+            ("rust-analyzer", "rust"),
+            ("pyright-langserver", "python"),
+            ("pylsp", "python"),
+            ("typescript-language-server", "typescript"),
+            ("gopls", "go"),
+        ]
+        .iter()
+        .filter(|(bin, _)| {
+            std::env::var_os("PATH")
+                .map(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
+                .unwrap_or(false)
+        })
+        .map(|(b, l)| (*b, *l))
+        .collect();
+        if detected.is_empty() {
+            report.push(
+                "lsp",
+                CheckStatus::Ok,
+                "no language servers on PATH (the diagnostics hook and lsp_* \
+                 tools will report 'no server for this file'; install \
+                 rust-analyzer / pyright-langserver / typescript-language-server \
+                 / gopls to enable)",
+            );
+        } else {
+            let names: Vec<String> = detected
+                .iter()
+                .map(|(b, l)| format!("{b} ({l})"))
+                .collect();
+            report.push(
+                "lsp",
+                CheckStatus::Ok,
+                format!("{} language server(s): {}", detected.len(), names.join(", ")),
+            );
         }
     }
 
@@ -435,4 +528,42 @@ mod tests {
         report.push("c", CheckStatus::Fail, "broken");
         assert!(report.has_failures());
     }
+}
+
+/// Every `.md` file under `root`, recursively, following the same
+/// conventions the skill loader uses (no symlink traversal, no
+/// filtering by directory name — a skill can live in a nested
+/// folder).
+///
+/// `kod-core` does not depend on `walkdir`; the doctor's walk is the
+/// only place that needs one, and a dozen lines of `std::fs` do not
+/// justify the dependency. Errors on individual entries are
+/// swallowed: a permission-denied subdirectory is reported by the
+/// caller as a parse failure count, not as a crash.
+fn collect_md_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                // A symlinked directory is skipped rather than
+                // followed. The skill loader does the same with
+                // `follow_links(false)`; matching its behaviour here
+                // means the doctor sees exactly what the loader
+                // would see.
+                if meta.file_type().is_symlink() {
+                    continue;
+                }
+                stack.push(path);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                out.push(path);
+            }
+        }
+    }
+    out
 }
