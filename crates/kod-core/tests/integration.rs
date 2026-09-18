@@ -4,7 +4,9 @@ use kod_core::{
 };
 use tempfile::TempDir;
 
-mod common;
+#[path = "common/install_test_provider.rs"]
+mod install_test_provider_mod;
+use install_test_provider_mod::install_test_provider;
 
 /// A provider that returns a canned reply without touching the
 /// network. `KodEngine::process` requires an installed provider — the
@@ -53,11 +55,7 @@ impl kod_provider::LlmProvider for NoOpProvider {
         _prompt: &str,
         _options: &kod_provider::GenerationOptions,
     ) -> std::pin::Pin<
-        Box<
-            dyn futures::Stream<Item = kod_error::Result<kod_provider::StreamChunk>>
-                + Send
-                + '_,
-        >,
+        Box<dyn futures::Stream<Item = kod_error::Result<kod_provider::StreamChunk>> + Send + '_>,
     > {
         Box::pin(futures::stream::empty())
     }
@@ -95,7 +93,8 @@ You are a Rust coding expert. Help with idiomatic Rust code.
     std::fs::write(skills_dir.join("rust.md"), skill_content).unwrap();
 
     let config = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         enable_memory: true,
@@ -115,7 +114,7 @@ You are a Rust coding expert. Help with idiomatic Rust code.
 
 async fn create_test_engine() -> (KodEngine, TempDir) {
     let (engine, temp_dir) = create_test_environment();
-    common::install_test_provider(&engine, std::sync::Arc::new(NoOpProvider)).await;
+    install_test_provider(&engine, std::sync::Arc::new(NoOpProvider)).await;
     (engine, temp_dir)
 }
 
