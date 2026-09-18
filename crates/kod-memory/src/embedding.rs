@@ -251,6 +251,119 @@ impl EmbeddingClient for OpenAIEmbedder {
     }
 }
 
+/// Build an embedder from the memory config (design D2.1).
+///
+/// `memory.embedding_endpoint` selects the wire shape; the other three
+/// fields carry the model name, an optional explicit URL, and an
+/// optional environment variable holding the API key.
+///
+/// `llm_base_url` is only consulted for the Ollama case when
+/// `embedding_url` is unset: Ollama's embed endpoint shares the
+/// server root with the chat endpoint, and the user almost always
+/// configures one and not the other. Passing `None` leaves the URL
+/// unresolved, which is an error the caller sees on the first
+/// `embed()` call rather than at construction — the same "fail
+/// loudly when it matters" shape every other client uses.
+///
+/// Returns `None` when the endpoint is `None` (the default) or when
+/// an embedder could not be built. A caller that gets `None` keeps
+/// the keyword+recency fallback the D2.3 scorer provides; no
+/// retrieval path is broken by an absent embedder.
+///
+/// The function is intentionally infallible: a misconfiguration
+/// (an OpenAI endpoint with no API key in the environment) logs a
+/// warning and returns `None`. A caller does not have to thread a
+/// `Result` through its own setup for a subsystem whose absence is
+/// already a supported mode.
+pub fn from_config(
+    memory: &kod_config::MemoryConfig,
+    llm_base_url: Option<&str>,
+) -> Option<std::sync::Arc<dyn EmbeddingClient>> {
+    use kod_config::EmbeddingEndpoint;
+
+    match memory.embedding_endpoint {
+        EmbeddingEndpoint::None => None,
+        EmbeddingEndpoint::Ollama => {
+            let url = memory
+                .embedding_url
+                .clone()
+                .or_else(|| llm_base_url.map(derive_ollama_root))
+                .unwrap_or_else(|| "http://localhost:11434".to_string());
+            match OllamaEmbedder::new(url.clone(), memory.embedding_model.clone()) {
+                Ok(e) => Some(std::sync::Arc::new(e)),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        url = %url,
+                        "could not build Ollama embedder; semantic scoring disabled",
+                    );
+                    None
+                }
+            }
+        }
+        EmbeddingEndpoint::OpenAI => {
+            let url = memory
+                .embedding_url
+                .clone()
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+            // API key: the named env var first, then `OPENAI_API_KEY`.
+            // A missing key is a warning, not a hard error: an
+            // operator who set `embedding_endpoint = "openai"` and
+            // forgot the key still gets a working session — just with
+            // keyword retrieval — and a log line naming the miss.
+            let key = memory
+                .embedding_api_key_env
+                .as_deref()
+                .and_then(|var| std::env::var(var).ok())
+                .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+                .unwrap_or_default();
+            if key.is_empty() {
+                tracing::warn!(
+                    endpoint = "openai",
+                    var = memory
+                        .embedding_api_key_env
+                        .as_deref()
+                        .unwrap_or("OPENAI_API_KEY"),
+                    "no OpenAI API key in the environment; semantic scoring disabled",
+                );
+                return None;
+            }
+            match OpenAIEmbedder::new(url.clone(), memory.embedding_model.clone(), key) {
+                Ok(e) => Some(std::sync::Arc::new(e)),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        url = %url,
+                        "could not build OpenAI embedder; semantic scoring disabled",
+                    );
+                    None
+                }
+            }
+        }
+    }
+}
+
+/// Turn an OpenAI-compatible chat base URL (`http://host:port/v1`,
+/// `http://host:port`, or a full URL with a path) into the Ollama
+/// server root that hosts `/api/embed`.
+///
+/// The three shapes a user's config can carry:
+///
+/// - `http://localhost:11434/v1` → `http://localhost:11434`
+/// - `http://localhost:11434`    → unchanged
+/// - anything else               → unchanged (a proxy that fronts both
+///   `/v1/chat/completions` and `/api/embed` gets the path preserved)
+///
+/// Trailing slashes are trimmed so the eventual
+/// `format!("{root}/api/embed")` does not produce a double slash.
+fn derive_ollama_root(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    match trimmed.strip_suffix("/v1") {
+        Some(root) => root.to_string(),
+        None => trimmed.to_string(),
+    }
+}
+
 /// Parse a JSON array of numbers into `Vec<f32>`. Rejects non-array
 /// shapes and entries that are not numbers; truncates absurdly long
 /// arrays (defensive — a server returning 10⁶ floats is a bug).
@@ -334,6 +447,52 @@ mod tests {
             .unwrap();
         // Fields are private; assert via name() as a light smoke test.
         assert_eq!(e.name(), "ollama");
+    }
+
+    #[test]
+    fn from_config_none_returns_none() {
+        let cfg = kod_config::MemoryConfig::default();
+        // Default `embedding_endpoint` is `None`; no embedder.
+        assert!(from_config(&cfg, None).is_none());
+    }
+
+    #[test]
+    fn from_config_ollama_derives_url_from_llm_base() {
+        let mut cfg = kod_config::MemoryConfig::default();
+        cfg.embedding_endpoint = kod_config::EmbeddingEndpoint::Ollama;
+        cfg.embedding_model = "nomic-embed-text".to_string();
+        let embedder = from_config(&cfg, Some("http://localhost:11434/v1"));
+        let embedder = embedder.expect("ollama embedder should build");
+        assert_eq!(embedder.name(), "ollama");
+    }
+
+    #[test]
+    fn from_config_openai_without_key_returns_none() {
+        // Ensure no leaked env var turns this into an accidental success.
+        // SAFETY: no other test in this file reads OPENAI_API_KEY.
+        let prior = std::env::var("OPENAI_API_KEY").ok();
+        // SAFETY: single-threaded test; the removal is restored below.
+        unsafe { std::env::remove_var("OPENAI_API_KEY") };
+
+        let mut cfg = kod_config::MemoryConfig::default();
+        cfg.embedding_endpoint = kod_config::EmbeddingEndpoint::OpenAI;
+        let embedder = from_config(&cfg, None);
+        assert!(embedder.is_none(), "missing API key must yield None");
+
+        // Restore the environment for the rest of the test binary.
+        if let Some(v) = prior {
+            // SAFETY: same reasoning.
+            unsafe { std::env::set_var("OPENAI_API_KEY", v) };
+        }
+    }
+
+    #[test]
+    fn derive_ollama_root_strips_v1_suffix() {
+        assert_eq!(derive_ollama_root("http://localhost:11434/v1"), "http://localhost:11434");
+        assert_eq!(derive_ollama_root("http://localhost:11434/v1/"), "http://localhost:11434");
+        assert_eq!(derive_ollama_root("http://localhost:11434"), "http://localhost:11434");
+        // A path-carrying URL is left alone (proxy case).
+        assert_eq!(derive_ollama_root("https://proxy.example/ollama"), "https://proxy.example/ollama");
     }
 
     #[test]
