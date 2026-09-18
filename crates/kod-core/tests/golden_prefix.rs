@@ -48,12 +48,12 @@ const VOLATILE_MARKER: &str = "## Volatile suffix";
 /// an invariant of the router, so a missing marker is a router
 /// regression, not a test setup error.
 fn split_cacheable(prompt: &str) -> (&str, &str) {
-    let idx = prompt
-        .find(VOLATILE_MARKER)
-        .unwrap_or_else(|| panic!(
+    let idx = prompt.find(VOLATILE_MARKER).unwrap_or_else(|| {
+        panic!(
             "router prompt is missing the volatile marker {VOLATILE_MARKER:?} \
              — the cacheable prefix invariant no longer applies"
-        ));
+        )
+    });
     (&prompt[..idx], &prompt[idx..])
 }
 
@@ -61,11 +61,7 @@ fn split_cacheable(prompt: &str) -> (&str, &str) {
 /// the repo-map block is non-empty (an empty map would render nothing
 /// and the test would trivially pass).
 fn router_with_one_file(dir: &TempDir) -> TaskRouter {
-    std::fs::write(
-        dir.path().join("foo.rs"),
-        "pub fn foo() -> u32 { 42 }\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("foo.rs"), "pub fn foo() -> u32 { 42 }\n").unwrap();
     let db_path = dir.path().join("test.redb");
     let cfg = RouterConfig {
         working_dir: dir.path().to_path_buf(),
@@ -144,21 +140,14 @@ async fn stable_prefix_survives_a_history_only_change() {
         .expect("turn 1");
 
     let p2 = router
-        .build_prompt(
-            "hello",
-            &TaskType::Simple,
-            "User: hi\nAssistant: hello\n",
-        )
+        .build_prompt("hello", &TaskType::Simple, "User: hi\nAssistant: hello\n")
         .await
         .expect("turn 2");
 
     let (c1, v1) = split_cacheable(&p1);
     let (c2, v2) = split_cacheable(&p2);
 
-    assert_eq!(
-        c1, c2,
-        "cacheable prefix must not depend on history",
-    );
+    assert_eq!(c1, c2, "cacheable prefix must not depend on history",);
     assert_ne!(
         v1, v2,
         "volatile region should have absorbed the history change",
