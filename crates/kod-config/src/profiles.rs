@@ -121,3 +121,133 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod coverage_profile_fields {
+    //! A profile is a small bundle of model settings `kod profile
+    //! use` writes into the user's config. An empty or malformed
+    //! field would produce a config the provider cannot reach —
+    //! the failure shows up later, as a provider error, with no
+    //! pointer back to the profile.
+    use super::*;
+
+    #[test]
+    fn every_profile_has_non_empty_identity_fields() {
+        for p in PRESETS {
+            assert!(!p.name.is_empty(), "profile with empty name");
+            assert!(
+                !p.description.is_empty(),
+                "profile {:?} with empty description",
+                p.name,
+            );
+            assert!(
+                !p.model.is_empty(),
+                "profile {:?} with empty model",
+                p.name,
+            );
+            assert!(
+                !p.base_url.is_empty(),
+                "profile {:?} with empty base_url",
+                p.name,
+            );
+        }
+    }
+
+    #[test]
+    fn every_profile_has_a_sane_context_window() {
+        // A context window under 1000 tokens makes the session
+        // unusable; over 10 million is a typo. Every shipped profile
+        // must sit inside that range.
+        for p in PRESETS {
+            assert!(
+                (1_000..=10_000_000).contains(&p.context_window),
+                "profile {:?} context_window {} out of range",
+                p.name,
+                p.context_window,
+            );
+        }
+    }
+
+    #[test]
+    fn every_profile_has_a_sane_max_tokens() {
+        // `max_tokens` must be positive and no larger than the
+        // context window — a max_tokens above the window is
+        // nonsense the provider silently clamps.
+        for p in PRESETS {
+            assert!(
+                p.max_tokens > 0,
+                "profile {:?} has zero max_tokens",
+                p.name,
+            );
+            assert!(
+                p.max_tokens <= p.context_window,
+                "profile {:?} max_tokens {} exceeds context_window {}",
+                p.name,
+                p.max_tokens,
+                p.context_window,
+            );
+        }
+    }
+
+    #[test]
+    fn base_urls_look_like_http_endpoints() {
+        // Every shipped profile must have an http(s) base_url. A
+        // profile with a bare hostname would fail at the first
+        // provider call with an "invalid URL" error.
+        for p in PRESETS {
+            assert!(
+                p.base_url.starts_with("http://") || p.base_url.starts_with("https://"),
+                "profile {:?} base_url {:?} is not http(s)",
+                p.name,
+                p.base_url,
+            );
+        }
+    }
+
+    #[test]
+    fn cloud_profile_has_no_install_command() {
+        // The cloud preset is the only one that ships without an
+        // install command: no local pull is required. A regression
+        // that added a bogus install command would print a useless
+        // hint to a user running `kod profile use cloud-openai`.
+        let cloud = by_name("cloud-openai").expect("cloud profile shipped");
+        assert!(cloud.install_command.is_none());
+    }
+
+    #[test]
+    fn local_profiles_install_commands_are_ollama_pull() {
+        // The install command is advisory, but the shipped locals
+        // all pull from Ollama; a regression that dropped the
+        // command would leave a user with no clear next step.
+        for p in PRESETS {
+            if p.base_url.contains("localhost") {
+                let cmd = p.install_command.expect("local has install");
+                assert!(
+                    cmd.starts_with("ollama pull "),
+                    "profile {:?} install {:?} is not an `ollama pull`",
+                    p.name,
+                    cmd,
+                );
+                // The pull target must match the model.
+                assert!(
+                    cmd.contains(p.model),
+                    "profile {:?} install {:?} does not name the model {:?}",
+                    p.name,
+                    cmd,
+                    p.model,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn names_csv_contains_every_name_separated_by_commas() {
+        let csv = names_csv();
+        for p in PRESETS {
+            assert!(csv.contains(p.name), "{:?} missing from csv", p.name);
+        }
+        // Sanity: an N-profile library has N-1 separators.
+        let commas = csv.matches(',').count();
+        assert_eq!(commas, PRESETS.len() - 1);
+    }
+}
