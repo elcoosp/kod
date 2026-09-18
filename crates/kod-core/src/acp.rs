@@ -800,3 +800,111 @@ mod tests {
         }
     }
 }
+
+/// Edge cases for the ACP pure helpers. The happy path is covered
+/// by `mod tests`; these pin the tolerance branches a refactor could
+/// silently break: missing fields, wrong types, resource-link blocks,
+/// and the empty-session key.
+#[cfg(test)]
+mod coverage_acp_edges {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn engine_key_empty_is_the_bare_acp_prefix() {
+        assert_eq!(engine_key(""), "acp");
+    }
+
+    #[test]
+    fn engine_key_nonempty_carries_the_session_id() {
+        assert_eq!(engine_key("s-1"), "acp:s-1");
+    }
+
+    #[test]
+    fn extract_prompt_text_missing_prompt_key_is_empty() {
+        assert_eq!(extract_prompt_text(&json!({})), "");
+    }
+
+    #[test]
+    fn extract_prompt_text_non_array_prompt_is_empty() {
+        assert_eq!(extract_prompt_text(&json!({ "prompt": "nope" })), "");
+        assert_eq!(extract_prompt_text(&json!({ "prompt": 42 })), "");
+        assert_eq!(extract_prompt_text(&json!({ "prompt": null })), "");
+    }
+
+    #[test]
+    fn extract_prompt_text_skips_resource_link_blocks() {
+        let params = json!({
+            "prompt": [
+                { "type": "resource_link", "uri": "file:///etc/passwd" },
+                { "type": "text", "text": "hello" }
+            ]
+        });
+        assert_eq!(extract_prompt_text(&params), "hello");
+    }
+
+    #[test]
+    fn extract_prompt_text_skips_text_blocks_without_a_text_field() {
+        let params = json!({
+            "prompt": [
+                { "type": "text" },
+                { "type": "text", "text": "kept" }
+            ]
+        });
+        assert_eq!(extract_prompt_text(&params), "kept");
+    }
+
+    #[test]
+    fn extract_prompt_text_skips_blocks_with_no_type() {
+        let params = json!({
+            "prompt": [
+                { "text": "no type field" },
+                { "type": "text", "text": "kept" }
+            ]
+        });
+        assert_eq!(extract_prompt_text(&params), "kept");
+    }
+
+    #[test]
+    fn extract_prompt_text_ignores_non_text_block_types() {
+        // Even if a non-text block carries a `text` field, only
+        // `type == "text"` blocks are read.
+        let params = json!({
+            "prompt": [
+                { "type": "image", "text": "not read" }
+            ]
+        });
+        assert_eq!(extract_prompt_text(&params), "");
+    }
+
+    #[test]
+    fn extract_prompt_text_joins_blocks_with_one_newline() {
+        let params = json!({
+            "prompt": [
+                { "type": "text", "text": "first" },
+                { "type": "text", "text": "second" }
+            ]
+        });
+        assert_eq!(extract_prompt_text(&params), "first\nsecond");
+    }
+
+    #[test]
+    fn extract_prompt_text_on_an_empty_array_is_empty() {
+        assert_eq!(extract_prompt_text(&json!({ "prompt": [] })), "");
+    }
+
+    #[test]
+    fn kind_for_tool_covers_every_documented_kind() {
+        // One representative per ACP ToolKind. If a name moves between
+        // categories, the client's icon/colour changes silently; this
+        // is the canary.
+        assert_eq!(kind_for_tool("read_file"), "read");
+        assert_eq!(kind_for_tool("write_file"), "edit");
+        assert_eq!(kind_for_tool("list_files"), "search");
+        assert_eq!(kind_for_tool("execute_command"), "execute");
+        assert_eq!(kind_for_tool("web_fetch"), "fetch");
+        assert_eq!(kind_for_tool("todo"), "think");
+        assert_eq!(kind_for_tool("git_status"), "other");
+        assert_eq!(kind_for_tool("something_unknown"), "other");
+    }
+}
