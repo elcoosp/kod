@@ -412,3 +412,80 @@ mod tests {
         assert_eq!(memory.count().await.unwrap(), 20);
     }
 }
+
+#[cfg(test)]
+mod coverage_store_batch {
+    //! `store_batch` is the batched write path the retrieval
+    //! writeback uses for `last_retrieved_at_ms`. A regression
+    //! that (a) opened N transactions instead of one or (b) failed
+    //! to serialize an entry before opening the transaction would
+    //! make the retrieval path silently slow or corrupt the store.
+    use super::*;
+    use kod_types::MemoryType;
+    use tempfile::TempDir;
+
+    fn entry(content: &str) -> MemoryEntry {
+        MemoryEntry {
+            id: MemoryId::new(),
+            memory_type: MemoryType::LongTerm,
+            content: content.to_string(),
+            timestamp: time::OffsetDateTime::now_utc(),
+            relevance: 1.0,
+            metadata: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_batch_is_a_no_op() {
+        let tmp = TempDir::new().unwrap();
+        let m = LongTermMemory::new(&tmp.path().join("t.redb")).unwrap();
+        m.store_batch(Vec::new()).await.unwrap();
+        assert_eq!(m.count().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn batch_write_is_visible_to_get_and_count() {
+        let tmp = TempDir::new().unwrap();
+        let m = LongTermMemory::new(&tmp.path().join("t.redb")).unwrap();
+        let a = entry("a");
+        let b = entry("b");
+        let a_id = a.id.clone();
+        let b_id = b.id.clone();
+        m.store_batch(vec![a, b]).await.unwrap();
+        assert_eq!(m.count().await.unwrap(), 2);
+        assert!(m.get(&a_id).await.unwrap().is_some());
+        assert!(m.get(&b_id).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn batch_write_replaces_existing_entries_by_id() {
+        let tmp = TempDir::new().unwrap();
+        let m = LongTermMemory::new(&tmp.path().join("t.redb")).unwrap();
+        let mut e = entry("original");
+        let id = e.id.clone();
+        m.store(e.clone()).await.unwrap();
+        e.content = "updated".into();
+        m.store_batch(vec![e]).await.unwrap();
+        assert_eq!(m.count().await.unwrap(), 1);
+        let got = m.get(&id).await.unwrap().unwrap();
+        assert_eq!(got.content, "updated");
+    }
+
+    #[tokio::test]
+    async fn batch_preserves_every_entry_field() {
+        let tmp = TempDir::new().unwrap();
+        let m = LongTermMemory::new(&tmp.path().join("t.redb")).unwrap();
+        let mut e = entry("body");
+        e.relevance = 0.42;
+        e.metadata.tags = vec!["a".into()];
+        e.metadata.project_key = Some("p".into());
+        e.metadata.last_retrieved_at_ms = Some(12345);
+        let id = e.id.clone();
+        m.store_batch(vec![e]).await.unwrap();
+        let got = m.get(&id).await.unwrap().unwrap();
+        assert!((got.relevance - 0.42).abs() < 1e-6);
+        assert_eq!(got.metadata.tags, vec!["a".to_string()]);
+        assert_eq!(got.metadata.project_key.as_deref(), Some("p"));
+        assert_eq!(got.metadata.last_retrieved_at_ms, Some(12345));
+    }
+}
