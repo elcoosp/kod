@@ -15,8 +15,8 @@
 //! "not available" rather than an empty result it might read as "no
 //! errors".
 
-use kod_tools::{Tool, ToolContext};
 use kod_error::{KodError, Result};
+use kod_tools::{Tool, ToolContext};
 use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use serde_json::Value;
 use std::sync::Arc;
@@ -82,11 +82,11 @@ impl Tool for LspDiagnosticsTool {
     }
 
     async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
-        let path_arg = params["path"].as_str().ok_or_else(|| {
-            KodError::InvalidParameters {
+        let path_arg = params["path"]
+            .as_str()
+            .ok_or_else(|| KodError::InvalidParameters {
                 reason: "lsp_diagnostics: 'path' is required".to_string(),
-            }
-        })?;
+            })?;
         let path = context.resolve_path(path_arg)?;
         context.can_read(&path)?;
         if kod_lsp::binary_for_path(&path).is_none() {
@@ -165,11 +165,11 @@ impl Tool for LspDefinitionTool {
     }
 
     async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
-        let path_arg = params["path"].as_str().ok_or_else(|| {
-            KodError::InvalidParameters {
+        let path_arg = params["path"]
+            .as_str()
+            .ok_or_else(|| KodError::InvalidParameters {
                 reason: "lsp_definition: 'path' is required".to_string(),
-            }
-        })?;
+            })?;
         let line = params["line"].as_u64().unwrap_or(0) as u32;
         let column = params["column"].as_u64().unwrap_or(0) as u32;
         if line == 0 || column == 0 {
@@ -185,7 +185,10 @@ impl Tool for LspDefinitionTool {
                 path.display()
             )));
         }
-        let locations = self.manager.definition(&path, kod_lsp::Position { line, column }).await;
+        let locations = self
+            .manager
+            .definition(&path, kod_lsp::Position { line, column })
+            .await;
         let arr: Vec<Value> = locations
             .iter()
             .map(|loc| {
@@ -249,11 +252,11 @@ impl Tool for LspReferencesTool {
     }
 
     async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
-        let path_arg = params["path"].as_str().ok_or_else(|| {
-            KodError::InvalidParameters {
+        let path_arg = params["path"]
+            .as_str()
+            .ok_or_else(|| KodError::InvalidParameters {
                 reason: "lsp_references: 'path' is required".to_string(),
-            }
-        })?;
+            })?;
         let line = params["line"].as_u64().unwrap_or(0) as u32;
         let column = params["column"].as_u64().unwrap_or(0) as u32;
         if line == 0 || column == 0 {
@@ -261,9 +264,7 @@ impl Tool for LspReferencesTool {
                 "lsp_references: line and column are 1-based and must be ≥ 1".to_string(),
             ));
         }
-        let include_declaration = params["include_declaration"]
-            .as_bool()
-            .unwrap_or(true);
+        let include_declaration = params["include_declaration"].as_bool().unwrap_or(true);
         let path = context.resolve_path(path_arg)?;
         context.can_read(&path)?;
         if kod_lsp::binary_for_path(&path).is_none() {
@@ -274,7 +275,11 @@ impl Tool for LspReferencesTool {
         }
         let locations = self
             .manager
-            .references(&path, kod_lsp::Position { line, column }, include_declaration)
+            .references(
+                &path,
+                kod_lsp::Position { line, column },
+                include_declaration,
+            )
             .await;
         let arr: Vec<Value> = locations
             .iter()
@@ -334,11 +339,11 @@ impl Tool for LspHoverTool {
     }
 
     async fn execute(&self, params: &Value, context: &ToolContext) -> Result<ToolResult> {
-        let path_arg = params["path"].as_str().ok_or_else(|| {
-            KodError::InvalidParameters {
+        let path_arg = params["path"]
+            .as_str()
+            .ok_or_else(|| KodError::InvalidParameters {
                 reason: "lsp_hover: 'path' is required".to_string(),
-            }
-        })?;
+            })?;
         let line = params["line"].as_u64().unwrap_or(0) as u32;
         let column = params["column"].as_u64().unwrap_or(0) as u32;
         if line == 0 || column == 0 {
