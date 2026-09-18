@@ -1113,3 +1113,101 @@ mod tests {
         assert!(resolver.backend_name().is_none());
     }
 }
+
+#[cfg(test)]
+mod coverage_resolve_path {
+    //! `resolve_path` is the containment primitive every filesystem
+    //! tool goes through. The existing tests cover the canonical
+    //! traversal case; these pin the paths the model actually sends
+    //! — dot-prefixed names, unicode filenames, in-tree `..` from a
+    //! subdirectory, absolute paths inside and outside the workspace
+    //! — plus the write-set glob check that the swarm runner relies
+    //! on. A regression here is either a silent escape (bad) or a
+    //! spurious refusal of a legitimate path (also bad).
+    use super::*;
+
+    fn ctx(root: &Path) -> ToolContext {
+        ToolContext::new(root).with_permissions(ToolPermissions {
+            read_files: true,
+            write_files: true,
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn accepts_dot_prefix_relative_to_workspace() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::write(root.join("a.txt"), "x").unwrap();
+        let c = ctx(&root);
+        assert_eq!(c.resolve_path("./a.txt").unwrap(), root.join("a.txt"));
+    }
+
+    #[test]
+    fn rejects_traversal_from_deep_within_the_tree() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("a/b/c")).unwrap();
+        let c = ctx(&root);
+        // a/b/c/../../.. lands at the root; one more `..` escapes.
+        assert!(c.resolve_path("a/b/c/../../../..").is_err());
+    }
+
+    #[test]
+    fn accepts_parent_within_the_tree() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        std::fs::write(root.join("a/x.txt"), "x").unwrap();
+        let c = ctx(&root);
+        // From a/b, one `..` reaches a; the file resolves.
+        let resolved = c.resolve_path("a/b/../x.txt").unwrap();
+        assert_eq!(resolved, root.join("a/x.txt"));
+    }
+
+    #[test]
+    fn rejects_absolute_path_outside_workspace() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let c = ctx(&root);
+        // `/etc/passwd` exists on every Unix system. The test is
+        // that resolve_path refuses it regardless of whether the
+        // process can read it.
+        #[cfg(unix)]
+        assert!(c.resolve_path("/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn handles_dot_prefixed_file_names() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::write(root.join(".env"), "A=1").unwrap();
+        let c = ctx(&root);
+        assert_eq!(c.resolve_path(".env").unwrap(), root.join(".env"));
+    }
+
+    #[test]
+    fn survives_unicode_file_names() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::write(root.join("café.txt"), "x").unwrap();
+        let c = ctx(&root);
+        assert_eq!(c.resolve_path("café.txt").unwrap(), root.join("café.txt"));
+    }
+
+    #[test]
+    fn write_set_blocks_paths_outside_the_declared_globs() {
+        // The write set is consulted for every candidate path. A
+        // path outside the declared globs is refused even when the
+        // permission bitmask grants writes and no lock table is
+        // installed. This is the check the swarm runner relies on to
+        // enforce each agent's declared write set.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let mut c = ctx(&root);
+        c.allowed_write_globs = Some(vec!["src/allowed.rs".to_string()]);
+        assert!(c.can_write(&root.join("src/allowed.rs")).is_ok());
+        assert!(c.can_write(&root.join("src/forbidden.rs")).is_err());
+    }
+}
