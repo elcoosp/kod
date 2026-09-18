@@ -94,8 +94,7 @@ impl HybridScorer {
         };
         let semantic_component = ws * cosine.unwrap_or(0.0).clamp(0.0, 1.0);
         let keyword_component = wk * self.keyword_bm25_lite(query, entry);
-        let recency_component =
-            self.w_recency * recency(entry.timestamp, now, self.half_life_days);
+        let recency_component = self.w_recency * recency(entry.timestamp, now, self.half_life_days);
         semantic_component + keyword_component + recency_component
     }
 
@@ -109,8 +108,7 @@ impl HybridScorer {
         if doc_tokens.is_empty() {
             return 0.0;
         }
-        let mut tf: std::collections::HashMap<&str, u32> =
-            std::collections::HashMap::new();
+        let mut tf: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
         for t in &doc_tokens {
             *tf.entry(t.as_str()).or_insert(0) += 1;
         }
