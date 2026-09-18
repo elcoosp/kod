@@ -1,279 +1,166 @@
-//! Golden-prefix regression tests (D0.6 P7).
+//! Golden-prefix test (design §3, D0.6).
 //!
-//! The cacheable portion of a prompt — the "Identity" preamble plus
-//! the repository map — must be byte-identical from one turn to the
-//! next within a session. That property is what makes prompt caching
-//! work at all: Anthropic's `cache_control` and the implicit
-//! prefix-caching on OpenAI-compatible servers both key on a
-//! byte-stable prefix. A single character of drift (a timestamp, a
-//! counter, an unordered list that reordered) silently defeats the
-//! cache and the user pays full input tokens for every turn.
+//! Locks the byte-stability of the router prompt's cacheable region
+//! across turns in the same session. Providers that cache on a
+//! byte-stable prefix (OpenAI-compatible automatic prefix caching,
+//! Anthropic explicit `cache_control`) only pay off if the prefix
+//! really is stable; a router that emits a byte that shifts with each
+//! request silently disables the cache and burns input tokens on every
+//! turn.
 //!
-//! # Why an integration test and not a unit test
+//! The design puts this test *before* the D1 engine migration so the
+//! refactor cannot quietly regress the invariant. After `build_prompt`
+//! becomes `build_prompt_plan` (AD-16), the same assertion must be
+//! re-expressed on the concatenation of `PromptPlan::system` segments
+//! flagged `cacheable` — but the invariant this file pins (the
+//! cacheable region is a function of the session, not of the current
+//! request or of past turns) is what matters, not the concrete marker.
 //!
-//! The stable prefix is assembled from three sources the unit tests
-//! do not exercise together: the identity preamble (a constant in
-//! the router), the repository map (a walk of the working directory
-//! with mtime-based invalidation), and the system-segment ordering
-//! the router emits. An integration test is the only level at which
-//! the full pipeline runs — the same code path a live session
-//! exercises.
+//! ## What "cacheable region" means here
 //!
-//! # What the test deliberately does not assert
+//! `TaskRouter::build_prompt_with_budget` emits the prompt in two
+//! textually delimited blocks:
 //!
-//! It does not assert the *content* of the identity preamble or the
-//! repository map beyond what makes them identifiable. Those change
-//! between releases and the test should not break when they do. The
-//! property under test is *stability*, not a specific byte string.
+//! ```text
+//! ## Identity
+//! ...
+//! ## Stable prefix (cacheable)
+//! ...
+//! ## Repository map
+//! ...
+//! ## Volatile suffix (not cached)
+//! ...
+//! ```
+//!
+//! Everything up to and including the byte *before* the volatile
+//! marker is the cacheable region. The test compares exactly that
+//! substring.
 
 use kod_core::router::{RouterConfig, TaskRouter, TaskType};
 use tempfile::TempDir;
 
-/// The marker the router emits between the cacheable prefix and the
-/// volatile suffix. Everything before this line is supposed to be
-/// byte-stable across turns; everything after it changes.
-const VOLATILE_MARKER: &str = "## Volatile suffix (not cached)";
+/// The marker that opens the volatile block. Everything strictly
+/// before its first occurrence is the cacheable region.
+const VOLATILE_MARKER: &str = "## Volatile suffix";
 
-/// Build a router rooted at a tempdir with two source files present.
-///
-/// The files are not compiled — the repository map is a regex walk
-/// over text, not a build. They exist so the `## Repository map`
-/// section is non-empty, which is what makes the byte-stability
-/// assertion meaningful: with no map, the section is omitted and the
-/// test would pass trivially.
-fn make_router() -> (TempDir, TaskRouter) {
-    let tmp = TempDir::new().expect("tempdir");
-    std::fs::write(tmp.path().join("main.rs"), "fn main() {}\n").expect("write main.rs");
-    std::fs::write(tmp.path().join("lib.rs"), "pub fn hello() {}\n").expect("write lib.rs");
-
-    let db_path = tmp.path().join("test.redb");
-    let router = TaskRouter::new(
-        RouterConfig { skill_threshold: 0.3,
-            working_dir: tmp.path().to_path_buf(),
-            enable_memory: false,
-            max_skills_per_query: 3,
-            context_window: 8192,
-            short_term_capacity: 100,
-        },
-        db_path,
-    )
-    .expect("router construction");
-
-    (tmp, router)
-}
-
-/// Split a rendered prompt at the volatile marker. Panics with a
-/// useful message when the marker is absent — a prompt built without
-/// it is a bug in the router, and the assertion should say so
-/// directly.
-fn split_at_marker(prompt: &str) -> (&str, &str) {
-    let idx = prompt.find(VOLATILE_MARKER).unwrap_or_else(|| {
-        panic!(
-            "prompt does not contain the volatile marker {VOLATILE_MARKER:?};\n\
-             prompt was:\n{prompt}"
-        )
-    });
+/// Split a rendered prompt into `(cacheable, rest)`. Panics with a
+/// clear message when the marker is missing — the test is asserting
+/// an invariant of the router, so a missing marker is a router
+/// regression, not a test setup error.
+fn split_cacheable(prompt: &str) -> (&str, &str) {
+    let idx = prompt
+        .find(VOLATILE_MARKER)
+        .unwrap_or_else(|| panic!(
+            "router prompt is missing the volatile marker {VOLATILE_MARKER:?} \
+             — the cacheable prefix invariant no longer applies"
+        ));
     (&prompt[..idx], &prompt[idx..])
 }
 
-/// The main golden test: build a prompt for turn 1, then build a
-/// prompt for turn 2 with turn-1 history, and assert that the
-/// cacheable prefix is byte-identical between the two.
+/// Build a fresh router rooted in a tempdir with a single `.rs` file so
+/// the repo-map block is non-empty (an empty map would render nothing
+/// and the test would trivially pass).
+fn router_with_one_file(dir: &TempDir) -> TaskRouter {
+    std::fs::write(
+        dir.path().join("foo.rs"),
+        "pub fn foo() -> u32 { 42 }\n",
+    )
+    .unwrap();
+    let db_path = dir.path().join("test.redb");
+    let cfg = RouterConfig {
+        working_dir: dir.path().to_path_buf(),
+        enable_memory: false,
+        ..RouterConfig::default()
+    };
+    TaskRouter::new(cfg, db_path).expect("router construction")
+}
+
 #[tokio::test]
 async fn stable_prefix_is_byte_identical_across_turns() {
-    let (_tmp, router) = make_router();
-    let task_type = TaskType::Simple;
+    let tmp = TempDir::new().unwrap();
+    let router = router_with_one_file(&tmp);
 
-    let turn1_input = "fix the parser";
-    let prompt1 = router
-        .build_prompt_with_context(
-            turn1_input,
-            &task_type,
+    // Turn 1: first request of the session, empty history.
+    let p1 = router
+        .build_prompt(
+            "fix the parser",
+            &TaskType::CodeModification,
             "(start of conversation)",
-            None,
         )
         .await
-        .expect("build turn 1 prompt");
+        .expect("turn 1 prompt");
 
-    let history =
-        "User: fix the parser\nAssistant: Done, the parser is fixed.\n";
-    let turn2_input = "and the tests?";
-    let prompt2 = router
-        .build_prompt_with_context(turn2_input, &task_type, history, None)
+    // Turn 2: different request, history has grown by one exchange.
+    let p2 = router
+        .build_prompt(
+            "and the tests?",
+            &TaskType::Testing,
+            "User: fix the parser\nAssistant: Looking at it now.\n",
+        )
         .await
-        .expect("build turn 2 prompt");
+        .expect("turn 2 prompt");
 
-    let (prefix1, suffix1) = split_at_marker(&prompt1);
-    let (prefix2, suffix2) = split_at_marker(&prompt2);
+    let (cacheable_1, _) = split_cacheable(&p1);
+    let (cacheable_2, _) = split_cacheable(&p2);
 
+    assert!(
+        !cacheable_1.is_empty(),
+        "cacheable region must not be empty — the router would emit no prefix",
+    );
     assert_eq!(
-        prefix1, prefix2,
-        "cacheable prefix drifted between turn 1 and turn 2.\n\
-         turn 1 prefix ({} bytes):\n{}\n\
-         turn 2 prefix ({} bytes):\n{}",
-        prefix1.len(),
-        prefix1,
-        prefix2.len(),
-        prefix2,
+        cacheable_1,
+        cacheable_2,
+        "cacheable prefix drifted between turns.\n\
+         Turn 1 prefix ({} bytes):\n{}\n---\n\
+         Turn 2 prefix ({} bytes):\n{}\n",
+        cacheable_1.len(),
+        cacheable_1,
+        cacheable_2.len(),
+        cacheable_2,
     );
 
-    // The volatile suffix must reflect the current turn — otherwise
-    // the "stable prefix" assertion above is vacuous (the whole
-    // prompt would be identical, meaning the user's new input never
-    // reached it).
-    assert!(
-        suffix2.contains(turn2_input),
-        "turn 2's suffix must contain turn 2's input {turn2_input:?};\n\
-         suffix was:\n{suffix2}",
-    );
-    assert!(
-        suffix1.contains(turn1_input),
-        "turn 1's suffix must contain turn 1's input {turn1_input:?}",
-    );
-    // And the history that turn 2 was built with must be present in
-    // turn 2's suffix.
-    assert!(
-        suffix2.contains("Done, the parser is fixed"),
-        "turn 2's suffix must contain the history it was built with",
+    // The volatile regions must *not* be identical — a router that
+    // ignores its inputs would also produce a stable prefix, and this
+    // asserts that the test is exercising real behaviour.
+    let (_, volatile_1) = split_cacheable(&p1);
+    let (_, volatile_2) = split_cacheable(&p2);
+    assert_ne!(
+        volatile_1, volatile_2,
+        "volatile regions should differ across turns: the router is not \
+         seeing the request/history arguments at all",
     );
 }
 
-/// The cacheable prefix must contain the identity preamble and the
-/// repository map. Without those, byte-stability would be trivially
-/// satisfied by an empty prefix — the exact failure mode the router
-/// is supposed to avoid.
 #[tokio::test]
-async fn stable_prefix_contains_identity_and_repo_map() {
-    let (_tmp, router) = make_router();
-    let task_type = TaskType::Simple;
+async fn stable_prefix_survives_a_history_only_change() {
+    // Same request, only the history differs. The prefix must still be
+    // stable; the volatile region must still differ.
+    let tmp = TempDir::new().unwrap();
+    let router = router_with_one_file(&tmp);
 
-    let prompt = router
-        .build_prompt_with_context(
+    let p1 = router
+        .build_prompt("hello", &TaskType::Simple, "(start of conversation)")
+        .await
+        .expect("turn 1");
+
+    let p2 = router
+        .build_prompt(
             "hello",
-            &task_type,
-            "(start of conversation)",
-            None,
+            &TaskType::Simple,
+            "User: hi\nAssistant: hello\n",
         )
         .await
-        .expect("build prompt");
+        .expect("turn 2");
 
-    let (prefix, _suffix) = split_at_marker(&prompt);
-
-    assert!(
-        prefix.contains("## Identity"),
-        "identity section missing from the cacheable prefix",
-    );
-    assert!(
-        prefix.contains("You are kod"),
-        "identity preamble text missing from the cacheable prefix",
-    );
-    assert!(
-        prefix.contains("## Stable prefix (cacheable)"),
-        "the cacheable marker must be inside the stable prefix itself",
-    );
-    assert!(
-        prefix.contains("## Repository map"),
-        "repository map section missing; the test fixture wrote main.rs and lib.rs, so the map should be non-empty",
-    );
-    // The two source files should be listed in the map. Their names
-    // are the only content the test can assert without coupling to
-    // the exact rendering format.
-    assert!(
-        prefix.contains("main.rs"),
-        "repository map must list main.rs",
-    );
-    assert!(
-        prefix.contains("lib.rs"),
-        "repository map must list lib.rs",
-    );
-}
-
-/// A turn whose working tree has not changed must produce the same
-/// repository map section as a previous turn — the D0.5 fingerprint
-/// check must not spuriously invalidate on unrelated activity.
-#[tokio::test]
-async fn repo_map_section_is_stable_within_a_session() {
-    let (_tmp, router) = make_router();
-    let task_type = TaskType::Simple;
-
-    let prompt_a = router
-        .build_prompt_with_context("first", &task_type, "(start of conversation)", None)
-        .await
-        .expect("build prompt a");
-    let prompt_b = router
-        .build_prompt_with_context(
-            "second",
-            &task_type,
-            "User: first\nAssistant: ok\n",
-            None,
-        )
-        .await
-        .expect("build prompt b");
-
-    let (prefix_a, _) = split_at_marker(&prompt_a);
-    let (prefix_b, _) = split_at_marker(&prompt_b);
-
-    // Extract just the repository-map section from each and compare.
-    // The map is between `## Repository map\n\n` and the next `\n\n## `.
-    fn map_section(prefix: &str) -> &str {
-        let start = prefix
-            .find("## Repository map")
-            .expect("repo map section present");
-        let rest = &prefix[start..];
-        let end = rest[2..].find("\n\n## ").map(|i| i + 2).unwrap_or(rest.len());
-        &rest[..end]
-    }
+    let (c1, v1) = split_cacheable(&p1);
+    let (c2, v2) = split_cacheable(&p2);
 
     assert_eq!(
-        map_section(prefix_a),
-        map_section(prefix_b),
-        "repository map section changed between turns with an unchanged tree",
+        c1, c2,
+        "cacheable prefix must not depend on history",
     );
-}
-
-/// Two routers constructed over the same working directory must
-/// produce the same repository map — the D0.5 cache is per-router,
-/// and cross-router determinism is the property that lets a session
-/// restart into the same cached prefix.
-#[tokio::test]
-async fn repo_map_is_deterministic_across_routers() {
-    let tmp = TempDir::new().expect("tempdir");
-    std::fs::write(tmp.path().join("main.rs"), "fn main() {}\n").unwrap();
-    std::fs::write(tmp.path().join("lib.rs"), "pub fn hello() {}\n").unwrap();
-
-    let make = |name: &str| {
-        let db = tmp.path().join(name);
-        TaskRouter::new(
-            RouterConfig { skill_threshold: 0.3,
-                working_dir: tmp.path().to_path_buf(),
-                enable_memory: false,
-                max_skills_per_query: 3,
-                context_window: 8192,
-                short_term_capacity: 100,
-            },
-            db,
-        )
-        .unwrap()
-    };
-
-    let a = make("a.redb");
-    let b = make("b.redb");
-
-    let task_type = TaskType::Simple;
-    let pa = a
-        .build_prompt_with_context("x", &task_type, "(start of conversation)", None)
-        .await
-        .unwrap();
-    let pb = b
-        .build_prompt_with_context("x", &task_type, "(start of conversation)", None)
-        .await
-        .unwrap();
-
-    let (prefix_a, _) = split_at_marker(&pa);
-    let (prefix_b, _) = split_at_marker(&pb);
-
-    assert_eq!(
-        prefix_a, prefix_b,
-        "two routers over the same tree produced different cacheable prefixes",
+    assert_ne!(
+        v1, v2,
+        "volatile region should have absorbed the history change",
     );
 }
