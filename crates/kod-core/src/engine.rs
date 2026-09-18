@@ -390,6 +390,37 @@ fn expand_one_at_ref(
     ))
 }
 
+/// Strip the transcript section the router appends to its plan.
+///
+/// The router's `build_prompt_with_budget` ends with:
+///
+/// ```text
+/// ## Conversation so far
+///
+/// {history}
+///
+/// ## User Request
+///
+/// {input}
+/// ```
+///
+/// Both sections are already passed as structured messages on the
+/// `CompletionRequest` path. Keeping them in the system prompt would
+/// duplicate the user's turn on every call — a token waste and a
+/// source of confusion for the model.
+///
+/// The cut is at the FIRST occurrence of `## Conversation so far` so a
+/// later mention in the model's own text does not truncate mid-reply.
+/// A prompt without the marker is returned unchanged (the router
+/// changed its shape, or a caller built a custom one).
+fn strip_conversation_tail(system_text: &str) -> String {
+    const MARKER: &str = "## Conversation so far";
+    match system_text.find(MARKER) {
+        Some(i) => system_text[..i].trim_end().to_string(),
+        None => system_text.to_string(),
+    }
+}
+
 /// Truncate a UTF-8 string to at most `max` bytes, rounding down to the
 /// nearest char boundary. Returns the input unchanged when it already
 /// fits. Use this instead of `&s[..max]` — the raw slice panics when
@@ -1319,6 +1350,28 @@ impl KodEngine {
             kod_tools::context::SandboxMode::Require => 1u8,
         };
         self.sandbox_mode_atomic.store(v, Ordering::Relaxed);
+    }
+
+    /// The effective sandbox state as a caller (the TUI header, a
+    /// status panel) wants to render it: the configured mode plus the
+    /// backend that will actually be used.
+    ///
+    /// The second element is the resolver's chosen primitive name
+    /// (`"bwrap"`, `"landlock"`, `"sandbox-exec"`) when one is
+    /// available, or `None` when the caller has Auto mode and no
+    /// primitive is installed — the honest "off" case the design's
+    /// AD-10 wants visible.
+    pub fn sandbox_status(
+        &self,
+    ) -> (kod_tools::context::SandboxMode, Option<&'static str>) {
+        let mode = self.sandbox_setting();
+        // `Disabled` never queries the resolver; the caller asked for
+        // no sandbox and that is what they get.
+        if matches!(mode, kod_tools::context::SandboxMode::Disabled) {
+            return (mode, None);
+        }
+        let resolver = kod_tools::context::SandboxResolver::detect();
+        (mode, resolver.backend_name())
     }
 
     /// The current sandbox mode.
@@ -2326,7 +2379,7 @@ impl KodEngine {
                     alloc.as_ref().ok(),
                 )
                 .await?;
-                plan.system.render_text()
+                plan.render_text()
             };
 
             // The transcript the provider will see. `remember_turn_for`
@@ -2602,7 +2655,7 @@ impl KodEngine {
                     alloc.as_ref().ok(),
                 )
                 .await?;
-                plan.system.render_text()
+                plan.render_text()
             };
             let initial_messages: Vec<kod_types::ChatMessage> = {
                 let guard = self.history.read().await;
@@ -2851,7 +2904,7 @@ impl KodEngine {
                     alloc.as_ref().ok(),
                 )
                 .await?;
-                let base = plan.system.render_text();
+                let base = plan.render_text();
                 format!(
                     "{base}\n\n## Goal\n\n{goal}\n\nWork turn by turn toward this goal using tools. Do not ask the user for confirmation — act. When the goal is fully reached, end your reply with a line containing exactly GOAL MET and summarize what was done. If a tool errors, work around it and keep going.\n"
                 )
@@ -2998,6 +3051,9 @@ impl KodEngine {
         &self,
         provider: &Arc<dyn LlmProvider>,
         pending: &mut String,
+        system_text: &str,
+        messages: &mut Vec<kod_types::ChatMessage>,
+        model_ref: &ModelRef,
         definitions: &[ToolDefinition],
         options: &GenerationOptions,
         holder: &str,
@@ -3015,10 +3071,17 @@ impl KodEngine {
             if self.is_cancelled_for(holder) {
                 return Err(KodError::InvalidState("cancelled by user".to_string()));
             }
-            match provider
-                .generate_with_tools(pending, definitions, options)
-                .await?
-            {
+            // Rebuild the structured request every round. Only the
+            // `messages` field changes; the system prompt, tools,
+            // options and model are constant for the turn.
+            let req = self.build_grounded_request(
+                system_text,
+                messages.clone(),
+                definitions,
+                options,
+                model_ref,
+            );
+            match provider.complete(&req).await? {
                 GenerationResponse::Text { content, usage } => {
                     last_usage = usage.or(last_usage);
                     append_round_text(&mut final_text, &content);
@@ -3031,23 +3094,12 @@ impl KodEngine {
                     }
                     let section = self.run_tool_calls(&calls, holder, None).await;
                     tool_calls.extend(calls);
-                    tool_results.extend(section.results);
-                    // Structured transcript slice (design §2 AD-02):
-                    // the assistant calls + tool results go into the
-                    // history so the eventual CompletionRequest
-                    // migration can ship them on the wire. The
-                    // text-prompt block below is unchanged — the
-                    // current path still renders the results as
-                    // `## Tool results` for the model.
-                    if !section.messages.is_empty() {
-                        let mut history = self.history.write().await;
-                        let turns = history.entry(holder.to_string()).or_default();
-                        turns.extend(section.messages.iter().cloned());
-                        let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
-                        if excess > 0 {
-                            turns.drain(..excess);
-                        }
-                    }
+                    tool_results.extend(section.results.clone());
+                    messages.extend(section.messages.iter().cloned());
+                    // Keep the text prompt in sync for callers that
+                    // still read `pending` (apply_steers, the
+                    // exhausted-rounds note). The provider no longer
+                    // sees this string on the primary path.
                     pending.push_str(&format!("\n\n{}", section.prompt_block));
                     self.apply_steers(pending, holder).await;
                 }
@@ -3063,23 +3115,8 @@ impl KodEngine {
                     }
                     let section = self.run_tool_calls(&calls, holder, None).await;
                     tool_calls.extend(calls);
-                    tool_results.extend(section.results);
-                    // Structured transcript slice (design §2 AD-02):
-                    // the assistant calls + tool results go into the
-                    // history so the eventual CompletionRequest
-                    // migration can ship them on the wire. The
-                    // text-prompt block below is unchanged — the
-                    // current path still renders the results as
-                    // `## Tool results` for the model.
-                    if !section.messages.is_empty() {
-                        let mut history = self.history.write().await;
-                        let turns = history.entry(holder.to_string()).or_default();
-                        turns.extend(section.messages.iter().cloned());
-                        let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
-                        if excess > 0 {
-                            turns.drain(..excess);
-                        }
-                    }
+                    tool_results.extend(section.results.clone());
+                    messages.extend(section.messages.iter().cloned());
                     pending.push_str(&format!("\n\n{}", section.prompt_block));
                     self.apply_steers(pending, holder).await;
                 }
@@ -3113,6 +3150,9 @@ impl KodEngine {
         &self,
         provider: &Arc<dyn LlmProvider>,
         pending: &mut String,
+        system_text: &str,
+        messages: &mut Vec<kod_types::ChatMessage>,
+        model_ref: &ModelRef,
         definitions: &[ToolDefinition],
         options: &GenerationOptions,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
@@ -3132,7 +3172,15 @@ impl KodEngine {
                 return Err(KodError::InvalidState("cancelled by user".to_string()));
             }
             let (text, calls, usage) = self
-                .stream_round(provider, pending, definitions, options, chunk_tx)
+                .stream_round(
+                    provider,
+                    system_text,
+                    messages,
+                    model_ref,
+                    definitions,
+                    options,
+                    chunk_tx,
+                )
                 .await?;
             last_usage = usage.or(last_usage);
             append_round_text(&mut final_text, &text);
@@ -3166,18 +3214,12 @@ impl KodEngine {
                     .await;
             }
             tool_calls.extend(calls);
-            tool_results.extend(section.results);
-            // Structured transcript slice (design §2 AD-02): same
-            // rationale as the collected loop above.
-            if !section.messages.is_empty() {
-                let mut history = self.history.write().await;
-                let turns = history.entry(holder.to_string()).or_default();
-                turns.extend(section.messages.iter().cloned());
-                let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
-                if excess > 0 {
-                    turns.drain(..excess);
-                }
-            }
+            tool_results.extend(section.results.clone());
+            // Structured transcript slice (design §2 AD-02): the
+            // assistant's tool calls + the tool results go into the
+            // request messages. The text `pending` string is kept in
+            // sync for `apply_steers` and the exhausted-rounds note.
+            messages.extend(section.messages.iter().cloned());
             pending.push_str(&format!("\n\n{}", section.prompt_block));
             self.apply_steers(pending, holder).await;
             // If we have already produced text this turn, emit a
@@ -3346,8 +3388,47 @@ impl KodEngine {
         options: &GenerationOptions,
         model: &ModelRef,
     ) -> CompletionRequest {
-        let grounded = self.ground_prompt(system_text.to_string(), definitions);
-        let system = SystemPrompt::new().with(grounded, false);
+        // The router's rendered plan ends with a transcript section
+        // (`## Conversation so far`) followed by the user's request
+        // (`## User Request`). Both are already passed as `messages`
+        // — duplicating them inside the system prompt wastes tokens
+        // and confuses a model that sees the same turn twice.
+        let head = strip_conversation_tail(system_text);
+
+        // Split the head at the router's own marker. Everything before
+        // `## Volatile suffix` is the byte-stable cacheable prefix
+        // (Identity + Repository map); everything from it on is the
+        // volatile tail (Environment, tool inventory, skills, memory).
+        // A provider with explicit cache support places a breakpoint at
+        // the last cacheable segment; this two-segment shape is what
+        // makes that breakpoint meaningful.
+        const VOLATILE_MARKER: &str = "## Volatile suffix";
+        let (cacheable, volatile_tail) = match head.find(VOLATILE_MARKER) {
+            Some(i) => (
+                head[..i].trim_end().to_string(),
+                head[i..].to_string(),
+            ),
+            None => {
+                // No marker (custom-built prompt): the whole thing is
+                // volatile. Honest degradation — a caller that lost
+                // the convention loses the cache benefit, not
+                // correctness.
+                (String::new(), head)
+            }
+        };
+
+        // The environment + tool inventory grounding is appended to the
+        // volatile segment — it depends on the current tool set and on
+        // the working directory, so it is never cacheable. `ground_prompt`
+        // appends a leading blank line + `## Environment` block, so
+        // passing an empty tail still produces a valid segment.
+        let grounded_volatile = self.ground_prompt(volatile_tail, definitions);
+
+        let mut system = SystemPrompt::new();
+        if !cacheable.is_empty() {
+            system = system.with(cacheable, true);
+        }
+        system = system.with(grounded_volatile, false);
         CompletionRequest {
             system,
             messages,
@@ -3683,45 +3764,75 @@ impl KodEngine {
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let _ = tx.send(tool_approval_batch_marker(batch_id, &json)).await;
 
-                    // Phase 3 — await each in order.
+                    // Phase 3 — await each in order. Each resolution
+                    // emits one `SessionEntry::Approval` so the JSONL
+                    // carries the audit trail: who decided, on which
+                    // tool, and what they decided.
                     for (i, orx) in awaiting {
                         let decision = tokio::time::timeout(
                             std::time::Duration::from_secs(AWAIT_APPROVAL_SECS),
                             orx,
                         )
                         .await;
-                        match decision {
-                            Ok(Ok(ApprovalDecision::Approve)) => {}
-                            Ok(Ok(d @ (ApprovalDecision::Deny
-                                | ApprovalDecision::DenyAlways))) => {
-                                if matches!(d, ApprovalDecision::DenyAlways)
-                                    && let Some(call) = calls.get(i)
-                                {
-                                    let path_pattern = call
-                                        .arguments
-                                        .get("path")
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| s.to_string());
-                                    let rule = kod_config::SessionDeny {
-                                        tool: call.tool_name.clone(),
-                                        path_pattern,
-                                    };
-                                    self.add_deny_rule(rule).await;
+                        let tool_name = calls
+                            .get(i)
+                            .map(|c| c.tool_name.clone())
+                            .unwrap_or_default();
+                        let (log_decision, allow) = match decision {
+                            Ok(Ok(ApprovalDecision::Approve)) => {
+                                ("approve", true)
+                            }
+                            Ok(Ok(ApprovalDecision::Deny)) => ("deny", false),
+                            Ok(Ok(ApprovalDecision::DenyAlways)) => {
+                                ("deny-always", false)
+                            }
+                            Ok(Err(_)) => ("cancelled", false),
+                            Err(_) => ("timeout", false),
+                        };
+                        if let Ok(guard) = self.session_recorder.read()
+                            && let Some(rec) = guard.as_ref()
+                        {
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(0);
+                            let entry = crate::session_log::SessionEntry::Approval {
+                                timestamp_ms: now_ms,
+                                holder: effective_holder.to_string(),
+                                tool_name: tool_name.clone(),
+                                decision: log_decision.to_string(),
+                            };
+                            let _ = rec.record(&entry);
+                        }
+                        if !allow {
+                            if log_decision == "deny-always"
+                                && let Some(call) = calls.get(i)
+                            {
+                                let path_pattern = call
+                                    .arguments
+                                    .get("path")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                let rule = kod_config::SessionDeny {
+                                    tool: call.tool_name.clone(),
+                                    path_pattern,
+                                };
+                                self.add_deny_rule(rule).await;
+                            }
+                            let reason = match log_decision {
+                                "deny" | "deny-always" => "denied by user",
+                                "cancelled" => "approval cancelled",
+                                "timeout" => {
+                                    // The format! below needs the
+                                    // AWAIT_APPROVAL_SECS bound.
+                                    // We build it here to keep the
+                                    // existing message shape.
+                                    // (Uses the same value as before.)
+                                    "no approval answer within timeout — denied"
                                 }
-                                denied.insert(i, "denied by user".to_string());
-                            }
-                            Ok(Err(_)) => {
-                                denied.insert(i, "approval cancelled".to_string());
-                            }
-                            Err(_) => {
-                                denied.insert(
-                                    i,
-                                    format!(
-                                        "no approval answer within {}s — denied",
-                                        AWAIT_APPROVAL_SECS
-                                    ),
-                                );
-                            }
+                                other => other,
+                            };
+                            denied.insert(i, reason.to_string());
                         }
                     }
                 }
@@ -4065,7 +4176,17 @@ impl KodEngine {
                 .collect();
 
             if !writes.is_empty() {
-                let lsp_wanted = self.auto_lsp_setting();
+                // `auto_lsp` on the engine is the per-session override
+                // the CLI/TUI apply; the config's
+                // `[lsp] auto_diagnostics` is the persistent choice. The
+                // pass runs only when both are true — a user who set
+                // either to false has asked not to be charged the
+                // per-write diagnostics cost.
+                let lsp_config_auto = kod_config::KodConfig::load_default()
+                    .ok()
+                    .map(|c| c.lsp.auto_diagnostics)
+                    .unwrap_or(true);
+                let lsp_wanted = self.auto_lsp_setting() && lsp_config_auto;
                 let compiler_wanted = self.auto_check_setting();
                 let lsp_eligible = lsp_wanted
                     && writes.len() == 1
@@ -4078,11 +4199,20 @@ impl KodEngine {
                 if lsp_eligible {
                     let (path, content) = &writes[0];
                     let binary = Self::lsp_binary_for(path).unwrap_or("lsp");
+                    // `settle_ms` from `[lsp]` bounds how long we
+                    // wait for the server to publish before accepting
+                    // an empty answer as final. Read from the same
+                    // config load used for `auto_diagnostics` above;
+                    // default 1500 ms if the config is unreadable.
+                    let settle_ms = kod_config::KodConfig::load_default()
+                        .ok()
+                        .map(|c| c.lsp.settle_ms)
+                        .unwrap_or(1_500);
                     let lsp_diags = self
                         .lsp_diagnostics(
                             path,
                             content,
-                            std::time::Duration::from_secs(30),
+                            std::time::Duration::from_millis(settle_ms),
                         )
                         .await;
                     if !lsp_diags.is_empty() {
@@ -4284,6 +4414,45 @@ impl KodEngine {
                         }
                     }
 
+                    // One `SessionEntry::Diagnostics` per file (AD-15).
+                    // The counts aggregate the round's diagnostics by
+                    // file, so a multi-file compiler pass yields one
+                    // entry per file rather than a single project-wide
+                    // lump.
+                    if let Ok(guard) = self.session_recorder.read()
+                        && let Some(rec) = guard.as_ref()
+                    {
+                        use std::collections::BTreeMap;
+                        let mut per_file: BTreeMap<
+                            String,
+                            (usize, usize),
+                        > = BTreeMap::new();
+                        for d in &diags {
+                            let entry = per_file
+                                .entry(d.file.clone())
+                                .or_insert((0, 0));
+                            match d.severity.as_str() {
+                                "error" => entry.0 += 1,
+                                "warning" => entry.1 += 1,
+                                _ => {}
+                            }
+                        }
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        for (file, (errs, warns)) in per_file {
+                            let entry =
+                                crate::session_log::SessionEntry::Diagnostics {
+                                    timestamp_ms: now_ms,
+                                    file,
+                                    error_count: errs,
+                                    warning_count: warns,
+                                };
+                            let _ = rec.record(&entry);
+                        }
+                    }
+
                     // The post-write state becomes the new baseline.
                     *self.check_baseline.write().await = Some(diags);
                 }
@@ -4337,6 +4506,47 @@ impl KodEngine {
             );
             tool_msg.tool_call_id = Some(id);
             messages.push(tool_msg);
+        }
+
+        // MemoryWrite audit for the tool channel (AD-15). Every
+        // successful `memory_save` writes one entry, with the id and
+        // tags the tool returned. The extraction path logs under the
+        // "extraction" channel; the user's `/remember` under "user".
+        if let Ok(guard) = self.session_recorder.read()
+            && let Some(rec) = guard.as_ref()
+        {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            for (call, result) in calls.iter().zip(results.iter()) {
+                if call.tool_name != "memory_save" {
+                    continue;
+                }
+                let ToolResult::Success(v) = result else {
+                    continue;
+                };
+                let Some(id) = v.get("id").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let tags: Vec<String> = v
+                    .get("tags")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str())
+                            .map(String::from)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let entry = crate::session_log::SessionEntry::MemoryWrite {
+                    timestamp_ms: now_ms,
+                    memory_id: id.to_string(),
+                    channel: "tool".to_string(),
+                    tags,
+                };
+                let _ = rec.record(&entry);
+            }
         }
 
         ToolRound {
@@ -4408,24 +4618,57 @@ impl KodEngine {
 
         let mut stored = 0usize;
         for fact in &facts {
-            let metadata = kod_memory::extract::metadata_for(fact, project_key.clone());
-            if let Err(e) = self
+            let mut metadata =
+                kod_memory::extract::metadata_for(fact, project_key.clone());
+            // The design (D2.5) attributes every auto-extracted fact to
+            // a session so consolidation can treat "an episode with no
+            // touch in 60 days" as archivable without ever archiving a
+            // durable `LongTerm` entry the user asked to remember. The
+            // transcript key is already a string; a `SessionId` is a
+            // UUID newtype, so a hash-shaped key degrades to `None` —
+            // the fact is still stored, it just loses the attribution
+            // a per-session triage would need.
+            metadata.session_id = uuid::Uuid::parse_str(key)
+                .ok()
+                .map(kod_types::SessionId::from_uuid);
+            // Store as Episodic (not LongTerm): the extraction channel
+            // is the auto path; only `memory_save` and the user's
+            // `/remember` write the durable layer.
+            match self
                 .router
-                .store_long_term(
-                    &fact.content,
-                    metadata.tags.clone(),
-                    metadata.project_key.clone(),
-                )
+                .store_episodic(&fact.content, metadata.clone())
                 .await
             {
-                tracing::warn!(
-                    error = %e,
-                    content = %fact.content,
-                    "extract_memories_now: store failed; skipping fact"
-                );
-                continue;
+                Ok(id) => {
+                    // One `MemoryWrite` per stored fact (AD-15). The
+                    // extraction channel is the auto path; `memory_save`
+                    // and `/remember` log the "tool" and "user" channels
+                    // respectively.
+                    if let Ok(guard) = self.session_recorder.read()
+                        && let Some(rec) = guard.as_ref()
+                    {
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        let entry = crate::session_log::SessionEntry::MemoryWrite {
+                            timestamp_ms: now_ms,
+                            memory_id: id.as_uuid().to_string(),
+                            channel: "extraction".to_string(),
+                            tags: metadata.tags.clone(),
+                        };
+                        let _ = rec.record(&entry);
+                    }
+                    stored += 1;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        content = %fact.content,
+                        "extract_memories_now: store failed; skipping fact"
+                    );
+                }
             }
-            stored += 1;
         }
         tracing::info!(stored, total = facts.len(), "memory extraction complete");
         Ok(stored)
@@ -4820,6 +5063,39 @@ impl KodEngine {
         self.last_prompt_for(DEFAULT_TRANSCRIPT_KEY).await
     }
 
+    /// Log a `SessionEntry::MemoryWrite` for the user channel (AD-15).
+    ///
+    /// The TUI's `/remember` command writes directly through a
+    /// `MemoryManager` it constructs itself (the engine's store is
+    /// behind an `Arc` and is not the same manager instance the CLI
+    /// builds). Rather than route the write through the engine — a
+    /// larger refactor — the TUI calls this method after a successful
+    /// write so the JSONL audit trail is uniform across all three
+    /// channels: extraction, tool, and user.
+    ///
+    /// No-op when no recorder is installed (the CLI default).
+    pub async fn record_user_memory_write(
+        &self,
+        memory_id: &str,
+        tags: Vec<String>,
+    ) {
+        if let Ok(guard) = self.session_recorder.read()
+            && let Some(rec) = guard.as_ref()
+        {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let entry = crate::session_log::SessionEntry::MemoryWrite {
+                timestamp_ms: now_ms,
+                memory_id: memory_id.to_string(),
+                channel: "user".to_string(),
+                tags,
+            };
+            let _ = rec.record(&entry);
+        }
+    }
+
     /// The prompt the provider received on the most recent `process*`
     /// call for `key`.
     pub async fn last_prompt_for(&self, key: &str) -> Option<String> {
@@ -5090,6 +5366,65 @@ impl BaselineRefresher {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn grounded_request_splits_cacheable_and_volatile() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig { skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+            embedder: None,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        let system_text = "identity bits\n\n## Stable prefix (cacheable)\n\nrepo map bits\n\n## Volatile suffix (not cached)\n\nvolatile bits\n\n## Conversation so far\n\nUser: hi\n\n## User Request\n\nhi";
+        let req = engine.build_grounded_request(
+            system_text,
+            Vec::new(),
+            &[],
+            &GenerationOptions::default(),
+            &ModelRef::new("test", "test-model"),
+        );
+        assert_eq!(
+            req.system.segments.len(),
+            2,
+            "expected exactly two segments: cacheable head + volatile tail",
+        );
+        assert!(req.system.segments[0].cacheable, "first segment must be cacheable");
+        assert!(
+            !req.system.segments[1].cacheable,
+            "second segment must be volatile",
+        );
+        assert!(
+            req.system.segments[0].text.contains("repo map bits"),
+            "cacheable segment must carry the pre-marker content: {}",
+            req.system.segments[0].text,
+        );
+        assert!(
+            !req.system.segments[0].text.contains("volatile bits"),
+            "volatile content must not leak into the cacheable segment",
+        );
+        assert!(
+            req.system.segments[1].text.contains("volatile bits"),
+            "volatile segment must carry the post-marker content: {}",
+            req.system.segments[1].text,
+        );
+        assert!(
+            req.system.segments[1].text.contains("## Environment"),
+            "environment grounding must be appended to the volatile segment: {}",
+            req.system.segments[1].text,
+        );
+        // The conversation tail must not appear anywhere.
+        assert!(
+            !req.system.segments[1].text.contains("## Conversation so far"),
+            "conversation tail must be stripped from the system prompt",
+        );
+    }
 
     #[tokio::test]
     async fn deny_rule_at_zero_returns_none() {
