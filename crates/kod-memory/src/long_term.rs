@@ -91,9 +91,7 @@ impl LongTermMemory {
                 })?;
                 table
                     .insert(key.as_slice(), value.as_slice())
-                    .map_err(|e| {
-                        KodError::MemoryDatabase(format!("Failed to insert: {}", e))
-                    })?;
+                    .map_err(|e| KodError::MemoryDatabase(format!("Failed to insert: {}", e)))?;
             }
             txn.commit()
                 .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {}", e)))?;
@@ -153,9 +151,9 @@ impl LongTermMemory {
             let txn = db.begin_read().map_err(|e| {
                 KodError::MemoryDatabase(format!("Failed to start read transaction: {}", e))
             })?;
-            let table = txn.open_table(MEMORY_TABLE).map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to open table: {}", e))
-            })?;
+            let table = txn
+                .open_table(MEMORY_TABLE)
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {}", e)))?;
             match table.get(key.as_slice()) {
                 Ok(Some(value)) => {
                     let entry: MemoryEntry = serde_json::from_slice(value.value())
@@ -185,9 +183,9 @@ impl LongTermMemory {
                 let mut table = txn.open_table(MEMORY_TABLE).map_err(|e| {
                     KodError::MemoryDatabase(format!("Failed to open table: {}", e))
                 })?;
-                table.remove(key.as_slice()).map_err(|e| {
-                    KodError::MemoryDatabase(format!("Failed to remove: {}", e))
-                })?;
+                table
+                    .remove(key.as_slice())
+                    .map_err(|e| KodError::MemoryDatabase(format!("Failed to remove: {}", e)))?;
             }
             txn.commit()
                 .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {}", e)))?;
@@ -202,13 +200,14 @@ impl LongTermMemory {
             let txn = db.begin_read().map_err(|e| {
                 KodError::MemoryDatabase(format!("Failed to start read transaction: {}", e))
             })?;
-            let table = txn.open_table(MEMORY_TABLE).map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to open table: {}", e))
-            })?;
+            let table = txn
+                .open_table(MEMORY_TABLE)
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {}", e)))?;
             let mut entries = Vec::new();
-            for entry in table.iter().map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to iterate: {}", e))
-            })? {
+            for entry in table
+                .iter()
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to iterate: {}", e)))?
+            {
                 match entry {
                     Ok((_, value)) => {
                         if let Ok(memory_entry) =
@@ -247,13 +246,14 @@ impl LongTermMemory {
             let txn = db.begin_read().map_err(|e| {
                 KodError::MemoryDatabase(format!("Failed to start read transaction: {}", e))
             })?;
-            let table = txn.open_table(MEMORY_TABLE).map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to open table: {}", e))
-            })?;
+            let table = txn
+                .open_table(MEMORY_TABLE)
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {}", e)))?;
             let mut count = 0usize;
-            for entry in table.iter().map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to iterate: {}", e))
-            })? {
+            for entry in table
+                .iter()
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to iterate: {}", e)))?
+            {
                 if entry.is_ok() {
                     count += 1;
                 }
@@ -302,9 +302,7 @@ impl LongTermMemory {
                 })?;
                 let keys: Vec<Vec<u8>> = table
                     .iter()
-                    .map_err(|e| {
-                        KodError::MemoryDatabase(format!("Failed to iterate: {}", e))
-                    })?
+                    .map_err(|e| KodError::MemoryDatabase(format!("Failed to iterate: {}", e)))?
                     .filter_map(|entry| match entry {
                         Ok((key, _)) => Some(key.value().to_vec()),
                         Err(e) => {
