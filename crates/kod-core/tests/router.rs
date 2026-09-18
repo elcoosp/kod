@@ -131,7 +131,10 @@ async fn test_route_simple_task() {
     // provider's reply. Regression: the router used to return a
     // placeholder string ("Processing simple task: …"), which leaked
     // to any caller using the router directly.
-    assert!(response.text.is_none(), "router must not fabricate reply text");
+    assert!(
+        response.text.is_none(),
+        "router must not fabricate reply text"
+    );
     assert!(response.tool_calls.is_empty());
     assert!(response.tool_results.is_empty());
     assert_eq!(response.task_type, TaskType::Simple);
@@ -168,7 +171,8 @@ async fn test_router_configuration() {
     let db_path = temp_dir.path().join("test.redb");
 
     let config = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         context_window: 8192,
         short_term_capacity: 100,
         max_skills_per_query: 2,
