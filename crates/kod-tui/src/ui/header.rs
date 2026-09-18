@@ -81,6 +81,29 @@ impl HeaderWidget {
             Style::default().fg(theme.dim),
         ));
 
+        // Sandbox badge (design D3.3 / AD-10). Rendered when the
+        // engine knows its effective backend. `off` is the honest
+        // "no sandbox active" state (Auto with no primitive, or
+        // Disabled) — showing it is what makes a missing primitive
+        // visible rather than a silent assumption of protection.
+        let sandbox = app.sandbox_label();
+        if !sandbox.is_empty() {
+            let (style, label) = match sandbox {
+                "off" => (Style::default().fg(theme.dim), " sandbox:off ".to_string()),
+                "require-missing" => (
+                    Style::default()
+                        .fg(theme.error)
+                        .add_modifier(Modifier::BOLD),
+                    " sandbox:require-missing ".to_string(),
+                ),
+                other => (
+                    Style::default().fg(theme.user).add_modifier(Modifier::BOLD),
+                    format!(" sandbox:{other} "),
+                ),
+            };
+            spans.push(Span::styled(label, style));
+        }
+
         // Network indicator: visible whenever the effective network
         // access is enabled. The default is off (llm.network_access =
         // false), so this is a positive signal — a user who enabled
@@ -126,24 +149,6 @@ impl Default for HeaderWidget {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::format_cost;
-
-    #[test]
-    fn format_cost_picks_precision_by_magnitude() {
-        assert_eq!(format_cost(0.0), "$0.0000");
-        assert_eq!(format_cost(0.0025), "$0.0025");
-        assert_eq!(format_cost(0.0099), "$0.0099");
-        assert_eq!(format_cost(0.01), "$0.010");
-        assert_eq!(format_cost(0.245), "$0.245");
-        assert_eq!(format_cost(0.999), "$0.999");
-        assert_eq!(format_cost(1.0), "$1.00");
-        assert_eq!(format_cost(3.14159), "$3.14");
-        assert_eq!(format_cost(1234.5), "$1234.50");
-    }
-}
-
 /// Format a USD amount with adaptive precision.
 ///
 /// A local model configured with a very cheap price (a tenth of a
@@ -165,3 +170,23 @@ fn format_cost(usd: f64) -> String {
         format!("${usd:.2}")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::format_cost;
+
+    #[test]
+    fn format_cost_picks_precision_by_magnitude() {
+        assert_eq!(format_cost(0.0), "$0.0000");
+        assert_eq!(format_cost(0.0025), "$0.0025");
+        assert_eq!(format_cost(0.0099), "$0.0099");
+        assert_eq!(format_cost(0.01), "$0.010");
+        assert_eq!(format_cost(0.245), "$0.245");
+        assert_eq!(format_cost(0.999), "$0.999");
+        assert_eq!(format_cost(1.0), "$1.00");
+        assert_eq!(format_cost(2.5), "$2.50");
+        assert_eq!(format_cost(1234.5), "$1234.50");
+    }
+}
+
+
