@@ -213,16 +213,12 @@ impl Tool for SwarmReadTool {
         let mut notes: Vec<(String, Vec<String>, String)> = Vec::new();
         for msg in &history {
             if let MessageContent::KnowledgeShare { information, tags } = &msg.content {
-                if let Some(want) = &filter {
-                    if !tags.iter().any(|t| t == want) {
-                        continue;
-                    }
+                if let Some(want) = &filter
+                    && !tags.iter().any(|t| t == want)
+                {
+                    continue;
                 }
-                notes.push((
-                    format!("{:?}", msg.from),
-                    tags.clone(),
-                    information.clone(),
-                ));
+                notes.push((format!("{:?}", msg.from), tags.clone(), information.clone()));
             }
         }
 
@@ -316,18 +312,12 @@ mod tests {
 
         let note = SwarmNoteTool::new(hub.clone(), sender.clone());
         let ctx = ToolContext::new("/tmp");
-        note.execute(
-            &serde_json::json!({"key": "alpha", "value": "first"}),
-            &ctx,
-        )
-        .await
-        .unwrap();
-        note.execute(
-            &serde_json::json!({"key": "beta", "value": "second"}),
-            &ctx,
-        )
-        .await
-        .unwrap();
+        note.execute(&serde_json::json!({"key": "alpha", "value": "first"}), &ctx)
+            .await
+            .unwrap();
+        note.execute(&serde_json::json!({"key": "beta", "value": "second"}), &ctx)
+            .await
+            .unwrap();
 
         let read = SwarmReadTool::new(hub.clone(), reader.clone());
 
@@ -345,10 +335,12 @@ mod tests {
         {
             ToolResult::Success(v) => {
                 assert_eq!(v["count"], 1);
-                assert!(v["entries"][0]["information"]
-                    .as_str()
-                    .unwrap()
-                    .contains("first"));
+                assert!(
+                    v["entries"][0]["information"]
+                        .as_str()
+                        .unwrap()
+                        .contains("first")
+                );
             }
             other => panic!("expected Success, got {other:?}"),
         }
