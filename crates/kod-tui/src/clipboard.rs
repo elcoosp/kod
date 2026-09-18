@@ -113,3 +113,63 @@ pub fn read_clipboard() -> Option<String> {
     #[allow(unreachable_code)]
     None
 }
+
+#[cfg(test)]
+mod coverage_clipboard {
+    //! The clipboard module is a best-effort shim over platform
+    //! tools. Its contract is "never panic, always return a
+    //! `bool` or `Option`" — a regression that panics on a
+    //! missing tool would take the whole TUI down on a headless
+    //! machine. The tests exercise that contract without
+    //! requiring a working clipboard.
+    use super::*;
+
+    #[test]
+    fn write_clipboard_returns_a_bool_and_never_panics() {
+        // Any environment: real terminal, headless CI, no
+        // clipboard tool. The call must complete and return a
+        // `bool` — never panic, never hang.
+        let _ok: bool = write_clipboard("the test's content");
+    }
+
+    #[test]
+    fn write_clipboard_handles_empty_input() {
+        let _ok: bool = write_clipboard("");
+    }
+
+    #[test]
+    fn write_clipboard_handles_multiline_content() {
+        let _ok: bool = write_clipboard("line one\nline two\nline three");
+    }
+
+    #[test]
+    fn write_clipboard_handles_unicode() {
+        let _ok: bool = write_clipboard("café — 日本語 🚀");
+    }
+
+    #[test]
+    fn read_clipboard_returns_an_option_and_never_panics() {
+        // Same contract on the read side. The value may be `None`
+        // on a machine with no clipboard tool; the contract is
+        // that the call returns, not that it succeeds.
+        let _v: Option<String> = read_clipboard();
+    }
+
+    #[test]
+    fn write_then_read_round_trip_or_gracefully_degrades() {
+        // On a machine with a working clipboard, a write followed
+        // by a read sees the same content. On one without, either
+        // (or both) calls return the graceful failure value.
+        // Either outcome is correct; a panic is not.
+        let content = "kod-clipboard-test-unique-payload";
+        let wrote = write_clipboard(content);
+        let read = read_clipboard();
+        if wrote {
+            if let Some(got) = read {
+                // Some platforms append a newline; compare on the
+                // trimmed form.
+                assert_eq!(got.trim_end(), content);
+            }
+        }
+    }
+}
