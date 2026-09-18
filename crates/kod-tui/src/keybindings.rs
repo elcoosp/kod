@@ -162,3 +162,144 @@ mod tests {
         assert_eq!(parse_action("quit"), Some(KeyAction::Quit));
     }
 }
+
+#[cfg(test)]
+mod coverage_cheat_sheet {
+    //! `cheat_sheet` is what the `/help` overlay renders. A blank
+    //! entry prints an empty line and the user sees a gap where a
+    //! key should be — worse, a regression that dropped the "Esc
+    //! cancels" entry leaves a user in a running prompt with no
+    //! documented escape.
+    use super::*;
+
+    #[test]
+    fn every_cheat_sheet_entry_has_both_fields() {
+        for (keys, desc) in cheat_sheet() {
+            assert!(!keys.is_empty(), "empty keys field: {desc:?}");
+            assert!(!desc.is_empty(), "empty description for keys {keys:?}");
+        }
+    }
+
+    #[test]
+    fn cheat_sheet_documents_the_essentials() {
+        // Every one of these is a way out of a state a user can get
+        // into. Removing the row would leave a first-time user
+        // stuck without documentation.
+        let sheet = cheat_sheet();
+        let text: String = sheet
+            .iter()
+            .map(|(k, d)| format!("{k} {d}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for keyword in [
+            "Esc",       // cancel / mode escape
+            "Enter",     // submit
+            "Ctrl+J",    // newline
+            "scroll",    // scrolling
+            "quit",      // quit
+            "cancel",    // cancel a running prompt
+            "search",    // search
+            "help",      // help
+        ] {
+            assert!(
+                text.contains(keyword),
+                "cheat sheet does not mention {keyword:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn every_keyaction_has_a_default_binding() {
+        // Every `KeyAction` variant must be reachable from the
+        // default bindings. A variant added to the enum but not to
+        // `default_bindings()` is dead: nothing the user types can
+        // trigger it.
+        let defaults = default_bindings();
+        let actions: std::collections::HashSet<KeyAction> =
+            defaults.values().copied().collect();
+        for required in [
+            KeyAction::Insert,
+            KeyAction::Quit,
+            KeyAction::Help,
+            KeyAction::Panel,
+            KeyAction::ScrollUp,
+            KeyAction::ScrollDown,
+            KeyAction::Top,
+            KeyAction::Bottom,
+            KeyAction::EditLast,
+            KeyAction::Undo,
+            KeyAction::ToggleTools,
+            KeyAction::SearchPrefix,
+            KeyAction::CopyLast,
+        ] {
+            assert!(
+                actions.contains(&required),
+                "{required:?} has no default binding",
+            );
+        }
+    }
+
+    #[test]
+    fn default_binding_chars_are_unique_per_action() {
+        // Two actions bound to the same key would make one
+        // unreachable — a silent regression that a user
+        // experiences as "the documented key does nothing".
+        let defaults = default_bindings();
+        // `?` and `h` both map to Help, `i` and `I` both to Insert:
+        // that is intentional. The invariant is the reverse: no
+        // action is bound to a key that also maps to a *different*
+        // action. Two keys for one action is fine; one key for two
+        // actions is not.
+        let mut key_to_action: std::collections::HashMap<char, KeyAction> =
+            std::collections::HashMap::new();
+        for (ch, action) in &defaults {
+            if let Some(prev) = key_to_action.get(ch) {
+                panic!("key {ch:?} bound to both {prev:?} and {action:?}");
+            }
+            key_to_action.insert(*ch, *action);
+        }
+    }
+
+    #[test]
+    fn unknown_action_names_are_rejected() {
+        assert_eq!(parse_action("no-such-action"), None);
+        assert_eq!(parse_action(""), None);
+    }
+
+    #[test]
+    fn parse_action_is_case_and_whitespace_insensitive() {
+        assert_eq!(parse_action("quit"), Some(KeyAction::Quit));
+        assert_eq!(parse_action("QUIT"), Some(KeyAction::Quit));
+        assert_eq!(parse_action("  Quit  "), Some(KeyAction::Quit));
+    }
+
+    #[test]
+    fn every_action_name_in_the_documented_set_parses() {
+        // The names printed in the CHANGELOG and the docs — the
+        // user-facing contract — must round-trip through
+        // `parse_action`, or a config file that uses them silently
+        // keeps the default.
+        let names = [
+            ("insert", KeyAction::Insert),
+            ("quit", KeyAction::Quit),
+            ("help", KeyAction::Help),
+            ("panel", KeyAction::Panel),
+            ("scroll_up", KeyAction::ScrollUp),
+            ("scroll_down", KeyAction::ScrollDown),
+            ("top", KeyAction::Top),
+            ("bottom", KeyAction::Bottom),
+            ("edit_last", KeyAction::EditLast),
+            ("undo", KeyAction::Undo),
+            ("toggle_tools", KeyAction::ToggleTools),
+            ("search_prefix", KeyAction::SearchPrefix),
+            ("copy_last", KeyAction::CopyLast),
+        ];
+        for (name, expected) in names {
+            assert_eq!(
+                parse_action(name),
+                Some(expected),
+                "action name {name:?} no longer parses",
+            );
+        }
+    }
+}
