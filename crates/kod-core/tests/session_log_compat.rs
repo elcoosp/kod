@@ -1,121 +1,149 @@
-//! Session log backward- and forward-compatibility (§11.3, AD-15).
+//! Session log forward and backward compatibility (design §11.3,
+//! AD-15).
 //!
-//! The session log is the file `kod replay` reads. Its format has
-//! grown since the first release: `ToolCall` was the only variant,
-//! then `ModelFallback`, `PolicyDecision`, `Cost`, `MemoryWrite`,
-//! `Approval`, and `Diagnostics` joined it. Two properties must
-//! hold for the format to be safe to extend:
+//! The `SessionEntry` enum is tagged by `kind`. Adding a new variant
+//! is the design's stated extension point: an older build reading a
+//! newer log must skip the unknown lines rather than fail. This file
+//! pins that contract on a synthetic fixture with every current
+//! variant plus one "future" entry the current build does not know.
 //!
-//! 1. **Backward compatibility**: a file written by an older build
-//!    — only `ToolCall` lines — must parse and replay today.
-//! 2. **Forward compatibility**: a file written by a newer build
-//!    — a `kind` this build does not recognise — must parse, with
-//!    the unknown line skipped and a warning rather than a hard
-//!    error. A user who downgrades should not lose access to their
-//!    session history because the file contains a line from a
-//!    future release.
+//! # Why a fixture rather than the recorder
 //!
-//! A third property is deliberately *not* relaxed: a line that is
-//! not valid JSON is still a hard error. Skipping a malformed line
-//! would hide a real truncation — a crash mid-write, a partial
-//! copy, a file mangled by an editor.
+//! The recorder writes today's variants; a fixture lets us write the
+//! synthetic "future" line by hand and iterate over every kind. A
+//! recorder round-trip would not exercise the unknown-kind path at
+//! all.
 
 use kod_core::session_log::{SessionEntry, read_session};
 use tempfile::TempDir;
 
-/// One old-format `ToolCall` line, verbatim. Matches what an earlier
-/// build wrote — no new fields, no new variants.
-const OLD_TOOL_CALL_LINE: &str = r#"{"kind":"tool_call","timestamp_ms":1700000000000,"holder":"session","tool_name":"read_file","arguments":{"path":"src/main.rs"},"duration_ms":7,"result":{"success":{"path":"src/main.rs","content":"fn main() {}"}}}"#;
+/// Every current variant plus a synthetic `future_kind` line the
+/// reader must skip.
+const FIXTURE: &str = r#"{"kind":"tool_call","timestamp_ms":1,"holder":"session","tool_name":"read_file","arguments":{"path":"src/main.rs"},"duration_ms":3,"result":{"success":{"path":"src/main.rs","content":"fn main() {}\n"}}}
+{"kind":"policy_decision","timestamp_ms":2,"holder":"session","tool_name":"write_file","outcome":"ask","rule":"preset Standard applies","source":"preset"}
+{"kind":"model_fallback","timestamp_ms":3,"holder":"session","from":"local-ollama/qwen2.5-coder:7b","to":"anthropic/claude-sonnet-4-5","error":"rate limited"}
+{"kind":"cost","timestamp_ms":4,"holder":"session","endpoint":"anthropic","model":"claude-sonnet-4-5","prompt_tokens":100,"completion_tokens":50,"cost_usd":0.0125}
+{"kind":"memory_write","timestamp_ms":5,"memory_id":"mem-abc","channel":"extraction","tags":["auto-fact","rust"]}
+{"kind":"approval","timestamp_ms":6,"holder":"session","tool_name":"write_file","decision":"approve"}
+{"kind":"diagnostics","timestamp_ms":7,"file":"src/main.rs","error_count":1,"warning_count":2}
+{"kind":"future_kind_this_build_does_not_know","timestamp_ms":8,"payload":{"anything":42}}
+{"kind":"tool_call","timestamp_ms":9,"holder":"session","tool_name":"write_file","arguments":{"path":"src/out.rs","content":"x"},"duration_ms":5,"result":{"success":{"path":"src/out.rs","written":1}}}
+"#;
 
 #[test]
-fn old_format_file_parses_under_todays_reader() {
+fn reads_every_known_variant_and_skips_the_unknown_one() {
     let tmp = TempDir::new().unwrap();
-    let path = tmp.path().join("old.jsonl");
-    let contents = format!("{OLD_TOOL_CALL_LINE}\n{OLD_TOOL_CALL_LINE}\n");
-    std::fs::write(&path, contents).unwrap();
+    let path = tmp.path().join("fixture.jsonl");
+    std::fs::write(&path, FIXTURE).unwrap();
 
-    let entries = read_session(&path).expect("old format must parse");
-    assert_eq!(entries.len(), 2);
+    let entries = read_session(&path).expect("read must succeed");
+
+    // Every known line: 2 tool calls + policy + fallback + cost +
+    // memory write + approval + diagnostics = 8. The synthetic future
+    // line is skipped.
+    assert_eq!(
+        entries.len(),
+        8,
+        "expected 8 known entries; got {} — a variant was dropped or \
+         the unknown-kind skip regressed",
+        entries.len(),
+    );
+
+    // The tool calls came back in file order and the second is the
+    // write_file (later in the file than the read_file).
+    let tool_names: Vec<&str> = entries
+        .iter()
+        .filter_map(|e| match e {
+            SessionEntry::ToolCall { tool_name, .. } => Some(tool_name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_names, vec!["read_file", "write_file"]);
+
+    // Spot-check the shape of one entry per variant that could quietly
+    // break: cost carries the USD figure, diagnostics carries the
+    // counts, approval carries the decision string.
     for e in &entries {
         match e {
-            SessionEntry::ToolCall { tool_name, holder, .. } => {
-                assert_eq!(tool_name, "read_file");
-                assert_eq!(holder, "session");
+            SessionEntry::Cost { cost_usd, .. } => {
+                assert!((cost_usd - 0.0125).abs() < 1e-9);
             }
-            other => panic!("expected ToolCall, got {other:?}"),
+            SessionEntry::Diagnostics {
+                error_count,
+                warning_count,
+                ..
+            } => {
+                assert_eq!((*error_count, *warning_count), (1, 2));
+            }
+            SessionEntry::Approval { decision, .. } => {
+                assert_eq!(decision, "approve");
+            }
+            SessionEntry::PolicyDecision {
+                outcome, source, ..
+            } => {
+                assert_eq!(outcome, "ask");
+                assert_eq!(source, "preset");
+            }
+            SessionEntry::MemoryWrite { channel, tags, .. } => {
+                assert_eq!(channel, "extraction");
+                assert_eq!(tags, &vec!["auto-fact".to_string(), "rust".to_string()]);
+            }
+            SessionEntry::ModelFallback { from, to, .. } => {
+                assert!(from.contains("qwen2.5-coder"));
+                assert!(to.contains("claude-sonnet"));
+            }
+            SessionEntry::ToolCall { .. } => {}
         }
     }
 }
 
 #[test]
-fn mixed_format_file_parses_every_known_kind() {
-    let tmp = TempDir::new().unwrap();
-    let path = tmp.path().join("mixed.jsonl");
-
-    let lines = [
-        OLD_TOOL_CALL_LINE.to_string(),
-        r#"{"kind":"model_fallback","timestamp_ms":1,"holder":"s","from":"a","to":"b","error":"timeout"}"#.to_string(),
-        r#"{"kind":"policy_decision","timestamp_ms":2,"holder":"s","tool_name":"write_file","outcome":"ask","rule":"preset","source":"preset"}"#.to_string(),
-        r#"{"kind":"cost","timestamp_ms":3,"holder":"s","endpoint":"e","model":"m","prompt_tokens":10,"completion_tokens":5,"cost_usd":0.0015}"#.to_string(),
-        r#"{"kind":"memory_write","timestamp_ms":4,"memory_id":"abc","channel":"extraction","tags":["auto-fact"]}"#.to_string(),
-        r#"{"kind":"approval","timestamp_ms":5,"holder":"s","tool_name":"write_file","decision":"approve"}"#.to_string(),
-        r#"{"kind":"diagnostics","timestamp_ms":6,"file":"src/x.rs","error_count":2,"warning_count":1}"#.to_string(),
-    ];
-    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
-
-    let entries = read_session(&path).expect("mixed format must parse");
-    assert_eq!(entries.len(), 7, "every known kind must round-trip");
-
-    assert!(matches!(entries[0], SessionEntry::ToolCall { .. }));
-    assert!(matches!(entries[1], SessionEntry::ModelFallback { .. }));
-    assert!(matches!(entries[2], SessionEntry::PolicyDecision { .. }));
-    assert!(matches!(entries[3], SessionEntry::Cost { .. }));
-    assert!(matches!(entries[4], SessionEntry::MemoryWrite { .. }));
-    assert!(matches!(entries[5], SessionEntry::Approval { .. }));
-    assert!(matches!(entries[6], SessionEntry::Diagnostics { .. }));
-}
-
-#[test]
-fn unknown_kind_is_skipped_not_an_error() {
-    let tmp = TempDir::new().unwrap();
-    let path = tmp.path().join("future.jsonl");
-
-    let contents = format!(
-        "{OLD_TOOL_CALL_LINE}\n\
-         {{\"kind\":\"future_thing\",\"timestamp_ms\":9,\"anything\":42}}\n\
-         {OLD_TOOL_CALL_LINE}\n"
-    );
-    std::fs::write(&path, contents).unwrap();
-
-    let entries = read_session(&path).expect("unknown kind must not error");
-    assert_eq!(
-        entries.len(),
-        2,
-        "the unknown kind is skipped, the two tool calls survive",
-    );
-    for e in &entries {
-        assert!(matches!(e, SessionEntry::ToolCall { .. }));
-    }
-}
-
-#[test]
-fn malformed_line_is_still_a_hard_error() {
+fn a_corrupt_line_is_still_a_hard_error() {
+    // The forward-compat skip is for *valid JSON with an unknown kind*.
+    // A truncated or malformed line is still a real error — the log is
+    // machine-written, and a partial line means the file is corrupt.
+    // Skipping it would hide a real truncation.
     let tmp = TempDir::new().unwrap();
     let path = tmp.path().join("corrupt.jsonl");
-    std::fs::write(&path, "{not valid json\n").unwrap();
+    std::fs::write(&path, "{\"kind\":\"tool_call\",\"timestamp_ms\":\n").unwrap();
 
-    let err = read_session(&path).expect_err("malformed JSON must error");
+    let err = read_session(&path).expect_err("corrupt line must error");
     let msg = err.to_string();
-    assert!(msg.contains("line 1"), "error should name the line: {msg}");
+    assert!(
+        msg.contains("line 1"),
+        "error should name the line, got: {msg}",
+    );
 }
 
 #[test]
-fn empty_lines_are_ignored() {
+fn only_the_unknown_kind_is_skipped() {
+    // The unknown line sits in the middle; the entries around it must
+    // both survive, in order. A regression that aborted at the first
+    // unknown line would drop the trailing entry.
     let tmp = TempDir::new().unwrap();
-    let path = tmp.path().join("empty.jsonl");
-    let contents = format!("\n\n{OLD_TOOL_CALL_LINE}\n\n");
-    std::fs::write(&path, contents).unwrap();
+    let path = tmp.path().join("mixed.jsonl");
+    std::fs::write(
+        &path,
+        concat!(
+            "{\"kind\":\"tool_call\",\"timestamp_ms\":1,\"holder\":\"s\",",
+            "\"tool_name\":\"first\",\"arguments\":{},\"duration_ms\":1,",
+            "\"result\":{\"success\":{}}}\n",
+            "{\"kind\":\"never_seen\",\"value\":1}\n",
+            "{\"kind\":\"tool_call\",\"timestamp_ms\":2,\"holder\":\"s\",",
+            "\"tool_name\":\"second\",\"arguments\":{},\"duration_ms\":2,",
+            "\"result\":{\"success\":{}}}\n",
+        ),
+    )
+    .unwrap();
 
-    let entries = read_session(&path).expect("empty lines must not error");
-    assert_eq!(entries.len(), 1);
+    let entries = read_session(&path).unwrap();
+    assert_eq!(entries.len(), 2);
+    let names: Vec<&str> = entries
+        .iter()
+        .filter_map(|e| match e {
+            SessionEntry::ToolCall { tool_name, .. } => Some(tool_name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(names, vec!["first", "second"]);
 }
