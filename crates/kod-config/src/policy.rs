@@ -47,22 +47,18 @@ use std::path::{Path, PathBuf};
 /// `[tools.<name>]` on top.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum Preset {
     /// Reads allowed, everything else denied. `write_file`,
     /// `patch_file`, `execute_command` all return Deny without asking.
     ReadOnly,
     /// Reads and non-mutating commands allowed; writes and shell
     /// commands require approval. The default.
+    #[default]
     Standard,
     /// Everything allowed without a prompt. The pre-PolicyEngine
     /// behaviour of a config with `confirm_writes = false`.
     Yolo,
-}
-
-impl Default for Preset {
-    fn default() -> Self {
-        Preset::Standard
-    }
 }
 
 /// What a `PolicyEngine::decide` call returns for one tool call.
@@ -141,6 +137,15 @@ fn default_true() -> bool {
 pub struct Policy {
     #[serde(default)]
     pub preset: Preset,
+    /// Non-serialized. `true` when the source TOML contained an
+    /// explicit `preset = ` line. `Policy::from_toml` sets it; the
+    /// engine's layering uses it to tell "the project chose
+    /// Standard" from "the project did not choose, and Standard is
+    /// the struct's default". Without this flag, a project that
+    /// wants to pin `standard` cannot override a global
+    /// `[tools] preset = "yolo"`.
+    #[serde(skip)]
+    pub preset_explicit: bool,
     #[serde(default)]
     pub tools: BTreeMap<String, ToolPolicy>,
     #[serde(default)]
@@ -151,6 +156,7 @@ impl Default for Policy {
     fn default() -> Self {
         Self {
             preset: Preset::Standard,
+            preset_explicit: false,
             tools: BTreeMap::new(),
             git: GitPolicy::default(),
         }
@@ -160,8 +166,14 @@ impl Default for Policy {
 impl Policy {
     /// Parse a policy from a TOML string.
     pub fn from_toml(s: &str) -> Result<Self> {
-        toml::from_str(s)
-            .map_err(|e| KodError::Config(format!("policy.toml: {e}")))
+        let mut p: Self =
+            toml::from_str(s).map_err(|e| KodError::Config(format!("policy.toml: {e}")))?;
+        // Presence check for `preset =` at the start of a line. A
+        // crude scan is sufficient: TOML keys start a line (after
+        // whitespace); the substring cannot appear in a value that
+        // matters for this file.
+        p.preset_explicit = s.lines().any(|l| l.trim_start().starts_with("preset"));
+        Ok(p)
     }
 
     /// Load a policy from `.kod/policy.toml` under `root`. `Ok(None)`
@@ -172,9 +184,8 @@ impl Policy {
         if !path.is_file() {
             return Ok(None);
         }
-        let raw = std::fs::read_to_string(&path).map_err(|e| {
-            KodError::Config(format!("{}: {e}", path.display()))
-        })?;
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| KodError::Config(format!("{}: {e}", path.display())))?;
         Ok(Some((Self::from_toml(&raw)?, path)))
     }
 }
@@ -215,32 +226,48 @@ impl PolicyEngine {
         let mut effective = Policy::default();
         let mut sources: BTreeMap<String, PolicySource> = BTreeMap::new();
 
-        // Layer 1: preset. A config with no explicit preset in
-        // [tools] and no CLI override lands on Yolo — the pre-policy
-        // default. A project that wants approval commits a
-        // .kod/policy.toml with `preset = "standard"` (or passes
-        // --preset standard).
+        // Layer 1: preset. Three sources, in priority order:
         //
-        // `cfg` is accepted to leave room for a future
-        // `[tools] preset = "..."` field; today it is unused.
-        let _ = cfg;
-        effective.preset = match cli_preset {
-            Some(p) => p,
+        //   1. `[tools] preset = "…"` in the global config (parsed from
+        //      a string; a bad value is a warning and falls through to
+        //      the default, not a hard error — a typo in a config
+        //      field must not make the session unusable).
+        //   2. Built-in default: `Standard`. The pre-policy default
+        //      (`Yolo`) was the wrong side of the trade for a
+        //      user-facing agent; the design's §12 migration makes
+        //      "writes require approval" the default, and a user who
+        //      wants the old behaviour writes `preset = "yolo"` or
+        //      passes `--preset yolo`.
+        //   3. CLI override applied below (the last writer wins).
+        effective.preset = match cfg.tools.preset.as_deref() {
+            Some("read-only") | Some("readonly") => Preset::ReadOnly,
+            Some("standard") | Some("default") => Preset::Standard,
+            Some("yolo") | Some("unrestricted") => Preset::Yolo,
+            Some(other) => {
+                tracing::warn!(
+                    value = %other,
+                    "unknown [tools] preset; falling back to Standard.                      Known values: read-only, standard, yolo",
+                );
+                Preset::Standard
+            }
             None => Preset::Standard,
         };
         sources.insert("preset".to_string(), PolicySource::GlobalConfig);
+        // Note: the CLI override is applied further down (Layer 4); the
+        // priority above already establishes the correct layering.
 
         // Layer 3: project policy overrides the preset and merges
         // the tools map.
         if let Some(root) = project_root
             && let Some((project, _path)) = Policy::load_project(root)?
         {
-            // A project can override the preset explicitly.
-            if !matches!(project.preset, Preset::Standard) {
-                // Only treat a non-Standard value as an override —
-                // otherwise the default of `Policy::default()`
-                // (Standard) would always win over the global config's
-                // derived preset, which is not the intent.
+            // A project overrides the preset only when it named one
+            // explicitly. `Policy::default()` produces
+            // `Preset::Standard`; without the `preset_explicit` flag
+            // there is no way to distinguish that from a project that
+            // wrote `preset = "standard"` on purpose. The flag comes
+            // from `Policy::from_toml`.
+            if project.preset_explicit {
                 effective.preset = project.preset;
                 sources.insert("preset".to_string(), PolicySource::ProjectPolicy);
             }
@@ -257,10 +284,7 @@ impl PolicyEngine {
             sources.insert("preset".to_string(), PolicySource::CliOverride);
         }
 
-        Ok(Self {
-            effective,
-            sources,
-        })
+        Ok(Self { effective, sources })
     }
 
     /// Build a `PolicyEngine` directly from an already-merged
@@ -304,9 +328,7 @@ impl PolicyEngine {
     ) -> PolicyDecision {
         // 0. Session "never" wins everything.
         let path_arg = extract_path_arg(args);
-        let resolved_path = path_arg
-            .as_deref()
-            .map(|p| resolve_path(working_dir, p));
+        let resolved_path = path_arg.as_deref().map(|p| resolve_path(working_dir, p));
         for deny in session_denies {
             if deny.tool == tool {
                 match (&deny.path_pattern, &resolved_path) {
@@ -352,7 +374,6 @@ impl PolicyEngine {
                 && let Some(cmd) = args.get("command").and_then(|v| v.as_str())
             {
                 let first = cmd
-                    .trim_start()
                     .split_whitespace()
                     .next()
                     .unwrap_or("")
@@ -373,9 +394,7 @@ impl PolicyEngine {
                 {
                     return PolicyDecision {
                         outcome: Decision::Deny,
-                        rule: format!(
-                            "{tool} allow-list does not include binary {first:?}"
-                        ),
+                        rule: format!("{tool} allow-list does not include binary {first:?}"),
                         source: self.source_for(tool),
                     };
                 }
@@ -387,9 +406,7 @@ impl PolicyEngine {
             {
                 return PolicyDecision {
                     outcome: Decision::Deny,
-                    rule: format!(
-                        "{tool} allow-list {allowed:?} does not include {p:?}",
-                    ),
+                    rule: format!("{tool} allow-list {allowed:?} does not include {p:?}",),
                     source: self.source_for(tool),
                 };
             }
@@ -560,12 +577,12 @@ fn glob_matches(pattern: &str, path: &Path, working_dir: &Path) -> bool {
         return true;
     }
     // Form 3: prepend `**/` unless the pattern is already anchored.
-    if !pattern.starts_with("**") && !pattern.starts_with('/')
+    if !pattern.starts_with("**")
+        && !pattern.starts_with('/')
         && let Some(m2) = build(&format!("**/{pattern}"))
+        && (m2.is_match(path) || m2.is_match(relative))
     {
-        if m2.is_match(path) || m2.is_match(relative) {
-            return true;
-        }
+        return true;
     }
     false
 }
@@ -573,7 +590,6 @@ fn glob_matches(pattern: &str, path: &Path, working_dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     fn engine(preset: Preset) -> PolicyEngine {
         PolicyEngine {
@@ -589,9 +605,19 @@ mod tests {
     fn read_only_preset_allows_reads_denies_writes() {
         let e = engine(Preset::ReadOnly);
         let wd = Path::new("/tmp");
-        let d = e.decide("read_file", &serde_json::json!({"path": "a.txt"}), wd, &HashSet::new());
+        let d = e.decide(
+            "read_file",
+            &serde_json::json!({"path": "a.txt"}),
+            wd,
+            &HashSet::new(),
+        );
         assert_eq!(d.outcome, Decision::Allow);
-        let d = e.decide("write_file", &serde_json::json!({"path": "a.txt"}), wd, &HashSet::new());
+        let d = e.decide(
+            "write_file",
+            &serde_json::json!({"path": "a.txt"}),
+            wd,
+            &HashSet::new(),
+        );
         assert_eq!(d.outcome, Decision::Deny);
     }
 
@@ -599,9 +625,19 @@ mod tests {
     fn standard_preset_asks_for_writes() {
         let e = engine(Preset::Standard);
         let wd = Path::new("/tmp");
-        let d = e.decide("write_file", &serde_json::json!({"path": "a.txt"}), wd, &HashSet::new());
+        let d = e.decide(
+            "write_file",
+            &serde_json::json!({"path": "a.txt"}),
+            wd,
+            &HashSet::new(),
+        );
         assert_eq!(d.outcome, Decision::Ask);
-        let d = e.decide("execute_command", &serde_json::json!({"command": "ls"}), wd, &HashSet::new());
+        let d = e.decide(
+            "execute_command",
+            &serde_json::json!({"command": "ls"}),
+            wd,
+            &HashSet::new(),
+        );
         assert_eq!(d.outcome, Decision::Ask);
     }
 
@@ -617,8 +653,10 @@ mod tests {
 
     #[test]
     fn per_tool_mode_overrides_preset() {
-        let mut effective = Policy::default();
-        effective.preset = Preset::ReadOnly;
+        let effective = Policy {
+            preset: Preset::ReadOnly,
+            ..Policy::default()
+        };
         effective.tools.insert(
             "write_file".to_string(),
             ToolPolicy {
@@ -631,14 +669,21 @@ mod tests {
             sources: BTreeMap::new(),
         };
         let wd = Path::new("/tmp");
-        let d = e.decide("write_file", &serde_json::json!({"path": "a.txt"}), wd, &HashSet::new());
+        let d = e.decide(
+            "write_file",
+            &serde_json::json!({"path": "a.txt"}),
+            wd,
+            &HashSet::new(),
+        );
         assert_eq!(d.outcome, Decision::Allow);
     }
 
     #[test]
     fn forbidden_path_wins_over_mode() {
-        let mut effective = Policy::default();
-        effective.preset = Preset::Yolo;
+        let effective = Policy {
+            preset: Preset::Yolo,
+            ..Policy::default()
+        };
         effective.tools.insert(
             "write_file".to_string(),
             ToolPolicy {
@@ -652,16 +697,28 @@ mod tests {
             sources: BTreeMap::new(),
         };
         let wd = Path::new("/tmp/proj");
-        let d = e.decide("write_file", &serde_json::json!({"path": ".env"}), wd, &HashSet::new());
+        let d = e.decide(
+            "write_file",
+            &serde_json::json!({"path": ".env"}),
+            wd,
+            &HashSet::new(),
+        );
         assert_eq!(d.outcome, Decision::Deny);
-        let d = e.decide("write_file", &serde_json::json!({"path": "src/main.rs"}), wd, &HashSet::new());
+        let d = e.decide(
+            "write_file",
+            &serde_json::json!({"path": "src/main.rs"}),
+            wd,
+            &HashSet::new(),
+        );
         assert_eq!(d.outcome, Decision::Allow);
     }
 
     #[test]
     fn execute_command_binary_allowlist() {
-        let mut effective = Policy::default();
-        effective.preset = Preset::Yolo;
+        let effective = Policy {
+            preset: Preset::Yolo,
+            ..Policy::default()
+        };
         effective.tools.insert(
             "execute_command".to_string(),
             ToolPolicy {
@@ -674,9 +731,19 @@ mod tests {
             sources: BTreeMap::new(),
         };
         let wd = Path::new("/tmp");
-        let d = e.decide("execute_command", &serde_json::json!({"command": "cargo test"}), wd, &HashSet::new());
+        let d = e.decide(
+            "execute_command",
+            &serde_json::json!({"command": "cargo test"}),
+            wd,
+            &HashSet::new(),
+        );
         assert_eq!(d.outcome, Decision::Allow);
-        let d = e.decide("execute_command", &serde_json::json!({"command": "rm -rf"}), wd, &HashSet::new());
+        let d = e.decide(
+            "execute_command",
+            &serde_json::json!({"command": "rm -rf"}),
+            wd,
+            &HashSet::new(),
+        );
         assert_eq!(d.outcome, Decision::Deny);
     }
 
@@ -689,11 +756,21 @@ mod tests {
             tool: "write_file".to_string(),
             path_pattern: Some("src/**".to_string()),
         });
-        let d = e.decide("write_file", &serde_json::json!({"path": "src/main.rs"}), wd, &denies);
+        let d = e.decide(
+            "write_file",
+            &serde_json::json!({"path": "src/main.rs"}),
+            wd,
+            &denies,
+        );
         assert_eq!(d.outcome, Decision::Deny);
         assert_eq!(d.source, PolicySource::SessionDeny);
         // Another path is unaffected.
-        let d = e.decide("write_file", &serde_json::json!({"path": "docs/readme.md"}), wd, &denies);
+        let d = e.decide(
+            "write_file",
+            &serde_json::json!({"path": "docs/readme.md"}),
+            wd,
+            &denies,
+        );
         assert_eq!(d.outcome, Decision::Allow);
     }
 
@@ -720,14 +797,61 @@ mod tests {
     }
 
     #[test]
+    fn project_can_explicitly_pin_standard() {
+        // Regression: a project that writes `preset = "standard"` must
+        // be able to override a global config that set Yolo, because
+        // "I want the middle preset here" is a real decision. The
+        // `preset_explicit` flag is what makes that possible.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".kod")).unwrap();
+        std::fs::write(
+            tmp.path().join(".kod").join("policy.toml"),
+            "preset = \"standard\"\n",
+        )
+        .unwrap();
+
+        let mut cfg = KodConfig::default();
+        cfg.tools.preset = Some("yolo".to_string());
+        let engine = PolicyEngine::load(&cfg, Some(tmp.path()), None).expect("load");
+        assert_eq!(
+            engine.effective().preset,
+            Preset::Standard,
+            "an explicit `preset = \"standard\"` in .kod/policy.toml must \
+             override the global config's yolo",
+        );
+    }
+
+    #[test]
+    fn project_without_preset_line_does_not_override() {
+        // Counterpart: a project that only carries per-tool rules and
+        // no `preset = ` line must not silently reset a global Yolo to
+        // Standard. The flag is false when the line is absent.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".kod")).unwrap();
+        std::fs::write(
+            tmp.path().join(".kod").join("policy.toml"),
+            "[tools.write_file]\nmode = \"deny\"\n",
+        )
+        .unwrap();
+
+        let mut cfg = KodConfig::default();
+        cfg.tools.preset = Some("yolo".to_string());
+        let engine = PolicyEngine::load(&cfg, Some(tmp.path()), None).expect("load");
+        assert_eq!(
+            engine.effective().preset,
+            Preset::Yolo,
+            "a project with no explicit preset must not change the global one",
+        );
+        // The project's per-tool rule still applies.
+        assert!(
+            engine.effective().tools.contains_key("write_file"),
+            "the project's tools map must merge regardless of the preset flag",
+        );
+    }
+
+    #[test]
     fn missing_policy_file_is_none() {
         let tmp = tempfile::TempDir::new().unwrap();
         assert!(Policy::load_project(tmp.path()).unwrap().is_none());
     }
-
-
-
-    
-
-    
 }
