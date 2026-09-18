@@ -12,8 +12,7 @@ use futures::Stream;
 use kod_core::{KodEngine, RouterConfig};
 use kod_error::{KodError, Result};
 use kod_provider::{
-    GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderRegistry,
-    StreamChunk,
+    GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderRegistry, StreamChunk,
 };
 use kod_types::ToolDefinition;
 use std::pin::Pin;
@@ -117,7 +116,8 @@ fn engine_in(dir: &std::path::Path) -> KodEngine {
     std::fs::write(dir.join("main.rs"), "pub fn main() {}\n").unwrap();
     let db_path = dir.join("test.redb");
     let cfg = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         working_dir: dir.to_path_buf(),
         enable_memory: false,
         max_skills_per_query: 3,
@@ -151,7 +151,9 @@ async fn retryable_error_falls_back_to_next_endpoint() {
 
     // Route Simple -> primary, fallback to secondary.
     let mut routing = kod_config::RoutingConfig::default();
-    routing.by_task.insert("Simple".to_string(), "primary".to_string());
+    routing
+        .by_task
+        .insert("Simple".to_string(), "primary".to_string());
     routing.fallback.push("secondary".to_string());
 
     engine
@@ -187,7 +189,11 @@ async fn retryable_error_falls_back_to_next_endpoint() {
             _ => None,
         })
         .collect();
-    assert_eq!(fallbacks.len(), 1, "expected exactly one fallback log entry");
+    assert_eq!(
+        fallbacks.len(),
+        1,
+        "expected exactly one fallback log entry"
+    );
     let (from, to, err) = &fallbacks[0];
     assert!(from.contains("primary"), "from: {from}");
     assert!(to.contains("secondary"), "to: {to}");
@@ -249,7 +255,9 @@ async fn non_retryable_error_does_not_fall_back() {
     );
 
     let mut routing = kod_config::RoutingConfig::default();
-    routing.by_task.insert("Simple".to_string(), "primary".to_string());
+    routing
+        .by_task
+        .insert("Simple".to_string(), "primary".to_string());
     routing.fallback.push("secondary".to_string());
 
     engine
