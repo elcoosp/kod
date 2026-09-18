@@ -93,9 +93,7 @@ impl ProjectKind {
             // `--message-format=short` gives one diagnostic per line:
             //   path:line:col: error[E0308]: message
             // Much easier to parse than cargo's default JSON-ish form.
-            ProjectKind::Cargo => {
-                ("cargo", vec!["check", "--message-format=short", "--quiet"])
-            }
+            ProjectKind::Cargo => ("cargo", vec!["check", "--message-format=short", "--quiet"]),
             // tsc emits `path(line,col): error TSxxxx: message` per line.
             ProjectKind::NodeTsc => ("npx", vec!["--no-install", "tsc", "--noEmit"]),
             // ruff's concise format: `path:line:col: CODE message`.
@@ -187,7 +185,9 @@ fn parse_ruff_line(line: &str) -> Option<Diagnostic> {
     let (code, message) = match rest.split_once(' ') {
         Some((first, tail))
             if first.len() >= 2
-                && first.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+                && first
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
                 && first.chars().next().is_some_and(|c| c.is_ascii_uppercase()) =>
         {
             (Some(first.to_string()), tail.trim().to_string())
@@ -359,14 +359,13 @@ impl CheckTool {
             definition: ToolDefinition {
                 id: ToolId::new(),
                 name: "check".to_string(),
-                description:
-                    "Run the project's compiler or linter and return structured \
+                description: "Run the project's compiler or linter and return structured \
                      diagnostics. Detects Cargo, tsc, ruff, or go vet from the working \
                      directory. Returns {kind, command, exit_code, diagnostic_count, \
                      diagnostics: [{file, line, column, severity, code, message}], \
                      truncated}. Use after writing or patching files to see if the change \
                      broke the build."
-                        .to_string(),
+                    .to_string(),
                 category: ToolCategory::System,
                 parameters_schema: serde_json::json!({
                     "type": "object",
@@ -411,26 +410,25 @@ impl CheckTool {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
-        let output = match tokio::time::timeout(Duration::from_secs(timeout_secs), cmd.output())
-            .await
-        {
-            Ok(Ok(o)) => o,
-            Ok(Err(e)) => {
-                return Err(KodError::ToolExecution {
-                    tool_name: "check".to_string(),
-                    reason: format!(
-                        "could not run `{}`: {}. Is the toolchain on PATH?",
-                        program, e
-                    ),
-                });
-            }
-            Err(_) => {
-                return Err(KodError::ToolExecution {
-                    tool_name: "check".to_string(),
-                    reason: format!("`{}` did not finish within {}s", program, timeout_secs),
-                });
-            }
-        };
+        let output =
+            match tokio::time::timeout(Duration::from_secs(timeout_secs), cmd.output()).await {
+                Ok(Ok(o)) => o,
+                Ok(Err(e)) => {
+                    return Err(KodError::ToolExecution {
+                        tool_name: "check".to_string(),
+                        reason: format!(
+                            "could not run `{}`: {}. Is the toolchain on PATH?",
+                            program, e
+                        ),
+                    });
+                }
+                Err(_) => {
+                    return Err(KodError::ToolExecution {
+                        tool_name: "check".to_string(),
+                        reason: format!("`{}` did not finish within {}s", program, timeout_secs),
+                    });
+                }
+            };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -448,10 +446,7 @@ impl CheckTool {
             (&a.file, a.line, a.column, &a.message).cmp(&(&b.file, b.line, b.column, &b.message))
         });
         diagnostics.dedup_by(|a, b| {
-            a.file == b.file
-                && a.line == b.line
-                && a.column == b.column
-                && a.message == b.message
+            a.file == b.file && a.line == b.line && a.column == b.column && a.message == b.message
         });
 
         let (stdout_short, stdout_truncated) = truncate(&stdout, MAX_OUTPUT_BYTES);
@@ -632,8 +627,7 @@ mod tests {
 
     #[test]
     fn parse_go_line_test() {
-        let line =
-            "src/foo.go:42:5: fmt.Printf format %d has arg s of wrong type string";
+        let line = "src/foo.go:42:5: fmt.Printf format %d has arg s of wrong type string";
         let d = parse_go_line(line).unwrap();
         assert_eq!(d.file, "src/foo.go");
         assert_eq!(d.line, 42);
