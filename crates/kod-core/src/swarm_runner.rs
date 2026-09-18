@@ -66,6 +66,15 @@ pub struct Subtask {
     /// remains as a fallback for the case where the planner omits
     /// the field.
     pub capability: Capability,
+    /// Names of other subtasks in this run that must complete before
+    /// this one starts (D4.2). The runner dispatches in dependency
+    /// waves; a subtask whose `depends_on` are all complete runs
+    /// together with its peers. A subtask that names an unknown
+    /// dependency, or sits in a cycle, is promoted to the first
+    /// wave with a warning — the merge-time conflict detector is
+    /// the second line of defence, and a stuck scheduler would be
+    /// worse than a racing subtask.
+    pub depends_on: Vec<String>,
 }
 
 /// Progress events a swarm run emits while it works. The consumer
@@ -85,6 +94,13 @@ pub enum SwarmEvent {
         id: AgentId,
         name: String,
         subtask: String,
+        /// Display string of the endpoint+model the agent runs
+        /// against (`endpoint/model`). Set from
+        /// `[llm.routing.swarm]` when configured; falls back to
+        /// the engine's current model otherwise, so the agent
+        /// panel never shows a blank row.
+        #[serde(default)]
+        model: Option<String>,
     },
     /// Agent produced a text chunk. Already labeled for display by the
     /// runner (a tool-start marker from the engine is rendered as
@@ -247,6 +263,25 @@ impl SwarmRunner {
         })
     }
 
+    /// Build a runner from the loaded `[swarm]` config. Centralises
+    /// the config → runner mapping so the two construction sites (CLI
+    /// `kod swarm` and TUI `/swarm`) cannot drift on which fields they
+    /// apply.
+    ///
+    /// `max_agents` is clamped by `SwarmRunner::new` to `[2, 8]`; the
+    /// other three are applied verbatim, including the "0 disables"
+    /// convention for the two timeouts.
+    pub async fn from_config(
+        engine: Arc<KodEngine>,
+        config: &kod_config::SwarmConfig,
+    ) -> Result<Self> {
+        Ok(Self::new(engine, config.max_agents, config.merge_results)
+            .await?
+            .with_agent_timeout_secs(config.agent_timeout_secs)
+            .with_agent_retries(config.agent_retries)
+            .with_swarm_timeout_secs(config.timeout_secs))
+    }
+
     /// Set the per-agent wall-clock cap in seconds. 0 disables.
     pub fn with_agent_timeout_secs(mut self, secs: u64) -> Self {
         self.agent_timeout_secs = secs;
@@ -368,37 +403,74 @@ impl SwarmRunner {
             worktree_created.clear();
         }
 
-        // 2. Spawn agents and register tasks.
-        let _working_dir = self.engine.working_dir().to_path_buf();
-        // Build the swarm on the engine's hub (D4.3). The note and
-        // read tools the engine registers talk to the same hub, so a
-        // fact one agent broadcasts is visible to the tool layer and
-        // vice versa.
-        // Bind the hub locally so the per-agent tasks below can
-        // broadcast on it. Cloning an `AgentCommunicationHub`
-        // shares the underlying maps; every clone talks to the
-        // same blackboard.
+        // 2. Spawn a capability pool and register tasks (design D4.3).
+        //
+        // Design: "dispatch = least_loaded_agent parmi
+        // find_agents_with_capability(cap)". The pool contains one
+        // agent per *distinct* subtask capability, capped at
+        // `max_agents`. A run with 3 coding subtasks and 2 testing
+        // subtasks spawns at most 2 agents (one coder, one tester),
+        // not 5; each agent then takes work from the coordinator via
+        // `least_loaded_agent` filtering on `find_agents_with_capability`.
+        //
+        // A run where every subtask has a distinct capability still
+        // spawns one agent per subtask — identical to the pre-D4.3
+        // behaviour, because the pool size equals the subtask count.
+        // The change only collapses redundant same-capability agents,
+        // which is the exact class of work a single agent can absorb
+        // without loss (the design's "coordination réelle au lieu de
+        // comptabilité").
         let hub = self.engine.swarm_hub();
-        let swarm = AgentSwarm::with_hub(self.engine.swarm_hub());
-        let mut handles: Vec<AgentHandle> = Vec::new();
-        for (i, st) in subtasks.iter().enumerate() {
-            let name = format!("agent-{}-{}", i + 1, sanitize(&st.name));
-            let agent = AgentBuilder::new(&name)
-                .with_capability(capability_for(&st.description))
+        let swarm = AgentSwarm::with_hub(hub.clone());
+
+        // Distinct capabilities, in first-appearance order so the
+        // pool's naming is deterministic.
+        let mut capabilities: Vec<Capability> = Vec::new();
+        for st in &subtasks {
+            if !capabilities.contains(&st.capability) {
+                capabilities.push(st.capability);
+            }
+        }
+        // Capability pool capped at max_agents; if the pool would
+        // exceed the cap, fall back to one agent per subtask (the
+        // pre-D4.3 shape) so no subtask is left without a coder.
+        let pool: Vec<Capability> = if capabilities.len() <= self.max_agents {
+            capabilities.clone()
+        } else {
+            subtasks.iter().map(|s| s.capability).collect()
+        };
+
+        // Map capability -> the agents that can serve it. Populated as
+        // we spawn. `Vec` (not `HashSet`) to keep the deterministic
+        // order that `find_agents_with_capability` sorts on.
+        let mut capability_agents: std::collections::HashMap<
+            Capability,
+            Vec<AgentId>,
+        > = std::collections::HashMap::new();
+
+        // Per-agent handle info: name and, when a worktree was created,
+        // its path. Keyed by AgentId so the wave loop can find the right
+        // worktree when it assigns a subtask to an agent.
+        struct AgentHandle {
+            id: AgentId,
+            name: String,
+            subtask: Subtask,
+            task_id: TaskId,
+        }
+
+        let mut pool_handles: Vec<AgentHandle> = Vec::with_capacity(pool.len());
+        for (i, cap) in pool.iter().enumerate() {
+            let slug = format!("agent-{}-{}", i + 1, sanitize(cap.as_str()));
+            let agent = AgentBuilder::new(&slug)
+                .with_capability(*cap)
                 .build();
             let id = agent.id().clone();
             swarm.add_agent(agent).await?;
             swarm.start_agent(&id).await?;
 
-            let task = Task::new(st.description.clone(), Priority::Medium);
-            let task_id = task.id.clone();
-            swarm.coordinator().register_task(task).await?;
-            swarm.coordinator().assign_task(&task_id, &id).await?;
-
-            // Point this agent's transcript at its own worktree, if
-            // one was created. The engine's per-transcript
-            // working_dir override (D4-D1) makes every tool the agent
-            // calls run rooted there.
+            // Point this agent's transcript at its own worktree, if one
+            // was created. The per-transcript working_dir override
+            // (D4-D1) makes every tool the agent calls run rooted there.
             if let Some(wt) = worktree_created.get(i) {
                 let key = format!("swarm:{id}");
                 let _ = self
@@ -407,27 +479,103 @@ impl SwarmRunner {
                     .await;
                 let _ = chunk_tx
                     .send(SwarmEvent::WorktreeCreated {
-                        agent_name: name.clone(),
+                        agent_name: slug.clone(),
                         path: wt.path.clone(),
                         branch: wt.branch.clone(),
                     })
                     .await;
             }
-            // Register this agent's declared write set on its
-            // transcript, whether or not a worktree was created
-            // (D4.2). The claim applies in the non-worktree case
-            // too — that is where the enforcement matters most,
-            // because the agents share a filesystem.
+
+            capability_agents
+                .entry(*cap)
+                .or_default()
+                .push(id.clone());
+            pool_handles.push(AgentHandle {
+                id,
+                name: slug,
+                // Placeholder subtask — the runner assigns the real
+                // one in the wave loop. Kept non-empty so the
+                // pre-existing display code that reads `subtask` has
+                // something sensible.
+                subtask: Subtask {
+                    name: String::new(),
+                    description: String::new(),
+                    expected_writes: Vec::new(),
+                    capability: *cap,
+                    depends_on: Vec::new(),
+                },
+                task_id: TaskId::new(),
+            });
+        }
+
+        // Register one task per subtask, assign it to the
+        // least-loaded agent of the right capability. The wave loop
+        // below re-registers nothing — it just consumes the handles
+        // that have already been paired with their subtask.
+        //
+        // `handles` (the pre-pool vector) is what the wave loop
+        // dispatches on. Rebuild it here from `subtasks` and the pool
+        // so the rest of the file does not change.
+        let mut handles: Vec<AgentHandle> = Vec::with_capacity(subtasks.len());
+        for st in &subtasks {
+            let candidates = capability_agents
+                .get(&st.capability)
+                .cloned()
+                .unwrap_or_default();
+            let chosen: AgentId = match candidates.len() {
+                0 => {
+                    // No pool agent declared this capability — should
+                    // not happen: `pool` was built from subtask
+                    // capabilities. Defensive: fall back to the first
+                    // agent.
+                    pool_handles
+                        .first()
+                        .map(|h| h.id.clone())
+                        .unwrap_or_else(AgentId::new)
+                }
+                1 => candidates[0].clone(),
+                _ => {
+                    // Real load-balancing: ask the coordinator which
+                    // candidate has the fewest in-flight tasks.
+                    swarm
+                        .coordinator()
+                        .least_loaded_agent(&candidates)
+                        .await
+                        .unwrap_or_else(|| candidates[0].clone())
+                }
+            };
+            let name = pool_handles
+                .iter()
+                .find(|h| h.id == chosen)
+                .map(|h| h.name.clone())
+                .unwrap_or_else(|| format!("agent-{}", st.name));
+
+            let task = Task::new(st.description.clone(), Priority::Medium);
+            let task_id = task.id.clone();
+            swarm.coordinator().register_task(task).await?;
+            swarm
+                .coordinator()
+                .assign_task(&task_id, &chosen)
+                .await?;
+
+            // Register the subtask's declared write set on the chosen
+            // agent's transcript. A pool agent that serves two
+            // subtasks with different write sets gets the union — the
+            // claim is per transcript, and the coordinator's assign
+            // step already serialised them if they overlapped.
             if !st.expected_writes.is_empty() {
-                let key = format!("swarm:{id}");
+                let key = format!("swarm:{chosen}");
                 let _ = self
                     .engine
-                    .set_transcript_write_globs(&key, Some(st.expected_writes.clone()))
+                    .set_transcript_write_globs(
+                        &key,
+                        Some(st.expected_writes.clone()),
+                    )
                     .await;
             }
 
             handles.push(AgentHandle {
-                id,
+                id: chosen,
                 name,
                 subtask: st.clone(),
                 task_id,
@@ -444,20 +592,208 @@ impl SwarmRunner {
         let agent_timeout_secs: u64 = self.agent_timeout_secs;
         let max_attempts: u32 = 1 + self.agent_retries;
 
-        let mut tasks = Vec::with_capacity(handles.len());
-        for h in &handles {
-            let engine = self.engine.clone();
-            let id = h.id.clone();
-            let name = h.name.clone();
-            let subtask = h.subtask.clone();
-            let out = chunk_tx.clone();
-            let hub = hub.clone();
-            tasks.push(async move {
+        // Dispatch in dependency waves (D4.2). Subtasks whose
+        // `depends_on` are all complete run together; a subtask
+        // whose dependencies have not yet run waits for the next
+        // wave. A subtask that names an unknown dependency, or sits
+        // in a cycle, is promoted to the current wave with a
+        // warning — the merge-time conflict detector is the second
+        // line of defence, and a stuck scheduler would be worse
+        // than a racing subtask.
+        let mut raw: Vec<(
+            kod_types::AgentId,
+            String,
+            Subtask,
+            Vec<String>,
+            std::result::Result<String, String>,
+        )> = Vec::with_capacity(handles.len());
+        let mut completed: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        // Per-run heartbeat watchdog (design D4.3). Polls every 10 s;
+        // for any agent whose last heartbeat is older than 90 s, sends
+        // a cooperative cancel so the agent's streaming loop stops at
+        // its next round boundary and its task exits with a retryable
+        // error — the retry loop then restarts it, which is the
+        // design's "re-dispatch". Best-effort: the watchdog holds an
+        // engine handle and a swarm handle, both of which the run
+        // already owns.
+        let (watchdog_stop_tx, mut watchdog_stop_rx) =
+            tokio::sync::mpsc::channel::<()>(1);
+        let watchdog_engine = self.engine.clone();
+        let watchdog_swarm = swarm.clone();
+        let watchdog_chunk_tx = chunk_tx.clone();
+        let watchdog_task = tokio::spawn(async move {
+            use tokio::time::{Duration, MissedTickBehavior};
+            let mut ticker = tokio::time::interval(Duration::from_secs(10));
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            // Skip the immediate first tick so the initial spawn does
+            // not race the pool registration.
+            ticker.tick().await;
+            loop {
+                tokio::select! {
+                    _ = ticker.tick() => {}
+                    _ = watchdog_stop_rx.recv() => return,
+                }
+                let ids = watchdog_swarm.list_agents().await;
+                for id in ids {
+                    let Some(agent) = watchdog_swarm.get_agent(&id).await else {
+                        continue;
+                    };
+                    // Only Running agents are eligible; a Stopped one
+                    // has no heartbeat obligation.
+                    if agent.state() != kod_swarm::AgentState::Running {
+                        continue;
+                    }
+                    // 90 s without a chunk: the agent is wedged on
+                    // something (a hung tool, a stalled stream). Cancel
+                    // cooperatively so the retry loop can restart it.
+                    if agent.is_timed_out(Duration::from_secs(90)) {
+                        let key = format!("swarm:{id}");
+                        tracing::warn!(
+                            agent = %agent.name(),
+                            key = %key,
+                            "swarm watchdog: agent has not reported in 90s;                              sending cooperative cancel",
+                        );
+                        watchdog_engine.request_cancel_for(&key);
+                        let _ = watchdog_chunk_tx
+                            .send(SwarmEvent::AgentRetrying {
+                                id: id.clone(),
+                                name: agent.name().to_string(),
+                                attempt: 0,
+                                max_attempts: 0,
+                                previous_error: "watchdog: no output in 90s".to_string(),
+                            })
+                            .await;
+                    }
+                }
+            }
+        });
+
+        let mut remaining: Vec<usize> = (0..handles.len()).collect();
+        let mut guard = handles.len() + 1;
+
+        // Global run deadline (design D4.3). The per-agent timeout
+        // above bounds one agent; without a ceiling on the whole run,
+        // a wave-per-`agent_timeout_secs` sequence (retries included)
+        // could run for hours. `swarm_timeout_secs == 0` disables the
+        // cap. The deadline is absolute so a wave cannot reset it.
+        let global_deadline = if self.swarm_timeout_secs == 0 {
+            None
+        } else {
+            Some(
+                tokio::time::Instant::now()
+                    + std::time::Duration::from_secs(self.swarm_timeout_secs),
+            )
+        };
+
+        // Emit an `AgentFailed` for every handle in `indices` that has
+        // not been recorded as completed. Used by both the top-of-loop
+        // deadline check and the wave-level timeout.
+        async fn report_run_timeout(
+            chunk_tx: &mpsc::Sender<SwarmEvent>,
+            handles: &[AgentHandle],
+            indices: &[usize],
+            timeout_secs: u64,
+        ) {
+            let reason = format!(
+                "overall run timeout ({}s) reached; this agent did not complete",
+                timeout_secs,
+            );
+            for &idx in indices {
+                if let Some(h) = handles.get(idx) {
+                    let _ = chunk_tx
+                        .send(SwarmEvent::AgentFailed {
+                            id: h.id.clone(),
+                            name: h.name.clone(),
+                            error: reason.clone(),
+                        })
+                        .await;
+                }
+            }
+            // Synthetic run-level event so a live UI can distinguish
+            // "this agent failed" from "the whole run stopped".
+            let _ = chunk_tx
+                .send(SwarmEvent::AgentFailed {
+                    id: kod_types::AgentId::new(),
+                    name: "(run)".to_string(),
+                    error: format!(
+                        "overall run timeout ({}s) reached",
+                        timeout_secs,
+                    ),
+                })
+                .await;
+        }
+
+        while !remaining.is_empty() && guard > 0 {
+            guard -= 1;
+
+            // Deadline check first: cheaper to bail than to spawn a
+            // wave whose futures will be dropped a moment later.
+            if let Some(deadline) = global_deadline
+                && tokio::time::Instant::now() >= deadline
+            {
+                tracing::warn!(
+                    secs = self.swarm_timeout_secs,
+                    "swarm: overall run deadline reached before a wave;                      aborting remaining agents"
+                );
+                report_run_timeout(
+                    chunk_tx,
+                    &handles,
+                    &remaining,
+                    self.swarm_timeout_secs,
+                )
+                .await;
+                break;
+            }
+            let (ready, blocked): (Vec<usize>, Vec<usize>) = remaining
+                .into_iter()
+                .partition(|&i| {
+                    handles[i]
+                        .subtask
+                        .depends_on
+                        .iter()
+                        .all(|d| completed.contains(d))
+                });
+            let (ready, blocked) = if ready.is_empty() {
+                tracing::warn!(
+                    count = blocked.len(),
+                    "swarm: dependency cycle or unknown dependency; \
+                     running remaining subtasks concurrently"
+                );
+                (blocked, Vec::new())
+            } else {
+                (ready, blocked)
+            };
+
+            let mut wave_tasks = Vec::with_capacity(ready.len());
+            for &i in &ready {
+                let engine = self.engine.clone();
+                let id = handles[i].id.clone();
+                let name = handles[i].name.clone();
+                let subtask = handles[i].subtask.clone();
+                let out = chunk_tx.clone();
+                let hub = hub.clone();
+                let swarm = swarm.clone();
+                wave_tasks.push(async move {
                 // Role preamble is computed once — retries use the
                 // same shaped prompt.
-                let per_agent_role = capability_for(&subtask.description);
+                // Planner-assigned, not re-inferred — a planner that labelled
+                // the subtask as CodeReview gets the reviewer preamble.
+                let per_agent_role = subtask.capability;
                 let role_prefix = role_preamble(per_agent_role);
                 let transcript_key = format!("swarm:{id}");
+
+                // Resolve the per-capability model once per agent
+                // (design D1.4 PR A7). `[llm.routing.swarm]` maps a
+                // subtask's `capability` to an endpoint; `None` when
+                // the table is absent or has no entry — the engine
+                // then routes by task type, the pre-A7 behaviour.
+                // Computed here rather than inside the retry loop so
+                // the agent panel sees the model on the first
+                // `AgentStarted` emit of every attempt.
+                let override_model: Option<kod_provider::ModelRef> = engine
+                    .resolve_model_ref_for_capability(&subtask.capability)
+                    .await;
 
                 // Announce this agent's start to its peers before it
                 // begins work (D4.3). A terminal-only lifecycle left
@@ -482,10 +818,23 @@ impl SwarmRunner {
                     attempt += 1;
                     let _ = out
                         .send(SwarmEvent::AgentStarted {
-                            id: id.clone(),
-                            name: name.clone(),
-                            subtask: subtask.description.clone(),
-                        })
+                        id: id.clone(),
+                        name: name.clone(),
+                        subtask: subtask.description.clone(),
+                        // Same per-capability model the streaming
+                        // call will use. Falls back to the current
+                        // model when no `[llm.routing.swarm]` table
+                        // is configured — the panel never shows a
+                        // blank, and a user can always tell which
+                        // endpoint an agent is on.
+                        model: Some(
+                            match &override_model {
+                                Some(m) => m.display(),
+                                None => engine.current_model().await.display(),
+                            },
+                        ),
+                    }
+                    )
                         .await;
 
                     // Retry attempts get the previous error appended so
@@ -504,8 +853,23 @@ impl SwarmRunner {
                     let out_pump = out.clone();
                     let id_pump = id.clone();
                     let name_pump = name.clone();
+                    // Keep a handle to the agent so the pump can record
+                    // a heartbeat on every chunk (design D4.3). "The
+                    // agent produced output" is the signal the watchdog
+                    // watches; the alternative — polling the engine's
+                    // last-chunk timestamp — would need a second
+                    // cross-task slot for no gain.
+                    let swarm_for_hb = swarm.clone();
+                    let id_for_hb = id.clone();
                     let pump = tokio::spawn(async move {
+                        // The swarm's registry is shared; a lookup per
+                        // chunk is a HashMap get. Cheap, and the pump
+                        // already crosses an await boundary per chunk
+                        // (the mpsc recv), so no extra yield point.
                         while let Some(chunk) = rx.recv().await {
+                            if let Some(agent) = swarm_for_hb.get_agent(&id_for_hb).await {
+                                agent.record_heartbeat();
+                            }
                             let display = if let Some(tool) =
                                 crate::engine::parse_tool_start(&chunk)
                             {
@@ -532,7 +896,12 @@ impl SwarmRunner {
                     });
 
                     let run = engine
-                        .process_streaming_for(&transcript_key, &shaped, &tx);
+                        .process_streaming_with_model_for(
+                            &transcript_key,
+                            &shaped,
+                            &tx,
+                            override_model.clone(),
+                        );
 
                     let outcome: std::result::Result<
                         crate::router::TaskResponse,
@@ -609,54 +978,66 @@ impl SwarmRunner {
                     }
                 }
             });
+            }
+            // Run this wave under whatever budget remains. A wave
+            // that starts just under the deadline cannot overrun it.
+            let wave_results = match global_deadline {
+                Some(deadline) => {
+                    let remaining_time = deadline
+                        .saturating_duration_since(tokio::time::Instant::now());
+                    if remaining_time.is_zero() {
+                        // The top-of-loop check should have caught
+                        // this; be defensive.
+                        report_run_timeout(
+                            chunk_tx,
+                            &handles,
+                            &ready,
+                            self.swarm_timeout_secs,
+                        )
+                        .await;
+                        break;
+                    }
+                    match tokio::time::timeout(
+                        remaining_time,
+                        join_all(wave_tasks),
+                    )
+                    .await
+                    {
+                        Ok(v) => v,
+                        Err(_) => {
+                            tracing::warn!(
+                                secs = self.swarm_timeout_secs,
+                                "swarm: wave hit the global deadline;                                  aborting agents mid-flight"
+                            );
+                            // `ready` futures were dropped by the
+                            // timeout; `blocked` never started. Both
+                            // need a terminal event.
+                            let mut all: Vec<usize> = ready.clone();
+                            all.extend(blocked.iter().copied());
+                            report_run_timeout(
+                                chunk_tx,
+                                &handles,
+                                &all,
+                                self.swarm_timeout_secs,
+                            )
+                            .await;
+                            break;
+                        }
+                    }
+                }
+                None => join_all(wave_tasks).await,
+            };
+            for (idx, res) in ready.iter().zip(wave_results) {
+                completed.insert(handles[*idx].subtask.name.clone());
+                raw.push(res);
+            }
+            remaining = blocked;
         }
 
-        // Overall run cap (D4.3). The per-agent timeout above covers
-        // a stuck agent, but N agents that each finish just under
-        // their cap can still make a run far longer than the user
-        // asked for. The overall cap is a hard ceiling; when it
-        // fires the agents are cancelled (their futures dropped)
-        // and the run proceeds to the merge with whatever results
-        // have arrived. A duration of zero disables the cap.
-        let raw = if self.swarm_timeout_secs == 0 {
-            join_all(tasks).await
-        } else {
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(self.swarm_timeout_secs),
-                join_all(tasks),
-            )
-            .await
-            {
-                Ok(v) => v,
-                Err(_) => {
-                    tracing::warn!(
-                        secs = self.swarm_timeout_secs,
-                        "swarm: overall run timeout reached; aborting agents"
-                    );
-                    let _ = chunk_tx
-                        .send(SwarmEvent::AgentFailed {
-                            id: kod_types::AgentId::new(),
-                            name: "(run)".to_string(),
-                            error: format!(
-                                "overall run timeout ({}s) reached; \
-                                 the swarm stopped with whatever results \
-                                 had arrived",
-                                self.swarm_timeout_secs
-                            ),
-                        })
-                        .await;
-                    // The futures are dropped when the timeout fires;
-                    // join_all's partial collection is not retrievable,
-                    // so the merge runs on empty results. That is the
-                    // safe shape: the user sees a clear "timed out"
-                    // message rather than a run that hangs.
-                    return Err(KodError::Internal(format!(
-                        "swarm exceeded the {}s overall timeout",
-                        self.swarm_timeout_secs
-                    )));
-                }
-            }
-        };
+        // `raw` was populated by the dependency-wave loop above; each
+        // wave waited up to `agent_timeout_secs` per agent. A per-run
+        // global watchdog (the design's D4.3) is a follow-up; until
+        // then the wave loop is the only bound.
 
         // 3b. Merge the worktrees back into the base branch (D4-D2).
         //     The merge is deterministic (git, not a model call) and
@@ -810,6 +1191,11 @@ impl SwarmRunner {
         } else {
             (Self::concatenate(&per_agent), false)
         };
+
+        // The run is over; stop the watchdog (drop the sender, await
+        // the task) so it cannot fire against a completed run.
+        let _ = watchdog_stop_tx.send(()).await;
+        let _ = watchdog_task.await;
 
         Ok(SwarmResponse {
             subtasks,
@@ -1029,6 +1415,15 @@ impl SwarmRunner {
                that tells the coordinator nothing and will force the whole \
                swarm to serialize. If a subtask genuinely does not write \
                files (research, review, planning), return an empty array.\n\
+             - \"depends_on\": an array of \"name\" values of other subtasks \
+               in this same list that must finish before this one starts. \
+               Use it only when the subtask genuinely needs the other's \
+               output — for example, an implementation subtask that \
+               consumes a schema another subtask writes. Most subtasks \
+               should have an empty array so the swarm parallelizes. Do \
+               not create cycles (A depends on B, B depends on A): the \
+               coordinator will run them together with a warning, and any \
+               claims they share will be enforced at write time.\n\
              \n\
              Two subtasks may not share a prefix in their write sets. If \
              you find yourself wanting to write the same file from two \
@@ -1039,7 +1434,8 @@ impl SwarmRunner {
              [{{\"name\":\"design-schema\",\"description\":\"Write the SQL \
              schema for a users table with id, email, created_at.\", \
              \"capability\":\"coding\", \
-             \"expected_writes\":[\"migrations/001_users.sql\"]}}]\n",
+             \"expected_writes\":[\"migrations/001_users.sql\"], \
+             \"depends_on\":[]}}]\n",
             goal = goal,
             repo = repo_block,
             n = self.max_agents,
@@ -1068,6 +1464,7 @@ impl SwarmRunner {
         // it is an honest swarm.
         Ok((0..self.max_agents)
             .map(|i| Subtask {
+                depends_on: Vec::new(),
                 name: format!("angle-{}", i + 1),
                 description: format!(
                     "{goal}\n\nFocus on a distinct angle from the other \
@@ -1177,13 +1574,6 @@ impl SwarmRunner {
         }
         out.trim_end().to_string()
     }
-}
-
-struct AgentHandle {
-    id: AgentId,
-    name: String,
-    subtask: Subtask,
-    task_id: TaskId,
 }
 
 /// Extract the canonical path of every file the agent wrote to.
@@ -1461,6 +1851,20 @@ fn parse_subtasks(text: &str, max: usize) -> Option<Vec<Subtask>> {
             description,
             expected_writes,
             capability,
+            // `depends_on` is a list of subtask names. A missing or
+            // malformed value degrades to an empty list — the
+            // scheduler then runs the subtask in the first wave.
+            depends_on: item
+                .get("depends_on")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
         });
         if out.len() >= max {
             break;
@@ -1563,12 +1967,14 @@ mod tests {
                 description: "a".to_string(),
                 expected_writes: vec!["src/parser.rs".to_string()],
                 capability: Capability::Coding,
+                depends_on: Vec::new(),
             },
             Subtask {
                 name: "b".to_string(),
                 description: "b".to_string(),
                 expected_writes: vec!["src/http.rs".to_string()],
                 capability: Capability::Coding,
+                depends_on: Vec::new(),
             },
         ];
         assert!(detect_overlap(&clean).is_none());
@@ -1579,12 +1985,14 @@ mod tests {
                 description: "a".to_string(),
                 expected_writes: vec!["src/parser.rs".to_string()],
                 capability: Capability::Coding,
+                depends_on: Vec::new(),
             },
             Subtask {
                 name: "b".to_string(),
                 description: "b".to_string(),
                 expected_writes: vec!["src/parser.rs".to_string()],
                 capability: Capability::Coding,
+                depends_on: Vec::new(),
             },
         ];
         let (i, j, common) = detect_overlap(&dirty).expect("collision");
@@ -1600,12 +2008,14 @@ mod tests {
                 description: "a".to_string(),
                 expected_writes: Vec::new(),
                 capability: Capability::Research,
+                depends_on: Vec::new(),
             },
             Subtask {
                 name: "b".to_string(),
                 description: "b".to_string(),
                 expected_writes: Vec::new(),
                 capability: Capability::Planning,
+                depends_on: Vec::new(),
             },
         ];
         assert!(detect_overlap(&subtasks).is_none());
