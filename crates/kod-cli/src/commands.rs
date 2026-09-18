@@ -6669,3 +6669,465 @@ mod coverage_cli_render {
         assert_eq!(preview_line("日本語です", 3), "日本語…");
     }
 }
+
+/// Parse-surface coverage for the eight sub-action enums that hang
+/// off the top-level commands. Same shape as `coverage_cli_parsing`:
+/// one test per documented invocation, plus the flags and defaults
+/// that a caller relies on.
+#[cfg(test)]
+mod coverage_cli_subactions {
+    use super::*;
+
+    fn parse_ok(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).unwrap_or_else(|e| {
+            panic!("expected `{}` to parse, got error: {e}", args.join(" "))
+        })
+    }
+
+    fn parse_err(args: &[&str]) {
+        assert!(
+            Cli::try_parse_from(args).is_err(),
+            "expected `{}` to be rejected, but it parsed",
+            args.join(" ")
+        );
+    }
+
+    // ---- ProfileAction -------------------------------------------------
+
+    #[test]
+    fn profile_list_defaults_json_to_false_and_accepts_the_flag() {
+        match parse_ok(&["kod", "profile", "list"]).command {
+            Some(Command::Profile {
+                action: ProfileAction::List { json },
+            }) => assert!(!json),
+            _ => panic!("expected Profile::List"),
+        }
+        match parse_ok(&["kod", "profile", "list", "--json"]).command {
+            Some(Command::Profile {
+                action: ProfileAction::List { json: true },
+            }) => {}
+            _ => panic!("expected Profile::List with json=true"),
+        }
+    }
+
+    #[test]
+    fn profile_show_takes_no_arguments() {
+        assert!(matches!(
+            parse_ok(&["kod", "profile", "show"]).command,
+            Some(Command::Profile {
+                action: ProfileAction::Show
+            })
+        ));
+        parse_err(&["kod", "profile", "show", "extra"]);
+    }
+
+    #[test]
+    fn profile_use_takes_a_name_and_optional_dry_run() {
+        match parse_ok(&["kod", "profile", "use", "ollama"]).command {
+            Some(Command::Profile {
+                action: ProfileAction::Use { name, dry_run },
+            }) => {
+                assert_eq!(name, "ollama");
+                assert!(!dry_run);
+            }
+            _ => panic!("expected Profile::Use"),
+        }
+        match parse_ok(&["kod", "profile", "use", "ollama", "--dry-run"]).command {
+            Some(Command::Profile {
+                action: ProfileAction::Use { dry_run: true, .. },
+            }) => {}
+            _ => panic!("expected Profile::Use with dry_run"),
+        }
+    }
+
+    // ---- ThemeAction ---------------------------------------------------
+
+    #[test]
+    fn theme_actions_parse() {
+        assert!(matches!(
+            parse_ok(&["kod", "theme", "list"]).command,
+            Some(Command::Theme {
+                action: ThemeAction::List
+            })
+        ));
+        match parse_ok(&["kod", "theme", "show", "dark"]).command {
+            Some(Command::Theme {
+                action: ThemeAction::Show { name },
+            }) => assert_eq!(name, "dark"),
+            _ => panic!("expected Theme::Show"),
+        }
+    }
+
+    #[test]
+    fn theme_show_without_a_name_is_rejected() {
+        parse_err(&["kod", "theme", "show"]);
+    }
+
+    // ---- ToolsAction ---------------------------------------------------
+
+    #[test]
+    fn tools_with_no_action_parses_as_none() {
+        assert!(matches!(
+            parse_ok(&["kod", "tools"]).command,
+            Some(Command::Tools { action: None })
+        ));
+    }
+
+    #[test]
+    fn tools_list_and_show_parse() {
+        assert!(matches!(
+            parse_ok(&["kod", "tools", "list"]).command,
+            Some(Command::Tools {
+                action: Some(ToolsAction::List)
+            })
+        ));
+        match parse_ok(&["kod", "tools", "show", "write_file"]).command {
+            Some(Command::Tools {
+                action: Some(ToolsAction::Show { name }),
+            }) => assert_eq!(name, "write_file"),
+            _ => panic!("expected Tools::Show"),
+        }
+    }
+
+    // ---- SandboxAction -------------------------------------------------
+
+    #[test]
+    fn sandbox_check_is_a_required_subcommand() {
+        parse_err(&["kod", "sandbox"]);
+        assert!(matches!(
+            parse_ok(&["kod", "sandbox", "check"]).command,
+            Some(Command::Sandbox {
+                action: SandboxAction::Check
+            })
+        ));
+    }
+
+    // ---- PolicyAction --------------------------------------------------
+
+    #[test]
+    fn policy_show_parses() {
+        assert!(matches!(
+            parse_ok(&["kod", "policy", "show"]).command,
+            Some(Command::Policy {
+                action: PolicyAction::Show
+            })
+        ));
+    }
+
+    #[test]
+    fn policy_forget_takes_an_optional_index() {
+        // Bare `forget` lists the rules; with an index it drops one.
+        match parse_ok(&["kod", "policy", "forget"]).command {
+            Some(Command::Policy {
+                action: PolicyAction::Forget { n },
+            }) => assert!(n.is_none()),
+            _ => panic!("expected Policy::Forget"),
+        }
+        match parse_ok(&["kod", "policy", "forget", "2"]).command {
+            Some(Command::Policy {
+                action: PolicyAction::Forget { n },
+            }) => assert_eq!(n, Some(2)),
+            _ => panic!("expected Policy::Forget with index"),
+        }
+    }
+
+    #[test]
+    fn policy_forget_rejects_a_non_numeric_index() {
+        parse_err(&["kod", "policy", "forget", "abc"]);
+    }
+
+    #[test]
+    fn policy_explain_takes_a_tool_and_trailing_var_args() {
+        match parse_ok(&["kod", "policy", "explain", "write_file"]).command {
+            Some(Command::Policy {
+                action: PolicyAction::Explain { tool, args },
+            }) => {
+                assert_eq!(tool, "write_file");
+                assert!(args.is_empty());
+            }
+            _ => panic!("expected Policy::Explain"),
+        }
+        match parse_ok(&[
+            "kod", "policy", "explain", "execute_command",
+            "command=cargo test",
+            "env=dev",
+        ])
+        .command
+        {
+            Some(Command::Policy {
+                action: PolicyAction::Explain { tool, args },
+            }) => {
+                assert_eq!(tool, "execute_command");
+                assert_eq!(args, vec!["command=cargo test", "env=dev"]);
+            }
+            _ => panic!("expected Policy::Explain with args"),
+        }
+    }
+
+    #[test]
+    fn policy_explain_allows_hyphen_values_in_trailing_args() {
+        // The `allow_hyphen_values` attribute is what lets a caller
+        // write `kod policy explain web_fetch url=https://...` and
+        // also pass a bare `-x` without clap treating it as a flag.
+        match parse_ok(&[
+            "kod", "policy", "explain", "execute_command",
+            "command=ls", "-la",
+        ])
+        .command
+        {
+            Some(Command::Policy {
+                action: PolicyAction::Explain { args, .. },
+            }) => {
+                assert_eq!(args, vec!["command=ls", "-la"]);
+            }
+            _ => panic!("expected Policy::Explain"),
+        }
+    }
+
+    #[test]
+    fn policy_explain_without_a_tool_is_rejected() {
+        parse_err(&["kod", "policy", "explain"]);
+    }
+
+    // ---- MemoryAction --------------------------------------------------
+
+    #[test]
+    fn memory_add_takes_content_and_optional_tags() {
+        match parse_ok(&["kod", "memory", "add", "remember this"]).command {
+            Some(Command::Memory {
+                action: MemoryAction::Add { content, tags },
+            }) => {
+                assert_eq!(content, "remember this");
+                assert!(tags.is_none());
+            }
+            _ => panic!("expected Memory::Add"),
+        }
+        match parse_ok(&[
+            "kod", "memory", "add", "remember", "--tags", "preference,rust",
+        ])
+        .command
+        {
+            Some(Command::Memory {
+                action: MemoryAction::Add { tags, .. },
+            }) => assert_eq!(tags.as_deref(), Some("preference,rust")),
+            _ => panic!("expected Memory::Add with tags"),
+        }
+    }
+
+    #[test]
+    fn memory_forget_takes_a_key() {
+        match parse_ok(&["kod", "memory", "forget", "preference"]).command {
+            Some(Command::Memory {
+                action: MemoryAction::Forget { key },
+            }) => assert_eq!(key, "preference"),
+            _ => panic!("expected Memory::Forget"),
+        }
+    }
+
+    #[test]
+    fn memory_list_parses() {
+        assert!(matches!(
+            parse_ok(&["kod", "memory", "list"]).command,
+            Some(Command::Memory {
+                action: MemoryAction::List
+            })
+        ));
+    }
+
+    #[test]
+    fn memory_export_and_import_default_path_to_dash() {
+        match parse_ok(&["kod", "memory", "export"]).command {
+            Some(Command::Memory {
+                action: MemoryAction::Export { path },
+            }) => assert_eq!(path, std::path::PathBuf::from("-")),
+            _ => panic!("expected Memory::Export"),
+        }
+        match parse_ok(&["kod", "memory", "import"]).command {
+            Some(Command::Memory {
+                action: MemoryAction::Import { path },
+            }) => assert_eq!(path, std::path::PathBuf::from("-")),
+            _ => panic!("expected Memory::Import"),
+        }
+        // An explicit path overrides the default.
+        match parse_ok(&["kod", "memory", "export", "/tmp/m.json"]).command {
+            Some(Command::Memory {
+                action: MemoryAction::Export { path },
+            }) => assert_eq!(path, std::path::PathBuf::from("/tmp/m.json")),
+            _ => panic!("expected Memory::Export with path"),
+        }
+    }
+
+    #[test]
+    fn memory_search_takes_a_query() {
+        match parse_ok(&["kod", "memory", "search", "rust"]).command {
+            Some(Command::Memory {
+                action: MemoryAction::Search { query },
+            }) => assert_eq!(query, "rust"),
+            _ => panic!("expected Memory::Search"),
+        }
+    }
+
+    #[test]
+    fn memory_delete_takes_an_id() {
+        match parse_ok(&["kod", "memory", "delete", "deadbeef"]).command {
+            Some(Command::Memory {
+                action: MemoryAction::Delete { id },
+            }) => assert_eq!(id, "deadbeef"),
+            _ => panic!("expected Memory::Delete"),
+        }
+    }
+
+    #[test]
+    fn memory_clear_defaults_yes_to_false() {
+        match parse_ok(&["kod", "memory", "clear"]).command {
+            Some(Command::Memory {
+                action: MemoryAction::Clear { yes },
+            }) => assert!(!yes),
+            _ => panic!("expected Memory::Clear"),
+        }
+        match parse_ok(&["kod", "memory", "clear", "--yes"]).command {
+            Some(Command::Memory {
+                action: MemoryAction::Clear { yes: true },
+            }) => {}
+            _ => panic!("expected Memory::Clear with yes"),
+        }
+    }
+
+    // ---- CheckpointAction ----------------------------------------------
+
+    #[test]
+    fn checkpoint_diff_and_restore_take_an_id() {
+        match parse_ok(&["kod", "checkpoint", "diff", "abc123"]).command {
+            Some(Command::Checkpoint {
+                action: CheckpointAction::Diff { id },
+            }) => assert_eq!(id, "abc123"),
+            _ => panic!("expected Checkpoint::Diff"),
+        }
+        match parse_ok(&["kod", "checkpoint", "restore", "abc123"]).command {
+            Some(Command::Checkpoint {
+                action: CheckpointAction::Restore { id },
+            }) => assert_eq!(id, "abc123"),
+            _ => panic!("expected Checkpoint::Restore"),
+        }
+    }
+
+    #[test]
+    fn checkpoint_list_defaults_limit_to_20_and_has_a_short_alias() {
+        match parse_ok(&["kod", "checkpoint", "list"]).command {
+            Some(Command::Checkpoint {
+                action: CheckpointAction::List { limit },
+            }) => assert_eq!(limit, 20),
+            _ => panic!("expected Checkpoint::List"),
+        }
+        match parse_ok(&["kod", "checkpoint", "list", "-l", "5"]).command {
+            Some(Command::Checkpoint {
+                action: CheckpointAction::List { limit },
+            }) => assert_eq!(limit, 5),
+            _ => panic!("expected Checkpoint::List with -l"),
+        }
+        match parse_ok(&["kod", "checkpoint", "list", "--limit", "3"]).command {
+            Some(Command::Checkpoint {
+                action: CheckpointAction::List { limit },
+            }) => assert_eq!(limit, 3),
+            _ => panic!("expected Checkpoint::List with --limit"),
+        }
+    }
+
+    #[test]
+    fn checkpoint_clear_parses() {
+        assert!(matches!(
+            parse_ok(&["kod", "checkpoint", "clear"]).command,
+            Some(Command::Checkpoint {
+                action: CheckpointAction::Clear
+            })
+        ));
+    }
+
+    #[test]
+    fn checkpoint_without_a_subcommand_is_rejected() {
+        parse_err(&["kod", "checkpoint"]);
+    }
+
+    // ---- SessionsAction ------------------------------------------------
+
+    #[test]
+    fn sessions_show_clear_latest_count_parse() {
+        assert!(matches!(
+            parse_ok(&["kod", "sessions", "show"]).command,
+            Some(Command::Sessions {
+                action: SessionsAction::Show
+            })
+        ));
+        assert!(matches!(
+            parse_ok(&["kod", "sessions", "clear"]).command,
+            Some(Command::Sessions {
+                action: SessionsAction::Clear
+            })
+        ));
+        assert!(matches!(
+            parse_ok(&["kod", "sessions", "latest"]).command,
+            Some(Command::Sessions {
+                action: SessionsAction::Latest
+            })
+        ));
+        assert!(matches!(
+            parse_ok(&["kod", "sessions", "count"]).command,
+            Some(Command::Sessions {
+                action: SessionsAction::Count
+            })
+        ));
+    }
+
+    #[test]
+    fn sessions_export_defaults_to_stdout_markdown() {
+        match parse_ok(&["kod", "sessions", "export"]).command {
+            Some(Command::Sessions {
+                action: SessionsAction::Export { path, format },
+            }) => {
+                assert_eq!(path, std::path::PathBuf::from("-"));
+                assert_eq!(format, "markdown");
+            }
+            _ => panic!("expected Sessions::Export"),
+        }
+    }
+
+    #[test]
+    fn sessions_export_accepts_path_and_format() {
+        match parse_ok(&[
+            "kod", "sessions", "export", "/tmp/s.json", "-f", "json",
+        ])
+        .command
+        {
+            Some(Command::Sessions {
+                action: SessionsAction::Export { path, format },
+            }) => {
+                assert_eq!(path, std::path::PathBuf::from("/tmp/s.json"));
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected Sessions::Export with path and format"),
+        }
+        // Long form of the format flag.
+        match parse_ok(&["kod", "sessions", "export", "-", "--format", "json"]).command {
+            Some(Command::Sessions {
+                action: SessionsAction::Export { format, .. },
+            }) => assert_eq!(format, "json"),
+            _ => panic!("expected Sessions::Export with --format"),
+        }
+    }
+
+    #[test]
+    fn sessions_import_requires_a_path() {
+        parse_err(&["kod", "sessions", "import"]);
+        match parse_ok(&["kod", "sessions", "import", "/tmp/s.json"]).command {
+            Some(Command::Sessions {
+                action: SessionsAction::Import { path },
+            }) => assert_eq!(path, std::path::PathBuf::from("/tmp/s.json")),
+            _ => panic!("expected Sessions::Import"),
+        }
+    }
+
+    #[test]
+    fn sessions_without_a_subcommand_is_rejected() {
+        parse_err(&["kod", "sessions"]);
+    }
+}
