@@ -28,6 +28,11 @@ pub struct SwarmConfig {
     /// How many additional attempts an agent gets after a timeout or a
     /// provider error. 1 (default) means: up to two attempts total.
     pub agent_retries: u32,
+    /// Overall wall-clock cap for a whole swarm run, in seconds. The
+    /// per-agent cap (`agent_timeout_secs`) bounds one agent; this one
+    /// bounds N agents across dependency waves. Design §D4.3 sets the
+    /// default at 30 minutes. `0` disables the cap.
+    pub timeout_secs: u64,
 }
 
 impl Default for SwarmConfig {
@@ -37,6 +42,7 @@ impl Default for SwarmConfig {
             merge_results: true,
             agent_timeout_secs: 300,
             agent_retries: 1,
+            timeout_secs: 1800,
         }
     }
 }
