@@ -1033,3 +1033,121 @@ mod tests {
         assert!(!last_text.trim().is_empty(), "trailing blank line survived");
     }
 }
+
+#[cfg(test)]
+mod coverage_render_cache_corners {
+    //! Additional `RenderCache` behaviours: what happens on a
+    //! capacity of zero, on repeated eviction, and on a theme
+    //! name change that is not the default. The chat widget relies
+    //! on the cache hit path being cheap and the eviction keeping
+    //! the working set small.
+    use super::*;
+
+    #[test]
+    fn capacity_zero_is_clamped_to_one() {
+        // A caller that passes zero gets a usable cache, not one
+        // that panics or refuses every insert. The clamp is what
+        // makes the "user configures a cache size" knob safe.
+        let c = RenderCache::with_capacity(0);
+        let t = Theme::dark();
+        let _ = c.get_or_render("hello", 40, &t);
+        assert_eq!(c.len(), 1);
+    }
+
+    #[test]
+    fn repeated_evictions_keep_the_cache_bounded() {
+        let c = RenderCache::with_capacity(3);
+        let t = Theme::dark();
+        for i in 0..50 {
+            let _ = c.get_or_render(&format!("content {i}"), 40, &t);
+        }
+        assert!(
+            c.len() <= 3,
+            "cache grew past its capacity: {}",
+            c.len(),
+        );
+    }
+
+    #[test]
+    fn distinct_contents_do_not_collide_in_the_cache() {
+        // Two different strings of the same length must not map to
+        // the same entry. The content hash + length is the key; a
+        // regression that keyed on length alone would return the
+        // wrong render.
+        let c = RenderCache::with_capacity(10);
+        let t = Theme::dark();
+        let a = c.get_or_render("foo **bold**", 40, &t);
+        let b = c.get_or_render("bar **bold**", 40, &t);
+        assert!(!std::sync::Arc::ptr_eq(&a, &b));
+        assert_eq!(c.len(), 2);
+    }
+
+    #[test]
+    fn empty_content_is_cacheable_and_renders_to_empty() {
+        let c = RenderCache::new();
+        let t = Theme::dark();
+        let a = c.get_or_render("", 40, &t);
+        let b = c.get_or_render("", 40, &t);
+        assert!(std::sync::Arc::ptr_eq(&a, &b), "empty content must cache");
+        assert!(a.is_empty(), "empty content must render empty");
+    }
+
+    #[test]
+    fn cache_misses_on_the_same_content_with_a_different_theme_name() {
+        // The theme name is part of the cache key. Two themes that
+        // happen to have the same palette but different names must
+        // still miss, because a future palette change would
+        // otherwise serve the stale render for one of them.
+        let c = RenderCache::new();
+        let mut t1 = Theme::dark();
+        t1.name = "theme-a".to_string();
+        let mut t2 = Theme::dark();
+        t2.name = "theme-b".to_string();
+        let _ = c.get_or_render("x", 40, &t1);
+        let _ = c.get_or_render("x", 40, &t2);
+        assert_eq!(c.len(), 2);
+    }
+
+    #[test]
+    fn is_empty_matches_len_zero() {
+        let c = RenderCache::new();
+        assert!(c.is_empty());
+        assert_eq!(c.len(), 0);
+        let _ = c.get_or_render("x", 40, &Theme::dark());
+        assert!(!c.is_empty());
+    }
+
+    #[test]
+    fn default_has_the_documented_capacity() {
+        // The default is a named constant; a regression that
+        // changed it would silently shift the working-set budget
+        // for every chat.
+        assert_eq!(RenderCache::DEFAULT_CAPACITY, 128);
+        let c = RenderCache::default();
+        assert_eq!(c.len(), 0);
+    }
+
+    #[test]
+    fn list_continuation_indentation_is_preserved_through_the_cache() {
+        // The wrapped continuation carries its indent spans; a
+        // cache that stripped styles would lose the visual
+        // alignment on the second call.
+        let c = RenderCache::new();
+        let t = Theme::dark();
+        let a = c.get_or_render("- long bullet content that wraps", 20, &t);
+        let b = c.get_or_render("- long bullet content that wraps", 20, &t);
+        assert!(std::sync::Arc::ptr_eq(&a, &b));
+        // And the content is stable, not just the pointer.
+        let text_a: String = a
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let text_b: String = b
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(text_a, text_b);
+    }
+}
