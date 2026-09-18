@@ -28,6 +28,13 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{Mutex, OnceCell, oneshot};
 
+/// The per-request responder map. `i64` request ids map to a
+/// oneshot that will carry the server's reply (or an error). The
+/// alias exists because the raw type is a four-layer generic and
+/// appears in three method signatures; naming it once keeps the
+/// signatures readable and satisfies `clippy::type_complexity`.
+type PendingMap = Arc<Mutex<HashMap<i64, oneshot::Sender<Result<serde_json::Value, McpError>>>>>;
+
 /// `initialize` timeout. Generous: a Python MCP server may need to
 /// import its modules on the first call, and a long-running one may
 /// already be warm. 10 s covers both.
@@ -61,7 +68,7 @@ pub struct McpClient {
     child: Mutex<Child>,
     stdin: Mutex<ChildStdin>,
     next_id: AtomicI64,
-    pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<serde_json::Value, McpError>>>>>,
+    pending: PendingMap,
     server_info: OnceCell<ServerInfo>,
     program: String,
 }
@@ -102,9 +109,7 @@ impl McpClient {
             .take()
             .ok_or_else(|| McpError::Protocol("server has no stdout".to_string()))?;
 
-        let pending: Arc<
-            Mutex<HashMap<i64, oneshot::Sender<Result<serde_json::Value, McpError>>>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
         let pending_reader = pending.clone();
 
         tokio::spawn(async move {
@@ -145,11 +150,7 @@ impl McpClient {
             }
         });
         let result = self
-            .request(
-                "initialize",
-                params,
-                Duration::from_secs(INIT_TIMEOUT_SECS),
-            )
+            .request("initialize", params, Duration::from_secs(INIT_TIMEOUT_SECS))
             .await?;
         let info = ServerInfo {
             name: result
@@ -224,11 +225,7 @@ impl McpClient {
     ) -> Result<McpToolResult, McpError> {
         let params = serde_json::json!({ "name": name, "arguments": args });
         let result = self
-            .request(
-                "tools/call",
-                params,
-                Duration::from_secs(timeout_secs),
-            )
+            .request("tools/call", params, Duration::from_secs(timeout_secs))
             .await?;
         let parsed: McpToolResult = serde_json::from_value(result)?;
         Ok(parsed)
@@ -279,11 +276,7 @@ impl McpClient {
         }
     }
 
-    async fn notify(
-        &self,
-        method: &str,
-        params: serde_json::Value,
-    ) -> Result<(), McpError> {
+    async fn notify(&self, method: &str, params: serde_json::Value) -> Result<(), McpError> {
         let msg = serde_json::json!({
             "jsonrpc": "2.0",
             "method": method,
@@ -303,10 +296,7 @@ impl McpClient {
 }
 
 /// Background reader: parse one JSON object per line, dispatch by id.
-async fn read_loop(
-    stdout: ChildStdout,
-    pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<serde_json::Value, McpError>>>>>,
-) {
+async fn read_loop(stdout: ChildStdout, pending: PendingMap) {
     let mut reader = BufReader::new(stdout).lines();
     loop {
         match reader.next_line().await {
@@ -330,8 +320,7 @@ async fn read_loop(
                     let sender = pending.lock().await.remove(&id);
                     if let Some(tx) = sender {
                         if let Some(err) = msg.get("error") {
-                            let code =
-                                err.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
+                            let code = err.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
                             let message = err
                                 .get("message")
                                 .and_then(|v| v.as_str())
@@ -346,10 +335,7 @@ async fn read_loop(
                             let _ = tx.send(Ok(result));
                         }
                     } else {
-                        tracing::debug!(
-                            id,
-                            "MCP: response for an unknown or timed-out request"
-                        );
+                        tracing::debug!(id, "MCP: response for an unknown or timed-out request");
                     }
                 } else if let Some(method) = msg.get("method").and_then(|v| v.as_str()) {
                     // A notification (or a server-initiated request we
@@ -439,8 +425,7 @@ for line in sys.stdin:
     /// Write the fake server to a temp file and return its path.
     fn write_fake_server() -> tempfile::TempDir {
         let dir = tempfile::TempDir::new().expect("tempdir");
-        std::fs::write(dir.path().join("server.py"), FAKE_SERVER)
-            .expect("write server");
+        std::fs::write(dir.path().join("server.py"), FAKE_SERVER).expect("write server");
         dir
     }
 
@@ -558,12 +543,9 @@ for line in sys.stdin:
         // tokio handles whose `Debug` impls are internal), so
         // `expect_err` — which requires `Ok: Debug` — is unavailable.
         // Match on the result directly instead.
-        let result = McpClient::spawn_stdio(
-            "this-binary-does-not-exist-kod-test",
-            &[],
-            &BTreeMap::new(),
-        )
-        .await;
+        let result =
+            McpClient::spawn_stdio("this-binary-does-not-exist-kod-test", &[], &BTreeMap::new())
+                .await;
         match result {
             Ok(_) => panic!("spawn of a missing binary must fail"),
             Err(McpError::Spawn { program, .. }) => {
