@@ -5,8 +5,8 @@ use adk_model::openai_compatible::{OpenAICompatible, OpenAICompatibleConfig};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
 use kod_error::{KodError, Result};
-use kod_provider::{GenerationOptions, GenerationResponse, LlmProvider, StreamChunk};
 use kod_provider::request::CompletionRequest;
+use kod_provider::{GenerationOptions, GenerationResponse, LlmProvider, StreamChunk};
 use kod_types::{ToolCall, ToolDefinition};
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -342,7 +342,8 @@ impl OpenAICompatProvider {
                 for part in content.parts {
                     match part {
                         Part::Text { text: chunk } => text.push_str(&chunk),
-                        Part::FunctionCall { name, args, .. } => calls.push(ToolCall { id: None,
+                        Part::FunctionCall { name, args, .. } => calls.push(ToolCall {
+                            id: None,
                             tool_name: name,
                             arguments: args,
                         }),
@@ -377,9 +378,7 @@ impl LlmProvider for OpenAICompatProvider {
                 // tried to reach. The message a user reads in the TUI
                 // now names the endpoint so the config file is the
                 // obvious next place to look.
-                KodError::Provider(format!(
-                    "could not reach the model server at {url}: {e}"
-                ))
+                KodError::Provider(format!("could not reach the model server at {url}: {e}"))
             })?;
         if !response.status().is_success() {
             let status = response.status();
