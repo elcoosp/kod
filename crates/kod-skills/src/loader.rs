@@ -197,9 +197,7 @@ impl SkillLoader {
 /// so project-local skills override global ones. Directories that do not
 /// exist are skipped with a warning — an empty home skills dir must not
 /// block a session.
-pub async fn load_from_dirs(
-    dirs: &[std::path::PathBuf],
-) -> Result<Vec<kod_types::Skill>> {
+pub async fn load_from_dirs(dirs: &[std::path::PathBuf]) -> Result<Vec<kod_types::Skill>> {
     use std::collections::HashMap;
     let mut by_name: HashMap<String, kod_types::Skill> = HashMap::new();
     for dir in dirs {
