@@ -1,5 +1,4 @@
-use kod_tui::app::{
-    SLASH_COMMANDS,InputMode, KodApp, Message};
+use kod_tui::app::{InputMode, KodApp, Message, SLASH_COMMANDS};
 use kod_tui::ui::{AgentPanelWidget, ChatWidget, CompletionsWidget, InputWidget, StatusWidget};
 use kod_types::{MessageId, MessageRole};
 use ratatui::backend::TestBackend;
@@ -324,7 +323,9 @@ async fn test_typing_into_search_bar_edits_query() {
 
     // Type a query.
     for c in ['f', 'o', 'o'] {
-        tui.handle_event(Event::Key(KeyCode::Char(c))).await.unwrap();
+        tui.handle_event(Event::Key(KeyCode::Char(c)))
+            .await
+            .unwrap();
     }
     assert_eq!(tui.app().search_query_text(), "foo");
     // Input box still empty — the characters went to the query, not
@@ -343,9 +344,7 @@ async fn test_typing_into_search_bar_edits_query() {
     assert_eq!(tui.app().search_query_text(), "fo");
 
     // Escape clears.
-    tui.handle_event(Event::Key(KeyCode::Escape))
-        .await
-        .unwrap();
+    tui.handle_event(Event::Key(KeyCode::Escape)).await.unwrap();
     assert!(!tui.app().is_searching());
     assert_eq!(tui.app().search_query_text(), "");
 }
