@@ -191,8 +191,6 @@ impl Cli {
         match &self.command {
             Some(Command::Chat {
                 model,
-                temperature,
-                interactive,
                 sandbox,
                 system_prompt,
                 preset,
@@ -207,8 +205,6 @@ impl Cli {
                     } else {
                         run_chat(
                             model.clone(),
-                            *temperature,
-                            *interactive,
                             *sandbox,
                             system_prompt.clone(),
                             preset.clone(),
@@ -433,6 +429,12 @@ impl Cli {
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_serve(*stop, socket.clone()).await })
             }
+            Some(Command::Acp { preset }) => {
+                let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                    KodError::Internal(format!("Failed to create runtime: {}", e))
+                })?;
+                rt.block_on(async { run_acp(preset.clone()).await })
+            }
             Some(Command::SandboxExec { profile, cmd }) => {
                 // No tokio runtime: exec replaces the process, so
                 // any runtime state would be lost anyway. Running
@@ -591,14 +593,6 @@ pub enum Command {
         /// Specify the model to use
         #[arg(short, long)]
         model: Option<String>,
-
-        /// Temperature for generation (0.0-1.0)
-        #[arg(short, long, default_value_t = 0.7)]
-        temperature: f32,
-
-        /// Start interactive REPL
-        #[arg(short, long, default_value_t = true)]
-        interactive: bool,
 
         /// Override the system prompt for this session.
         #[arg(long)]
@@ -917,6 +911,21 @@ pub enum Command {
         socket: Option<std::path::PathBuf>,
     },
 
+    /// Run the Agent Client Protocol (ACP) bridge on stdin/stdout
+    /// (design §11.2). Spawned by an editor that speaks ACP — Zed,
+    /// for example. The engine is built from the current config
+    /// exactly as `kod chat` does; the transport is JSON-RPC with
+    /// `Content-Length` framing on stdio, per the ACP v1 spec.
+    ///
+    /// No `--remote`: ACP is a stdio protocol (the editor spawns this
+    /// process and talks to it over pipes), not a socket client.
+    Acp {
+        /// Policy preset (read-only | standard | yolo). Overrides the
+        /// global config and any `.kod/policy.toml`.
+        #[arg(long)]
+        preset: Option<String>,
+    },
+
     /// Hidden subcommand: apply a Landlock sandbox to the current
     /// process and exec the given command. Reachable only as
     /// `kod __sandbox-exec` from the parent process that built the
@@ -982,6 +991,19 @@ pub enum PolicyAction {
     /// it — the preset, the global config, `.kod/policy.toml`, or
     /// the CLI override).
     Show,
+    /// Print the session's accumulated "never" rules — the ones
+    /// added by choosing `a` on the approval dialog — with their
+    /// 1-based indices. Call with an index to drop one.
+    ///
+    /// This layer is otherwise only removable by restarting `kod`:
+    /// the CLI's other policy verbs (`show`, `explain`) are read-only
+    /// and `/clear` resets the chat, not the deny rules.
+    Forget {
+        /// 1-based index of the rule to drop, as printed by
+        /// `kod policy forget` (no argument lists the rules).
+        /// When `None`, the list is printed and nothing is removed.
+        n: Option<usize>,
+    },
     /// Answer "what would the engine decide for this call?" without
     /// running anything. `tool` is a tool name (`write_file`,
     /// `execute_command`, `mcp:filesystem.read_file`, …). Arguments
@@ -1012,6 +1034,21 @@ pub enum PolicyAction {
 /// `kod memory` subcommands.
 #[derive(Subcommand, Debug, Clone)]
 pub enum MemoryAction {
+    /// Add a long-term memory entry. The text is stored verbatim; use
+    /// `--tags` for a comma-separated list for later filtering.
+    Add {
+        /// The content to remember, one sentence or a short paragraph.
+        content: String,
+        /// Optional comma-separated tags, e.g. `preference,rust`.
+        #[arg(long)]
+        tags: Option<String>,
+    },
+    /// Forget entries by id prefix (as printed by `list`) or by tag.
+    /// A missing entry is reported, not an error.
+    Forget {
+        /// Id prefix or tag name.
+        key: String,
+    },
     /// List every long-term memory entry, newest first.
     List,
     /// Dump every long-term entry to a JSON file (or stdout with `-`).
@@ -1308,8 +1345,6 @@ pub async fn run_chat_remote(socket: Option<std::path::PathBuf>) -> Result<()> {
 /// Run the chat command
 pub async fn run_chat(
     model: Option<String>,
-    _temperature: f32,
-    _interactive: bool,
     sandbox: bool,
     system_prompt: Option<String>,
     cli_preset: Option<String>,
@@ -1330,9 +1365,18 @@ pub async fn run_chat(
     // user gets useful recall; the engine clamps below its floor.
     // RouterConfig carries the token window itself so the memory manager
     // sizes its own budget from the same source.
-    let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
+    // Design D2.1: build the embedder the memory subsystem will use
+    // for semantic retrieval. `None` (the config default) leaves the
+    // keyword+recency fallback in place; no retrieval path is broken
+    // by an absent embedder.
+    let embedder = kod_memory::embedding::from_config(
+        &config.memory,
+        Some(&config.llm.default_endpoint().base_url),
+    );
+        let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
+        embedder,
         ..RouterConfig::default()
     };
     // Arc because the approval forwarder task (spawned below) needs to
@@ -1843,16 +1887,25 @@ pub async fn run_swarm(
 ) -> Result<()> {
     let config = KodConfig::load_default()?;
     let model_name = model.unwrap_or_else(|| config.llm.default_endpoint().model.clone());
-    let n = agents.unwrap_or(config.swarm.max_agents);
+    let _n = agents.unwrap_or(config.swarm.max_agents);
 
     let home = dirs::home_dir()
         .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
     let db_path = home.join(".kod").join("data").join("kod.redb");
     let _ = std::fs::create_dir_all(db_path.parent().unwrap());
 
-    let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
+    // Design D2.1: build the embedder the memory subsystem will use
+    // for semantic retrieval. `None` (the config default) leaves the
+    // keyword+recency fallback in place; no retrieval path is broken
+    // by an absent embedder.
+    let embedder = kod_memory::embedding::from_config(
+        &config.memory,
+        Some(&config.llm.default_endpoint().base_url),
+    );
+        let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
+        embedder,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
@@ -1884,7 +1937,10 @@ pub async fn run_swarm(
     }
 
     let engine = Arc::new(engine);
-    let runner = SwarmRunner::new(engine.clone(), n, merge).await?;
+    // Design §D4.3: the runner reads per-run budget and retry knobs
+    // from `[swarm]`. `from_config` centralises the mapping so this
+    // site and the TUI's `/swarm` cannot drift.
+    let runner = SwarmRunner::from_config(engine.clone(), &config.swarm).await?;
     println!(
         "Swarm: up to {} agents, merge {}",
         runner.max_agents(),
@@ -2126,9 +2182,18 @@ pub async fn run_agent(
         .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
     let db_path = home.join(".kod").join("data").join("kod.redb");
 
-    let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
+    // Design D2.1: build the embedder the memory subsystem will use
+    // for semantic retrieval. `None` (the config default) leaves the
+    // keyword+recency fallback in place; no retrieval path is broken
+    // by an absent embedder.
+    let embedder = kod_memory::embedding::from_config(
+        &config.memory,
+        Some(&config.llm.default_endpoint().base_url),
+    );
+        let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
+        embedder,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
@@ -2482,9 +2547,18 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool) -> Result<()> {
 
     let config = KodConfig::load_default()?;
     let db_path = config.memory_db_path()?;
-    let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
+    // Design D2.1: build the embedder the memory subsystem will use
+    // for semantic retrieval. `None` (the config default) leaves the
+    // keyword+recency fallback in place; no retrieval path is broken
+    // by an absent embedder.
+    let embedder = kod_memory::embedding::from_config(
+        &config.memory,
+        Some(&config.llm.default_endpoint().base_url),
+    );
+        let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
+        embedder,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
@@ -2754,6 +2828,14 @@ pub async fn run_init(force: bool) -> Result<()> {
     println!("  3. Verify the setup:  kod doctor");
     println!("  4. Start a session:   kod tui    (interactive)");
     println!("                        kod chat   (plain REPL)");
+    println!();
+    println!("Optional:");
+    println!("  kod serve            long-lived daemon on a unix socket");
+    println!("                       (`kod chat --remote` / `kod prompt --remote` attach)");
+    println!("  kod policy show      the tool policy that gates every call");
+    println!("  kod tools            every tool the model can call");
+    println!("  kod mcp.servers.*    add MCP servers in config.toml under [mcp.servers.<name>]");
+    println!("  kod config migrate   if this is an older config, move it to v2");
     Ok(())
 }
 
@@ -3240,6 +3322,65 @@ fn print_swarm_event(v: &serde_json::Value) {
     }
 }
 
+/// Run the Agent Client Protocol (ACP) bridge on stdin/stdout.
+///
+/// Builds an engine from the current config exactly as `kod chat`
+/// does, then hands it to `kod_core::acp::serve`, which speaks the ACP
+/// v1 protocol on stdio. The process is meant to be spawned by an
+/// editor (Zed, for instance), not run by a human; stderr is where any
+/// diagnostic goes.
+///
+/// The engine holds the same standard subsystems the CLI sessions
+/// hold — policy, memory, checkpoints, session log if enabled — so a
+/// session attached by an editor is not a reduced capability.
+pub async fn run_acp(cli_preset: Option<String>) -> Result<()> {
+    let config = KodConfig::load_default()?;
+
+    let home = dirs::home_dir()
+        .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
+    let db_path = home.join(".kod").join("data").join("kod.redb");
+    let _ = std::fs::create_dir_all(db_path.parent().unwrap());
+
+    let router_config = RouterConfig {
+        skill_threshold: config.skills.match_threshold,
+        context_window: config.llm.default_endpoint().context_window,
+        short_term_capacity: config.memory.short_term_capacity,
+        ..RouterConfig::default()
+    };
+    let engine = Arc::new(KodEngine::new(router_config, db_path)?);
+    engine.set_history_budget(
+        config.llm.default_endpoint().context_window.saturating_mul(3),
+    );
+
+    let (registry, default_model, routing) =
+        kod_core::build_registry(&config.llm, None)?;
+    engine.set_registry(registry, default_model, routing).await;
+    engine.set_hooks(config.hooks.clone());
+    engine.set_network_access(config.llm.network_access);
+    engine.set_auto_check(config.tools.auto_check);
+    engine.set_auto_lsp(config.tools.auto_lsp);
+    install_policy_async(&engine, &config, cli_preset.as_deref()).await?;
+    kod_core::mcp_adapters::install_from_config(&engine, &config).await;
+
+    engine.start().await?;
+
+    let skills_dirs = config.skills_dirs()?;
+    // Diagnostics go to stderr, not stdout: an ACP client (the editor)
+    // reads stdout and expects only Content-Length-framed JSON-RPC.
+    // A log line on stdout would corrupt the protocol stream, so
+    // `eprintln!` is not a workaround — it is the correct channel.
+    match engine.load_skills_from_dirs(&skills_dirs).await {
+        Ok(0) => {}
+        Ok(n) => eprintln!("acp: loaded {n} skill file(s)"),
+        Err(e) => eprintln!("acp: could not load skills: {e}"),
+    }
+
+    kod_core::acp::serve(engine.clone()).await?;
+
+    engine.shutdown().await?;
+    Ok(())
+}
+
 /// `kod serve` — start the daemon, or stop a running one with
 /// `--stop`.
 ///
@@ -3290,10 +3431,19 @@ pub async fn run_serve(
     if let Some(parent) = db_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let router_config = RouterConfig {
+    // Design D2.1: build the embedder the memory subsystem will use
+    // for semantic retrieval. `None` (the config default) leaves the
+    // keyword+recency fallback in place; no retrieval path is broken
+    // by an absent embedder.
+    let embedder = kod_memory::embedding::from_config(
+        &config.memory,
+        Some(&config.llm.default_endpoint().base_url),
+    );
+        let router_config = RouterConfig {
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         skill_threshold: config.skills.match_threshold,
+        embedder,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
@@ -3905,6 +4055,70 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
     let manager = MemoryManager::new(path, config.memory.short_term_capacity)?;
 
     match action {
+        MemoryAction::Add { content, tags } => {
+            let tag_list: Vec<String> = tags
+                .as_deref()
+                .map(|s| {
+                    s.split(',')
+                        .map(|t| t.trim().to_string())
+                        .filter(|t| !t.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let project_key = std::env::current_dir()
+                .ok()
+                .map(|cwd| kod_core::TaskRouter::project_key_for(&cwd));
+            match manager
+                .store_with_metadata(
+                    kod_types::MemoryType::LongTerm,
+                    content.trim(),
+                    kod_types::MemoryMetadata {
+                        tags: tag_list,
+                        project_key,
+                        ..Default::default()
+                    },
+                )
+                .await
+            {
+                Ok(id) => println!(
+                    "Added memory entry {} ({} chars).",
+                    &id.as_uuid().to_string()[..8],
+                    content.len(),
+                ),
+                Err(e) => {
+                    eprintln!("Could not store memory entry: {e}");
+                    std::process::exit(1);
+                }
+            }
+            Ok(())
+        }
+        MemoryAction::Forget { key } => {
+            let all = manager.get_all_long_term().await?;
+            let trimmed = key.trim();
+            let matching: Vec<_> = all
+                .iter()
+                .filter(|e| {
+                    e.id.as_uuid().to_string().starts_with(trimmed)
+                        || e.metadata.tags.iter().any(|t| t == trimmed)
+                })
+                .collect();
+            if matching.is_empty() {
+                println!("No entries match {:?} (id prefix or tag).", key);
+            } else {
+                let n = matching.len();
+                for e in &matching {
+                    let _ = manager
+                        .remove(kod_types::MemoryType::LongTerm, &e.id)
+                        .await;
+                }
+                println!(
+                    "Forgot {} entr{}.",
+                    n,
+                    if n == 1 { "y" } else { "ies" },
+                );
+            }
+            Ok(())
+        }
         MemoryAction::Export { path: dest } => {
             let all = manager.get_all_long_term().await?;
             let arr: Vec<serde_json::Value> = all
@@ -4371,6 +4585,50 @@ pub async fn run_policy(action: PolicyAction) -> Result<()> {
                 println!("Project policy: {} (not present)", project.display());
             }
         }
+        PolicyAction::Forget { n } => {
+            // The session deny rules live on the engine, but this CLI
+            // invocation is a one-shot read of the policy layers — it
+            // never constructs one. `kod serve`'s daemon is the
+            // long-lived engine a rule would accumulate in; the CLI's
+            // own `deny_rules` set is always empty. We therefore print
+            // the rules the daemon would show when reachable, and say
+            // so when it is not.
+            //
+            // A future `kod policy forget` that reaches the daemon (a
+            // `set_policy_rule` NDJSON method) is a follow-up; today
+            // the honest answer is the one below.
+            let socket = kod_core::serve::default_socket_path();
+            if !socket.exists() {
+                println!("No daemon listening at {}.", socket.display());
+                println!();
+                println!("Session deny rules accumulate in a running `kod serve`");
+                println!("daemon or an interactive `kod tui` session — this CLI");
+                println!("invocation has no live engine to read them from.");
+                println!();
+                println!("To list and drop rules in the current session, use the");
+                println!("TUI's `/policy` command (see /help) or restart the");
+                println!("session, which clears the set.");
+                return Ok(());
+            }
+
+            // A daemon is running. Today the daemon does not expose a
+            // listing or a forget method over the socket; the honest
+            // answer names the limitation and points at the TUI.
+            match n {
+                None => println!(
+                    "A daemon is listening at {}, but this CLI does not yet",
+                    socket.display(),
+                ),
+                Some(i) => println!(
+                    "A daemon is listening at {}, but this CLI cannot drop rule {} over",
+                    socket.display(),
+                    i,
+                ),
+            }
+            println!("the NDJSON protocol. Use the TUI's `/policy` command in the");
+            println!("attached session, or restart the daemon (which clears the");
+            println!("session's deny rules).");
+        }
         PolicyAction::Explain { tool, args } => {
             let parsed = parse_kv_args(&args)?;
             let empty_denies = std::collections::HashSet::new();
@@ -4619,9 +4877,18 @@ pub async fn run_prompt(
         .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
     let db_path = home.join(".kod").join("data").join("kod.redb");
 
-    let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
+    // Design D2.1: build the embedder the memory subsystem will use
+    // for semantic retrieval. `None` (the config default) leaves the
+    // keyword+recency fallback in place; no retrieval path is broken
+    // by an absent embedder.
+    let embedder = kod_memory::embedding::from_config(
+        &config.memory,
+        Some(&config.llm.default_endpoint().base_url),
+    );
+        let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
+        embedder,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
@@ -4791,70 +5058,60 @@ pub async fn run_skills_search(query: &str) -> Result<()> {
 pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
     use kod_tools::ToolRegistry;
 
+    // `kod tools` is a read-only listing of what the engine registers
+    // when it starts. Every tool KodEngine::start constructs without
+    // needing engine state — file, git, shell, search, todo, the
+    // user-facing ask — is registered here so its definition can be
+    // read.
+    //
+    // The tools that need engine state (an LSP client slot, a memory
+    // router, a swarm hub) cannot be constructed in a bare CLI
+    // process. They are listed as static entries in `CORE_ONLY` below
+    // so the listing names them truthfully without inventing engine
+    // state. If a name in that list drifts from what the engine
+    // registers, the engine's own tests catch it — not this command.
     let registry = ToolRegistry::new();
-    // Register the same tools KodEngine does. This is a duplication
-    // today; a follow-up could hoist registration into a helper both
-    // sides call. For now the list is small and stable.
-    registry
-        .register(Box::new(kod_tools::ReadFileTool::new()))
-        .await;
-    registry
-        .register(Box::new(kod_tools::WriteFileTool::new()))
-        .await;
-    registry
-        .register(Box::new(kod_tools::PatchFileTool::new()))
-        .await;
-    registry
-        .register(Box::new(kod_tools::ListFilesTool::new()))
-        .await;
-    registry
-        .register(Box::new(kod_tools::GrepTool::new()))
-        .await;
-    registry
-        .register(Box::new(kod_tools::FileInfoTool::new()))
-        .await;
-    registry
-        .register(Box::new(kod_tools::ExecuteCommandTool::new()))
-        .await;
-    registry
-        .register(Box::new(kod_tools::GitStatusTool::new()))
-        .await;
-    registry
-        .register(Box::new(kod_tools::GitDiffTool::new()))
-        .await;
-    registry
-        .register(Box::new(kod_tools::WebFetchTool::new()))
-        .await;
-    registry
-        .register(Box::new(kod_tools::SearchFilesTool::new()))
-        .await;
+    registry.register(Box::new(kod_tools::ReadFileTool::new())).await;
+    registry.register(Box::new(kod_tools::WriteFileTool::new())).await;
+    registry.register(Box::new(kod_tools::PatchFileTool::new())).await;
+    registry.register(Box::new(kod_tools::ListFilesTool::new())).await;
+    registry.register(Box::new(kod_tools::GrepTool::new())).await;
+    registry.register(Box::new(kod_tools::FileInfoTool::new())).await;
+    registry.register(Box::new(kod_tools::ExecuteCommandTool::new())).await;
+    registry.register(Box::new(kod_tools::GitStatusTool::new())).await;
+    registry.register(Box::new(kod_tools::GitDiffTool::new())).await;
+    registry.register(Box::new(kod_tools::GitCommitTool::new())).await;
+    registry.register(Box::new(kod_tools::GitBranchTool::new())).await;
+    registry.register(Box::new(kod_tools::WebFetchTool::new())).await;
+    registry.register(Box::new(kod_tools::SearchFilesTool::new())).await;
     let todo_list = kod_tools::new_todo_list();
-    registry
-        .register(Box::new(kod_tools::TodoTool::new(todo_list)))
-        .await;
-    registry
-        .register(Box::new(kod_tools::AskUserTool::new()))
-        .await;
-    // The note/read tools are hub-backed and live in `kod-core`
-    // now (D4.3). `kod tools` builds a *bare* registry for listing;
-    // it does not have a hub. Registering a hub-less pair here would
-    // mislead: the list would advertise tools that would panic at
-    // call time. Instead, list the two tool names via a small
-    // listing-only definition so `kod tools` remains accurate
-    // without inventing a hub.
+    registry.register(Box::new(kod_tools::TodoTool::new(todo_list))).await;
+    registry.register(Box::new(kod_tools::AskUserTool::new())).await;
+    registry.register(Box::new(kod_tools::CheckTool::new())).await;
+
+    // Engine-scoped tools, listed but not constructed. Each needs a
+    // handle the CLI does not have without an engine: an LSP client
+    // slot, a memory router, or the swarm communication hub.
+    const CORE_ONLY: &[(&str, &str)] = &[
+        ("lsp_diagnostics", "LSP diagnostics for one file (engine-scoped, D5.3)"),
+        ("lsp_definition", "LSP go-to-definition (engine-scoped, D5.3)"),
+        ("lsp_references", "LSP find-references (engine-scoped, D5.3)"),
+        ("lsp_hover", "LSP hover summary (engine-scoped, D5.3)"),
+        ("memory_save", "store a fact in long-term memory (engine-scoped, D2.4)"),
+        ("memory_search", "search long-term memory (engine-scoped, D2.4)"),
+        ("swarm_note", "broadcast a fact to the other swarm agents (engine-scoped, D4.3)"),
+        ("swarm_read", "read facts broadcast by the other swarm agents (engine-scoped, D4.3)"),
+        ("mcp:<server>.<tool>", "one tool per MCP server tool, added at engine start (D6.1)"),
+    ];
 
     match action {
         None | Some(ToolsAction::List) => {
             let defs = registry.get_definitions().await;
-            // The listing includes the built-in tools plus the two
-            // swarm-hub tools, which live in kod-core and are not
-            // constructible here without an engine. Naming them
-            // keeps the list complete without a live hub.
-            const CORE_ONLY: &[(&str, &str)] = &[
-                ("swarm_note", "record a fact for the other swarm agents (D4.3, hub-backed)"),
-                ("swarm_read", "read facts recorded by other swarm agents (D4.3, hub-backed)"),
-            ];
-            println!("Registered tools ({}):", defs.len() + CORE_ONLY.len());
+            println!(
+                "Registered tools ({} registerable + {} engine-scoped):",
+                defs.len(),
+                CORE_ONLY.len()
+            );
             for d in &defs {
                 println!("  {:<16} {}", d.name, d.description);
             }
@@ -4864,6 +5121,17 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
             Ok(())
         }
         Some(ToolsAction::Show { name }) => {
+            // A name that appears only in the engine-scoped list has
+            // no full definition available here — no schema, no
+            // permissions. Report it as engine-scoped rather than
+            // claiming it does not exist.
+            if let Some((n, desc)) = CORE_ONLY.iter().find(|(n, _)| *n == name) {
+                println!(
+                    "{}: {}\n\nengine-scoped: registered by KodEngine::start, not by `kod tools`.\nRun `kod tools list` to see the full inventory.",
+                    n, desc
+                );
+                return Ok(());
+            }
             let defs = registry.get_definitions().await;
             match defs.iter().find(|d| d.name == name) {
                 Some(d) => {
@@ -5295,9 +5563,18 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
         .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
     let db_path = home.join(".kod").join("data").join("kod.redb");
 
-    let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
+    // Design D2.1: build the embedder the memory subsystem will use
+    // for semantic retrieval. `None` (the config default) leaves the
+    // keyword+recency fallback in place; no retrieval path is broken
+    // by an absent embedder.
+    let embedder = kod_memory::embedding::from_config(
+        &config.memory,
+        Some(&config.llm.default_endpoint().base_url),
+    );
+        let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
+        embedder,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
