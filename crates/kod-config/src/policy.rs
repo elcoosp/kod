@@ -855,3 +855,304 @@ mod tests {
         assert!(Policy::load_project(tmp.path()).unwrap().is_none());
     }
 }
+
+#[cfg(test)]
+mod coverage_glob_matching {
+    //! `glob_matches` is the single point through which every
+    //! path-based policy decision flows: forbidden paths in a
+    //! `[tools.*]` block, session deny patterns from an approval
+    //! dialog, and the swarm runner's write-set enforcement all
+    //! compile their patterns through it. The current tests use only
+    //! single-segment patterns; this module pins the multi-segment,
+    //! `**`, and single-`*` behaviour the .gitignore semantics rely
+    //! on.
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn relative_pattern_matches_relative_path() {
+        let wd = Path::new("/tmp/proj");
+        assert!(glob_matches("src/**", Path::new("/tmp/proj/src/a.rs"), wd));
+        assert!(glob_matches(
+            "src/**",
+            Path::new("/tmp/proj/src/deep/b.rs"),
+            wd
+        ));
+        assert!(!glob_matches(
+            "src/**",
+            Path::new("/tmp/proj/tests/a.rs"),
+            wd
+        ));
+    }
+
+    #[test]
+    fn basename_pattern_matches_anywhere_in_tree() {
+        let wd = Path::new("/tmp/proj");
+        // `**/.env` is the canonical "anywhere in the tree" idiom a
+        // policy author reaches for. A single-`*` pattern would only
+        // match the top level, which is the wrong guarantee.
+        assert!(glob_matches("**/.env", Path::new("/tmp/proj/.env"), wd));
+        assert!(glob_matches("**/.env", Path::new("/tmp/proj/a/.env"), wd));
+        assert!(!glob_matches(
+            "**/.env",
+            Path::new("/tmp/proj/a/.env.local"),
+            wd
+        ));
+    }
+
+    #[test]
+    fn absolute_pattern_is_matched_verbatim() {
+        let wd = Path::new("/tmp/proj");
+        assert!(glob_matches(
+            "/tmp/proj/secret",
+            Path::new("/tmp/proj/secret"),
+            wd
+        ));
+        assert!(!glob_matches(
+            "/tmp/other/secret",
+            Path::new("/tmp/proj/secret"),
+            wd
+        ));
+    }
+
+    #[test]
+    fn single_star_does_not_cross_directory_boundary() {
+        // The `.gitignore` contract: `*` matches within a segment,
+        // `**` crosses segments. A regression that let `*` cross
+        // would silently widen every pattern a user wrote.
+        let wd = Path::new("/tmp/proj");
+        assert!(glob_matches("src/*.rs", Path::new("/tmp/proj/src/a.rs"), wd));
+        assert!(!glob_matches(
+            "src/*.rs",
+            Path::new("/tmp/proj/src/sub/a.rs"),
+            wd
+        ));
+    }
+
+    #[test]
+    fn double_star_crosses_directories() {
+        let wd = Path::new("/tmp/proj");
+        assert!(glob_matches(
+            "src/**/a.rs",
+            Path::new("/tmp/proj/src/x/y/a.rs"),
+            wd
+        ));
+        assert!(glob_matches(
+            "src/**/a.rs",
+            Path::new("/tmp/proj/src/a.rs"),
+            wd
+        ));
+    }
+
+    #[test]
+    fn invalid_pattern_returns_false_without_panicking() {
+        // A malformed glob (unbalanced bracket) is a hand-written
+        // policy typo. Returning `false` means the pattern does not
+        // fire; the tool's permission gate then falls through to the
+        // preset, which is the safe direction.
+        let wd = Path::new("/tmp/proj");
+        assert!(!glob_matches(
+            "[unterminated",
+            Path::new("/tmp/proj/a"),
+            wd
+        ));
+    }
+}
+
+#[cfg(test)]
+mod coverage_policy_deny_rules {
+    //! `SessionDeny` is keyed in a `HashSet` by the engine's
+    //! session deny store. Its `Eq` and `Hash` impls are the
+    //! contract that makes `kod policy forget <n>` and the
+    //! approval dialog's "never" choice agree on which rule is
+    //! which. `Decision` and `PolicySource` are the two enums a
+    //! policy decision carries; their serde spellings are the
+    //! on-disk and on-the-wire shapes a downstream consumer
+    //! relies on.
+    use super::*;
+
+    #[test]
+    fn session_deny_equality_uses_both_fields() {
+        let a = SessionDeny {
+            tool: "write_file".into(),
+            path_pattern: Some("src/**".into()),
+        };
+        let b = SessionDeny {
+            tool: "write_file".into(),
+            path_pattern: Some("src/**".into()),
+        };
+        let c = SessionDeny {
+            tool: "write_file".into(),
+            path_pattern: Some("docs/**".into()),
+        };
+        let d = SessionDeny {
+            tool: "execute_command".into(),
+            path_pattern: Some("src/**".into()),
+        };
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(a, d);
+    }
+
+    #[test]
+    fn session_deny_hashes_the_same_for_equal_values() {
+        use std::collections::HashSet;
+        let a = SessionDeny {
+            tool: "write_file".into(),
+            path_pattern: Some("src/**".into()),
+        };
+        let b = a.clone();
+        let mut set = HashSet::new();
+        set.insert(a);
+        assert!(set.contains(&b));
+    }
+
+    #[test]
+    fn session_deny_with_none_pattern_is_distinct_from_wildcard() {
+        // A tool-wide deny (`path_pattern: None`) and a
+        // `path_pattern: Some("*")` are semantically different:
+        // the first denies every call of the tool, the second
+        // denies every path the glob happens to match. The
+        // equality test pins that they are not conflated.
+        let a = SessionDeny {
+            tool: "write_file".into(),
+            path_pattern: None,
+        };
+        let b = SessionDeny {
+            tool: "write_file".into(),
+            path_pattern: Some("*".into()),
+        };
+        assert_ne!(a, b);
+    }
+
+        #[test]
+    fn decision_variants_serialize_lowercase() {
+        // The serde rename_all = "lowercase" is the on-disk
+        // contract; a downstream viewer that reads a policy
+        // decision from the session log depends on the exact
+        // spelling.
+        assert_eq!(serde_json::to_string(&Decision::Allow).unwrap(), "\"allow\"");
+        assert_eq!(serde_json::to_string(&Decision::Deny).unwrap(), "\"deny\"");
+        assert_eq!(serde_json::to_string(&Decision::Ask).unwrap(), "\"ask\"");
+    }
+
+    #[test]
+    fn decision_round_trips_every_variant() {
+        for d in [Decision::Allow, Decision::Deny, Decision::Ask] {
+            let json = serde_json::to_string(&d).unwrap();
+            let parsed: Decision = serde_json::from_str(&json).unwrap();
+            assert_eq!(d, parsed, "roundtrip mismatch for {json}");
+        }
+    }
+
+    #[test]
+    fn policy_source_variants_use_kebab_case() {
+        // The rename_all = "kebab-case" is the on-disk contract
+        // for the session log's policy decision entries.
+        assert_eq!(
+            serde_json::to_string(&PolicySource::Preset).unwrap(),
+            "\"preset\"",
+        );
+        assert_eq!(
+            serde_json::to_string(&PolicySource::GlobalConfig).unwrap(),
+            "\"global-config\"",
+        );
+        assert_eq!(
+            serde_json::to_string(&PolicySource::ProjectPolicy).unwrap(),
+            "\"project-policy\"",
+        );
+        assert_eq!(
+            serde_json::to_string(&PolicySource::CliOverride).unwrap(),
+            "\"cli-override\"",
+        );
+        assert_eq!(
+            serde_json::to_string(&PolicySource::SessionDeny).unwrap(),
+            "\"session-deny\"",
+        );
+    }
+
+    #[test]
+    fn policy_source_round_trips_every_variant() {
+        for s in [
+            PolicySource::Preset,
+            PolicySource::GlobalConfig,
+            PolicySource::ProjectPolicy,
+            PolicySource::CliOverride,
+            PolicySource::SessionDeny,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let parsed: PolicySource = serde_json::from_str(&json).unwrap();
+            assert_eq!(s, parsed, "roundtrip mismatch for {json}");
+        }
+    }
+
+    #[test]
+    fn tool_policy_default_has_every_field_none() {
+        // An empty `[tools.write_file]` block must default to
+        // "preset applies" — every override is `None`. A
+        // regression that pre-populated a field would silently
+        // change the effective policy for that tool.
+        let p = ToolPolicy::default();
+        assert!(p.mode.is_none());
+        assert!(p.paths.is_none());
+        assert!(p.forbidden.is_none());
+        assert!(p.binaries.is_none());
+        assert!(p.forbidden_binaries.is_none());
+        assert!(p.network.is_none());
+        assert!(p.domains.is_none());
+    }
+
+    #[test]
+    fn git_policy_defaults_to_protecting_history() {
+        // `.git` read-only is the safe default. A regression that
+        // flipped it would let a sandboxed agent rewrite git
+        // history, which is the exact class of accident the design
+        // calls out.
+        let g = GitPolicy::default();
+        assert!(g.history_protected);
+    }
+
+    #[test]
+    fn empty_tool_policy_block_parses_with_all_none() {
+        // The TOML spelling a user writes for "just use the
+        // preset" must parse cleanly. Every field is
+        // `#[serde(default)]`.
+        let p: ToolPolicy = toml::from_str("").unwrap();
+        assert!(p.mode.is_none());
+        assert!(p.paths.is_none());
+    }
+
+    #[test]
+    fn tool_policy_parses_each_field_independently() {
+        let p: ToolPolicy = toml::from_str(
+            r#"
+            mode = "ask"
+            paths = ["src/**", "docs/**"]
+            forbidden = ["**/.env"]
+            binaries = ["cargo", "rustc"]
+            forbidden_binaries = ["rm"]
+            network = false
+            domains = ["docs.rs"]
+            "#,
+        )
+        .unwrap();
+        assert_eq!(p.mode, Some(Decision::Ask));
+        assert_eq!(p.paths.unwrap().len(), 2);
+        assert_eq!(p.forbidden.unwrap().len(), 1);
+        assert_eq!(p.binaries.unwrap().len(), 2);
+        assert_eq!(p.forbidden_binaries.unwrap().len(), 1);
+        assert_eq!(p.network, Some(false));
+        assert_eq!(p.domains.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn policy_default_preset_is_standard() {
+        // The design's migration made Standard the default; a
+        // regression to ReadOnly or Yolo would silently change
+        // every session's behaviour.
+        let p = Policy::default();
+        assert_eq!(p.preset, Preset::Standard);
+        assert!(!p.preset_explicit, "the flag must default to false");
+        assert!(p.tools.is_empty());
+    }
+}
