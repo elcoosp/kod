@@ -271,10 +271,7 @@ async fn complete_merges_consecutive_user_messages() {
         OffsetDateTime::now_utc(),
     );
     tr.tool_call_id = Some("call_1".into());
-    let req = request_with(
-        vec![user("first"), tr],
-        SystemPrompt::default(),
-    );
+    let req = request_with(vec![user("first"), tr], SystemPrompt::default());
     provider.complete(&req).await.expect("complete");
 }
 
