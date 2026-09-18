@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use kod_provider::{
     GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderRegistry, StreamChunk,
 };
+use kod_provider::request::{CompletionRequest, SystemPrompt};
 use kod_tools::{
     ExecuteCommandTool, FileInfoTool, GitDiffTool, GitStatusTool, GrepTool, ListFilesTool,
     PatchFileTool, PathLockTable, ReadFileTool, ToolContext, ToolRegistry, WriteFileTool,
@@ -870,6 +871,15 @@ struct ToolRound {
     results: Vec<ToolResult>,
     prompt_block: String,
     elapsed_ms: Vec<u64>,
+    /// Structured form of this round: one assistant message carrying
+    /// the calls (with ids), then one `Role::Tool` message per call
+    /// linked by `tool_call_id` (design §2 AD-02). Appended to the
+    /// per-transcript history by the caller. The text rendering of
+    /// the transcript skips these for now (see `render_history_for`),
+    /// so the pre-migration prompt bytes are unchanged; they are the
+    /// payload the eventual `CompletionRequest` migration (AD-01)
+    /// will ship on the wire.
+    messages: Vec<kod_types::ChatMessage>,
 }
 
 /// Default transcript key: the interactive session. Public methods
@@ -937,15 +947,19 @@ pub struct KodEngine {
     /// `LlmConfig::context_window` at startup so a 128k model actually
     /// gets 128k worth of history instead of the 8k-safe default.
     history_budget: std::sync::atomic::AtomicUsize,
-    /// The grounded prompt handed to the provider on the most recent
-    /// `process*` call. Kept so `/debug last-prompt` can show exactly
-    /// what the model received — environment block, tool inventory,
-    /// skill inventory, rendered history, and user input — which is
-    /// otherwise invisible and the number one source of "why did the
-    /// model answer that?" confusion. Overwritten each call; bounded
-    /// by the prompt builder's own caps.
+    /// The grounded prompt + its per-section budget allocation, for the
+    /// most recent `process*` call on each transcript.
+    ///
+    /// `PromptTrace::text` is what `/debug last-prompt` dumps: the full
+    /// environment block, tool inventory, skill inventory, rendered
+    /// history, and user input the model received. `PromptTrace::alloc`
+    /// is what `/debug tokens` renders as the budget table — the
+    /// character allocation the `PromptBudget` gave each truncatable
+    /// section (history, skills, memory, repomap) plus the request.
+    ///
+    /// Overwritten each call; bounded by the prompt builder's own caps.
     /// Same keying as `history`.
-    last_prompt: RwLock<HashMap<String, String>>,
+    last_prompt: RwLock<HashMap<String, crate::budget::PromptTrace>>,
     /// Provider options captured from `LlmConfig` at engine construction.
     /// Transitional until D1 (endpoint config per ModelRef). Kept in an
     /// `RwLock<Option<...>>` so `set_generation_defaults` works through
@@ -992,16 +1006,14 @@ pub struct KodEngine {
     /// consulted — the highest priority.
     deny_rules: RwLock<std::collections::HashSet<kod_config::SessionDeny>>,
 
-    /// A long-lived language server for incremental diagnostics. Lazily
-    /// started on the first `lsp_diagnostics` call; `None` when no
-    /// server has been spawned yet. Wrapped in an async mutex because
-    /// every LSP method takes `&mut self` — the client is mutated on
-    /// each call (next_id, buffered reader, etc.).
-    ///
-    /// The mutex is per-engine. Two concurrent auto-checks serialize,
-    /// which is the correct behavior: one language server handles one
-    /// request at a time.
-    lsp_client: Arc<tokio::sync::Mutex<Option<kod_lsp::LspClient>>>,
+    /// Multi-language LSP pool (design D5.1). One `LspClient` per
+    /// server binary, lazily started on the first request for its
+    /// language. The manager is created once at engine construction
+    /// and held for the engine's lifetime; `shutdown()` tears it
+    /// down. Exposed via [`KodEngine::lsp_manager`] so the `lsp_*`
+    /// tools use the same pool the engine uses — a second manager
+    /// would spawn a second rust-analyzer, doubling the index cost.
+    lsp_manager: Arc<kod_lsp::LspManager>,
     /// The project's diagnostics as of the last check. `None` until a
     /// baseline has been captured. Used by auto-check to distinguish
     /// the model's contribution from pre-existing problems: a write
@@ -1047,6 +1059,13 @@ pub struct KodEngine {
     /// the home directory is unavailable (a stripped container, a
     /// test that has unset HOME). See [`crate::checkpoint`].
     checkpoints: Option<Arc<crate::checkpoint::CheckpointManager>>,
+    /// The background consolidation task (design D2.5), when
+    /// `memory.compaction_interval_secs > 0` and memory is enabled.
+    /// Aborted and awaited in `shutdown()` BEFORE the redb close so
+    /// `Arc::try_unwrap` on the router succeeds — the task holds a
+    /// clone of the router, and the close needs the last reference.
+    memory_consolidation_task: tokio::sync::RwLock<Option<tokio::task::JoinHandle<()>>>,
+
     /// MCP host (D6.1). `None` — the default — means no MCP tools
     /// are registered. The CLI/TUI install one via `set_mcp_host`
     /// when `[mcp.servers]` is non-empty. The host owns the spawned
@@ -1219,7 +1238,7 @@ impl KodEngine {
             tools: Arc::new(ToolRegistry::new()),
             tool_context,
             lock_table,
-            working_dir,
+            working_dir: working_dir.clone(),
             steers: RwLock::new(HashMap::new()),
             cancels: RwLock::new(std::collections::HashSet::new()),
             history: RwLock::new(HashMap::new()),
@@ -1234,13 +1253,17 @@ impl KodEngine {
             hooks: std::sync::RwLock::new(std::sync::Arc::new(
                 crate::hooks::HookRunner::disabled(),
             )),
-            sandbox_mode_atomic: std::sync::atomic::AtomicU8::new(0),
+            // 2 == SandboxMode::Auto: use the best platform primitive
+            // when available, silently fall through otherwise. The CLI
+            // and TUI escalate to Require via `--sandbox`; a caller
+            // that never touches this gets the design's safe default.
+            sandbox_mode_atomic: std::sync::atomic::AtomicU8::new(2),
             network_access_atomic: std::sync::atomic::AtomicBool::new(false),
             auto_check_atomic: std::sync::atomic::AtomicBool::new(false),
             auto_lsp_atomic: std::sync::atomic::AtomicBool::new(true),
             policy: RwLock::new(None),
             deny_rules: RwLock::new(std::collections::HashSet::new()),
-            lsp_client: Arc::new(tokio::sync::Mutex::new(None)),
+            lsp_manager: Arc::new(kod_lsp::LspManager::new(working_dir.clone())),
             check_baseline: Arc::new(RwLock::new(None)),
             next_approval_id: std::sync::atomic::AtomicU64::new(1),
             pending_approvals: RwLock::new(std::collections::HashMap::new()),
@@ -1250,6 +1273,7 @@ impl KodEngine {
             swarm_coordinator_id: kod_types::AgentId::new(),
             todo_list: kod_tools::new_todo_list(),
             checkpoints,
+            memory_consolidation_task: tokio::sync::RwLock::new(None),
             mcp: RwLock::new(None),
         })
     }
@@ -1351,43 +1375,28 @@ impl KodEngine {
 
     /// Is a language server available for this path?
     ///
-    /// Returns the server binary name (e.g. `rust-analyzer`) when one
-    /// is on PATH and can serve this file's language, or `None` when
-    /// the caller should fall back to the compiler-based `check`.
-    ///
-    /// Only Rust is supported today. Adding Python (`pyright-langserver`
-    /// or `pylsp`), TypeScript (`typescript-language-server`), or Go
-    /// (`gopls`) is a match arm on the extension plus the binary name;
-    /// the LSP crate already speaks the protocol.
+    /// Delegates to `kod_lsp::binary_for_path`. Kept as an associated
+    /// function because `kod-tui` and the `lsp_*` tools call it to
+    /// decide whether an "install X" message is appropriate before
+    /// making a request.
     pub fn lsp_binary_for(path: &std::path::Path) -> Option<&'static str> {
-        match path.extension().and_then(|s| s.to_str()) {
-            Some("rs") if which("rust-analyzer") => Some("rust-analyzer"),
-            Some("py")
-                if which("pyright-langserver") =>
-            {
-                Some("pyright-langserver")
-            }
-            Some("py") if which("pylsp") => Some("pylsp"),
-            Some("ts") | Some("tsx") | Some("js") | Some("jsx")
-                if which("typescript-language-server") =>
-            {
-                Some("typescript-language-server")
-            }
-            Some("go") if which("gopls") => Some("gopls"),
-            _ => None,
-        }
+        kod_lsp::binary_for_path(path)
+    }
+
+    /// The engine's LSP pool. Exposed so callers (the `lsp_*` tools,
+    /// `kod doctor`, the post-write diagnostics hook) can reach the
+    /// same `LspManager` the engine uses without going through the
+    /// engine's higher-level methods.
+    pub fn lsp_manager(&self) -> &Arc<kod_lsp::LspManager> {
+        &self.lsp_manager
     }
 
     /// Return LSP diagnostics for `path`.
     ///
-    /// The first call spawns and initializes the server; subsequent
-    /// calls reuse the same process, which is where the value is —
-    /// rust-analyzer's indexing cost is paid once and then per-file
-    /// diagnostics are milliseconds. On any failure (no binary, spawn
-    /// error, protocol error, timeout) the client is dropped so the
-    /// next call retries cleanly, and the method returns an empty vec.
-    /// The caller treats empty as "no LSP feedback" and falls back to
-    /// `CheckTool::run_check`.
+    /// Empty on any failure (no server, spawn error, protocol error,
+    /// timeout). The caller treats empty as "no LSP feedback" and
+    /// falls back to `CheckTool::run_check`, which disambiguates
+    /// "clean" from "unreachable".
     ///
     /// `content` is what to analyze. The caller reads the file it just
     /// wrote; passing the content avoids a re-read that could race a
@@ -1398,79 +1407,22 @@ impl KodEngine {
         content: &str,
         overall_timeout: std::time::Duration,
     ) -> Vec<kod_lsp::Diagnostic> {
-        let Some(binary) = Self::lsp_binary_for(path) else {
-            return Vec::new();
-        };
-
-        let mut guard = self.lsp_client.lock().await;
-
-        // Lazy spawn + initialize.
-        if guard.is_none() {
-            match kod_lsp::LspClient::start(binary, &self.working_dir).await {
-                Ok(mut client) => {
-                    if let Err(e) = client.initialize().await {
-                        tracing::debug!(
-                            error = %e,
-                            binary,
-                            "LSP initialize failed; disabling LSP for this session"
-                        );
-                        return Vec::new();
-                    }
-                    tracing::info!(binary, "LSP client started");
-                    *guard = Some(client);
-                }
-                Err(e) => {
-                    tracing::debug!(error = %e, binary, "could not spawn LSP server");
-                    return Vec::new();
-                }
-            }
-        }
-
-        let Some(client) = guard.as_mut() else {
-            return Vec::new();
-        };
-
-        // `client.diagnostics` handles the first-call / subsequent-call
-        // distinction internally: didOpen the first time, didChange
-        // after. The caller does not track which files are open.
-        match client.diagnostics(path, content, overall_timeout).await {
-            Ok(diags) => diags,
-            Err(e) => {
-                tracing::debug!(error = %e, "LSP diagnostics failed; dropping client");
-                *guard = None;
-                Vec::new()
-            }
-        }
+        self.lsp_manager
+            .diagnostics(path, content, overall_timeout)
+            .await
     }
 
     /// LSP: definition at `(line, column)` in `path`. 1-based
-    /// coordinates (the tool layer already uses them). Returns empty
-    /// when no server is available or the request fails — the tool
-    /// turns that into a tool-level error the model can act on.
+    /// coordinates (the tool layer already uses them). Empty on any
+    /// failure.
     pub async fn lsp_definition(
         &self,
         path: &std::path::Path,
         line: u32,
         column: u32,
     ) -> Vec<kod_lsp::Location> {
-        let mut guard = self.lsp_client.lock().await;
-        if guard.is_none() {
-            if Self::lsp_binary_for(path).is_none() {
-                return Vec::new();
-            }
-            if Self::ensure_lsp_started(&mut *guard, path, &self.working_dir)
-                .await
-                .is_err()
-            {
-                return Vec::new();
-            }
-        }
-        let client = match guard.as_mut() {
-            Some(c) => c,
-            None => return Vec::new(),
-        };
         let pos = kod_lsp::Position { line, column };
-        client.definition(path, pos).await.unwrap_or_default()
+        self.lsp_manager.definition(path, pos).await
     }
 
     /// LSP: all references to the symbol at `(line, column)`.
@@ -1481,27 +1433,10 @@ impl KodEngine {
         column: u32,
         include_declaration: bool,
     ) -> Vec<kod_lsp::Location> {
-        let mut guard = self.lsp_client.lock().await;
-        if guard.is_none() {
-            if Self::lsp_binary_for(path).is_none() {
-                return Vec::new();
-            }
-            if Self::ensure_lsp_started(&mut *guard, path, &self.working_dir)
-                .await
-                .is_err()
-            {
-                return Vec::new();
-            }
-        }
-        let client = match guard.as_mut() {
-            Some(c) => c,
-            None => return Vec::new(),
-        };
         let pos = kod_lsp::Position { line, column };
-        client
+        self.lsp_manager
             .references(path, pos, include_declaration)
             .await
-            .unwrap_or_default()
     }
 
     /// LSP: hover text at `(line, column)`.
@@ -1511,45 +1446,14 @@ impl KodEngine {
         line: u32,
         column: u32,
     ) -> Option<kod_lsp::Hover> {
-        let mut guard = self.lsp_client.lock().await;
-        if guard.is_none() {
-            if Self::lsp_binary_for(path).is_none() {
-                return None;
-            }
-            if Self::ensure_lsp_started(&mut *guard, path, &self.working_dir)
-                .await
-                .is_err()
-            {
-                return None;
-            }
-        }
-        let client = guard.as_mut()?;
         let pos = kod_lsp::Position { line, column };
-        client.hover(path, pos).await.ok()
+        self.lsp_manager.hover(path, pos).await
     }
 
-    /// Start the LSP client if none is running and the file's
-    /// language has a server binary on PATH. Used by the three
-    /// lsp_* accessors above as the shared lazy-init path.
-    async fn ensure_lsp_started(
-        slot: &mut Option<kod_lsp::LspClient>,
-        path: &std::path::Path,
-        working_dir: &std::path::Path,
-    ) -> kod_error::Result<()> {
-        let Some(binary) = Self::lsp_binary_for(path) else {
-            return Err(kod_error::KodError::InvalidState(
-                "no LSP server binary for this file".to_string(),
-            ));
-        };
-        let mut client = kod_lsp::LspClient::start(binary, working_dir)
-            .await
-            .map_err(|e| kod_error::KodError::Internal(e.to_string()))?;
-        client
-            .initialize()
-            .await
-            .map_err(|e| kod_error::KodError::Internal(e.to_string()))?;
-        *slot = Some(client);
-        Ok(())
+    /// Shut down every language server. Called by `shutdown()`.
+    async fn lsp_shutdown(&self) {
+        self.lsp_manager.shutdown_all().await;
+        tracing::info!("LSP servers shut down");
     }
 
     /// Capture the project's diagnostics into the baseline. Called at
@@ -1584,16 +1488,6 @@ impl KodEngine {
         &self,
     ) -> Option<Vec<kod_tools::check::Diagnostic>> {
         self.check_baseline.read().await.clone()
-    }
-
-    /// Shut down the LSP client if one is running. Called by
-    /// `shutdown()`.
-    async fn lsp_shutdown(&self) {
-        let mut guard = self.lsp_client.lock().await;
-        if let Some(client) = guard.take() {
-            client.shutdown().await;
-            tracing::info!("LSP client shut down");
-        }
     }
 
     /// Install a per-project policy (D3-C1). Called by the CLI/TUI
@@ -1637,7 +1531,49 @@ impl KodEngine {
     /// The current set of session deny rules. Read by the TUI to show
     /// `kod policy show`-style summaries, and by tests.
     pub async fn deny_rules(&self) -> Vec<kod_config::SessionDeny> {
-        self.deny_rules.read().await.iter().cloned().collect()
+        let mut rules: Vec<kod_config::SessionDeny> =
+            self.deny_rules.read().await.iter().cloned().collect();
+        // `HashSet` iteration order is unspecified. `kod policy forget
+        // <n>` names rules by their position in this list, so the list
+        // must be deterministic: sort by tool, then by path pattern.
+        rules.sort_by(|a, b| {
+            (a.tool.as_str(), a.path_pattern.as_deref())
+                .cmp(&(b.tool.as_str(), b.path_pattern.as_deref()))
+        });
+        rules
+    }
+
+    /// The session deny rule at 1-based index `n`, in the stable order
+    /// `deny_rules()` returns. `None` when `n` is 0 or past the end.
+    ///
+    /// The set is a `HashSet<SessionDeny>` (order-undefined), so the
+    /// index is meaningful only in combination with `deny_rules()`:
+    /// this accessor sorts internally the same way that method does,
+    /// so `kod policy forget <n>` and the listing a user reads agree
+    /// on which rule index `n` names.
+    pub async fn deny_rule_at(&self, n: usize) -> Option<kod_config::SessionDeny> {
+        if n == 0 {
+            return None;
+        }
+        let mut rules: Vec<kod_config::SessionDeny> =
+            self.deny_rules.read().await.iter().cloned().collect();
+        // Stable ordering — the same shape `deny_rules()` returns.
+        // `SessionDeny` derives `Hash + Eq` but not `Ord`; sort on
+        // the fields we can order to get a deterministic listing.
+        rules.sort_by(|a, b| {
+            (a.tool.as_str(), a.path_pattern.as_deref())
+                .cmp(&(b.tool.as_str(), b.path_pattern.as_deref()))
+        });
+        rules.into_iter().nth(n - 1)
+    }
+
+    /// Drop a session deny rule. Returns `true` when the rule was
+    /// present. The equality is the derived `Hash + Eq` on
+    /// `SessionDeny`; two rules built from the same tool and path
+    /// pattern compare equal, so a caller that fetched the rule via
+    /// `deny_rule_at` can hand it straight back.
+    pub async fn remove_deny_rule(&self, rule: &kod_config::SessionDeny) -> bool {
+        self.deny_rules.write().await.remove(rule)
     }
 
 
@@ -1792,6 +1728,64 @@ impl KodEngine {
     /// A v1 config (`routing = None`) produces a single-element chain
     /// containing `current_model`, so the fallback loop degenerates to
     /// a single attempt — identical to the pre-A6 behaviour.
+    /// Streaming chain for a turn. The override, when present,
+    /// replaces the *primary* endpoint with a caller-chosen
+    /// `ModelRef` (the swarm runner's per-capability routing).
+    /// `[llm.routing].fallback` endpoints are still appended so a
+    /// fallback chain survives the override — the override is a
+    /// routing decision, not a fallback-free mandate.
+    ///
+    /// `None` delegates to `resolve_chain_for_task`, the pre-A7
+    /// behaviour. Both paths return an empty vec when no provider is
+    /// reachable; the caller reports "no provider".
+    async fn build_streaming_chain(
+        &self,
+        task_key: &str,
+        override_model: Option<&ModelRef>,
+    ) -> Vec<ModelRef> {
+        match override_model {
+            None => self.resolve_chain_for_task(task_key).await,
+            Some(primary) => {
+                let mut chain = vec![primary.clone()];
+                let routing = self.routing.read().await.clone();
+                if let Some(r) = &routing {
+                    let registry = self.registry.read().await.clone();
+                    if let Some(reg) = registry {
+                        for endpoint in &r.fallback {
+                            if chain.iter().any(|c| c.endpoint == *endpoint) {
+                                continue;
+                            }
+                            if let Some(model) = reg.default_model(endpoint) {
+                                chain.push(ModelRef::new(endpoint.clone(), model));
+                            }
+                        }
+                    }
+                }
+                chain
+            }
+        }
+    }
+
+    /// Resolve a swarm subtask's capability to a `ModelRef` via
+    /// `[llm.routing.swarm]`. `None` when the config has no swarm
+    /// table, no entry for this capability, or the endpoint is not
+    /// registered — every one of which means "route by task type",
+    /// the pre-A7 behaviour.
+    ///
+    /// Public so the swarm runner (which holds an `Arc<KodEngine>`
+    /// and no config) can query the mapping before each subtask.
+    pub async fn resolve_model_ref_for_capability(
+        &self,
+        capability: &kod_swarm::Capability,
+    ) -> Option<ModelRef> {
+        let routing = self.routing.read().await.clone()?;
+        let endpoint = routing.swarm.get(capability.as_str())?;
+        let registry = self.registry.read().await.clone()?;
+        registry
+            .default_model(endpoint)
+            .map(|model| ModelRef::new(endpoint.clone(), model))
+    }
+
     async fn resolve_chain_for_task(&self, task_key: &str) -> Vec<ModelRef> {
         // Legacy path: no registry.
         if self.registry.read().await.is_none() {
@@ -2074,26 +2068,22 @@ impl KodEngine {
         // the tools take the slot Arc, not the engine Arc.
         self.tools
             .register(Box::new(crate::lsp_tools::LspDiagnosticsTool::new(
-                Arc::clone(&self.lsp_client),
-                self.working_dir.clone(),
+                Arc::clone(&self.lsp_manager),
             )))
             .await;
         self.tools
             .register(Box::new(crate::lsp_tools::LspDefinitionTool::new(
-                Arc::clone(&self.lsp_client),
-                self.working_dir.clone(),
+                Arc::clone(&self.lsp_manager),
             )))
             .await;
         self.tools
             .register(Box::new(crate::lsp_tools::LspReferencesTool::new(
-                Arc::clone(&self.lsp_client),
-                self.working_dir.clone(),
+                Arc::clone(&self.lsp_manager),
             )))
             .await;
         self.tools
             .register(Box::new(crate::lsp_tools::LspHoverTool::new(
-                Arc::clone(&self.lsp_client),
-                self.working_dir.clone(),
+                Arc::clone(&self.lsp_manager),
             )))
             .await;
 
@@ -2174,8 +2164,75 @@ impl KodEngine {
             tracing::debug!("baseline refresh spawned");
         });
 
+        self.start_memory_consolidation_task().await;
+
         tracing::info!("KOD engine started");
         Ok(())
+    }
+
+    /// Spawn the periodic memory-consolidation task (design D2.5).
+    /// No-op when `compaction_interval_secs == 0` or memory is disabled.
+    ///
+    /// The task holds a clone of the router `Arc` (the manager lives
+    /// inside it). `shutdown()` aborts and awaits this handle before
+    /// closing redb, so the router's unique-holder path is available
+    /// at that moment.
+    async fn start_memory_consolidation_task(&self) {
+        let interval_secs = match kod_config::KodConfig::load_default() {
+            Ok(c) => c.memory.compaction_interval_secs,
+            Err(_) => 0,
+        };
+        if interval_secs == 0 || !self.router.has_memory() {
+            return;
+        }
+        // Already started (idempotent: start() is only callable once,
+        // but be defensive against a future caller).
+        if self.memory_consolidation_task.read().await.is_some() {
+            return;
+        }
+
+        let router = Arc::clone(&self.router);
+        let handle = tokio::spawn(async move {
+            let interval = std::time::Duration::from_secs(interval_secs);
+            loop {
+                tokio::time::sleep(interval).await;
+                match router.consolidate_memory().await {
+                    Ok(report) if report.archived > 0 || report.fused > 0 => {
+                        tracing::info!(
+                            archived = report.archived,
+                            fused = report.fused,
+                            "memory consolidation pass",
+                        );
+                    }
+                    Ok(_) => {
+                        tracing::debug!("memory consolidation pass: nothing to do");
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "memory consolidation failed; will retry next tick",
+                        );
+                    }
+                }
+            }
+        });
+        *self.memory_consolidation_task.write().await = Some(handle);
+        tracing::debug!(
+            interval_secs,
+            "memory consolidation task started",
+        );
+    }
+
+    /// Stop the consolidation task (if any) and wait for it to actually
+    /// drop. Necessary before the redb close: the task holds a router
+    /// clone, and `Arc::try_unwrap` needs the last reference.
+    async fn stop_memory_consolidation_task(&self) {
+        let handle = self.memory_consolidation_task.write().await.take();
+        if let Some(h) = handle {
+            h.abort();
+            let _ = h.await;
+            tracing::debug!("memory consolidation task stopped");
+        }
     }
 
     /// Process user input
@@ -2242,11 +2299,43 @@ impl KodEngine {
             // Without this it claims "no filesystem access" even though
             // tools are wired below.
             let definitions = self.tools.get_definitions().await;
-            let convo = self.ground_prompt(prompt, &definitions);
+            let convo = self.ground_prompt(prompt.clone(), &definitions);
 
             // Snapshot the grounded prompt before the loop mutates it
             // with tool results. This is what `/debug last-prompt` shows.
-            self.last_prompt.write().await.insert(key.to_string(), convo.clone());
+            {
+                let trace = crate::budget::PromptTrace {
+                    text: convo.clone(),
+                    alloc: alloc.as_ref().ok().copied(),
+                };
+                self.last_prompt.write().await.insert(key.to_string(), trace);
+            }
+
+            // The structured system prompt the provider will see: the
+            // router's plan rendered to text, with the environment
+            // grounding appended. The `prompt` variable above remains
+            // the un-grounded text used for `/debug` and the initial
+            // `pending` string in the loop; the two are byte-compatible
+            // up to the grounding block.
+            let system_text = {
+                let plan = self.router.build_prompt_plan(
+                    input,
+                    &task_type,
+                    &history,
+                    response.memory_context.clone(),
+                    alloc.as_ref().ok(),
+                )
+                .await?;
+                plan.system.render_text()
+            };
+
+            // The transcript the provider will see. `remember_turn_for`
+            // above recorded the user's turn, so this already ends with
+            // the current user message.
+            let initial_messages: Vec<kod_types::ChatMessage> = {
+                let guard = self.history.read().await;
+                guard.get(key).cloned().unwrap_or_default()
+            };
 
             // Agentic loop: generate (with tools) -> execute -> feed back.
             // Wrapped in a fallback chain (A6): the primary endpoint is
@@ -2291,10 +2380,14 @@ impl KodEngine {
                     }
                 };
                 let mut attempt_pending = convo.clone();
+                let mut attempt_messages = initial_messages.clone();
                 match self
                     .run_collected_loop(
                         &this_provider,
                         &mut attempt_pending,
+                        &system_text,
+                        &mut attempt_messages,
+                        model_ref,
                         &definitions,
                         &options,
                         key,
@@ -2426,6 +2519,31 @@ impl KodEngine {
         input: &str,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
     ) -> Result<TaskResponse> {
+        self.process_streaming_with_model_for(key, input, chunk_tx, None)
+            .await
+    }
+
+    /// Streaming variant of [`KodEngine::process_for`] with an optional
+    /// model override.
+    ///
+    /// The override is the swarm runner's per-capability routing hook
+    /// (design D1.4 PR A7): a subtask's `capability` (Coding, Testing,
+    /// CodeReview, …) resolves against `[llm.routing.swarm]` to a
+    /// `ModelRef`, and the streaming chain tries that model first.
+    /// Fallback endpoints from `[llm.routing].fallback` are still
+    /// appended — the override replaces the *primary* choice, not the
+    /// fallback chain.
+    ///
+    /// `None` routes by task type as before; this is what every
+    /// non-swarm caller passes, and it is what
+    /// `process_streaming_for` itself passes.
+    pub async fn process_streaming_with_model_for(
+        &self,
+        key: &str,
+        input: &str,
+        chunk_tx: &tokio::sync::mpsc::Sender<String>,
+        override_model: Option<ModelRef>,
+    ) -> Result<TaskResponse> {
         {
             let running = self.is_running.read().await;
             if !*running {
@@ -2461,10 +2579,35 @@ impl KodEngine {
                 }
             };
             let definitions = self.tools.get_definitions().await;
-            let pending = self.ground_prompt(prompt, &definitions);
+            let pending = self.ground_prompt(prompt.clone(), &definitions);
 
-            // Snapshot the grounded prompt for /debug last-prompt.
-            self.last_prompt.write().await.insert(key.to_string(), pending.clone());
+            // Snapshot the grounded prompt for /debug last-prompt and
+            // the per-section allocation for /debug tokens.
+            {
+                let trace = crate::budget::PromptTrace {
+                    text: pending.clone(),
+                    alloc: alloc.as_ref().ok().copied(),
+                };
+                self.last_prompt.write().await.insert(key.to_string(), trace);
+            }
+
+            // Structured system prompt and initial messages: same
+            // shape as the collected path (see `process_for`).
+            let system_text = {
+                let plan = self.router.build_prompt_plan(
+                    input,
+                    &task_type,
+                    &history,
+                    response.memory_context.clone(),
+                    alloc.as_ref().ok(),
+                )
+                .await?;
+                plan.system.render_text()
+            };
+            let initial_messages: Vec<kod_types::ChatMessage> = {
+                let guard = self.history.read().await;
+                guard.get(key).cloned().unwrap_or_default()
+            };
 
             let options = self
                 .generation_defaults
@@ -2477,7 +2620,9 @@ impl KodEngine {
             // retryable error typically fires before any token, so the
             // user sees a clean stream from the fallback endpoint.
             let task_key = format!("{:?}", response.task_type);
-            let chain = self.resolve_chain_for_task(&task_key).await;
+            let chain = self
+                .build_streaming_chain(&task_key, override_model.as_ref())
+                .await;
             if chain.is_empty() {
                 return Err(Self::no_provider_error());
             }
@@ -2507,10 +2652,14 @@ impl KodEngine {
                     }
                 };
                 let mut attempt_pending = pending.clone();
+                let mut attempt_messages = initial_messages.clone();
                 match self
                     .run_streaming_loop(
                         &this_provider,
                         &mut attempt_pending,
+                        &system_text,
+                        &mut attempt_messages,
+                        model_ref,
                         &definitions,
                         &options,
                         chunk_tx,
@@ -2673,7 +2822,7 @@ impl KodEngine {
                 }
             };
             let definitions = self.tools.get_definitions().await;
-            let mut pending = self.ground_prompt(prompt, &definitions);
+            let mut pending = self.ground_prompt(prompt.clone(), &definitions);
             pending.push_str(&format!(
                 "\n## Goal\n\n{goal}\n\nWork turn by turn toward this goal using tools. Do not ask the user for confirmation — act. When the goal is fully reached, end your reply with a line containing exactly GOAL MET and summarize what was done. If a tool errors, work around it and keep going.\n"
             ));
@@ -2681,7 +2830,40 @@ impl KodEngine {
             // Snapshot includes the goal block — that is what the model
             // sees on turn 1, which is what users want to inspect when a
             // goal run misbehaves.
-            self.last_prompt.write().await.insert(key.to_string(), pending.clone());
+            {
+                let trace = crate::budget::PromptTrace {
+                    text: pending.clone(),
+                    alloc: alloc.as_ref().ok().copied(),
+                };
+                self.last_prompt.write().await.insert(key.to_string(), trace);
+            }
+
+            // Structured inputs for the streaming loop. The goal text
+            // is part of the system prompt, not a message, so a fresh
+            // turn of the goal loop does not create a duplicate user
+            // message every iteration.
+            let system_text = {
+                let plan = self.router.build_prompt_plan(
+                    input,
+                    &task_type,
+                    &history,
+                    response.memory_context.clone(),
+                    alloc.as_ref().ok(),
+                )
+                .await?;
+                let base = plan.system.render_text();
+                format!(
+                    "{base}\n\n## Goal\n\n{goal}\n\nWork turn by turn toward this goal using tools. Do not ask the user for confirmation — act. When the goal is fully reached, end your reply with a line containing exactly GOAL MET and summarize what was done. If a tool errors, work around it and keep going.\n"
+                )
+            };
+            // The user message for the initial turn. The goal loop
+            // re-uses the same structured base across iterations; the
+            // `pending` text grows per turn, but the message list is
+            // rebuilt from the transcript + this user turn.
+            let initial_messages_base: Vec<kod_types::ChatMessage> = {
+                let guard = self.history.read().await;
+                guard.get(key).cloned().unwrap_or_default()
+            };
 
             let options = self
                 .generation_defaults
@@ -2736,10 +2918,14 @@ impl KodEngine {
                         }
                     };
                     let mut attempt_pending = pending.clone();
+                    let mut attempt_messages = initial_messages_base.clone();
                     match self
                         .run_streaming_loop(
                             &this_provider,
                             &mut attempt_pending,
+                            &system_text,
+                            &mut attempt_messages,
+                            model_ref,
                             &definitions,
                             &options,
                             chunk_tx,
@@ -2846,6 +3032,22 @@ impl KodEngine {
                     let section = self.run_tool_calls(&calls, holder, None).await;
                     tool_calls.extend(calls);
                     tool_results.extend(section.results);
+                    // Structured transcript slice (design §2 AD-02):
+                    // the assistant calls + tool results go into the
+                    // history so the eventual CompletionRequest
+                    // migration can ship them on the wire. The
+                    // text-prompt block below is unchanged — the
+                    // current path still renders the results as
+                    // `## Tool results` for the model.
+                    if !section.messages.is_empty() {
+                        let mut history = self.history.write().await;
+                        let turns = history.entry(holder.to_string()).or_default();
+                        turns.extend(section.messages.iter().cloned());
+                        let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
+                        if excess > 0 {
+                            turns.drain(..excess);
+                        }
+                    }
                     pending.push_str(&format!("\n\n{}", section.prompt_block));
                     self.apply_steers(pending, holder).await;
                 }
@@ -2862,6 +3064,22 @@ impl KodEngine {
                     let section = self.run_tool_calls(&calls, holder, None).await;
                     tool_calls.extend(calls);
                     tool_results.extend(section.results);
+                    // Structured transcript slice (design §2 AD-02):
+                    // the assistant calls + tool results go into the
+                    // history so the eventual CompletionRequest
+                    // migration can ship them on the wire. The
+                    // text-prompt block below is unchanged — the
+                    // current path still renders the results as
+                    // `## Tool results` for the model.
+                    if !section.messages.is_empty() {
+                        let mut history = self.history.write().await;
+                        let turns = history.entry(holder.to_string()).or_default();
+                        turns.extend(section.messages.iter().cloned());
+                        let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
+                        if excess > 0 {
+                            turns.drain(..excess);
+                        }
+                    }
                     pending.push_str(&format!("\n\n{}", section.prompt_block));
                     self.apply_steers(pending, holder).await;
                 }
@@ -2949,6 +3167,17 @@ impl KodEngine {
             }
             tool_calls.extend(calls);
             tool_results.extend(section.results);
+            // Structured transcript slice (design §2 AD-02): same
+            // rationale as the collected loop above.
+            if !section.messages.is_empty() {
+                let mut history = self.history.write().await;
+                let turns = history.entry(holder.to_string()).or_default();
+                turns.extend(section.messages.iter().cloned());
+                let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
+                if excess > 0 {
+                    turns.drain(..excess);
+                }
+            }
             pending.push_str(&format!("\n\n{}", section.prompt_block));
             self.apply_steers(pending, holder).await;
             // If we have already produced text this turn, emit a
@@ -2985,7 +3214,9 @@ impl KodEngine {
     async fn stream_round(
         &self,
         provider: &Arc<dyn LlmProvider>,
-        pending: &str,
+        system_text: &str,
+        messages: &[kod_types::ChatMessage],
+        model_ref: &ModelRef,
         definitions: &[ToolDefinition],
         options: &GenerationOptions,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
@@ -3000,7 +3231,20 @@ impl KodEngine {
             args: String,
         }
 
-        let mut stream = provider.stream_with_tools(pending, definitions, options);
+        // Build the structured request the provider will see. The
+        // streaming variant of `complete` is `stream_completion`; its
+        // working default collects the reply and replays it, so a
+        // provider that has not overridden it still produces chunks in
+        // the right order. Both concrete providers in this workspace
+        // override it with real SSE.
+        let req = self.build_grounded_request(
+            system_text,
+            messages.to_vec(),
+            definitions,
+            options,
+            model_ref,
+        );
+        let mut stream = provider.stream_completion(&req);
         let mut text = String::new();
         let mut partials: BTreeMap<usize, Partial> = BTreeMap::new();
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
@@ -3067,6 +3311,50 @@ impl KodEngine {
             }
         }
         Ok(text)
+    }
+
+    /// Build a grounded `CompletionRequest` from the router plan and
+    /// the transcript (design §2 AD-01, AD-16).
+    ///
+    /// The split:
+    ///
+    /// - **system**: the router's `PromptPlan::system` segments
+    ///   concatenated in order, with the environment + tool inventory
+    ///   grounding appended as a final volatile segment. The
+    ///   cacheable / volatile ordering is preserved by rendering the
+    ///   plan to text first and grounding the result — a provider with
+    ///   explicit cache support (Anthropic) is given the whole string
+    ///   as one segment; the split between cacheable and volatile is
+    ///   not needed for correctness on either wire today, only for
+    ///   cache *placement*. A follow-up can pass the segments through
+    ///   as separate `SystemPrompt::segments` to place the breakpoint
+    ///   exactly, and the design notes the shape.
+    ///
+    /// - **messages**: the transcript as structured `ChatMessage`s
+    ///   (`self.history[key]` already holds the user's turn by the time
+    ///   this runs; the assistant's turns and the tool rounds are
+    ///   appended by the loops).
+    ///
+    /// The `model` field carries the resolved endpoint, so a provider
+    /// that is asked to switch mid-stream can honour the request's
+    /// choice rather than the one baked in at construction.
+    fn build_grounded_request(
+        &self,
+        system_text: &str,
+        messages: Vec<kod_types::ChatMessage>,
+        definitions: &[ToolDefinition],
+        options: &GenerationOptions,
+        model: &ModelRef,
+    ) -> CompletionRequest {
+        let grounded = self.ground_prompt(system_text.to_string(), definitions);
+        let system = SystemPrompt::new().with(grounded, false);
+        CompletionRequest {
+            system,
+            messages,
+            tools: definitions.to_vec(),
+            options: options.clone(),
+            model: model.clone(),
+        }
     }
 
     /// Append the environment + tool inventory grounding to a router prompt.
@@ -3733,7 +4021,24 @@ impl KodEngine {
         // Failures are silent except for a `tracing::debug!`: a
         // missing toolchain, an empty directory, or a timeout should
         // not make the write itself look like a problem.
-        if self.auto_check_setting() {
+        // Auto-check / auto-LSP diagnostics. The two flags are
+        // independent:
+        //
+        //   - `auto_lsp` (default true): run the language server's
+        //     diagnostics pass on the touched file and append a
+        //     `## LSP diagnostics` block when the server returns any.
+        //     Cheap (sub-second per file) and per-file.
+        //   - `auto_check` (default false): run the project's
+        //     compiler/linter and append `## Auto-check`. Thorough
+        //     but slower and per-project.
+        //
+        // When both are on and the file's language has a server, LSP
+        // runs first; an empty LSP response falls through to the
+        // compiler (which disambiguates "clean" from "unreachable").
+        // When only `auto_lsp` is on and LSP is empty or unavailable,
+        // no block is emitted — the compiler is not consulted on the
+        // user's behalf.
+        if self.auto_check_setting() || self.auto_lsp_setting() {
             // Every successful write in this round. We read the file
             // from disk rather than trusting the call's `content`
             // argument: `patch_file` does not carry one, and a
@@ -3760,19 +4065,15 @@ impl KodEngine {
                 .collect();
 
             if !writes.is_empty() {
-                // Preferred path: a single Rust file and a server on
-                // PATH. Every other shape — several files, a
-                // non-Rust file — goes to the whole-workspace
-                // compiler, which sees every file the round touched
-                // and the cross-file effects between them.
-                //
-                // A per-file LSP check on one file of a multi-file
-                // round would miss the other files' breakage.
-                let lsp_eligible =
-                    writes.len() == 1 && Self::lsp_binary_for(&writes[0].0).is_some();
+                let lsp_wanted = self.auto_lsp_setting();
+                let compiler_wanted = self.auto_check_setting();
+                let lsp_eligible = lsp_wanted
+                    && writes.len() == 1
+                    && Self::lsp_binary_for(&writes[0].0).is_some();
 
                 let diags: Vec<kod_tools::check::Diagnostic>;
                 let source: String;
+                let used_lsp: bool;
 
                 if lsp_eligible {
                     let (path, content) = &writes[0];
@@ -3797,7 +4098,8 @@ impl KodEngine {
                             })
                             .collect();
                         source = binary.to_string();
-                    } else {
+                        used_lsp = true;
+                    } else if compiler_wanted {
                         // Empty LSP answer: could mean "clean" or
                         // "unreachable". Fall through to the
                         // compiler, which disambiguates.
@@ -3810,6 +4112,7 @@ impl KodEngine {
                             Ok(outcome) => {
                                 source = outcome.command.clone();
                                 diags = outcome.diagnostics;
+                                used_lsp = false;
                             }
                             Err(e) => {
                                 tracing::debug!(
@@ -3820,16 +4123,31 @@ impl KodEngine {
                                     results,
                                     prompt_block: block,
                                     elapsed_ms,
+                                    messages: Vec::new(),
                                 };
                             }
                         }
+                    } else {
+                        // Only auto_lsp is on and LSP returned empty:
+                        // either the server found nothing or is
+                        // unreachable, and without compiler
+                        // confirmation we cannot say which. Emit no
+                        // block rather than inventing one.
+                        return ToolRound {
+                            results,
+                            prompt_block: block,
+                            elapsed_ms,
+                            // Auto-check error path: no structured transcript slice.
+                            messages: Vec::new(),
+                        };
                     }
-                } else {
+                } else if compiler_wanted {
                     match kod_tools::CheckTool::run_check(&self.working_dir, 60).await
                     {
                         Ok(outcome) => {
                             source = outcome.command.clone();
                             diags = outcome.diagnostics;
+                            used_lsp = false;
                         }
                         Err(e) => {
                             tracing::debug!(
@@ -3840,114 +4158,192 @@ impl KodEngine {
                                 results,
                                 prompt_block: block,
                                 elapsed_ms,
+                                // Auto-check error path: no structured transcript slice.
+                                messages: Vec::new(),
                             };
                         }
                     }
+                } else {
+                    // LSP was wanted but not eligible (no server for
+                    // this file's language, or more than one file in
+                    // the round), and the compiler is off. Nothing to
+                    // emit — the user has chosen LSP-only.
+                    return ToolRound {
+                        results,
+                        prompt_block: block,
+                        elapsed_ms,
+                        // Auto-check error path: no structured transcript slice.
+                        messages: Vec::new(),
+                    };
                 }
 
-                // Diff against the baseline. A diagnostic whose
-                // `(file, code, message)` was already present is
-                // pre-existing; only the model's *new* errors should
-                // drive the feedback loop.
-                let baseline = self.check_baseline.read().await.clone();
-                let baseline_keys: std::collections::HashSet<(
-                    String,
-                    Option<String>,
-                    String,
-                )> = baseline
-                    .as_ref()
-                    .map(|v| v.iter().map(diag_key).collect())
-                    .unwrap_or_default();
-                let current_keys: std::collections::HashSet<(
-                    String,
-                    Option<String>,
-                    String,
-                )> = diags.iter().map(diag_key).collect();
-
-                let new_diags: Vec<&kod_tools::check::Diagnostic> = diags
-                    .iter()
-                    .filter(|d| !baseline_keys.contains(&diag_key(d)))
-                    .collect();
-                let resolved_count = if baseline.is_some() {
-                    baseline_keys
-                        .iter()
-                        .filter(|k| !current_keys.contains(*k))
-                        .count()
-                } else {
-                    0
-                };
-
-                // Render. The message is deliberately different for
-                // each case so the model knows what its write did:
-                // introduced N errors, resolved M errors, or neither.
-                block.push_str("\n## Auto-check\n\n");
-                match baseline {
-                    None => {
-                        // First auto-check in this session; no
-                        // baseline. Report everything, note that the
-                        // state is unknown.
-                        if diags.is_empty() {
-                            block.push_str(&format!("`{}` is clean.\n", source));
-                        } else {
-                            block.push_str(&format!(
-                                "`{}` reported {} diagnostic(s). \\
-                                 (No baseline was captured, so all are shown — \
-                                 some may pre-date this write.)\n\n",
-                                source,
-                                diags.len(),
-                            ));
-                            render_diagnostics(&mut block, &diags, 20);
-                        }
-                    }
-                    Some(_) if !new_diags.is_empty() => {
+                // LSP diagnostics are per-file and live from the
+                // server; the baseline diff (a per-project compiler
+                // snapshot) does not apply. Emit them verbatim under
+                // their own header.
+                if used_lsp {
+                    block.push_str("\n## LSP diagnostics\n\n");
+                    if diags.is_empty() {
                         block.push_str(&format!(
-                            "`{}` reported {} NEW diagnostic(s) from this write:\n\n",
+                            "`{}`: no diagnostics on this file.\n",
                             source,
-                            new_diags.len(),
                         ));
-                        let owned: Vec<kod_tools::check::Diagnostic> = new_diags
-                            .iter()
-                            .map(|d| (*d).clone())
-                            .collect();
-                        render_diagnostics(&mut block, &owned, 20);
-                        if resolved_count > 0 {
-                            block.push_str(&format!(
-                                "\n({} pre-existing diagnostic(s) resolved.)\n",
-                                resolved_count,
-                            ));
-                        }
-                        block.push_str("\nFix the new errors before continuing.\n");
-                    }
-                    Some(_) if resolved_count > 0 => {
+                    } else {
                         block.push_str(&format!(
-                            "`{}`: your write introduced no new errors and \
-                             resolved {} pre-existing diagnostic(s).\n",
-                            source, resolved_count,
-                        ));
-                    }
-                    Some(_) if diags.is_empty() => {
-                        block.push_str(&format!("`{}` is clean.\n", source));
-                    }
-                    Some(_) => {
-                        block.push_str(&format!(
-                            "`{}`: your write introduced no new errors. \
-                             {} pre-existing diagnostic(s) remain, \
-                             unrelated to this change.\n",
+                            "`{}` reported {} diagnostic(s) on this file:\n\n",
                             source,
                             diags.len(),
                         ));
+                        render_diagnostics(&mut block, &diags, 20);
                     }
-                }
+                } else {
+                    // Compiler diagnostics keep the baseline diff so
+                    // the model sees *new* errors, not pre-existing
+                    // ones.
+                    let baseline = self.check_baseline.read().await.clone();
+                    let baseline_keys: std::collections::HashSet<(
+                        String,
+                        Option<String>,
+                        String,
+                    )> = baseline
+                        .as_ref()
+                        .map(|v| v.iter().map(diag_key).collect())
+                        .unwrap_or_default();
+                    let current_keys: std::collections::HashSet<(
+                        String,
+                        Option<String>,
+                        String,
+                    )> = diags.iter().map(diag_key).collect();
 
-                // The post-write state becomes the new baseline.
-                *self.check_baseline.write().await = Some(diags);
+                    let new_diags: Vec<&kod_tools::check::Diagnostic> = diags
+                        .iter()
+                        .filter(|d| !baseline_keys.contains(&diag_key(d)))
+                        .collect();
+                    let resolved_count = if baseline.is_some() {
+                        baseline_keys
+                            .iter()
+                            .filter(|k| !current_keys.contains(*k))
+                            .count()
+                    } else {
+                        0
+                    };
+
+                    block.push_str("\n## Auto-check\n\n");
+                    match baseline {
+                        None => {
+                            if diags.is_empty() {
+                                block.push_str(&format!("`{}` is clean.\n", source));
+                            } else {
+                                block.push_str(&format!(
+                                    "`{}` reported {} diagnostic(s). \
+                                     (No baseline was captured, so all are shown — \
+                                     some may pre-date this write.)\n\n",
+                                    source,
+                                    diags.len(),
+                                ));
+                                render_diagnostics(&mut block, &diags, 20);
+                            }
+                        }
+                        Some(_) if !new_diags.is_empty() => {
+                            block.push_str(&format!(
+                                "`{}` reported {} NEW diagnostic(s) from this write:\n\n",
+                                source,
+                                new_diags.len(),
+                            ));
+                            let owned: Vec<kod_tools::check::Diagnostic> = new_diags
+                                .iter()
+                                .map(|d| (*d).clone())
+                                .collect();
+                            render_diagnostics(&mut block, &owned, 20);
+                            if resolved_count > 0 {
+                                block.push_str(&format!(
+                                    "\n({} pre-existing diagnostic(s) resolved.)\n",
+                                    resolved_count,
+                                ));
+                            }
+                            block.push_str("\nFix the new errors before continuing.\n");
+                        }
+                        Some(_) if resolved_count > 0 => {
+                            block.push_str(&format!(
+                                "`{}`: your write introduced no new errors and \
+                                 resolved {} pre-existing diagnostic(s).\n",
+                                source, resolved_count,
+                            ));
+                        }
+                        Some(_) if diags.is_empty() => {
+                            block.push_str(&format!("`{}` is clean.\n", source));
+                        }
+                        Some(_) => {
+                            block.push_str(&format!(
+                                "`{}`: your write introduced no new errors. \
+                                 {} pre-existing diagnostic(s) remain, \
+                                 unrelated to this change.\n",
+                                source,
+                                diags.len(),
+                            ));
+                        }
+                    }
+
+                    // The post-write state becomes the new baseline.
+                    *self.check_baseline.write().await = Some(diags);
+                }
             }
+        }
+
+        // Structured transcript slice (AD-02). One assistant message
+        // carrying the calls, then one tool message per result linked
+        // by `tool_call_id`. Ids are preserved when the provider
+        // emitted them; a provider that did not (some local servers
+        // omit them) gets a synthesized `call_N` so the transcript is
+        // well-formed on every wire.
+        let mut messages: Vec<kod_types::ChatMessage> = Vec::new();
+        let mut assistant_msg = kod_types::ChatMessage::text(
+            kod_types::MessageId::new(),
+            kod_types::MessageRole::Assistant,
+            String::new(),
+            time::OffsetDateTime::now_utc(),
+        );
+        for (i, call) in calls.iter().enumerate() {
+            let id = call
+                .id
+                .clone()
+                .unwrap_or_else(|| format!("call_{i}"));
+            assistant_msg.tool_calls.push(kod_types::ToolCall {
+                id: Some(id.clone()),
+                tool_name: call.tool_name.clone(),
+                arguments: call.arguments.clone(),
+            });
+        }
+        // Only push the assistant message when there was at least one
+        // call — an empty assistant turn is not a legal wire shape.
+        if !assistant_msg.tool_calls.is_empty() {
+            messages.push(assistant_msg);
+        }
+        for (i, call) in calls.iter().enumerate() {
+            let id = call.id.clone().unwrap_or_else(|| format!("call_{i}"));
+            let rendered = match results.get(i) {
+                Some(kod_types::ToolResult::Success(v)) => v.to_string(),
+                Some(kod_types::ToolResult::Error(e)) => format!("error: {e}"),
+                Some(kod_types::ToolResult::RequiresConfirmation { description, .. }) => {
+                    format!("requires confirmation: {description}")
+                }
+                None => String::new(),
+            };
+            let mut tool_msg = kod_types::ChatMessage::text(
+                kod_types::MessageId::new(),
+                kod_types::MessageRole::Tool,
+                rendered,
+                time::OffsetDateTime::now_utc(),
+            );
+            tool_msg.tool_call_id = Some(id);
+            messages.push(tool_msg);
         }
 
         ToolRound {
             results,
             prompt_block: block,
             elapsed_ms,
+            messages,
         }
     }
 
@@ -4115,6 +4511,27 @@ impl KodEngine {
             && let Err(e) = self.extract_memories_now("").await
         {
             tracing::warn!(error = %e, "shutdown memory extraction failed");
+        }
+
+        // 7b. Stop the consolidation task before any redb close —
+        //     it holds a router clone, and `Arc::try_unwrap`
+        //     needs the last reference.
+        self.stop_memory_consolidation_task().await;
+
+        // 8. Explicit redb close (design D0.3). Best-effort: the
+        // router is behind an `Arc` and a caller that cloned the
+        // engine may still hold a reference. `Arc::try_unwrap`
+        // returns the value on the unique-holder path — the common
+        // case for a CLI/TUI session that has stopped driving the
+        // engine — and returns the `Arc` back on the shared path,
+        // in which case we fall back to the previous behaviour
+        // (the OS file lock releases when the last reference drops).
+        match Arc::try_unwrap(self.router.clone()) {
+            Ok(router) => router.close_memory(),
+            Err(_) => tracing::debug!(
+                "router Arc still shared at shutdown; redb will close when \
+                 the last reference drops"
+            ),
         }
 
         tracing::info!("KOD engine shutdown complete");
@@ -4371,6 +4788,26 @@ impl KodEngine {
 
         let mut out = String::new();
         for message in &turns[cutoff..] {
+            // Skip the structured tool transcript slice (AD-02): the
+            // tool results are still delivered to the model via the
+            // `## Tool results` block appended to `pending` at the end
+            // of each round. Rendering them here as `Tool: …` lines
+            // would change the prompt bytes and defeat the AD-16
+            // cacheable prefix invariant. When the engine migrates to
+            // `CompletionRequest` (AD-01), the structured slice goes
+            // on the wire and this filter goes away.
+            if matches!(message.role, kod_types::MessageRole::Tool) {
+                continue;
+            }
+            // An assistant message whose only content is a set of tool
+            // calls (empty text) has nothing to render. Same rationale:
+            // it is structural, not prose.
+            if matches!(message.role, kod_types::MessageRole::Assistant)
+                && message.content.trim().is_empty()
+                && !message.tool_calls.is_empty()
+            {
+                continue;
+            }
             out.push_str(&message.render_text());
             out.push('\n');
         }
@@ -4386,6 +4823,27 @@ impl KodEngine {
     /// The prompt the provider received on the most recent `process*`
     /// call for `key`.
     pub async fn last_prompt_for(&self, key: &str) -> Option<String> {
+        self.last_prompt
+            .read()
+            .await
+            .get(key)
+            .map(|t| t.text.clone())
+    }
+
+    /// The full prompt trace (text + per-section allocation) for the
+    /// most recent `process*` call on the default transcript.
+    /// `PromptTrace::alloc` is what `/debug tokens` renders as the
+    /// budget table; `PromptTrace::text` is byte-identical to what
+    /// `last_prompt` returns.
+    pub async fn last_prompt_trace(&self) -> Option<crate::budget::PromptTrace> {
+        self.last_prompt_trace_for(DEFAULT_TRANSCRIPT_KEY).await
+    }
+
+    /// The full prompt trace for `key`.
+    pub async fn last_prompt_trace_for(
+        &self,
+        key: &str,
+    ) -> Option<crate::budget::PromptTrace> {
         self.last_prompt.read().await.get(key).cloned()
     }
 
@@ -4561,20 +5019,8 @@ impl KodEngine {
 
 
 
-/// `true` if `program` is on PATH. Used by
-/// [`KodEngine::lsp_binary_for`] to avoid promising a language server
-/// the process cannot spawn.
-fn which(program: &str) -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    for dir in std::env::split_paths(&path) {
-        if dir.join(program).is_file() {
-            return true;
-        }
-    }
-    false
-}
+// (The `which` helper moved to `kod_lsp::binary_for_path` when the
+// LSP pool was introduced; `lsp_binary_for` now delegates there.)
 
 /// Identity of a diagnostic for diffing between two check runs.
 /// Ignores line and column: an edit that shifts a later error down by
@@ -4644,6 +5090,121 @@ impl BaselineRefresher {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn deny_rule_at_zero_returns_none() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig { skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+            embedder: None,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+        assert!(engine.deny_rule_at(0).await.is_none());
+        assert!(engine.deny_rule_at(1).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn deny_rule_at_returns_the_sorted_index() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig { skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+            embedder: None,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        // Three rules with distinguishable sort keys.
+        engine
+            .add_deny_rule(kod_config::SessionDeny {
+                tool: "write_file".into(),
+                path_pattern: Some("src/**".into()),
+            })
+            .await;
+        engine
+            .add_deny_rule(kod_config::SessionDeny {
+                tool: "execute_command".into(),
+                path_pattern: None,
+            })
+            .await;
+        engine
+            .add_deny_rule(kod_config::SessionDeny {
+                tool: "write_file".into(),
+                path_pattern: Some("docs/**".into()),
+            })
+            .await;
+
+        let listed = engine.deny_rules().await;
+        assert_eq!(listed.len(), 3);
+        // Sorted by (tool, path_pattern):
+        //   (execute_command, None) < (write_file, Some("docs/**")) < (write_file, Some("src/**"))
+        assert_eq!(
+            engine.deny_rule_at(1).await,
+            Some(kod_config::SessionDeny {
+                tool: "execute_command".into(),
+                path_pattern: None,
+            })
+        );
+        assert_eq!(
+            engine.deny_rule_at(2).await,
+            Some(kod_config::SessionDeny {
+                tool: "write_file".into(),
+                path_pattern: Some("docs/**".into()),
+            })
+        );
+        assert_eq!(
+            engine.deny_rule_at(3).await,
+            Some(kod_config::SessionDeny {
+                tool: "write_file".into(),
+                path_pattern: Some("src/**".into()),
+            })
+        );
+        assert!(engine.deny_rule_at(4).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn remove_deny_rule_is_by_value_and_reports_presence() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.redb");
+        let cfg = RouterConfig { skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: temp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+            embedder: None,
+        };
+        let engine = KodEngine::new(cfg, db_path).unwrap();
+        engine.start().await.unwrap();
+
+        let rule = kod_config::SessionDeny {
+            tool: "write_file".into(),
+            path_pattern: Some("src/**".into()),
+        };
+        engine.add_deny_rule(rule.clone()).await;
+        assert_eq!(engine.deny_rules().await.len(), 1);
+
+        // A value-equal rule removes it.
+        let same_value = kod_config::SessionDeny {
+            tool: "write_file".into(),
+            path_pattern: Some("src/**".into()),
+        };
+        assert!(engine.remove_deny_rule(&same_value).await);
+        assert!(engine.deny_rules().await.is_empty());
+
+        // Removing again reports false.
+        assert!(!engine.remove_deny_rule(&same_value).await);
+    }
 
     #[tokio::test]
     async fn test_engine_lifecycle() {
@@ -4791,7 +5352,8 @@ mod tests {
 
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -4849,7 +5411,8 @@ mod tests {
     async fn test_process_without_provider_errors() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -4873,7 +5436,8 @@ mod tests {
     async fn test_process_streaming_without_provider_errors() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -4895,7 +5459,8 @@ mod tests {
     async fn test_process_goal_streaming_without_provider_errors() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -4923,7 +5488,8 @@ mod tests {
     async fn test_remember_turn_writes_short_term_memory() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -4962,7 +5528,8 @@ mod tests {
     async fn test_remember_turn_skips_empty_text() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5122,7 +5689,8 @@ mod tests {
 
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5162,7 +5730,8 @@ mod tests {
     async fn test_history_budget_clamps_and_applies() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5190,7 +5759,8 @@ mod tests {
     async fn test_render_history_drops_oldest_first() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5233,7 +5803,8 @@ mod tests {
     async fn test_record_turn_does_not_panic_mid_multibyte() {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5295,7 +5866,8 @@ mod tests {
         std::fs::write(temp.path().join("beta.txt"), "").unwrap();
 
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5605,7 +6177,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("test.redb");
 
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5659,7 +6232,8 @@ mod tests {
         std::fs::write(temp.path().join("b.txt"), "BBB").unwrap();
 
         let db_path = temp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: temp.path().to_path_buf(),
@@ -5703,7 +6277,8 @@ async fn test_render_history_keeps_pinned_turn() {
     use tempfile::TempDir;
     let temp = TempDir::new().unwrap();
     let db_path = temp.path().join("test.redb");
-    let cfg = RouterConfig { skill_threshold: 0.3,
+    let cfg = RouterConfig {
+        embedder: None, skill_threshold: 0.3,
         context_window: 8192,
         short_term_capacity: 100,
         working_dir: temp.path().to_path_buf(),
@@ -5748,7 +6323,8 @@ async fn test_render_history_drops_unpinned_turn_again() {
     use tempfile::TempDir;
     let temp = TempDir::new().unwrap();
     let db_path = temp.path().join("test.redb");
-    let cfg = RouterConfig { skill_threshold: 0.3,
+    let cfg = RouterConfig {
+        embedder: None, skill_threshold: 0.3,
         context_window: 8192,
         short_term_capacity: 100,
         working_dir: temp.path().to_path_buf(),
@@ -5937,7 +6513,8 @@ mod diff_attachment_tests {
         std::fs::write(tmp.path().join("greet.txt"), "hello\n").unwrap();
 
         let db_path = tmp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -6054,7 +6631,8 @@ mod auto_check_tests {
         std::fs::write(tmp.path().join("src/lib.rs"), "pub fn ok() {}\n").unwrap();
 
         let db_path = tmp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -6108,7 +6686,8 @@ mod auto_check_tests {
         std::fs::write(tmp.path().join("src/lib.rs"), "pub fn ok() {}\n").unwrap();
 
         let db_path = tmp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -6159,7 +6738,8 @@ mod auto_check_tests {
         .unwrap();
 
         let db_path = tmp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -6218,7 +6798,8 @@ mod auto_check_tests {
         std::fs::write(tmp.path().join("src/lib.rs"), "pub fn ok() {}\n").unwrap();
 
         let db_path = tmp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
@@ -6266,7 +6847,8 @@ mod auto_check_tests {
         std::fs::write(tmp.path().join("src/touched.rs"), "pub fn ok() {}\n").unwrap();
 
         let db_path = tmp.path().join("test.redb");
-        let cfg = RouterConfig { skill_threshold: 0.3,
+        let cfg = RouterConfig {
+            embedder: None, skill_threshold: 0.3,
             context_window: 8192,
             short_term_capacity: 100,
             working_dir: tmp.path().to_path_buf(),
