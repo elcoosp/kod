@@ -135,10 +135,7 @@ pub enum SwarmEvent {
     /// Two agents wrote to the same file. Emitted after all agents
     /// finish, before the merge call, so a live UI can show the
     /// conflict while it is still actionable.
-    ConflictDetected {
-        file: String,
-        agents: Vec<String>,
-    },
+    ConflictDetected { file: String, agents: Vec<String> },
     /// All agents done; the runner is now calling the model to merge.
     Merging,
     /// A per-agent git worktree was created (D4-D2). Emitted before
@@ -316,9 +313,7 @@ impl SwarmRunner {
         //    directory is not a git repo — the runner then falls back
         //    to the shared root, exactly the pre-D4 behaviour.
         let mut worktree_mgr: Option<crate::worktree::WorktreeManager> =
-            match crate::worktree::WorktreeManager::detect(
-                &self.engine.working_dir(),
-            ) {
+            match crate::worktree::WorktreeManager::detect(self.engine.working_dir()) {
                 Ok(Some(m)) => Some(m),
                 Ok(None) => None,
                 Err(e) => {
@@ -330,9 +325,7 @@ impl SwarmRunner {
                 }
             };
         if worktree_mgr.is_some() {
-            tracing::info!(
-                "swarm: worktree mode enabled (per-agent isolation)"
-            );
+            tracing::info!("swarm: worktree mode enabled (per-agent isolation)");
         }
 
         // 1. Decompose.
@@ -362,9 +355,19 @@ impl SwarmRunner {
                  interface, a test fixture), or merge the two subtasks \
                  into one.",
                 subtasks[i].name,
-                subtasks[i].expected_writes.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(", "),
+                subtasks[i]
+                    .expected_writes
+                    .iter()
+                    .map(|s| format!("\"{s}\""))
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 subtasks[j].name,
-                subtasks[j].expected_writes.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(", "),
+                subtasks[j]
+                    .expected_writes
+                    .iter()
+                    .map(|s| format!("\"{s}\""))
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 common.join(", "),
             );
             if let Ok(replanned) = self.decompose_with_hint(goal, &replan_hint).await
@@ -373,7 +376,9 @@ impl SwarmRunner {
                 subtasks = replanned;
             }
         }
-        let _ = chunk_tx.send(SwarmEvent::Decomposed(subtasks.clone())).await;
+        let _ = chunk_tx
+            .send(SwarmEvent::Decomposed(subtasks.clone()))
+            .await;
 
         // 1b. Create one worktree per subtask. All-or-nothing: a
         //     failure on any worktree drops the manager (cleaning up
@@ -443,10 +448,8 @@ impl SwarmRunner {
         // Map capability -> the agents that can serve it. Populated as
         // we spawn. `Vec` (not `HashSet`) to keep the deterministic
         // order that `find_agents_with_capability` sorts on.
-        let mut capability_agents: std::collections::HashMap<
-            Capability,
-            Vec<AgentId>,
-        > = std::collections::HashMap::new();
+        let mut capability_agents: std::collections::HashMap<Capability, Vec<AgentId>> =
+            std::collections::HashMap::new();
 
         // Per-agent handle info: name and, when a worktree was created,
         // its path. Keyed by AgentId so the wave loop can find the right
@@ -461,9 +464,7 @@ impl SwarmRunner {
         let mut pool_handles: Vec<AgentHandle> = Vec::with_capacity(pool.len());
         for (i, cap) in pool.iter().enumerate() {
             let slug = format!("agent-{}-{}", i + 1, sanitize(cap.as_str()));
-            let agent = AgentBuilder::new(&slug)
-                .with_capability(*cap)
-                .build();
+            let agent = AgentBuilder::new(&slug).with_capability(*cap).build();
             let id = agent.id().clone();
             swarm.add_agent(agent).await?;
             swarm.start_agent(&id).await?;
@@ -486,10 +487,7 @@ impl SwarmRunner {
                     .await;
             }
 
-            capability_agents
-                .entry(*cap)
-                .or_default()
-                .push(id.clone());
+            capability_agents.entry(*cap).or_default().push(id.clone());
             pool_handles.push(AgentHandle {
                 id,
                 name: slug,
@@ -531,7 +529,7 @@ impl SwarmRunner {
                     pool_handles
                         .first()
                         .map(|h| h.id.clone())
-                        .unwrap_or_else(AgentId::new)
+                        .unwrap_or_default()
                 }
                 1 => candidates[0].clone(),
                 _ => {
@@ -553,10 +551,7 @@ impl SwarmRunner {
             let task = Task::new(st.description.clone(), Priority::Medium);
             let task_id = task.id.clone();
             swarm.coordinator().register_task(task).await?;
-            swarm
-                .coordinator()
-                .assign_task(&task_id, &chosen)
-                .await?;
+            swarm.coordinator().assign_task(&task_id, &chosen).await?;
 
             // Register the subtask's declared write set on the chosen
             // agent's transcript. A pool agent that serves two
@@ -567,10 +562,7 @@ impl SwarmRunner {
                 let key = format!("swarm:{chosen}");
                 let _ = self
                     .engine
-                    .set_transcript_write_globs(
-                        &key,
-                        Some(st.expected_writes.clone()),
-                    )
+                    .set_transcript_write_globs(&key, Some(st.expected_writes.clone()))
                     .await;
             }
 
@@ -607,8 +599,7 @@ impl SwarmRunner {
             Vec<String>,
             std::result::Result<String, String>,
         )> = Vec::with_capacity(handles.len());
-        let mut completed: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut completed: std::collections::HashSet<String> = std::collections::HashSet::new();
         // Per-run heartbeat watchdog (design D4.3). Polls every 10 s;
         // for any agent whose last heartbeat is older than 90 s, sends
         // a cooperative cancel so the agent's streaming loop stops at
@@ -617,8 +608,7 @@ impl SwarmRunner {
         // design's "re-dispatch". Best-effort: the watchdog holds an
         // engine handle and a swarm handle, both of which the run
         // already owns.
-        let (watchdog_stop_tx, mut watchdog_stop_rx) =
-            tokio::sync::mpsc::channel::<()>(1);
+        let (watchdog_stop_tx, mut watchdog_stop_rx) = tokio::sync::mpsc::channel::<()>(1);
         let watchdog_engine = self.engine.clone();
         let watchdog_swarm = swarm.clone();
         let watchdog_chunk_tx = chunk_tx.clone();
@@ -716,10 +706,7 @@ impl SwarmRunner {
                 .send(SwarmEvent::AgentFailed {
                     id: kod_types::AgentId::new(),
                     name: "(run)".to_string(),
-                    error: format!(
-                        "overall run timeout ({}s) reached",
-                        timeout_secs,
-                    ),
+                    error: format!("overall run timeout ({}s) reached", timeout_secs,),
                 })
                 .await;
         }
@@ -736,18 +723,11 @@ impl SwarmRunner {
                     secs = self.swarm_timeout_secs,
                     "swarm: overall run deadline reached before a wave;                      aborting remaining agents"
                 );
-                report_run_timeout(
-                    chunk_tx,
-                    &handles,
-                    &remaining,
-                    self.swarm_timeout_secs,
-                )
-                .await;
+                report_run_timeout(chunk_tx, &handles, &remaining, self.swarm_timeout_secs).await;
                 break;
             }
-            let (ready, blocked): (Vec<usize>, Vec<usize>) = remaining
-                .into_iter()
-                .partition(|&i| {
+            let (ready, blocked): (Vec<usize>, Vec<usize>) =
+                remaining.into_iter().partition(|&i| {
                     handles[i]
                         .subtask
                         .depends_on
@@ -983,26 +963,16 @@ impl SwarmRunner {
             // that starts just under the deadline cannot overrun it.
             let wave_results = match global_deadline {
                 Some(deadline) => {
-                    let remaining_time = deadline
-                        .saturating_duration_since(tokio::time::Instant::now());
+                    let remaining_time =
+                        deadline.saturating_duration_since(tokio::time::Instant::now());
                     if remaining_time.is_zero() {
                         // The top-of-loop check should have caught
                         // this; be defensive.
-                        report_run_timeout(
-                            chunk_tx,
-                            &handles,
-                            &ready,
-                            self.swarm_timeout_secs,
-                        )
-                        .await;
+                        report_run_timeout(chunk_tx, &handles, &ready, self.swarm_timeout_secs)
+                            .await;
                         break;
                     }
-                    match tokio::time::timeout(
-                        remaining_time,
-                        join_all(wave_tasks),
-                    )
-                    .await
-                    {
+                    match tokio::time::timeout(remaining_time, join_all(wave_tasks)).await {
                         Ok(v) => v,
                         Err(_) => {
                             tracing::warn!(
@@ -1014,13 +984,8 @@ impl SwarmRunner {
                             // need a terminal event.
                             let mut all: Vec<usize> = ready.clone();
                             all.extend(blocked.iter().copied());
-                            report_run_timeout(
-                                chunk_tx,
-                                &handles,
-                                &all,
-                                self.swarm_timeout_secs,
-                            )
-                            .await;
+                            report_run_timeout(chunk_tx, &handles, &all, self.swarm_timeout_secs)
+                                .await;
                             break;
                         }
                     }
@@ -1044,31 +1009,31 @@ impl SwarmRunner {
         //     runs before the LLM synthesis so the caller sees the
         //     conflict list first. A conflict aborts the merge cleanly
         //     and the report names the files.
-        let worktree_merge: Option<WorktreeMergeOutcome> =
-            if let Some(mgr) = worktree_mgr.as_mut() {
-                match mgr.merge_all() {
-                    Ok(report) => {
-                        let _ = chunk_tx
-                            .send(SwarmEvent::WorktreesMerged {
-                                merged: report.merged.clone(),
-                                conflicted: report.conflicted.clone(),
-                                failed: report.failed.clone(),
-                            })
-                            .await;
-                        Some(WorktreeMergeOutcome {
-                            merged: report.merged,
-                            conflicted: report.conflicted,
-                            failed: report.failed,
+        let worktree_merge: Option<WorktreeMergeOutcome> = if let Some(mgr) = worktree_mgr.as_mut()
+        {
+            match mgr.merge_all() {
+                Ok(report) => {
+                    let _ = chunk_tx
+                        .send(SwarmEvent::WorktreesMerged {
+                            merged: report.merged.clone(),
+                            conflicted: report.conflicted.clone(),
+                            failed: report.failed.clone(),
                         })
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "worktree merge failed");
-                        None
-                    }
+                        .await;
+                    Some(WorktreeMergeOutcome {
+                        merged: report.merged,
+                        conflicted: report.conflicted,
+                        failed: report.failed,
+                    })
                 }
-            } else {
-                None
-            };
+                Err(e) => {
+                    tracing::warn!(error = %e, "worktree merge failed");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         // 3c. Clear the per-transcript working dir overrides and
         //     write sets so a reused engine (a second swarm run)
@@ -1111,9 +1076,7 @@ impl SwarmRunner {
                         .communication()
                         .broadcast_lifecycle(
                             &id,
-                            &format!("completed: {}",
-                                text.lines().next().unwrap_or("(no text)")
-                            ),
+                            &format!("completed: {}", text.lines().next().unwrap_or("(no text)")),
                         )
                         .await;
                     let _ = chunk_tx
@@ -1320,11 +1283,7 @@ impl SwarmRunner {
     /// so the caller can decide whether to retry with the original
     /// plan or abort; today the only caller falls through to the
     /// original plan, which is the safe default.
-    async fn decompose_with_hint(
-        &self,
-        goal: &str,
-        hint: &str,
-    ) -> Result<Vec<Subtask>> {
+    async fn decompose_with_hint(&self, goal: &str, hint: &str) -> Result<Vec<Subtask>> {
         // The probe is best-effort inside `decompose` — here we
         // simply prepend a hint line and call the underlying
         // provider with the same generation options `decompose`
@@ -1750,9 +1709,7 @@ fn globs_overlap(a: &str, b: &str) -> bool {
     if na.is_empty() || nb.is_empty() {
         return false;
     }
-    na == nb
-        || na.starts_with(&format!("{nb}/"))
-        || nb.starts_with(&format!("{na}/"))
+    na == nb || na.starts_with(&format!("{nb}/")) || nb.starts_with(&format!("{na}/"))
 }
 
 /// Truncate a glob at its first wildcard segment. `src/parser/*.rs`
@@ -1917,8 +1874,14 @@ mod tests {
     #[test]
     fn capability_inference_from_description() {
         assert_eq!(capability_for("write tests for auth"), Capability::Testing);
-        assert_eq!(capability_for("update the readme"), Capability::Documentation);
-        assert_eq!(capability_for("refactor the parser"), Capability::Refactoring);
+        assert_eq!(
+            capability_for("update the readme"),
+            Capability::Documentation
+        );
+        assert_eq!(
+            capability_for("refactor the parser"),
+            Capability::Refactoring
+        );
         assert_eq!(capability_for("implement the handler"), Capability::Coding);
     }
 
@@ -2027,7 +1990,10 @@ mod tests {
         let v = parse_subtasks(text, 5).expect("parse");
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].capability, Capability::Testing);
-        assert_eq!(v[0].expected_writes, vec!["src/a.rs".to_string(), "docs/**".to_string()]);
+        assert_eq!(
+            v[0].expected_writes,
+            vec!["src/a.rs".to_string(), "docs/**".to_string()]
+        );
     }
 
     #[test]
