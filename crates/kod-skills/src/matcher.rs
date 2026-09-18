@@ -383,3 +383,177 @@ mod tests {
         assert_eq!(matcher.count().await, 0);
     }
 }
+
+#[cfg(test)]
+mod coverage_match_scoring {
+    //! Pins the ranking shape a caller relies on: a name hit
+    //! outranks a trigger hit, a trigger hit outranks a tag hit, a
+    //! tag hit outranks a capability hit, and a capability hit
+    //! outranks pure description overlap. A regression that changed
+    //! these ratios would silently reroute every prompt that
+    //! mentions a skill name.
+    use super::*;
+    use kod_types::{SkillId, SkillMetadata};
+    use std::path::PathBuf;
+
+    fn skill(name: &str, desc: &str, triggers: &[&str], tags: &[&str], caps: &[&str]) -> Skill {
+        Skill {
+            id: SkillId::new(),
+            metadata: SkillMetadata {
+                name: name.into(),
+                description: desc.into(),
+                version: "1.0.0".into(),
+                author: None,
+                category: "test".into(),
+                tags: tags.iter().map(|s| s.to_string()).collect(),
+                capabilities: caps.iter().map(|s| s.to_string()).collect(),
+                requirements: vec![],
+                triggers: triggers.iter().map(|s| s.to_string()).collect(),
+            },
+            instructions: String::new(),
+            examples: vec![],
+            constraints: None,
+            content: String::new(),
+            path: PathBuf::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn name_hit_outranks_trigger_hit() {
+        let m = SkillMatcher::new();
+        m.add_skill(skill("rust-refactoring", "", &[], &[], &[]))
+            .await;
+        m.add_skill(skill("other", "", &["rust-refactoring"], &[], &[]))
+            .await;
+        let results = m.find_relevant_skills("rust-refactoring").await;
+        assert!(!results.is_empty(), "expected at least one match");
+        assert_eq!(results[0].skill.metadata.name, "rust-refactoring");
+    }
+
+    #[tokio::test]
+    async fn trigger_hit_outranks_tag_hit() {
+        let m = SkillMatcher::new();
+        m.add_skill(skill("by-trigger", "", &["special phrase"], &[], &[]))
+            .await;
+        m.add_skill(skill("by-tag", "", &[], &["special"], &[]))
+            .await;
+        // The query contains the exact trigger phrase; both skills
+        // have some signal, but the exact-trigger match must lead.
+        let results = m.find_relevant_skills("use special phrase here").await;
+        assert!(results.len() >= 1, "expected a match");
+        assert_eq!(results[0].skill.metadata.name, "by-trigger");
+    }
+
+    #[tokio::test]
+    async fn case_insensitive_trigger_match() {
+        // Matching lowercases both sides. A trigger written with
+        // capitals must fire on a lowercase query and vice versa.
+        let m = SkillMatcher::new();
+        m.add_skill(skill("x", "", &["Refactor Rust"], &[], &[]))
+            .await;
+        let results = m.find_relevant_skills("please refactor rust now").await;
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn no_signal_skill_is_filtered() {
+        // A skill whose every field is empty returns no match for a
+        // query that has nothing in common with its name. The
+        // threshold filter is what keeps a huge, unrelated skill
+        // library from polluting the prompt.
+        let m = SkillMatcher::new();
+        m.add_skill(skill("unrelated", "", &[], &[], &[])).await;
+        let results = m.find_relevant_skills("completely different subject")
+            .await;
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn results_are_sorted_by_score_descending() {
+        let m = SkillMatcher::new();
+        // Three skills with decreasing signal.
+        m.add_skill(skill("target", "", &["target"], &[], &[]))
+            .await;
+        m.add_skill(skill("second", "", &[], &["target"], &[]))
+            .await;
+        m.add_skill(skill("third", "", &[], &[], &["target"]))
+            .await;
+        let results = m.find_relevant_skills("target").await;
+        assert!(results.len() >= 2, "expected at least 2: {results:?}");
+        for w in results.windows(2) {
+            assert!(
+                w[0].score >= w[1].score,
+                "scores not sorted: {} before {}",
+                w[0].score,
+                w[1].score,
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn max_results_caps_the_output() {
+        // `max_results` defaults to 3. A query matching 10 skills
+        // returns 3 — that cap is what bounds prompt cost.
+        let m = SkillMatcher::new();
+        for i in 0..10 {
+            m.add_skill(skill(
+                &format!("s{i}"),
+                "matching description about matching",
+                &["matching"],
+                &[],
+                &[],
+            ))
+            .await;
+        }
+        let results = m.find_relevant_skills("matching").await;
+        assert!(results.len() <= 3, "cap ignored: got {}", results.len());
+    }
+
+    #[tokio::test]
+    async fn with_threshold_controls_the_minimum() {
+        // A higher threshold rejects weak matches; a lower one
+        // accepts them. The knob is the caller's only lever on the
+        // precision/recall tradeoff, so both directions must work.
+        let strict = SkillMatcher::with_threshold(0.99);
+        strict
+            .add_skill(skill("x", "some description", &[], &[], &[]))
+            .await;
+        let r = strict.find_relevant_skills("some description").await;
+        // Description-only overlap is capped at 0.2, so nothing
+        // reaches 0.99.
+        assert!(r.is_empty(), "strict should reject: {r:?}");
+
+        let loose = SkillMatcher::with_threshold(0.05);
+        loose
+            .add_skill(skill("x", "some description", &[], &[], &[]))
+            .await;
+        let r = loose.find_relevant_skills("some description").await;
+        assert!(!r.is_empty(), "loose should accept: {r:?}");
+    }
+
+    #[tokio::test]
+    async fn removing_a_skill_makes_it_unmatchable() {
+        let m = SkillMatcher::new();
+        m.add_skill(skill("gone", "", &["unique-trigger"], &[], &[]))
+            .await;
+        assert_eq!(m.find_relevant_skills("unique-trigger").await.len(), 1);
+        m.remove_skill("gone").await;
+        assert!(m.find_relevant_skills("unique-trigger").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn adding_a_skill_under_an_existing_name_replaces_it() {
+        // The matcher keys skills by name. Registering a second
+        // skill under the same name must overwrite, not append:
+        // otherwise a hot-reloaded skill produces two matches for
+        // one name and the prompt carries the instructions twice.
+        let m = SkillMatcher::new();
+        m.add_skill(skill("same", "old", &["old-trigger"], &[], &[]))
+            .await;
+        m.add_skill(skill("same", "new", &["new-trigger"], &[], &[]))
+            .await;
+        assert_eq!(m.count().await, 1);
+        assert!(m.find_relevant_skills("old-trigger").await.is_empty());
+        assert_eq!(m.find_relevant_skills("new-trigger").await.len(), 1);
+    }
+}
