@@ -51,6 +51,59 @@ jobs:
     - name: Run doc tests
       run: cargo test --doc --workspace
 
+  # Fast, deterministic, offline — the two suites that guard the two
+  # invariants a refactor is most likely to break silently:
+  #
+  # - **Provider contracts** (`kod-provider-openai`, `kod-provider-
+  #   anthropic`): the wire shape each provider emits for `complete`
+  #   and `stream_completion`. The tests use `httpmock` (no network)
+  #   and pin multi-role messages, tool calls with ids, tool results
+  #   linked by `tool_call_id`, `cache_control` placement on the last
+  #   cacheable segment, and `input_schema` vs `parameters`.
+  #
+  # - **Prompt goldens** (`kod-core`): the byte-level shape of the
+  #   prompt the router emits (`characterization_prompts`), the
+  #   cacheable prefix's stability across turns (`golden_prefix`), the
+  #   `PromptPlan` identity with the text builder (`prompt_plan`), and
+  #   the historical transcript rendering (`characterization_history`).
+  #
+  # Splitting these out of the main `test` job does not remove them
+  # from that job; it makes the failure domain legible in the CI UI,
+  # which is what §11.4 asks for.
+  contracts:
+    name: Provider contracts + prompt goldens
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-contracts-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-contracts-
+          ${{ runner.os }}-cargo-
+
+    - name: Provider request-shape contracts
+      run: |
+        cargo test -p kod-provider-openai --test contracts
+        cargo test -p kod-provider-anthropic --test contracts
+
+    - name: Prompt characterization + golden prefix + plan
+      run: |
+        cargo test -p kod-core --test characterization_history
+        cargo test -p kod-core --test characterization_prompts
+        cargo test -p kod-core --test golden_prefix
+        cargo test -p kod-core --test prompt_plan
+
   security:
     name: Security audit
     runs-on: ubuntu-latest
@@ -105,6 +158,57 @@ jobs:
         file: coverage/cobertura.xml
         flags: unittests
         name: codecov-umbrella
+
+  # PR-level size gate. The release workflow has a strict 15 MB ceiling
+  # on the musl release binary; this lighter check runs on every PR
+  # against the debug binary (which is much larger — the point is to
+  # catch a runaway dependency add, not to enforce the release
+  # promise). A +50 % jump in the debug binary size on a PR is a signal
+  # to look at what the diff pulled in; the ceiling leaves room for
+  # legitimate growth while catching the pathological case.
+  bloat-pr:
+    name: Size gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-bloat-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-bloat-
+
+    - name: Build debug binary
+      run: cargo build -p kod-cli
+
+    - name: Enforce debug-size ceiling
+      run: |
+        set -euo pipefail
+        BIN=target/debug/kod
+        SIZE=$(stat -c%s "$BIN")
+        # 200 MiB ceiling. The release binary strips symbols and
+        # optimises; debug keeps them. The gate is intentionally
+        # generous — the point is to catch a jump, not to police the
+        # exact debug size.
+        MAX=$((200 * 1024 * 1024))
+        echo "debug binary size: $SIZE bytes ($(( SIZE / 1024 / 1024 )) MiB)"
+        if [ "$SIZE" -gt "$MAX" ]; then
+          echo "debug binary exceeds the 200 MiB PR ceiling" >&2
+          echo "the diff likely pulled in a heavy dependency; run" >&2
+          echo "  cargo bloat -p kod-cli --crates --n 20" >&2
+          echo "to see the largest contributors" >&2
+          exit 1
+        fi
 
   # Runs the #[ignore]-gated tests that exercise the product against a
   # real OpenAI-compatible server. Without this job, the ignored tests
@@ -192,6 +296,45 @@ jobs:
         # (all TUI tests are inline #[cfg(test)] modules). Run every
         # ignored test in the crate instead.
         cargo test -p kod-tui -- --ignored --nocapture
+
+  # Live Anthropic API tests (design §4 D1.5). Runs only when the
+  # `ANTHROPIC_API_KEY` repository secret is set — a PR from a fork
+  # does not have it, so the job is skipped rather than failing. This
+  # is the design's "skip, do not fail" shape. Every test in
+  # `crates/kod-provider-anthropic/tests/live.rs` re-checks the
+  # variable and returns cleanly when it is absent, so the skip is
+  # enforced twice: at the job level and at the test level.
+  live-anthropic:
+    name: Live Anthropic (skippable)
+    runs-on: ubuntu-latest
+    # Only run when the secret exists and this is not a fork PR.
+    if: ${{ secrets.ANTHROPIC_API_KEY != '' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-live-anthropic-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-live-anthropic-
+          ${{ runner.os }}-cargo-
+
+    - name: Run live Anthropic tests
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        # Keep the cost tiny: the tests default to a small model.
+        KOD_LIVE_MODEL: claude-3-5-haiku-latest
+      run: |
+        cargo test -p kod-provider-anthropic --test live -- --ignored --nocapture
 
   benchmark:
     name: Benchmarks
