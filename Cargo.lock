@@ -2208,6 +2208,7 @@ dependencies = [
 name = "kod-provider"
 version = "0.1.0"
 dependencies = [
+ "async-stream",
  "async-trait",
  "futures",
  "httpmock",
