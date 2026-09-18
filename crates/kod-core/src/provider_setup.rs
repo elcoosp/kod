@@ -46,14 +46,17 @@ use std::sync::Arc;
 pub fn build_registry(
     llm: &LlmConfig,
     model_override: Option<&str>,
-) -> Result<(Arc<ProviderRegistry>, ModelRef, Option<kod_config::RoutingConfig>)> {
+) -> Result<(
+    Arc<ProviderRegistry>,
+    ModelRef,
+    Option<kod_config::RoutingConfig>,
+)> {
     // Endpoints come straight from the config; a v2 config always
     // carries them. An empty list is invalid (validate() reports it,
     // and Default synthesises one), so this is a defensive check.
     if llm.endpoints.is_empty() {
         return Err(KodError::Config(
-            "llm.endpoints is empty; add at least one [[llm.endpoints]] block"
-                .to_string(),
+            "llm.endpoints is empty; add at least one [[llm.endpoints]] block".to_string(),
         ));
     }
     let endpoints = llm.endpoints.clone();
@@ -88,11 +91,11 @@ pub fn build_registry(
         .iter()
         .find(|e| e.name == default_name)
         .or_else(|| endpoints.first())
-        .ok_or_else(|| {
-            KodError::Config("llm config produced zero endpoints".to_string())
-        })?;
+        .ok_or_else(|| KodError::Config("llm config produced zero endpoints".to_string()))?;
 
-    let model = model_override.unwrap_or(&default_endpoint.model).to_string();
+    let model = model_override
+        .unwrap_or(&default_endpoint.model)
+        .to_string();
     let default_ref = ModelRef::new(default_endpoint.name.clone(), model);
 
     Ok((Arc::new(registry), default_ref, llm.routing.clone()))
@@ -104,9 +107,7 @@ pub fn build_registry(
 /// variable name in the config), then from `OPENAI_API_KEY` for the
 /// OpenAI-compatible case, then a dummy value the local servers
 /// accept. See `OpenAICompatProvider::with_api_key`.
-fn build_provider(
-    endpoint: &EndpointConfig,
-) -> Result<Arc<dyn kod_provider::LlmProvider>> {
+fn build_provider(endpoint: &EndpointConfig) -> Result<Arc<dyn kod_provider::LlmProvider>> {
     match endpoint.provider {
         ProviderKind::OpenAICompatible => {
             let api_key = resolve_api_key(endpoint);
@@ -149,7 +150,10 @@ fn resolve_anthropic_api_key(endpoint: &EndpointConfig) -> Result<String> {
     Err(KodError::Config(format!(
         "endpoint {:?}: no Anthropic API key. Set {} in the environment          (or set `api_key_env` on the endpoint to name a different          variable).",
         endpoint.name,
-        endpoint.api_key_env.as_deref().unwrap_or("ANTHROPIC_API_KEY"),
+        endpoint
+            .api_key_env
+            .as_deref()
+            .unwrap_or("ANTHROPIC_API_KEY"),
     )))
 }
 
@@ -213,8 +217,7 @@ mod tests {
     #[test]
     fn model_override_applies_to_default_ref_only() {
         let cfg = v1_config();
-        let (_registry, default_ref, _routing) =
-            build_registry(&cfg, Some("llama3.1")).unwrap();
+        let (_registry, default_ref, _routing) = build_registry(&cfg, Some("llama3.1")).unwrap();
         assert_eq!(default_ref.model, "llama3.1");
     }
 
