@@ -125,10 +125,7 @@ struct Response<'a> {
 pub async fn serve(engine: Arc<KodEngine>, socket_path: PathBuf) -> Result<()> {
     prepare_socket(&socket_path).await?;
     let listener = UnixListener::bind(&socket_path).map_err(|e| {
-        KodError::Internal(format!(
-            "could not bind {}: {e}",
-            socket_path.display()
-        ))
+        KodError::Internal(format!("could not bind {}: {e}", socket_path.display()))
     })?;
     set_socket_perms(&socket_path)?;
     tracing::info!(socket = %socket_path.display(), "kod serve listening");
@@ -193,8 +190,7 @@ pub async fn stop_daemon(socket_path: &Path) -> Result<()> {
         "method": "shutdown",
         "params": {},
     });
-    let mut line = serde_json::to_string(&req)
-        .map_err(|e| KodError::Internal(e.to_string()))?;
+    let mut line = serde_json::to_string(&req).map_err(|e| KodError::Internal(e.to_string()))?;
     line.push('\n');
     stream.write_all(line.as_bytes()).await?;
     stream.flush().await?;
@@ -264,9 +260,9 @@ fn set_socket_perms(_path: &Path) -> Result<()> {
 /// `ls -la` shows, but a same-user process on a multi-user machine
 /// is exactly what the UID check is for.
 fn check_peer_uid(stream: &UnixStream) -> Result<()> {
-    let cred = stream.peer_cred().map_err(|e| {
-        KodError::Internal(format!("could not read peer credentials: {e}"))
-    })?;
+    let cred = stream
+        .peer_cred()
+        .map_err(|e| KodError::Internal(format!("could not read peer credentials: {e}")))?;
     let our_uid = current_uid();
     if cred.uid() != our_uid {
         return Err(KodError::PermissionDenied {
@@ -441,12 +437,8 @@ async fn handle_connection(
                         .await?;
                     }
                     None => {
-                        write_error(
-                            &out_tx,
-                            &req.id,
-                            "respond_to_question requires 'id' (u64)",
-                        )
-                        .await?;
+                        write_error(&out_tx, &req.id, "respond_to_question requires 'id' (u64)")
+                            .await?;
                     }
                 }
             }
@@ -471,9 +463,7 @@ async fn handle_connection(
                 let out = out_tx.clone();
                 let id = req.id.clone();
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        run_swarm(&engine, &out, &id, &goal, max_agents, merge).await
-                    {
+                    if let Err(e) = run_swarm(&engine, &out, &id, &goal, max_agents, merge).await {
                         let _ = send_response(
                             &out,
                             &Response {
@@ -561,10 +551,8 @@ async fn run_swarm(
     max_agents: usize,
     merge: bool,
 ) -> Result<()> {
-    let runner =
-        crate::swarm_runner::SwarmRunner::new(engine.clone(), max_agents, merge).await?;
-    let (evt_tx, mut evt_rx) =
-        tokio::sync::mpsc::channel::<crate::swarm_runner::SwarmEvent>(256);
+    let runner = crate::swarm_runner::SwarmRunner::new(engine.clone(), max_agents, merge).await?;
+    let (evt_tx, mut evt_rx) = tokio::sync::mpsc::channel::<crate::swarm_runner::SwarmEvent>(256);
     let goal_owned = goal.to_string();
     let run_handle = tokio::spawn(async move { runner.run(&goal_owned, &evt_tx).await });
     while let Some(evt) = evt_rx.recv().await {
@@ -611,19 +599,15 @@ async fn send_response(
     tx: &tokio::sync::mpsc::Sender<String>,
     response: &Response<'_>,
 ) -> Result<()> {
-    let mut s = serde_json::to_string(response)
-        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    let mut s =
+        serde_json::to_string(response).map_err(|e| KodError::Serialization(e.to_string()))?;
     s.push('\n');
     tx.send(s)
         .await
         .map_err(|_| KodError::Internal("writer channel closed".to_string()))
 }
 
-async fn write_chunk(
-    tx: &tokio::sync::mpsc::Sender<String>,
-    id: &str,
-    chunk: &str,
-) -> Result<()> {
+async fn write_chunk(tx: &tokio::sync::mpsc::Sender<String>, id: &str, chunk: &str) -> Result<()> {
     send_response(
         tx,
         &Response {
@@ -680,11 +664,7 @@ async fn write_ack(tx: &tokio::sync::mpsc::Sender<String>, id: &str) -> Result<(
     .await
 }
 
-async fn write_ok(
-    tx: &tokio::sync::mpsc::Sender<String>,
-    id: &str,
-    data: Value,
-) -> Result<()> {
+async fn write_ok(tx: &tokio::sync::mpsc::Sender<String>, id: &str, data: Value) -> Result<()> {
     send_response(
         tx,
         &Response {
@@ -695,8 +675,6 @@ async fn write_ok(
     )
     .await
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -734,11 +712,9 @@ mod tests {
 
     #[test]
     fn request_parses_with_and_without_version() {
-        let with: Request =
-            serde_json::from_str(r#"{"v":1,"id":"a","method":"process"}"#).unwrap();
+        let with: Request = serde_json::from_str(r#"{"v":1,"id":"a","method":"process"}"#).unwrap();
         assert_eq!(with.method, "process");
-        let without: Request =
-            serde_json::from_str(r#"{"id":"a","method":"process"}"#).unwrap();
+        let without: Request = serde_json::from_str(r#"{"id":"a","method":"process"}"#).unwrap();
         assert_eq!(without.method, "process");
     }
 }
