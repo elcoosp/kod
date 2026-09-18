@@ -307,3 +307,196 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod coverage_todo_lifecycle {
+    //! The todo list is a working document the model reads back.
+    //! A regression in ordering, id assignment, or validation
+    //! produces a list whose IDs do not match what `update`
+    //! expects, and the model loses its place with no error
+    //! pointing at the cause.
+    use super::*;
+    use kod_types::ToolPermissions;
+
+    fn ctx() -> ToolContext {
+        ToolContext::new("/tmp").with_permissions(ToolPermissions::default())
+    }
+
+    #[tokio::test]
+    async fn ids_are_monotonic_and_never_reused_after_clear() {
+        // Even after `clear`, the next `add` must not reuse an id.
+        // A model that has stale ids in its context could otherwise
+        // update the wrong new item.
+        let list = new_list();
+        let tool = TodoTool::new(list.clone());
+        tool.execute(&serde_json::json!({"action": "add", "text": "one"}), &ctx())
+            .await
+            .unwrap();
+        tool.execute(&serde_json::json!({"action": "add", "text": "two"}), &ctx())
+            .await
+            .unwrap();
+        tool.execute(&serde_json::json!({"action": "clear"}), &ctx())
+            .await
+            .unwrap();
+        let r = tool
+            .execute(&serde_json::json!({"action": "add", "text": "three"}), &ctx())
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Success(v) => {
+                assert_eq!(v["id"], 3, "id reused after clear: {v}");
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_text_is_rejected() {
+        let list = new_list();
+        let tool = TodoTool::new(list);
+        let r = tool
+            .execute(&serde_json::json!({"action": "add", "text": "   "}), &ctx())
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Error(msg) => assert!(msg.contains("empty"), "got: {msg}"),
+            other => panic!("expected error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_text_on_add_is_a_parameter_error() {
+        let list = new_list();
+        let tool = TodoTool::new(list);
+        let err = tool
+            .execute(&serde_json::json!({"action": "add"}), &ctx())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("text"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn missing_status_on_update_is_a_parameter_error() {
+        let list = new_list();
+        let tool = TodoTool::new(list);
+        tool.execute(&serde_json::json!({"action": "add", "text": "a"}), &ctx())
+            .await
+            .unwrap();
+        let err = tool
+            .execute(&serde_json::json!({"action": "update", "id": 1}), &ctx())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("status"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn unknown_status_is_a_value_error_not_a_parameter_error() {
+        // A bad status string is model input, not a missing
+        // argument; the error must be recoverable (Error result)
+        // and name the valid values.
+        let list = new_list();
+        let tool = TodoTool::new(list);
+        tool.execute(&serde_json::json!({"action": "add", "text": "a"}), &ctx())
+            .await
+            .unwrap();
+        let r = tool
+            .execute(
+                &serde_json::json!({"action": "update", "id": 1, "status": "in-progress"}),
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Error(msg) => {
+                assert!(msg.contains("in_progress"), "hyphen form not suggested: {msg}");
+            }
+            other => panic!("expected error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_action_is_reported_cleanly() {
+        let list = new_list();
+        let tool = TodoTool::new(list);
+        let r = tool
+            .execute(&serde_json::json!({"action": "delete", "id": 1}), &ctx())
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Error(msg) => {
+                assert!(msg.contains("add"), "expected a hint list: {msg}");
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_returns_items_in_insertion_order() {
+        let list = new_list();
+        let tool = TodoTool::new(list);
+        for t in ["alpha", "beta", "gamma"] {
+            tool.execute(&serde_json::json!({"action": "add", "text": t}), &ctx())
+                .await
+                .unwrap();
+        }
+        let r = tool
+            .execute(&serde_json::json!({"action": "list"}), &ctx())
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Success(v) => {
+                let items = v["items"].as_array().unwrap();
+                assert_eq!(items[0]["text"], "alpha");
+                assert_eq!(items[1]["text"], "beta");
+                assert_eq!(items[2]["text"], "gamma");
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn every_documented_status_is_accepted() {
+        // The four statuses in the schema are the contract; a
+        // regression that renamed one would silently break
+        // `update` for that status.
+        let list = new_list();
+        let tool = TodoTool::new(list);
+        tool.execute(&serde_json::json!({"action": "add", "text": "a"}), &ctx())
+            .await
+            .unwrap();
+        for s in ["pending", "in_progress", "completed", "cancelled"] {
+            let r = tool
+                .execute(
+                    &serde_json::json!({"action": "update", "id": 1, "status": s}),
+                    &ctx(),
+                )
+                .await
+                .unwrap();
+            match r {
+                ToolResult::Success(v) => assert_eq!(v["status"], s),
+                other => panic!("status {s} rejected: {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_list_is_shared_across_tools() {
+        // The `TodoList` is an `Arc<RwLock<Vec>>`; two tools
+        // sharing the same list must see each other's writes.
+        // This is what lets a swarm's agents share one plan.
+        let list = new_list();
+        let a = TodoTool::new(list.clone());
+        let b = TodoTool::new(list.clone());
+        a.execute(&serde_json::json!({"action": "add", "text": "from a"}), &ctx())
+            .await
+            .unwrap();
+        let r = b
+            .execute(&serde_json::json!({"action": "list"}), &ctx())
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Success(v) => assert_eq!(v["count"], 1),
+            other => panic!("got {other:?}"),
+        }
+    }
+}
