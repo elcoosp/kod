@@ -79,3 +79,62 @@ pub fn language_id_for(path: &std::path::Path) -> &'static str {
         _ => "plaintext",
     }
 }
+
+#[cfg(test)]
+mod coverage_language_id {
+    //! `language_id_for` is the single point that decides which LSP
+    //! language a file belongs to. A regression mislabels a file,
+    //! the server reports no diagnostics for it, and the model reads
+    //! a clean build where there is one.
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn supported_extensions_map_to_the_expected_id() {
+        let cases = [
+            ("a.rs", "rust"),
+            ("a.py", "python"),
+            ("a.ts", "typescript"),
+            ("a.tsx", "typescript"),
+            ("a.js", "javascript"),
+            ("a.jsx", "javascript"),
+            ("a.go", "go"),
+            ("a.c", "c"),
+            ("a.h", "c"),
+            ("a.cc", "cpp"),
+            ("a.cpp", "cpp"),
+            ("a.hpp", "cpp"),
+            ("a.cxx", "cpp"),
+        ];
+        for (file, expected) in cases {
+            assert_eq!(
+                language_id_for(Path::new(file)),
+                expected,
+                "{file} mapped wrong",
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_extension_falls_back_to_plaintext() {
+        assert_eq!(language_id_for(Path::new("a.txt")), "plaintext");
+        assert_eq!(language_id_for(Path::new("a.json")), "plaintext");
+        assert_eq!(language_id_for(Path::new("a.md")), "plaintext");
+    }
+
+    #[test]
+    fn no_extension_is_plaintext() {
+        // A file with no extension (`Makefile`, `LICENSE`) must not
+        // panic or return an empty string.
+        assert_eq!(language_id_for(Path::new("Makefile")), "plaintext");
+        assert_eq!(language_id_for(Path::new("LICENSE")), "plaintext");
+    }
+
+    #[test]
+    fn uppercase_extension_is_not_recognized() {
+        // The mapping is deliberately case-sensitive: `.RS` is
+        // almost always a typo, and silently mapping it to Rust
+        // would hide the mistake.
+        assert_eq!(language_id_for(Path::new("a.RS")), "plaintext");
+    }
+}
