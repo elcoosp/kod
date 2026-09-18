@@ -5,15 +5,14 @@ use adk_model::anthropic::{AnthropicClient, AnthropicConfig};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
 use kod_error::{KodError, Result};
+use kod_provider::request::CompletionRequest;
 use kod_provider::{
     GenerationOptions, GenerationResponse, LlmProvider, PromptCacheKind, ProviderCapabilities,
     StreamChunk,
 };
-use kod_provider::request::CompletionRequest;
 use kod_types::{ToolCall, ToolDefinition};
 use std::collections::HashMap;
 use std::pin::Pin;
-
 
 /// Wrapper that implements kod's [`LlmProvider`] over the Anthropic
 /// Messages API.
@@ -48,9 +47,7 @@ impl AnthropicProvider {
             .connect_timeout(std::time::Duration::from_secs(10))
             .build()
             .map_err(|e| {
-                KodError::Provider(format!(
-                    "anthropic: could not build http client: {e}"
-                ))
+                KodError::Provider(format!("anthropic: could not build http client: {e}"))
             })?;
         Ok(Self {
             inner,
@@ -132,7 +129,8 @@ impl AnthropicProvider {
                 for part in content.parts {
                     match part {
                         Part::Text { text: chunk } => text.push_str(&chunk),
-                        Part::FunctionCall { name, args, .. } => calls.push(ToolCall { id: None,
+                        Part::FunctionCall { name, args, .. } => calls.push(ToolCall {
+                            id: None,
                             tool_name: name,
                             arguments: args,
                         }),
@@ -183,10 +181,7 @@ impl LlmProvider for AnthropicProvider {
     /// on the `adk-model` path — that is the pre-migration surface, and
     /// this override only affects callers that have already migrated to
     /// `CompletionRequest`.
-    async fn complete(
-        &self,
-        req: &CompletionRequest,
-    ) -> Result<GenerationResponse> {
+    async fn complete(&self, req: &CompletionRequest) -> Result<GenerationResponse> {
         let body = crate::wire::build_messages_body(req);
         let url = format!("{}/messages", self.base_url);
         let resp = self
@@ -197,9 +192,7 @@ impl LlmProvider for AnthropicProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| {
-                KodError::Provider(format!("anthropic: POST {url}: {e}"))
-            })?;
+            .map_err(|e| KodError::Provider(format!("anthropic: POST {url}: {e}")))?;
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -210,9 +203,10 @@ impl LlmProvider for AnthropicProvider {
             };
             return Err(KodError::provider_status(status.as_u16(), &snippet));
         }
-        let parsed: serde_json::Value = resp.json().await.map_err(|e| {
-            KodError::Provider(format!("anthropic: invalid JSON: {e}"))
-        })?;
+        let parsed: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| KodError::Provider(format!("anthropic: invalid JSON: {e}")))?;
         parse_response(&parsed)
     }
 
@@ -345,9 +339,10 @@ impl LlmProvider for AnthropicProvider {
             // closes without one (a truncated stream), still emit a
             // `Done` so the engine's assembly loop terminates instead
             // of stalling on the last partial call.
-            if !done_sent && state.finished {
-                yield Ok(StreamChunk::Done);
-            } else if !done_sent {
+            // The two branches were identical; collapse them. The
+            // contract is the same either way: the transport closed
+            // (or `message_stop` arrived), the engine needs a `Done`.
+            if !done_sent {
                 yield Ok(StreamChunk::Done);
             }
         })
@@ -529,10 +524,8 @@ fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
     }
 
     let usage = v.get("usage").map(|u| kod_provider::TokenUsage {
-        prompt_tokens: u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0)
-            as usize,
-        completion_tokens: u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0)
-            as usize,
+        prompt_tokens: u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as usize,
+        completion_tokens: u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as usize,
         total_tokens: (u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0)
             + u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0))
             as usize,
@@ -577,8 +570,6 @@ mod tests {
             "https://api.anthropic.com/v1"
         );
     }
-
-
 
     #[test]
     fn capabilities_declare_explicit_prompt_cache() {
