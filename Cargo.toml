@@ -41,8 +41,6 @@ async-stream = "0.3"
 # Data structures
 compact_str = { version = "0.10.0", features = ["serde"] }
 bitflags = { version = "2.13.0", features = ["serde"] }
-slotmap = "1.1.1"
-arc-swap = "1.9.2"
 parking_lot = "0.12.5"
 
 # Storage
@@ -57,8 +55,6 @@ clap = { version = "4.6.6", features = ["derive", "env"] }
 clap_complete = "4.6.6"
 toml = "1.1.2"
 
-# Git & GitHub
-git2 = "0.19"
 chrono = { version = "0.4", features = ["serde"] }
 
 # Diffing
@@ -78,9 +74,6 @@ fs4 = "1.1.0"
 # Tracing
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json", "fmt"] }
-
-# Embedding (heavy — isolated in kod-embed)
-fastembed = "5.17.4"
 
 # TUI
 ratatui = { version = "0.29.0", features = ["unstable-rendered-line-info"] }
