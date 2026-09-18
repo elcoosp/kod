@@ -85,8 +85,14 @@ mod coverage_memory_metadata {
     use super::*;
 
     #[test]
-    fn empty_json_yields_a_fully_default_metadata() {
-        let m: MemoryMetadata = serde_json::from_str("{}").unwrap();
+    fn legacy_json_defaults_the_newer_fields() {
+        // The three original fields (session_id, tags, embedding)
+        // are required; only project_key and last_retrieved_at_ms
+        // carry a per-field `#[serde(default)]`. A pre-D2.5 entry
+        // therefore parses cleanly, with the two new fields
+        // defaulting.
+        let legacy = r#"{"session_id":null,"tags":[],"embedding":null}"#;
+        let m: MemoryMetadata = serde_json::from_str(legacy).unwrap();
         assert!(m.session_id.is_none());
         assert!(m.tags.is_empty());
         assert!(m.embedding.is_none());
