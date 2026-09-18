@@ -768,3 +768,262 @@ mod widget_overlays {
         assert!(!text.contains("hint:"), "no hint line, got: {text}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Header and status widgets.
+//
+// Both are state-heavy renderers: the interesting branches are the
+// conditional spans that appear only under specific KodApp states
+// (offline, near-limit context, sandbox badge, network badge, goal).
+// Each test drives the app into one state and asserts only on that
+// state's contribution to the buffer — not on the whole line, which
+// would make the test brittle against unrelated visual changes.
+// ---------------------------------------------------------------------------
+mod header_and_status {
+    use super::*;
+    use kod_tui::app::{ConfirmKind, KodApp};
+    use kod_tui::ui::{HeaderWidget, StatusWidget};
+
+    fn render_header(app: &KodApp, w: u16) -> String {
+        let area = ratatui::layout::Rect::new(0, 0, w, 1);
+        let mut buf = Buffer::empty(area);
+        HeaderWidget::new().render(app, area, &mut buf);
+        buffer_text(&buf)
+    }
+
+    fn render_status(app: &KodApp, w: u16) -> String {
+        let area = ratatui::layout::Rect::new(0, 0, w, 1);
+        let mut buf = Buffer::empty(area);
+        StatusWidget::new().render(app, area, &mut buf);
+        buffer_text(&buf)
+    }
+
+    // ---- HeaderWidget --------------------------------------------------
+
+    #[test]
+    fn header_shows_the_kod_title_and_model_label() {
+        let mut app = KodApp::new();
+        app.set_model_name("claude-sonnet-4-5");
+        let text = render_header(&app, 120);
+        assert!(text.contains(" kod "), "title span, got: {text}");
+        assert!(
+            text.contains("claude-sonnet-4-5"),
+            "model label, got: {text}"
+        );
+    }
+
+    #[test]
+    fn header_shows_the_theme_name_in_brackets() {
+        let app = KodApp::new();
+        let name = app.theme_name().to_string();
+        let text = render_header(&app, 120);
+        assert!(
+            text.contains(&format!("[{name}]")),
+            "theme tag [{name}], got: {text}"
+        );
+    }
+
+    #[test]
+    fn header_hides_the_sandbox_badge_when_the_label_is_empty() {
+        let app = KodApp::new();
+        assert!(
+            app.sandbox_label().is_empty(),
+            "fresh app should have no sandbox label"
+        );
+        let text = render_header(&app, 160);
+        assert!(
+            !text.contains("sandbox:"),
+            "no sandbox badge on a fresh app, got: {text}"
+        );
+    }
+
+    #[test]
+    fn header_shows_a_real_sandbox_backend_by_name() {
+        let mut app = KodApp::new();
+        app.set_sandbox_label("bwrap".to_string());
+        let text = render_header(&app, 160);
+        assert!(
+            text.contains("sandbox:bwrap"),
+            "sandbox backend badge, got: {text}"
+        );
+    }
+
+    #[test]
+    fn header_shows_sandbox_off_as_a_plain_badge() {
+        let mut app = KodApp::new();
+        app.set_sandbox_label("off".to_string());
+        let text = render_header(&app, 160);
+        assert!(
+            text.contains("sandbox:off"),
+            "sandbox-off badge, got: {text}"
+        );
+    }
+
+    #[test]
+    fn header_calls_out_a_missing_required_sandbox() {
+        // `require-missing` is the loud state: the user asked for a
+        // sandbox, no primitive is available, and the header must
+        // say so rather than silently rendering the generic badge.
+        let mut app = KodApp::new();
+        app.set_sandbox_label("require-missing".to_string());
+        let text = render_header(&app, 200);
+        assert!(
+            text.contains("require-missing"),
+            "missing-sandbox warning, got: {text}"
+        );
+    }
+
+    #[test]
+    fn header_hides_the_network_badge_until_it_is_enabled() {
+        let app = KodApp::new();
+        assert!(!app.network_access_enabled(), "network is off by default");
+        let text = render_header(&app, 160);
+        assert!(!text.contains("net:on"), "no net badge by default, got: {text}");
+    }
+
+    #[test]
+    fn header_shows_the_network_badge_when_enabled() {
+        let mut app = KodApp::new();
+        app.set_network_access_enabled(true);
+        let text = render_header(&app, 160);
+        assert!(text.contains("net:on"), "net:on badge, got: {text}");
+    }
+
+    #[test]
+    fn header_renders_a_short_goal_verbatim() {
+        let mut app = KodApp::new();
+        app.set_goal("fix the failing test");
+        let text = render_header(&app, 200);
+        assert!(text.contains("◉"), "goal bullet, got: {text}");
+        assert!(
+            text.contains("fix the failing test"),
+            "goal text, got: {text}"
+        );
+    }
+
+    #[test]
+    fn header_truncates_a_long_goal_with_an_ellipsis() {
+        let mut app = KodApp::new();
+        // 80 chars — well past the 40-char display cap in the widget.
+        let long = "x".repeat(80);
+        app.set_goal(&long);
+        let text = render_header(&app, 300);
+        assert!(text.contains("◉"), "goal bullet present, got: {text}");
+        assert!(
+            text.contains("…"),
+            "long goal must be truncated with …, got: {text}"
+        );
+        // The full 80-char goal must NOT appear — the cap is real.
+        assert!(
+            !text.contains(&long),
+            "full long goal must not be rendered, got: {text}"
+        );
+    }
+
+    // ---- StatusWidget --------------------------------------------------
+
+    #[test]
+    fn status_confirmation_clear_prompt_wins_over_everything_else() {
+        let mut app = KodApp::new();
+        app.begin_generation(); // would otherwise show the spinner
+        app.request_confirm(ConfirmKind::Clear);
+        let text = render_status(&app, 200);
+        assert!(
+            text.contains("Clear all messages"),
+            "confirm prompt must win, got: {text}"
+        );
+        assert!(
+            !text.contains("Esc cancels"),
+            "generating hint must be suppressed, got: {text}"
+        );
+    }
+
+    #[test]
+    fn status_confirmation_quit_prompt_is_rendered() {
+        let mut app = KodApp::new();
+        app.request_confirm(ConfirmKind::Quit);
+        let text = render_status(&app, 200);
+        assert!(
+            text.contains("Quit with a generation running"),
+            "quit confirm text, got: {text}"
+        );
+    }
+
+    #[test]
+    fn status_confirmation_clear_all_prompt_mentions_the_danger() {
+        let mut app = KodApp::new();
+        app.request_confirm(ConfirmKind::ClearAll);
+        let text = render_status(&app, 240);
+        assert!(
+            text.contains("Cannot be undone"),
+            "clear-all warning, got: {text}"
+        );
+    }
+
+    #[test]
+    fn status_search_bar_renders_the_live_query() {
+        let mut app = KodApp::new();
+        app.begin_search();
+        app.search_type('a');
+        app.search_type('b');
+        let label = app.search_status_label();
+        assert!(
+            !label.is_empty(),
+            "an active search must have a non-empty status label"
+        );
+        let text = render_status(&app, 240);
+        // The widget renders the label verbatim
+        // (`format!("{} ", search_label)`). Compare against the label
+        // itself instead of guessing at its prefix — the exact shape
+        // is a KodApp concern, not a StatusWidget one.
+        assert!(
+            text.contains(label.trim()),
+            "search label {label:?} must appear in the status, got: {text}"
+        );
+        // And the search branch must suppress the idle hint.
+        assert_ne!(
+            text.trim(),
+            app.hint_line().trim(),
+            "active search must not fall through to the idle hint"
+        );
+    }
+
+    #[test]
+    fn status_error_banner_survives_until_the_next_keypress() {
+        let mut app = KodApp::new();
+        app.fail_generation("provider unreachable");
+        assert_eq!(app.last_error(), Some("provider unreachable"));
+        let text = render_status(&app, 200);
+        assert!(
+            text.contains("provider unreachable"),
+            "error banner, got: {text}"
+        );
+    }
+
+    #[test]
+    fn status_shows_the_spinner_and_phase_while_generating() {
+        let mut app = KodApp::new();
+        app.begin_generation();
+        let text = render_status(&app, 200);
+        assert!(
+            text.contains("thinking") || text.contains("connecting"),
+            "phase label, got: {text}"
+        );
+        assert!(
+            text.contains("Esc cancels"),
+            "cancel hint, got: {text}"
+        );
+    }
+
+    #[test]
+    fn status_falls_back_to_the_idle_hint_when_nothing_else_applies() {
+        let app = KodApp::new();
+        // No confirm, no search, no error, no generation → the hint.
+        let text = render_status(&app, 240);
+        assert_eq!(
+            text.trim(),
+            app.hint_line().trim(),
+            "idle status must be exactly the hint line"
+        );
+    }
+}

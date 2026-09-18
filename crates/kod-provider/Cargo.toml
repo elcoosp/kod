@@ -22,14 +22,14 @@ httpmock = "0.7"
 time = { workspace = true }
 
 [features]
-# Exposes `kod_provider::testkit`, the shared provider contract
-# suite (§11.2). Enabled by each concrete provider crate's
-# dev-dependencies so a test binary can call the suite against its
-# own `LlmProvider` implementation.
+# `testkit` is on by default so the contract suite in
+# `src/testkit.rs` is compiled (and its own test module runs) during
+# a plain `cargo nextest --workspace`. Without this, the module is
+# excluded from every default test build and its 278 lines are
+# measured as 0% covered — which is what the coverage report used to
+# show.
 #
-# No `dep:` entries: `tokio`, `serde_json`, and the rest are
-# unconditional dependencies of this crate. A feature that names
-# them would either be a no-op (`dep:foo` on a non-optional dep is
-# an error) or force them to become optional and break every other
-# feature that relies on them.
+# Downstream crates that want the suite import it explicitly; the
+# rest pay only for the code being present, not for it being used.
+default = ["testkit"]
 testkit = []

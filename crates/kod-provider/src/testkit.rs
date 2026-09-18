@@ -585,3 +585,168 @@ pub fn anthropic_sse_text_response(content: &str) -> String {
         content = content,
     )
 }
+
+// ---------------------------------------------------------------------------
+// Self-tests
+//
+// Before this module existed, `run_trait_contracts` was declared and
+// documented but had no caller anywhere in the workspace: the three
+// crates whose doc comments mention it only mention it in prose, and
+// the crate's own default features did not compile `testkit` at all.
+// The coverage report showed the file at 0.00% (278 lines) because
+// the compiler never saw it.
+//
+// These tests instantiate the suite against a fresh `MockProvider`
+// (the suite creates its own internal mocks for the interesting
+// scenarios, so passing any working provider is enough to exercise
+// every contract body) and pin the two SSE-body helpers directly.
+//
+// `default = ["testkit"]` in this crate's Cargo.toml is what makes
+// these tests compile during a plain `cargo nextest --workspace`.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod coverage_testkit {
+    use super::*;
+    use std::sync::Arc;
+
+    /// Run the full trait contract suite against a text-scripted
+    /// `MockProvider`. The suite creates its own internal mocks for
+    /// the calls that need a specific script (calls, mixed, error),
+    /// so a single working provider is enough to exercise every
+    /// contract body inside `run_trait_contracts`.
+    #[tokio::test]
+    async fn run_trait_contracts_completes_against_a_mock_provider() {
+        let provider: Arc<dyn LlmProvider> =
+            Arc::new(MockProvider::new("self-test", Script::Text("ok".into())));
+        run_trait_contracts(provider).await;
+    }
+
+    // ---- MockProvider behaviour ---------------------------------------
+
+    #[test]
+    fn scripted_provider_rotates_and_repeats_the_last_entry() {
+        let p = MockProvider::scripted(
+            "rotate",
+            vec![
+                Script::Text("first".into()),
+                Script::Text("second".into()),
+            ],
+        );
+        // next_script is private; drive it through a public method.
+        // `list_models` does not consume the script, so use the
+        // MockProvider's own accessor pattern: call next_script
+        // directly since we are in the same module tree.
+        assert!(matches!(p.next_script(), Script::Text(t) if t == "first"));
+        assert!(matches!(p.next_script(), Script::Text(t) if t == "second"));
+        // Past the end it repeats the last entry.
+        assert!(matches!(p.next_script(), Script::Text(t) if t == "second"));
+        assert!(matches!(p.next_script(), Script::Text(t) if t == "second"));
+    }
+
+    #[test]
+    fn single_element_script_answers_every_call_the_same_way() {
+        let p = MockProvider::new("one-shot", Script::Text("always".into()));
+        for _ in 0..5 {
+            assert!(matches!(p.next_script(), Script::Text(t) if t == "always"));
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_provider_records_every_prompt_it_receives() {
+        let p = MockProvider::new("recorder", Script::Text("ok".into()));
+        let opts = GenerationOptions::default();
+        p.generate("first", &opts).await.unwrap();
+        p.generate("second", &opts).await.unwrap();
+        let seen = p.captured_prompts.lock().unwrap().clone();
+        assert_eq!(seen, vec!["first".to_string(), "second".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn mock_provider_generate_on_a_calls_only_script_errors() {
+        // A script that has tool calls but no text cannot answer a
+        // plain `generate`; the mock returns a descriptive error
+        // rather than an empty string, so a test that wired the
+        // wrong method learns why.
+        let call = ToolCall {
+            id: None,
+            tool_name: "noop".into(),
+            arguments: serde_json::Value::Null,
+        };
+        let p = MockProvider::new("calls-only", Script::Calls(vec![call]));
+        let opts = GenerationOptions::default();
+        let err = p.generate("hi", &opts).await.unwrap_err();
+        assert!(
+            err.to_string().contains("tool calls"),
+            "error must explain the mismatch, got: {err}"
+        );
+    }
+
+    #[test]
+    fn mock_provider_with_capabilities_overrides_the_reported_matrix() {
+        let custom = ProviderCapabilities {
+            tools: false,
+            vision: false,
+            json_mode: true,
+            prompt_cache: crate::request::PromptCacheKind::None,
+            embeddings: false,
+            streaming_tools: false,
+            pricing: None,
+        };
+        let p =
+            MockProvider::new("custom-caps", Script::Text("x".into())).with_capabilities(custom);
+        let reported = p.capabilities();
+        assert!(reported.json_mode, "custom caps applied");
+        assert!(!reported.tools, "custom caps applied");
+    }
+
+    // ---- SSE response helpers -----------------------------------------
+
+    #[test]
+    fn openai_sse_body_carries_the_content_and_terminator() {
+        let body = openai_sse_text_response("hello openai");
+        assert!(
+            body.contains("hello openai"),
+            "content must be interpolated"
+        );
+        assert!(
+            body.contains("data: [DONE]"),
+            "OpenAI streams terminate with [DONE]"
+        );
+        // Every non-empty line after the first is a `data:` frame.
+        for line in body.lines().filter(|l| !l.is_empty()) {
+            assert!(
+                line.starts_with("data:"),
+                "unexpected non-data line in OpenAI SSE body: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn anthropic_sse_body_has_the_expected_event_sequence() {
+        let body = anthropic_sse_text_response("hello anthropic");
+        // The Messages API stream is a fixed event sequence. Pin the
+        // ones the wire parser keys on; anything else is cosmetic.
+        for ev in [
+            "message_start",
+            "content_block_start",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop",
+        ] {
+            assert!(
+                body.contains(&format!("event: {ev}")),
+                "missing `event: {ev}` in Anthropic SSE body"
+            );
+        }
+        assert!(
+            body.contains("hello anthropic"),
+            "content must be interpolated"
+        );
+        assert!(
+            body.contains("text_delta"),
+            "the content delta type is what the parser dispatches on"
+        );
+    }
+}

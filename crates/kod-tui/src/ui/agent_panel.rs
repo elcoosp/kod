@@ -155,3 +155,137 @@ fn shorten_path(p: &str) -> String {
     segs = segs[segs.len() - KEEP..].to_vec();
     format!("…/{}", segs.join("/"))
 }
+
+#[cfg(test)]
+mod coverage_agent_panel {
+    //! Agent panel render and its two private string helpers.
+    //! Lives inside the source file (not `tests/ui.rs`) so `truncate`
+    //! and `shorten_path` are reachable without widening their
+    //! visibility for a test-only reason.
+    use super::*;
+    use crate::app::KodApp;
+    use ratatui::buffer::Buffer;
+
+    fn render(app: &KodApp, w: u16, h: u16) -> String {
+        let area = ratatui::layout::Rect::new(0, 0, w, h);
+        let mut buf = Buffer::empty(area);
+        AgentPanelWidget::new().render(app, area, &mut buf);
+        buf.content().iter().map(|c| c.symbol().to_string()).collect()
+    }
+
+    // ---- truncate ------------------------------------------------------
+
+    #[test]
+    fn truncate_returns_short_input_unchanged() {
+        assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_with_zero_max_is_empty() {
+        assert_eq!(truncate("anything", 0), "");
+    }
+
+    #[test]
+    fn truncate_appends_an_ellipsis_when_cut() {
+        assert_eq!(truncate("abcdefghij", 4), "abc…");
+    }
+
+    #[test]
+    fn truncate_counts_chars_not_bytes() {
+        assert_eq!(truncate("日本語です", 3), "日本…");
+    }
+
+    // ---- shorten_path --------------------------------------------------
+
+    #[test]
+    fn shorten_path_keeps_a_short_path_verbatim() {
+        assert_eq!(shorten_path("/a/b"), "/a/b");
+        assert_eq!(shorten_path("/a/b/c"), "/a/b/c");
+    }
+
+    #[test]
+    fn shorten_path_collapses_a_long_path_to_its_tail() {
+        assert_eq!(shorten_path("/a/b/c/d/e"), "…/d/e");
+    }
+
+    #[test]
+    fn shorten_path_tolerates_trailing_slashes() {
+        // Empty segments are filtered, so a trailing slash does not
+        // count as a segment.
+        assert_eq!(shorten_path("/a/b/c/d/"), "…/c/d");
+    }
+
+    // ---- render --------------------------------------------------------
+
+    #[test]
+    fn panel_says_no_active_agents_on_a_fresh_app() {
+        let app = KodApp::new();
+        let text = render(&app, 40, 10);
+        assert!(text.contains("No active agents"), "empty state, got: {text}");
+        assert!(text.contains("/swarm"), "empty-state hint, got: {text}");
+    }
+
+    #[test]
+    fn panel_renders_a_running_agent_with_its_model() {
+        let mut app = KodApp::new();
+        app.begin_swarm();
+        let id = kod_types::AgentId::new();
+        app.swarm_agent_started(
+            id,
+            "architect",
+            "design the schema",
+            Some("local/qwen2.5".to_string()),
+        );
+        let text = render(&app, 60, 20);
+        assert!(text.contains("architect"), "agent name, got: {text}");
+        assert!(
+            text.contains("design the schema"),
+            "subtask, got: {text}"
+        );
+        assert!(text.contains("local/qwen2.5"), "model, got: {text}");
+    }
+
+    #[test]
+    fn panel_renders_a_worktree_and_branch_when_present() {
+        let mut app = KodApp::new();
+        app.begin_swarm();
+        let id = kod_types::AgentId::new();
+        app.swarm_agent_started(id.clone(), "coder", "write the handler", None);
+        app.swarm_set_worktree(
+            &id,
+            std::path::PathBuf::from("/tmp/kod-work/coder-1"),
+            "kod/coder-1".to_string(),
+        );
+        let text = render(&app, 80, 20);
+        assert!(text.contains("worktree:"), "worktree label, got: {text}");
+        assert!(text.contains("coder-1"), "worktree tail, got: {text}");
+        assert!(text.contains("branch:"), "branch label, got: {text}");
+        assert!(text.contains("kod/coder-1"), "branch value, got: {text}");
+    }
+
+    #[test]
+    fn panel_marks_a_failed_agent_with_an_x() {
+        let mut app = KodApp::new();
+        app.begin_swarm();
+        let id = kod_types::AgentId::new();
+        app.swarm_agent_started(id.clone(), "tester", "run the suite", None);
+        app.swarm_agent_failed(&id, "compile error in test.rs");
+        let text = render(&app, 80, 20);
+        assert!(text.contains("✗"), "failure marker, got: {text}");
+        assert!(
+            text.contains("compile error"),
+            "failure text, got: {text}"
+        );
+    }
+
+    #[test]
+    fn panel_marks_a_finished_agent_with_a_filled_circle() {
+        let mut app = KodApp::new();
+        app.begin_swarm();
+        let id = kod_types::AgentId::new();
+        app.swarm_agent_started(id.clone(), "writer", "draft the docs", None);
+        app.swarm_agent_finished(&id, "done");
+        let text = render(&app, 60, 20);
+        assert!(text.contains("●"), "finished marker, got: {text}");
+    }
+}
