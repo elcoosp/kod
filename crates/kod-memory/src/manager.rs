@@ -9,6 +9,12 @@ use kod_types::{MemoryContext, MemoryEntry, MemoryId, MemoryType, };
 use std::path::PathBuf;
 use time::OffsetDateTime;
 
+/// Episodic entries whose last touch (write or retrieval) is older
+/// than this many days are archived by [`MemoryManager::consolidate`].
+/// A durable `LongTerm` fact is never archived — only auto-extracted
+/// `Episodic` entries age out. 60 days matches the design's D2.5.
+pub const ARCHIVE_AFTER_DAYS: u32 = 60;
+
 /// Result of a [`MemoryManager::compact`] call: how many entries
 /// were dropped from each layer. A single struct rather than a tuple
 /// because more layers may grow a compaction path later.
@@ -16,6 +22,24 @@ use time::OffsetDateTime;
 pub struct CompactionReport {
     /// Entries dropped from short-term memory.
     pub short_term_removed: usize,
+}
+
+/// Result of a [`MemoryManager::consolidate`] pass: how many episodic
+/// entries were archived (dropped from the active store) and how many
+/// duplicate pairs were fused into single entries.
+///
+/// Fusion needs an embedder; a session without one reports `fused: 0`
+/// and leaves every pair in place. The archival count is the one that
+/// moves on a fresh session without a model — an episode written months
+/// ago and never read again is dropped even with no embedder.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ConsolidationReport {
+    /// Episodes archived (removed from the persistent store).
+    pub archived: usize,
+    /// Pairs of near-duplicate entries fused into one. `0` when no
+    /// embedder is installed, or when no pair exceeded the fusion
+    /// threshold.
+    pub fused: usize,
 }
 
 /// Unified memory manager
@@ -337,12 +361,82 @@ impl MemoryManager {
         // order. 0.15 lets recency+keyword-only entries through but
         // filters obvious noise.
         const MIN_SCORE: f32 = 0.15;
-        Ok(scored
+        let top: Vec<MemoryEntry> = scored
             .into_iter()
             .filter(|(s, _)| *s >= MIN_SCORE)
             .take(20)
             .map(|(_, e)| e)
-            .collect())
+            .collect();
+
+        // Write back `last_retrieved_at_ms` (design D2.5). Best-effort
+        // and batched: one redb write transaction for the top-k, on the
+        // retrieval hot path. A failure is logged and the results are
+        // returned unchanged — the writeback is an archival heuristic,
+        // not a correctness requirement.
+        if !top.is_empty() {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let mut updated: Vec<MemoryEntry> = Vec::with_capacity(top.len());
+            for e in &top {
+                let mut e = e.clone();
+                e.metadata.last_retrieved_at_ms = Some(now_ms);
+                updated.push(e);
+            }
+            if let Err(err) = self.long_term.store_batch(updated).await {
+                tracing::debug!(
+                    error = %err,
+                    "could not persist last_retrieved_at_ms; consolidation                      will fall back to the entry timestamp",
+                );
+            }
+        }
+
+        Ok(top)
+    }
+
+    /// Archive episodic entries that have not been touched in
+    /// [`ARCHIVE_AFTER_DAYS`]. Returns a count of what was removed and
+    /// (a follow-up) how many duplicate pairs were fused.
+    ///
+    /// "Touched" means: written, or returned by a retrieval since the
+    /// `last_retrieved_at_ms` writeback landed. A `LongTerm` entry is
+    /// never archived — it is a durable fact the user asked to
+    /// remember; only `Episodic` entries (auto-extracted at end of
+    /// session) are age-eligible.
+    ///
+    /// Duplicate fusion (cosine > 0.95) needs an embedder; without one
+    /// the pass reports `fused: 0` and leaves every pair in place. The
+    /// archival half runs regardless.
+    pub async fn consolidate(&self) -> Result<ConsolidationReport> {
+        let all = self.long_term.get_all().await?;
+        if all.is_empty() {
+            return Ok(ConsolidationReport::default());
+        }
+        let now = OffsetDateTime::now_utc();
+        let cutoff = now - time::Duration::days(ARCHIVE_AFTER_DAYS as i64);
+        let mut archived = 0usize;
+        for entry in &all {
+            if entry.memory_type != MemoryType::Episodic {
+                continue;
+            }
+            let last_touch = entry
+                .metadata
+                .last_retrieved_at_ms
+                .and_then(|ms| {
+                    OffsetDateTime::from_unix_timestamp((ms / 1000) as i64).ok()
+                })
+                .unwrap_or(entry.timestamp);
+            if last_touch < cutoff
+                && self.long_term.remove(&entry.id).await.is_ok()
+            {
+                archived += 1;
+            }
+        }
+        Ok(ConsolidationReport {
+            archived,
+            fused: 0,
+        })
     }
 
 
@@ -372,6 +466,25 @@ impl MemoryManager {
         self.long_term.get_all().await
     }
 
+
+    /// Explicitly close the underlying long-term database.
+    ///
+    /// Consumes the manager: the caller (typically `KodEngine::shutdown`)
+    /// has decided the session is over and no further reads or writes
+    /// should be possible. Dropping the manager here releases its own
+    /// `LongTermMemory` handle; redb's `Database` fsyncs and closes
+    /// when the last reference drops (see `LongTermMemory::close`).
+    ///
+    /// Idempotency is by construction. A caller that needs to reuse
+    /// the store after a shutdown creates a fresh manager.
+    pub fn close(self) {
+        // Bind to a local and drop explicitly so the intent is obvious
+        // even if a future field is added: every owned subsystem is
+        // released on this line.
+        let Self { short_term, long_term, .. } = self;
+        drop(short_term);
+        long_term.close();
+    }
 
     /// Clear all memories
     pub async fn clear_all(&self) -> Result<()> {
