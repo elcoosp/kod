@@ -21,7 +21,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-mod common;
+#[path = "common/install_test_provider.rs"]
+mod install_test_provider_mod;
+use install_test_provider_mod::install_test_provider;
 
 struct CaptureProvider {
     prompts: Mutex<Vec<String>>,
@@ -79,7 +81,8 @@ fn engine_in(dir: &std::path::Path) -> KodEngine {
     std::fs::write(dir.join("main.rs"), "pub fn main() {}\n").unwrap();
     let db_path = dir.join("test.redb");
     let cfg = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         working_dir: dir.to_path_buf(),
         enable_memory: false,
         max_skills_per_query: 3,
@@ -105,7 +108,7 @@ async fn history_rendering_shape_is_stable_across_turns() {
     let temp = TempDir::new().unwrap();
     let engine = engine_in(temp.path());
     let capture = Arc::new(CaptureProvider::new());
-    common::install_test_provider(&engine, capture.clone()).await;
+    install_test_provider(&engine, capture.clone()).await;
     engine.start().await.unwrap();
 
     engine.process("first prompt").await.unwrap();
@@ -181,7 +184,7 @@ async fn history_budget_drops_oldest_first() {
     let temp = TempDir::new().unwrap();
     let engine = engine_in(temp.path());
     let capture = Arc::new(CaptureProvider::new());
-    common::install_test_provider(&engine, capture.clone()).await;
+    install_test_provider(&engine, capture.clone()).await;
     engine.start().await.unwrap();
 
     // At the floor: 4_000 chars. Each seeded turn is
