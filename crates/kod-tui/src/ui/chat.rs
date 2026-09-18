@@ -73,7 +73,16 @@ impl ChatWidget {
         // renderer owns the wrapping, so no per-line `reflow_line`
         // call is needed — the markdown module is the single place
         // that decides where a line breaks.
-        let body: Vec<Line<'static>> = crate::markdown::render(content, inner, theme);
+        //
+        // Cached: the widget re-renders every visible message on every
+        // frame, so an uncached parse here is O(messages × parse_cost)
+        // per keystroke. The key is (content, inner width, theme), so a
+        // theme switch or a sidebar toggle gets a fresh render.
+        let cached = app.render_cache().get_or_render(content, inner, theme);
+        // `assistant_block` returns `Vec<Line>`, not a slice; the
+        // cache gives us a shared `Arc<Vec<Line>>` to build the framed
+        // output from without copying the underlying spans.
+        let body: Vec<Line<'static>> = (*cached).clone();
 
         if width < 20 {
             let mut lines = vec![Line::from(vec![Span::styled("ai ", title_style)])];
