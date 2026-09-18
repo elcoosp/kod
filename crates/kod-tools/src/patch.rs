@@ -65,32 +65,30 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
         let mut new_lines: Vec<String> = Vec::new();
         for hl in &hunk.lines {
             match hl {
-                HunkLine::Context(text) => {
-                    match lines.get(cursor) {
-                        Some(actual) if actual == text => {
-                            new_lines.push(actual.clone());
-                            cursor += 1;
-                        }
-                        Some(actual) => {
-                            return Err(KodError::InvalidParameters {
-                                reason: format!(
-                                    "context mismatch at line {}:\n  expected: {}\n  actual:   {}",
-                                    cursor + 1,
-                                    text,
-                                    actual
-                                ),
-                            });
-                        }
-                        None => {
-                            return Err(KodError::InvalidParameters {
-                                reason: format!(
-                                    "context expected at line {} but file ended",
-                                    cursor + 1
-                                ),
-                            });
-                        }
+                HunkLine::Context(text) => match lines.get(cursor) {
+                    Some(actual) if actual == text => {
+                        new_lines.push(actual.clone());
+                        cursor += 1;
                     }
-                }
+                    Some(actual) => {
+                        return Err(KodError::InvalidParameters {
+                            reason: format!(
+                                "context mismatch at line {}:\n  expected: {}\n  actual:   {}",
+                                cursor + 1,
+                                text,
+                                actual
+                            ),
+                        });
+                    }
+                    None => {
+                        return Err(KodError::InvalidParameters {
+                            reason: format!(
+                                "context expected at line {} but file ended",
+                                cursor + 1
+                            ),
+                        });
+                    }
+                },
                 HunkLine::Remove(text) => match lines.get(cursor) {
                     Some(actual) if actual == text => {
                         cursor += 1;
@@ -183,10 +181,7 @@ pub fn parse_unified_diff(patch: &str) -> Result<Vec<Hunk>> {
 }
 
 fn parse_hunk_header(line: &str) -> Result<Hunk> {
-    let inner = line
-        .trim_start_matches("@@")
-        .trim_end_matches("@@")
-        .trim();
+    let inner = line.trim_start_matches("@@").trim_end_matches("@@").trim();
     let mut parts = inner.split_whitespace();
     let old = parts
         .next()
@@ -221,9 +216,12 @@ fn parse_range(s: &str) -> Result<(usize, usize)> {
                 reason: format!("bad range count: {count}"),
             })?,
         )),
-        None => Ok((s.parse().map_err(|_| KodError::InvalidParameters {
-            reason: format!("bad range: {s}"),
-        })?, 1)),
+        None => Ok((
+            s.parse().map_err(|_| KodError::InvalidParameters {
+                reason: format!("bad range: {s}"),
+            })?,
+            1,
+        )),
     }
 }
 
@@ -250,7 +248,8 @@ mod tests {
     #[test]
     fn apply_simple_replacement() {
         let original = "line one\nline two\nline three\n";
-        let patch = "--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n line one\n-line two\n+LINE TWO\n line three\n";
+        let patch =
+            "--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n line one\n-line two\n+LINE TWO\n line three\n";
         let result = apply_unified_diff(original, patch).unwrap();
         assert_eq!(result, "line one\nLINE TWO\nline three\n");
     }
