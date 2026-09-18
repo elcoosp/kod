@@ -1872,3 +1872,176 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod coverage_classifier_edges {
+    //! The classifier's ordering is the engine's first routing
+    //! decision. A regression that reordered the priority checks
+    //! would silently send "debug the create function" to the
+    //! Complex path instead of Debugging — the caller sees the
+    //! wrong model, the wrong prompt sections, and the wrong
+    //! routing table, with no error to point at the cause.
+    use super::*;
+    use tempfile::TempDir;
+
+    fn router() -> (TempDir, TaskRouter) {
+        let tmp = TempDir::new().unwrap();
+        let r = TaskRouter::new(RouterConfig::default(), tmp.path().join("t.redb"))
+            .unwrap();
+        (tmp, r)
+    }
+
+    #[tokio::test]
+    async fn debugging_outranks_complex() {
+        // "debug the create function" contains both a Debugging
+        // keyword ("debug") and a Complex keyword ("create"). The
+        // classifier's documented priority puts Debugging first.
+        let (_tmp, r) = router();
+        assert_eq!(
+            r.classify_task("debug the create function").await.unwrap(),
+            TaskType::Debugging,
+        );
+    }
+
+    #[tokio::test]
+    async fn code_modification_outranks_complex() {
+        let (_tmp, r) = router();
+        // "fix" is CodeMod; "create" is Complex. CodeMod wins.
+        assert_eq!(
+            r.classify_task("fix the create helper").await.unwrap(),
+            TaskType::CodeModification,
+        );
+    }
+
+    #[tokio::test]
+    async fn complex_outranks_testing() {
+        let (_tmp, r) = router();
+        // "design and test the system" — Complex outranks Testing
+        // per the documented ordering.
+        assert_eq!(
+            r.classify_task("design and test the system").await.unwrap(),
+            TaskType::Complex,
+        );
+    }
+
+    #[tokio::test]
+    async fn testing_outranks_documentation() {
+        let (_tmp, r) = router();
+        assert_eq!(
+            r.classify_task("write tests for the docs").await.unwrap(),
+            TaskType::Testing,
+        );
+    }
+
+    #[tokio::test]
+    async fn research_outranks_documentation() {
+        // "research the docs" contains "research" (Research) and
+        // "docs" (Documentation). Research wins per the design.
+        let (_tmp, r) = router();
+        assert_eq!(
+            r.classify_task("research the docs").await.unwrap(),
+            TaskType::Research,
+        );
+    }
+
+    #[tokio::test]
+    async fn word_boundaries_prevent_substring_false_positives() {
+        let (_tmp, r) = router();
+        // "prefix" contains "fix" as a substring, but not as a
+        // whole word. A regression that swapped the whole-word
+        // matcher for a substring `contains` would classify this
+        // as CodeModification.
+        assert_eq!(
+            r.classify_task("add a prefix to the string").await.unwrap(),
+            TaskType::Simple,
+        );
+    }
+
+    #[tokio::test]
+    async fn word_boundaries_do_not_break_legitimate_matches() {
+        // The counterpart: whole-word matching must still catch
+        // "fix" in normal phrasing.
+        let (_tmp, r) = router();
+        assert_eq!(
+            r.classify_task("fix the bug").await.unwrap(),
+            TaskType::CodeModification,
+        );
+    }
+
+    #[tokio::test]
+    async fn classification_is_case_insensitive() {
+        let (_tmp, r) = router();
+        assert_eq!(
+            r.classify_task("FIX THE BUG").await.unwrap(),
+            TaskType::CodeModification,
+        );
+        assert_eq!(
+            r.classify_task("Debug this").await.unwrap(),
+            TaskType::Debugging,
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_input_falls_through_to_simple() {
+        let (_tmp, r) = router();
+        assert_eq!(r.classify_task("").await.unwrap(), TaskType::Simple);
+    }
+
+    #[tokio::test]
+    async fn unclassified_input_defaults_to_simple() {
+        let (_tmp, r) = router();
+        assert_eq!(
+            r.classify_task("what's the weather?").await.unwrap(),
+            TaskType::Simple,
+        );
+    }
+
+    #[tokio::test]
+    async fn panic_keyword_routes_to_debugging() {
+        let (_tmp, r) = router();
+        assert_eq!(
+            r.classify_task("the program panics on startup").await.unwrap(),
+            TaskType::Debugging,
+        );
+    }
+
+    #[tokio::test]
+    async fn traceback_keyword_routes_to_debugging() {
+        let (_tmp, r) = router();
+        assert_eq!(
+            r.classify_task("here is the traceback").await.unwrap(),
+            TaskType::Debugging,
+        );
+    }
+
+    #[tokio::test]
+    async fn refactor_keyword_routes_to_code_modification() {
+        let (_tmp, r) = router();
+        assert_eq!(
+            r.classify_task("refactor the parser").await.unwrap(),
+            TaskType::CodeModification,
+        );
+    }
+
+    #[tokio::test]
+    async fn project_key_is_deterministic() {
+        // `project_key_for` is the memory subsystem's project
+        // scoping hash. Two calls on the same canonical path
+        // return the same key; a regression to a randomised
+        // hasher would fragment the project's memory.
+        let tmp = TempDir::new().unwrap();
+        let a = TaskRouter::project_key_for(tmp.path());
+        let b = TaskRouter::project_key_for(tmp.path());
+        assert_eq!(a, b);
+    }
+
+    #[tokio::test]
+    async fn project_key_differs_across_directories() {
+        let a = TempDir::new().unwrap();
+        let b = TempDir::new().unwrap();
+        assert_ne!(
+            TaskRouter::project_key_for(a.path()),
+            TaskRouter::project_key_for(b.path()),
+        );
+    }
+}
