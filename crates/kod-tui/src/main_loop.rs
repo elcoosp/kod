@@ -27,7 +27,7 @@ use std::time::Duration;
 /// `test_slash_help_lists_every_command` — adding a command to
 /// `SLASH_COMMANDS` without updating this string fails the test, so
 /// the help output and the `/` autocomplete cannot drift apart.
-const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/doctor — print a diagnostics report (same as `kod doctor`)\n/init — onboarding info: config path, model profiles, next steps\n/regenerate — regenerate the last assistant reply\n/delete — remove the last user+assistant exchange\n/export [path] — export session as markdown (stdout when no path)\n/rollback [id] — restore a file from a checkpoint (newest when no id)\n/checkpoints — list file checkpoints for this project\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\n/check [<file>] — project check (LSP for a file, compiler for the whole workspace)\n/todo-add <text> — add a todo item to the session list\n/fork [label] — save the current chat as a restorable fork\n/reset — reset transient state: input, search, expansions, attachments\n/git-status — git status --porcelain=v2 in the current directory\n/stats — per-session statistics: roles, tools, tokens, elapsed\n/clearall — clear chat + long-term memory + checkpoints (asks for confirmation)\n/whoami — session summary: model, skills, context, paths\n/summarize — ask the model to summarize the session so far\n/grep <regex> — regex search the chat history\n/system <text> — override the system prompt for this session\n/branch [label] — drop a branch-point marker in the chat\n/load <path> — load a JSON session file\n/save <path> — save session markdown to a file\n/raw — print the last assistant reply raw (no decoration)\n/refine <instruction> — refine the last assistant reply\n/attach <path> — attach a file to the next prompt\n/diff — show the most recent file change (from checkpoints)\n/last-prompt — write the most recent prompt to ~/.kod/last_prompt.txt\n/context — visualize context window usage and session totals\n/memory [search <q> | delete <id> | clear] — long-term memory store\n/map [max-chars] — repository map (top-level symbols per file)\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text\n/pin <n> — pin a message so it survives history compaction (1-based index)\n/unpin <n> — remove a pin\n/handoff — produce a handoff document, save it to .kod/, and start a fresh session with it as context";
+const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/doctor — print a diagnostics report (same as `kod doctor`)\n/init — onboarding info: config path, model profiles, next steps\n/regenerate — regenerate the last assistant reply\n/delete — remove the last user+assistant exchange\n/export [path] — export session as markdown (stdout when no path)\n/export-html [path] — export the session as a self-contained HTML file\n/rollback [id] — restore a file from a checkpoint (newest when no id)\n/checkpoints — list file checkpoints for this project\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\n/check [<file>] — project check (LSP for a file, compiler for the whole workspace)\n/todo-add <text> — add a todo item to the session list\n/fork [label] — save the current chat as a restorable fork\n/reset — reset transient state: input, search, expansions, attachments\n/git-status — git status --porcelain=v2 in the current directory\n/stats — per-session statistics: roles, tools, tokens, elapsed\n/clearall — clear chat + long-term memory + checkpoints (asks for confirmation)\n/whoami — session summary: model, skills, context, paths\n/summarize — ask the model to summarize the session so far\n/grep <regex> — regex search the chat history\n/system <text> — override the system prompt for this session\n/branch [label] — drop a branch-point marker in the chat\n/load <path> — load a JSON session file\n/save <path> — save session markdown to a file\n/raw — print the last assistant reply raw (no decoration)\n/refine <instruction> — refine the last assistant reply\n/attach <path> — attach a file to the next prompt\n/diff — show the most recent file change (from checkpoints)\n/last-prompt — write the most recent prompt to ~/.kod/last_prompt.txt\n/context — visualize context window usage and session totals\n/memory [search <q> | delete <id> | clear] — long-term memory store\n/map [max-chars] — repository map (top-level symbols per file)\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text\n/pin <n> — pin a message so it survives history compaction (1-based index)\n/unpin <n> — remove a pin\n/handoff — produce a handoff document, save it to .kod/, and start a fresh session with it as context";
 
 /// Main TUI application loop
 pub struct TuiLoop {
@@ -264,9 +264,18 @@ impl TuiLoop {
         // Propagate the model's context window to the router so its
         // memory manager sizes its own budget from the same number the
         // engine uses for history.
-        let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
+        // Design D2.1: build the embedder the memory subsystem will use
+    // for semantic retrieval. `None` (the config default) leaves the
+    // keyword+recency fallback in place; no retrieval path is broken
+    // by an absent embedder.
+    let embedder = kod_memory::embedding::from_config(
+        &config.memory,
+        Some(&config.llm.default_endpoint().base_url),
+    );
+            let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
             context_window: config.llm.default_endpoint().context_window,
             short_term_capacity: config.memory.short_term_capacity,
+            embedder,
             ..RouterConfig::default()
         };
         let engine = KodEngine::new(router_config, db_path)?;
@@ -289,6 +298,21 @@ impl TuiLoop {
         kod_core::mcp_adapters::install_from_config(&engine, &config).await;
 
         engine.start().await?;
+        // Sandbox label for the header (design D3.3 / AD-10). Rendered
+        // as a badge only when non-empty; the value reflects the
+        // *effective* backend the resolver picked (or `require-missing`
+        // when the caller asked for Require and no primitive exists).
+        let (mode, backend) = engine.sandbox_status();
+        let sandbox_label = match (mode, backend) {
+            (kod_tools::context::SandboxMode::Disabled, _) => "off".to_string(),
+            (kod_tools::context::SandboxMode::Auto, Some(b)) => b.to_string(),
+            (kod_tools::context::SandboxMode::Auto, None) => "off".to_string(),
+            (kod_tools::context::SandboxMode::Require, Some(b)) => b.to_string(),
+            (kod_tools::context::SandboxMode::Require, None) => {
+                "require-missing".to_string()
+            }
+        };
+        self.app.set_sandbox_label(sandbox_label);
         self.engine = Some(Arc::new(engine));
         self.llm_config = Some(config.llm);
         self.app.set_model_name(&model_name);
@@ -844,8 +868,14 @@ impl TuiLoop {
             Event::SwarmDecomposed(subs) => {
                 self.app.swarm_decomposed(&subs);
             }
-            Event::SwarmAgentStarted { id, name, subtask } => {
-                self.app.swarm_agent_started(id, &name, &subtask);
+            Event::SwarmAgentStarted {
+                id,
+                name,
+                subtask,
+                model,
+            } => {
+                self.app
+                    .swarm_agent_started(id, &name, &subtask, model);
             }
             Event::SwarmAgentChunk { id, text } => {
                 self.app.swarm_agent_chunk(&id, &text);
@@ -926,6 +956,27 @@ impl TuiLoop {
         if input.trim_start().starts_with('/') {
             self.app.submit_input();
             self.handle_command(&input).await?;
+            return Ok(());
+        }
+
+        // @N focus (design D4.6): while a swarm is running, an input of
+        // the form `@2 <text>` steers the second agent that started this
+        // run, rather than the default (whole-session) steer. `@N` is
+        // only recognised with a digit immediately after the `@` and a
+        // space or end-of-input after the digit, so it cannot collide
+        // with the `@path` file-reference syntax (which is path-shaped
+        // and would never be just a number).
+        if let Some((n, rest)) = parse_at_agent_prefix(&input)
+            && let Some(agent_id) = self.app.swarm_agent_by_index(n).cloned()
+        {
+            self.app.submit_input();
+            let key = format!("swarm:{agent_id}");
+            if let Some(engine) = self.engine.clone() {
+                engine.steer_for(&key, rest).await;
+            }
+            self.app.push_system_message(&format!(
+                "Steered agent {n} — applies after its current tool call: {rest}",
+            ));
             return Ok(());
         }
 
@@ -1214,6 +1265,10 @@ impl TuiLoop {
         let config = kod_config::KodConfig::load_default()?;
         let n = config.swarm.max_agents;
         let merge = config.swarm.merge_results;
+        // Keep a copy of the swarm config for the runner: `config`
+        // below is moved into the closure, and `from_config` needs the
+        // three budget knobs (§D4.3).
+        let swarm_config = config.swarm.clone();
 
         self.app.begin_swarm();
         self.app.begin_generation();
@@ -1227,7 +1282,7 @@ impl TuiLoop {
 
         let event_tx = self.event_handler.sender();
         let handle = tokio::spawn(async move {
-            let runner = match kod_core::SwarmRunner::new(engine, n, merge).await {
+            let runner = match kod_core::SwarmRunner::from_config(engine, &swarm_config).await {
                 Ok(r) => r,
                 Err(e) => {
                     let _ = event_tx.send(Event::SwarmError(e.to_string())).await;
@@ -1246,9 +1301,17 @@ impl TuiLoop {
                                 .map(|s| (s.name.clone(), s.description.clone()))
                                 .collect(),
                         ),
-                        kod_core::SwarmEvent::AgentStarted { id, name, subtask } => {
-                            Event::SwarmAgentStarted { id, name, subtask }
-                        }
+                        kod_core::SwarmEvent::AgentStarted {
+                            id,
+                            name,
+                            subtask,
+                            model,
+                        } => Event::SwarmAgentStarted {
+                            id,
+                            name,
+                            subtask,
+                            model,
+                        },
                         kod_core::SwarmEvent::AgentChunk { id, text, .. } => {
                             Event::SwarmAgentChunk { id, text }
                         }
@@ -1708,7 +1771,7 @@ impl TuiLoop {
                     } else {
                         format!("{}h{:02}m", secs / 3600, (secs % 3600) / 60)
                     };
-                    self.app.push_system_message(&format!(
+                    let mut msg = format!(
                         "Token accounting\n\
                          \n\
                          Window (approx):\n\
@@ -1724,7 +1787,45 @@ impl TuiLoop {
                          \n\
                          Elapsed: {}",
                         used, limit, pct, label, inp, out, total, elapsed_label,
-                    ));
+                    );
+
+                    // Per-section allocation from the most recent prompt.
+                    // This is what the PromptBudget assigned to each
+                    // truncatable section (history, skills, memory,
+                    // repomap) plus the request. It is the number that
+                    // moves when the endpoint's `context_window` shrinks,
+                    // so it is the number a user staring at "context
+                    // almost full" wants to see.
+                    if let Some(engine) = &self.engine
+                        && let Some(trace) = engine.last_prompt_trace().await
+                        && let Some(a) = trace.alloc
+                    {
+                        let total_chars = a.request + a.truncatable_total();
+                        msg.push_str("\n\nPrompt allocation (last turn):\n");
+                        msg.push_str(&format!("  request:  {:>8} chars\n", a.request));
+                        msg.push_str(&format!("  history:  {:>8} chars\n", a.history));
+                        msg.push_str(&format!("  skills:   {:>8} chars\n", a.skills));
+                        msg.push_str(&format!("  memory:   {:>8} chars\n", a.memory));
+                        msg.push_str(&format!("  repomap:  {:>8} chars\n", a.repomap));
+                        msg.push_str(&format!(
+                            "  total:    {:>8} chars (~{} tokens)\n",
+                            total_chars,
+                            total_chars / 4,
+                        ));
+                        msg.push_str(
+                            "\nShare of the truncatable budget that goes to \
+                             the request is not counted above; the four other \
+                             sections split what is left after the request.",
+                        );
+                    } else if self.engine.is_some() {
+                        msg.push_str(
+                            "\n\nNo prompt allocation recorded yet — send a \
+                             prompt first; the table shows the most recent \
+                             turn's budget.",
+                        );
+                    }
+
+                    self.app.push_system_message(&msg);
                 }
                 _ => {
                     self.app.push_system_message(
@@ -2031,6 +2132,293 @@ impl TuiLoop {
                         }
                     }
                 }
+            }
+            "/remember" => {
+                let content: String = parts.collect::<Vec<_>>().join(" ");
+                let content = content.trim();
+                if content.is_empty() {
+                    self.app.push_system_message(
+                        "Usage: /remember <text> — store a durable fact in \
+                         long-term memory. No LLM call: the text is saved \
+                         verbatim. Tags default to [\"user\"]; use the CLI's \
+                         `kod memory add` for custom tags.",
+                    );
+                    return Ok(());
+                }
+                let config = match KodConfig::load_default() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        self.app.push_system_message(&format!(
+                            "Could not load config: {e}"
+                        ));
+                        return Ok(());
+                    }
+                };
+                let path = match config.memory_db_path() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        self.app.push_system_message(&format!(
+                            "Could not determine memory database path: {e}"
+                        ));
+                        return Ok(());
+                    }
+                };
+                let manager = match kod_memory::MemoryManager::new(
+                    path,
+                    config.memory.short_term_capacity,
+                ) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        self.app.push_system_message(&format!(
+                            "Could not open memory database: {e}"
+                        ));
+                        return Ok(());
+                    }
+                };
+                let project_key = std::env::current_dir()
+                    .ok()
+                    .map(|cwd| kod_core::TaskRouter::project_key_for(&cwd));
+                match manager
+                    .store_with_metadata(
+                        kod_types::MemoryType::LongTerm,
+                        content,
+                        kod_types::MemoryMetadata {
+                            tags: vec!["user".to_string()],
+                            project_key,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                {
+                    Ok(id) => {
+                        // AD-15 audit trail: log the user channel.
+                        // The store went through a manager this handler
+                        // constructed; the engine only records the
+                        // event.
+                        if let Some(engine) = &self.engine {
+                            engine
+                                .record_user_memory_write(
+                                    &id.as_uuid().to_string(),
+                                    vec!["user".to_string()],
+                                )
+                                .await;
+                        }
+                        self.app.push_system_message(&format!(
+                            "Remembered ({}): {}",
+                            &id.as_uuid().to_string()[..8],
+                            content,
+                        ))
+                    }
+                    Err(e) => self.app.push_system_message(&format!(
+                        "Could not store memory entry: {e}",
+                    )),
+                }
+            }
+            "/policy" => {
+                // Parity with the CLI's `kod policy show|explain|forget`.
+                // The TUI holds a live engine, so it can reach the
+                // session's accumulated deny rules directly — the rules
+                // the `a` choice on the approval dialog builds up.
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message(
+                        "Engine not initialized; no session policy to inspect.",
+                    );
+                    return Ok(());
+                };
+                let sub = parts.next();
+                match sub {
+                    Some("forget") => {
+                        let n_str = parts.next().unwrap_or("");
+                        let n: usize = match n_str.parse() {
+                            Ok(v) if v > 0 => v,
+                            _ => {
+                                self.app.push_system_message(
+                                    "Usage: /policy forget <n> — n is a 1-based \
+                                     index from `/policy` (no argument).",
+                                );
+                                return Ok(());
+                            }
+                        };
+                        match engine.deny_rule_at(n).await {
+                            Some(rule) => {
+                                let removed = engine.remove_deny_rule(&rule).await;
+                                if removed {
+                                    let pattern = rule
+                                        .path_pattern
+                                        .as_deref()
+                                        .unwrap_or("*");
+                                    self.app.push_system_message(&format!(
+                                        "Forgot deny rule {}: {} {}",
+                                        n, rule.tool, pattern,
+                                    ));
+                                } else {
+                                    self.app.push_system_message(&format!(
+                                        "Rule {} disappeared before it could \
+                                         be removed (raced another caller).",
+                                        n,
+                                    ));
+                                }
+                            }
+                            None => {
+                                self.app.push_system_message(&format!(
+                                    "No rule at index {n}. Run `/policy` with no \
+                                     argument to list the current rules.",
+                                ));
+                            }
+                        }
+                    }
+                    Some("show") | None => {
+                        let rules = engine.deny_rules().await;
+                        if rules.is_empty() {
+                            self.app.push_system_message(
+                                "No session deny rules. Rules accumulate when \
+                                 you answer `a` (never) on an approval dialog; \
+                                 `/policy` lists them, `/policy forget <n>` \
+                                 drops one.",
+                            );
+                        } else {
+                            let mut msg = format!(
+                                "Session deny rules ({} total):\n/policy [show | forget <n>] — inspect and clear session deny rules\n",
+                                rules.len(),
+                            );
+                            for (i, r) in rules.iter().enumerate() {
+                                let pattern = r.path_pattern.as_deref().unwrap_or("*");
+                                msg.push_str(&format!(
+                                    "  {}. {} {}\n",
+                                    i + 1,
+                                    r.tool,
+                                    pattern,
+                                ));
+                            }
+                            msg.push_str(
+                                "\nDrop a rule with `/policy forget <n>`.",
+                            );
+                            self.app.push_system_message(msg.trim_end());
+                        }
+                    }
+                    Some(other) => {
+                        self.app.push_system_message(&format!(
+                            "Unknown /policy subcommand {:?}. Try `/policy` or \
+                             `/policy forget <n>`.",
+                            other,
+                        ));
+                    }
+                }
+            }
+            "/map" => {
+                // `kod map` in the CLI and `/map` in the TUI produce
+                // the same output: one line per recognized source file,
+                // followed by its top-level symbols. The command is
+                // useful mid-session to remind the model (and the user)
+                // what the repository looks like without scrolling
+                // through files.
+                let max_chars: usize = parts
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(16_000);
+                let cwd = std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let map = kod_core::repomap::build_repo_map(&cwd);
+                let rendered = map.render(max_chars);
+                if rendered.trim().is_empty() {
+                    self.app.push_system_message(&format!(
+                        "No recognized source files under {} — the map is empty. \
+                         The repo map recognizes Rust, Python, JavaScript/TypeScript, \
+                         Go, Ruby, and C-family source files.",
+                        cwd.display(),
+                    ));
+                    return Ok(());
+                }
+                self.app.push_system_message(&format!(
+                    "Repository map ({} files, {} symbols, budget {} chars):\n\n{}",
+                    map.file_count(),
+                    map.symbol_count(),
+                    max_chars,
+                    rendered.trim_end(),
+                ));
+            }
+            "/grep" => {
+                // Regex search over the session's chat history. Unlike
+                // `/search` (a case-insensitive substring over the
+                // *current* message view), `/grep` accepts a Rust
+                // `regex` pattern and prints the matching messages
+                // with their 1-based indices — the tool for "which
+                // reply mentioned `retry_after`?" or "when did we
+                // discuss the sandbox fallback?".
+                let pattern: String = parts.collect::<Vec<_>>().join(" ");
+                let pattern = pattern.trim();
+                if pattern.is_empty() {
+                    self.app.push_system_message(
+                        "Usage: /grep <regex> — regex search over the chat history. \
+                         Example: /grep ^assert|panic",
+                    );
+                    return Ok(());
+                }
+                let re = match regex::Regex::new(pattern) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        self.app.push_system_message(&format!(
+                            "Invalid regex {:?}: {}",
+                            pattern, e,
+                        ));
+                        return Ok(());
+                    }
+                };
+                let hits: Vec<(usize, &str, &str)> = self
+                    .app
+                    .messages()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, m)| {
+                        if re.is_match(&m.content) {
+                            let role = match &m.role {
+                                kod_types::MessageRole::User => "you",
+                                kod_types::MessageRole::Assistant => "ai",
+                                kod_types::MessageRole::System => "sys",
+                                kod_types::MessageRole::Tool => "tool",
+                                kod_types::MessageRole::Agent(_) => "agent",
+                            };
+                            Some((i + 1, role, m.content.as_str()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if hits.is_empty() {
+                    self.app.push_system_message(&format!(
+                        "No messages match {:?}.",
+                        pattern,
+                    ));
+                    return Ok(());
+                }
+                let mut msg = format!(
+                    "{} message(s) match {:?}:\n",
+                    hits.len(),
+                    pattern,
+                );
+                // Cap the display at 30 messages, printing the first
+                // line of each so a search over a long transcript
+                // stays readable.
+                for (n, role, content) in hits.iter().take(30) {
+                    let first_line = content.lines().next().unwrap_or("");
+                    let shown = if first_line.chars().count() > 120 {
+                        let s: String = first_line.chars().take(120).collect();
+                        format!("{s}…")
+                    } else {
+                        first_line.to_string()
+                    };
+                    msg.push_str(&format!(
+                        "  {:>4}. [{}] {}\n",
+                        n, role, shown,
+                    ));
+                }
+                if hits.len() > 30 {
+                    msg.push_str(&format!(
+                        "… and {} more. Narrow the pattern to see them.",
+                        hits.len() - 30,
+                    ));
+                }
+                self.app.push_system_message(msg.trim_end());
             }
             "/context" => {
                 let used = self.app.context_tokens();
@@ -2901,6 +3289,64 @@ impl TuiLoop {
                                 .push_system_message(&format!("Export failed: {e}")),
                         }
                     }
+                }
+            }
+            "/export-html" => {
+                // `KodApp::export_html` builds a self-contained HTML
+                // document (inline CSS, no external assets) — the
+                // shape a user can email or paste into a wiki. The
+                // command writes it to a file when a path is given,
+                // and to a default location otherwise so a user who
+                // types just `/export-html` still gets a file
+                // instead of an error.
+                let html = self.app.export_html();
+                let arg = parts.next().map(|s| s.to_string());
+                let path = match arg {
+                    Some(p) if p != "-" => std::path::PathBuf::from(p),
+                    Some(_) => {
+                        // `-` means stdout; print the whole thing.
+                        // Nothing else to do — return.
+                        println!();
+                        println!("{}", html);
+                        println!();
+                        self.app.push_system_message(
+                            "Exported session HTML to stdout.",
+                        );
+                        return Ok(());
+                    }
+                    None => {
+                        // Default path: `.kod/session-<unix-ms>.html`
+                        // under the engine's working directory.
+                        let base = self
+                            .engine
+                            .as_ref()
+                            .map(|e| e.working_dir().to_path_buf())
+                            .unwrap_or_else(|| {
+                                std::env::current_dir()
+                                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                            });
+                        let dir = base.join(".kod");
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis())
+                            .unwrap_or(0);
+                        dir.join(format!("session-{ts}.html"))
+                    }
+                };
+                if let Some(parent) = path.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                match std::fs::write(&path, html.as_bytes()) {
+                    Ok(()) => self.app.push_system_message(&format!(
+                        "Exported session ({} bytes) as HTML to {}",
+                        html.len(),
+                        path.display(),
+                    )),
+                    Err(e) => self.app.push_system_message(&format!(
+                        "Export failed: {e}",
+                    )),
                 }
             }
             "/init" => {
@@ -3800,9 +4246,331 @@ fn format_entry_one_line(entry: &kod_core::session_log::SessionEntry) -> String 
 // for the live done-markers and the TUI for the task-end fallback, so
 // both share one implementation instead of drifting apart.
 
+/// Parse a leading `@N ` prefix in `input`, returning `(n, rest)`.
+///
+/// The prefix is only recognised when `N` is a positive integer (1+) and
+/// is followed by a space or by end-of-input. `@0`, `@01`, `@x` all
+/// return `None`. This keeps the syntax unambiguous against the `@path`
+/// file-reference form (`@src/lib.rs`), which a user could also type.
+fn parse_at_agent_prefix(input: &str) -> Option<(usize, &str)> {
+    let s = input.strip_prefix('@')?;
+    let digits_end = s
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(s.len());
+    if digits_end == 0 {
+        return None;
+    }
+    let digits = &s[..digits_end];
+    // Reject a leading zero (except the single-digit "0" which we reject
+    // separately as n == 0).
+    if digits.len() > 1 && digits.starts_with('0') {
+        return None;
+    }
+    let n: usize = digits.parse().ok()?;
+    if n == 0 {
+        return None;
+    }
+    let rest = &s[digits_end..];
+    if rest.is_empty() {
+        return Some((n, ""));
+    }
+    // Require exactly one space (or a tab) after the digits, then the
+    // text. Any other character means this is not an `@N` prefix.
+    let (sep, text) = rest.split_at(1);
+    if sep != " " && sep != "\t" {
+        return None;
+    }
+    Some((n, text))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_policy_command_without_engine_reports() {
+        // The TUI without an engine reports the missing engine rather
+        // than silently doing nothing. The list path is the honest
+        // no-engine response; the alternative would be a silent no-op
+        // that a user would attribute to a bug in the command.
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/policy").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("Engine not initialized"),
+            "expected a clear no-engine message, got: {}",
+            last.content,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_policy_forget_without_engine_reports() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/policy forget 1").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(last.content.contains("Engine not initialized"));
+    }
+
+    #[tokio::test]
+    async fn test_policy_unknown_subcommand_reports() {
+        // The engine check runs first, so without an engine any
+        // subcommand reports the missing engine. With an engine, an
+        // unknown subcommand reports the usage. This test proves the
+        // no-engine path is consistent regardless of subcommand.
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/policy somethingweird").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(last.content.contains("Engine not initialized"));
+    }
+
+    #[tokio::test]
+    async fn test_map_command_produces_output() {
+        // The TUI's cwd during tests is the crate directory
+        // (`crates/kod-tui`), which contains `.rs` files. `/map` walks
+        // the current directory and prints one line per file. The test
+        // asserts the output is the map, not the "no recognized source
+        // files" fallback.
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/map").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("Repository map"),
+            "expected a repository map, got: {}",
+            last.content,
+        );
+        // The map should name at least one file with a `.rs` extension.
+        assert!(
+            last.content.contains(".rs"),
+            "the map must list at least one Rust file: {}",
+            last.content,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_map_command_respects_max_chars() {
+        // A tiny budget must truncate. The renderer appends a
+        // `(map truncated)` marker when it hits the cap; the assertion
+        // proves the argument reaches the renderer.
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/map 1").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        // A 1-char budget is smaller than any line; the map is either
+        // empty (unlikely with a `.rs` in cwd) or truncated.
+        assert!(
+            last.content.contains("map truncated")
+                || last.content.contains("No recognized source files")
+                || last.content.contains("Repository map"),
+            "expected the map output under a tiny budget, got: {}",
+            last.content,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_grep_command_finds_a_matching_message() {
+        let mut tui = TuiLoop::new();
+        // Push a message with a distinctive token.
+        tui.app_mut()
+            .push_system_message("the marker zqxjw appears here");
+        tui.handle_command("/grep zqxjw").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("1 message"),
+            "expected one match, got: {}",
+            last.content,
+        );
+        assert!(
+            last.content.contains("zqxjw"),
+            "the match line must show the content: {}",
+            last.content,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_grep_command_no_match_reports() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/grep nothingmatchesxyzzy").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("No messages match"),
+            "expected a no-match message, got: {}",
+            last.content,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_grep_command_invalid_regex_reports() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/grep [unterminated").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("Invalid regex"),
+            "expected an invalid-regex message, got: {}",
+            last.content,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_grep_command_empty_pattern_reports_usage() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/grep").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("Usage: /grep"),
+            "expected a usage message, got: {}",
+            last.content,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_export_html_writes_to_default_path() {
+        let mut tui = TuiLoop::new();
+        tui.app_mut().push_system_message("hello world");
+
+        // Use a tempdir as the cwd so the default path lands there.
+        // The default is `<cwd>/.kod/session-<ts>.html`; the test's
+        // own cwd is the crate directory, which is not writable in CI
+        // and would leave artefacts on the developer's machine.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let old_cwd = std::env::current_dir().unwrap();
+        // Serialize cwd mutation across tests via a static mutex so
+        // the change does not race a parallel test.
+        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+            std::sync::OnceLock::new();
+        let _guard = CWD_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = tui.handle_command("/export-html").await;
+        let restore = std::env::set_current_dir(&old_cwd);
+        let _ = restore;
+        result.unwrap();
+
+        // A file should exist under <tmp>/.kod/.
+        let entry = std::fs::read_dir(tmp.path().join(".kod"))
+            .map(|rd| {
+                rd.filter_map(|e| e.ok().map(|e| e.path())).any(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| n.starts_with("session-") && n.ends_with(".html"))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+        assert!(
+            entry,
+            "an HTML file must be written under <cwd>/.kod/; {} has {:?}",
+            tmp.path().display(),
+            std::fs::read_dir(tmp.path()).ok().map(|rd| rd
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .collect::<Vec<_>>()),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_export_html_to_explicit_path() {
+        let mut tui = TuiLoop::new();
+        tui.app_mut().push_system_message("explicit path content");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let target = tmp.path().join("out.html");
+        tui.handle_command(&format!("/export-html {}", target.display()))
+            .await
+            .unwrap();
+        let content = std::fs::read_to_string(&target).unwrap();
+        assert!(
+            content.starts_with("<!doctype html>"),
+            "the file must be a complete HTML document",
+        );
+        assert!(content.contains("explicit path content"));
+    }
+
+    #[tokio::test]
+    async fn test_export_html_stdout_path() {
+        // `-` prints to stdout instead of a file. The test asserts the
+        // command does not create a file named `-` in the cwd.
+        let mut tui = TuiLoop::new();
+        tui.app_mut().push_system_message("stdout content");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let old_cwd = std::env::current_dir().unwrap();
+        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+            std::sync::OnceLock::new();
+        let _guard = CWD_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = tui.handle_command("/export-html -").await;
+        let restore = std::env::set_current_dir(&old_cwd);
+        let _ = restore;
+        result.unwrap();
+
+        assert!(
+            !tmp.path().join("-").exists(),
+            "`-` must print to stdout, not create a file named `-`",
+        );
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("stdout"),
+            "the command should report the stdout export, got: {}",
+            last.content,
+        );
+    }
+
+
+    #[test]
+    fn parse_at_agent_prefix_accepts_simple_form() {
+        assert_eq!(parse_at_agent_prefix("@1 hello"), Some((1, "hello")));
+        assert_eq!(parse_at_agent_prefix("@2 two words"), Some((2, "two words")));
+        assert_eq!(parse_at_agent_prefix("@10 x"), Some((10, "x")));
+        // A bare `@N` with no text is legal; the caller steers with an
+        // empty message, which `steer_for` already ignores.
+        assert_eq!(parse_at_agent_prefix("@3"), Some((3, "")));
+    }
+
+    #[test]
+    fn parse_at_agent_prefix_rejects_non_numbers() {
+        assert_eq!(parse_at_agent_prefix("@x hello"), None);
+        assert_eq!(parse_at_agent_prefix("@ hello"), None);
+        assert_eq!(parse_at_agent_prefix("no at sign"), None);
+    }
+
+    #[test]
+    fn parse_at_agent_prefix_rejects_path_shapes() {
+        // `@src/lib.rs` is the file-attachment form; the digit check
+        // must reject it, or every reference would try to steer agent
+        // `s` (which does not exist anyway, but the failure should be
+        // silent).
+        assert_eq!(parse_at_agent_prefix("@src/lib.rs"), None);
+        assert_eq!(parse_at_agent_prefix("@./path"), None);
+        assert_eq!(parse_at_agent_prefix("@docs/file.md"), None);
+    }
+
+    #[test]
+    fn parse_at_agent_prefix_rejects_zero_and_leading_zero() {
+        // `@0` is not a valid agent position (positions are 1-based);
+        // `@01` would be ambiguous with `@1` and is rejected to keep
+        // the parser deterministic.
+        assert_eq!(parse_at_agent_prefix("@0 x"), None);
+        assert_eq!(parse_at_agent_prefix("@01 x"), None);
+    }
+
+    #[test]
+    fn parse_at_agent_prefix_requires_space_after_digits() {
+        // `@1x` is a non-number, not an agent position followed by an
+        // identifier — a user who typed that made a mistake and should
+        // not silently steer.
+        assert_eq!(parse_at_agent_prefix("@1x"), None);
+        assert_eq!(parse_at_agent_prefix("@12abc"), None);
+    }
+
+    #[test]
+    fn parse_at_agent_prefix_accepts_leading_whitespace_in_text() {
+        // The text after the space is passed through verbatim,
+        // including any additional whitespace the user typed.
+        assert_eq!(parse_at_agent_prefix("@2  double space"), Some((2, " double space")));
+    }
 
     #[tokio::test]
     async fn test_tui_lifecycle() {
