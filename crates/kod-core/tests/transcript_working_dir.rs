@@ -15,7 +15,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-mod common;
+#[path = "common/install_test_provider.rs"]
+mod install_test_provider_mod;
+use install_test_provider_mod::install_test_provider;
 
 struct ScriptedProvider {
     calls: Mutex<Vec<Vec<ToolCall>>>,
@@ -58,10 +60,7 @@ impl LlmProvider for ScriptedProvider {
                 usage: None,
             })
         } else {
-            Ok(GenerationResponse::ToolCalls {
-                calls,
-                usage: None,
-            })
+            Ok(GenerationResponse::ToolCalls { calls, usage: None })
         }
     }
     fn stream(
@@ -77,7 +76,8 @@ fn engine_in(dir: &std::path::Path) -> KodEngine {
     std::fs::write(dir.join("main.rs"), "pub fn main() {}\n").unwrap();
     let db_path = dir.join("test.redb");
     let cfg = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         working_dir: dir.to_path_buf(),
         enable_memory: false,
         max_skills_per_query: 3,
@@ -96,14 +96,15 @@ async fn transcript_with_override_writes_under_the_override() {
     std::fs::create_dir_all(&worktree).unwrap();
 
     let engine = engine_in(&engine_root);
-    let provider = Arc::new(ScriptedProvider::new(vec![vec![ToolCall { id: None,
+    let provider = Arc::new(ScriptedProvider::new(vec![vec![ToolCall {
+        id: None,
         tool_name: "write_file".to_string(),
         arguments: serde_json::json!({
             "path": "out.txt",
             "content": "worktree content\n",
         }),
     }]]));
-    common::install_test_provider(&engine, provider).await;
+    install_test_provider(&engine, provider).await;
     engine.start().await.unwrap();
 
     let key = "swarm:agent-1";
@@ -131,14 +132,15 @@ async fn transcript_with_override_writes_under_the_override() {
 async fn default_transcript_still_uses_engine_root() {
     let tmp = TempDir::new().unwrap();
     let engine = engine_in(tmp.path());
-    let provider = Arc::new(ScriptedProvider::new(vec![vec![ToolCall { id: None,
+    let provider = Arc::new(ScriptedProvider::new(vec![vec![ToolCall {
+        id: None,
         tool_name: "write_file".to_string(),
         arguments: serde_json::json!({
             "path": "out.txt",
             "content": "default content\n",
         }),
     }]]));
-    common::install_test_provider(&engine, provider).await;
+    install_test_provider(&engine, provider).await;
     engine.start().await.unwrap();
 
     let _ = engine.process("write out.txt").await.unwrap();
@@ -156,14 +158,16 @@ async fn clearing_override_reverts_to_engine_root() {
 
     let engine = engine_in(&engine_root);
     let provider = Arc::new(ScriptedProvider::new(vec![
-        vec![ToolCall { id: None,
+        vec![ToolCall {
+            id: None,
             tool_name: "write_file".to_string(),
             arguments: serde_json::json!({
                 "path": "first.txt",
                 "content": "in worktree\n",
             }),
         }],
-        vec![ToolCall { id: None,
+        vec![ToolCall {
+            id: None,
             tool_name: "write_file".to_string(),
             arguments: serde_json::json!({
                 "path": "second.txt",
@@ -171,7 +175,7 @@ async fn clearing_override_reverts_to_engine_root() {
             }),
         }],
     ]));
-    common::install_test_provider(&engine, provider).await;
+    install_test_provider(&engine, provider).await;
     engine.start().await.unwrap();
 
     let key = "swarm:agent-1";
