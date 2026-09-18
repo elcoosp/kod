@@ -103,5 +103,18 @@ overflow-checks = false
 opt-level = 3
 codegen-units = 1
 
+
 [profile.dev]
+# Local code compiles at opt-level 0: codegen is 2-3x faster and
+# test runs don't need the optimizer. Debug info is reduced to line
+# tables (debug = 1) instead of full DWARF; that alone cuts link
+# time substantially on macOS's ld64.
+opt-level = 0
+debug = 1
+incremental = true
+
+# Dependencies stay optimized. They are compiled once and cached,
+# so opt-level 1 on them costs nothing per iteration but keeps
+# perf-sensitive tests honest (they aren't running slow unopt deps).
+[profile.dev.package."*"]
 opt-level = 1

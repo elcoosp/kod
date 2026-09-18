@@ -6,3 +6,9 @@
 #
 # For local native builds use:  cargo build --release -C target-cpu=native
 # (or the `just build-native` recipe).
+
+# Use kache as the rustc wrapper. Caches compilation artifacts across
+# clean checkouts and across workspace crates, so a dep rebuild after
+# touching only kod-* files is a cache hit instead of a recompile.
+[build]
+rustc-wrapper = "kache"
