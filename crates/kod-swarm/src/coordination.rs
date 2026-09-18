@@ -568,3 +568,175 @@ mod tests {
         assert_eq!(picked, free);
     }
 }
+
+#[cfg(test)]
+mod coverage_task_lifecycle {
+    //! The coordinator is the swarm's load accounting. The existing
+    //! tests cover the common paths; these pin the queries and
+    //! invariant edges — what `pending_tasks`, `tasks_for_agent`,
+    //! `all_assignments` and `least_loaded_agent` actually report
+    //! after a mixed sequence of assignments and completions.
+    use super::*;
+    use kod_types::{AgentId, Priority};
+
+    fn task(name: &str) -> Task {
+        Task::new(name.to_string(), Priority::Medium)
+    }
+
+    #[tokio::test]
+    async fn pending_tasks_excludes_assigned_work() {
+        let coord = TaskCoordinator::new();
+        let a = task("a");
+        let b = task("b");
+        let a_id = a.id.clone();
+        let b_id = b.id.clone();
+        coord.register_task(a).await.unwrap();
+        coord.register_task(b).await.unwrap();
+
+        coord.assign_task(&a_id, &AgentId::new()).await.unwrap();
+
+        let pending = coord.pending_tasks().await;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, b_id);
+    }
+
+    #[tokio::test]
+    async fn pending_tasks_excludes_terminal_work() {
+        let coord = TaskCoordinator::new();
+        let t = task("done");
+        let id = t.id.clone();
+        coord.register_task(t).await.unwrap();
+        coord.assign_task(&id, &AgentId::new()).await.unwrap();
+        coord.complete_task(&id).await.unwrap();
+
+        assert!(coord.pending_tasks().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tasks_for_agent_lists_only_that_agents_work() {
+        let coord = TaskCoordinator::new();
+        let a = task("a");
+        let b = task("b");
+        let c = task("c");
+        let a_id = a.id.clone();
+        let b_id = b.id.clone();
+        let c_id = c.id.clone();
+        coord.register_task(a).await.unwrap();
+        coord.register_task(b).await.unwrap();
+        coord.register_task(c).await.unwrap();
+
+        let agent_x = AgentId::new();
+        let agent_y = AgentId::new();
+        coord.assign_task(&a_id, &agent_x).await.unwrap();
+        coord.assign_task(&b_id, &agent_y).await.unwrap();
+        coord.assign_task(&c_id, &agent_x).await.unwrap();
+
+        let x_tasks = coord.tasks_for_agent(&agent_x).await;
+        assert_eq!(x_tasks.len(), 2);
+        assert!(x_tasks.iter().any(|t| t.id == a_id));
+        assert!(x_tasks.iter().any(|t| t.id == c_id));
+
+        let y_tasks = coord.tasks_for_agent(&agent_y).await;
+        assert_eq!(y_tasks.len(), 1);
+        assert_eq!(y_tasks[0].id, b_id);
+    }
+
+    #[tokio::test]
+    async fn all_assignments_reflects_current_assignments_only() {
+        let coord = TaskCoordinator::new();
+        let a = task("a");
+        let b = task("b");
+        let a_id = a.id.clone();
+        let b_id = b.id.clone();
+        coord.register_task(a).await.unwrap();
+        coord.register_task(b).await.unwrap();
+
+        let agent = AgentId::new();
+        coord.assign_task(&a_id, &agent).await.unwrap();
+        coord.assign_task(&b_id, &agent).await.unwrap();
+        assert_eq!(coord.all_assignments().await.len(), 2);
+
+        coord.complete_task(&a_id).await.unwrap();
+        // `complete_task` leaves `assigned_to` set as a record of
+        // who did the work, and the assignments map entry is left in
+        // place — the map is a live view of what was assigned, not
+        // what is still in flight. The pending/terminal split is
+        // what `pending_tasks` reports.
+        assert_eq!(coord.all_assignments().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn least_loaded_agent_breaks_ties_by_input_order() {
+        // `min_by_key` returns the first minimum. Two agents with
+        // zero load must therefore be picked in the order they were
+        // passed, so a caller that sorts candidates gets deterministic
+        // dispatch.
+        let coord = TaskCoordinator::new();
+        let a = AgentId::new();
+        let b = AgentId::new();
+        let picked = coord.least_loaded_agent(&[a.clone(), b.clone()]).await;
+        assert_eq!(picked, Some(a.clone()));
+        let picked = coord.least_loaded_agent(&[b.clone(), a.clone()]).await;
+        assert_eq!(picked, Some(b.clone()));
+    }
+
+    #[tokio::test]
+    async fn least_loaded_agent_of_empty_slice_is_none() {
+        let coord = TaskCoordinator::new();
+        assert_eq!(coord.least_loaded_agent(&[]).await, None);
+    }
+
+    #[tokio::test]
+    async fn agent_load_of_unknown_agent_is_zero() {
+        let coord = TaskCoordinator::new();
+        assert_eq!(coord.agent_load(&AgentId::new()).await, 0);
+    }
+
+    #[tokio::test]
+    async fn task_status_of_unknown_id_is_none() {
+        let coord = TaskCoordinator::new();
+        assert_eq!(coord.task_status(&TaskId::new()).await, None);
+    }
+
+    #[tokio::test]
+    async fn assigning_an_unregistered_task_errors() {
+        let coord = TaskCoordinator::new();
+        let err = coord
+            .assign_task(&TaskId::new(), &AgentId::new())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not found"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn duplicate_registration_is_rejected() {
+        let coord = TaskCoordinator::new();
+        let t = task("once");
+        let id = t.id.clone();
+        coord.register_task(t).await.unwrap();
+        let dup = Task {
+            id,
+            description: "again".into(),
+            priority: Priority::Low,
+            status: TaskStatus::Pending,
+            assigned_to: None,
+            dependencies: vec![],
+        };
+        let err = coord.register_task(dup).await.unwrap_err();
+        assert!(err.to_string().contains("already registered"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn assigning_an_in_progress_task_is_rejected() {
+        let coord = TaskCoordinator::new();
+        let t = task("live");
+        let id = t.id.clone();
+        coord.register_task(t).await.unwrap();
+        coord.assign_task(&id, &AgentId::new()).await.unwrap();
+        let err = coord.assign_task(&id, &AgentId::new()).await.unwrap_err();
+        assert!(
+            err.to_string().contains("InProgress"),
+            "error should name the blocking status: {err}",
+        );
+    }
+}
