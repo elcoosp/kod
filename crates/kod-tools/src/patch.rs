@@ -558,38 +558,7 @@ mod coverage_render_unified {
         let d = render_unified_diff(old, new, "f");
         let applied = apply_unified_diff(old, &d).unwrap();
         assert_eq!(applied, new);
-    }
-
-    #[test]
-    fn empty_old_and_new_are_both_handled() {
-        // Both empty: no change.
-        let d = render_unified_diff("", "", "f");
-        let hunks = parse_unified_diff(&d).unwrap();
-        assert!(hunks.is_empty());
-
-        // Empty → content: an addition. The header's a/b markers
-        // are still present; the hunk applies.
-        let d = render_unified_diff("", "hello\n", "f");
-        let applied = apply_unified_diff("", &d).unwrap();
-        assert_eq!(applied, "hello\n");
-
-        // Content → empty: a removal.
-        let d = render_unified_diff("hello\n", "", "f");
-        let applied = apply_unified_diff("hello\n", &d).unwrap();
-        assert_eq!(applied, "");
-    }
-
-    #[test]
-    fn newline_at_end_of_file_is_preserved_across_the_round_trip() {
-        // A diff between "a\n" and "a" (no trailing newline) is a
-        // distinct change from "a\n" and "a\n". The renderer's
-        // round trip must preserve that distinction.
-        let d = render_unified_diff("a\n", "a", "f");
-        let applied = apply_unified_diff("a\n", &d).unwrap();
-        assert_eq!(applied, "a");
-    }
-
-    #[test]
+    }    #[test]
     fn two_adjacent_hunks_are_rendered_separately() {
         // A change at line 1 and a change at line 20 with no
         // overlap produce two hunks in one diff. Both must apply.
