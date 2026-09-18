@@ -15,7 +15,9 @@ use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use tokio::sync::mpsc;
 
-mod common;
+#[path = "common/install_test_provider.rs"]
+mod install_test_provider_mod;
+use install_test_provider_mod::install_test_provider;
 
 /// Provider that routes on the prompt's shape:
 ///
@@ -36,23 +38,17 @@ impl LlmProvider for ScriptedSwarmProvider {
         Ok(vec!["scripted-swarm".into()])
     }
 
-    async fn generate(
-        &self,
-        prompt: &str,
-        _opts: &GenerationOptions,
-    ) -> kod_error::Result<String> {
+    async fn generate(&self, prompt: &str, _opts: &GenerationOptions) -> kod_error::Result<String> {
         self.calls.lock().unwrap().push(prompt.to_string());
 
         if prompt.contains("Split this goal") {
             // Decompose call.
-            return Ok(
-                r#"[
+            return Ok(r#"[
                     {"name":"schema","description":"Write the SQL schema for a users table."},
                     {"name":"api","description":"Implement the GET /users handler."},
                     {"name":"tests","description":"Write integration tests for the users endpoint."}
                 ]"#
-                    .to_string(),
-            );
+            .to_string());
         }
 
         if prompt.contains("Synthesize their work") {
@@ -81,8 +77,7 @@ impl LlmProvider for ScriptedSwarmProvider {
         &self,
         _prompt: &str,
         _opts: &GenerationOptions,
-    ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
-    {
+    ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>> {
         Box::pin(futures::stream::empty())
     }
 
@@ -91,8 +86,7 @@ impl LlmProvider for ScriptedSwarmProvider {
         prompt: &'a str,
         _tools: &'a [ToolDefinition],
         options: &'a GenerationOptions,
-    ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
-    {
+    ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>> {
         // The engine's streaming loop drives the swarm's per-agent
         // calls. Reuse `generate`'s routing rather than duplicating it:
         // `async_stream::stream!` lets this method `.await` the async
@@ -115,14 +109,14 @@ impl ScriptedSwarmProvider {
             calls: Mutex::new(Vec::new()),
         }
     }
-
 }
 
 async fn build_engine(provider: Arc<dyn LlmProvider>) -> (Arc<KodEngine>, TempDir) {
     let temp = TempDir::new().unwrap();
     let db_path = temp.path().join("swarm.redb");
     let cfg = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         context_window: 8192,
         short_term_capacity: 100,
         max_skills_per_query: 3,
@@ -131,7 +125,7 @@ async fn build_engine(provider: Arc<dyn LlmProvider>) -> (Arc<KodEngine>, TempDi
     };
     let engine = KodEngine::new(cfg, db_path).unwrap();
     engine.start().await.unwrap();
-    common::install_test_provider(&engine, provider).await;
+    install_test_provider(&engine, provider).await;
     (Arc::new(engine), temp)
 }
 
@@ -196,8 +190,14 @@ async fn swarm_decomposes_runs_and_merges() {
 
     // The provider saw one decompose call, three per-agent calls, one merge.
     let calls = provider.calls.lock().unwrap().clone();
-    let decompose_calls = calls.iter().filter(|p| p.contains("Split this goal")).count();
-    let merge_calls = calls.iter().filter(|p| p.contains("Synthesize their work")).count();
+    let decompose_calls = calls
+        .iter()
+        .filter(|p| p.contains("Split this goal"))
+        .count();
+    let merge_calls = calls
+        .iter()
+        .filter(|p| p.contains("Synthesize their work"))
+        .count();
     // generate_with_tools is not used here; the streaming loop drives
     // per-agent. So we count only the two orchestration calls.
     assert_eq!(decompose_calls, 1);
@@ -262,9 +262,8 @@ async fn test_decompose_sees_repo_context() {
             _p: &'a str,
             _t: &'a [ToolDefinition],
             _o: &'a GenerationOptions,
-        ) -> Pin<
-            Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>,
-        > {
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+        {
             Box::pin(futures::stream::iter(vec![
                 Ok(StreamChunk::Text("agent reply".to_string())),
                 Ok(StreamChunk::Done),
@@ -353,7 +352,8 @@ async fn test_swarm_detects_file_conflicts() {
             _o: &GenerationOptions,
         ) -> kod_error::Result<GenerationResponse> {
             Ok(GenerationResponse::ToolCalls {
-                calls: vec![ToolCall { id: None,
+                calls: vec![ToolCall {
+                    id: None,
                     tool_name: "write_file".to_string(),
                     arguments: serde_json::json!({
                         "path": "shared.txt",
@@ -376,16 +376,20 @@ async fn test_swarm_detects_file_conflicts() {
             _p: &'a str,
             _t: &'a [ToolDefinition],
             _o: &'a GenerationOptions,
-        ) -> Pin<
-            Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>,
-        > {
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+        {
             // Two rounds per agent: first a write_file tool call, then
             // a text reply. The engine loop sees the tool call and runs
             // it, then gets Text and stops.
             Box::pin(futures::stream::iter(vec![
-                Ok(StreamChunk::ToolCallStart { index: 0, id: None, name: "write_file".to_string(),
+                Ok(StreamChunk::ToolCallStart {
+                    index: 0,
+                    id: None,
+                    name: "write_file".to_string(),
                 }),
-                Ok(StreamChunk::ToolCallDelta { index: 0, arguments: serde_json::json!({
+                Ok(StreamChunk::ToolCallDelta {
+                    index: 0,
+                    arguments: serde_json::json!({
                         "path": "shared.txt",
                         "content": "from one agent"
                     })
@@ -430,7 +434,12 @@ async fn test_swarm_detects_file_conflicts() {
         "conflict file should be shared.txt: {}",
         c.file
     );
-    assert_eq!(c.agents.len(), 2, "two agents should be named: {:?}", c.agents);
+    assert_eq!(
+        c.agents.len(),
+        2,
+        "two agents should be named: {:?}",
+        c.agents
+    );
 
     // The merge prompt should carry the warning block.
     let merge_prompts = provider.merge_prompts.lock().unwrap().clone();
@@ -494,11 +503,7 @@ async fn swarm_falls_back_when_decompose_is_not_json() {
         async fn list_models(&self) -> kod_error::Result<Vec<String>> {
             Ok(vec![])
         }
-        async fn generate(
-            &self,
-            _p: &str,
-            _o: &GenerationOptions,
-        ) -> kod_error::Result<String> {
+        async fn generate(&self, _p: &str, _o: &GenerationOptions) -> kod_error::Result<String> {
             Ok("I will not follow your format.".to_string())
         }
         async fn generate_with_tools(
@@ -525,9 +530,8 @@ async fn swarm_falls_back_when_decompose_is_not_json() {
             _p: &'a str,
             _t: &'a [ToolDefinition],
             _o: &'a GenerationOptions,
-        ) -> Pin<
-            Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>,
-        > {
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+        {
             Box::pin(futures::stream::iter(vec![
                 Ok(StreamChunk::Text("still not json".to_string())),
                 Ok(StreamChunk::Done),
@@ -562,15 +566,14 @@ async fn swarm_falls_back_when_decompose_is_not_json() {
 async fn swarm_requires_a_provider() {
     let temp = TempDir::new().unwrap();
     let cfg = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp.path().to_path_buf(),
         enable_memory: false,
         ..Default::default()
     };
-    let engine = Arc::new(
-        KodEngine::new(cfg, temp.path().join("swarm.redb")).unwrap(),
-    );
+    let engine = Arc::new(KodEngine::new(cfg, temp.path().join("swarm.redb")).unwrap());
     engine.start().await.unwrap();
     // No set_provider.
     // `unwrap_err` needs `Debug` on the Ok type; matching explicitly
