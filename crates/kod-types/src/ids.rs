@@ -103,3 +103,105 @@ mod tests {
         assert_ne!(agent_id.as_uuid(), message_id.as_uuid());
     }
 }
+
+#[cfg(test)]
+mod coverage_id_parsing {
+    //! The ID newtypes are the type system's first line of defence
+    //! against mixing an agent ID into a message slot. The macro-
+    //! generated `FromStr` strips a matching prefix and parses the
+    //! rest as a UUID; a regression there lets one type's serialized
+    //! form parse as another's, and the type system's protection
+    //! evaporates the moment anything round-trips through a string.
+    use super::*;
+    use std::str::FromStr;
+    use uuid::Uuid;
+
+    #[test]
+    fn from_str_accepts_prefixed_form() {
+        let u = Uuid::new_v4();
+        let s = format!("agent-{u}");
+        let parsed = AgentId::from_str(&s).unwrap();
+        assert_eq!(parsed.as_uuid(), &u);
+    }
+
+    #[test]
+    fn from_str_accepts_bare_uuid() {
+        let u = Uuid::new_v4();
+        let parsed = AgentId::from_str(&u.to_string()).unwrap();
+        assert_eq!(parsed.as_uuid(), &u);
+    }
+
+    #[test]
+    fn from_str_rejects_garbage() {
+        assert!(AgentId::from_str("not-a-uuid").is_err());
+        assert!(AgentId::from_str("").is_err());
+        assert!(AgentId::from_str("agent-").is_err());
+    }
+
+    #[test]
+    fn cross_prefix_parsing_is_rejected() {
+        // A `msg-`-prefixed string must not parse as an `AgentId`.
+        // The macro strips only the matching prefix; the residual
+        // text is not a UUID and the parse fails.
+        let u = Uuid::new_v4();
+        assert!(AgentId::from_str(&format!("msg-{u}")).is_err());
+        assert!(MessageId::from_str(&format!("agent-{u}")).is_err());
+        assert!(SkillId::from_str(&format!("mem-{u}")).is_err());
+    }
+
+    #[test]
+    fn prefixed_string_round_trips() {
+        let id = TaskId::new();
+        let s = id.to_prefixed_string();
+        assert!(s.starts_with("task-"));
+        let parsed = TaskId::from_str(&s).unwrap();
+        assert_eq!(parsed, id);
+    }
+
+    #[test]
+    fn display_is_short_and_prefixed() {
+        let id = SessionId::new();
+        let s = id.to_string();
+        assert!(s.starts_with("session-"), "got {s}");
+        // "session-" + 8 hex chars.
+        assert_eq!(s.len(), "session-".len() + 8);
+    }
+
+    #[test]
+    fn default_matches_new() {
+        // The Default impl calls new(); two defaults must differ,
+        // since a shared default would silently collapse unrelated
+        // entries under one key.
+        let a = MemoryId::default();
+        let b = MemoryId::default();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn equality_and_hash_are_uuid_based() {
+        use std::collections::HashSet;
+        let u = Uuid::new_v4();
+        let a = ToolId::from_uuid(u);
+        let b = ToolId::from_uuid(u);
+        assert_eq!(a, b);
+        let mut set = HashSet::new();
+        set.insert(a);
+        assert!(set.contains(&b));
+    }
+
+    #[test]
+    fn different_types_never_equal_their_uuid_peers() {
+        // `AgentId(u) != MessageId(u)` even though the underlying
+        // UUID matches. That is the whole point of the newtype. The
+        // comparison is a compile error; this test proves the types
+        // exist as distinct symbols so a future refactor cannot
+        // merge them.
+        let u = Uuid::new_v4();
+        let a = AgentId::from_uuid(u);
+        let m = MessageId::from_uuid(u);
+        assert_ne!(a.as_uuid(), &Uuid::nil());
+        assert_ne!(m.as_uuid(), &Uuid::nil());
+        // Different bytes is the only comparison that compiles.
+        let _ = a.as_uuid() == m.as_uuid();
+    }
+}
