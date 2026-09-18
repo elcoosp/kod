@@ -11,6 +11,15 @@ use crate::communication::AgentCommunicationHub;
 use crate::coordination::TaskCoordinator;
 
 /// The agent swarm orchestrator
+/// The agent swarm orchestrator.
+///
+/// `Clone` is derived so a caller (the swarm runner's watchdog, the
+/// agent pump) can hand a copy into a background task without the
+/// `Arc<AgentSwarm>` ceremony. Every interior field is already a
+/// shared handle — `Arc<RwLock<HashMap>>` for the agent map, a
+/// `Clone`-able hub and coordinator — so a clone is a handful of
+/// Arc-bumps, not a deep copy.
+#[derive(Clone)]
 pub struct AgentSwarm {
     agents: Arc<RwLock<HashMap<AgentId, std::sync::Arc<Agent>>>>,
     communication: AgentCommunicationHub,
