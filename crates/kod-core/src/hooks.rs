@@ -255,3 +255,117 @@ mod tests {
         runner.run_post(&c).await;
     }
 }
+
+#[cfg(test)]
+mod coverage_hook_substitution {
+    //! `substitute` is what turns a template like `rustfmt {path}`
+    //! into a real command line. A regression that drops a token
+    //! leaves a literal `{path}` in the shell string, which the
+    //! shell then tries to expand — sometimes a silent no-op,
+    //! sometimes a syntax error. `matches_key` is the selector: a
+    //! mismatch means the hook never runs.
+    use super::*;
+    use serde_json::json;
+
+    fn call(name: &str, args: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: None,
+            tool_name: name.to_string(),
+            arguments: args,
+        }
+    }
+
+    #[test]
+    fn substitute_replaces_every_known_token_in_one_pass() {
+        let c = call(
+            "write_file",
+            json!({
+                "path": "/a.rs",
+                "content": "x",
+                "command": "c",
+                "pattern": "p",
+                "file": "f",
+            }),
+        );
+        let out = substitute("{path}|{content}|{command}|{pattern}|{file}", &c);
+        assert_eq!(out, "/a.rs|x|c|p|f");
+    }
+
+    #[test]
+    fn substitute_is_a_no_op_when_no_tokens_are_present() {
+        let c = call("write_file", json!({"path": "/a.rs"}));
+        assert_eq!(substitute("cargo fmt", &c), "cargo fmt");
+    }
+
+    #[test]
+    fn substitute_handles_a_missing_argument_as_the_empty_string() {
+        // The tool call's argument is absent; the template's token
+        // becomes empty. This is the same shape the shell sees for
+        // an unset variable, and the hook author can rely on it.
+        let c = call("write_file", json!({}));
+        assert_eq!(substitute("x={path} y", &c), "x= y");
+    }
+
+    #[test]
+    fn substitute_replaces_all_occurrences_of_the_same_token() {
+        let c = call("write_file", json!({"path": "/a"}));
+        assert_eq!(substitute("{path}{path}", &c), "/a/a");
+    }
+
+    #[test]
+    fn substitute_leaves_unknown_tokens_untouched() {
+        // A future hook author may write `{unknown}` expecting a
+        // different substitution mechanism. Preserving the text is
+        // the least-surprising behaviour: the shell sees the
+        // literal token, and the author sees it in the error.
+        let c = call("write_file", json!({"path": "/a"}));
+        assert_eq!(substitute("run {unknown}", &c), "run {unknown}");
+    }
+
+    #[test]
+    fn matches_key_honours_the_field_suffix() {
+        // `write_file.path` is a config-side convenience; the key's
+        // prefix before the first `.` names the tool. A regression
+        // that compared the whole key would refuse the suffixed
+        // form and the hook would silently not run.
+        assert!(matches_key("write_file.path", "write_file"));
+        assert!(matches_key("write_file.anything", "write_file"));
+        assert!(matches_key("write_file", "write_file"));
+        assert!(!matches_key("read_file.path", "write_file"));
+        assert!(!matches_key("write_file.", "read_file"));
+        assert!(!matches_key("", "write_file"));
+    }
+
+    #[tokio::test]
+    async fn disabled_runner_never_runs_a_configured_hook() {
+        // The disabled state must short-circuit before spawning the
+        // shell. The proof: a hook that would exit 1 is configured,
+        // yet `run_pre` returns `Ok(())`. If the command had run,
+        // the exit code would have turned it into `Err`.
+        let mut pre = std::collections::HashMap::new();
+        pre.insert("write_file".to_string(), "exit 1".to_string());
+        let runner = HookRunner::new(kod_config::HooksConfig {
+            enabled: false,
+            pre_tool_use: pre,
+            ..Default::default()
+        });
+        assert!(!runner.is_enabled());
+        let c = call("write_file", json!({"path": "/x"}));
+        runner.run_pre(&c).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn enabled_but_empty_map_is_a_no_op() {
+        // A config that flips `enabled = true` without adding any
+        // hooks must not run anything (there is nothing to run) and
+        // must not be reported as active either — the
+        // `is_enabled()` predicate requires both.
+        let runner = HookRunner::new(kod_config::HooksConfig {
+            enabled: true,
+            ..Default::default()
+        });
+        assert!(!runner.is_enabled());
+        let c = call("write_file", json!({"path": "/x"}));
+        runner.run_pre(&c).await.unwrap();
+    }
+}
