@@ -164,18 +164,19 @@ impl TuiLoop {
             crossterm::event::DisableMouseCapture,
             crossterm::terminal::LeaveAlternateScreen,
         )
-        .map_err(|e| {
-            KodError::Internal(format!("could not leave alternate screen: {e}"))
-        })?;
-        crossterm::terminal::disable_raw_mode().map_err(|e| {
-            KodError::Internal(format!("could not disable raw mode: {e}"))
-        })?;
+        .map_err(|e| KodError::Internal(format!("could not leave alternate screen: {e}")))?;
+        crossterm::terminal::disable_raw_mode()
+            .map_err(|e| KodError::Internal(format!("could not disable raw mode: {e}")))?;
 
         // Resolve the editor: $EDITOR, then $VISUAL, then `vi`.
         let editor = std::env::var("EDITOR")
             .ok()
             .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var("VISUAL").ok().filter(|s| !s.trim().is_empty()))
+            .or_else(|| {
+                std::env::var("VISUAL")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty())
+            })
             .unwrap_or_else(|| "vi".to_string());
 
         // Shell out so a value like `code --wait` (or
@@ -191,17 +192,14 @@ impl TuiLoop {
         // a user whose `$EDITOR` was set to garbage should still
         // come back to a working `kod`.
         let restore = (|| -> Result<()> {
-            crossterm::terminal::enable_raw_mode().map_err(|e| {
-                KodError::Internal(format!("could not re-enable raw mode: {e}"))
-            })?;
+            crossterm::terminal::enable_raw_mode()
+                .map_err(|e| KodError::Internal(format!("could not re-enable raw mode: {e}")))?;
             execute!(
                 std::io::stdout(),
                 crossterm::terminal::EnterAlternateScreen,
                 crossterm::event::EnableMouseCapture,
             )
-            .map_err(|e| {
-                KodError::Internal(format!("could not re-enter alternate screen: {e}"))
-            })?;
+            .map_err(|e| KodError::Internal(format!("could not re-enter alternate screen: {e}")))?;
             if let Some(terminal) = &mut self.terminal {
                 let _ = terminal.clear();
                 let _ = terminal.hide_cursor();
@@ -243,13 +241,18 @@ impl TuiLoop {
 
         // The meter + compaction threshold must use the real window from
         // config (e.g. 8k for a small local model), not DEFAULT_CONTEXT_LIMIT.
-        self.app.set_context_limit(config.llm.default_endpoint().context_window);
+        self.app
+            .set_context_limit(config.llm.default_endpoint().context_window);
 
         // History budget: roughly three chars per token of the model's
         // window. The engine clamps anything below its floor, so a tiny
         // or placeholder context_window cannot produce an engine that
         // forgets every turn.
-        let history_budget = config.llm.default_endpoint().context_window.saturating_mul(3);
+        let history_budget = config
+            .llm
+            .default_endpoint()
+            .context_window
+            .saturating_mul(3);
 
         // KOD_TEST_DB isolates integration tests from a live session's
         // database. When unset, the config's `memory.scope` decides:
@@ -265,14 +268,15 @@ impl TuiLoop {
         // memory manager sizes its own budget from the same number the
         // engine uses for history.
         // Design D2.1: build the embedder the memory subsystem will use
-    // for semantic retrieval. `None` (the config default) leaves the
-    // keyword+recency fallback in place; no retrieval path is broken
-    // by an absent embedder.
-    let embedder = kod_memory::embedding::from_config(
-        &config.memory,
-        Some(&config.llm.default_endpoint().base_url),
-    );
-            let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
+        // for semantic retrieval. `None` (the config default) leaves the
+        // keyword+recency fallback in place; no retrieval path is broken
+        // by an absent embedder.
+        let embedder = kod_memory::embedding::from_config(
+            &config.memory,
+            Some(&config.llm.default_endpoint().base_url),
+        );
+        let router_config = RouterConfig {
+            skill_threshold: config.skills.match_threshold,
             context_window: config.llm.default_endpoint().context_window,
             short_term_capacity: config.memory.short_term_capacity,
             embedder,
@@ -282,16 +286,14 @@ impl TuiLoop {
         engine.set_history_budget(history_budget);
 
         let (registry, default_model, routing) =
-        kod_core::build_registry(&config.llm, Some(&model_name))?;
-    engine
-        .set_registry(registry, default_model, routing)
-        .await;
+            kod_core::build_registry(&config.llm, Some(&model_name))?;
+        engine.set_registry(registry, default_model, routing).await;
         engine.set_hooks(config.hooks.clone());
         engine.set_network_access(config.llm.network_access);
         self.app
             .set_network_access_enabled(config.llm.network_access);
         engine.set_auto_check(config.tools.auto_check);
-    engine.set_auto_lsp(config.tools.auto_lsp);
+        engine.set_auto_lsp(config.tools.auto_lsp);
         if self.sandbox_required {
             engine.set_sandbox_mode(kod_tools::context::SandboxMode::Require);
         }
@@ -308,9 +310,7 @@ impl TuiLoop {
             (kod_tools::context::SandboxMode::Auto, Some(b)) => b.to_string(),
             (kod_tools::context::SandboxMode::Auto, None) => "off".to_string(),
             (kod_tools::context::SandboxMode::Require, Some(b)) => b.to_string(),
-            (kod_tools::context::SandboxMode::Require, None) => {
-                "require-missing".to_string()
-            }
+            (kod_tools::context::SandboxMode::Require, None) => "require-missing".to_string(),
         };
         self.app.set_sandbox_label(sandbox_label);
         self.engine = Some(Arc::new(engine));
@@ -534,8 +534,8 @@ impl TuiLoop {
         self.app.save_session();
 
         // Restore the original hook before tearing down.
-        let default_hook = std::sync::Arc::try_unwrap(default_hook)
-            .unwrap_or_else(|_| std::panic::take_hook());
+        let default_hook =
+            std::sync::Arc::try_unwrap(default_hook).unwrap_or_else(|_| std::panic::take_hook());
         std::panic::set_hook(default_hook);
 
         let _ = self.restore_terminal().await;
@@ -721,24 +721,23 @@ impl TuiLoop {
                         diff: i.diff,
                     })
                     .collect();
-                self.app.set_pending_batch(crate::app::PendingApprovalBatch {
-                    batch_id,
-                    items,
-                    current: 0,
-                });
+                self.app
+                    .set_pending_batch(crate::app::PendingApprovalBatch {
+                        batch_id,
+                        items,
+                        current: 0,
+                    });
             }
             Event::QuestionRequested {
                 id,
                 question,
                 placeholder,
             } => {
-                self.app.set_pending_question(
-                    crate::app::PendingQuestion {
-                        id,
-                        question,
-                        placeholder,
-                    },
-                );
+                self.app.set_pending_question(crate::app::PendingQuestion {
+                    id,
+                    question,
+                    placeholder,
+                });
             }
             Event::Cancelled => {
                 self.gen_task = None;
@@ -762,8 +761,7 @@ impl TuiLoop {
                 if let Some(engine) = &self.engine {
                     let dir = engine.working_dir().join(".kod");
                     if std::fs::create_dir_all(&dir).is_ok() {
-                        let stamp =
-                            chrono::Utc::now().format("%Y-%m-%d-%H%M").to_string();
+                        let stamp = chrono::Utc::now().format("%Y-%m-%d-%H%M").to_string();
                         let path = dir.join(format!("handoff-{stamp}.md"));
                         match std::fs::write(&path, text.as_bytes()) {
                             Ok(()) => written = Some(path),
@@ -783,10 +781,7 @@ impl TuiLoop {
                     // `clear_history` also clears short-term memory —
                     // appropriate here: /handoff is a fresh start.
                     engine.clear_history().await;
-                    let seed = format!(
-                        "Context from previous session:\n\n{}",
-                        text.trim()
-                    );
+                    let seed = format!("Context from previous session:\n\n{}", text.trim());
                     engine.seed_turn(true, &seed).await;
                 }
 
@@ -874,8 +869,7 @@ impl TuiLoop {
                 subtask,
                 model,
             } => {
-                self.app
-                    .swarm_agent_started(id, &name, &subtask, model);
+                self.app.swarm_agent_started(id, &name, &subtask, model);
             }
             Event::SwarmAgentChunk { id, text } => {
                 self.app.swarm_agent_chunk(&id, &text);
@@ -908,12 +902,8 @@ impl TuiLoop {
                 max_attempts,
                 previous_error,
             } => {
-                self.app.swarm_set_retrying(
-                    &id,
-                    attempt,
-                    max_attempts,
-                    &previous_error,
-                );
+                self.app
+                    .swarm_set_retrying(&id, attempt, max_attempts, &previous_error);
             }
             Event::SwarmConflict { file, agents } => {
                 self.app.push_system_message(&format!(
@@ -1001,9 +991,7 @@ impl TuiLoop {
         // wants to see in the chat.
         // System prompt override wraps the outgoing message.
         let input_with_system = match self.app.session_system_prompt() {
-            Some(sys) if !sys.is_empty() => format!(
-                "[system] {sys}\n\n[user] {input}",
-            ),
+            Some(sys) if !sys.is_empty() => format!("[system] {sys}\n\n[user] {input}",),
             _ => input.clone(),
         };
         let input = input_with_system;
@@ -1097,15 +1085,11 @@ impl TuiLoop {
             let event_tx_chunks = event_tx.clone();
             let pump = tokio::spawn(async move {
                 while let Some(chunk) = chunk_rx.recv().await {
-                    if let Some((id, json)) =
-                        kod_core::engine::parse_question(&chunk)
-                    {
-                        let req: kod_tools::ask::QuestionRequest =
-                            serde_json::from_str(json).unwrap_or_else(|_| {
-                                kod_tools::ask::QuestionRequest {
-                                    question: "(unparseable question)".to_string(),
-                                    placeholder: None,
-                                }
+                    if let Some((id, json)) = kod_core::engine::parse_question(&chunk) {
+                        let req: kod_tools::ask::QuestionRequest = serde_json::from_str(json)
+                            .unwrap_or_else(|_| kod_tools::ask::QuestionRequest {
+                                question: "(unparseable question)".to_string(),
+                                placeholder: None,
                             });
                         let _ = event_tx_chunks
                             .send(Event::QuestionRequested {
@@ -1117,9 +1101,9 @@ impl TuiLoop {
                     } else if let Some((batch_id, json)) =
                         kod_core::engine::parse_tool_approval_batch(&chunk)
                     {
-                        let batch: kod_core::engine::ApprovalBatch =
-                            serde_json::from_str(json).unwrap_or_else(|_| {
-                                kod_core::engine::ApprovalBatch { items: Vec::new() }
+                        let batch: kod_core::engine::ApprovalBatch = serde_json::from_str(json)
+                            .unwrap_or_else(|_| kod_core::engine::ApprovalBatch {
+                                items: Vec::new(),
                             });
                         let items: Vec<crate::event::ApprovalItem> = batch
                             .items
@@ -1135,10 +1119,7 @@ impl TuiLoop {
                             .collect();
                         if !items.is_empty() {
                             let _ = event_tx_chunks
-                                .send(Event::ApprovalBatchRequested {
-                                    batch_id,
-                                    items,
-                                })
+                                .send(Event::ApprovalBatchRequested { batch_id, items })
                                 .await;
                         }
                     } else if let Some(tool) = kod_core::engine::parse_tool_start(&chunk) {
@@ -1214,12 +1195,9 @@ impl TuiLoop {
                         // which case the header simply shows no `$`
                         // figure — a number we did not earn the
                         // right to print is worse than no number.
-                        let cost_usd = response.pricing.map(|p| {
-                            p.cost_usd(
-                                usage.prompt_tokens,
-                                usage.completion_tokens,
-                            )
-                        });
+                        let cost_usd = response
+                            .pricing
+                            .map(|p| p.cost_usd(usage.prompt_tokens, usage.completion_tokens));
                         let _ = event_tx
                             .send(Event::SessionUsage {
                                 prompt_tokens: usage.prompt_tokens,
@@ -1290,8 +1268,7 @@ impl TuiLoop {
                 }
             };
 
-            let (chunk_tx, mut chunk_rx) =
-                tokio::sync::mpsc::channel::<kod_core::SwarmEvent>(128);
+            let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<kod_core::SwarmEvent>(128);
             let event_tx_pump = event_tx.clone();
             let pump = tokio::spawn(async move {
                 while let Some(ev) = chunk_rx.recv().await {
@@ -1356,13 +1333,8 @@ impl TuiLoop {
                             conflicted,
                             failed,
                         } => {
-                            let summary = if conflicted.is_empty()
-                                && failed.is_empty()
-                            {
-                                format!(
-                                    "worktrees merged: {} ok",
-                                    merged.len()
-                                )
+                            let summary = if conflicted.is_empty() && failed.is_empty() {
+                                format!("worktrees merged: {} ok", merged.len())
                             } else {
                                 format!(
                                     "worktrees merged: {} ok, {} conflict(s), \
@@ -1475,46 +1447,51 @@ impl TuiLoop {
                     let found = details.iter().find(|(n, _)| n == name).cloned();
                     match found {
                         Some((n, d)) => {
-                            // Read the file for the full content.
+                                                        // Read the file for the full content.
                             let config = KodConfig::load_default().ok();
                             let mut body: Option<String> = None;
-                            if let Some(cfg) = &config {
-                                if let Ok(dirs) = cfg.skills_dirs() {
-                                    for dir in dirs.iter() {
-                                        if !dir.is_dir() {
+                            if let Some(cfg) = &config
+                                && let Ok(dirs) = cfg.skills_dirs()
+                            {
+                                for dir in dirs.iter() {
+                                    if !dir.is_dir() {
+                                        continue;
+                                    }
+                                    for entry in walkdir::WalkDir::new(dir)
+                                        .follow_links(false)
+                                        .into_iter()
+                                        .filter_map(|e| e.ok())
+                                    {
+                                        if !entry.file_type().is_file() {
                                             continue;
                                         }
-                                        for entry in walkdir::WalkDir::new(dir)
-                                            .follow_links(false)
-                                            .into_iter()
-                                            .filter_map(|e| e.ok())
+                                        if entry.path().extension().and_then(|s| s.to_str())
+                                            != Some("md")
                                         {
-                                            if !entry.file_type().is_file() {
-                                                continue;
-                                            }
-                                            if entry.path().extension().and_then(|s| s.to_str()) != Some("md") {
-                                                continue;
-                                            }
-                                            let stem = entry.path().file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                                            if stem == n {
-                                                if let Ok(text) = std::fs::read_to_string(entry.path()) {
-                                                    body = Some(text);
-                                                }
-                                                break;
-                                            }
+                                            continue;
                                         }
-                                        if body.is_some() {
+                                        let stem = entry
+                                            .path()
+                                            .file_stem()
+                                            .and_then(|s| s.to_str())
+                                            .unwrap_or("");
+                                        if stem == n {
+                                            if let Ok(text) =
+                                                std::fs::read_to_string(entry.path())
+                                            {
+                                                body = Some(text);
+                                            }
                                             break;
                                         }
                                     }
+                                    if body.is_some() {
+                                        break;
+                                    }
                                 }
                             }
-                            let text = body.unwrap_or_else(|| format!("(description) {}", d));
-                            self.app.push_system_message(&format!(
-                                "Skill {}\n\n{}",
-                                n,
-                                text,
-                            ));
+let text = body.unwrap_or_else(|| format!("(description) {}", d));
+                            self.app
+                                .push_system_message(&format!("Skill {}\n\n{}", n, text,));
                         }
                         None => self.app.push_system_message(&format!(
                             "No skill named {:?}. Run /skills to list.",
@@ -1721,8 +1698,8 @@ impl TuiLoop {
                     };
                     match engine.last_prompt().await {
                         Some(prompt) => {
-                            let path = dirs::home_dir()
-                                .map(|h| h.join(".kod").join("last_prompt.txt"));
+                            let path =
+                                dirs::home_dir().map(|h| h.join(".kod").join("last_prompt.txt"));
                             match path {
                                 Some(p) => {
                                     if let Some(parent) = p.parent() {
@@ -1930,9 +1907,7 @@ impl TuiLoop {
                                 list.len() - 20,
                             ));
                         }
-                        msg.push_str(
-                            "\nRestore with /rollback <id>, or /rollback for the newest.",
-                        );
+                        msg.push_str("\nRestore with /rollback <id>, or /rollback for the newest.");
                         self.app.push_system_message(&msg);
                     }
                     Err(e) => self
@@ -1966,9 +1941,7 @@ impl TuiLoop {
                     return Ok(());
                 }
                 match self.app.drop_last_exchange() {
-                    Some(_) => self
-                        .app
-                        .push_system_message("Last exchange removed."),
+                    Some(_) => self.app.push_system_message("Last exchange removed."),
                     None => self.app.push_system_message("Nothing to delete."),
                 }
             }
@@ -1990,18 +1963,16 @@ impl TuiLoop {
                         return Ok(());
                     }
                 };
-                let manager = match kod_memory::MemoryManager::new(
-                    path,
-                    config.memory.short_term_capacity,
-                ) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        self.app.push_system_message(&format!(
-                            "Could not open memory database: {e}"
-                        ));
-                        return Ok(());
-                    }
-                };
+                let manager =
+                    match kod_memory::MemoryManager::new(path, config.memory.short_term_capacity) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            self.app.push_system_message(&format!(
+                                "Could not open memory database: {e}"
+                            ));
+                            return Ok(());
+                        }
+                    };
 
                 let sub = parts.next();
                 match sub {
@@ -2034,9 +2005,9 @@ impl TuiLoop {
                                     }
                                     self.app.push_system_message(msg.trim_end());
                                 }
-                                Err(e) => self.app.push_system_message(&format!(
-                                    "Search failed: {e}"
-                                )),
+                                Err(e) => {
+                                    self.app.push_system_message(&format!("Search failed: {e}"))
+                                }
                             }
                         }
                     }
@@ -2048,18 +2019,16 @@ impl TuiLoop {
                             {
                                 Some(entry) => {
                                     match manager
-                                        .remove(
-                                            kod_types::MemoryType::LongTerm,
-                                            &entry.id,
-                                        )
+                                        .remove(kod_types::MemoryType::LongTerm, &entry.id)
                                         .await
                                     {
-                                        Ok(()) => self.app.push_system_message(
-                                            &format!("Deleted memory entry {}.", &entry.id.as_uuid().to_string()[..8]),
-                                        ),
-                                        Err(e) => self.app.push_system_message(&format!(
-                                            "Delete failed: {e}"
+                                        Ok(()) => self.app.push_system_message(&format!(
+                                            "Deleted memory entry {}.",
+                                            &entry.id.as_uuid().to_string()[..8]
                                         )),
+                                        Err(e) => self
+                                            .app
+                                            .push_system_message(&format!("Delete failed: {e}")),
                                     }
                                 }
                                 None => self.app.push_system_message(&format!(
@@ -2073,29 +2042,23 @@ impl TuiLoop {
                         },
                         None => self.app.push_system_message("Usage: /memory delete <id>"),
                     },
-                    Some("clear") => {
-                        match manager.get_all_long_term().await {
-                            Ok(all) => {
-                                let n = all.len();
-                                for e in &all {
-                                    let _ = manager
-                                        .remove(
-                                            kod_types::MemoryType::LongTerm,
-                                            &e.id,
-                                        )
-                                        .await;
-                                }
-                                self.app.push_system_message(&format!(
-                                    "Cleared {} memory entr{}.",
-                                    n,
-                                    if n == 1 { "y" } else { "ies" },
-                                ));
+                    Some("clear") => match manager.get_all_long_term().await {
+                        Ok(all) => {
+                            let n = all.len();
+                            for e in &all {
+                                let _ =
+                                    manager.remove(kod_types::MemoryType::LongTerm, &e.id).await;
                             }
-                            Err(e) => self.app.push_system_message(&format!(
-                                "Could not read memory database: {e}"
-                            )),
+                            self.app.push_system_message(&format!(
+                                "Cleared {} memory entr{}.",
+                                n,
+                                if n == 1 { "y" } else { "ies" },
+                            ));
                         }
-                    }
+                        Err(e) => self
+                            .app
+                            .push_system_message(&format!("Could not read memory database: {e}")),
+                    },
                     _ => {
                         // No subcommand: list entries.
                         match manager.get_all_long_term().await {
@@ -2103,10 +2066,8 @@ impl TuiLoop {
                                 "No long-term memory entries. Add some with the memory tools.",
                             ),
                             Ok(all) => {
-                                let mut msg = format!(
-                                    "Long-term memory ({} entries):\n",
-                                    all.len(),
-                                );
+                                let mut msg =
+                                    format!("Long-term memory ({} entries):\n", all.len(),);
                                 for e in all.iter().take(30) {
                                     let short = &e.id.as_uuid().to_string()[..8];
                                     let one = e.content.lines().next().unwrap_or("");
@@ -2148,9 +2109,8 @@ impl TuiLoop {
                 let config = match KodConfig::load_default() {
                     Ok(c) => c,
                     Err(e) => {
-                        self.app.push_system_message(&format!(
-                            "Could not load config: {e}"
-                        ));
+                        self.app
+                            .push_system_message(&format!("Could not load config: {e}"));
                         return Ok(());
                     }
                 };
@@ -2163,18 +2123,16 @@ impl TuiLoop {
                         return Ok(());
                     }
                 };
-                let manager = match kod_memory::MemoryManager::new(
-                    path,
-                    config.memory.short_term_capacity,
-                ) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        self.app.push_system_message(&format!(
-                            "Could not open memory database: {e}"
-                        ));
-                        return Ok(());
-                    }
-                };
+                let manager =
+                    match kod_memory::MemoryManager::new(path, config.memory.short_term_capacity) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            self.app.push_system_message(&format!(
+                                "Could not open memory database: {e}"
+                            ));
+                            return Ok(());
+                        }
+                    };
                 let project_key = std::env::current_dir()
                     .ok()
                     .map(|cwd| kod_core::TaskRouter::project_key_for(&cwd));
@@ -2209,9 +2167,9 @@ impl TuiLoop {
                             content,
                         ))
                     }
-                    Err(e) => self.app.push_system_message(&format!(
-                        "Could not store memory entry: {e}",
-                    )),
+                    Err(e) => self
+                        .app
+                        .push_system_message(&format!("Could not store memory entry: {e}",)),
                 }
             }
             "/policy" => {
@@ -2243,10 +2201,7 @@ impl TuiLoop {
                             Some(rule) => {
                                 let removed = engine.remove_deny_rule(&rule).await;
                                 if removed {
-                                    let pattern = rule
-                                        .path_pattern
-                                        .as_deref()
-                                        .unwrap_or("*");
+                                    let pattern = rule.path_pattern.as_deref().unwrap_or("*");
                                     self.app.push_system_message(&format!(
                                         "Forgot deny rule {}: {} {}",
                                         n, rule.tool, pattern,
@@ -2283,16 +2238,9 @@ impl TuiLoop {
                             );
                             for (i, r) in rules.iter().enumerate() {
                                 let pattern = r.path_pattern.as_deref().unwrap_or("*");
-                                msg.push_str(&format!(
-                                    "  {}. {} {}\n",
-                                    i + 1,
-                                    r.tool,
-                                    pattern,
-                                ));
+                                msg.push_str(&format!("  {}. {} {}\n", i + 1, r.tool, pattern,));
                             }
-                            msg.push_str(
-                                "\nDrop a rule with `/policy forget <n>`.",
-                            );
+                            msg.push_str("\nDrop a rule with `/policy forget <n>`.");
                             self.app.push_system_message(msg.trim_end());
                         }
                     }
@@ -2312,12 +2260,8 @@ impl TuiLoop {
                 // useful mid-session to remind the model (and the user)
                 // what the repository looks like without scrolling
                 // through files.
-                let max_chars: usize = parts
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(16_000);
-                let cwd = std::env::current_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let max_chars: usize = parts.next().and_then(|s| s.parse().ok()).unwrap_or(16_000);
+                let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
                 let map = kod_core::repomap::build_repo_map(&cwd);
                 let rendered = map.render(max_chars);
                 if rendered.trim().is_empty() {
@@ -2357,10 +2301,8 @@ impl TuiLoop {
                 let re = match regex::Regex::new(pattern) {
                     Ok(r) => r,
                     Err(e) => {
-                        self.app.push_system_message(&format!(
-                            "Invalid regex {:?}: {}",
-                            pattern, e,
-                        ));
+                        self.app
+                            .push_system_message(&format!("Invalid regex {:?}: {}", pattern, e,));
                         return Ok(());
                     }
                 };
@@ -2385,17 +2327,11 @@ impl TuiLoop {
                     })
                     .collect();
                 if hits.is_empty() {
-                    self.app.push_system_message(&format!(
-                        "No messages match {:?}.",
-                        pattern,
-                    ));
+                    self.app
+                        .push_system_message(&format!("No messages match {:?}.", pattern,));
                     return Ok(());
                 }
-                let mut msg = format!(
-                    "{} message(s) match {:?}:\n",
-                    hits.len(),
-                    pattern,
-                );
+                let mut msg = format!("{} message(s) match {:?}:\n", hits.len(), pattern,);
                 // Cap the display at 30 messages, printing the first
                 // line of each so a search over a long transcript
                 // stays readable.
@@ -2407,10 +2343,7 @@ impl TuiLoop {
                     } else {
                         first_line.to_string()
                     };
-                    msg.push_str(&format!(
-                        "  {:>4}. [{}] {}\n",
-                        n, role, shown,
-                    ));
+                    msg.push_str(&format!("  {:>4}. [{}] {}\n", n, role, shown,));
                 }
                 if hits.len() > 30 {
                     msg.push_str(&format!(
@@ -2428,12 +2361,14 @@ impl TuiLoop {
                 let out = self.app.session_output_tokens();
                 let total = self.app.session_total_tokens();
                 let msg_count = self.app.messages().len();
-                let assistant_count = self.app
+                let assistant_count = self
+                    .app
                     .messages()
                     .iter()
                     .filter(|m| matches!(m.role, kod_types::MessageRole::Assistant))
                     .count();
-                let tool_count = self.app
+                let tool_count = self
+                    .app
                     .messages()
                     .iter()
                     .filter(|m| matches!(m.role, kod_types::MessageRole::Tool))
@@ -2481,16 +2416,13 @@ impl TuiLoop {
                     return Ok(());
                 };
                 let Ok(n) = idx_str.parse::<usize>() else {
-                    self.app.push_system_message(&format!(
-                        "Not a number: {:?}",
-                        idx_str,
-                    ));
+                    self.app
+                        .push_system_message(&format!("Not a number: {:?}", idx_str,));
                     return Ok(());
                 };
                 if n == 0 {
-                    self.app.push_system_message(
-                        "Index is 1-based; try /pin 1 for the first message.",
-                    );
+                    self.app
+                        .push_system_message("Index is 1-based; try /pin 1 for the first message.");
                     return Ok(());
                 }
                 let (role, content, total) = {
@@ -2517,9 +2449,7 @@ impl TuiLoop {
                     }
                 }
                 if let Some(engine) = &self.engine {
-                    let found = engine
-                        .set_turn_pinned_by_content("", &content, pin)
-                        .await;
+                    let found = engine.set_turn_pinned_by_content("", &content, pin).await;
                     if !found {
                         self.app.push_system_message(
                             "The engine no longer has that turn in its \
@@ -2531,9 +2461,8 @@ impl TuiLoop {
                 }
                 self.app.set_message_pinned_at(n - 1, pin);
                 let verb = if pin { "Pinned" } else { "Unpinned" };
-                self.app.push_system_message(&format!(
-                    "{verb} message {n} of {total}.",
-                ));
+                self.app
+                    .push_system_message(&format!("{verb} message {n} of {total}.",));
             }
             "/handoff" => {
                 if self.app.is_generating() {
@@ -2549,15 +2478,12 @@ impl TuiLoop {
                 };
                 let transcript = self.app.export_markdown();
                 if transcript.trim().is_empty() {
-                    self.app.push_system_message(
-                        "Nothing to hand off — the session is empty.",
-                    );
+                    self.app
+                        .push_system_message("Nothing to hand off — the session is empty.");
                     return Ok(());
                 }
                 self.app.begin_generation();
-                self.app.push_system_message(
-                    "Generating handoff document…",
-                );
+                self.app.push_system_message("Generating handoff document…");
                 let event_tx = self.event_handler.sender();
                 tokio::spawn(async move {
                     let prompt = format!(
@@ -2582,14 +2508,10 @@ impl TuiLoop {
                     match engine.process(&prompt).await {
                         Ok(resp) => {
                             let text = resp.text.unwrap_or_default();
-                            let _ = event_tx
-                                .send(Event::HandoffGenerated(text))
-                                .await;
+                            let _ = event_tx.send(Event::HandoffGenerated(text)).await;
                         }
                         Err(e) => {
-                            let _ = event_tx
-                                .send(Event::Error(format!("/handoff: {e}")))
-                                .await;
+                            let _ = event_tx.send(Event::Error(format!("/handoff: {e}"))).await;
                         }
                     }
                 });
@@ -2637,9 +2559,9 @@ impl TuiLoop {
                             ));
                         }
                     }
-                    Err(e) => self.app.push_system_message(&format!(
-                        "Could not read checkpoints: {e}",
-                    )),
+                    Err(e) => self
+                        .app
+                        .push_system_message(&format!("Could not read checkpoints: {e}",)),
                 }
             }
             "/attach" => {
@@ -2654,10 +2576,7 @@ impl TuiLoop {
                                  \nClear with /attach clear. Multiple files supported.",
                             );
                         } else {
-                            let mut msg = format!(
-                                "Attached files ({}):\n",
-                                attached.len(),
-                            );
+                            let mut msg = format!("Attached files ({}):\n", attached.len(),);
                             for f in attached {
                                 msg.push_str(&format!("  {}\n", f.display()));
                             }
@@ -2703,9 +2622,8 @@ impl TuiLoop {
                     return Ok(());
                 }
                 let Some(last_assistant) = self.app.last_assistant_text() else {
-                    self.app.push_system_message(
-                        "Nothing to refine — no assistant reply yet.",
-                    );
+                    self.app
+                        .push_system_message("Nothing to refine — no assistant reply yet.");
                     return Ok(());
                 };
                 let prior = last_assistant.to_string();
@@ -2717,8 +2635,7 @@ impl TuiLoop {
                 // chain of unrefined → refined → refined again.
                 let _ = self.app.drop_last_exchange();
                 self.app.set_input(prompt);
-                self.app
-                    .push_system_message("Refining the last reply…");
+                self.app.push_system_message("Refining the last reply…");
                 Box::pin(self.dispatch_prompt()).await?;
             }
             "/raw" => {
@@ -2735,9 +2652,7 @@ impl TuiLoop {
                             "(raw reply printed to stdout — select with your terminal)",
                         );
                     }
-                    None => self.app.push_system_message(
-                        "No assistant reply yet.",
-                    ),
+                    None => self.app.push_system_message("No assistant reply yet."),
                 }
             }
             "/save" => {
@@ -2760,8 +2675,7 @@ impl TuiLoop {
                         markdown.len(),
                         path.display(),
                     )),
-                    Err(e) => self.app
-                        .push_system_message(&format!("Save failed: {e}")),
+                    Err(e) => self.app.push_system_message(&format!("Save failed: {e}")),
                 }
             }
             "/load" => {
@@ -2794,8 +2708,7 @@ impl TuiLoop {
                             ),
                         }
                     }
-                    Err(e) => self.app
-                        .push_system_message(&format!("Load failed: {e}")),
+                    Err(e) => self.app.push_system_message(&format!("Load failed: {e}")),
                 }
             }
             "/branch" => {
@@ -2879,9 +2792,7 @@ impl TuiLoop {
                     match engine.process(&prompt).await {
                         Ok(resp) => {
                             let text = resp.text.unwrap_or_default();
-                            let _ = event_tx
-                                .send(Event::ResponseComplete(text))
-                                .await;
+                            let _ = event_tx.send(Event::ResponseComplete(text)).await;
                         }
                         Err(e) => {
                             let _ = event_tx.send(Event::Error(e.to_string())).await;
@@ -2917,9 +2828,22 @@ impl TuiLoop {
                 msg.push_str(&format!("  messages:      {}\n", msgs));
                 msg.push_str(&format!("  context:       {}\n", ctx));
                 msg.push_str(&format!("  theme:         {}\n", theme));
-                msg.push_str(&format!("  tool output:   {}\n", if tools_on { "shown" } else { "hidden" }));
-                msg.push_str(&format!("  autocompact:   {}\n", if auto_on { "on" } else { "off" }));
-                msg.push_str(&format!("  system prompt: {}\n", if sys_override { "override active" } else { "(default)" }));
+                msg.push_str(&format!(
+                    "  tool output:   {}\n",
+                    if tools_on { "shown" } else { "hidden" }
+                ));
+                msg.push_str(&format!(
+                    "  autocompact:   {}\n",
+                    if auto_on { "on" } else { "off" }
+                ));
+                msg.push_str(&format!(
+                    "  system prompt: {}\n",
+                    if sys_override {
+                        "override active"
+                    } else {
+                        "(default)"
+                    }
+                ));
                 msg.push_str(&format!("  attachments:   {}\n", attached));
                 if let Some(g) = goal {
                     let shown: String = if g.chars().count() > 60 {
@@ -2932,7 +2856,7 @@ impl TuiLoop {
                 msg.push_str("\nPaths\n");
                 msg.push_str(&format!("  config:  {}\n", config_path));
                 msg.push_str(&format!("  session: {}\n", session_path));
-                self.app.push_system_message(&msg.trim_end().to_string());
+                self.app.push_system_message(msg.trim_end());
             }
             "/clearall" => {
                 if self.app.is_generating() {
@@ -2984,9 +2908,18 @@ impl TuiLoop {
                 let mut msg = String::from("Session statistics\n");
                 msg.push_str(&format!("  elapsed:         {}\n", elapsed));
                 msg.push_str(&format!("  total messages:  {}\n", msgs.len()));
-                msg.push_str(&format!("  input tokens:    {}\n", self.app.session_input_tokens()));
-                msg.push_str(&format!("  output tokens:   {}\n", self.app.session_output_tokens()));
-                msg.push_str(&format!("  context:         {}\n", self.app.context_label()));
+                msg.push_str(&format!(
+                    "  input tokens:    {}\n",
+                    self.app.session_input_tokens()
+                ));
+                msg.push_str(&format!(
+                    "  output tokens:   {}\n",
+                    self.app.session_output_tokens()
+                ));
+                msg.push_str(&format!(
+                    "  context:         {}\n",
+                    self.app.context_label()
+                ));
                 msg.push_str("\nMessages by role\n");
                 for (r, n) in per_role.iter() {
                     msg.push_str(&format!("  {:<6} {}\n", r, n));
@@ -3004,8 +2937,7 @@ impl TuiLoop {
             "/git-status" => {
                 // `git status --porcelain=v2 -b` in the working
                 // directory, printed as a system message.
-                let cwd = std::env::current_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
                 match std::process::Command::new("git")
                     .args(["status", "--porcelain=v2", "-b"])
                     .current_dir(&cwd)
@@ -3015,9 +2947,8 @@ impl TuiLoop {
                         let text = String::from_utf8_lossy(&out.stdout);
                         let trimmed = text.trim_end();
                         if trimmed.is_empty() {
-                            self.app.push_system_message(
-                                "Working tree is clean (no changes).",
-                            );
+                            self.app
+                                .push_system_message("Working tree is clean (no changes).");
                         } else {
                             self.app.push_system_message(&format!(
                                 "git status ({}):\n\n{}",
@@ -3028,14 +2959,12 @@ impl TuiLoop {
                     }
                     Ok(out) => {
                         let err = String::from_utf8_lossy(&out.stderr);
-                        self.app.push_system_message(&format!(
-                            "git status failed: {}",
-                            err.trim(),
-                        ));
+                        self.app
+                            .push_system_message(&format!("git status failed: {}", err.trim(),));
                     }
-                    Err(e) => self.app.push_system_message(&format!(
-                        "Could not run git: {e} — is git on PATH?",
-                    )),
+                    Err(e) => self
+                        .app
+                        .push_system_message(&format!("Could not run git: {e} — is git on PATH?",)),
                 }
             }
             "/reset" => {
@@ -3059,7 +2988,8 @@ impl TuiLoop {
                 let label = parts.next().map(|s| s.to_string());
                 let n = self.app.fork_messages();
                 if n == 0 {
-                    self.app.push_system_message("Nothing to fork — the chat is empty.");
+                    self.app
+                        .push_system_message("Nothing to fork — the chat is empty.");
                 } else {
                     let msg = match label {
                         Some(l) => format!(
@@ -3119,9 +3049,7 @@ impl TuiLoop {
                             msg.push_str(&format_entry_one_line(e));
                             msg.push('\n');
                         }
-                        msg.push_str(
-                            "\nReplay this log with: kod replay <path>",
-                        );
+                        msg.push_str("\nReplay this log with: kod replay <path>");
                         self.app.push_system_message(msg.trim_end());
                     }
                     Err(e) => {
@@ -3138,8 +3066,7 @@ impl TuiLoop {
                 // project-aware), fall back to the compiler if no
                 // server is available or the file cannot be read.
                 let arg = parts.next().map(|s| s.to_string());
-                let cwd = std::env::current_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
                 let mut handled = false;
                 if let Some(file) = arg.as_deref()
@@ -3155,11 +3082,7 @@ impl TuiLoop {
                         && let Ok(content) = std::fs::read_to_string(&path)
                     {
                         let diags = engine
-                            .lsp_diagnostics(
-                                &path,
-                                &content,
-                                std::time::Duration::from_secs(30),
-                            )
+                            .lsp_diagnostics(&path, &content, std::time::Duration::from_secs(30))
                             .await;
                         if !diags.is_empty() {
                             let mut msg = format!(
@@ -3174,8 +3097,7 @@ impl TuiLoop {
                                     .map(|c| format!("[{c}]"))
                                     .unwrap_or_default();
                                 let short = if d.message.chars().count() > 120 {
-                                    let s: String =
-                                        d.message.chars().take(120).collect();
+                                    let s: String = d.message.chars().take(120).collect();
                                     format!("{s}…")
                                 } else {
                                     d.message.clone()
@@ -3186,10 +3108,7 @@ impl TuiLoop {
                                 ));
                             }
                             if diags.len() > 30 {
-                                msg.push_str(&format!(
-                                    "  … and {} more\n",
-                                    diags.len() - 30
-                                ));
+                                msg.push_str(&format!("  … and {} more\n", diags.len() - 30));
                             }
                             self.app.push_system_message(msg.trim_end());
                             handled = true;
@@ -3227,22 +3146,15 @@ impl TuiLoop {
                                         .as_deref()
                                         .map(|c| format!("[{c}]"))
                                         .unwrap_or_default();
-                                    let short =
-                                        if d.message.chars().count() > 120 {
-                                            let s: String =
-                                                d.message.chars().take(120).collect();
-                                            format!("{s}…")
-                                        } else {
-                                            d.message.clone()
-                                        };
+                                    let short = if d.message.chars().count() > 120 {
+                                        let s: String = d.message.chars().take(120).collect();
+                                        format!("{s}…")
+                                    } else {
+                                        d.message.clone()
+                                    };
                                     msg.push_str(&format!(
                                         "  {} {} {}:{}:{} — {}\n",
-                                        d.severity,
-                                        code,
-                                        d.file,
-                                        d.line,
-                                        d.column,
-                                        short,
+                                        d.severity, code, d.file, d.line, d.column, short,
                                     ));
                                 }
                                 if outcome.diagnostics.len() > 30 {
@@ -3257,9 +3169,7 @@ impl TuiLoop {
                                 self.app.push_system_message(msg.trim_end());
                             }
                         }
-                        Err(e) => self.app.push_system_message(&format!(
-                            "check failed: {e}",
-                        )),
+                        Err(e) => self.app.push_system_message(&format!("check failed: {e}",)),
                     }
                 }
             }
@@ -3277,16 +3187,16 @@ impl TuiLoop {
                     }
                     Some(path) => {
                         let p = std::path::PathBuf::from(&path);
-                        let _ = std::fs::create_dir_all(p.parent().unwrap_or(std::path::Path::new(".")));
+                        let _ = std::fs::create_dir_all(
+                            p.parent().unwrap_or(std::path::Path::new(".")),
+                        );
                         match std::fs::write(&p, markdown.as_bytes()) {
                             Ok(()) => self.app.push_system_message(&format!(
                                 "Exported session ({} bytes) to {}",
                                 markdown.len(),
                                 p.display(),
                             )),
-                            Err(e) => self
-                                .app
-                                .push_system_message(&format!("Export failed: {e}")),
+                            Err(e) => self.app.push_system_message(&format!("Export failed: {e}")),
                         }
                     }
                 }
@@ -3309,9 +3219,8 @@ impl TuiLoop {
                         println!();
                         println!("{}", html);
                         println!();
-                        self.app.push_system_message(
-                            "Exported session HTML to stdout.",
-                        );
+                        self.app
+                            .push_system_message("Exported session HTML to stdout.");
                         return Ok(());
                     }
                     None => {
@@ -3344,9 +3253,9 @@ impl TuiLoop {
                         html.len(),
                         path.display(),
                     )),
-                    Err(e) => self.app.push_system_message(&format!(
-                        "Export failed: {e}",
-                    )),
+                    Err(e) => self
+                        .app
+                        .push_system_message(&format!("Export failed: {e}",)),
                 }
             }
             "/init" => {
@@ -3360,10 +3269,7 @@ impl TuiLoop {
                 };
                 let config_dir = KodConfig::config_dir().ok();
                 let path = config_dir.as_ref().map(|d| d.join("config.toml"));
-                let mut lines = vec![
-                    "KOD onboarding".to_string(),
-                    String::new(),
-                ];
+                let mut lines = vec!["KOD onboarding".to_string(), String::new()];
                 match &path {
                     Some(p) if p.exists() => {
                         lines.push(format!("Config:   {}", p.display()));
@@ -3377,7 +3283,10 @@ impl TuiLoop {
                     None => lines.push("Config:   (unknown — no config directory)".to_string()),
                 }
                 lines.push(format!("Model:    {}", config.llm.default_endpoint().model));
-                lines.push(format!("Endpoint: {}", config.llm.default_endpoint().base_url));
+                lines.push(format!(
+                    "Endpoint: {}",
+                    config.llm.default_endpoint().base_url
+                ));
                 lines.push(format!(
                     "Network:  {}",
                     if config.llm.network_access {
@@ -3386,10 +3295,7 @@ impl TuiLoop {
                         "disabled (set llm.network_access = true to enable)"
                     }
                 ));
-                lines.push(
-                    "Writes:   policy-gated (see [tools] and .kod/policy.toml)"
-                        .to_string(),
-                );
+                lines.push("Writes:   policy-gated (see [tools] and .kod/policy.toml)".to_string());
                 lines.push(String::new());
                 lines.push("Built-in model profiles:".to_string());
                 for p in kod_config::profiles::PRESETS {
@@ -3434,8 +3340,7 @@ impl TuiLoop {
                 lines.push(String::new());
                 if report.has_failures() {
                     lines.push(
-                        "One or more checks failed — review the items marked ✗ above."
-                            .to_string(),
+                        "One or more checks failed — review the items marked ✗ above.".to_string(),
                     );
                 } else {
                     lines.push("All checks passed.".to_string());
@@ -3454,14 +3359,11 @@ impl TuiLoop {
                 });
                 match custom {
                     Some(body) => {
-                        let args: String =
-                            parts.collect::<Vec<_>>().join(" ");
+                        let args: String = parts.collect::<Vec<_>>().join(" ");
                         let cwd = std::env::current_dir()
                             .map(|p| p.display().to_string())
                             .unwrap_or_else(|_| ".".to_string());
-                        let expanded = body
-                            .replace("{args}", &args)
-                            .replace("{cwd}", &cwd);
+                        let expanded = body.replace("{args}", &args).replace("{cwd}", &cwd);
                         self.app.set_input(expanded);
                         Box::pin(self.dispatch_prompt()).await?;
                     }
@@ -3471,11 +3373,8 @@ impl TuiLoop {
                         let hint = config
                             .as_ref()
                             .map(|c| {
-                                let names: Vec<&str> = c
-                                    .commands
-                                    .keys()
-                                    .map(|s| s.as_str())
-                                    .collect();
+                                let names: Vec<&str> =
+                                    c.commands.keys().map(|s| s.as_str()).collect();
                                 if names.is_empty() {
                                     String::new()
                                 } else {
@@ -3677,15 +3576,10 @@ impl TuiLoop {
                         return Ok(());
                     };
                     let mut ids: Vec<u64> = Vec::new();
-                    loop {
-                        match batch.current_item() {
-                            Some(item) => {
-                                ids.push(item.id);
-                                if !batch.advance() {
-                                    break;
-                                }
-                            }
-                            None => break,
+                    while let Some(item) = batch.current_item() {
+                        ids.push(item.id);
+                        if !batch.advance() {
+                            break;
                         }
                     }
                     ids
@@ -3693,10 +3587,7 @@ impl TuiLoop {
                 if let Some(engine) = &self.engine {
                     for id in ids {
                         engine
-                            .respond_to_approval(
-                                id,
-                                kod_core::engine::ApprovalDecision::Deny,
-                            )
+                            .respond_to_approval(id, kod_core::engine::ApprovalDecision::Deny)
                             .await;
                     }
                 }
@@ -3807,10 +3698,7 @@ impl TuiLoop {
                                 let n = all.len();
                                 for e in &all {
                                     let _ = manager
-                                        .remove(
-                                            kod_types::MemoryType::LongTerm,
-                                            &e.id,
-                                        )
+                                        .remove(kod_types::MemoryType::LongTerm, &e.id)
                                         .await;
                                 }
                                 self.app.push_system_message(&format!(
@@ -3823,10 +3711,8 @@ impl TuiLoop {
                                 && let Some(cp) = engine.checkpoints()
                                 && let Ok(n) = cp.clear()
                             {
-                                self.app.push_system_message(&format!(
-                                    "Cleared {} checkpoint(s).",
-                                    n,
-                                ));
+                                self.app
+                                    .push_system_message(&format!("Cleared {} checkpoint(s).", n,));
                             }
                             self.app.push_system_message(
                                 "Cleared all: chat, engine history, long-term memory, checkpoints.",
@@ -3907,9 +3793,8 @@ impl TuiLoop {
                         // change, so the app's state should match
                         // reality.
                         self.mouse_captured = !self.mouse_captured;
-                        self.app.push_system_message(&format!(
-                            "Could not toggle mouse capture: {e}"
-                        ));
+                        self.app
+                            .push_system_message(&format!("Could not toggle mouse capture: {e}"));
                     }
                 }
             }
@@ -4116,9 +4001,8 @@ impl TuiLoop {
                         self.app.set_input(content.trim_end().to_string());
                     }
                     Err(e) => {
-                        self.app.push_system_message(&format!(
-                            "External editor failed: {e}"
-                        ));
+                        self.app
+                            .push_system_message(&format!("External editor failed: {e}"));
                     }
                 }
             }
@@ -4235,9 +4119,7 @@ fn format_entry_one_line(entry: &kod_core::session_log::SessionEntry) -> String 
             error_count,
             warning_count,
             ..
-        } => format!(
-            "  ------   lsp   {file} ({error_count}E/{warning_count}W)"
-        ),
+        } => format!("  ------   lsp   {file} ({error_count}E/{warning_count}W)"),
     }
 }
 
@@ -4254,9 +4136,7 @@ fn format_entry_one_line(entry: &kod_core::session_log::SessionEntry) -> String 
 /// file-reference form (`@src/lib.rs`), which a user could also type.
 fn parse_at_agent_prefix(input: &str) -> Option<(usize, &str)> {
     let s = input.strip_prefix('@')?;
-    let digits_end = s
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(s.len());
+    let digits_end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     if digits_end == 0 {
         return None;
     }
@@ -4286,6 +4166,85 @@ fn parse_at_agent_prefix(input: &str) -> Option<(usize, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_check_command_without_project() {
+        // Running `/check` in a directory with no recognized project
+        // (no Cargo.toml, package.json, pyproject.toml, or go.mod)
+        // must report the missing project, not silently do nothing.
+        // The TUI's cwd during tests is the crate directory, which
+        // has a Cargo.toml — so we set the cwd to a fresh tempdir
+        // under a static lock so the change does not race a parallel
+        // test.
+        let mut tui = TuiLoop::new();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let old_cwd = std::env::current_dir().unwrap();
+        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        let _guard = CWD_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let result = tui.handle_command("/check").await;
+        let restore = std::env::set_current_dir(&old_cwd);
+        let _ = restore;
+        result.unwrap();
+
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("check failed") || last.content.contains("no recognized project"),
+            "expected a missing-project message, got: {}",
+            last.content,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handoff_without_engine_reports() {
+        // Without an engine, /handoff cannot produce a document. The
+        // command must say so rather than silently doing nothing.
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/handoff").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("Engine not initialized"),
+            "expected a clear no-engine message, got: {}",
+            last.content,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handoff_with_engine_reports_empty_session() {
+        // With an engine but an empty session, /handoff has no
+        // transcript to summarize. The command must report the empty
+        // session rather than starting a generation on an empty
+        // prompt.
+        use kod_core::{KodEngine, RouterConfig};
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db = tmp.path().join("t.redb");
+        let cfg = RouterConfig {
+            skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+            embedder: None,
+        };
+        let engine = std::sync::Arc::new(KodEngine::new(cfg, db).unwrap());
+        engine.start().await.unwrap();
+
+        let mut tui = TuiLoop::new();
+        tui.set_engine(engine.clone());
+        tui.handle_command("/handoff").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("Nothing to hand off"),
+            "expected an empty-session message, got: {}",
+            last.content,
+        );
+        let _ = engine.shutdown().await;
+    }
 
     #[tokio::test]
     async fn test_policy_command_without_engine_reports() {
@@ -4388,7 +4347,9 @@ mod tests {
     #[tokio::test]
     async fn test_grep_command_no_match_reports() {
         let mut tui = TuiLoop::new();
-        tui.handle_command("/grep nothingmatchesxyzzy").await.unwrap();
+        tui.handle_command("/grep nothingmatchesxyzzy")
+            .await
+            .unwrap();
         let last = tui.app().messages().last().unwrap();
         assert!(
             last.content.contains("No messages match"),
@@ -4434,8 +4395,7 @@ mod tests {
         let old_cwd = std::env::current_dir().unwrap();
         // Serialize cwd mutation across tests via a static mutex so
         // the change does not race a parallel test.
-        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
-            std::sync::OnceLock::new();
+        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
         let _guard = CWD_LOCK
             .get_or_init(|| std::sync::Mutex::new(()))
             .lock()
@@ -4493,8 +4453,7 @@ mod tests {
         tui.app_mut().push_system_message("stdout content");
         let tmp = tempfile::TempDir::new().unwrap();
         let old_cwd = std::env::current_dir().unwrap();
-        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
-            std::sync::OnceLock::new();
+        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
         let _guard = CWD_LOCK
             .get_or_init(|| std::sync::Mutex::new(()))
             .lock()
@@ -4518,11 +4477,13 @@ mod tests {
         );
     }
 
-
     #[test]
     fn parse_at_agent_prefix_accepts_simple_form() {
         assert_eq!(parse_at_agent_prefix("@1 hello"), Some((1, "hello")));
-        assert_eq!(parse_at_agent_prefix("@2 two words"), Some((2, "two words")));
+        assert_eq!(
+            parse_at_agent_prefix("@2 two words"),
+            Some((2, "two words"))
+        );
         assert_eq!(parse_at_agent_prefix("@10 x"), Some((10, "x")));
         // A bare `@N` with no text is legal; the caller steers with an
         // empty message, which `steer_for` already ignores.
@@ -4569,7 +4530,10 @@ mod tests {
     fn parse_at_agent_prefix_accepts_leading_whitespace_in_text() {
         // The text after the space is passed through verbatim,
         // including any additional whitespace the user typed.
-        assert_eq!(parse_at_agent_prefix("@2  double space"), Some((2, " double space")));
+        assert_eq!(
+            parse_at_agent_prefix("@2  double space"),
+            Some((2, " double space"))
+        );
     }
 
     #[tokio::test]
@@ -4607,9 +4571,8 @@ mod tests {
         let known: std::collections::HashSet<&'static str> =
             SLASH_COMMANDS.iter().map(|c| c.name).collect();
         for token in help.split_whitespace() {
-            let trimmed = token.trim_end_matches(|c: char| {
-                !c.is_ascii_alphanumeric() && c != '/' && c != '-'
-            });
+            let trimmed = token
+                .trim_end_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/' && c != '-');
             if trimmed.starts_with('/') && trimmed.len() > 1 {
                 assert!(
                     known.contains(trimmed),
@@ -4705,7 +4668,9 @@ mod tests {
         let mut tui = TuiLoop::new();
         tui.app_mut().set_input_mode(InputMode::Insert);
         tui.app_mut().set_input("hello".to_string());
-        tui.handle_event(Event::Key(KeyCode::Backspace)).await.unwrap();
+        tui.handle_event(Event::Key(KeyCode::Backspace))
+            .await
+            .unwrap();
         assert_eq!(tui.app().input(), "hell");
         assert_eq!(tui.app().cursor_position(), 4);
     }
@@ -4954,7 +4919,9 @@ mod tests {
     async fn test_swarm_command_without_engine_reports() {
         let mut tui = TuiLoop::new();
         // TuiLoop::new() has no engine; that is the case this asserts.
-        tui.handle_command("/swarm fix the payment handler").await.unwrap();
+        tui.handle_command("/swarm fix the payment handler")
+            .await
+            .unwrap();
         let last = tui.app().messages().last().unwrap();
         assert!(
             last.content.contains("Engine not initialized"),
