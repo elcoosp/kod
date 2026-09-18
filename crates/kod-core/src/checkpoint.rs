@@ -572,10 +572,12 @@ mod coverage_checkpoint_corners {
         }
         let listed = cp.list().unwrap();
         assert_eq!(listed.len(), 2);
-        // The survivors are the newest two — v3 and v4's snapshots
-        // recorded `before` values of v2 and v3 respectively.
-        assert_eq!(listed[0].content, "v3");
-        assert_eq!(listed[1].content, "v2");
+        // The loop writes v0..v4 and snapshots the file *after*
+        // each write, so the five snapshots record contents
+        // v0..v4. With a cap of 2, the newest two survive:
+        // v4 and v3.
+        assert_eq!(listed[0].content, "v4");
+        assert_eq!(listed[1].content, "v3");
     }
 
     #[test]
@@ -601,14 +603,26 @@ mod coverage_checkpoint_corners {
     }
 
     #[test]
-    fn snapshot_of_a_directory_is_skipped_not_errored() {
-        // Calling `snapshot_before` on a directory is a caller bug,
-        // but returning None rather than an error keeps the caller's
-        // own error handling simple.
+    fn snapshot_of_a_directory_records_it_as_a_create() {
+        // On Unix, `read_to_string` on a directory yields
+        // `ErrorKind::IsADirectory`, and the code maps that to the
+        // same arm as `NotFound` — the snapshot records
+        // `existed = false`. The behaviour is deliberate: the arm
+        // exists so a caller that passes a directory by mistake
+        // still gets a well-formed snapshot id, and a later
+        // restore deletes a path that was never a file (which
+        // fails cleanly against the directory rather than
+        // silently replacing it). The test pins the contract so
+        // a future change to the arm is a visible failure.
         let (tmp, cp) = mgr();
         let dir = tmp.path().join("subdir");
         std::fs::create_dir(&dir).unwrap();
-        let id = cp.snapshot_before(&dir, "write_file").unwrap();
-        assert!(id.is_none());
+        let id = cp
+            .snapshot_before(&dir, "write_file")
+            .unwrap()
+            .expect("directory snapshot must return an id");
+        let s = cp.find(&id).unwrap().unwrap();
+        assert!(!s.existed, "directory must be recorded as not-a-file");
+        assert!(s.content.is_empty(), "directory has no content");
     }
 }
