@@ -5,7 +5,7 @@
 
 use crate::{long_term::LongTermMemory, short_term::ShortTermMemory};
 use kod_error::{KodError, Result};
-use kod_types::{MemoryContext, MemoryEntry, MemoryId, MemoryType, };
+use kod_types::{MemoryContext, MemoryEntry, MemoryId, MemoryType};
 use std::path::PathBuf;
 use time::OffsetDateTime;
 
@@ -14,6 +14,20 @@ use time::OffsetDateTime;
 /// A durable `LongTerm` fact is never archived — only auto-extracted
 /// `Episodic` entries age out. 60 days matches the design's D2.5.
 pub const ARCHIVE_AFTER_DAYS: u32 = 60;
+
+/// How many of the most recent long-term entries are examined for
+/// near-duplicate fusion in one [`MemoryManager::consolidate`] pass.
+/// The comparison is O(N²) in this window; 500 keeps it at ~125k
+/// cosines — a fraction of a second even without SIMD — while still
+/// covering the paraphrase-in-the-same-session case the fusion is
+/// for.
+const FUSE_WINDOW: usize = 500;
+
+/// Cosine above which two entries are considered the same fact.
+/// 0.95 is the design's threshold (D2.5). Paraphrases of a short
+/// sentence typically land in 0.92–0.98; distinct facts on the same
+/// topic usually stay below 0.9.
+const FUSE_COSINE_THRESHOLD: f32 = 0.95;
 
 /// Result of a [`MemoryManager::compact`] call: how many entries
 /// were dropped from each layer. A single struct rather than a tuple
@@ -24,21 +38,24 @@ pub struct CompactionReport {
     pub short_term_removed: usize,
 }
 
-/// Result of a [`MemoryManager::consolidate`] pass: how many episodic
-/// entries were archived (dropped from the active store) and how many
-/// duplicate pairs were fused into single entries.
+/// Result of a [`MemoryManager::consolidate`] pass.
 ///
-/// Fusion needs an embedder; a session without one reports `fused: 0`
-/// and leaves every pair in place. The archival count is the one that
-/// moves on a fresh session without a model — an episode written months
-/// ago and never read again is dropped even with no embedder.
+/// Two independent operations run in one call:
+///
+/// - **Archival**: episodic entries whose last touch is older than
+///   `ARCHIVE_AFTER_DAYS` are dropped. This runs with or without an
+///   embedder — an episode written months ago and never read again is
+///   dropped on a fresh session with no model.
+/// - **Fusion**: near-duplicate entries (cosine > 0.95) within the
+///   same project are merged into a single survivor. This needs an
+///   embedder; without one, `fused` is `0` and every duplicate stays
+///   in place.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ConsolidationReport {
-    /// Episodes archived (removed from the persistent store).
+    /// Episodic entries archived (removed from the persistent store).
     pub archived: usize,
-    /// Pairs of near-duplicate entries fused into one. `0` when no
-    /// embedder is installed, or when no pair exceeded the fusion
-    /// threshold.
+    /// Entries removed by near-duplicate fusion. `0` when no embedder
+    /// is installed, or when no cluster exceeded the threshold.
     pub fused: usize,
 }
 
@@ -295,10 +312,7 @@ impl MemoryManager {
     /// The hybrid retrieval itself, exposed for tests and for a caller
     /// that wants the top-k list without wrapping it in a
     /// `MemoryContext`.
-    pub async fn retrieve_long_term_hybrid(
-        &self,
-        query: &str,
-    ) -> Result<Vec<MemoryEntry>> {
+    pub async fn retrieve_long_term_hybrid(&self, query: &str) -> Result<Vec<MemoryEntry>> {
         let all = self.long_term.get_all().await?;
         if all.is_empty() {
             return Ok(Vec::new());
@@ -307,7 +321,11 @@ impl MemoryManager {
 
         // Ensure the vector index is populated when an embedder is
         // installed. `None` means "no semantic component".
-        let semantic_available = self.embedder.as_ref().map(|e| e.dims() > 0).unwrap_or(false);
+        let semantic_available = self
+            .embedder
+            .as_ref()
+            .map(|e| e.dims() > 0)
+            .unwrap_or(false);
         if semantic_available && self.vector_index.read().is_none() {
             // Best-effort rebuild: a failure here just means the
             // hybrid falls back to keyword+recency for this call.
@@ -321,7 +339,10 @@ impl MemoryManager {
         // single embed call for the query, then a top-k search.
         let cosines: std::collections::HashMap<MemoryId, f32> = if semantic_available {
             let embedder = self.embedder.as_ref().unwrap();
-            match embedder.embed(std::slice::from_ref(&query.to_string())).await {
+            match embedder
+                .embed(std::slice::from_ref(&query.to_string()))
+                .await
+            {
                 Ok(mut v) if !v.is_empty() => {
                     let q_vec = v.remove(0);
                     let idx_guard = self.vector_index.read();
@@ -352,9 +373,7 @@ impl MemoryManager {
                 (s, entry)
             })
             .collect();
-        scored.sort_by(|a, b| {
-            b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
         // Apply a minimum relevance threshold so an unrelated query
         // does not return the entire store in a stable-but-meaningless
@@ -413,32 +432,214 @@ impl MemoryManager {
         if all.is_empty() {
             return Ok(ConsolidationReport::default());
         }
+
+        // --- Pass 1: archive old episodic entries. ---
         let now = OffsetDateTime::now_utc();
         let cutoff = now - time::Duration::days(ARCHIVE_AFTER_DAYS as i64);
         let mut archived = 0usize;
-        for entry in &all {
-            if entry.memory_type != MemoryType::Episodic {
-                continue;
+        let mut remaining: Vec<MemoryEntry> = Vec::with_capacity(all.len());
+        for entry in all {
+            if entry.memory_type == MemoryType::Episodic {
+                let last_touch = entry
+                    .metadata
+                    .last_retrieved_at_ms
+                    .and_then(|ms| OffsetDateTime::from_unix_timestamp((ms / 1000) as i64).ok())
+                    .unwrap_or(entry.timestamp);
+                if last_touch < cutoff && self.long_term.remove(&entry.id).await.is_ok() {
+                    archived += 1;
+                    continue;
+                }
             }
-            let last_touch = entry
-                .metadata
-                .last_retrieved_at_ms
-                .and_then(|ms| {
-                    OffsetDateTime::from_unix_timestamp((ms / 1000) as i64).ok()
-                })
-                .unwrap_or(entry.timestamp);
-            if last_touch < cutoff
-                && self.long_term.remove(&entry.id).await.is_ok()
-            {
-                archived += 1;
-            }
+            remaining.push(entry);
         }
-        Ok(ConsolidationReport {
-            archived,
-            fused: 0,
-        })
+
+        // --- Pass 2: fuse near-duplicates. ---
+        let fused = self.fuse_duplicates(&remaining).await?;
+
+        Ok(ConsolidationReport { archived, fused })
     }
 
+    /// Fuse near-duplicate long-term entries (design D2.5).
+    ///
+    /// Considers the most recent `FUSE_WINDOW` entries per project,
+    /// embeds them in one batch, and unions any pair whose cosine
+    /// exceeds `FUSE_COSINE_THRESHOLD`. Each cluster keeps one entry
+    /// (the most recently touched); the rest are deleted and their
+    /// tags are merged into the survivor.
+    ///
+    /// Returns the number of entries deleted by fusion. `0` when no
+    /// embedder is installed, or when no cluster exceeded the
+    /// threshold — the design's honest report, not a guess.
+    async fn fuse_duplicates(&self, entries: &[MemoryEntry]) -> Result<usize> {
+        let Some(embedder) = self.embedder.as_ref() else {
+            return Ok(0);
+        };
+        let dim = embedder.dims();
+        if dim == 0 {
+            return Ok(0);
+        }
+
+        // Group by project_key so a fact from project A never fuses
+        // with a fact from project B. `None` is its own group (entries
+        // written before the field existed, or by a caller that
+        // deliberately left it empty).
+        let mut by_project: std::collections::HashMap<Option<String>, Vec<&MemoryEntry>> =
+            std::collections::HashMap::new();
+        for e in entries {
+            by_project
+                .entry(e.metadata.project_key.clone())
+                .or_default()
+                .push(e);
+        }
+
+        let mut to_delete: Vec<MemoryId> = Vec::new();
+        let mut tags_to_merge: std::collections::HashMap<MemoryId, Vec<String>> =
+            std::collections::HashMap::new();
+
+        for (_key, mut group) in by_project {
+            if group.len() < 2 {
+                continue;
+            }
+            // Sort by most recent touch descending, then truncate.
+            group.sort_by(|a, b| {
+                let ta = a
+                    .metadata
+                    .last_retrieved_at_ms
+                    .unwrap_or_else(|| (a.timestamp.unix_timestamp() * 1000) as u64);
+                let tb = b
+                    .metadata
+                    .last_retrieved_at_ms
+                    .unwrap_or_else(|| (b.timestamp.unix_timestamp() * 1000) as u64);
+                tb.cmp(&ta)
+            });
+            group.truncate(FUSE_WINDOW);
+
+            // Embed the group in one batch. Any embed error skips
+            // fusion for this project — the archive half already ran,
+            // so the pass is not lost.
+            let texts: Vec<String> = group.iter().map(|e| e.content.clone()).collect();
+            let vectors = match embedder.embed(&texts).await {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        count = texts.len(),
+                        "fuse_duplicates: embed failed; skipping project",
+                    );
+                    continue;
+                }
+            };
+            if vectors.len() != group.len() {
+                tracing::warn!(
+                    got = vectors.len(),
+                    expected = group.len(),
+                    "fuse_duplicates: embed returned wrong count; skipping project",
+                );
+                continue;
+            }
+
+            // Normalize each vector so cosine == dot product.
+            let normed: Vec<Vec<f32>> = vectors
+                .into_iter()
+                .map(|mut v| {
+                    let n: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+                    if n > 0.0 {
+                        for x in &mut v {
+                            *x /= n;
+                        }
+                    }
+                    v
+                })
+                .collect();
+
+            // Union-find over "cosine > threshold".
+            let n = group.len();
+            let mut parent: Vec<usize> = (0..n).collect();
+            fn find(p: &mut [usize], mut i: usize) -> usize {
+                while p[i] != i {
+                    p[i] = p[p[i]];
+                    i = p[i];
+                }
+                i
+            }
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    let cos: f32 = normed[i]
+                        .iter()
+                        .zip(normed[j].iter())
+                        .map(|(a, b)| a * b)
+                        .sum();
+                    if cos >= FUSE_COSINE_THRESHOLD {
+                        let ri = find(&mut parent, i);
+                        let rj = find(&mut parent, j);
+                        if ri != rj {
+                            parent[rj] = ri;
+                        }
+                    }
+                }
+            }
+
+            // Group indices by root, keep the first (most recent) of
+            // each cluster, delete the rest.
+            let mut clusters: std::collections::HashMap<usize, Vec<usize>> =
+                std::collections::HashMap::new();
+            for i in 0..n {
+                let r = find(&mut parent, i);
+                clusters.entry(r).or_default().push(i);
+            }
+            for (_root, indices) in clusters {
+                if indices.len() < 2 {
+                    continue;
+                }
+                let survivor = group[indices[0]];
+                // Union tags of the cluster into the survivor.
+                let mut union_tags: Vec<String> = survivor.metadata.tags.clone();
+                for &idx in &indices[1..] {
+                    for t in &group[idx].metadata.tags {
+                        if !union_tags.contains(t) {
+                            union_tags.push(t.clone());
+                        }
+                    }
+                    to_delete.push(group[idx].id.clone());
+                }
+                tags_to_merge.insert(survivor.id.clone(), union_tags);
+            }
+        }
+
+        if to_delete.is_empty() {
+            return Ok(0);
+        }
+
+        // Persist the survivor tag unions first so a crash between
+        // the two writes does not lose them.
+        if !tags_to_merge.is_empty() {
+            let mut updated: Vec<MemoryEntry> = Vec::new();
+            for e in entries {
+                if let Some(tags) = tags_to_merge.get(&e.id) {
+                    let mut e = e.clone();
+                    e.metadata.tags = tags.clone();
+                    updated.push(e);
+                }
+            }
+            if !updated.is_empty()
+                && let Err(err) = self.long_term.store_batch(updated).await
+            {
+                tracing::warn!(
+                    error = %err,
+                    "fuse_duplicates: could not persist merged tags;                      skipping deletion to keep metadata consistent",
+                );
+                return Ok(0);
+            }
+        }
+
+        let mut actually_deleted = 0usize;
+        for id in &to_delete {
+            if self.long_term.remove(id).await.is_ok() {
+                actually_deleted += 1;
+            }
+        }
+        Ok(actually_deleted)
+    }
 
     /// Proactively trim short-term memory to `target` entries,
     /// leaving headroom below capacity. Returns how many entries were
@@ -466,7 +667,6 @@ impl MemoryManager {
         self.long_term.get_all().await
     }
 
-
     /// Explicitly close the underlying long-term database.
     ///
     /// Consumes the manager: the caller (typically `KodEngine::shutdown`)
@@ -481,7 +681,11 @@ impl MemoryManager {
         // Bind to a local and drop explicitly so the intent is obvious
         // even if a future field is added: every owned subsystem is
         // released on this line.
-        let Self { short_term, long_term, .. } = self;
+        let Self {
+            short_term,
+            long_term,
+            ..
+        } = self;
         drop(short_term);
         long_term.close();
     }
@@ -548,10 +752,7 @@ mod tests {
         let manager = MemoryManager::new(db_path, 100).unwrap();
 
         manager
-            .store(
-                MemoryType::LongTerm,
-                "The user's project is called KOD.",
-            )
+            .store(MemoryType::LongTerm, "The user's project is called KOD.")
             .await
             .unwrap();
         manager
@@ -559,10 +760,7 @@ mod tests {
             .await
             .unwrap();
         manager
-            .store(
-                MemoryType::LongTerm,
-                "The build uses Cargo and rustc.",
-            )
+            .store(MemoryType::LongTerm, "The build uses Cargo and rustc.")
             .await
             .unwrap();
 
@@ -585,17 +783,16 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            ctx.long_term.iter().any(|e| e.content.contains("dark mode")),
+            ctx.long_term
+                .iter()
+                .any(|e| e.content.contains("dark mode")),
             "expected the dark-mode fact: {:?}",
             ctx.long_term.iter().map(|e| &e.content).collect::<Vec<_>>()
         );
 
         // A query with no content-word overlap returns nothing past
         // the min-score threshold.
-        let ctx = manager
-            .retrieve_context("xyzzy plugh")
-            .await
-            .unwrap();
+        let ctx = manager.retrieve_context("xyzzy plugh").await.unwrap();
         assert!(
             ctx.long_term.is_empty(),
             "unrelated query should return nothing: {:?}",
@@ -651,10 +848,7 @@ mod tests {
                 .unwrap();
         }
         let len = manager.get_all_short_term().len();
-        assert!(
-            len <= 10,
-            "short-term must not exceed capacity, got {len}"
-        );
+        assert!(len <= 10, "short-term must not exceed capacity, got {len}");
         assert!(
             len < 10,
             "store should have compacted below capacity, got {len}"
