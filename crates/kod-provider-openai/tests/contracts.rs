@@ -16,9 +16,9 @@
 //! one httpmock has kept stable.
 
 use httpmock::prelude::*;
+use kod_provider::GenerationResponse;
 use kod_provider::request::{CompletionRequest, ModelRef, SystemPrompt, SystemSegment};
 use kod_provider::traits::{GenerationOptions, LlmProvider};
-use kod_provider::GenerationResponse;
 use kod_provider_openai::OpenAICompatProvider;
 use kod_types::{ChatMessage, MessageId, MessageRole, ToolCall};
 use serde_json::Value;
