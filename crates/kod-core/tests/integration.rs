@@ -94,7 +94,8 @@ You are a Rust coding expert. Help with idiomatic Rust code.
 
     std::fs::write(skills_dir.join("rust.md"), skill_content).unwrap();
 
-    let config = RouterConfig { skill_threshold: 0.3,
+    let config = RouterConfig {
+        embedder: None, skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         enable_memory: true,

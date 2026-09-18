@@ -121,7 +121,8 @@ impl ScriptedSwarmProvider {
 async fn build_engine(provider: Arc<dyn LlmProvider>) -> (Arc<KodEngine>, TempDir) {
     let temp = TempDir::new().unwrap();
     let db_path = temp.path().join("swarm.redb");
-    let cfg = RouterConfig { skill_threshold: 0.3,
+    let cfg = RouterConfig {
+        embedder: None, skill_threshold: 0.3,
         context_window: 8192,
         short_term_capacity: 100,
         max_skills_per_query: 3,
@@ -560,7 +561,8 @@ async fn swarm_falls_back_when_decompose_is_not_json() {
 #[tokio::test]
 async fn swarm_requires_a_provider() {
     let temp = TempDir::new().unwrap();
-    let cfg = RouterConfig { skill_threshold: 0.3,
+    let cfg = RouterConfig {
+        embedder: None, skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp.path().to_path_buf(),
         enable_memory: false,
