@@ -253,6 +253,23 @@ pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
     }
 
     drop(out_tx);
+    // `server` also holds a clone of the `out_tx` sender (see the
+    // `Server` construction above). Dropping only `out_tx` leaves
+    // the channel open, so `writer_task`'s `out_rx.recv().await`
+    // never returns `None` and awaiting the writer task here
+    // deadlocks: the writer waits for a closed channel, the channel
+    // stays open because `server.out` holds a sender.
+    //
+    // In the handshake-only case (initialize, then the client closes
+    // stdin), any dispatch task spawned for that request has already
+    // completed and dropped its own `Arc<Server>` clone, so this
+    // drop releases the last sender and the writer exits promptly.
+    // When a long-running `session/prompt` task is still alive it
+    // holds its own clone; the channel therefore stays open until
+    // that task finishes, which is the correct behaviour — the
+    // client's EOF is a shutdown signal for the reader, not a hard
+    // kill of an in-flight turn.
+    drop(server);
     let _ = writer_task.await;
     Ok(())
 }
