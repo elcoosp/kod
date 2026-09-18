@@ -33,9 +33,9 @@ fn describe_path_error(path: &std::path::Path, err: &std::io::Error) -> String {
             "not found: {p}. Check the path — a typo or a directory you have \
              not listed yet is the common cause.",
         ),
-        std::io::ErrorKind::PermissionDenied => format!(
-            "permission denied: {p}. The process does not have read access.",
-        ),
+        std::io::ErrorKind::PermissionDenied => {
+            format!("permission denied: {p}. The process does not have read access.",)
+        }
         std::io::ErrorKind::IsADirectory => format!(
             "is a directory, not a file: {p}. Use list_files to see its \
              contents, or read a specific file inside it.",
@@ -132,9 +132,7 @@ impl Tool for ReadFileTool {
         context.can_read(&resolved)?;
 
         // Total size from metadata (the byte cap below can hide it).
-        let total_size = std::fs::metadata(&resolved)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let total_size = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
 
         // Reject directories up front with a structured message. The
         // downstream open would fail with "Is a directory" (or a
@@ -145,10 +143,7 @@ impl Tool for ReadFileTool {
         if resolved.is_dir() {
             return Ok(ToolResult::Error(describe_path_error(
                 &resolved,
-                &std::io::Error::new(
-                    std::io::ErrorKind::IsADirectory,
-                    "is a directory",
-                ),
+                &std::io::Error::new(std::io::ErrorKind::IsADirectory, "is a directory"),
             )));
         }
 
@@ -475,9 +470,7 @@ impl Tool for ExecuteCommandTool {
         ) {
             Ok(v) => v,
             Err(e) => {
-                return Ok(ToolResult::Error(format!(
-                    "sandbox invocation failed: {e}"
-                )));
+                return Ok(ToolResult::Error(format!("sandbox invocation failed: {e}")));
             }
         };
 
@@ -542,8 +535,7 @@ impl Tool for ExecuteCommandTool {
         let mut stderr_res: Option<std::io::Result<(Vec<u8>, bool)>> = None;
 
         let effective_timeout_secs = context.timeout_secs.max(1);
-        let timeout =
-            tokio::time::sleep(std::time::Duration::from_secs(effective_timeout_secs));
+        let timeout = tokio::time::sleep(std::time::Duration::from_secs(effective_timeout_secs));
         tokio::pin!(timeout);
         let mut timed_out = false;
 
@@ -723,10 +715,7 @@ impl Tool for ListFilesTool {
             )));
         }
         if resolved.is_file() {
-            let entry = truncate_entry(
-                &resolved.to_string_lossy(),
-                MAX_ENTRY_BYTES,
-            );
+            let entry = truncate_entry(&resolved.to_string_lossy(), MAX_ENTRY_BYTES);
             return Ok(ToolResult::Success(serde_json::json!({
                 "path": resolved.to_string_lossy().to_string(),
                 "path_kind": "file",
@@ -1316,10 +1305,7 @@ mod tests {
 
         match result {
             ToolResult::Error(msg) => {
-                assert!(
-                    msg.contains("blocker"),
-                    "error should name the path: {msg}"
-                );
+                assert!(msg.contains("blocker"), "error should name the path: {msg}");
             }
             other => panic!("expected ToolResult::Error, got {:?}", other),
         }
@@ -1383,11 +1369,7 @@ mod tests {
     #[tokio::test]
     async fn read_file_multibyte_utf8_is_not_binary() {
         let temp = tempfile::TempDir::new().unwrap();
-        std::fs::write(
-            temp.path().join("accented.txt"),
-            "café au lait — un été\n",
-        )
-        .unwrap();
+        std::fs::write(temp.path().join("accented.txt"), "café au lait — un été\n").unwrap();
 
         let ctx = full_context(temp.path());
         let tool = ReadFileTool::new();
@@ -1538,10 +1520,7 @@ mod tests {
         );
         match result {
             ToolResult::Success(v) => {
-                assert_eq!(
-                    v["timed_out"], true,
-                    "result must report timed_out: {v}"
-                );
+                assert_eq!(v["timed_out"], true, "result must report timed_out: {v}");
                 assert_eq!(v["timeout_secs"], 1);
                 // Nothing on stdout — sleep produces no output.
                 assert_eq!(v["stdout"], "");
@@ -1811,5 +1790,4 @@ mod tests {
             other => panic!("expected ToolResult::Error, got {:?}", other),
         }
     }
-
 }
