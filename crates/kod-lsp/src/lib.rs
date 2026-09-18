@@ -28,6 +28,4 @@ pub mod types;
 
 pub use client::{LspClient, LspError};
 pub use manager::{LspManager, binary_for_path};
-pub use types::{
-    Diagnostic, Hover, Location, Position, Range, language_id_for,
-};
+pub use types::{Diagnostic, Hover, Location, Position, Range, language_id_for};
