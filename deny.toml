@@ -1,13 +1,124 @@
 # Cargo deny configuration
 # https://github.com/EmbarkStudios/cargo-deny
+#
+# This file is the policy gate for the `deny` CI job. Its purpose is to
+# turn a stray dependency (a licence we would not ship, a source we did
+# not agree to fetch from, a crate we have explicitly ruled out) into a
+# build failure at PR time rather than a surprise at release time.
+#
+# The design's §5.3 B4 calls out the previous state of this file: a
+# stub whose `[licenses]` and `[sources]` sections carried no policy, so
+# `cargo deny check` passed trivially and enforced nothing. The sections
+# below are the actual policy.
 
 [graph]
+# Check every feature combination. A crate that only appears behind a
+# non-default feature is still part of the release matrix the moment a
+# user enables it; the check must see it.
 all-features = true
 
+# ---------------------------------------------------------------------------
+# Licences
+# ---------------------------------------------------------------------------
 [licenses]
-license-files = [
-    { path = "LICENSE.md" }
+# The allow-list. Every entry is a licence that appears in the
+# workspace's dependency tree today, plus a small margin for the
+# standard permissive set a Rust project is likely to pick up. A
+# dependency under a licence not listed here is a build failure and a
+# conscious decision to add to this list — not a warning to ignore.
+#
+# See https://spdx.org/licenses/ for the identifiers.
+allow = [
+    # The two crates almost every Rust project carries. MIT OR
+    # Apache-2.0 is the standard dual-licence.
+    "MIT",
+    "Apache-2.0",
+    # The LLVM-exception variant. Some crates derived from LLVM
+    # (wasm-related, in particular) carry it.
+    "Apache-2.0 WITH LLVM-exception",
+    # The BSD family.
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    # Internet Systems Consortium (used by some network crates,
+    # including parts of the rustls stack).
+    "ISC",
+    # Mozilla Public License 2.0, a file-level copyleft that is safe to
+    # link against a permissive project.
+    "MPL-2.0",
+    # Public-domain dedications. The Unicode crates in particular use
+    # them for the character data they ship.
+    "CC0-1.0",
+    "Unlicense",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    # Boost Software License and Zlib: permissive, occasionally seen in
+    # compression and utility crates.
+    "BSL-1.0",
+    "Zlib",
 ]
 
+# Copy the project's own LICENSE file into any package that lacks one,
+# so a downstream consumer of a workspace member always has a text to
+# point at.
+license-files = [
+    { path = "LICENSE.md" },
+]
+
+# Do not fail on a crate whose licence cannot be determined from its
+# Cargo.toml — warn instead. The failure this would prevent (a genuine
+# missing licence) is rare, and a crate that ships without a
+# `license`/`license-file` field is usually a development-only tool.
+confidence-threshold = 0.9
+unlicensed = "deny"
+copyleft = "deny"
+default = "deny"
+
+# ---------------------------------------------------------------------------
+# Sources
+# ---------------------------------------------------------------------------
+# The workspace fetches from crates.io only. A `[patch]` or `[replace]`
+# entry pointing at a git URL, or a dependency declared with a git
+# source, would appear here and fail. The design's "no lock-in"
+# principle extends to source provenance.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+# ---------------------------------------------------------------------------
+# Advisory database (RustSec)
+# ---------------------------------------------------------------------------
+# Vulnerabilities block; the softer categories warn. A CVE in the
+# dependency tree is a hard stop for a release artifact; `unmaintained`
+# and `unsound` are signals that deserve attention but should not gate
+# a build.
+[advisories]
+vulnerability = "deny"
+unmaintained = "warn"
+unsound = "warn"
+yanked = "deny"
+notice = "warn"
+
+# ---------------------------------------------------------------------------
+# Bans
+# ---------------------------------------------------------------------------
 [bans]
+# Multiple versions of the same crate are a signal (duplicated code,
+# possible API skew), not a blocker. Warn.
 multiple-versions = "Warn"
+# Duplicate a dependency that appears more than once in the tree.
+wildcards = "Warn"
+# Crates the design has already decided against. Two entries:
+#
+# - `openssl-sys` — the workspace uses `rustls` exclusively; a
+#   transitive pull of OpenSSL would change the "single static binary
+#   with no system TLS" story the release pipeline assumes.
+# - `fastembed` — removed as a phantom workspace dependency (the
+#   embedding path is HTTP-first per the design's D2.1). Denying it
+#   here keeps a future PR from re-adding it without a conscious
+#   decision.
+deny = [
+    { name = "openssl-sys" },
+    { name = "fastembed" },
+]
