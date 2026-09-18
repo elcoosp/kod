@@ -230,3 +230,238 @@ mod tests {
         assert_eq!(msg.id, deserialized.id);
     }
 }
+
+#[cfg(test)]
+mod coverage_message_render {
+    //! `render_text` produces the exact bytes the engine feeds into
+    //! the legacy text prompt. A regression changes every golden
+    //! prompt snapshot in `kod-core`; the tests here pin the
+    //! per-role prefix and the metadata default that those snapshots
+    //! depend on.
+    use crate::ids::{AgentId, MessageId};
+    use crate::{ChatMessage, MessageMetadata, MessageRole};
+    use time::OffsetDateTime;
+
+    #[test]
+    fn render_text_prefixes_each_role() {
+        let now = OffsetDateTime::now_utc();
+        let cases: &[(MessageRole, &str)] = &[
+            (MessageRole::User, "User"),
+            (MessageRole::Assistant, "Assistant"),
+            (MessageRole::System, "System"),
+            (MessageRole::Tool, "Tool"),
+            (MessageRole::Agent(AgentId::new()), "Agent"),
+        ];
+        for (role, prefix) in cases {
+            let m = ChatMessage::text(MessageId::new(), role.clone(), "body", now);
+            let rendered = m.render_text();
+            assert!(
+                rendered.starts_with(prefix),
+                "role {role:?}: expected prefix {prefix:?}, got {rendered:?}",
+            );
+            assert!(rendered.ends_with("body"), "content lost: {rendered:?}");
+        }
+    }
+
+    #[test]
+    fn render_text_with_empty_content_is_just_the_prefix() {
+        let m = ChatMessage::text(
+            MessageId::new(),
+            MessageRole::User,
+            "",
+            OffsetDateTime::now_utc(),
+        );
+        assert_eq!(m.render_text(), "User: ");
+    }
+
+    #[test]
+    fn multiline_content_preserves_internal_newlines() {
+        let content = "line one\nline two\nline three";
+        let m = ChatMessage::text(
+            MessageId::new(),
+            MessageRole::Assistant,
+            content,
+            OffsetDateTime::now_utc(),
+        );
+        let rendered = m.render_text();
+        assert!(rendered.contains("line one\nline two\nline three"));
+        assert_eq!(rendered.matches('\n').count(), 2);
+    }
+
+    #[test]
+    fn text_constructor_defaults_to_no_tool_fields() {
+        let m = ChatMessage::text(
+            MessageId::new(),
+            MessageRole::Assistant,
+            "hi",
+            OffsetDateTime::now_utc(),
+        );
+        assert!(m.tool_calls.is_empty());
+        assert!(m.tool_call_id.is_none());
+    }
+
+    #[test]
+    fn metadata_default_is_all_empty_and_unpinned() {
+        let m = MessageMetadata::default();
+        assert!(m.skill_applied.is_none());
+        assert!(m.tools_used.is_empty());
+        assert!(m.agent_id.is_none());
+        assert!(m.thinking_time_ms.is_none());
+        assert!(m.token_count.is_none());
+        assert!(!m.pinned);
+    }
+
+    #[test]
+    fn pinned_flag_round_trips_through_json() {
+        let mut m = MessageMetadata::default();
+        m.pinned = true;
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"pinned\":true"), "got: {json}");
+        let parsed: MessageMetadata = serde_json::from_str(&json).unwrap();
+        assert!(parsed.pinned);
+    }
+
+    #[test]
+    fn metadata_without_pinned_key_defaults_to_false() {
+        // A session file written before `pinned` existed still parses.
+        let parsed: MessageMetadata = serde_json::from_str("{}").unwrap();
+        assert!(!parsed.pinned);
+    }
+}
+
+#[cfg(test)]
+mod coverage_agent_message_content {
+    //! `AgentMessageContent` and its inner enums are the wire
+    //! shape a swarm runner emits and a viewer reads. None of them
+    //! derive `PartialEq`, so the round-trips here compare
+    //! re-serialized JSON rather than parsed values — an
+    //! approach that also pins the on-disk schema (externally
+    //! tagged variants, camel-free field names) instead of just
+    //! "deserialization succeeded".
+    use super::*;
+
+    fn round_trips(c: &AgentMessageContent) {
+        let json = serde_json::to_string(c).unwrap();
+        let parsed: AgentMessageContent = serde_json::from_str(&json).unwrap();
+        let re = serde_json::to_string(&parsed).unwrap();
+        assert_eq!(json, re, "roundtrip mismatch for {json}");
+    }
+
+    #[test]
+    fn every_variant_round_trips_through_json() {
+        round_trips(&AgentMessageContent::TaskAssignment {
+            description: "write the schema".into(),
+            priority: Priority::High,
+        });
+        round_trips(&AgentMessageContent::ProgressUpdate {
+            status: TaskStatus::InProgress,
+            details: "half done".into(),
+        });
+        round_trips(&AgentMessageContent::HelpRequest {
+            question: "which db?".into(),
+            context: "postgres or sqlite".into(),
+        });
+        round_trips(&AgentMessageContent::KnowledgeShare {
+            information: "column missing".into(),
+            tags: vec!["schema".into(), "urgent".into()],
+        });
+        round_trips(&AgentMessageContent::Coordination {
+            action: CoordinationAction::RequestingSync,
+        });
+        round_trips(&AgentMessageContent::FileClaim {
+            path: "src/a.rs".into(),
+            duration_secs: 60,
+        });
+        round_trips(&AgentMessageContent::FileRelease {
+            path: "src/a.rs".into(),
+        });
+        round_trips(&AgentMessageContent::ResultDelivery {
+            result: "done".into(),
+        });
+    }
+
+    #[test]
+    fn variants_use_the_externally_tagged_shape() {
+        // Default `derive(Serialize)` puts the variant name as the
+        // JSON key. A caller (a log viewer, a filter in an external
+        // tool) relies on the exact spelling, so a rename is a
+        // breaking wire change and worth pinning.
+        let v = AgentMessageContent::TaskAssignment {
+            description: "d".into(),
+            priority: Priority::Low,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.starts_with("{\"TaskAssignment\""), "got: {json}");
+        assert!(json.contains("\"description\":\"d\""), "got: {json}");
+        assert!(json.contains("\"priority\":\"Low\""), "got: {json}");
+    }
+
+    #[test]
+    fn message_destination_round_trips_its_three_forms() {
+        let agent = AgentId::new();
+        for dest in [
+            MessageDestination::Agent(agent.clone()),
+            MessageDestination::Broadcast,
+            MessageDestination::Coordinator,
+        ] {
+            let json = serde_json::to_string(&dest).unwrap();
+            let parsed: MessageDestination = serde_json::from_str(&json).unwrap();
+            // `MessageDestination` derives `PartialEq`, so compare
+            // directly rather than round-tripping the JSON.
+            assert_eq!(dest, parsed, "roundtrip mismatch for {json}");
+        }
+    }
+
+    #[test]
+    fn priority_orders_low_to_critical() {
+        // The derive order is the on-the-wire order; a regression
+        // that reshuffled the variants would silently invert every
+        // "prioritise this" decision a coordinator makes.
+        let order = [Priority::Low, Priority::Medium, Priority::High, Priority::Critical];
+        for (i, a) in order.iter().enumerate() {
+            for (j, b) in order.iter().enumerate() {
+                if i < j {
+                    assert_ne!(a, b, "duplicate priority level");
+                }
+            }
+        }
+        // Every priority has its own distinct serialized form.
+        let mut seen = std::collections::HashSet::new();
+        for p in order {
+            let json = serde_json::to_string(&p).unwrap();
+            assert!(seen.insert(json.clone()), "collision at {json}");
+        }
+    }
+
+    #[test]
+    fn task_status_round_trips_every_variant() {
+        for s in [
+            TaskStatus::Pending,
+            TaskStatus::InProgress,
+            TaskStatus::Blocked,
+            TaskStatus::Completed,
+            TaskStatus::Failed,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let parsed: TaskStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(s, parsed, "roundtrip mismatch for {json}");
+        }
+    }
+
+    #[test]
+    fn agent_message_round_trips_with_a_direct_destination() {
+        let msg = AgentMessage {
+            id: MessageId::new(),
+            from: AgentId::new(),
+            to: MessageDestination::Agent(AgentId::new()),
+            content: AgentMessageContent::ResultDelivery {
+                result: "ok".into(),
+            },
+            timestamp: OffsetDateTime::now_utc(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: AgentMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg.id, parsed.id);
+        assert_eq!(msg.from, parsed.from);
+    }
+}
