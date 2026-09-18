@@ -457,11 +457,27 @@ See [`docs/TESTING.md`](docs/TESTING.md) for the full testing guide, including p
 - Optional shell sandboxing through `bwrap` / `sandbox-exec`.
 - Shell hooks (`pre_tool_use`, `post_tool_use`) driven by config templates.
 - TUI with chat, live tool rows, agent panel, search, themes, keybindings, and slash-command completion.
+- **Structured provider protocol** (AD-01): the engine builds a
+  `CompletionRequest` from the router's `PromptPlan` and the
+  transcript, and calls `LlmProvider::complete` /
+  `LlmProvider::stream_completion`. Anthropic's `cache_control`
+  on the last cacheable system segment is wired through the wire
+  module; OpenAI-compatible providers preserve the multi-role
+  transcript and tool-call ids on the wire.
+- **Multi-language LSP pool** (`LspManager`, design D5.1): one
+  language server per language, lazily started, sharing one pool
+  between the `lsp_*` tools and the post-write diagnostics hook.
+- **`kod acp`**: an Agent Client Protocol bridge on stdio so an
+  editor can spawn the process as its agent (design §11.2).
+- **Sandbox auto-detection** with `bwrap` / `sandbox-exec` /
+  Landlock fallback, plus a live badge in the TUI header.
+- **`/policy` in the TUI** and `kod policy forget <n>` in the CLI
+  for dropping session deny rules (design §6.2).
+
 
 ### Tracked gaps
 
-- **`kod chat --remote` / `kod prompt --remote` / `kod agent --remote` attach to a running `kod serve` daemon**, but approval and `ask_user` prompts are not yet routed over the socket — a strict policy on the daemon side will time out to deny. The daemon works cleanly with permissive presets.
-- **`kod swarm --remote`** is not wired. A swarm run streams many events (agent start, chunk, complete, conflict, merge); streaming that over the NDJSON socket needs a request shape the daemon does not yet expose.
+- **`kod chat --remote` / `kod prompt --remote` / `kod agent --remote` attach to a running `kod serve` daemon**. Response routing for approvals and `ask_user` is implemented: the daemon dispatches `respond_to_approval` and `respond_to_question` methods, so a client that sees an approval marker can answer it. What is not yet wired is the *initial forward* of a marker to a client that has not yet connected — a daemon started with a strict policy on a fresh socket is the case that still times out to deny. A client already attached to a `process_streaming` call receives the marker on the same connection and can answer.
 - **The swarm runner dispatches one agent per subtask index-1:1.** `TaskCoordinator::least_loaded_agent` and `find_agents_with_capability` exist but the runner does not consult them; a work-stealing dispatch is a follow-up.
 - **No per-agent heartbeat watchdog.** A stuck agent times out; a swarm whose N agents each finish just under their cap is bounded by the overall run timeout (`swarm_timeout_secs`, default 30 min).
 - **`docs/SPEC.md`** describes a larger aspirational system than the workspace implements. It is kept as a design reference; `docs/ARCHITECTURE.md` and `docs/TESTING.md` describe the code as it exists.
