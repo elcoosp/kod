@@ -53,8 +53,7 @@ fn default_preset_is_standard() {
 fn cli_preset_read_only_is_honoured() {
     // Regression: `Some(_) => Standard` ignored the CLI's chosen value.
     let cfg = KodConfig::default();
-    let engine =
-        PolicyEngine::load(&cfg, None, Some(Preset::ReadOnly)).expect("load");
+    let engine = PolicyEngine::load(&cfg, None, Some(Preset::ReadOnly)).expect("load");
     assert_eq!(
         engine.effective().preset,
         Preset::ReadOnly,
@@ -66,8 +65,7 @@ fn cli_preset_read_only_is_honoured() {
 #[test]
 fn cli_preset_yolo_is_honoured() {
     let cfg = KodConfig::default();
-    let engine =
-        PolicyEngine::load(&cfg, None, Some(Preset::Yolo)).expect("load");
+    let engine = PolicyEngine::load(&cfg, None, Some(Preset::Yolo)).expect("load");
     assert_eq!(engine.effective().preset, Preset::Yolo);
 }
 
@@ -82,8 +80,7 @@ fn standard_preset_asks_for_writes() {
 #[test]
 fn read_only_preset_denies_writes() {
     let cfg = KodConfig::default();
-    let engine =
-        PolicyEngine::load(&cfg, None, Some(Preset::ReadOnly)).expect("load");
+    let engine = PolicyEngine::load(&cfg, None, Some(Preset::ReadOnly)).expect("load");
     assert_eq!(decide(&engine, "write_file"), Decision::Deny);
     assert_eq!(decide(&engine, "execute_command"), Decision::Deny);
     // Reads stay allowed under every preset.
@@ -93,8 +90,7 @@ fn read_only_preset_denies_writes() {
 #[test]
 fn yolo_preset_allows_everything() {
     let cfg = KodConfig::default();
-    let engine =
-        PolicyEngine::load(&cfg, None, Some(Preset::Yolo)).expect("load");
+    let engine = PolicyEngine::load(&cfg, None, Some(Preset::Yolo)).expect("load");
     assert_eq!(decide(&engine, "write_file"), Decision::Allow);
     assert_eq!(decide(&engine, "execute_command"), Decision::Allow);
 }
