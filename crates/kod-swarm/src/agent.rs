@@ -426,3 +426,163 @@ mod tests {
         assert!(!agent.has_capability(&Capability::Planning));
     }
 }
+
+#[cfg(test)]
+mod coverage_agent_builder {
+    //! The builder's defaults are what a caller that only sets a
+    //! name gets. A regression to a model name, a context window,
+    //! or a state default silently shifts the behaviour of every
+    //! agent a swarm spawns — the caller sees a plausible agent
+    //! with the wrong settings and no error to point at.
+    use super::*;
+
+    #[test]
+    fn default_model_config_matches_the_shipped_values() {
+        let c = ModelConfig::default();
+        assert_eq!(c.model_name, "codellama:13b");
+        assert_eq!(c.provider, "openai-compatible");
+        assert!((c.temperature - 0.7).abs() < 1e-6);
+        assert_eq!(c.max_tokens, 2048);
+    }
+
+    #[test]
+    fn default_agent_state_is_idle() {
+        // A freshly-built agent must not be Running — the runner's
+        // `start_agent` would then refuse the transition.
+        assert_eq!(AgentState::default(), AgentState::Idle);
+    }
+
+    #[test]
+    fn agent_name_is_set_from_the_builder() {
+        let a = Agent::new("planner").build();
+        assert_eq!(a.name(), "planner");
+    }
+
+    #[test]
+    fn model_accessor_returns_the_config_default_when_not_overridden() {
+        let a = Agent::new("x").build();
+        assert_eq!(a.model(), "codellama:13b");
+    }
+
+    #[test]
+    fn with_model_overrides_the_resolved_model_only() {
+        // The override goes into the `model` field, not into
+        // `model_config`. This is the design: the config keeps
+        // the file's default so a caller inspecting it sees the
+        // user's config, while `model()` reports the resolved
+        // choice the agent will use on the wire.
+        let a = Agent::new("x").with_model("qwen2.5:7b").build();
+        assert_eq!(a.model(), "qwen2.5:7b");
+        assert_eq!(a.model_config().model_name, "codellama:13b");
+    }
+
+    #[test]
+    fn max_context_tokens_defaults_to_8192_and_overrides() {
+        let a = Agent::new("x").build();
+        assert_eq!(a.max_context_tokens(), 8192);
+        let b = Agent::new("x").with_max_context_tokens(16_384).build();
+        assert_eq!(b.max_context_tokens(), 16_384);
+    }
+
+    #[test]
+    fn capabilities_accumulate_and_report_their_order() {
+        let a = AgentBuilder::new("x")
+            .with_capability(Capability::Coding)
+            .with_capability(Capability::Testing)
+            .with_capability(Capability::Planning)
+            .build();
+        let caps = a.capabilities();
+        assert_eq!(caps.len(), 3);
+        assert!(caps.contains(&Capability::Coding));
+        assert!(caps.contains(&Capability::Testing));
+        assert!(caps.contains(&Capability::Planning));
+        assert!(!caps.contains(&Capability::Refactoring));
+    }
+
+    #[test]
+    fn duplicate_capability_registration_is_idempotent() {
+        // `HashSet` under the hood — the same capability added
+        // twice appears once. A regression to a Vec would double
+        // it and every caller that counts capabilities would
+        // drift.
+        let a = AgentBuilder::new("x")
+            .with_capability(Capability::Coding)
+            .with_capability(Capability::Coding)
+            .build();
+        assert_eq!(a.capabilities().len(), 1);
+    }
+
+    #[test]
+    fn capability_as_str_round_trips_through_from_str() {
+        // `Capability::as_str` is what the runner sends over the
+        // wire; `FromStr` is what the config's `[llm.routing.
+        // swarm]` keys use. A divergence — a rename on one side
+        // only — would silently disable per-capability routing.
+        for c in [
+            Capability::Coding,
+            Capability::Testing,
+            Capability::Documentation,
+            Capability::CodeReview,
+            Capability::Planning,
+            Capability::Research,
+            Capability::Debugging,
+            Capability::Refactoring,
+        ] {
+            let s = c.as_str();
+            let parsed: Capability = s.parse().unwrap_or_else(|e| {
+                panic!("capability {c:?} -> {s:?} did not parse back: {e}")
+            });
+            assert_eq!(parsed, c);
+        }
+    }
+
+    #[test]
+    fn capability_from_str_rejects_unknown_strings() {
+        for bad in ["", "Coding", "code_review", "unknown"] {
+            assert!(
+                bad.parse::<Capability>().is_err(),
+                "unexpectedly accepted {bad:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn display_matches_as_str() {
+        // The `Display` impl and `as_str` must agree — the
+        // runner's error messages use Display, its routing uses
+        // as_str; a divergence would leave a message naming a
+        // capability the routing table does not recognize.
+        for c in [
+            Capability::Coding,
+            Capability::Testing,
+            Capability::Documentation,
+            Capability::CodeReview,
+            Capability::Planning,
+            Capability::Research,
+            Capability::Debugging,
+            Capability::Refactoring,
+        ] {
+            assert_eq!(format!("{c}"), c.as_str());
+        }
+    }
+
+    #[test]
+    fn a_freshly_built_agent_has_a_unique_id() {
+        // Two agents in a swarm must not collide on identity.
+        let a = Agent::new("a").build();
+        let b = Agent::new("b").build();
+        assert_ne!(a.id(), b.id());
+    }
+
+    #[test]
+    fn heartbeat_is_none_before_start_and_some_after() {
+        let a = Agent::new("x").build();
+        assert!(a.last_heartbeat().is_none());
+        assert!(a.is_timed_out(std::time::Duration::from_millis(0)));
+        a.record_heartbeat();
+        assert!(a.last_heartbeat().is_some());
+        // A freshly-recorded heartbeat is not "timed out" under a
+        // generous window.
+        assert!(!a.is_timed_out(std::time::Duration::from_secs(60)));
+    }
+}
