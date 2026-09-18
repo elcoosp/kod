@@ -233,3 +233,99 @@ mod tests {
         assert!(large.truncatable_total() > small.truncatable_total() * 10);
     }
 }
+
+#[cfg(test)]
+mod coverage_allocation_math {
+    //! `PromptBudget::allocate` decides how much of the model's
+    //! window each prompt section gets. The existing tests verify the
+    //! shares sum and the ordering is right; these pin the exact
+    //! ratios at a representative window, the degenerate windows
+    //! (zero, over-reserved), and the trace's own accounting. A
+    //! regression in any of these silently over-truncates a section
+    //! or ships an oversized prompt.
+    use super::*;
+
+    #[test]
+    fn allocate_zero_request_uses_the_whole_budget() {
+        let b = PromptBudget::from_tokens(8000, 2000);
+        let a = b.allocate(0).unwrap();
+        assert_eq!(a.request, 0);
+        assert_eq!(a.truncatable_total(), b.total_chars);
+    }
+
+    #[test]
+    fn allocate_full_request_leaves_zero_for_sections() {
+        let b = PromptBudget::from_tokens(8000, 2000);
+        let a = b.allocate(b.total_chars).unwrap();
+        assert_eq!(a.truncatable_total(), 0);
+    }
+
+    #[test]
+    fn allocate_share_ratios_at_a_representative_window() {
+        // 8000 - 2000 = 6000 tokens usable, * 4 chars = 24000.
+        let b = PromptBudget::from_tokens(8000, 2000);
+        assert_eq!(b.total_chars, 24_000);
+        let a = b.allocate(0).unwrap();
+        assert_eq!(a.history, 12_000);
+        assert_eq!(a.skills, 4_800);
+        assert_eq!(a.memory, 4_800);
+        // The repomap share is whatever integer division leaves
+        // after the other three; the sum must equal the whole.
+        assert_eq!(a.repomap, 2_400);
+    }
+
+    #[test]
+    fn zero_window_yields_zero_budget() {
+        let b = PromptBudget::from_tokens(0, 0);
+        assert_eq!(b.total_chars, 0);
+        // A non-empty request cannot fit; the empty one fits trivially.
+        assert!(b.allocate(1).is_err());
+        let a = b.allocate(0).unwrap();
+        assert_eq!(a.truncatable_total(), 0);
+    }
+
+    #[test]
+    fn reserve_larger_than_window_yields_zero_budget() {
+        // A misconfigured `max_tokens` above `context_window` must
+        // not underflow; the usable window is zero.
+        let b = PromptBudget::from_tokens(1000, 2000);
+        assert_eq!(b.total_chars, 0);
+    }
+
+    #[test]
+    fn budget_error_display_names_both_sizes() {
+        let b = PromptBudget::from_tokens(2048, 512);
+        let err = b.allocate(10_000).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("10000"), "should name request chars: {msg}");
+        assert!(msg.contains("context_window"), "should hint the fix: {msg}");
+        // The error implements std::error::Error.
+        let _: &dyn std::error::Error = &err;
+    }
+
+    #[test]
+    fn prompt_trace_totals_add_up() {
+        let trace = PromptTrace {
+            text: "x".repeat(500),
+            alloc: Some(Allocation {
+                request: 100,
+                history: 200,
+                skills: 100,
+                memory: 50,
+                repomap: 50,
+            }),
+        };
+        assert_eq!(trace.total_chars(), Some(500));
+        assert_eq!(trace.total_tokens_estimate(), Some(125));
+    }
+
+    #[test]
+    fn prompt_trace_without_allocation_is_none() {
+        let trace = PromptTrace {
+            text: "anything".to_string(),
+            alloc: None,
+        };
+        assert!(trace.total_chars().is_none());
+        assert!(trace.total_tokens_estimate().is_none());
+    }
+}
