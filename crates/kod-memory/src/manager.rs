@@ -903,3 +903,78 @@ mod tests {
         assert!(manager.get_long_term(&long_id).await.unwrap().is_some());
     }
 }
+
+#[cfg(test)]
+mod coverage_report_types {
+    //! `CompactionReport` and `ConsolidationReport` are the two
+    //! shapes a caller inspects after a maintenance pass. A
+    //! regression in their `Default` or `PartialEq` would make
+    //! `assert_eq!(r, Default::default())` lie, and a caller
+    //! testing "nothing was pruned" would pass while the pass
+    //! silently pruned everything.
+    use super::*;
+
+    #[test]
+    fn compaction_report_default_is_zero() {
+        let r = CompactionReport::default();
+        assert_eq!(r.short_term_removed, 0);
+    }
+
+    #[test]
+    fn consolidation_report_default_is_zero() {
+        let r = ConsolidationReport::default();
+        assert_eq!(r.archived, 0);
+        assert_eq!(r.fused, 0);
+    }
+
+    #[test]
+    fn reports_are_copy_and_comparable() {
+        // `Copy` lets a caller pass a report by value multiple
+        // times; `PartialEq` lets a test compare two runs.
+        let a = CompactionReport {
+            short_term_removed: 3,
+        };
+        let b = a;
+        assert_eq!(a, b);
+        let a = ConsolidationReport {
+            archived: 2,
+            fused: 1,
+        };
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[tokio::test]
+    async fn compact_on_a_fresh_manager_is_a_no_op_with_a_zero_report() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let m = MemoryManager::new(tmp.path().join("t.redb"), 10).unwrap();
+        let r = m.compact(5);
+        assert_eq!(r, CompactionReport::default());
+    }
+
+    #[tokio::test]
+    async fn consolidate_on_a_fresh_store_is_a_no_op_with_a_zero_report() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let m = MemoryManager::new(tmp.path().join("t.redb"), 10).unwrap();
+        let r = m.consolidate().await.unwrap();
+        assert_eq!(r, ConsolidationReport::default());
+    }
+
+    #[test]
+    fn archive_threshold_is_the_documented_sixty_days() {
+        // The consolidation pass archives episodic entries older
+        // than this. A regression that changed the constant would
+        // silently shift the retention policy.
+        assert_eq!(ARCHIVE_AFTER_DAYS, 60);
+    }
+
+    #[test]
+    fn embedding_aware_manager_reports_its_embedder_name() {
+        // A manager without an embedder reports "none"; the
+        // accessor's contract is "name the effective state, never
+        // panic on the absent case".
+        let tmp = tempfile::TempDir::new().unwrap();
+        let m = MemoryManager::new(tmp.path().join("t.redb"), 10).unwrap();
+        assert_eq!(m.embedder_name(), "none");
+    }
+}
