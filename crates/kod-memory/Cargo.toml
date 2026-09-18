@@ -18,6 +18,10 @@ time = { workspace = true }
 kod-types = { path = "../kod-types" }
 kod-provider = { path = "../kod-provider" }
 kod-error = { path = "../kod-error" }
+# `embedding::from_config` reads `MemoryConfig` / `EmbeddingEndpoint`
+# to build the embedder the runtime installs. Foundation → foundation,
+# no cycle: kod-config depends only on kod-error.
+kod-config = { path = "../kod-config" }
 
 [dev-dependencies]
 tempfile = "3.8"
