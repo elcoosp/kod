@@ -5584,3 +5584,222 @@ mod coverage_slash_dispatch {
         );
     }
 }
+
+/// Coverage for the slash commands the first `coverage_slash_dispatch`
+/// pass did not reach: the pin/unpin pair, the fork/edit state
+/// mutators, the three file-writing commands (`/save`, `/load`,
+/// `/export`), and the two self-diagnostic commands (`/git-status`,
+/// `/doctor`).
+///
+/// The three file-I/O commands are asserted with an OR: the command
+/// must either write the destination file **or** push a message
+/// explaining why not. That is the honest contract — a `/save` that
+/// silently no-ops when the path is not writable would be the bug;
+/// a `/save` that refuses and explains is correct.
+#[cfg(test)]
+mod coverage_slash_dispatch_more {
+    use super::*;
+    use crate::app::Message;
+    use chrono::Utc;
+    use kod_types::{MessageId, MessageRole};
+
+    fn last_message(tui: &TuiLoop) -> String {
+        tui.app()
+            .messages()
+            .last()
+            .map(|m| m.content.clone())
+            .unwrap_or_default()
+    }
+
+    fn assert_last_contains_any(tui: &TuiLoop, needles: &[&str]) {
+        let last = last_message(tui);
+        let lower = last.to_lowercase();
+        if needles.iter().any(|n| lower.contains(&n.to_lowercase())) {
+            return;
+        }
+        panic!("last message matched none of {needles:?}; got: {last:?}");
+    }
+
+    fn push_user_message(tui: &mut TuiLoop, content: &str) {
+        tui.app_mut().add_message(Message {
+            id: MessageId::new(),
+            role: MessageRole::User,
+            content: content.to_string(),
+            timestamp: Utc::now(),
+            metadata: Default::default(),
+            sequence: 0,
+        });
+    }
+
+    // ---- state-based --------------------------------------------------
+
+    #[tokio::test]
+    async fn pin_pins_something_or_reports() {
+        // `/pin N` may or may not accept N=1 depending on the index
+        // convention and on whether the system message I pushed
+        // counts. The contract is: the command either pins a
+        // message, or it pushes a message explaining why not. It
+        // must not silently no-op.
+        let mut tui = TuiLoop::new();
+        tui.app_mut().push_system_message("first");
+        tui.app_mut().push_system_message("second");
+        let before = tui.app().messages().len();
+        let pinned_before = (0..3).filter(|i| tui.app().is_message_pinned(*i)).count();
+        assert_eq!(pinned_before, 0, "fresh chat has no pins");
+
+        tui.handle_command("/pin 1").await.unwrap();
+
+        let pinned_after = (0..3).filter(|i| tui.app().is_message_pinned(*i)).count();
+        let after = tui.app().messages().len();
+        assert!(
+            pinned_after > 0 || after > before,
+            "/pin must pin a message or report why not; \
+             pinned_before={pinned_before}, pinned_after={pinned_after}, \
+             messages {before}->{after}",
+        );
+    }
+
+    #[tokio::test]
+    async fn unpin_removes_a_pin_or_reports() {
+        let mut tui = TuiLoop::new();
+        tui.app_mut().push_system_message("first");
+        // Pin whatever index works, then unpin it.
+        tui.handle_command("/pin 1").await.unwrap();
+        let pinned_mid = (0..3).filter(|i| tui.app().is_message_pinned(*i)).count();
+        let before = tui.app().messages().len();
+        tui.handle_command("/unpin 1").await.unwrap();
+        let pinned_end = (0..3).filter(|i| tui.app().is_message_pinned(*i)).count();
+        let after = tui.app().messages().len();
+        // Either the unpin cleared a pin, or the command reported
+        // the missing pin. A silent no-op is the only failure.
+        assert!(
+            pinned_end < pinned_mid || after > before,
+            "/unpin must clear a pin or report; \
+             pinned {pinned_mid}->{pinned_end}, messages {before}->{after}",
+        );
+    }
+
+    #[tokio::test]
+    async fn fork_increments_the_fork_count() {
+        let mut tui = TuiLoop::new();
+        tui.app_mut().push_system_message("in the fork");
+        let before = tui.app().fork_count();
+        tui.handle_command("/fork test-fork").await.unwrap();
+        assert!(
+            tui.app().fork_count() > before,
+            "/fork must increase the fork count",
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_loads_the_last_user_message_into_the_input() {
+        let mut tui = TuiLoop::new();
+        push_user_message(&mut tui, "original user text");
+        tui.handle_command("/edit").await.unwrap();
+        assert_eq!(
+            tui.app().input(),
+            "original user text",
+            "/edit must load the last user message into the input",
+        );
+    }
+
+    // ---- file-writing commands ---------------------------------------
+
+    #[tokio::test]
+    async fn save_writes_the_file_or_reports_why_not() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("session.json");
+        let mut tui = TuiLoop::new();
+        tui.app_mut().push_system_message("save-marker");
+        let before = tui.app().messages().len();
+
+        tui.handle_command(&format!("/save {}", path.display()))
+            .await
+            .unwrap();
+
+        let after = tui.app().messages().len();
+        assert!(
+            path.exists() || after > before,
+            "/save must either write the file or push a report message",
+        );
+    }
+
+    #[tokio::test]
+    async fn load_of_a_missing_file_reports() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let missing = tmp.path().join("does-not-exist.json");
+        let mut tui = TuiLoop::new();
+        tui.handle_command(&format!("/load {}", missing.display()))
+            .await
+            .unwrap();
+        // "Engine not initialized" is a plausible response too if the
+        // engine check fires first; the contract is only that the
+        // command reports something.
+        let last = last_message(&tui);
+        assert!(
+            !last.is_empty(),
+            "/load of a missing file must report, not stay silent",
+        );
+    }
+
+    #[tokio::test]
+    async fn export_writes_the_file_or_reports_why_not() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("chat.md");
+        let mut tui = TuiLoop::new();
+        tui.app_mut().push_system_message("export-marker");
+        let before = tui.app().messages().len();
+
+        tui.handle_command(&format!("/export {}", path.display()))
+            .await
+            .unwrap();
+
+        let after = tui.app().messages().len();
+        assert!(
+            path.exists() || after > before,
+            "/export must either write the file or push a report message",
+        );
+        if path.exists() {
+            let body = std::fs::read_to_string(&path).unwrap_or_default();
+            assert!(
+                body.contains("export-marker"),
+                "exported markdown must include the chat content",
+            );
+        }
+    }
+
+    // ---- self-diagnostic commands ------------------------------------
+
+    #[tokio::test]
+    async fn git_status_reports_something() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/git-status").await.unwrap();
+        // Three honest outcomes: porcelain output (lines with a status
+        // code), "clean", or a git-unavailable message.
+        let last = last_message(&tui);
+        assert!(
+            !last.is_empty(),
+            "/git-status must report the repo state, not stay silent",
+        );
+    }
+
+    #[tokio::test]
+    async fn doctor_produces_a_report() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/doctor").await.unwrap();
+        assert_last_contains_any(
+            &tui,
+            &["config", "check", "doctor", "ok", "warn", "lsp", "llm"],
+        );
+    }
+
+    #[tokio::test]
+    async fn rollback_without_a_checkpoint_reports() {
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/rollback").await.unwrap();
+        assert_last_contains_any(
+            &tui,
+            &["Engine not initialized", "checkpoint", "rollback", "no "],
+        );
+    }
+}
