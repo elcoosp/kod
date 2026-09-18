@@ -239,22 +239,15 @@ fn compute_pagerank(
         }
         *out_degree.entry(from.clone()).or_insert(0.0) = deg;
         for t in targets {
-            incoming
-                .entry(t.clone())
-                .or_default()
-                .push(from.clone());
+            incoming.entry(t.clone()).or_default().push(from.clone());
         }
     }
 
     // Initialize to 1/N.
-    let mut rank: BTreeMap<PathBuf, f32> = entries
-        .keys()
-        .map(|k| (k.clone(), 1.0 / n))
-        .collect();
+    let mut rank: BTreeMap<PathBuf, f32> = entries.keys().map(|k| (k.clone(), 1.0 / n)).collect();
 
     for _ in 0..ITERATIONS {
-        let mut next: BTreeMap<PathBuf, f32> =
-            entries.keys().map(|k| (k.clone(), base)).collect();
+        let mut next: BTreeMap<PathBuf, f32> = entries.keys().map(|k| (k.clone(), base)).collect();
         for (path, sources) in &incoming {
             if !next.contains_key(path) {
                 continue;
@@ -264,11 +257,7 @@ fn compute_pagerank(
                 .map(|src| {
                     let r = rank.get(src).copied().unwrap_or(0.0);
                     let deg = out_degree.get(src).copied().unwrap_or(1.0);
-                    if deg > 0.0 {
-                        DAMPING * r / deg
-                    } else {
-                        0.0
-                    }
+                    if deg > 0.0 { DAMPING * r / deg } else { 0.0 }
                 })
                 .sum();
             if let Some(slot) = next.get_mut(path) {
@@ -337,15 +326,9 @@ fn extract_imports(ext: &str, content: &str) -> Vec<String> {
 (?:\s*['"]([^'"]+)['"]\s*
 )*"#,
         ],
-        "c" | "h" | "cc" | "cpp" | "hpp" | "cxx" => &[
-            r#"(?m)^\s*#\s*include\s+["<]([^">]+)[">]"#,
-        ],
-        "rb" => &[
-            r#"(?m)^\s*require(?:_relative)?\s+['"]([^'"]+)['"]"#,
-        ],
-        "java" => &[
-            r"(?m)^\s*import\s+([a-zA-Z_][a-zA-Z0-9_.]*)\s*;",
-        ],
+        "c" | "h" | "cc" | "cpp" | "hpp" | "cxx" => &[r#"(?m)^\s*#\s*include\s+["<]([^">]+)[">]"#],
+        "rb" => &[r#"(?m)^\s*require(?:_relative)?\s+['"]([^'"]+)['"]"#],
+        "java" => &[r"(?m)^\s*import\s+([a-zA-Z_][a-zA-Z0-9_.]*)\s*;"],
         _ => return Vec::new(),
     };
 
@@ -364,8 +347,6 @@ fn extract_imports(ext: &str, content: &str) -> Vec<String> {
     }
     out
 }
-
-
 
 fn scan(content: &str, patterns: &[(&'static str, &Regex)]) -> Vec<Symbol> {
     let mut out = Vec::new();
@@ -440,13 +421,15 @@ fn extract_js(content: &str) -> Vec<Symbol> {
     static CLASS: OnceLock<Regex> = OnceLock::new();
     static CONST: OnceLock<Regex> = OnceLock::new();
     let f = FN.get_or_init(|| {
-        Regex::new(r"(?m)^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)").unwrap()
+        Regex::new(r"(?m)^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)")
+            .unwrap()
     });
     let c = CLASS.get_or_init(|| {
         Regex::new(r"(?m)^\s*(?:export\s+)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)").unwrap()
     });
     let k = CONST.get_or_init(|| {
-        Regex::new(r"(?m)^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=").unwrap()
+        Regex::new(r"(?m)^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=")
+            .unwrap()
     });
     scan(content, &[("function", f), ("class", c), ("const", k)])
 }
@@ -467,7 +450,8 @@ fn extract_ruby(content: &str) -> Vec<Symbol> {
     static MODULE: OnceLock<Regex> = OnceLock::new();
     let d = DEF.get_or_init(|| Regex::new(r"(?m)^\s*def\s+([A-Za-z_][A-Za-z0-9_!?]*)").unwrap());
     let c = CLASS.get_or_init(|| Regex::new(r"(?m)^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap());
-    let m = MODULE.get_or_init(|| Regex::new(r"(?m)^\s*module\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap());
+    let m =
+        MODULE.get_or_init(|| Regex::new(r"(?m)^\s*module\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap());
     scan(content, &[("def", d), ("class", c), ("module", m)])
 }
 
@@ -535,11 +519,7 @@ impl Engine {
     fn test_rank_favors_hubs() {
         let tmp = TempDir::new().unwrap();
         // Create a "hub" and three "spokes" that import it.
-        std::fs::write(
-            tmp.path().join("hub.rs"),
-            "pub fn shared() {}\n",
-        )
-        .unwrap();
+        std::fs::write(tmp.path().join("hub.rs"), "pub fn shared() {}\n").unwrap();
         std::fs::write(
             tmp.path().join("aaa.rs"),
             "use crate::hub;\npub fn a() {}\n",
@@ -557,11 +537,7 @@ impl Engine {
         .unwrap();
         // A lexical-first file that nothing imports. Its rank must be
         // lower than the hub's.
-        std::fs::write(
-            tmp.path().join("aaa_only.rs"),
-            "pub fn alone() {}\n",
-        )
-        .unwrap();
+        std::fs::write(tmp.path().join("aaa_only.rs"), "pub fn alone() {}\n").unwrap();
 
         let map = build_repo_map(tmp.path());
         let hub_rank = map
@@ -599,11 +575,7 @@ impl Engine {
         let tmp = TempDir::new().unwrap();
         // Hub imported by many spokes; each file is one line, so a
         // small cap fits only the first few lines.
-        std::fs::write(
-            tmp.path().join("hub.rs"),
-            "pub fn shared() {}\n",
-        )
-        .unwrap();
+        std::fs::write(tmp.path().join("hub.rs"), "pub fn shared() {}\n").unwrap();
         for i in 0..20 {
             std::fs::write(
                 tmp.path().join(format!("spoke{i:02}.rs")),
@@ -629,7 +601,10 @@ impl Engine {
     fn test_extract_imports_rust() {
         let content = "use crate::foo::bar;\npub mod baz;\n";
         let imports = extract_imports("rs", content);
-        assert!(imports.iter().any(|s| s == "crate::foo::bar"), "got: {imports:?}");
+        assert!(
+            imports.iter().any(|s| s == "crate::foo::bar"),
+            "got: {imports:?}"
+        );
         assert!(imports.iter().any(|s| s == "baz"), "got: {imports:?}");
     }
 
@@ -645,11 +620,7 @@ impl Engine {
     #[test]
     fn build_repo_map_walks_a_tempdir() {
         let tmp = TempDir::new().unwrap();
-        std::fs::write(
-            tmp.path().join("main.rs"),
-            "fn main() {}\nstruct Foo;\n",
-        )
-        .unwrap();
+        std::fs::write(tmp.path().join("main.rs"), "fn main() {}\nstruct Foo;\n").unwrap();
         std::fs::create_dir_all(tmp.path().join("sub")).unwrap();
         std::fs::write(tmp.path().join("sub/lib.rs"), "pub fn helper() {}\n").unwrap();
         // Binary content should be ignored — no valid UTF-8, no symbols.
