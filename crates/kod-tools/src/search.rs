@@ -179,3 +179,181 @@ impl Tool for SearchFilesTool {
         })))
     }
 }
+
+#[cfg(test)]
+mod coverage_search_files_tool {
+    //! `search_files` had no tests at all before this module.
+    //! Every behaviour the model depends on — context lines, the
+    //! match marker, the case-insensitive flag, single-file vs
+    //! directory, a missing path, an invalid regex — is pinned
+    //! here so a regression in the grep-style walker surfaces
+    //! immediately.
+    use super::*;
+    use kod_types::ToolPermissions;
+
+    fn ctx(dir: &std::path::Path) -> ToolContext {
+        ToolContext::new(dir).with_permissions(ToolPermissions {
+            read_files: true,
+            ..Default::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn finds_a_match_with_context_lines_and_marker() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("a.rs"),
+            "line one\nline two\nNEEDLE\nline four\nline five\n",
+        )
+        .unwrap();
+        let tool = SearchFilesTool::new();
+        let r = tool
+            .execute(
+                &serde_json::json!({"path": ".", "pattern": "NEEDLE", "context": 1}),
+                &ctx(tmp.path()),
+            )
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Success(v) => {
+                assert_eq!(v["count"], 1);
+                let block = v["results"][0]["context"].as_str().unwrap();
+                assert!(block.contains("NEEDLE"));
+                assert!(block.contains("line two"), "context missing: {block}");
+                assert!(block.contains("line four"), "context missing: {block}");
+                assert!(block.contains('>'), "match marker missing: {block}");
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_regex_is_a_tool_error_not_a_panic() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "hello").unwrap();
+        let tool = SearchFilesTool::new();
+        let r = tool
+            .execute(
+                &serde_json::json!({"path": ".", "pattern": "[unterminated"}),
+                &ctx(tmp.path()),
+            )
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Error(msg) => assert!(msg.contains("invalid regex"), "got: {msg}"),
+            other => panic!("expected error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn case_insensitive_flag_matches_uppercase_content() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "HELLO\nworld\n").unwrap();
+        let tool = SearchFilesTool::new();
+        let r = tool
+            .execute(
+                &serde_json::json!({
+                    "path": ".",
+                    "pattern": "hello",
+                    "case_insensitive": true
+                }),
+                &ctx(tmp.path()),
+            )
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Success(v) => assert_eq!(v["count"], 1),
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn no_matches_is_an_empty_success_not_an_error() {
+        // "The pattern is not in the tree" is a legitimate answer,
+        // not a failure. A regression that returned an error here
+        // would make the model think the search itself broke.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "nothing here").unwrap();
+        let tool = SearchFilesTool::new();
+        let r = tool
+            .execute(
+                &serde_json::json!({"path": ".", "pattern": "zzz-no-match"}),
+                &ctx(tmp.path()),
+            )
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Success(v) => {
+                assert_eq!(v["count"], 0);
+                assert_eq!(v["truncated"], false);
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_single_file_path_is_searched_directly() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "needle\n").unwrap();
+        let tool = SearchFilesTool::new();
+        let r = tool
+            .execute(
+                &serde_json::json!({"path": "a.txt", "pattern": "needle"}),
+                &ctx(tmp.path()),
+            )
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Success(v) => assert_eq!(v["count"], 1),
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_missing_path_is_a_tool_error() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let tool = SearchFilesTool::new();
+        let r = tool
+            .execute(
+                &serde_json::json!({"path": "no-such-file", "pattern": "x"}),
+                &ctx(tmp.path()),
+            )
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Error(msg) => assert!(msg.contains("not found"), "got: {msg}"),
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn context_parameter_is_clamped_to_the_maximum() {
+        // The schema says max 5 lines of context; a caller asking
+        // for 500 must be clamped, not honored. Otherwise a single
+        // call can drag an entire file into the prompt.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("a.txt"),
+            "1\n2\n3\nneedle\n5\n6\n7\n",
+        )
+        .unwrap();
+        let tool = SearchFilesTool::new();
+        let r = tool
+            .execute(
+                &serde_json::json!({
+                    "path": ".",
+                    "pattern": "needle",
+                    "context": 500
+                }),
+                &ctx(tmp.path()),
+            )
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Success(v) => {
+                assert_eq!(v["context_lines"], 5, "clamp ignored: {v}");
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+}
