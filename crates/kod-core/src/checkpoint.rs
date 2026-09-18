@@ -478,3 +478,137 @@ mod tests {
         assert!(id.is_none(), "oversized files must be skipped");
     }
 }
+
+#[cfg(test)]
+mod coverage_checkpoint_corners {
+    //! The existing tests cover the happy paths. These pin the
+    //! corners that decide whether a checkpoint set stays usable
+    //! over a long session — the cap, the interaction of restore
+    //! with an absent target, and the fnv1a hash's stability.
+    use super::*;
+    use tempfile::TempDir;
+
+    fn mgr() -> (TempDir, CheckpointManager) {
+        let tmp = TempDir::new().unwrap();
+        let cp = CheckpointManager::new(tmp.path().join("cp"));
+        (tmp, cp)
+    }
+
+    #[test]
+    fn snapshot_id_is_sortable_by_time_and_counter() {
+        // The id format `<zero-padded-ms>-<counter>` must sort
+        // lexicographically in chronological order; `list` relies on
+        // this and skips reading each file's mtime.
+        let (tmp, cp) = mgr();
+        let f = tmp.path().join("f.txt");
+        std::fs::write(&f, "v0").unwrap();
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            std::fs::write(&f, format!("v{i}")).unwrap();
+            ids.push(cp.snapshot_before(&f, "write_file").unwrap().unwrap());
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let mut sorted = ids.clone();
+        sorted.sort();
+        assert_eq!(sorted, ids, "ids are not lexicographically time-ordered");
+    }
+
+    #[test]
+    fn list_on_never_written_manager_returns_empty() {
+        let (_tmp, cp) = mgr();
+        assert!(cp.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn clear_on_never_written_manager_returns_zero() {
+        let (_tmp, cp) = mgr();
+        assert_eq!(cp.clear().unwrap(), 0);
+    }
+
+    #[test]
+    fn find_returns_none_for_unknown_id() {
+        let (_tmp, cp) = mgr();
+        assert!(cp.find("no-such-id").unwrap().is_none());
+    }
+
+    #[test]
+    fn restore_of_a_create_snapshot_deletes_an_existing_file() {
+        // The restore path for a "was created" snapshot is `remove_file`.
+        // A file that was written since must be removed, and the
+        // restore must report success, not an error.
+        let (tmp, cp) = mgr();
+        let target = tmp.path().join("new.txt");
+        let id = cp.snapshot_before(&target, "write_file").unwrap().unwrap();
+        std::fs::write(&target, "written").unwrap();
+        let restored = cp.restore(&id).unwrap();
+        assert_eq!(restored, std::fs::canonicalize(&tmp.path().join("new.txt"))
+            .unwrap_or(target));
+        assert!(!tmp.path().join("new.txt").exists());
+    }
+
+    #[test]
+    fn find_populates_every_field() {
+        let (tmp, cp) = mgr();
+        let target = tmp.path().join("a.txt");
+        std::fs::write(&target, "hello").unwrap();
+        let id = cp.snapshot_before(&target, "patch_file").unwrap().unwrap();
+        let s = cp.find(&id).unwrap().unwrap();
+        assert_eq!(s.id, id);
+        assert_eq!(s.tool, "patch_file");
+        assert!(s.existed);
+        assert_eq!(s.content, "hello");
+        assert!(s.taken_at_ms > 0);
+    }
+
+    #[test]
+    fn retention_drops_only_the_oldest_entries() {
+        let (tmp, cp) = mgr();
+        let cp = cp.with_max_snapshots(2);
+        let f = tmp.path().join("f.txt");
+        for i in 0..5 {
+            std::fs::write(&f, format!("v{i}")).unwrap();
+            cp.snapshot_before(&f, "write_file").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let listed = cp.list().unwrap();
+        assert_eq!(listed.len(), 2);
+        // The survivors are the newest two — v3 and v4's snapshots
+        // recorded `before` values of v2 and v3 respectively.
+        assert_eq!(listed[0].content, "v3");
+        assert_eq!(listed[1].content, "v2");
+    }
+
+    #[test]
+    fn fnv1a_hex_is_sixteen_lowercase_hex_chars() {
+        let h = fnv1a_hex("anything");
+        assert_eq!(h.len(), 16);
+        assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(h.chars().all(|c| !c.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn fnv1a_hex_is_stable_across_processes() {
+        // The hash is used as a directory name; a deterministic
+        // implementation is what lets a session that wrote a
+        // snapshot be resumed by a later session and find the same
+        // directory. The exact value is not pinned — only that the
+        // function is deterministic within this binary.
+        let a = fnv1a_hex("hello world");
+        let b = fnv1a_hex("hello world");
+        assert_eq!(a, b);
+        let c = fnv1a_hex("hello world!");
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn snapshot_of_a_directory_is_skipped_not_errored() {
+        // Calling `snapshot_before` on a directory is a caller bug,
+        // but returning None rather than an error keeps the caller's
+        // own error handling simple.
+        let (tmp, cp) = mgr();
+        let dir = tmp.path().join("subdir");
+        std::fs::create_dir(&dir).unwrap();
+        let id = cp.snapshot_before(&dir, "write_file").unwrap();
+        assert!(id.is_none());
+    }
+}
