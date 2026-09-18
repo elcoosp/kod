@@ -5,7 +5,29 @@ use kod_error::{KodError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// The in-memory default config. Stamped `config_version = 2` so any
+/// caller that writes `KodConfig::default()` to disk produces the
+/// current release's shape, not the pre-v2 shape. `load_default` used
+/// to paper over this for the first-run path only; the invariant now
+/// holds everywhere — tests, library code, future subcommands.
+impl Default for KodConfig {
+    fn default() -> Self {
+        Self {
+            config_version: 2,
+            llm: LlmConfig::default(),
+            memory: MemoryConfig::default(),
+            skills: SkillsConfig::default(),
+            swarm: SwarmConfig::default(),
+            hooks: HooksConfig::default(),
+            tools: ToolsConfig::default(),
+            lsp: LspConfig::default(),
+            mcp: crate::McpConfig::default(),
+            commands: Default::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 // `#[serde(default)]` at the container level: a config.toml that omits
 // a section entirely (e.g. no `[memory]`) fills that section from
 // KodConfig::default() instead of failing with "missing field memory".
@@ -13,7 +35,7 @@ use std::path::{Path, PathBuf};
 // care about, leave the rest out.
 #[serde(default)]
 pub struct KodConfig {
-        /// Config schema version. Absent means "v1" — the shape that
+    /// Config schema version. Absent means "v1" — the shape that
     /// predates named endpoints, `[mcp]`, `[tools]`, and the
     /// policy engine's layering. The loader accepts both; `kod config
     /// migrate` writes a `2` here and rewrites the file into the v2
@@ -24,12 +46,13 @@ pub struct KodConfig {
     /// version is `version == 0 ? 1 : version`.
     #[serde(default)]
     pub config_version: u32,
-pub llm: LlmConfig,
+    pub llm: LlmConfig,
     pub memory: MemoryConfig,
     pub skills: SkillsConfig,
     pub swarm: SwarmConfig,
     pub hooks: HooksConfig,
     pub tools: ToolsConfig,
+    pub lsp: LspConfig,
     /// MCP servers (D6.1). Empty when the config has no `[mcp]`
     /// section, which is the default — no plugin is registered
     /// unless the user writes a block for it.
@@ -48,6 +71,39 @@ pub llm: LlmConfig,
     pub commands: std::collections::HashMap<String, String>,
 }
 
+/// Language-server configuration (design §4 D5.2).
+///
+/// Two independent knobs:
+///
+/// - `auto_diagnostics` — whether a successful `write_file` /
+///   `patch_file` triggers the post-write diagnostics pass. Independent
+///   of `[tools] auto_lsp`, which says whether the pass *tries* LSP or
+///   falls straight to the compiler. The composition is intentional:
+///   `auto_lsp = false, auto_diagnostics = true` gives a
+///   compiler-only feedback loop (fast on a project with no language
+///   server); `auto_diagnostics = false` disables both.
+///
+/// - `settle_ms` — how long the diagnostics pass waits for the server
+///   to publish its list after a `didSave` before accepting an empty
+///   answer as final. 1500 ms is the design's default; a slow
+///   rust-analyzer on a large workspace may need more, a snappy
+///   workspace is fine with less.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LspConfig {
+    pub auto_diagnostics: bool,
+    pub settle_ms: u64,
+}
+
+impl Default for LspConfig {
+    fn default() -> Self {
+        Self {
+            auto_diagnostics: true,
+            settle_ms: 1500,
+        }
+    }
+}
+
 /// Shell hooks run around tool execution. See `kod-core`'s `hooks`
 /// module for the runtime side. Disabled by default; a config that
 /// wants them sets `enabled = true` and adds at least one hook.
@@ -58,6 +114,13 @@ pub llm: LlmConfig,
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ToolsConfig {
+    /// The default policy preset (design §6.1). Written as a string —
+    /// `"read-only"`, `"standard"`, or `"yolo"` — and parsed at engine
+    /// startup. `None` (the default) selects `Standard`. A project's
+    /// `.kod/policy.toml` and a CLI `--preset` override this; it is
+    /// the same layer ordering the design documents.
+    #[serde(default)]
+    pub preset: Option<String>,
     /// When true, a successful `write_file` / `patch_file` in a tool
     /// round triggers a project check (Cargo, tsc, ruff, go vet) and
     /// the diagnostics are appended to the prompt the model sees on
@@ -78,6 +141,7 @@ pub struct ToolsConfig {
 impl Default for ToolsConfig {
     fn default() -> Self {
         Self {
+            preset: None,
             auto_check: false,
             auto_lsp: true,
         }
@@ -153,8 +217,10 @@ impl KodConfig {
             // the shape the current release reads. A file that
             // predates this change and lacks `config_version` loads
             // as v1 via `effective_version()`.
-            let mut config = Self::default();
-            config.config_version = 2;
+            let config = Self {
+                config_version: 2,
+                ..Self::default()
+            };
             if let Err(e) = config.save_to(&config_path) {
                 tracing::warn!(
                     path = %config_path.display(),
@@ -223,9 +289,7 @@ impl KodConfig {
         match self.memory.scope {
             crate::MemoryScope::Global => dirs::home_dir()
                 .map(|h| h.join(".kod").join("data").join("kod.redb"))
-                .ok_or_else(|| {
-                    KodError::Config("Could not determine home directory".to_string())
-                }),
+                .ok_or_else(|| KodError::Config("Could not determine home directory".to_string())),
             crate::MemoryScope::Project => {
                 let cwd = std::env::current_dir().map_err(|e| {
                     KodError::Config(format!(
@@ -303,6 +367,32 @@ impl KodConfig {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn default_config_is_v2() {
+        // Regression: `KodConfig::default()` used to return
+        // `config_version: 0` (the derive), so any caller that saved
+        // a default to disk wrote the pre-v2 shape. The explicit
+        // `Default` impl stamps 2.
+        let cfg = KodConfig::default();
+        assert_eq!(
+            cfg.config_version, 2,
+            "the in-memory default must match the schema the current release writes",
+        );
+        assert!(
+            !cfg.needs_migration(),
+            "a freshly constructed default must not look like a v1 config",
+        );
+    }
+
+    #[test]
+    fn default_config_round_trip_preserves_v2() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        KodConfig::default().save_to(&path).unwrap();
+        let loaded = KodConfig::load_from(&path).unwrap();
+        assert_eq!(loaded.config_version, 2);
+    }
 
     #[test]
     fn test_default_config() {
@@ -465,6 +555,30 @@ mod tests {
     /// model = "…"` additionally failed with "missing field
     /// `provider`". Both are the common hand-edited shape.
     #[test]
+    fn lsp_section_defaults_when_absent() {
+        // A config.toml with no `[lsp]` block still parses and gets
+        // the documented defaults: auto_diagnostics = true,
+        // settle_ms = 1500.
+        let cfg: KodConfig = toml::from_str("").unwrap();
+        assert!(cfg.lsp.auto_diagnostics);
+        assert_eq!(cfg.lsp.settle_ms, 1_500);
+    }
+
+    #[test]
+    fn lsp_section_overrides_are_honoured() {
+        let cfg: KodConfig = toml::from_str(
+            r#"
+            [lsp]
+            auto_diagnostics = false
+            settle_ms = 400
+            "#,
+        )
+        .unwrap();
+        assert!(!cfg.lsp.auto_diagnostics);
+        assert_eq!(cfg.lsp.settle_ms, 400);
+    }
+
+    #[test]
     fn test_corrupt_file_yields_error_from_load_from() {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("config.toml");
@@ -474,9 +588,6 @@ mod tests {
         assert!(KodConfig::load_from(&path).is_err());
         // Defaults, by construction, have the documented fields.
         let defaults = KodConfig::default();
-        assert_eq!(
-            defaults.llm.default_endpoint().model,
-            "codellama:13b"
-        );
+        assert_eq!(defaults.llm.default_endpoint().model, "codellama:13b");
     }
 }
