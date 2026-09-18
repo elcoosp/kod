@@ -287,3 +287,103 @@ mod tests {
         assert!((c - 0.0105).abs() < 1e-9);
     }
 }
+
+#[cfg(test)]
+mod coverage_prompt_types {
+    //! `SystemPrompt`, `ModelPricing`, and `ProviderCapabilities` are
+    //! the D1 migration's public contract. The engine builds one, the
+    //! TUI reads the other two. A regression in any of them is
+    //! invisible until a specific endpoint's accounting drifts, so
+    //! each behaviour is pinned.
+    use super::*;
+
+    #[test]
+    fn system_prompt_with_chains_in_order() {
+        let s = SystemPrompt::new()
+            .with("first", true)
+            .with("second", false)
+            .with("third", true);
+        assert_eq!(s.segments.len(), 3);
+        assert_eq!(s.segments[0].text, "first");
+        assert!(s.segments[0].cacheable);
+        assert!(!s.segments[1].cacheable);
+        assert!(s.segments[2].cacheable);
+    }
+
+    #[test]
+    fn system_prompt_empty_renders_to_empty_string() {
+        assert!(SystemPrompt::new().is_empty());
+        assert_eq!(SystemPrompt::new().render_text(), "");
+    }
+
+    #[test]
+    fn system_prompt_render_separates_segments_with_blank_line() {
+        let s = SystemPrompt::new().with("a", true).with("b", false);
+        assert_eq!(s.render_text(), "a\n\nb");
+    }
+
+    #[test]
+    fn model_ref_display_is_endpoint_slash_model() {
+        assert_eq!(
+            ModelRef::new("local-ollama", "qwen2.5:7b").display(),
+            "local-ollama/qwen2.5:7b",
+        );
+    }
+
+    #[test]
+    fn model_ref_equality_and_hash_use_both_fields() {
+        use std::collections::HashSet;
+        let a = ModelRef::new("e", "m");
+        let b = ModelRef::new("e", "m");
+        let c = ModelRef::new("e", "other");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        let mut set = HashSet::new();
+        set.insert(a);
+        assert!(set.contains(&b));
+        assert!(!set.contains(&c));
+    }
+
+    #[test]
+    fn pricing_zero_tokens_is_zero_cost() {
+        let p = ModelPricing::new(3.0, 15.0);
+        assert_eq!(p.cost_usd(0, 0), 0.0);
+    }
+
+    #[test]
+    fn pricing_splits_input_and_output() {
+        let p = ModelPricing::new(1.0, 10.0);
+        assert!((p.cost_usd(1_000_000, 0) - 1.0).abs() < 1e-9);
+        assert!((p.cost_usd(0, 1_000_000) - 10.0).abs() < 1e-9);
+        assert!((p.cost_usd(1_000_000, 1_000_000) - 11.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pricing_cost_is_additive_across_calls() {
+        let p = ModelPricing::new(3.0, 15.0);
+        let a = p.cost_usd(500_000, 250_000);
+        let b = p.cost_usd(500_000, 250_000);
+        let c = p.cost_usd(1_000_000, 500_000);
+        assert!((a + b - c).abs() < 1e-9);
+    }
+
+    #[test]
+    fn conservative_capabilities_enable_tools_and_disable_pricing() {
+        let caps = ProviderCapabilities::conservative();
+        assert!(caps.tools);
+        assert!(!caps.streaming_tools);
+        assert!(caps.pricing.is_none());
+        assert_eq!(caps.prompt_cache, PromptCacheKind::None);
+    }
+
+    #[test]
+    fn capabilities_default_matches_conservative() {
+        // The two are used interchangeably by call sites that want
+        // "sensible defaults"; if they ever diverge, half the
+        // workspace gets one shape and half the other.
+        assert_eq!(
+            ProviderCapabilities::default(),
+            ProviderCapabilities::conservative(),
+        );
+    }
+}
