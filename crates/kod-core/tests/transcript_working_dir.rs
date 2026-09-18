@@ -157,25 +157,15 @@ async fn clearing_override_reverts_to_engine_root() {
     std::fs::create_dir_all(&worktree).unwrap();
 
     let engine = engine_in(&engine_root);
-    let provider = Arc::new(ScriptedProvider::new(vec![
-        vec![ToolCall {
-            id: None,
-            tool_name: "write_file".to_string(),
-            arguments: serde_json::json!({
-                "path": "first.txt",
-                "content": "in worktree\n",
-            }),
-        }],
-        vec![ToolCall {
-            id: None,
-            tool_name: "write_file".to_string(),
-            arguments: serde_json::json!({
-                "path": "second.txt",
-                "content": "in root\n",
-            }),
-        }],
-    ]));
-    install_test_provider(&engine, provider).await;
+    let provider1 = Arc::new(ScriptedProvider::new(vec![vec![ToolCall {
+        id: None,
+        tool_name: "write_file".to_string(),
+        arguments: serde_json::json!({
+            "path": "first.txt",
+            "content": "in worktree\n",
+        }),
+    }]]));
+    install_test_provider(&engine, provider1).await;
     engine.start().await.unwrap();
 
     let key = "swarm:agent-1";
@@ -186,6 +176,15 @@ async fn clearing_override_reverts_to_engine_root() {
     assert!(worktree.join("first.txt").is_file());
 
     engine.clear_transcript_working_dir(key).await;
+    let provider2 = Arc::new(ScriptedProvider::new(vec![vec![ToolCall {
+        id: None,
+        tool_name: "write_file".to_string(),
+        arguments: serde_json::json!({
+            "path": "second.txt",
+            "content": "in root\n",
+        }),
+    }]]));
+    install_test_provider(&engine, provider2).await;
     let _ = engine.process_for(key, "write second.txt").await.unwrap();
     assert!(
         engine_root.join("second.txt").is_file(),

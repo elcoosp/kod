@@ -335,7 +335,7 @@ async fn test_swarm_detects_file_conflicts() {
         ) -> kod_error::Result<String> {
             if prompt.contains("Split this goal") {
                 return Ok(
-                    r#"[{"name":"a","description":"edit shared"},{"name":"b","description":"edit shared too"}]"#
+                    r#"[{"name":"a","description":"edit shared","capability":"coding"},{"name":"b","description":"edit shared too","capability":"refactoring"}]"#
                         .to_string(),
                 );
             }

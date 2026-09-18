@@ -53,8 +53,19 @@ fn test_chat_widget_rendering() {
 fn test_agent_panel_rendering() {
     let mut app = KodApp::new();
 
-    app.add_agent("architect", vec!["planning".to_string()]);
-    app.add_agent("coder", vec!["coding".to_string()]);
+    app.begin_swarm();
+    app.swarm_agent_started(
+        kod_types::AgentId::new(),
+        "architect",
+        "plan the schema",
+        Some("local-ollama/qwen2.5-coder:7b".to_string()),
+    );
+    app.swarm_agent_started(
+        kod_types::AgentId::new(),
+        "coder",
+        "write the handler",
+        None,
+    );
 
     let widget = AgentPanelWidget::new();
 

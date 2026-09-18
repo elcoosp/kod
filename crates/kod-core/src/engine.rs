@@ -5009,7 +5009,37 @@ impl KodEngine {
         turns.push(message);
         let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
         if excess > 0 {
-            turns.drain(..excess);
+            let mut to_drop = excess;
+            turns.retain(|t| {
+                if to_drop > 0 && !t.metadata.pinned {
+                    to_drop -= 1;
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        // Char-budget trim: D1 moved the transcript from a rendered
+        // text section to a structured `messages` field the provider
+        // sees verbatim; without a cap here the budget was ignored.
+        let budget = self.history_budget();
+        let mut total: usize = 0;
+        let mut cutoff = turns.len();
+        for i in (0..turns.len()).rev() {
+            let line_len = turns[i].render_text().len() + 1;
+            if total + line_len > budget {
+                break;
+            }
+            total += line_len;
+            cutoff = i;
+        }
+        for i in (0..cutoff).rev() {
+            if turns[i].metadata.pinned {
+                cutoff = i;
+            }
+        }
+        if cutoff > 0 {
+            turns.drain(..cutoff);
         }
     }
 
@@ -5791,12 +5821,10 @@ mod tests {
             {
                 Box::pin(futures::stream::empty())
             }
-            fn stream_with_tools<'a>(
-                &'a self,
-                _prompt: &'a str,
-                _tools: &'a [ToolDefinition],
-                _opts: &'a GenerationOptions,
-            ) -> Pin<Box<dyn Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+            fn stream_completion<'a>(
+        &'a self,
+        _req: &'a CompletionRequest,
+    ) -> Pin<Box<dyn Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
             {
                 let hold = self.hold_for;
                 let started = self.started.clone();

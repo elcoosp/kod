@@ -124,8 +124,13 @@ async fn history_rendering_shape_is_stable_across_turns() {
     );
 
     assert!(
-        prompts[0].contains("(start of conversation)"),
-        "turn 1 should carry the placeholder: {}",
+        prompts[0].contains("User: first prompt"),
+        "turn 1 should carry the user's message: {}",
+        excerpt(&prompts[0])
+    );
+    assert!(
+        !prompts[0].contains("(start of conversation)"),
+        "legacy placeholder must not appear: {}",
         excerpt(&prompts[0])
     );
 

@@ -71,8 +71,15 @@ fn acp_subcommand_answers_initialize() {
     // `CARGO_BIN_EXE_kod` is set by cargo for integration tests of a
     // crate with a binary target; the binary is built automatically.
     let exe = env!("CARGO_BIN_EXE_kod");
+    // Isolate the subprocess DB from every other test in the
+    // workspace: without this the ACP daemon opens the shared
+    // ~/.kod/data/kod.redb and can lose the lock to a parallel test,
+    // dying before it writes the initialize response.
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db = tmp.path().join("acp.redb");
     let mut child = Command::new(exe)
         .arg("acp")
+        .env("KOD_TEST_DB", &db)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

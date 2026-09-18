@@ -523,8 +523,8 @@ async fn test_second_turn_sees_first_turn_history() {
         "second prompt lost the first user turn: {second}"
     );
     assert!(
-        second.contains("## Conversation so far"),
-        "history section missing from second prompt: {second}"
+        second.contains("Assistant: done"),
+        "history section should carry the assistant's reply: {second}"
     );
 
     // `/clear` forgets the transcript: the next prompt starts over.

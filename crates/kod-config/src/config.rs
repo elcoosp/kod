@@ -262,6 +262,20 @@ impl KodConfig {
 
     /// Get the configuration directory
     pub fn config_dir() -> Result<PathBuf> {
+        // `KOD_CONFIG_DIR` is the kod config directory *itself* (the
+        // directory that holds `config.toml`), not a parent. It is
+        // consulted before the platform default so a caller can
+        // localise the config path without mutating `HOME` or
+        // `XDG_CONFIG_HOME` — both process-wide, both racing under a
+        // parallel test runner, and `XDG_CONFIG_HOME` is ignored by
+        // `dirs::config_dir` on macOS anyway. An empty value falls
+        // through to the default rather than producing an empty path.
+        if let Ok(dir) = std::env::var("KOD_CONFIG_DIR") {
+            let dir = dir.trim();
+            if !dir.is_empty() {
+                return Ok(PathBuf::from(dir));
+            }
+        }
         dirs::config_dir()
             .map(|d| d.join("kod"))
             .ok_or_else(|| KodError::Config("Could not determine config directory".to_string()))

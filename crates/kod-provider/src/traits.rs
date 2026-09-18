@@ -103,11 +103,8 @@ pub trait LlmProvider: Send + Sync {
         // design's `render_text` is byte-stable for the same request,
         // so the underlying `complete()` sees the same prompt a
         // direct `generate_with_tools` call would have.
-        let prompt = req.render_text();
-        let tools = req.tools.clone();
-        let options = req.options.clone();
         Box::pin(async_stream::stream! {
-            match self.generate_with_tools(&prompt, &tools, &options).await {
+            match self.complete(req).await {
                 Ok(response) => {
                     for chunk in crate::response_chunks(response) {
                         yield Ok(chunk);

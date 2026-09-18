@@ -2538,6 +2538,7 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool) -> Result<()> {
         Some(&config.llm.default_endpoint().base_url),
     );
     let router_config = RouterConfig {
+        enable_memory: false,
         skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
@@ -3345,10 +3346,19 @@ fn print_swarm_event(v: &serde_json::Value) {
 pub async fn run_acp(cli_preset: Option<String>) -> Result<()> {
     let config = KodConfig::load_default()?;
 
-    let home = dirs::home_dir()
-        .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
-    let db_path = home.join(".kod").join("data").join("kod.redb");
-    let _ = std::fs::create_dir_all(db_path.parent().unwrap());
+    // Same isolation hook `TuiLoop::init_engine` uses. Without it
+    // the ACP subprocess opens the shared `~/.kod/data/kod.redb`,
+    // which a concurrent test process may hold a lock on — the
+    // process then dies before writing the initialize response.
+    let db_path = match std::env::var("KOD_TEST_DB") {
+        Ok(p) => std::path::PathBuf::from(p),
+        Err(_) => {
+            let home = dirs::home_dir()
+                .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
+            home.join(".kod").join("data").join("kod.redb")
+        }
+    };
+    let _ = std::fs::create_dir_all(db_path.parent().unwrap_or(std::path::Path::new(".")));
 
     let router_config = RouterConfig {
         skill_threshold: config.skills.match_threshold,

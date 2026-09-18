@@ -552,7 +552,7 @@ fn parse_inline(text: &str, theme: &Theme) -> Vec<Span<'static>> {
             let is_word_char = |ch: char| ch.is_alphanumeric();
             let left_is_word = i > 0 && is_word_char(chars[i - 1]);
             let right_is_word = i + 1 < chars.len() && is_word_char(chars[i + 1]);
-            let escaped = c == '_' && (left_is_word || right_is_word);
+            let escaped = c == '_' && left_is_word && right_is_word;
 
             if !escaped && let Some(end) = find_char(&chars, i + 1, c) {
                 let content: String = chars[i + 1..end].iter().collect();

@@ -29,9 +29,17 @@ fn kod_bin() -> &'static str {
 /// Build a session log with one `read_file` call whose recorded result
 /// matches what a fresh read of `fixture.txt` will produce.
 fn write_fixture(dir: &std::path::Path) -> std::path::PathBuf {
-    // The file we will read.
+    // The file we will read. Canonicalize *after* creating it: on
+    // macOS, `TempDir::new()` yields a path under `/var/folders/...`,
+    // which is a symlink to `/private/var/folders/...`. `ReadFileTool`
+    // canonicalizes through `resolve_path`, so the result it returns
+    // carries the `/private/...` form. Writing the un-canonicalized
+    // form into the fixture made the fresh result differ from the
+    // recorded one on the very same bytes — the tool was correct, the
+    // fixture was wrong.
     let target = dir.join("fixture.txt");
     std::fs::write(&target, "hello from the fixture\n").unwrap();
+    let target = std::fs::canonicalize(&target).unwrap();
 
     // Build the recorded result in the same shape `kod replay`
     // computes: `{"success": {"path": ..., "content": ..., "truncated":
@@ -69,6 +77,7 @@ fn dry_run_lists_tool_calls_without_executing() {
     let log = write_fixture(tmp.path());
 
     let out = Command::new(kod_bin())
+        .current_dir(tmp.path())
         .args(["replay", log.to_str().unwrap()])
         .output()
         .expect("spawn kod");
@@ -100,6 +109,7 @@ fn execute_runs_the_tool_and_matches_the_recorded_result() {
     let log = write_fixture(tmp.path());
 
     let out = Command::new(kod_bin())
+        .current_dir(tmp.path())
         .args(["replay", log.to_str().unwrap(), "--execute"])
         .output()
         .expect("spawn kod");
@@ -133,6 +143,7 @@ fn empty_log_reports_no_tool_calls() {
     .unwrap();
 
     let out = Command::new(kod_bin())
+        .current_dir(tmp.path())
         .args(["replay", log.to_str().unwrap()])
         .output()
         .expect("spawn kod");

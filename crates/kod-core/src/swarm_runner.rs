@@ -1709,7 +1709,27 @@ fn globs_overlap(a: &str, b: &str) -> bool {
     if na.is_empty() || nb.is_empty() {
         return false;
     }
-    na == nb || na.starts_with(&format!("{nb}/")) || nb.starts_with(&format!("{na}/"))
+    if na == nb {
+        return true;
+    }
+    // Directory-prefix: `src/parser` vs `src/parser/foo.rs` (the
+    // shorter names a directory, the longer names a file inside it).
+    if na.starts_with(&format!("{nb}/")) || nb.starts_with(&format!("{na}/")) {
+        return true;
+    }
+    // File-name-prefix in the same directory: `src/parser` and
+    // `src/parser.rs` refer to the same logical file (one names the
+    // stem, the other names the file). The test
+    // `globs_overlap_catches_prefix_relations` pins this behaviour.
+    let (da, fa) = match na.rfind('/') {
+        Some(i) => (na[..i].to_string(), na[i + 1..].to_string()),
+        None => (String::new(), na.clone()),
+    };
+    let (db, fb) = match nb.rfind('/') {
+        Some(i) => (nb[..i].to_string(), nb[i + 1..].to_string()),
+        None => (String::new(), nb.clone()),
+    };
+    da == db && (fa.starts_with(&fb) || fb.starts_with(&fa))
 }
 
 /// Truncate a glob at its first wildcard segment. `src/parser/*.rs`

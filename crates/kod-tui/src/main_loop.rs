@@ -27,7 +27,63 @@ use std::time::Duration;
 /// `test_slash_help_lists_every_command` — adding a command to
 /// `SLASH_COMMANDS` without updating this string fails the test, so
 /// the help output and the `/` autocomplete cannot drift apart.
-const SLASH_HELP: &str = "Commands:\n/help — show this help\n/clear — clear chat (asks confirm)\n/undo — restore last /clear\n/edit — load your last message back into the input for editing (also `e`)\n/model [<name>] — switch model; no argument lists the server's models\n/skills — list loaded skills\n/goal <text> — set a goal the agent works toward until GOAL MET (/goal clear to stop)\n/steer <instruction> — redirect the running prompt after its current tool call\n/cancel — stop the running prompt (also Esc or Ctrl+C while it runs)\n/compact — compact session history now\n/retry — resend the last prompt (also `r`)\n/search [<text>] — search chat (n/N next/prev, Esc clears)\n/copy — copy last assistant reply to clipboard (also `y`)\n/theme [dark|light] — cycle or set theme\n/tools — toggle tool-output visibility (also `t`)\n/debug last-prompt — write the last prompt sent to the model into ~/.kod/last_prompt.txt\n/debug tokens — show the token accounting breakdown for this session\n/doctor — print a diagnostics report (same as `kod doctor`)\n/init — onboarding info: config path, model profiles, next steps\n/regenerate — regenerate the last assistant reply\n/delete — remove the last user+assistant exchange\n/export [path] — export session as markdown (stdout when no path)\n/export-html [path] — export the session as a self-contained HTML file\n/rollback [id] — restore a file from a checkpoint (newest when no id)\n/checkpoints — list file checkpoints for this project\n/swarm <goal> — run N agents: decompose, run concurrently, merge\n/quit — quit kod\n/check [<file>] — project check (LSP for a file, compiler for the whole workspace)\n/todo-add <text> — add a todo item to the session list\n/fork [label] — save the current chat as a restorable fork\n/reset — reset transient state: input, search, expansions, attachments\n/git-status — git status --porcelain=v2 in the current directory\n/stats — per-session statistics: roles, tools, tokens, elapsed\n/clearall — clear chat + long-term memory + checkpoints (asks for confirmation)\n/whoami — session summary: model, skills, context, paths\n/summarize — ask the model to summarize the session so far\n/grep <regex> — regex search the chat history\n/system <text> — override the system prompt for this session\n/branch [label] — drop a branch-point marker in the chat\n/load <path> — load a JSON session file\n/save <path> — save session markdown to a file\n/raw — print the last assistant reply raw (no decoration)\n/refine <instruction> — refine the last assistant reply\n/attach <path> — attach a file to the next prompt\n/diff — show the most recent file change (from checkpoints)\n/last-prompt — write the most recent prompt to ~/.kod/last_prompt.txt\n/context — visualize context window usage and session totals\n/memory [search <q> | delete <id> | clear] — long-term memory store\n/map [max-chars] — repository map (top-level symbols per file)\n\nWhile a prompt runs, typing + Enter steers it (same as /steer).\nKeys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text\n/pin <n> — pin a message so it survives history compaction (1-based index)\n/unpin <n> — remove a pin\n/handoff — produce a handoff document, save it to .kod/, and start a fresh session with it as context";
+const SLASH_HELP: &str = "Commands:\n\
+/help — show available commands\n\
+/clear — clear chat history\n\
+/model — switch model: /model <name>\n\
+/skills — list loaded skills\n\
+/goal — set a goal the agent works toward: /goal <text> | /goal clear\n\
+/steer — redirect the running prompt: /steer <instruction>\n\
+/cancel — stop the running prompt\n\
+/compact — compact session history now\n\
+/swarm — run N agents on a goal: /swarm <goal>\n\
+/quit — quit kod\n\
+/undo — restore chat cleared with /clear\n\
+/edit — edit your last message again\n\
+/search — search chat: /search <text> (n/N jumps)\n\
+/theme — switch theme: /theme [dark|light]\n\
+/tools — toggle tool output details\n\
+/retry — reconnect + resend the last prompt\n\
+/copy — copy the last assistant reply\n\
+/debug — diagnostics: /debug last-prompt dumps the last prompt\n\
+/rollback — restore a file from a checkpoint: /rollback [id]\n\
+/checkpoints — list file checkpoints for this project\n\
+/doctor — print a diagnostics report (same as `kod doctor`)\n\
+/init — onboarding info: config path, model profiles, next steps\n\
+/regenerate — regenerate the last assistant reply\n\
+/delete — remove the last user+assistant exchange\n\
+/export — export session as markdown: /export [path]\n\
+/export-html — export session as a self-contained HTML file: /export-html [path]\n\
+/memory — long-term memory: /memory [search <q> | delete <id> | clear]\n\
+/remember — store a durable fact in long-term memory: /remember <text>\n\
+/policy — tool policy: /policy [show | forget <n>]\n\
+/map — print the repository map (top-level symbols per file)\n\
+/context — visualize context window usage and session totals\n\
+/last-prompt — shortcut for /debug last-prompt\n\
+/diff — show the most recent file diff (from checkpoints)\n\
+/attach — attach a file to the next prompt: /attach <path>\n\
+/refine — refine the last assistant reply: /refine <instruction>\n\
+/raw — print the last assistant reply raw (no decoration)\n\
+/save — save session to a file: /save <path>\n\
+/load — load session from a JSON file: /load <path>\n\
+/branch — drop a branch-point marker: /branch [label]\n\
+/system — override the system prompt: /system <text> | /system clear\n\
+/grep — regex search the chat history: /grep <regex>\n\
+/summarize — LLM-summarize the session so far\n\
+/whoami — session summary: model, skills, context, paths\n\
+/clearall — clear chat + memory + checkpoints (asks for confirmation)\n\
+/stats — per-session statistics: roles, tools, tokens, elapsed\n\
+/git-status — git status --porcelain=v2 in the current directory\n\
+/reset — reset transient state: input, search, expansions, attachments\n\
+/fork — save the current chat as a restorable fork: /fork [label]\n\
+/check — run the project compiler/linter (Cargo, tsc, ruff, go vet)\n\
+/log — show recent session log entries: /log [N]\n\
+/pin — pin a message so it survives history compaction: /pin <n>\n\
+/unpin — remove a pin: /unpin <n>\n\
+/handoff — write a handoff document and start a fresh session with it as context\n\
+\n\
+While a prompt runs, typing + Enter steers it (same as /steer).\n\
+Keys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
 
 /// Main TUI application loop
 pub struct TuiLoop {
@@ -2476,12 +2532,12 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                     self.app.push_system_message("Engine not initialized.");
                     return Ok(());
                 };
-                let transcript = self.app.export_markdown();
-                if transcript.trim().is_empty() {
+                if self.app.messages().is_empty() {
                     self.app
                         .push_system_message("Nothing to hand off — the session is empty.");
                     return Ok(());
                 }
+                let transcript = self.app.export_markdown();
                 self.app.begin_generation();
                 self.app.push_system_message("Generating handoff document…");
                 let event_tx = self.event_handler.sender();

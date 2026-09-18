@@ -741,7 +741,7 @@ mod tests {
         let body = build_messages_body(&req);
         assert_eq!(body["model"], "claude-sonnet-4-5");
         assert_eq!(body["max_tokens"], 1024);
-        assert_eq!(body["system"][1]["cache_control"]["type"], "ephemeral");
+        assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
         assert_eq!(body["messages"][0]["role"], "user");
     }
 

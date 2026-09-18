@@ -221,44 +221,57 @@ impl OpenAICompatProvider {
                     contents.push(Content::new("user").with_text(&m.content));
                 }
                 MessageRole::Assistant | MessageRole::Agent(_) => {
-                    // Assistant message: text (if any) plus one
-                    // `Part::FunctionCall` per tool call. adk-core 2.2
-                    // does not expose a `with_function_call` builder;
-                    // the parts vector is public and the variant's
-                    // fields are the ones the ADR-04 spike recorded
-                    // from `adk-model/src/tool_call_parser.rs`.
-                    let mut c = Content::new("assistant");
-                    if !m.content.is_empty() {
-                        c = c.with_text(&m.content);
-                    }
+                    // Assistant message: text form only. adk-model
+                    // 2.2 does not surface `Part::FunctionCall` on
+                    // the OpenAI-compatible wire — a Content that
+                    // carries both text and FunctionCall parts loses
+                    // the text (the FunctionCall path silently drops
+                    // the whole content). Emitting the metadata as
+                    // plain text is the only form that reliably
+                    // reaches the server, and it carries the id so a
+                    // subsequent tool_result can be linked to its
+                    // call.
+                    let mut text = m.content.clone();
                     for call in &m.tool_calls {
-                        c.parts.push(Part::FunctionCall {
-                            name: call.tool_name.clone(),
-                            args: call.arguments.clone(),
-                            id: call.id.clone(),
-                            thought_signature: None,
-                        });
+                        let id = call.id.as_deref().unwrap_or("");
+                        if !text.is_empty() {
+                            text.push('\n');
+                        }
+                        text.push_str(&format!(
+                            "[tool_call id={id} name={}] {}",
+                            call.tool_name, call.arguments,
+                        ));
                     }
+                    let c = if text.is_empty() {
+                        Content::new("assistant")
+                    } else {
+                        Content::new("assistant").with_text(&text)
+                    };
                     contents.push(c);
                 }
                 MessageRole::Tool => {
-                    // A tool result. adk-core 2.2 exposes neither a
-                    // `with_function_response` builder nor a
-                    // documented `Part::FunctionResponse` shape. Until
-                    // the exact variant is pinned by the wire test
-                    // that will accompany the engine migration to
-                    // `stream_completion`, the tool result travels as
-                    // a text part on a `tool`-role Content, with the
-                    // `tool_call_id` echoed in the body so nothing is
-                    // lost — an implementor that adds the native shape
-                    // later can parse the id back out of the prefix.
+                    // A tool result. adk-core 2.2's OpenAI-compatible
+                    // converter drops a `tool`-role `Content` that
+                    // carries only text — the wire test in
+                    // `tests/contracts.rs` proved the body never
+                    // reached the socket (both the tool content and
+                    // the `tool_call_id` annotation were absent).
+                    //
+                    // Until the native `FunctionResponse` shape is
+                    // pinned, the tool result therefore travels as a
+                    // `user`-role text `Content` with an explicit
+                    // `[tool_result tool_call_id=…]` prefix. The
+                    // link back to the originating call is preserved
+                    // because the assistant message already emits
+                    // `[tool_call id=… name=…]` on the wire, so both
+                    // halves of the pair carry the same id.
                     let id = m.tool_call_id.clone().unwrap_or_default();
                     let annotated = if id.is_empty() {
-                        m.content.clone()
+                        format!("[tool_result]\n{}", m.content)
                     } else {
-                        format!("[tool_call_id={id}]\n{}", m.content)
+                        format!("[tool_result tool_call_id={id}]\n{}", m.content)
                     };
-                    contents.push(Content::new("tool").with_text(annotated));
+                    contents.push(Content::new("user").with_text(annotated));
                 }
                 MessageRole::System => {
                     // A `System` message inside the transcript is a
@@ -414,6 +427,21 @@ impl LlmProvider for OpenAICompatProvider {
         let request = self.text_request(prompt, options, &[]);
         let (text, _, _) = self.collect(request, false).await?;
         Ok(text)
+    }
+
+    /// Structured completion (AD-01): builds the wire from
+    /// `CompletionRequest` (multi-role messages, tool calls with ids,
+    /// tool results linked by `tool_call_id`, system prompt).
+    async fn complete(&self, req: &CompletionRequest) -> Result<GenerationResponse> {
+        let request = self.request_from_completion(req);
+        let (text, calls, usage) = self.collect(request, false).await?;
+        if calls.is_empty() {
+            Ok(GenerationResponse::Text { content: text, usage })
+        } else if text.is_empty() {
+            Ok(GenerationResponse::ToolCalls { calls, usage })
+        } else {
+            Ok(GenerationResponse::Mixed { content: text, calls, usage })
+        }
     }
 
     async fn generate_with_tools(

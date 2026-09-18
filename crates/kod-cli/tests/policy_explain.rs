@@ -19,8 +19,7 @@ fn kod_bin() -> &'static str {
 fn run_kod_in(config_dir: &std::path::Path, args: &[&str]) -> (String, String, i32) {
     let out = Command::new(kod_bin())
         .args(args)
-        .env("XDG_CONFIG_HOME", config_dir)
-        .env("HOME", config_dir)
+        .env("KOD_CONFIG_DIR", config_dir)
         .output()
         .expect("spawn kod");
     (

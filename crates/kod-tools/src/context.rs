@@ -696,7 +696,10 @@ impl ToolContext {
             });
         }
         if let Some(globs) = &self.allowed_write_globs {
-            let matched = globs.iter().any(|g| Self::matches_pattern(path, g));
+            let relative = path.strip_prefix(&self.working_dir).unwrap_or(path);
+            let matched = globs
+                .iter()
+                .any(|g| Self::matches_pattern(path, g) || Self::matches_pattern(relative, g));
             if !matched {
                 return Err(KodError::PermissionDenied {
                     action: "write".to_string(),

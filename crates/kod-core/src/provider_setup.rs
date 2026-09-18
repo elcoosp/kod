@@ -189,19 +189,26 @@ mod tests {
             .unwrap_or_else(|p| p.into_inner())
     }
 
+    /// A v1-shaped configuration, built in code. The v1 flat `[llm]`
+    /// shape — `provider` / `model` / `base_url` at the top level of
+    /// the section — cannot be deserialized into the v2 `LlmConfig`:
+    /// those fields now live on `EndpointConfig`, and a v1 file needs
+    /// `kod config migrate` before it loads. Building the struct
+    /// programmatically exercises the same `build_registry` path with
+    /// a deterministic single-endpoint config.
     fn v1_config() -> LlmConfig {
-        toml::from_str(
-            r#"
-            provider = "OpenAICompatible"
-            model = "qwen2.5-coder:7b"
-            base_url = "http://localhost:11434/v1"
-            context_window = 8192
-            max_tokens = 2048
-            temperature = 0.2
-            timeout_secs = 120
-            "#,
-        )
-        .unwrap()
+        let mut cfg = LlmConfig::default();
+        {
+            let ep = cfg.default_endpoint_mut();
+            ep.provider = ProviderKind::OpenAICompatible;
+            ep.model = "qwen2.5-coder:7b".to_string();
+            ep.base_url = "http://localhost:11434/v1".to_string();
+            ep.context_window = 8192;
+            ep.max_tokens = Some(2048);
+            ep.temperature = Some(0.2);
+            ep.timeout_secs = 120;
+        }
+        cfg
     }
 
     #[test]

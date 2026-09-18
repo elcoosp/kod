@@ -21,17 +21,17 @@ fn kod_bin() -> &'static str {
     env!("CARGO_BIN_EXE_kod")
 }
 
-/// Run `kod <args>` with a fresh config dir set via the XDG var (the
-/// platform-respecting source of truth `KodConfig::config_dir` reads
-/// first on Linux). Returns (stdout, stderr, status_code).
+/// Run `kod <args>` with `KodConfig::config_dir()` pointed at
+/// `config_dir` via `KOD_CONFIG_DIR`. The variable names the config
+/// directory itself (the one holding `config.toml`), so it works
+/// identically on Linux, macOS, and Windows — unlike `XDG_CONFIG_HOME`
+/// (ignored on macOS by `dirs::config_dir`) or `HOME` (which expands
+/// to `$HOME/Library/Application Support/kod` on macOS, not `$HOME/kod`).
+/// Returns (stdout, stderr, status_code).
 fn run_kod_in(config_dir: &std::path::Path, args: &[&str]) -> (String, String, i32) {
     let out = Command::new(kod_bin())
         .args(args)
-        // XDG_CONFIG_HOME is what dirs::config_dir honours on Linux
-        // and macOS-in-CI. Setting it localises the config path to
-        // the tempdir the caller created.
-        .env("XDG_CONFIG_HOME", config_dir)
-        .env("HOME", config_dir)
+        .env("KOD_CONFIG_DIR", config_dir)
         .output()
         .expect("spawn kod");
     (
@@ -67,7 +67,7 @@ fn migrate_brings_a_v1_config_to_v2_with_a_backup() {
     let cfg_path = kod_dir.join("config.toml");
     std::fs::write(&cfg_path, V1_CONFIG).unwrap();
 
-    let (stdout, stderr, code) = run_kod_in(tmp.path(), &["config", "migrate"]);
+    let (stdout, stderr, code) = run_kod_in(&kod_dir, &["config", "migrate"]);
     assert_eq!(
         code, 0,
         "config migrate should exit 0\nstdout: {stdout}\nstderr: {stderr}",
@@ -114,7 +114,7 @@ fn migrate_is_idempotent_on_a_v2_config() {
     )
     .unwrap();
 
-    let (stdout, _stderr, code) = run_kod_in(tmp.path(), &["config", "migrate"]);
+    let (stdout, _stderr, code) = run_kod_in(&kod_dir, &["config", "migrate"]);
     assert_eq!(code, 0);
     // The message tells the user the file is already current; a
     // regression that rewrote it (creating a second backup) would
