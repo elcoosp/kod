@@ -79,9 +79,11 @@ fn check_snapshot(name: &str, actual: &str) {
 }
 
 fn make_router(tmp: &Path) -> TaskRouter {
-    let mut cfg = RouterConfig::default();
-    cfg.working_dir = tmp.to_path_buf();
-    cfg.enable_memory = false;
+    let cfg = RouterConfig {
+        working_dir: tmp.to_path_buf(),
+        enable_memory: false,
+        ..RouterConfig::default()
+    };
     let db = tmp.join("test.redb");
     TaskRouter::new(cfg, db).expect("router construction")
 }
@@ -157,15 +159,13 @@ async fn snapshot_debugging_task_with_history() {
     let history = "User: run the tests\nAssistant: cargo test failed with \
                    a type mismatch on line 42 of lib.rs\n";
     let prompt = router
-        .build_prompt_with_context(
-            "debug that error",
-            &TaskType::Debugging,
-            history,
-            None,
-        )
+        .build_prompt_with_context("debug that error", &TaskType::Debugging, history, None)
         .await
         .expect("build prompt");
-    check_snapshot("debugging_task_with_history", &normalize(&prompt, tmp.path()));
+    check_snapshot(
+        "debugging_task_with_history",
+        &normalize(&prompt, tmp.path()),
+    );
 }
 
 #[tokio::test]
@@ -195,12 +195,7 @@ async fn cacheable_prefix_does_not_drift_between_turns() {
     const MARKER: &str = "## Volatile suffix (not cached)";
 
     let p1 = router
-        .build_prompt_with_context(
-            "first",
-            &TaskType::Simple,
-            "(start of conversation)",
-            None,
-        )
+        .build_prompt_with_context("first", &TaskType::Simple, "(start of conversation)", None)
         .await
         .unwrap();
     let p2 = router
@@ -244,9 +239,11 @@ async fn prompt_is_deterministic_across_routers() {
     let tmp = TempDir::new().unwrap();
     seed_sources(tmp.path());
     let make = |name: &str| {
-        let mut cfg = RouterConfig::default();
-        cfg.working_dir = tmp.path().to_path_buf();
-        cfg.enable_memory = false;
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
         TaskRouter::new(cfg, tmp.path().join(name)).unwrap()
     };
     let a = make("a.redb");
