@@ -23,9 +23,11 @@
 //! transport and handshake below already do the hard part.
 
 pub mod client;
+pub mod manager;
 pub mod types;
 
 pub use client::{LspClient, LspError};
+pub use manager::{LspManager, binary_for_path};
 pub use types::{
     Diagnostic, Hover, Location, Position, Range, language_id_for,
 };
