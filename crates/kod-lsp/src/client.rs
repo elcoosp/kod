@@ -823,3 +823,246 @@ mod tests {
         client.shutdown().await;
     }
 }
+
+/// Coverage for the pure JSON→struct parsers that translate LSP wire
+/// responses into our workspace-native shapes. No I/O, no subprocess,
+/// no async — just the 0-based→1-based conversion, the markdown
+/// flattening, and the null/missing-field tolerance that a refactor
+/// could silently break.
+#[cfg(test)]
+mod coverage_lsp_parsers {
+    use super::*;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    // ---- parse_diagnostics: severity + field coverage ------------------
+
+    #[test]
+    fn diagnostics_severity_maps_every_number_to_its_word() {
+        let mk = |sev: u64| {
+            json!({
+                "diagnostics": [{
+                    "range": { "start": { "line": 0, "character": 0 } },
+                    "severity": sev,
+                    "message": "m"
+                }]
+            })
+        };
+        assert_eq!(parse_diagnostics(&mk(1), "file:///x.rs")[0].severity, "error");
+        assert_eq!(
+            parse_diagnostics(&mk(2), "file:///x.rs")[0].severity,
+            "warning"
+        );
+        assert_eq!(parse_diagnostics(&mk(3), "file:///x.rs")[0].severity, "info");
+        // 4 and any out-of-range value fall through to "hint".
+        assert_eq!(parse_diagnostics(&mk(4), "file:///x.rs")[0].severity, "hint");
+        assert_eq!(parse_diagnostics(&mk(99), "file:///x.rs")[0].severity, "hint");
+    }
+
+    #[test]
+    fn diagnostics_missing_severity_defaults_to_error() {
+        let params = json!({
+            "diagnostics": [{
+                "range": { "start": { "line": 3, "character": 1 } },
+                "message": "no severity field"
+            }]
+        });
+        let out = parse_diagnostics(&params, "file:///x.rs");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].severity, "error");
+    }
+
+    #[test]
+    fn diagnostics_without_a_code_leave_code_none() {
+        let params = json!({
+            "diagnostics": [{
+                "range": { "start": { "line": 0, "character": 0 } },
+                "message": "no code"
+            }]
+        });
+        let out = parse_diagnostics(&params, "file:///x.rs");
+        assert!(out[0].code.is_none());
+    }
+
+    #[test]
+    fn diagnostics_uri_without_file_scheme_is_used_verbatim() {
+        // The function strips a `file://` prefix if present; a bare
+        // path (which some servers send) is used as-is.
+        let params = json!({
+            "diagnostics": [{
+                "range": { "start": { "line": 0, "character": 0 } },
+                "message": "m"
+            }]
+        });
+        let out = parse_diagnostics(&params, "/abs/no_scheme.rs");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].file, "/abs/no_scheme.rs");
+    }
+
+    #[test]
+    fn diagnostics_missing_diagnostics_key_is_empty() {
+        let params = json!({ "uri": "file:///x.rs" });
+        assert!(parse_diagnostics(&params, "file:///x.rs").is_empty());
+    }
+
+    #[test]
+    fn diagnostics_entries_missing_required_fields_are_skipped() {
+        let params = json!({
+            "diagnostics": [
+                // no range -> skipped
+                { "message": "no range" },
+                // no message -> skipped
+                { "range": { "start": { "line": 0, "character": 0 } } },
+                // complete -> kept
+                {
+                    "range": { "start": { "line": 5, "character": 2 } },
+                    "message": "kept"
+                }
+            ]
+        });
+        let out = parse_diagnostics(&params, "file:///x.rs");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].message, "kept");
+        assert_eq!(out[0].line, 6); // 0-based 5 -> 1-based 6
+        assert_eq!(out[0].column, 3);
+    }
+
+    // ---- parse_locations -----------------------------------------------
+
+    fn loc(uri: &str, sl: u64, sc: u64, el: u64, ec: u64) -> serde_json::Value {
+        json!({
+            "uri": uri,
+            "range": {
+                "start": { "line": sl, "character": sc },
+                "end":   { "line": el, "character": ec }
+            }
+        })
+    }
+
+    #[test]
+    fn locations_null_is_empty() {
+        assert!(parse_locations(&json!(null)).is_empty());
+    }
+
+    #[test]
+    fn locations_single_object_is_wrapped_in_a_vec() {
+        let v = loc("file:///a.rs", 0, 0, 0, 5);
+        let out = parse_locations(&v);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].file, PathBuf::from("/a.rs"));
+        assert_eq!(out[0].range.start.line, 1); // 0-based -> 1-based
+        assert_eq!(out[0].range.start.column, 1);
+        assert_eq!(out[0].range.end.column, 6);
+    }
+
+    #[test]
+    fn locations_array_preserves_order() {
+        let v = json!([
+            loc("file:///a.rs", 0, 0, 0, 1),
+            loc("file:///b.rs", 1, 2, 1, 3),
+        ]);
+        let out = parse_locations(&v);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].file, PathBuf::from("/a.rs"));
+        assert_eq!(out[1].file, PathBuf::from("/b.rs"));
+    }
+
+    #[test]
+    fn locations_malformed_entries_are_skipped() {
+        let v = json!([
+            { "not": "a location" },
+            loc("file:///good.rs", 0, 0, 0, 1),
+            { "uri": "file:///no_range.rs" },
+        ]);
+        let out = parse_locations(&v);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].file, PathBuf::from("/good.rs"));
+    }
+
+    #[test]
+    fn locations_uri_without_file_scheme_is_kept_verbatim() {
+        let v = loc("/plain/path.rs", 0, 0, 0, 1);
+        let out = parse_locations(&v);
+        assert_eq!(out[0].file, PathBuf::from("/plain/path.rs"));
+    }
+
+    // ---- parse_hover ---------------------------------------------------
+
+    #[test]
+    fn hover_null_is_empty_text_and_no_range() {
+        let h = parse_hover(&json!(null));
+        assert!(h.text.is_empty());
+        assert!(h.range.is_none());
+    }
+
+    #[test]
+    fn hover_string_contents_become_the_text() {
+        let v = json!({ "contents": "fn main()" });
+        let h = parse_hover(&v);
+        assert_eq!(h.text, "fn main()");
+        assert!(h.range.is_none());
+    }
+
+    #[test]
+    fn hover_markup_content_object_uses_its_value_field() {
+        let v = json!({
+            "contents": { "kind": "markdown", "value": "## docs" }
+        });
+        assert_eq!(parse_hover(&v).text, "## docs");
+    }
+
+    #[test]
+    fn hover_array_of_mixed_items_is_joined_with_newlines() {
+        // The LSP spec allows `contents` to be MarkedString |
+        // MarkedString[], where MarkedString is `string | { language,
+        // value }`.
+        let v = json!({
+            "contents": [
+                "first",
+                { "language": "rust", "value": "fn main" },
+                "third"
+            ]
+        });
+        assert_eq!(parse_hover(&v).text, "first\nfn main\nthird");
+    }
+
+    #[test]
+    fn hover_array_with_unknown_items_skips_them() {
+        let v = json!({ "contents": [ 42, "kept", null ] });
+        assert_eq!(parse_hover(&v).text, "kept");
+    }
+
+    #[test]
+    fn hover_range_is_translated_to_one_based() {
+        let v = json!({
+            "contents": "x",
+            "range": {
+                "start": { "line": 4, "character": 1 },
+                "end":   { "line": 4, "character": 9 }
+            }
+        });
+        let h = parse_hover(&v);
+        let r = h.range.expect("range present");
+        assert_eq!(r.start.line, 5);
+        assert_eq!(r.start.column, 2);
+        assert_eq!(r.end.column, 10);
+    }
+
+    #[test]
+    fn hover_missing_contents_yields_empty_text() {
+        let v = json!({});
+        assert!(parse_hover(&v).text.is_empty());
+    }
+
+    // ---- uri_to_path ---------------------------------------------------
+
+    #[test]
+    fn uri_to_path_strips_the_file_scheme() {
+        assert_eq!(uri_to_path("file:///tmp/x.rs"), PathBuf::from("/tmp/x.rs"));
+    }
+
+    #[test]
+    fn uri_to_path_without_scheme_is_kept_verbatim() {
+        assert_eq!(uri_to_path("/tmp/x.rs"), PathBuf::from("/tmp/x.rs"));
+    }
+}
