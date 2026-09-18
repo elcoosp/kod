@@ -348,12 +348,8 @@ mod tests {
     #[tokio::test]
     async fn test_replace_all_swaps_contents() {
         let matcher = SkillMatcher::new();
-        matcher
-            .add_skill(create_skill("first", vec!["one"]))
-            .await;
-        matcher
-            .add_skill(create_skill("second", vec!["two"]))
-            .await;
+        matcher.add_skill(create_skill("first", vec!["one"])).await;
+        matcher.add_skill(create_skill("second", vec!["two"])).await;
         matcher
             .add_skill(create_skill("third", vec!["three"]))
             .await;
@@ -381,9 +377,7 @@ mod tests {
     #[tokio::test]
     async fn test_replace_all_with_empty_clears() {
         let matcher = SkillMatcher::new();
-        matcher
-            .add_skill(create_skill("a", vec!["x"]))
-            .await;
+        matcher.add_skill(create_skill("a", vec!["x"])).await;
         assert_eq!(matcher.count().await, 1);
         matcher.replace_all(Vec::new()).await;
         assert_eq!(matcher.count().await, 0);
