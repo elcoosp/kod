@@ -718,3 +718,104 @@ mod tests {
         assert_eq!(without.method, "process");
     }
 }
+
+#[cfg(test)]
+mod coverage_serve_serde {
+    //! The daemon's wire shape is the contract any `kod
+    //! * --remote` client depends on. A regression that renamed
+    //! `type` to `kind` (or vice versa) breaks every client
+    //! silently — the client skips unknown response types and the
+    //! session appears to hang.
+    use super::*;
+
+    #[test]
+    fn request_parses_with_every_documented_field() {
+        let json = r#"{"v":1,"id":"r1","method":"process","params":{"input":"hi","transcript_key":"chat"}}"#;
+        let r: Request = serde_json::from_str(json).unwrap();
+        assert_eq!(r.id, "r1");
+        assert_eq!(r.method, "process");
+        assert_eq!(r.params["input"], "hi");
+        assert_eq!(r.params["transcript_key"], "chat");
+    }
+
+    #[test]
+    fn request_parses_without_version_field() {
+        // Older clients and ad-hoc test scripts omit `v`; the
+        // `#[serde(default)]` on the field is what keeps the
+        // daemon compatible with them.
+        let json = r#"{"id":"r1","method":"shutdown"}"#;
+        let r: Request = serde_json::from_str(json).unwrap();
+        assert_eq!(r.method, "shutdown");
+        assert!(r.params.is_null(), "missing params must default to null");
+    }
+
+    #[test]
+    fn request_requires_id_and_method() {
+        // The daemon routes responses by id; a frame without one
+        // cannot be answered. Missing either field is a hard
+        // parse error.
+        assert!(serde_json::from_str::<Request>(r#"{"method":"process"}"#).is_err());
+        assert!(serde_json::from_str::<Request>(r#"{"id":"r1"}"#).is_err());
+    }
+
+    #[test]
+    fn chunk_response_serializes_data_as_a_string() {
+        let r = Response {
+            id: "r1",
+            kind: "chunk",
+            data: Some(serde_json::Value::String("hi".to_string())),
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(s.contains("\"type\":\"chunk\""), "got {s}");
+        assert!(s.contains("\"data\":\"hi\""), "got {s}");
+    }
+
+    #[test]
+    fn done_response_with_no_data_omits_the_field() {
+        // `skip_serializing_if = "Option::is_none"` on `data`
+        // keeps an ack frame small. A regression that emitted
+        // `"data":null` would still parse on the client, but the
+        // change is worth pinning.
+        let r = Response {
+            id: "r1",
+            kind: "done",
+            data: None,
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(!s.contains("data"), "ack should omit data: {s}");
+        assert!(s.contains("\"type\":\"done\""));
+    }
+
+    #[test]
+    fn error_response_carries_a_message_object() {
+        // The client reads `data.message`; a regression that
+        // emitted the message as a bare string would make every
+        // error response render as "(no message)".
+        let r = Response {
+            id: "r1",
+            kind: "error",
+            data: Some(serde_json::json!({"message": "boom"})),
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["type"], "error");
+        assert_eq!(v["data"]["message"], "boom");
+    }
+
+    #[test]
+    fn protocol_version_is_one() {
+        // The daemon and the clients agree on this constant.
+        // Bumping it is a breaking wire change.
+        assert_eq!(PROTOCOL_VERSION, 1);
+    }
+
+    #[test]
+    fn default_socket_path_ends_with_the_expected_name() {
+        // The daemon and the CLI both derive the path through
+        // this function; a change to the filename would break
+        // every `--remote` invocation with a "connection refused"
+        // that names a socket nobody is listening on.
+        let p = default_socket_path();
+        assert!(p.ends_with("kod.sock"), "got {p:?}");
+    }
+}
