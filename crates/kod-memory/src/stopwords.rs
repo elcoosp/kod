@@ -294,3 +294,83 @@ mod tests {
         assert!(t.contains(&"value".to_string()));
     }
 }
+
+#[cfg(test)]
+mod coverage_stemming {
+    //! The stemmer is a hand-written suffix list, not a Porter. Its
+    //! correctness condition is "does not overshoot" — a word must
+    //! not shrink below the suffix+3 threshold — because an
+    //! over-aggressive stemmer makes unrelated entries collide in
+    //! the keyword index and silently merges distinct facts.
+    use super::*;
+
+    #[test]
+    fn stem_does_not_shrink_short_words() {
+        // The rule: `word.len() > suffix.len() + 3`. `ing` is 3, so
+        // the word must be at least 7 chars to strip; anything under
+        // stays whole. This is what stops "sing", "ring", "king"
+        // from collapsing to "s", "r", "k".
+        for short in ["sing", "ring", "king", "wing"] {
+            assert_eq!(stem(short), short, "{short} was mangled");
+        }
+    }
+
+    #[test]
+    fn stem_strips_s_plural_from_content_words() {
+        assert_eq!(stem("parsers"), "parser");
+        assert_eq!(stem("handlers"), "handler");
+        assert_eq!(stem("functions"), "function");
+    }
+
+    #[test]
+    fn stem_keeps_two_letter_words_alone() {
+        assert_eq!(stem("is"), "is");
+        assert_eq!(stem("id"), "id");
+        assert_eq!(stem("io"), "io");
+        assert_eq!(stem("or"), "or");
+    }
+
+    #[test]
+    fn tokens_drops_a_pure_stopword_query() {
+        let t = tokens("the and or but of");
+        assert!(t.is_empty(), "expected no tokens, got {t:?}");
+    }
+
+    #[test]
+    fn tokens_preserves_numbers_and_identifiers() {
+        let t = tokens("version 42 release v2");
+        assert!(t.contains(&"version".to_string()));
+        assert!(t.contains(&"42".to_string()));
+        assert!(t.contains(&"release".to_string()));
+        // `v2` has no stopword, no suffix match; must survive intact.
+        assert!(t.contains(&"v2".to_string()));
+    }
+
+    #[test]
+    fn tokens_handles_emoji_and_non_ascii() {
+        // A prompt with emoji must not panic or drop the surrounding
+        // words. The splitter walks by char, not byte.
+        let t = tokens("deploy 🚀 to prod");
+        assert!(t.contains(&"deploy".to_string()));
+        assert!(t.contains(&"prod".to_string()));
+    }
+
+    #[test]
+    fn is_stopword_is_case_sensitive_and_lowercase_only() {
+        // The contract: callers lowercase before asking. A regression
+        // that made this case-insensitive would double the list and
+        // change every retrieval score without a visible failure.
+        assert!(is_stopword("the"));
+        assert!(!is_stopword("The"));
+    }
+
+    #[test]
+    fn is_stopword_keeps_technical_short_words() {
+        // The list was curated to keep short-but-meaningful tokens.
+        // A regression that swapped in the plain NLTK list would
+        // drop these and quietly break retrieval on technical prose.
+        for keep in ["gpu", "sql", "rpc", "api", "not", "new", "off"] {
+            assert!(!is_stopword(keep), "{keep} should NOT be a stopword");
+        }
+    }
+}
