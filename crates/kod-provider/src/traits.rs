@@ -59,7 +59,8 @@ pub trait LlmProvider: Send + Sync {
     /// `generate`/`generate_with_tools` methods are removed.
     async fn complete(&self, req: &CompletionRequest) -> Result<GenerationResponse> {
         let prompt = req.render_text();
-        self.generate_with_tools(&prompt, &req.tools, &req.options).await
+        self.generate_with_tools(&prompt, &req.tools, &req.options)
+            .await
     }
 
     /// Structured streaming completion (design §2 AD-01).
@@ -191,11 +192,7 @@ mod tests {
         async fn list_models(&self) -> Result<Vec<String>> {
             Ok(vec![])
         }
-        async fn generate(
-            &self,
-            _prompt: &str,
-            _opts: &GenerationOptions,
-        ) -> Result<String> {
+        async fn generate(&self, _prompt: &str, _opts: &GenerationOptions) -> Result<String> {
             Ok(String::new())
         }
         async fn generate_with_tools(
@@ -271,5 +268,4 @@ mod tests {
         assert!(!caps.streaming_tools);
         assert_eq!(caps.prompt_cache, crate::request::PromptCacheKind::None);
     }
-
 }
