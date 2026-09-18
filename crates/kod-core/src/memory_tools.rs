@@ -16,8 +16,8 @@
 //! router (`store_long_term` / `search_long_term`) are the only
 //! interface the tools touch.
 
-use kod_tools::{Tool, ToolContext};
 use kod_error::{KodError, Result};
+use kod_tools::{Tool, ToolContext};
 use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use serde_json::Value;
 use std::sync::Arc;
@@ -83,8 +83,7 @@ impl Tool for MemorySaveTool {
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .ok_or_else(|| KodError::InvalidParameters {
-                reason: "memory_save: 'content' is required and must not be empty"
-                    .to_string(),
+                reason: "memory_save: 'content' is required and must not be empty".to_string(),
             })?;
 
         let tags: Vec<String> = params
@@ -170,8 +169,7 @@ impl Tool for MemorySearchTool {
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .ok_or_else(|| KodError::InvalidParameters {
-                reason: "memory_search: 'query' is required and must not be empty"
-                    .to_string(),
+                reason: "memory_search: 'query' is required and must not be empty".to_string(),
             })?;
         let k = params
             .get("k")
