@@ -38,7 +38,7 @@
 
 use kod_provider::request::{CompletionRequest, SystemPrompt};
 use kod_types::{ChatMessage, MessageRole, ToolDefinition};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Build the JSON body for `POST /v1/messages`.
 pub fn build_messages_body(req: &CompletionRequest) -> Value {
@@ -73,10 +73,7 @@ pub fn system_blocks(prompt: &SystemPrompt) -> Value {
     if prompt.segments.is_empty() {
         return json!([]);
     }
-    let last_cacheable = prompt
-        .segments
-        .iter()
-        .rposition(|s| s.cacheable);
+    let last_cacheable = prompt.segments.iter().rposition(|s| s.cacheable);
 
     let mut blocks: Vec<Value> = Vec::with_capacity(prompt.segments.len());
     for (i, seg) in prompt.segments.iter().enumerate() {
@@ -157,22 +154,22 @@ pub fn messages_array(messages: &[ChatMessage]) -> Value {
 
         // Merge into the previous entry when the role matches.
         let block_content = block;
-        if let Some(last) = out.last_mut() {
-            if last["role"] == json!(role) {
-                if let Some(arr) = last["content"].as_array_mut() {
-                    // Existing entry's content is always an array by the
-                    // time we get here (the initializer for the user
-                    // branch is a single object, so normalise).
-                    if block_content.is_array() {
-                        for b in block_content.as_array().unwrap() {
-                            arr.push(b.clone());
-                        }
-                    } else {
-                        arr.push(block_content);
+        if let Some(last) = out.last_mut()
+            && last["role"] == json!(role)
+        {
+            if let Some(arr) = last["content"].as_array_mut() {
+                // Existing entry's content is always an array by the
+                // time we get here (the initializer for the user
+                // branch is a single object, so normalise).
+                if block_content.is_array() {
+                    for b in block_content.as_array().unwrap() {
+                        arr.push(b.clone());
                     }
+                } else {
+                    arr.push(block_content);
                 }
-                continue;
             }
+            continue;
         }
 
         // Normalise a single object into an array for consistency with
@@ -262,7 +259,10 @@ pub struct BlockInfo {
 /// Feed one SSE line (already trimmed of `\n`) into the state machine.
 /// Returns the chunks the line produced. Lines that are blank, comments,
 /// or events we do not consume return an empty vec.
-pub fn parse_sse_line(state: &mut AnthropicStreamState, line: &str) -> Vec<kod_provider::StreamChunk> {
+pub fn parse_sse_line(
+    state: &mut AnthropicStreamState,
+    line: &str,
+) -> Vec<kod_provider::StreamChunk> {
     use kod_provider::StreamChunk;
 
     // The event name line is informational; we key on the JSON `type`
@@ -388,8 +388,8 @@ pub fn parse_sse_line(state: &mut AnthropicStreamState, line: &str) -> Vec<kod_p
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kod_provider::request::{ModelRef, SystemSegment};
     use kod_provider::GenerationOptions;
+    use kod_provider::request::{ModelRef, SystemSegment};
     use kod_types::{MessageId, ToolCall};
     use time::OffsetDateTime;
 
@@ -420,6 +420,168 @@ mod tests {
             ..Default::default()
         };
         req
+    }
+
+    #[test]
+    fn sse_message_start_sets_input_tokens() {
+        let mut st = super::AnthropicStreamState::default();
+        let line = "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\"role\":\"assistant\",\"content\":[],\"usage\":{\"input_tokens\":17,\"output_tokens\":0}}}";
+        let chunks = super::parse_sse_line(&mut st, line);
+        assert!(chunks.is_empty(), "message_start yields no chunks");
+        assert_eq!(
+            st.input_tokens, 17,
+            "input_tokens must be captured for the later Usage"
+        );
+    }
+
+    #[test]
+    fn sse_content_block_start_text_yields_nothing() {
+        let mut st = super::AnthropicStreamState::default();
+        let line = "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}";
+        let chunks = super::parse_sse_line(&mut st, line);
+        assert!(chunks.is_empty(), "a text block start yields no chunk");
+    }
+
+    #[test]
+    fn sse_content_block_start_tool_use_yields_start() {
+        let mut st = super::AnthropicStreamState::default();
+        let line = "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"read_file\",\"input\":{}}}";
+        let chunks = super::parse_sse_line(&mut st, line);
+        assert_eq!(chunks.len(), 1);
+        match &chunks[0] {
+            kod_provider::StreamChunk::ToolCallStart { index, id, name } => {
+                assert_eq!(*index, 0);
+                assert_eq!(id.as_deref(), Some("toolu_1"));
+                assert_eq!(name, "read_file");
+            }
+            other => panic!("expected ToolCallStart, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sse_text_delta_yields_text_chunk() {
+        let mut st = super::AnthropicStreamState::default();
+        let line = "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}";
+        let chunks = super::parse_sse_line(&mut st, line);
+        assert_eq!(chunks.len(), 1);
+        match &chunks[0] {
+            kod_provider::StreamChunk::Text(t) => assert_eq!(t, "hello"),
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sse_input_json_delta_yields_tool_call_delta() {
+        let mut st = super::AnthropicStreamState::default();
+        // Prime a tool block so the index is known.
+        let start = "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"read_file\",\"input\":{}}}";
+        let _ = super::parse_sse_line(&mut st, start);
+        let line = "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}}";
+        let chunks = super::parse_sse_line(&mut st, line);
+        assert_eq!(chunks.len(), 1);
+        match &chunks[0] {
+            kod_provider::StreamChunk::ToolCallDelta { index, arguments } => {
+                assert_eq!(*index, 0);
+                assert!(arguments.contains("a.rs"), "partial JSON must be captured");
+            }
+            other => panic!("expected ToolCallDelta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sse_message_delta_yields_usage() {
+        let mut st = super::AnthropicStreamState::default();
+        // Prime the input token count.
+        let start = "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\"role\":\"assistant\",\"content\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}";
+        let _ = super::parse_sse_line(&mut st, start);
+        let line = "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":4}}";
+        let chunks = super::parse_sse_line(&mut st, line);
+        assert_eq!(chunks.len(), 1);
+        match &chunks[0] {
+            kod_provider::StreamChunk::Usage(u) => {
+                assert_eq!(u.prompt_tokens, 10);
+                assert_eq!(u.completion_tokens, 4);
+                assert_eq!(u.total_tokens, 14);
+            }
+            other => panic!("expected Usage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sse_message_stop_yields_done() {
+        let mut st = super::AnthropicStreamState::default();
+        let line = "data: {\"type\":\"message_stop\"}";
+        let chunks = super::parse_sse_line(&mut st, line);
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(chunks[0], kod_provider::StreamChunk::Done));
+        assert!(st.finished);
+    }
+
+    #[test]
+    fn sse_unknown_event_is_ignored() {
+        let mut st = super::AnthropicStreamState::default();
+        let line = "data: {\"type\":\"something.new\",\"value\":42}";
+        assert!(super::parse_sse_line(&mut st, line).is_empty());
+    }
+
+    #[test]
+    fn sse_malformed_json_is_ignored() {
+        let mut st = super::AnthropicStreamState::default();
+        assert!(super::parse_sse_line(&mut st, "data: not json").is_empty());
+    }
+
+    #[test]
+    fn sse_event_line_is_ignored() {
+        // The `event:` line is informational — the parser keys on the
+        // JSON `type` field inside the `data:` payload.
+        let mut st = super::AnthropicStreamState::default();
+        assert!(super::parse_sse_line(&mut st, "event: message_start").is_empty());
+    }
+
+    #[test]
+    fn sse_blank_line_is_ignored() {
+        let mut st = super::AnthropicStreamState::default();
+        assert!(super::parse_sse_line(&mut st, "").is_empty());
+    }
+
+    #[test]
+    fn sse_full_sequence_produces_expected_chunks() {
+        // A realistic sequence: text + tool use, end to end.
+        let mut st = super::AnthropicStreamState::default();
+        let stream = [
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\"role\":\"assistant\",\"content\":[],\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Let me check.\"}}",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}",
+            "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_2\",\"name\":\"read_file\",\"input\":{}}}",
+            "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"src/main.rs\\\"}\"}}",
+            "data: {\"type\":\"content_block_stop\",\"index\":1}",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":12}}",
+            "data: {\"type\":\"message_stop\"}",
+        ];
+        let mut texts = String::new();
+        let mut starts = 0usize;
+        let mut deltas = 0usize;
+        let mut usage: Option<kod_provider::TokenUsage> = None;
+        let mut done = false;
+        for line in stream {
+            for chunk in super::parse_sse_line(&mut st, line) {
+                match chunk {
+                    kod_provider::StreamChunk::Text(t) => texts.push_str(&t),
+                    kod_provider::StreamChunk::ToolCallStart { .. } => starts += 1,
+                    kod_provider::StreamChunk::ToolCallDelta { .. } => deltas += 1,
+                    kod_provider::StreamChunk::Usage(u) => usage = Some(u),
+                    kod_provider::StreamChunk::Done => done = true,
+                }
+            }
+        }
+        assert_eq!(texts, "Let me check.");
+        assert_eq!(starts, 1, "one tool call started");
+        assert_eq!(deltas, 1, "one argument delta seen");
+        assert!(done, "sequence terminated with Done");
+        let u = usage.expect("usage must be emitted");
+        assert_eq!(u.prompt_tokens, 5);
+        assert_eq!(u.completion_tokens, 12);
     }
 
     #[test]
@@ -602,6 +764,9 @@ mod tests {
         assert_eq!(v[0]["name"], "read_file");
         assert_eq!(v[0]["description"], "read a file");
         assert_eq!(v[0]["input_schema"]["type"], "object");
-        assert!(v[0].get("parameters").is_none(), "Anthropic uses input_schema, not parameters");
+        assert!(
+            v[0].get("parameters").is_none(),
+            "Anthropic uses input_schema, not parameters"
+        );
     }
 }
