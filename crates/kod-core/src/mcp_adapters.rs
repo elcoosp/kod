@@ -174,9 +174,7 @@ impl McpHost {
         let spec = self
             .specs
             .get(name)
-            .ok_or_else(|| {
-                KodError::InvalidState(format!("unknown MCP server {name:?}"))
-            })?
+            .ok_or_else(|| KodError::InvalidState(format!("unknown MCP server {name:?}")))?
             .clone();
         if !spec.is_spawnable() {
             return Err(KodError::InvalidState(format!(
@@ -266,12 +264,7 @@ pub struct McpToolAdapter {
 }
 
 impl McpToolAdapter {
-    fn new(
-        host: Arc<McpHost>,
-        server: String,
-        def: McpToolDef,
-        call_timeout_secs: u64,
-    ) -> Self {
+    fn new(host: Arc<McpHost>, server: String, def: McpToolDef, call_timeout_secs: u64) -> Self {
         let full_name = mcp_tool_name(&server, &def.name);
         let description = def
             .description
@@ -451,10 +444,8 @@ mod tests {
                 ..Default::default()
             },
         );
-        cfg.servers.insert(
-            "empty".into(),
-            McpServerConfig::default(),
-        );
+        cfg.servers
+            .insert("empty".into(), McpServerConfig::default());
         let host = McpHost::new(cfg, std::env::temp_dir());
         let names = host.server_names();
         assert_eq!(names, vec!["a".to_string()]);
