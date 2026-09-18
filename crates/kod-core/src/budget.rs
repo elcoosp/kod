@@ -88,7 +88,7 @@ impl PromptBudget {
     ///
     /// `Err` when the request alone does not fit — the caller should
     /// return a clear error rather than silently ship a truncated
-    /// prompt. The error string names both numbers so a user can see
+    ///   prompt. The error string names both numbers so a user can see
     /// how much they need to trim or how big a window to configure.
     pub fn allocate(&self, request_chars: usize) -> Result<Allocation, BudgetError> {
         if request_chars > self.total_chars {
@@ -133,7 +133,7 @@ impl PromptTrace {
     /// Total characters the prompt was budgeted for, or `None` when no
     /// allocation was recorded. Equal to `alloc.request + alloc.history
     /// + alloc.skills + alloc.memory + alloc.repomap` for a budgeted
-    /// prompt.
+    ///   prompt.
     pub fn total_chars(&self) -> Option<usize> {
         self.alloc.map(|a| a.request + a.truncatable_total())
     }
@@ -227,7 +227,9 @@ mod tests {
     #[test]
     fn larger_window_yields_a_larger_budget() {
         let small = PromptBudget::from_tokens(8192, 2048).allocate(100).unwrap();
-        let large = PromptBudget::from_tokens(131_072, 4096).allocate(100).unwrap();
+        let large = PromptBudget::from_tokens(131_072, 4096)
+            .allocate(100)
+            .unwrap();
         assert!(large.truncatable_total() > small.truncatable_total() * 10);
     }
 }
