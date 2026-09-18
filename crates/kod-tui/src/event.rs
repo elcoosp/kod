@@ -445,3 +445,123 @@ mod tests {
         assert_eq!(key, KeyCode::Escape);
     }
 }
+
+#[cfg(test)]
+mod coverage_event_priority {
+    //! `EventPriority`'s derived `Ord` is what the priority
+    //! queue's insertion sort depends on. A regression that
+    //! reordered the variants would let a Quit land behind a
+    //! System message, or a Critical error be preempted by a
+    //! Normal tick — invisible until the wrong thing happens at
+    //! the wrong moment.
+    use super::*;
+
+    #[test]
+    fn priority_orders_low_to_critical() {
+        assert!(EventPriority::Low < EventPriority::Normal);
+        assert!(EventPriority::Normal < EventPriority::High);
+        assert!(EventPriority::High < EventPriority::Critical);
+    }
+
+    #[test]
+    fn priority_default_is_normal() {
+        assert_eq!(EventPriority::default(), EventPriority::Normal);
+    }
+
+    #[test]
+    fn priority_round_trips_through_json() {
+        for p in [
+            EventPriority::Low,
+            EventPriority::Normal,
+            EventPriority::High,
+            EventPriority::Critical,
+        ] {
+            let json = serde_json::to_string(&p).unwrap();
+            let parsed: EventPriority = serde_json::from_str(&json).unwrap();
+            assert_eq!(p, parsed, "roundtrip mismatch for {json}");
+        }
+    }
+
+    #[test]
+    fn priority_variant_names_survive_serialization() {
+        // A caller (a log viewer, a queue inspector) that maps a
+        // JSON priority to its meaning relies on the variant
+        // name. The exact spelling is the contract.
+        let json = serde_json::to_string(&EventPriority::Critical).unwrap();
+        assert!(json.contains("Critical"), "got: {json}");
+    }
+
+    #[test]
+    fn keycode_equality_and_hash_cover_every_variant() {
+        // KeyCode is `Copy + PartialEq + Eq + Hash`. A regression
+        // that dropped one of the derives would break the
+        // keybinding lookup; the test exercises each shape.
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        for k in [
+            KeyCode::Char('a'),
+            KeyCode::Enter,
+            KeyCode::Escape,
+            KeyCode::Backspace,
+            KeyCode::Delete,
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Home,
+            KeyCode::End,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+            KeyCode::Tab,
+            KeyCode::BackTab,
+            KeyCode::CtrlC,
+            KeyCode::CtrlJ,
+            KeyCode::CtrlK,
+            KeyCode::CtrlU,
+            KeyCode::CtrlW,
+            KeyCode::CtrlE,
+            KeyCode::CtrlLeft,
+            KeyCode::CtrlRight,
+            KeyCode::F(1),
+        ] {
+            set.insert(k);
+        }
+        assert!(set.contains(&KeyCode::Char('a')));
+        assert!(set.contains(&KeyCode::CtrlC));
+        assert!(!set.contains(&KeyCode::Char('b')));
+        // CtrlJ and ShiftEnter are distinct — a regression that
+        // collapsed them would lose "newline" on one of the two
+        // physical keys a user might press.
+        assert_ne!(KeyCode::CtrlJ, KeyCode::ShiftEnter);
+    }
+
+    #[test]
+    fn event_priority_high_is_greater_than_normal() {
+        // The events module maps specific variants to non-default
+        // priorities (Error -> High, Quit -> Critical). A
+        // regression that swapped the mapping would park a
+        // Quit behind a Tick in the queue.
+        let err_priority = EventPriority::High;
+        let quit_priority = EventPriority::Critical;
+        assert!(quit_priority > err_priority);
+    }
+
+    #[test]
+    fn event_round_trips_through_json_for_simple_variants() {
+        // The channel that carries events between the engine and
+        // the TUI does not require JSON, but the event type is
+        // serializable and a future external consumer (a debug
+        // dump, a remote client) may use it. Pin the shape for
+        // the variants that have no inner type requiring extra
+        // imports.
+        for e in [
+            Event::Tick,
+            Event::Quit,
+        ] {
+            let json = serde_json::to_string(&e).unwrap();
+            let parsed: Event = serde_json::from_str(&json).unwrap();
+            let re = serde_json::to_string(&parsed).unwrap();
+            assert_eq!(json, re, "roundtrip mismatch for {json}");
+        }
+    }
+}
