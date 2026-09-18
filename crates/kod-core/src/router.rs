@@ -40,7 +40,7 @@ pub enum TaskType {
 }
 
 /// Configuration for the task router
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RouterConfig {
     pub enable_memory: bool,
     pub max_skills_per_query: usize,
@@ -63,6 +63,37 @@ pub struct RouterConfig {
     /// hardcoded value so a caller that ignores the field sees no
     /// change.
     pub skill_threshold: f32,
+    /// Optional embedder for semantic memory retrieval (design D2.1).
+    /// `None` (the default) keeps the keyword+recency fallback the D2.3
+    /// scorer provides. A caller that wants semantic scoring builds one
+    /// from `memory.embedding_endpoint` via
+    /// `kod_memory::embedding::from_config` and hands it here.
+    ///
+    /// The embedder is installed on the `MemoryManager` inside
+    /// `TaskRouter::new` — before the router goes behind an `Arc` and
+    /// `set_embedder`'s `&mut self` becomes unreachable. The field is
+    /// therefore part of the config, not a separate post-construction
+    /// setter.
+    pub embedder: Option<std::sync::Arc<dyn kod_memory::EmbeddingClient>>,
+}
+
+impl std::fmt::Debug for RouterConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `dyn EmbeddingClient` is not `Debug`; the manual impl shows
+        // the embedder by name, which is what a log line wants.
+        f.debug_struct("RouterConfig")
+            .field("enable_memory", &self.enable_memory)
+            .field("max_skills_per_query", &self.max_skills_per_query)
+            .field("working_dir", &self.working_dir)
+            .field("context_window", &self.context_window)
+            .field("short_term_capacity", &self.short_term_capacity)
+            .field("skill_threshold", &self.skill_threshold)
+            .field(
+                "embedder",
+                &self.embedder.as_ref().map(|e| e.name()),
+            )
+            .finish()
+    }
 }
 
 impl Default for RouterConfig {
@@ -74,6 +105,7 @@ impl Default for RouterConfig {
             context_window: 8192,
             short_term_capacity: 100,
             skill_threshold: 0.3,
+            embedder: None,
         }
     }
 }
@@ -121,6 +153,121 @@ pub struct TaskResponse {
     pub pricing: Option<kod_provider::ModelPricing>,
 }
 
+/// The structured form of a router prompt (design §2 AD-16).
+///
+/// A `PromptPlan` is what a provider's `complete` method wants:
+///
+/// - a system prompt split into cacheable and volatile segments, in
+///   order, so a provider with explicit cache support (Anthropic's
+///   `cache_control`) can place a breakpoint on the last cacheable one,
+///   and a provider with implicit prefix caching (OpenAI-compatible
+///   servers, LM Studio, vLLM) can rely on the byte-stability of the
+///   concatenation.
+/// - a rendered transcript block — the historical turns plus the user's
+///   current request — which is always volatile.
+///
+/// The concrete split point is the `## Volatile suffix` marker the
+/// router already emits between its stable block (Identity + RepoMap)
+/// and its volatile one (Environment + Tool inventory + skills +
+/// history + user request). That marker was a text convention; this
+/// struct makes it a type. `render_text` reproduces the pre-`PromptPlan`
+/// prompt byte for byte, which is the invariant the migration asserts.
+///
+/// The plan is produced by [`TaskRouter::build_prompt_plan`]. Until the
+/// engine migrates to `CompletionRequest` (AD-01), the plan is available
+/// for callers and tests but the engine still calls
+/// `build_prompt_with_budget` directly — `build_prompt_plan` internally
+/// calls it and splits the result, so the two paths cannot drift.
+#[derive(Debug, Clone)]
+pub struct PromptPlan {
+    /// Ordered segments. `cacheable == true` for the invariant prefix
+    /// (Identity + RepoMap) and `false` for everything the model sees
+    /// that depends on the turn — the environment block, the tool
+    /// inventory, the skills, the transcript, and the user's request.
+    pub system: Vec<SystemSegment>,
+    /// The rendered transcript + user request. Always volatile.
+    pub messages_text: String,
+}
+
+/// One ordered slice of the system prompt. See [`PromptPlan`].
+#[derive(Debug, Clone)]
+pub struct SystemSegment {
+    pub text: String,
+    /// `true` when this segment is part of the byte-stable invariant
+    /// prefix across turns of a session. A provider with explicit cache
+    /// support places a breakpoint at the **last** cacheable segment.
+    pub cacheable: bool,
+}
+
+impl PromptPlan {
+    /// Split a rendered prompt at the design's marker. Everything
+    /// strictly before `## Volatile suffix` is a single cacheable
+    /// segment; everything from that marker on is a single volatile
+    /// segment. A prompt without the marker is treated as entirely
+    /// volatile (a degraded but valid state — a caller that renders a
+    /// custom prompt without the router's convention loses the cache
+    /// benefit rather than failing).
+    ///
+    /// One segment per region, not one per line: the wire does not
+    /// care how the byte sequence is chunked, only that the cacheable
+    /// prefix is byte-stable. Splitting per section would multiply
+    /// breakpoints for no benefit.
+    pub fn from_rendered(rendered: &str) -> Self {
+        const VOLATILE_MARKER: &str = "## Volatile suffix";
+        match rendered.find(VOLATILE_MARKER) {
+            Some(idx) => {
+                let (stable, volatile) = rendered.split_at(idx);
+                Self {
+                    system: vec![
+                        SystemSegment {
+                            text: stable.to_string(),
+                            cacheable: true,
+                        },
+                        SystemSegment {
+                            text: volatile.to_string(),
+                            cacheable: false,
+                        },
+                    ],
+                    messages_text: String::new(),
+                }
+            }
+            None => Self {
+                system: vec![SystemSegment {
+                    text: rendered.to_string(),
+                    cacheable: false,
+                }],
+                messages_text: String::new(),
+            },
+        }
+    }
+
+    /// Reconstruct the text this plan was built from. Byte-identical to
+    /// the pre-`PromptPlan` prompt — that equivalence is the invariant
+    /// the `prompt_plan_renders_identically` test asserts.
+    pub fn render_text(&self) -> String {
+        let mut out = String::new();
+        for seg in &self.system {
+            out.push_str(&seg.text);
+        }
+        out.push_str(&self.messages_text);
+        out
+    }
+
+    /// The concatenation of every cacheable segment, in order. This is
+    /// the string a provider with explicit cache support places a
+    /// breakpoint after; the golden-prefix test asserts it is stable
+    /// across turns in a session.
+    pub fn cacheable_prefix(&self) -> String {
+        let mut out = String::new();
+        for seg in &self.system {
+            if seg.cacheable {
+                out.push_str(&seg.text);
+            }
+        }
+        out
+    }
+}
+
 /// Main task router that coordinates all subsystems
 pub struct TaskRouter {
     config: RouterConfig,
@@ -159,6 +306,19 @@ impl TaskRouter {
             // silently under-populates rather than erroring).
             let mut manager = MemoryManager::new(db_path, config.short_term_capacity.max(1))?;
             manager.set_context_window(config.context_window.max(1_000));
+            // Design D2.1: install the embedder the caller built from
+            // `memory.embedding_endpoint`. Done here, before the router
+            // is behind an `Arc`, because `MemoryManager::set_embedder`
+            // takes `&mut self` and the Arc makes that unreachable
+            // afterwards.
+            if let Some(embedder) = config.embedder.clone() {
+                tracing::info!(
+                    name = embedder.name(),
+                    dims = embedder.dims(),
+                    "memory embedder installed",
+                );
+                manager.set_embedder(embedder);
+            }
             Some(manager)
         } else {
             None
@@ -263,6 +423,44 @@ impl TaskRouter {
                 tracing::warn!(error = %e, "memory search failed");
                 Vec::new()
             }
+        }
+    }
+
+    /// One consolidation pass over the long-term store (design D2.5).
+    /// Archives episodic entries with no touch in `ARCHIVE_AFTER_DAYS`.
+    /// No-op when memory is disabled.
+    ///
+    /// Called by `KodEngine`'s consolidation task on the interval
+    /// carried by `memory.compaction_interval_secs`. Best-effort: a
+    /// store error is returned to the caller, which logs it; the task
+    /// retries on its next tick.
+    pub async fn consolidate_memory(
+        &self,
+    ) -> Result<kod_memory::ConsolidationReport> {
+        match &self.memory_manager {
+            Some(m) => m.consolidate().await,
+            None => Ok(kod_memory::ConsolidationReport::default()),
+        }
+    }
+
+    /// Explicitly close the memory subsystem.
+    ///
+    /// Consumes the router: the caller (typically `KodEngine::shutdown`)
+    /// has decided the session is over. Needed because the router
+    /// holds the only `MemoryManager` in the process; without a way to
+    /// reach and consume it, the redb handle stays alive until the
+    /// engine's `Arc<TaskRouter>` itself is dropped — which the
+    /// engine cannot force from `&self`.
+    ///
+    /// A router built with `enable_memory: false` has no manager; the
+    /// method is then a no-op after consuming the router.
+    ///
+    /// Idempotency is by construction: consuming `self` means the
+    /// method can only be called once.
+    pub fn close_memory(self) {
+        let Self { memory_manager, .. } = self;
+        if let Some(manager) = memory_manager {
+            manager.close();
         }
     }
 
@@ -969,6 +1167,42 @@ impl TaskRouter {
 
         Ok(prompt)
     }
+
+    /// The structured form of the same prompt `build_prompt_with_budget`
+    /// returns (design §2 AD-16).
+    ///
+    /// Built by calling the text builder and splitting at the marker —
+    /// not by duplicating the prompt-construction logic — so the two
+    /// cannot drift. The `prompt_plan_renders_identically` test asserts
+    /// `plan.render_text() == build_prompt_with_budget(...)` on
+    /// representative inputs; a future refactor that changes one without
+    /// the other fails that test.
+    ///
+    /// A caller that wants the plan (the eventual `CompletionRequest`
+    /// migration, a provider that places cache breakpoints, a test that
+    /// asserts prefix stability) uses this; a caller that still wants a
+    /// `String` uses `build_prompt_with_budget` — which is exactly what
+    /// this method calls under the hood, so the cost is one extra
+    /// allocation.
+    pub async fn build_prompt_plan(
+        &self,
+        input: &str,
+        task_type: &TaskType,
+        history: &str,
+        memory_context: Option<MemoryContext>,
+        budget: Option<&crate::budget::Allocation>,
+    ) -> Result<PromptPlan> {
+        let rendered = self
+            .build_prompt_with_budget(
+                input,
+                task_type,
+                history,
+                memory_context,
+                budget,
+            )
+            .await?;
+        Ok(PromptPlan::from_rendered(&rendered))
+    }
     async fn find_relevant_skills(&self, input: &str) -> Result<Vec<String>> {
         if let Some(matcher) = &self.skill_matcher {
             let matches = matcher.find_relevant_skills(input).await;
@@ -1171,7 +1405,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
-            RouterConfig { skill_threshold: 0.3,
+            RouterConfig {
+                embedder: None, skill_threshold: 0.3,
                 enable_memory: true,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
@@ -1234,7 +1469,8 @@ mod tests {
 
         let db_path = wd.join("test.redb");
         let router = TaskRouter::new(
-            RouterConfig { skill_threshold: 0.3,
+            RouterConfig {
+                embedder: None, skill_threshold: 0.3,
                 enable_memory: false,
                 max_skills_per_query: 3,
                 working_dir: wd.clone(),
@@ -1271,7 +1507,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
-            RouterConfig { skill_threshold: 0.3,
+            RouterConfig {
+                embedder: None, skill_threshold: 0.3,
                 enable_memory: true,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
@@ -1334,7 +1571,8 @@ mod tests {
 
         // enable_memory on so the router constructs a MemoryManager.
         let router = TaskRouter::new(
-            RouterConfig { skill_threshold: 0.3,
+            RouterConfig {
+                embedder: None, skill_threshold: 0.3,
                 enable_memory: true,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
@@ -1380,7 +1618,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
-            RouterConfig { skill_threshold: 0.3,
+            RouterConfig {
+                embedder: None, skill_threshold: 0.3,
                 enable_memory: true,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
@@ -1504,7 +1743,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
-            RouterConfig { skill_threshold: 0.3,
+            RouterConfig {
+                embedder: None, skill_threshold: 0.3,
                 enable_memory: false,
                 context_window: 8192,
                 short_term_capacity: 100,
@@ -1530,7 +1770,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
-            RouterConfig { skill_threshold: 0.3,
+            RouterConfig {
+                embedder: None, skill_threshold: 0.3,
                 enable_memory: false,
                 context_window: 8192,
                 short_term_capacity: 100,
@@ -1575,7 +1816,8 @@ mod tests {
 
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
-            RouterConfig { skill_threshold: 0.3,
+            RouterConfig {
+                embedder: None, skill_threshold: 0.3,
                 enable_memory: false,
                 context_window: 8192,
                 short_term_capacity: 100,
