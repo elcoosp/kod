@@ -72,10 +72,7 @@ impl AgentPanelWidget {
                 ]));
 
                 let sub = truncate(&view.subtask, area.width.saturating_sub(4) as usize);
-                lines.push(Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(sub, dim),
-                ]));
+                lines.push(Line::from(vec![Span::raw("  "), Span::styled(sub, dim)]));
 
                 if let Some(m) = &view.model {
                     lines.push(Line::from(vec![
