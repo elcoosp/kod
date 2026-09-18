@@ -908,3 +908,182 @@ mod coverage_acp_edges {
         assert_eq!(kind_for_tool("something_unknown"), "other");
     }
 }
+
+/// Coverage for the `read_frame` error branches the happy-path
+/// tests do not reach. `read_frame` is the daemon's only parser for
+/// input from an editor (Zed, etc.), so a regression that accepted
+/// a malformed frame — or that mis-attributed the failure — would
+/// show up as a hung session in the editor rather than a clear
+/// error.
+#[cfg(test)]
+mod coverage_acp_frame_errors {
+    use super::*;
+    use serde_json::json;
+
+    fn reader(raw: &'static [u8]) -> BufReader<std::io::Cursor<&'static [u8]>> {
+        BufReader::new(std::io::Cursor::new(raw))
+    }
+
+    // ---- parse failures -------------------------------------------------
+
+    #[tokio::test]
+    async fn bad_content_length_is_a_parameter_error() {
+        let raw: &[u8] = b"Content-Length: abc\r\n\r\n{}";
+        let err = read_frame(&mut reader(raw)).await.unwrap_err();
+        assert!(
+            matches!(err, KodError::InvalidParameters { .. }),
+            "expected InvalidParameters, got {err:?}",
+        );
+        assert!(
+            err.to_string().contains("bad Content-Length"),
+            "the error must name the malformed header, got: {err}",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_negative_content_length_is_rejected() {
+        let raw: &[u8] = b"Content-Length: -1\r\n\r\n{}";
+        let err = read_frame(&mut reader(raw)).await.unwrap_err();
+        assert!(matches!(err, KodError::InvalidParameters { .. }));
+    }
+
+    #[tokio::test]
+    async fn content_length_beyond_the_cap_is_rejected() {
+        // A number that parses as usize but is far larger than any
+        // sane frame. The cap check must fire before any buffer is
+        // allocated, so the test does not depend on the actual cap
+        // value or on a large allocation succeeding.
+        let raw: &[u8] = b"Content-Length: 99999999999999\r\n\r\n";
+        let err = read_frame(&mut reader(raw)).await.unwrap_err();
+        assert!(matches!(err, KodError::InvalidParameters { .. }));
+        assert!(
+            err.to_string().contains("exceeds"),
+            "expected a frame-size error, got: {err}",
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_json_body_is_a_deserialization_error() {
+        // `Content-Length: 3` with the body `{}}` — three bytes
+        // that are not valid JSON. The error must name the ACP
+        // frame, not the caller's method.
+        let raw: &[u8] = b"Content-Length: 3\r\n\r\n{}}";
+        let err = read_frame(&mut reader(raw)).await.unwrap_err();
+        assert!(
+            matches!(err, KodError::Deserialization(_)),
+            "expected Deserialization, got {err:?}",
+        );
+        assert!(
+            err.to_string().contains("acp frame"),
+            "the error must identify the frame, got: {err}",
+        );
+    }
+
+    // ---- tolerance branches ---------------------------------------------
+
+    #[tokio::test]
+    async fn extra_headers_before_content_length_are_ignored() {
+        // The ACP spec permits additional headers (a content type,
+        // a protocol version, etc.). Anything that is not
+        // `Content-Length:` must be skipped without error.
+        let body = br#"{"jsonrpc":"2.0"}"#;
+        let mut raw: Vec<u8> = Vec::new();
+        raw.extend_from_slice(b"X-Custom: foo\r\n");
+        raw.extend_from_slice(b"Content-Type: application/json\r\n");
+        raw.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+        raw.extend_from_slice(body);
+
+        // Cursor borrows from `raw`, so leak a reference — the
+        // test binary is short-lived and the value is trivial.
+        let raw_static: &'static [u8] = Box::leak(raw.into_boxed_slice());
+        let parsed = read_frame(&mut reader(raw_static)).await.unwrap().unwrap();
+        assert_eq!(parsed, json!({"jsonrpc": "2.0"}));
+    }
+
+    #[tokio::test]
+    async fn line_endings_without_a_carriage_return_are_accepted() {
+        // The ACP v1 spec says headers are terminated by
+        // `\r\n\r\n`, but a hand-written client or a test harness
+        // often emits bare `\n`. `read_frame` trims both characters
+        // so both forms parse.
+        let body = br#"{"id":1}"#;
+        let mut raw: Vec<u8> = Vec::new();
+        raw.extend_from_slice(format!("Content-Length: {}\n\n", body.len()).as_bytes());
+        raw.extend_from_slice(body);
+        let raw_static: &'static [u8] = Box::leak(raw.into_boxed_slice());
+        let parsed = read_frame(&mut reader(raw_static)).await.unwrap().unwrap();
+        assert_eq!(parsed, json!({"id": 1}));
+    }
+
+    // ---- write_frame ----------------------------------------------------
+
+    #[tokio::test]
+    async fn write_frame_uses_a_carriage_return_header_terminator() {
+        // The spec is explicit: `Content-Length: N\r\n\r\n`. A
+        // regression that emitted bare `\n\n` would work against
+        // `read_frame` but break other ACP clients.
+        let mut buf: Vec<u8> = Vec::new();
+        write_frame(&mut buf, &json!({"a": 1})).await.unwrap();
+        let s = String::from_utf8(buf.clone()).unwrap();
+        assert!(
+            s.starts_with("Content-Length: "),
+            "header line, got: {s:?}",
+        );
+        assert!(
+            s.contains("\r\n\r\n"),
+            "header must terminate with \\r\\n\\r\\n, got: {s:?}",
+        );
+        // The body length must match the byte count after the
+        // blank line.
+        let sep = s.find("\r\n\r\n").unwrap();
+        let header = &s[..sep];
+        let declared: usize = header
+            .strip_prefix("Content-Length: ")
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            declared,
+            buf.len() - (sep + 4),
+            "declared length must equal body byte count",
+        );
+    }
+
+    #[tokio::test]
+    async fn write_frame_round_trips_a_large_nested_payload() {
+        // A payload well past 100 bytes, with the kind of nested
+        // structure ACP uses for `session/update` notifications.
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "s-1",
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {
+                        "type": "text",
+                        "text": "x".repeat(4096),
+                    }
+                }
+            }
+        });
+        let mut buf: Vec<u8> = Vec::new();
+        write_frame(&mut buf, &msg).await.unwrap();
+        let mut r = BufReader::new(std::io::Cursor::new(buf));
+        let parsed = read_frame(&mut r).await.unwrap().unwrap();
+        assert_eq!(parsed, msg);
+    }
+
+    #[tokio::test]
+    async fn write_then_read_a_zero_length_body_round_trips() {
+        // A frame whose body is `{}` (two bytes) is the smallest
+        // legal one. Writing and reading it proves the framing
+        // handles short bodies without a boundary bug.
+        let msg = json!({});
+        let mut buf: Vec<u8> = Vec::new();
+        write_frame(&mut buf, &msg).await.unwrap();
+        let mut r = BufReader::new(std::io::Cursor::new(buf));
+        let parsed = read_frame(&mut r).await.unwrap().unwrap();
+        assert_eq!(parsed, msg);
+    }
+}

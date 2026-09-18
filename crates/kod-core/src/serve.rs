@@ -819,3 +819,264 @@ mod coverage_serve_serde {
         assert!(p.ends_with("kod.sock"), "got {p:?}");
     }
 }
+
+/// Coverage for the daemon's pure helpers and its small write
+/// wrappers. None of these tests touches a real socket — the
+/// framing is already covered by `serve_roundtrip`, and the
+/// wrappers are thin enough that a `tokio::sync::mpsc` channel is
+/// enough to observe their output.
+#[cfg(test)]
+mod coverage_serve_handlers {
+    use super::*;
+    use tokio::sync::mpsc;
+
+    async fn drain_one<F, Fut>(f: F) -> String
+    where
+        F: FnOnce(mpsc::Sender<String>) -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        let (tx, mut rx) = mpsc::channel::<String>(4);
+        f(tx).await;
+        rx.recv().await.expect("a response was written")
+    }
+
+    fn parse_line(line: &str) -> Value {
+        serde_json::from_str(line.trim_end()).expect("response is valid JSON")
+    }
+
+    // ---- string_param ---------------------------------------------------
+
+    #[test]
+    fn string_param_returns_the_value_when_present() {
+        let v = serde_json::json!({"input": "hello", "other": 1});
+        assert_eq!(string_param(&v, "input"), "hello");
+    }
+
+    #[test]
+    fn string_param_missing_key_is_empty_string() {
+        let v = serde_json::json!({"input": "hello"});
+        assert_eq!(string_param(&v, "absent"), "");
+    }
+
+    #[test]
+    fn string_param_wrong_type_is_empty_string() {
+        // A client that sent `{"input": 42}` gets "" rather than an
+        // error; the engine then sees an empty prompt and reports
+        // its own error, which is a better message than
+        // "expected string, found number".
+        let v = serde_json::json!({"input": 42});
+        assert_eq!(string_param(&v, "input"), "");
+        let v = serde_json::json!({"input": null});
+        assert_eq!(string_param(&v, "input"), "");
+        let v = serde_json::json!({"input": ["a"]});
+        assert_eq!(string_param(&v, "input"), "");
+    }
+
+    #[test]
+    fn string_param_on_null_params_is_empty() {
+        assert_eq!(string_param(&Value::Null, "input"), "");
+    }
+
+    // ---- write_chunk ----------------------------------------------------
+
+    #[tokio::test]
+    async fn write_chunk_produces_a_chunk_frame() {
+        let line = drain_one(|tx| async move {
+            write_chunk(&tx, "r1", "hi").await.unwrap();
+        })
+        .await;
+        let v = parse_line(&line);
+        assert_eq!(v["id"], "r1");
+        assert_eq!(v["type"], "chunk");
+        assert_eq!(v["data"], "hi");
+        assert!(line.ends_with('\n'), "line is newline-terminated");
+    }
+
+    #[tokio::test]
+    async fn write_chunk_with_an_empty_string_is_still_a_frame() {
+        let line = drain_one(|tx| async move {
+            write_chunk(&tx, "r1", "").await.unwrap();
+        })
+        .await;
+        let v = parse_line(&line);
+        assert_eq!(v["type"], "chunk");
+        assert_eq!(v["data"], "");
+    }
+
+    #[tokio::test]
+    async fn write_chunk_with_unicode_round_trips() {
+        let line = drain_one(|tx| async move {
+            write_chunk(&tx, "r1", "café 🚀").await.unwrap();
+        })
+        .await;
+        let v = parse_line(&line);
+        assert_eq!(v["data"], "café 🚀");
+    }
+
+    // ---- write_error ----------------------------------------------------
+
+    #[tokio::test]
+    async fn write_error_carries_a_message_object() {
+        let line = drain_one(|tx| async move {
+            write_error(&tx, "r2", "boom").await.unwrap();
+        })
+        .await;
+        let v = parse_line(&line);
+        assert_eq!(v["id"], "r2");
+        assert_eq!(v["type"], "error");
+        assert_eq!(v["data"]["message"], "boom");
+    }
+
+    // ---- write_ack ------------------------------------------------------
+
+    #[tokio::test]
+    async fn write_ack_omits_data() {
+        let line = drain_one(|tx| async move {
+            write_ack(&tx, "r3").await.unwrap();
+        })
+        .await;
+        let v = parse_line(&line);
+        assert_eq!(v["id"], "r3");
+        assert_eq!(v["type"], "done");
+        assert!(
+            v.get("data").is_none(),
+            "ack must omit `data`, got: {line}"
+        );
+    }
+
+    // ---- write_ok -------------------------------------------------------
+
+    #[tokio::test]
+    async fn write_ok_carries_an_object_payload() {
+        let line = drain_one(|tx| async move {
+            write_ok(&tx, "r4", serde_json::json!({"delivered": true}))
+                .await
+                .unwrap();
+        })
+        .await;
+        let v = parse_line(&line);
+        assert_eq!(v["id"], "r4");
+        assert_eq!(v["type"], "done");
+        assert_eq!(v["data"]["delivered"], true);
+    }
+
+    #[tokio::test]
+    async fn write_ok_with_an_array_payload_is_allowed() {
+        let line = drain_one(|tx| async move {
+            write_ok(&tx, "r5", serde_json::json!({"models": ["a", "b"]}))
+                .await
+                .unwrap();
+        })
+        .await;
+        let v = parse_line(&line);
+        assert_eq!(v["data"]["models"][0], "a");
+        assert_eq!(v["data"]["models"][1], "b");
+    }
+
+    // ---- send_response --------------------------------------------------
+
+    #[tokio::test]
+    async fn send_response_returns_an_error_when_the_channel_is_closed() {
+        // A writer task that has already exited leaves the sender
+        // with no receiver; the write wrappers must propagate the
+        // error rather than panic, so the read loop can decide
+        // whether to keep going.
+        let (tx, rx) = mpsc::channel::<String>(1);
+        drop(rx);
+        let r = Response {
+            id: "r6",
+            kind: "done",
+            data: None,
+        };
+        assert!(
+            send_response(&tx, &r).await.is_err(),
+            "a closed channel must surface as an error",
+        );
+    }
+
+    // ---- current_uid ----------------------------------------------------
+
+    #[test]
+    fn current_uid_returns_a_u32() {
+        // The value is environment-dependent; the contract is only
+        // that the call has no preconditions and returns without
+        // panicking. A regression that swapped in a fallible
+        // syscall would fail here.
+        let _uid: u32 = current_uid();
+    }
+
+    // ---- prepare_socket -------------------------------------------------
+
+    #[tokio::test]
+    async fn prepare_socket_creates_the_parent_directory() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let sock = tmp.path().join("nested").join("kod.sock");
+        assert!(!sock.parent().unwrap().exists());
+        prepare_socket(&sock).await.unwrap();
+        assert!(
+            sock.parent().unwrap().is_dir(),
+            "prepare_socket must create the parent directory",
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_socket_succeeds_on_a_fresh_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let sock = tmp.path().join("kod.sock");
+        prepare_socket(&sock).await.unwrap();
+        // The socket file itself is not created here — only
+        // `UnixListener::bind` does that. What `prepare_socket`
+        // guarantees is that no stale file blocks the bind.
+        assert!(
+            !sock.exists(),
+            "prepare_socket must not leave a socket file behind",
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_socket_removes_a_stale_socket_file() {
+        // A crashed daemon leaves an inode on disk that is not a
+        // listening socket. `prepare_socket` must clear it so the
+        // next bind succeeds, rather than returning "already
+        // listening" for a server that no longer exists.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let sock = tmp.path().join("kod.sock");
+        std::fs::write(&sock, b"stale").unwrap();
+        assert!(sock.exists());
+        prepare_socket(&sock).await.unwrap();
+        assert!(
+            !sock.exists(),
+            "prepare_socket must remove a stale socket file",
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_socket_refuses_when_a_live_listener_exists() {
+        // A real listening socket is the one case where the
+        // daemon must refuse to start — a second `kod serve` would
+        // silently steal connections from the first.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let sock = tmp.path().join("kod.sock");
+        let _listener = UnixListener::bind(&sock).expect("bind test listener");
+        let err = prepare_socket(&sock).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("another kod server") || msg.contains("listening"),
+            "expected an 'already listening' error, got: {msg}",
+        );
+    }
+
+    // ---- set_socket_perms -----------------------------------------------
+
+    #[cfg(unix)]
+    #[test]
+    fn set_socket_perms_creates_a_0600_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let f = tmp.path().join("perm_test");
+        std::fs::write(&f, b"").unwrap();
+        set_socket_perms(&f).unwrap();
+        let mode = std::fs::metadata(&f).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "socket file must be 0600, got {mode:o}");
+    }
+}
