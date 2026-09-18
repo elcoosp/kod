@@ -564,3 +564,207 @@ fn test_thinking_spinner_advances_with_time() {
     assert_ne!(first, second, "spinner must advance without any tick");
     app.finish_response("done");
 }
+
+// ---------------------------------------------------------------------------
+// Overlay widgets: approval dialog, help, question.
+//
+// These three widgets were at 0% line coverage when this block was added.
+// Each renders conditionally on a `KodApp` accessor, so the interesting
+// surface is: (a) the no-pending-state early return, (b) the populated
+// render, (c) the branch that varies with the data (diff vs no diff,
+// single-item vs multi-item batch, hint vs no hint).
+// ---------------------------------------------------------------------------
+mod widget_overlays {
+    use super::*;
+    use kod_tui::app::{PendingApproval, PendingApprovalBatch, PendingQuestion};
+    use kod_tui::ui::{ApprovalWidget, HelpWidget, QuestionWidget};
+
+    fn rect(w: u16, h: u16) -> ratatui::layout::Rect {
+        ratatui::layout::Rect::new(0, 0, w, h)
+    }
+
+    fn approval_item(id: u64, tool: &str, summary: &str) -> PendingApproval {
+        PendingApproval {
+            id,
+            tool_name: tool.to_string(),
+            summary: summary.to_string(),
+            diff: None,
+        }
+    }
+
+    // --- ApprovalWidget -----------------------------------------------------
+
+    #[test]
+    fn approval_widget_renders_nothing_without_a_batch() {
+        let app = KodApp::new();
+        let area = rect(80, 24);
+        let mut buffer = Buffer::empty(area);
+        ApprovalWidget::new().render(&app, area, &mut buffer);
+        let text = buffer_text(&buffer);
+        assert!(
+            !text.contains("approval required"),
+            "no batch -> no dialog title, got: {text}"
+        );
+        assert!(
+            !text.contains("tool:"),
+            "no batch -> no dialog body, got: {text}"
+        );
+    }
+
+    #[test]
+    fn approval_widget_renders_single_item_with_diff() {
+        let mut app = KodApp::new();
+        app.set_pending_batch(PendingApprovalBatch {
+            batch_id: 1,
+            items: vec![PendingApproval {
+                id: 7,
+                tool_name: "write_file".into(),
+                summary: "src/main.rs".into(),
+                diff: Some("+ new line\n- old line\n context".into()),
+            }],
+            current: 0,
+        });
+        let area = rect(80, 24);
+        let mut buffer = Buffer::empty(area);
+        ApprovalWidget::new().render(&app, area, &mut buffer);
+        let text = buffer_text(&buffer);
+        assert!(text.contains("approval required"), "title, got: {text}");
+        assert!(text.contains("write_file"), "tool name, got: {text}");
+        assert!(text.contains("src/main.rs"), "summary, got: {text}");
+        assert!(text.contains("+ new line"), "added diff line, got: {text}");
+        assert!(text.contains("- old line"), "removed diff line, got: {text}");
+        assert!(
+            text.contains("never (session)"),
+            "single-item legend, got: {text}"
+        );
+        // A single-item batch does NOT draw the multi-item legend.
+        assert!(
+            !text.contains("deny all remaining"),
+            "no batch legend for one item, got: {text}"
+        );
+    }
+
+    #[test]
+    fn approval_widget_renders_multi_item_batch_header_and_legend() {
+        let mut app = KodApp::new();
+        app.set_pending_batch(PendingApprovalBatch {
+            batch_id: 42,
+            items: vec![
+                approval_item(1, "write_file", "a.rs"),
+                approval_item(2, "patch_file", "b.rs"),
+                approval_item(3, "execute_command", "cargo check"),
+            ],
+            current: 1,
+        });
+        let area = rect(100, 30);
+        let mut buffer = Buffer::empty(area);
+        ApprovalWidget::new().render(&app, area, &mut buffer);
+        let text = buffer_text(&buffer);
+        assert!(text.contains("(2 of 3)"), "batch counter, got: {text}");
+        assert!(text.contains("write_file"), "item 1 listed, got: {text}");
+        assert!(text.contains("patch_file"), "item 2 listed, got: {text}");
+        assert!(
+            text.contains("execute_command"),
+            "item 3 listed, got: {text}"
+        );
+        assert!(
+            text.contains("deny all remaining"),
+            "batch legend, got: {text}"
+        );
+    }
+
+    #[test]
+    fn approval_widget_no_diff_shows_placeholder() {
+        let mut app = KodApp::new();
+        app.set_pending_batch(PendingApprovalBatch {
+            batch_id: 1,
+            items: vec![approval_item(1, "write_file", "new_file.rs")],
+            current: 0,
+        });
+        let area = rect(80, 24);
+        let mut buffer = Buffer::empty(area);
+        ApprovalWidget::new().render(&app, area, &mut buffer);
+        let text = buffer_text(&buffer);
+        assert!(
+            text.contains("no diff"),
+            "missing-diff placeholder, got: {text}"
+        );
+    }
+
+    // --- HelpWidget ---------------------------------------------------------
+
+    #[test]
+    fn help_widget_renders_every_section_and_a_few_bindings() {
+        let app = KodApp::new();
+        let area = rect(100, 40);
+        let mut buffer = Buffer::empty(area);
+        HelpWidget::new().render(&app, area, &mut buffer);
+        let text = buffer_text(&buffer);
+        for section in ["help", "Modes", "Typing", "Chat", "Session"] {
+            assert!(text.contains(section), "missing {section:?}, got: {text}");
+        }
+        assert!(text.contains("insert"), "insert description, got: {text}");
+        assert!(text.contains("/retry"), "slash command listed, got: {text}");
+    }
+
+    #[test]
+    fn help_widget_centered_clamps_to_area_and_centers_small() {
+        let area = rect(40, 20);
+        let big = HelpWidget::centered(area, 200, 200);
+        assert_eq!((big.x, big.y, big.width, big.height), (0, 0, 40, 20));
+        let small = HelpWidget::centered(area, 10, 6);
+        assert_eq!((small.x, small.y, small.width, small.height), (15, 7, 10, 6));
+    }
+
+    // --- QuestionWidget -----------------------------------------------------
+
+    #[test]
+    fn question_widget_renders_nothing_without_a_question() {
+        let app = KodApp::new();
+        let area = rect(80, 24);
+        let mut buffer = Buffer::empty(area);
+        QuestionWidget::new().render(&app, area, &mut buffer);
+        let text = buffer_text(&buffer);
+        assert!(
+            !text.contains("question"),
+            "no question -> no dialog, got: {text}"
+        );
+    }
+
+    #[test]
+    fn question_widget_renders_prompt_hint_and_input() {
+        let mut app = KodApp::new();
+        app.set_pending_question(PendingQuestion {
+            id: 3,
+            question: "Which file?".into(),
+            placeholder: Some("e.g. src/main.rs".into()),
+        });
+        // set_pending_question clears the input; fill it afterwards.
+        *app.question_input_mut() = "src/lib.rs".into();
+
+        let area = rect(80, 24);
+        let mut buffer = Buffer::empty(area);
+        QuestionWidget::new().render(&app, area, &mut buffer);
+        let text = buffer_text(&buffer);
+        assert!(text.contains("Which file?"), "prompt, got: {text}");
+        assert!(text.contains("e.g. src/main.rs"), "hint, got: {text}");
+        assert!(text.contains("src/lib.rs"), "typed input, got: {text}");
+        assert!(text.contains("Enter submits"), "footer, got: {text}");
+    }
+
+    #[test]
+    fn question_widget_omits_hint_when_absent() {
+        let mut app = KodApp::new();
+        app.set_pending_question(PendingQuestion {
+            id: 4,
+            question: "Continue?".into(),
+            placeholder: None,
+        });
+        let area = rect(80, 24);
+        let mut buffer = Buffer::empty(area);
+        QuestionWidget::new().render(&app, area, &mut buffer);
+        let text = buffer_text(&buffer);
+        assert!(text.contains("Continue?"), "prompt, got: {text}");
+        assert!(!text.contains("hint:"), "no hint line, got: {text}");
+    }
+}
