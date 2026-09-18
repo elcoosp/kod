@@ -653,7 +653,7 @@ mod tests {
 
     #[test]
     fn per_tool_mode_overrides_preset() {
-        let effective = Policy {
+        let mut effective = Policy {
             preset: Preset::ReadOnly,
             ..Policy::default()
         };
@@ -680,7 +680,7 @@ mod tests {
 
     #[test]
     fn forbidden_path_wins_over_mode() {
-        let effective = Policy {
+        let mut effective = Policy {
             preset: Preset::Yolo,
             ..Policy::default()
         };
@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn execute_command_binary_allowlist() {
-        let effective = Policy {
+        let mut effective = Policy {
             preset: Preset::Yolo,
             ..Policy::default()
         };
