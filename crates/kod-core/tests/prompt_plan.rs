@@ -15,11 +15,7 @@ use kod_core::router::{PromptPlan, RouterConfig, TaskRouter, TaskType};
 use tempfile::TempDir;
 
 fn router_with_one_file(dir: &TempDir) -> TaskRouter {
-    std::fs::write(
-        dir.path().join("foo.rs"),
-        "pub fn foo() -> u32 { 42 }\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("foo.rs"), "pub fn foo() -> u32 { 42 }\n").unwrap();
     let db_path = dir.path().join("test.redb");
     let cfg = RouterConfig {
         working_dir: dir.path().to_path_buf(),
