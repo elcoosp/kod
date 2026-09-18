@@ -329,10 +329,10 @@ fn block_private_host(host: &str) -> Option<String> {
     if lower.ends_with(".local") {
         return Some("mDNS (.local) hosts are not fetchable".to_string());
     }
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        if let Some(reason) = block_private_ip(ip) {
-            return Some(reason);
-        }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>()
+        && let Some(reason) = block_private_ip(ip)
+    {
+        return Some(reason);
     }
     None
 }
