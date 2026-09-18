@@ -19,8 +19,6 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-mod common;
-
 /// A provider that records every prompt it sees and replies with a
 /// text that identifies it — so a test can assert *which* provider
 /// served a call.
@@ -78,7 +76,8 @@ fn engine_in(dir: &std::path::Path) -> KodEngine {
     std::fs::write(dir.join("main.rs"), "pub fn main() {}\n").unwrap();
     let db_path = dir.join("test.redb");
     let cfg = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         working_dir: dir.to_path_buf(),
         enable_memory: false,
         max_skills_per_query: 3,
@@ -88,8 +87,6 @@ fn engine_in(dir: &std::path::Path) -> KodEngine {
     KodEngine::new(cfg, db_path).unwrap()
 }
 
-
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_current_model_switches_the_resolved_provider() {
     let temp = TempDir::new().unwrap();
@@ -98,8 +95,18 @@ async fn set_current_model_switches_the_resolved_provider() {
     let b = Arc::new(NamedProvider::new("b"));
 
     let mut registry = ProviderRegistry::new();
-    registry.insert("a", a.clone(), kod_provider::ProviderCapabilities::conservative(), "any-model");
-    registry.insert("b", b.clone(), kod_provider::ProviderCapabilities::conservative(), "any-model");
+    registry.insert(
+        "a",
+        a.clone(),
+        kod_provider::ProviderCapabilities::conservative(),
+        "any-model",
+    );
+    registry.insert(
+        "b",
+        b.clone(),
+        kod_provider::ProviderCapabilities::conservative(),
+        "any-model",
+    );
     engine
         .set_registry(Arc::new(registry), ModelRef::new("a", "m"), None)
         .await;
@@ -129,8 +136,18 @@ async fn current_model_reflects_set_registry_and_set_current_model() {
     assert_eq!(initial.endpoint, "default");
 
     let mut registry = ProviderRegistry::new();
-    registry.insert("a", a, kod_provider::ProviderCapabilities::conservative(), "any-model");
-    registry.insert("b", b, kod_provider::ProviderCapabilities::conservative(), "any-model");
+    registry.insert(
+        "a",
+        a,
+        kod_provider::ProviderCapabilities::conservative(),
+        "any-model",
+    );
+    registry.insert(
+        "b",
+        b,
+        kod_provider::ProviderCapabilities::conservative(),
+        "any-model",
+    );
     engine
         .set_registry(Arc::new(registry), ModelRef::new("a", "m1"), None)
         .await;
