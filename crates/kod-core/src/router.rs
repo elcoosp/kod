@@ -2000,7 +2000,7 @@ mod coverage_classifier_edges {
     async fn panic_keyword_routes_to_debugging() {
         let (_tmp, r) = router();
         assert_eq!(
-            r.classify_task("the program panics on startup").await.unwrap(),
+            r.classify_task("the program has a panic at startup").await.unwrap(),
             TaskType::Debugging,
         );
     }
