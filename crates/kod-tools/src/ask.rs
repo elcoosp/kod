@@ -143,3 +143,90 @@ mod tests {
         assert!(!body.contains('\0'));
     }
 }
+
+#[cfg(test)]
+mod coverage_question_request {
+    //! `QuestionRequest` is the payload of a question marker. A
+    //! regression that changed the field names would break the
+    //! marker round-trip between the engine and the TUI without
+    //! any error pointing at the cause.
+    use super::*;
+
+    #[test]
+    fn question_request_round_trips_with_placeholder() {
+        let req = QuestionRequest {
+            question: "Which branch?".into(),
+            placeholder: Some("main / develop".into()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: QuestionRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.question, req.question);
+        assert_eq!(parsed.placeholder, req.placeholder);
+    }
+
+    #[test]
+    fn question_request_parses_without_placeholder() {
+        // A model that omits `placeholder` must not fail the parse;
+        // the field is `#[serde(default)]` for exactly this case.
+        let json = r#"{"question":"Which branch?"}"#;
+        let req: QuestionRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.question, "Which branch?");
+        assert!(req.placeholder.is_none());
+    }
+
+    #[test]
+    fn a_question_marker_with_unicode_round_trips() {
+        // Question text may contain any UTF-8 a user typed. The
+        // marker's NUL-sanitization must not corrupt the bytes.
+        let req = QuestionRequest {
+            question: "¿Cuál es la rama — main o dev? 🚀".into(),
+            placeholder: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let chunk = question_marker(7, &json);
+        let (id, body) = parse_question(&chunk).unwrap();
+        assert_eq!(id, 7);
+        let parsed: QuestionRequest = serde_json::from_str(body).unwrap();
+        assert_eq!(parsed.question, req.question);
+    }
+
+    #[test]
+    fn a_question_with_a_placeholder_can_be_empty_string() {
+        // The schema says `placeholder: Option<String>`; an empty
+        // string is distinct from `None` and must be preserved.
+        let req = QuestionRequest {
+            question: "q".into(),
+            placeholder: Some(String::new()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: QuestionRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.placeholder.as_deref(), Some(""));
+    }
+
+    #[tokio::test]
+    async fn ask_user_tool_reports_a_clean_error_outside_the_streaming_path() {
+        // The tool's execute is a fallback for the non-streaming
+        // case. It must return a `ToolResult::Error` with an
+        // actionable message — not panic, not an `Err(KodError)`,
+        // because the engine turns `Err` into a hard failure while
+        // `Error` reaches the model as a tool-level refusal.
+        use crate::{Tool, ToolContext};
+        use kod_types::ToolPermissions;
+        let tool = AskUserTool::new();
+        let ctx = ToolContext::new("/tmp").with_permissions(ToolPermissions::default());
+        let r = tool
+            .execute(
+                &serde_json::json!({"question": "hi"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        match r {
+            kod_types::ToolResult::Error(msg) => {
+                assert!(msg.contains("interactive"), "got: {msg}");
+                assert!(msg.contains("kod tui") || msg.contains("kod chat"), "got: {msg}");
+            }
+            other => panic!("expected ToolResult::Error, got {other:?}"),
+        }
+    }
+}
