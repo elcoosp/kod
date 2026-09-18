@@ -104,3 +104,172 @@ pub fn response_chunks(response: GenerationResponse) -> Vec<StreamChunk> {
     chunks.push(StreamChunk::Done);
     chunks
 }
+
+#[cfg(test)]
+mod coverage_response_chunks {
+    //! `response_chunks` is the bridge between a collected
+    //! `GenerationResponse` and the streaming shape the trait's
+    //! default `stream_with_tools` replays. A regression here
+    //! changes the order or count of chunks a caller sees from a
+    //! provider that has not overridden the default — the engine's
+    //! assembly loop then mis-parses the response without any
+    //! error pointing at the cause.
+    use super::*;
+    use kod_types::ToolCall;
+
+    fn call(name: &str, id: Option<&str>) -> ToolCall {
+        ToolCall {
+            id: id.map(|s| s.to_string()),
+            tool_name: name.to_string(),
+            arguments: serde_json::json!({"k": "v"}),
+        }
+    }
+
+    #[test]
+    fn text_response_yields_one_text_chunk_then_done() {
+        let r = GenerationResponse::Text {
+            content: "hello".to_string(),
+            usage: None,
+        };
+        let chunks = response_chunks(r);
+        assert_eq!(chunks.len(), 2);
+        assert!(matches!(&chunks[0], StreamChunk::Text(t) if t == "hello"));
+        assert!(matches!(&chunks[1], StreamChunk::Done));
+    }
+
+    #[test]
+    fn empty_text_response_yields_only_done() {
+        let r = GenerationResponse::Text {
+            content: String::new(),
+            usage: None,
+        };
+        let chunks = response_chunks(r);
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(&chunks[0], StreamChunk::Done));
+    }
+
+    #[test]
+    fn tool_calls_response_yields_start_and_delta_per_call_then_done() {
+        let r = GenerationResponse::ToolCalls {
+            calls: vec![call("a", Some("id_a")), call("b", None)],
+            usage: None,
+        };
+        let chunks = response_chunks(r);
+        // 2 calls * 2 chunks + 1 Done = 5.
+        assert_eq!(chunks.len(), 5);
+        match &chunks[0] {
+            StreamChunk::ToolCallStart { index, id, name } => {
+                assert_eq!(*index, 0);
+                assert_eq!(id.as_deref(), Some("id_a"));
+                assert_eq!(name, "a");
+            }
+            other => panic!("expected ToolCallStart, got {other:?}"),
+        }
+        match &chunks[1] {
+            StreamChunk::ToolCallDelta { index, arguments } => {
+                assert_eq!(*index, 0);
+                assert!(arguments.contains("k"));
+            }
+            other => panic!("expected ToolCallDelta, got {other:?}"),
+        }
+        match &chunks[2] {
+            StreamChunk::ToolCallStart { index, id, name } => {
+                assert_eq!(*index, 1);
+                assert!(id.is_none());
+                assert_eq!(name, "b");
+            }
+            other => panic!("expected ToolCallStart, got {other:?}"),
+        }
+        assert!(matches!(&chunks[4], StreamChunk::Done));
+    }
+
+    #[test]
+    fn mixed_response_puts_text_before_tool_chunks() {
+        let r = GenerationResponse::Mixed {
+            content: "prefix".to_string(),
+            calls: vec![call("t", None)],
+            usage: None,
+        };
+        let chunks = response_chunks(r);
+        assert_eq!(chunks.len(), 4);
+        assert!(matches!(&chunks[0], StreamChunk::Text(t) if t == "prefix"));
+        assert!(matches!(&chunks[1], StreamChunk::ToolCallStart { .. }));
+        assert!(matches!(&chunks[2], StreamChunk::ToolCallDelta { .. }));
+        assert!(matches!(&chunks[3], StreamChunk::Done));
+    }
+
+    #[test]
+    fn empty_mixed_response_skips_the_text_chunk() {
+        let r = GenerationResponse::Mixed {
+            content: String::new(),
+            calls: vec![call("t", None)],
+            usage: None,
+        };
+        let chunks = response_chunks(r);
+        // No text chunk; one ToolCallStart, one delta, one Done.
+        assert_eq!(chunks.len(), 3);
+        assert!(matches!(&chunks[0], StreamChunk::ToolCallStart { .. }));
+    }
+
+    #[test]
+    fn done_is_always_last() {
+        // The assembly loop relies on this; a regression that put
+        // Done before the calls would silently truncate every
+        // multi-call response.
+        for r in [
+            GenerationResponse::Text {
+                content: "t".into(),
+                usage: None,
+            },
+            GenerationResponse::ToolCalls {
+                calls: vec![call("a", None), call("b", None)],
+                usage: None,
+            },
+            GenerationResponse::Mixed {
+                content: "t".into(),
+                calls: vec![call("a", None)],
+                usage: None,
+            },
+        ] {
+            let chunks = response_chunks(r);
+            assert!(
+                matches!(chunks.last(), Some(StreamChunk::Done)),
+                "Done is not last",
+            );
+        }
+    }
+
+    #[test]
+    fn usage_accessor_reports_the_variant_payload() {
+        let u = TokenUsage {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+        };
+        let r = GenerationResponse::Text {
+            content: String::new(),
+            usage: Some(u.clone()),
+        };
+        assert_eq!(r.usage(), Some(&u));
+        let r = GenerationResponse::ToolCalls {
+            calls: vec![],
+            usage: Some(u.clone()),
+        };
+        assert_eq!(r.usage(), Some(&u));
+        let r = GenerationResponse::Mixed {
+            content: String::new(),
+            calls: vec![],
+            usage: Some(u.clone()),
+        };
+        assert_eq!(r.usage(), Some(&u));
+    }
+
+    #[test]
+    fn usage_accessor_returns_none_when_absent() {
+        let r = GenerationResponse::Text {
+            content: String::new(),
+            usage: None,
+        };
+        assert!(r.usage().is_none());
+    }
+}
