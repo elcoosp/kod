@@ -119,8 +119,8 @@ fn benchmark_skill_matching(c: &mut Criterion) {
             &skill_count,
             |b, &count| {
                 b.iter(|| {
-                    let matches = rt
-                        .block_on(async { matcher.find_relevant_skills("benchmark test").await });
+                    let matches =
+                        rt.block_on(async { matcher.find_relevant_skills("benchmark test").await });
                     black_box(matches.len());
                     black_box(count);
                 });
@@ -211,9 +211,11 @@ fn benchmark_task_classification(c: &mut Criterion) {
     let env = BenchEnvironment::new();
     let db_path = env.working_dir.join("bench.redb");
 
-    let mut cfg = RouterConfig::default();
-    cfg.working_dir = env.working_dir.clone();
-    cfg.enable_memory = false;
+    let cfg = RouterConfig {
+        working_dir: env.working_dir.clone(),
+        enable_memory: false,
+        ..RouterConfig::default()
+    };
     let router = TaskRouter::new(cfg, db_path).unwrap();
 
     let mut group = c.benchmark_group("task_classification");
@@ -253,9 +255,11 @@ fn benchmark_task_processing(c: &mut Criterion) {
     let env = BenchEnvironment::new();
     let db_path = env.working_dir.join("bench_process.redb");
 
-    let mut cfg = RouterConfig::default();
-    cfg.working_dir = env.working_dir.clone();
-    cfg.enable_memory = false;
+    let cfg = RouterConfig {
+        working_dir: env.working_dir.clone(),
+        enable_memory: false,
+        ..RouterConfig::default()
+    };
     let router = TaskRouter::new(cfg, db_path).unwrap();
 
     let mut group = c.benchmark_group("task_processing");
@@ -325,7 +329,9 @@ fn benchmark_memory_retrieval(c: &mut Criterion) {
         b.iter(|| {
             let ctx = rt
                 .block_on(async {
-                    manager.retrieve_context("how does the parser handle retries?").await
+                    manager
+                        .retrieve_context("how does the parser handle retries?")
+                        .await
                 })
                 .expect("retrieve");
             black_box(ctx.long_term.len());
@@ -355,9 +361,11 @@ fn benchmark_startup(c: &mut Criterion) {
             || {
                 let tmp = tempfile::TempDir::new().expect("tempdir");
                 let db = tmp.path().join("cold.redb");
-                let mut cfg = RouterConfig::default();
-                cfg.working_dir = tmp.path().to_path_buf();
-                cfg.enable_memory = false;
+                let cfg = RouterConfig {
+                    working_dir: tmp.path().to_path_buf(),
+                    enable_memory: false,
+                    ..RouterConfig::default()
+                };
                 (tmp, cfg, db)
             },
             |(_tmp, cfg, db)| {
@@ -374,6 +382,56 @@ fn benchmark_startup(c: &mut Criterion) {
     group.finish();
 }
 
+/// Cold-start benchmark (design §D6.8).
+///
+/// The existing `benchmark_startup` measures a warm loop: after the
+/// first iteration the process has warmed allocator pages, JIT-ed
+/// nothing (Rust is compiled), and cached the crate's string tables.
+/// The figure a user sees on the first launch of `kod` is different —
+/// and, since the README promises a "small, self-contained binary",
+/// the cold-start wall time is the honest number.
+///
+/// This is a single-shot measurement, not a criterion loop: the first
+/// call is what we want, and rerunning it iteratively would report the
+/// warm steady-state. Criterion still owns the harness (so the timing
+/// primitive and reporting format are consistent with the rest of the
+/// suite), but a single sample is the answer.
+fn benchmark_startup_cold(c: &mut Criterion) {
+    let rt = rt();
+    let mut group = c.benchmark_group("startup_cold");
+    // One sample: the number we want is the first-run cost.
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(2));
+
+    group.bench_function("cold_engine_lifecycle", |b| {
+        // `iter_batched` with `PerIteration` gives criterion a fresh
+        // tempdir + db for every batch. That is expensive, but a
+        // cold-start benchmark has to pay it — an engine on a warm
+        // db is not cold.
+        b.iter_batched(
+            || {
+                let tmp = tempfile::TempDir::new().expect("tempdir");
+                let db = tmp.path().join("cold.redb");
+                let cfg = RouterConfig {
+                    working_dir: tmp.path().to_path_buf(),
+                    enable_memory: true,
+                    ..RouterConfig::default()
+                };
+                (tmp, cfg, db)
+            },
+            |(_tmp, cfg, db)| {
+                let engine = kod_core::KodEngine::new(cfg, db).expect("engine new");
+                rt.block_on(async {
+                    engine.start().await.expect("engine start");
+                    engine.shutdown().await.expect("engine shutdown");
+                });
+            },
+            criterion::BatchSize::PerIteration,
+        );
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_skill_loading,
@@ -385,6 +443,7 @@ criterion_group!(
     benchmark_repo_map,
     benchmark_memory_retrieval,
     benchmark_startup,
+    benchmark_startup_cold,
 );
 
 criterion_main!(benches);
