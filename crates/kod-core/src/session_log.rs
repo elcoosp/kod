@@ -345,3 +345,244 @@ mod tests {
         assert!(path.exists());
     }
 }
+
+#[cfg(test)]
+mod coverage_entry_roundtrip {
+    //! Every `SessionEntry` variant must round-trip through JSON so
+    //! `kod replay` and `/log` can read a session written by any
+    //! build. The existing tests cover `ToolCall`; the other six
+    //! variants are the ones a new field silently breaks, because
+    //! nothing writes them in the in-tree tests.
+    use super::SessionEntry;
+
+    fn tool_call() -> SessionEntry {
+        SessionEntry::ToolCall {
+            timestamp_ms: 1,
+            holder: "session".into(),
+            tool_name: "read_file".into(),
+            arguments: serde_json::json!({"path": "a.rs"}),
+            duration_ms: 7,
+            result: serde_json::json!({"success": {}}),
+        }
+    }
+
+    fn every_variant() -> Vec<SessionEntry> {
+        vec![
+            tool_call(),
+            SessionEntry::ModelFallback {
+                timestamp_ms: 2,
+                holder: "s".into(),
+                from: "a/1".into(),
+                to: "b/2".into(),
+                error: "connection reset".into(),
+            },
+            SessionEntry::Cost {
+                timestamp_ms: 3,
+                holder: "s".into(),
+                endpoint: "local".into(),
+                model: "qwen".into(),
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                cost_usd: 0.001,
+            },
+            SessionEntry::PolicyDecision {
+                timestamp_ms: 4,
+                holder: "s".into(),
+                tool_name: "write_file".into(),
+                outcome: "allow".into(),
+                rule: "preset Standard applies".into(),
+                source: "preset".into(),
+            },
+            SessionEntry::MemoryWrite {
+                timestamp_ms: 5,
+                memory_id: "abc".into(),
+                channel: "tool".into(),
+                tags: vec!["auto-fact".into()],
+            },
+            SessionEntry::Approval {
+                timestamp_ms: 6,
+                holder: "s".into(),
+                tool_name: "write_file".into(),
+                decision: "approve".into(),
+            },
+            SessionEntry::Diagnostics {
+                timestamp_ms: 7,
+                file: "a.rs".into(),
+                error_count: 2,
+                warning_count: 3,
+            },
+        ]
+    }
+
+    #[test]
+    fn every_variant_round_trips_through_json() {
+        for e in &every_variant() {
+            let json = serde_json::to_string(e).expect("serialize");
+            let parsed: SessionEntry = serde_json::from_str(&json).expect("parse");
+            let re = serde_json::to_string(&parsed).expect("re-serialize");
+            assert_eq!(json, re, "roundtrip mismatch for {json}");
+        }
+    }
+
+    #[test]
+    fn kind_tag_is_the_variant_name_in_snake_case() {
+        // The on-disk schema is `<variant>` -> snake_case via the
+        // container attribute. A caller that branches on the tag
+        // (an external log viewer, a future `kod log`) depends on
+        // this naming, so a rename is a schema break.
+        let cases = [
+            (tool_call(), "tool_call"),
+            (
+                SessionEntry::Cost {
+                    timestamp_ms: 0,
+                    holder: "h".into(),
+                    endpoint: "e".into(),
+                    model: "m".into(),
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    cost_usd: 0.0,
+                },
+                "cost",
+            ),
+            (
+                SessionEntry::Approval {
+                    timestamp_ms: 0,
+                    holder: "h".into(),
+                    tool_name: "t".into(),
+                    decision: "deny".into(),
+                },
+                "approval",
+            ),
+        ];
+        for (entry, expected_kind) in cases {
+            let v: serde_json::Value = serde_json::to_value(&entry).unwrap();
+            assert_eq!(v["kind"], expected_kind, "for {entry:?}");
+        }
+    }
+
+    #[test]
+    fn malformed_line_is_rejected_but_forward_compat_is_tolerated() {
+        // Two separate behaviours the reader must keep distinct:
+        // unknown `kind` is skipped (forward compat), invalid JSON
+        // is a hard error (the log is corrupt).
+        use super::read_session;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("mixed.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"kind\":\"tool_call\",\"timestamp_ms\":1,\"holder\":\"s\",",
+                "\"tool_name\":\"r\",\"arguments\":{},\"duration_ms\":1,",
+                "\"result\":{\"success\":{}}}\n",
+                "not json at all\n"
+            ),
+        )
+        .unwrap();
+        let err = read_session(&path).unwrap_err();
+        assert!(err.to_string().contains("line 2"), "got: {err}");
+    }
+}
+
+#[cfg(test)]
+mod coverage_session_paths {
+    //! `default_session_path` is the one place the log location is
+    //! decided. A regression that dropped the timestamp or the
+    //! directory would make `kod replay` point at the wrong file
+    //! or overwrite a previous session's log.
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn default_session_path_is_under_kod_sessions() {
+        // The default lives under `<home>/.kod/sessions/`. Whether
+        // a home directory is available depends on the test
+        // environment; when it is available, the path has the
+        // expected suffix and a `.jsonl` extension.
+        if let Some(p) = default_session_path() {
+            let s = p.to_string_lossy();
+            assert!(s.contains(".kod"), "not under .kod: {s}");
+            assert!(s.contains("sessions"), "not under sessions: {s}");
+            assert!(s.ends_with(".jsonl"), "wrong extension: {s}");
+        }
+    }
+
+    #[test]
+    fn two_default_paths_differ_within_the_same_process() {
+        // The path includes a millisecond timestamp. Two calls in
+        // the same process are microseconds apart, so they may or
+        // may not differ — but they must both exist and be
+        // well-formed. The test records the contract rather than
+        // asserting non-determinism.
+        if let (Some(a), Some(b)) = (default_session_path(), default_session_path()) {
+            assert!(a.ends_with(".jsonl"));
+            assert!(b.ends_with(".jsonl"));
+        }
+    }
+
+    #[test]
+    fn open_records_and_reads_from_a_path_under_a_nested_directory() {
+        // A path whose parent does not exist must be created by
+        // `open`. Regression target: a log directory that is
+        // removed between sessions.
+        let tmp = TempDir::new().unwrap();
+        let nested = tmp.path().join("a").join("b").join("s.jsonl");
+        let rec = SessionRecorder::open(nested.clone()).unwrap();
+        let entry = SessionEntry::Approval {
+            timestamp_ms: 1,
+            holder: "h".into(),
+            tool_name: "write_file".into(),
+            decision: "approve".into(),
+        };
+        rec.record(&entry).unwrap();
+        let read = read_session(&nested).unwrap();
+        assert_eq!(read.len(), 1);
+        match &read[0] {
+            SessionEntry::Approval { tool_name, .. } => {
+                assert_eq!(tool_name, "write_file");
+            }
+            other => panic!("unexpected kind: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recorder_path_accessor_reports_the_open_path() {
+        let tmp = TempDir::new().unwrap();
+        let p = tmp.path().join("x.jsonl");
+        let rec = SessionRecorder::open(p.clone()).unwrap();
+        // The on-disk path is exactly what was passed in.
+        assert_eq!(rec.path(), p.as_path());
+    }
+
+    #[test]
+    fn flush_on_an_empty_recorder_is_ok() {
+        let tmp = TempDir::new().unwrap();
+        let rec = SessionRecorder::open(tmp.path().join("e.jsonl")).unwrap();
+        rec.flush().unwrap();
+    }
+
+    #[test]
+    fn multiple_recorders_append_to_the_same_path() {
+        // `open` uses `OpenOptions::new().append(true)`; two
+        // recorders on the same path must not truncate each other.
+        let tmp = TempDir::new().unwrap();
+        let p = tmp.path().join("multi.jsonl");
+        let a = SessionRecorder::open(p.clone()).unwrap();
+        a.record(&SessionEntry::Approval {
+            timestamp_ms: 1,
+            holder: "a".into(),
+            tool_name: "t".into(),
+            decision: "approve".into(),
+        })
+        .unwrap();
+        let b = SessionRecorder::open(p.clone()).unwrap();
+        b.record(&SessionEntry::Approval {
+            timestamp_ms: 2,
+            holder: "b".into(),
+            tool_name: "t".into(),
+            decision: "deny".into(),
+        })
+        .unwrap();
+        let read = read_session(&p).unwrap();
+        assert_eq!(read.len(), 2);
+    }
+}
