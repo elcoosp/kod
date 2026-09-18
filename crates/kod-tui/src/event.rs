@@ -114,6 +114,11 @@ pub enum Event {
         id: kod_types::AgentId,
         name: String,
         subtask: String,
+        /// Display string of the endpoint+model the agent runs against
+        /// (`endpoint/model`), when known. The agent panel renders it
+        /// next to the agent name.
+        #[serde(default)]
+        model: Option<String>,
     },
     /// A swarm agent produced a text chunk.
     SwarmAgentChunk { id: kod_types::AgentId, text: String },
