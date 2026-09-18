@@ -261,3 +261,93 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod coverage_scoring_composition {
+    //! The existing tests probe each scoring component on its own.
+    //! The scorer's behaviour at the boundaries — an empty corpus, a
+    //! full cosine, a zero cosine supplied by the caller versus
+    //! `None`, a zero half-life — is what a retrieval regression
+    //! changes first, and it is what these tests pin.
+    use super::*;
+    use kod_types::{MemoryId, MemoryType};
+    use time::Duration;
+
+    fn entry_at(content: &str, age_days: i64) -> MemoryEntry {
+        MemoryEntry {
+            id: MemoryId::new(),
+            memory_type: MemoryType::LongTerm,
+            content: content.to_string(),
+            timestamp: OffsetDateTime::now_utc() - Duration::days(age_days),
+            relevance: 1.0,
+            metadata: Default::default(),
+        }
+    }
+
+    #[test]
+    fn empty_corpus_does_not_panic() {
+        let scorer = HybridScorer::default();
+        let now = OffsetDateTime::now_utc();
+        let empty: Vec<MemoryEntry> = Vec::new();
+        let q = QueryTerms::build("anything", &empty);
+        let entry = entry_at("nothing", 0);
+        let s = scorer.score(&q, &entry, None, now);
+        // Recency is 1.0 * 0.1 = 0.1; the keyword component is 0
+        // because there is nothing to score against. The exact upper
+        // bound is loose on purpose: the assertion is that the call
+        // returns a finite value in the plausible range.
+        assert!((0.0..=0.2).contains(&s), "got {s}");
+    }
+
+    #[test]
+    fn score_is_bounded_above_by_one() {
+        // Every component maxed: cosine 1.0, a perfect keyword match
+        // on a single-token document, a fresh timestamp. The weights
+        // sum to 1.0, so the score cannot exceed it.
+        let scorer = HybridScorer::default();
+        let now = OffsetDateTime::now_utc();
+        let candidates = vec![entry_at("dark mode", 0)];
+        let q = QueryTerms::build("dark mode", &candidates);
+        let s = scorer.score(&q, &candidates[0], Some(1.0), now);
+        assert!((0.0..=1.0).contains(&s), "score {s} out of range");
+    }
+
+    #[test]
+    fn zero_cosine_is_not_the_same_as_none() {
+        // A caller that supplies `Some(0.0)` is saying "the semantic
+        // component exists and scored zero" — the weight is applied
+        // and contributes nothing. A caller that supplies `None` is
+        // saying "no semantic component today", and the weight is
+        // redistributed onto keyword. The keyword-only score is
+        // therefore at least as high as the one that supplied an
+        // explicit zero.
+        let scorer = HybridScorer::default();
+        let now = OffsetDateTime::now_utc();
+        let candidates = vec![entry_at("the user prefers dark mode", 0)];
+        let q = QueryTerms::build("dark mode", &candidates);
+        let with_zero = scorer.score(&q, &candidates[0], Some(0.0), now);
+        let without = scorer.score(&q, &candidates[0], None, now);
+        assert!(
+            without >= with_zero,
+            "redistribution must not lower the score: {without} vs {with_zero}",
+        );
+    }
+
+    #[test]
+    fn older_entries_have_lower_recency_than_fresh_ones() {
+        let now = OffsetDateTime::now_utc();
+        let fresh = entry_at("x", 0);
+        let old = entry_at("x", 100);
+        assert!(recency(fresh.timestamp, now, 14.0) > recency(old.timestamp, now, 14.0));
+    }
+
+    #[test]
+    fn zero_half_life_yields_zero_recency() {
+        // A nonsensical half-life (0.0) must not produce a division
+        // by zero or an infinite exponent. The contract is a bounded
+        // value: zero.
+        let now = OffsetDateTime::now_utc();
+        let e = entry_at("x", 1);
+        assert_eq!(recency(e.timestamp, now, 0.0), 0.0);
+    }
+}
