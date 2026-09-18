@@ -707,39 +707,29 @@ impl ToolContext {
         Ok(())
     }
 
-    /// Check if command can be executed
-    pub fn can_execute_command(&self, command: &str) -> Result<()> {
+    /// Check whether the context permits command execution at all.
+    ///
+    /// This is a gate, not a filter: with `execute_commands` granted it
+    /// returns `Ok` for every command, including `rm -rf /`. The
+    /// text-pattern blocklist that used to live here (matching on
+    /// `"sudo"`, `"rm -rf"`, …) was removed (design H1, §5.3) because a
+    /// string match is trivially bypassable (`rm  -rf`, `sudo\t`, a
+    /// leading newline) and gave the false impression of a security
+    /// boundary. The real defences are the platform sandbox
+    /// (`SandboxResolver`, AD-10) and the policy engine's per-tool
+    /// `binaries` allowlist (`ToolPolicy`, AD-08), both of which
+    /// operate on structure, not text.
+    ///
+    /// Denying here without the flag is the honest behaviour: a caller
+    /// that did not grant `execute_commands` should not be able to run
+    /// anything, not even `echo`.
+    pub fn can_execute_command(&self, _command: &str) -> Result<()> {
         if !self.permissions.execute_commands {
             return Err(KodError::PermissionDenied {
                 action: "execute".to_string(),
                 reason: "Command execution not permitted".to_string(),
             });
         }
-
-        let trimmed = command.trim_start();
-        let dangerous_patterns: &[&str] = &[
-            "rm -rf",
-            "rm -fr",
-            "rm -r -f",
-            "sudo",
-            "chmod 777",
-            "mkfs",
-            "> /dev/sda",
-            "> /dev/disk",
-            "format ",
-            "del /f /q /s",
-            "rd /s /q",
-            "rmdir /s /q",
-        ];
-        for pattern in dangerous_patterns {
-            if trimmed.starts_with(pattern) {
-                return Err(KodError::PermissionDenied {
-                    action: "execute".to_string(),
-                    reason: format!("Dangerous command pattern detected: {}", pattern),
-                });
-            }
-        }
-
         Ok(())
     }
 
@@ -910,18 +900,25 @@ mod tests {
     }
 
     #[test]
-    fn test_can_execute_command_rejects_leading_whitespace() {
+    fn test_can_execute_command_delegates_to_sandbox() {
+        // The text-pattern blocklist was removed (design H1, §5.3): a
+        // string match is not a security boundary and gave false
+        // confidence. The real gates are the sandbox (AD-10) and the
+        // policy engine (AD-08). This test asserts the delegation:
+        // with `execute_commands` granted, `can_execute_command`
+        // always returns Ok; without it, every command is denied.
         let perms = ToolPermissions {
             execute_commands: true,
             ..Default::default()
         };
         let ctx = ToolContext::new("/tmp").with_permissions(perms);
-
-        assert!(ctx.can_execute_command("rm -rf /").is_err());
-        assert!(ctx.can_execute_command("  rm -rf /").is_err());
-        assert!(ctx.can_execute_command("\trm -rf /").is_err());
-        assert!(ctx.can_execute_command("\nrm -rf /").is_err());
+        assert!(ctx.can_execute_command("rm -rf /").is_ok());
+        assert!(ctx.can_execute_command("  rm -rf /").is_ok());
+        assert!(ctx.can_execute_command("sudo apt install").is_ok());
         assert!(ctx.can_execute_command("ls -la").is_ok());
+
+        let denied = ToolContext::new("/tmp").with_permissions(ToolPermissions::default());
+        assert!(denied.can_execute_command("ls").is_err());
     }
 
     #[test]
