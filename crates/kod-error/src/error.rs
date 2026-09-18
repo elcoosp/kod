@@ -221,3 +221,165 @@ mod tests {
         assert!(message.contains("Permission denied"));
     }
 }
+
+#[cfg(test)]
+mod coverage_error_classification {
+    //! Focused tests for the three predicates that decide how the
+    //! engine responds to a provider failure: `is_retryable` (does
+    //! the fallback chain try again), `is_recoverable` (does the
+    //! caller treat this as a transient), and `provider_status` (how
+    //! is a raw HTTP code classified). A regression here is invisible
+    //! from the outside — the run either retries too much or too
+    //! little — so the string-matching branches are pinned one by one.
+    use super::*;
+    use kod_types::{AgentId, SkillId};
+
+    #[test]
+    fn is_retryable_recognizes_rate_limit_variants() {
+        for msg in [
+            "429 Too Many Requests",
+            "rate limit exceeded",
+            "please try again in 30s",
+            "temporarily unavailable",
+        ] {
+            assert!(KodError::Provider(msg.into()).is_retryable(), "{msg}");
+        }
+    }
+
+    #[test]
+    fn is_retryable_recognizes_server_errors() {
+        for code in ["502", "503", "504"] {
+            let msg = format!("server error {code}: bad gateway");
+            assert!(KodError::Provider(msg).is_retryable(), "{code}");
+        }
+        assert!(KodError::Provider("bad gateway".into()).is_retryable());
+        assert!(KodError::Provider("service unavailable".into()).is_retryable());
+        assert!(KodError::Provider("gateway timeout".into()).is_retryable());
+        assert!(KodError::Provider("server error 5xx".into()).is_retryable());
+    }
+
+    #[test]
+    fn is_retryable_rejects_client_errors() {
+        for msg in [
+            "401 unauthorized",
+            "403 forbidden",
+            "404 not found",
+            "422 unprocessable",
+            "invalid parameters",
+            "malformed request",
+        ] {
+            assert!(!KodError::Provider(msg.into()).is_retryable(), "{msg}");
+        }
+    }
+
+    #[test]
+    fn is_retryable_covers_timeout_and_network_variants() {
+        assert!(KodError::ProviderTimeout { timeout_ms: 100 }.is_retryable());
+        assert!(KodError::RateLimited { retry_after_secs: 5 }.is_retryable());
+        assert!(KodError::Network("connection refused".into()).is_retryable());
+        assert!(KodError::Provider("timed out".into()).is_retryable());
+        assert!(KodError::Provider("connection reset".into()).is_retryable());
+        assert!(KodError::Provider("connection closed".into()).is_retryable());
+    }
+
+    #[test]
+    fn is_retryable_rejects_non_provider_errors() {
+        assert!(!KodError::Config("x".into()).is_retryable());
+        assert!(!KodError::Internal("x".into()).is_retryable());
+        assert!(!KodError::InvalidState("x".into()).is_retryable());
+        assert!(
+            !KodError::PermissionDenied {
+                action: "a".into(),
+                reason: "r".into(),
+            }
+            .is_retryable()
+        );
+    }
+
+    #[test]
+    fn provider_status_classifies_by_http_code() {
+        assert!(matches!(
+            KodError::provider_status(401, "no"),
+            KodError::Provider(ref m) if m.contains("auth error 401")
+        ));
+        assert!(matches!(
+            KodError::provider_status(403, "no"),
+            KodError::Provider(ref m) if m.contains("auth error 403")
+        ));
+        assert!(matches!(
+            KodError::provider_status(404, "no"),
+            KodError::Provider(ref m) if m.contains("not found 404")
+        ));
+        assert!(matches!(
+            KodError::provider_status(408, "no"),
+            KodError::ProviderTimeout { .. }
+        ));
+        assert!(matches!(
+            KodError::provider_status(429, "no"),
+            KodError::RateLimited { .. }
+        ));
+        assert!(matches!(
+            KodError::provider_status(503, "no"),
+            KodError::Provider(ref m) if m.contains("server error 503")
+        ));
+        assert!(matches!(
+            KodError::provider_status(418, "no"),
+            KodError::Provider(ref m) if m.contains("http 418")
+        ));
+    }
+
+    #[test]
+    fn provider_status_truncates_long_bodies() {
+        let body = "x".repeat(1000);
+        let err = KodError::provider_status(500, &body);
+        let msg = err.to_string();
+        assert!(msg.len() < 500, "message not truncated: {} chars", msg.len());
+        assert!(msg.contains("server error 500"));
+    }
+
+    #[test]
+    fn is_recoverable_is_a_strict_subset_of_the_typed_variants() {
+        assert!(KodError::ProviderTimeout { timeout_ms: 1 }.is_recoverable());
+        assert!(KodError::RateLimited { retry_after_secs: 1 }.is_recoverable());
+        assert!(KodError::Network("x".into()).is_recoverable());
+        assert!(KodError::LockTimeout { path: "p".into() }.is_recoverable());
+        // A Provider error whose text happens to look retryable is
+        // not "recoverable" — the two predicates have different
+        // shapes on purpose: is_retryable is a text heuristic,
+        // is_recoverable is a typed classification. The distinction
+        // is what stops a caller from treating "429 rate limit" and
+        // "not found 404" the same way.
+        assert!(!KodError::Provider("429".into()).is_recoverable());
+        assert!(!KodError::Internal("x".into()).is_recoverable());
+    }
+
+    #[test]
+    fn user_message_rewrites_known_variants() {
+        let e = KodError::Provider("boom".into());
+        assert!(e.user_message().starts_with("The AI provider"));
+        let e = KodError::SkillNotFound {
+            skill_id: SkillId::new(),
+        };
+        assert!(e.user_message().contains("skill"));
+        let e = KodError::AgentNotFound {
+            agent_id: AgentId::new(),
+        };
+        assert!(e.user_message().contains("agent"));
+        let e = KodError::PermissionDenied {
+            action: "x".into(),
+            reason: "y".into(),
+        };
+        assert!(e.user_message().contains("Permission denied"));
+        // Anything else falls through to Display verbatim.
+        let e = KodError::Internal("idk".into());
+        assert_eq!(e.user_message(), e.to_string());
+    }
+
+    #[test]
+    fn rate_limited_uses_retry_after_or_default() {
+        let e = KodError::rate_limited(Some(std::time::Duration::from_secs(7)), 429, "");
+        assert!(matches!(e, KodError::RateLimited { retry_after_secs: 7 }));
+        let e = KodError::rate_limited(None, 429, "");
+        assert!(matches!(e, KodError::RateLimited { retry_after_secs: 30 }));
+    }
+}
