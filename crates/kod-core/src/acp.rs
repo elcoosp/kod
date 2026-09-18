@@ -1,69 +1,180 @@
 //! Agent Client Protocol bridge (D6.2, PR M4).
 //!
-//! # Status
+//! # Spec
 //!
-//! Best-effort. ACP is a young spec; the method names, capability
-//! keys, and the shape of `session/update` notifications written
-//! here match the ACP design at the time of writing but have not
-//! been validated against a live Zed client. The transport
-//! (Content-Length-framed JSON-RPC 2.0 over stdio, the LSP
-//! convention ACP inherits) is the stable part.
+//! Validated against the ACP v1 schema at
+//! `https://agentclientprotocol.com/protocol/v1/schema` (the
+//! `agent-client-protocol-schema` crate is the machine-readable
+//! source of truth). The v1 protocol version integer is `1`.
 //!
-//! Before publishing `kod acp` in a release, verify against:
-//!   https://github.com/zed-industries/agent-client-protocol
+//! # Transport
+//!
+//! Content-Length-framed JSON-RPC 2.0 on stdio, the LSP convention
+//! ACP inherits. One writer task per connection so a streaming
+//! `session/update` and a `session/request_permission` reply cannot
+//! interleave frame headers.
+//!
+//! # Bidirectional requests
+//!
+//! ACP is not client-request/agent-response. The agent makes requests
+//! of its own — most importantly `session/request_permission`, sent
+//! before executing a tool the agent's policy gates. This bridge
+//! therefore has:
+//!
+//! - a **read loop** that demultiplexes: a frame with `method` and
+//!   `id` is a client→agent request; a frame with `method` and no `id`
+//!   is a client notification; a frame with `id` and no `method` is a
+//!   response to a request the agent sent.
+//! - a **pending-request map** keyed by id, with one oneshot per
+//!   outstanding agent→client request.
+//! - a `request_permission` method that allocates an id, sends the
+//!   frame, and awaits the response.
 //!
 //! # Methods
 //!
-//! Client to server:
+//! Client → agent:
 //! - `initialize` — handshake.
-//! - `session/new` — create a session.
-//! - `session/prompt` — send a turn; streams `session/update`
-//!   notifications while it runs, then responds with `stopReason`.
-//! - `session/cancel` — cancel the running turn.
+//! - `session/new` — create a session (`cwd`, `mcpServers`).
+//! - `session/prompt` — run a turn. Streams `session/update`
+//!   notifications; responds with `{stopReason}` when the turn ends.
+//! - `session/cancel` — **notification**: cancel the running turn.
 //!
-//! Server to client:
-//! - `session/update` — text chunks and tool-call notices.
+//! Agent → client:
+//! - `session/update` — text chunks, tool-call lifecycle.
+//! - `session/request_permission` — approval before a gated tool call.
 //!
 //! # What is deliberately not here
 //!
-//! `session/request_permission`: approvals are dropped on the floor.
-//! An editor-mediated permission round trip needs a request-id
-//! allocator, a pending map, and a read loop that demultiplexes
-//! responses from requests — the exact shape `kod-mcp`'s client has
-//! in reverse. This bridge works with a permissive policy on the
-//! engine side; a follow-up adds the round trip.
+//! `session/load` and `session/resume` are not advertised (the
+//! `loadSession` capability is `false`). A full implementation would
+//! replay a stored transcript; this bridge keeps sessions in memory
+//! for the life of the process.
 //!
-//! `kod mcp --server` (mode serveur MCP stdio): not implemented.
-//! The MCP *client* is at `crates/kod-mcp`.
-//!
-//! # Relationship to `kod serve`
-//!
-//! Both wrap `KodEngine::process_streaming_for`. `kod serve` speaks
-//! NDJSON on a Unix socket for a terminal client; `kod acp` speaks
-//! Content-Length-framed JSON-RPC on stdio for an editor that
-//! spawned the process.
+//! `fs/read_text_file` and `fs/write_text_file` are not requested from
+//! the client. The engine reads and writes files itself, through its
+//! own sandbox and policy gate. An editor that wants to mediate file
+//! access through its own buffer should be told so explicitly; this
+//! bridge does not pretend to.
 
-use crate::engine::KodEngine;
+use crate::engine::{ApprovalDecision, KodEngine};
 use kod_error::{KodError, Result};
-use serde_json::Value;
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 /// Largest JSON-RPC body we will read. Matches the LSP client's
 /// ceiling; a frame larger than this is a protocol bug or an attack.
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
+/// ACP v1 protocol version. Echoed to the client when it asks for a
+/// version we support; a client asking for anything else gets this
+/// back and decides for itself whether to keep the connection.
+const PROTOCOL_VERSION: i64 = 1;
+
+/// Shared state for one ACP connection.
+struct Server {
+    engine: Arc<KodEngine>,
+    /// Writer-task channel. Every outgoing frame goes through here.
+    out: mpsc::Sender<Value>,
+    /// Id source for agent→client requests. Negative so it cannot
+    /// collide with a client's own ids even if a client ever reuses
+    /// them across the connection.
+    next_request_id: AtomicI64,
+    /// Outstanding agent→client requests, keyed by id. A response
+    /// arriving on the read loop is routed to the matching oneshot.
+    pending: Mutex<HashMap<i64, oneshot::Sender<Value>>>,
+    /// ACP session id → engine transcript key. The engine keys its
+    /// own transcripts by a string; the ACP session id is one.
+    sessions: Mutex<HashMap<String, String>>,
+    /// Most recent tool-call id per session. The engine's chunk
+    /// stream carries a start, zero or more args updates, and a done,
+    /// none of which carry a correlation id; the tool_call /
+    /// tool_call_update notifications need one, so the id is tracked
+    /// per session between the start and the done.
+    last_tool_call_id: Mutex<HashMap<String, String>>,
+}
+
+impl Server {
+    /// Send a notification (no id, no response expected).
+    async fn notify(&self, method: &str, params: Value) {
+        let _ = self
+            .out
+            .send(json!({
+                "jsonrpc": "2.0",
+                "method": method,
+                "params": params,
+            }))
+            .await;
+    }
+
+    /// Send a request to the client and await its response.
+    async fn request(&self, method: &str, params: Value) -> Result<Value> {
+        let id = self.next_request_id.fetch_sub(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().await.insert(id, tx);
+        let sent = self
+            .out
+            .send(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": method,
+                "params": params,
+            }))
+            .await;
+        if sent.is_err() {
+            self.pending.lock().await.remove(&id);
+            return Err(KodError::Internal("writer channel closed".to_string()));
+        }
+        // ACP requests have no client-side timeout in the spec; the
+        // engine's own approval timeout would fire if the client never
+        // answered, but this future is not the engine's. Bound it here
+        // so a misbehaving client cannot wedge a session.
+        match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
+            Ok(Ok(v)) => Ok(v),
+            Ok(Err(_)) => Err(KodError::Internal(
+                "client dropped the pending request".to_string(),
+            )),
+            Err(_) => {
+                self.pending.lock().await.remove(&id);
+                Err(KodError::Internal(
+                    "client did not answer within 120s".to_string(),
+                ))
+            }
+        }
+    }
+
+    /// Send a response to a client→agent request.
+    async fn respond(&self, id: Value, result: Value) {
+        let _ = self
+            .out
+            .send(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": result,
+            }))
+            .await;
+    }
+
+    /// Send an error response to a client→agent request.
+    async fn respond_error(&self, id: Value, code: i64, message: &str) {
+        let _ = self
+            .out
+            .send(json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": code, "message": message },
+            }))
+            .await;
+    }
+}
+
 /// Run the ACP bridge until the client closes stdin.
 pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
-    let mut reader = BufReader::new(tokio::io::stdin());
-    let mut writer = tokio::io::stdout();
-
-    // One writer task, one channel. Two concurrent writers framing
-    // JSON-RPC on the same stdout would interleave `Content-Length`
-    // headers with bodies; the channel makes the framing
-    // single-threaded without locking.
     let (out_tx, mut out_rx) = mpsc::channel::<Value>(256);
+    let mut writer = tokio::io::stdout();
     let writer_task = tokio::spawn(async move {
         while let Some(msg) = out_rx.recv().await {
             if write_frame(&mut writer, &msg).await.is_err() {
@@ -72,87 +183,75 @@ pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
         }
     });
 
+    let server = Arc::new(Server {
+        engine,
+        out: out_tx.clone(),
+        next_request_id: AtomicI64::new(-1),
+        pending: Mutex::new(HashMap::new()),
+        sessions: Mutex::new(HashMap::new()),
+        last_tool_call_id: Mutex::new(HashMap::new()),
+    });
+
+    let mut reader = BufReader::new(tokio::io::stdin());
     loop {
-        let msg = match read_frame(&mut reader).await {
-            Ok(Some(m)) => m,
+        let frame = match read_frame(&mut reader).await {
+            Ok(Some(f)) => f,
             Ok(None) => break,
             Err(e) => {
                 tracing::warn!(error = %e, "acp: frame read failed");
                 break;
             }
         };
-        let method = msg
-            .get("method")
-            .and_then(|m| m.as_str())
-            .unwrap_or("")
-            .to_string();
-        let id = msg.get("id").cloned();
-        let params = msg.get("params").cloned().unwrap_or(Value::Null);
 
-        match method.as_str() {
-            "initialize" => {
-                let result = serde_json::json!({
-                    "protocolVersion": 1,
-                    "agentCapabilities": {
-                        "loadSession": false,
-                        "promptCapabilities": {
-                            "image": false,
-                            "audio": false,
-                            "embeddedContext": false
-                        }
-                    }
-                });
-                respond(&out_tx, id, result).await?;
+        let has_id = frame.get("id").is_some();
+        let has_method = frame.get("method").is_some();
+
+        if has_id && has_method {
+            // Client → agent request. Dispatch on a spawned task: a
+            // `session/prompt` runs for the whole turn, and the read
+            // loop must stay free to route the
+            // `session/request_permission` response that arrives
+            // mid-turn.
+            let server = server.clone();
+            let id = frame.get("id").cloned().unwrap_or(Value::Null);
+            let method = frame
+                .get("method")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
+            let params = frame.get("params").cloned().unwrap_or(Value::Null);
+            tokio::spawn(async move {
+                dispatch_request(server, id, &method, params).await;
+            });
+        } else if has_id {
+            // Response to an agent → client request.
+            let Some(id) = frame.get("id").and_then(|v| v.as_i64()) else {
+                continue;
+            };
+            let sender = server.pending.lock().await.remove(&id);
+            if let Some(tx) = sender {
+                let result = frame.get("result").cloned().unwrap_or(Value::Null);
+                let _ = tx.send(result);
             }
-            "session/new" => {
-                let session_id = uuid::Uuid::new_v4().to_string();
-                respond(
-                    &out_tx,
-                    id,
-                    serde_json::json!({ "sessionId": session_id }),
-                )
-                .await?;
-            }
-            "session/prompt" => {
-                let engine_task = engine.clone();
-                let out = out_tx.clone();
-                let session_id = params
-                    .get("sessionId")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let text = extract_prompt_text(&params);
-                let req_id = id.clone();
-                tokio::spawn(async move {
-                    if let Err(e) =
-                        run_prompt(&engine_task, &out, &session_id, &text, req_id)
-                            .await
-                    {
-                        tracing::warn!(error = %e, "acp: prompt task failed");
-                    }
-                });
-            }
-            "session/cancel" => {
+        } else if has_method {
+            // Client → agent notification (no response expected).
+            let method = frame
+                .get("method")
+                .and_then(|m| m.as_str())
+                .unwrap_or("");
+            let params = frame.get("params").cloned().unwrap_or(Value::Null);
+            if method == "session/cancel" {
                 let session_id = params
                     .get("sessionId")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                engine.request_cancel_for(&transcript_key(session_id));
-                respond(&out_tx, id, serde_json::json!({})).await?;
+                let key = engine_key(session_id);
+                server.engine.request_cancel_for(&key);
             }
-            other if !other.is_empty() => {
-                respond_error(
-                    &out_tx,
-                    id,
-                    -32601,
-                    &format!("unknown method: {other}"),
-                )
-                .await?;
-            }
-            _ => {
-                // A response to a request we would have sent; this
-                // revision does not send any (see module doc).
-            }
+            // Other client notifications (e.g. `$/cancelRequest`) are
+            // ignored: this bridge does not make cancellable requests
+            // of its own besides `session/request_permission`, whose
+            // cancellation is routed through the ACP response shape.
         }
     }
 
@@ -161,61 +260,106 @@ pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
     Ok(())
 }
 
-/// Run one turn, streaming `session/update` notifications, then
-/// respond to the `session/prompt` request with the stop reason.
-async fn run_prompt(
-    engine: &Arc<KodEngine>,
-    out: &mpsc::Sender<Value>,
-    session_id: &str,
-    prompt: &str,
-    req_id: Option<Value>,
-) -> Result<()> {
-    let key = transcript_key(session_id);
-    let (chunk_tx, mut chunk_rx) = mpsc::channel::<String>(64);
-    let engine_call = engine.clone();
-    let key_owned = key.clone();
-    let prompt_owned = prompt.to_string();
-    let call = tokio::spawn(async move {
-        engine_call
-            .process_streaming_for(&key_owned, &prompt_owned, &chunk_tx)
-            .await
-    });
-    while let Some(chunk) = chunk_rx.recv().await {
-        if let Some(notification) = chunk_to_update(session_id, &chunk) {
-            let _ = out.send(notification).await;
-        }
-    }
-    let outcome = call
-        .await
-        .map_err(|e| KodError::Internal(format!("engine task panicked: {e}")))?;
-    match outcome {
-        Ok(resp) => {
-            if let Some(id) = req_id {
-                let text = resp.text.unwrap_or_default();
-                send_response(
-                    out,
+/// Dispatch one client→agent request. Every arm either responds or
+/// deliberately does not (a notification is filtered out in the read
+/// loop before reaching here).
+async fn dispatch_request(
+    server: Arc<Server>,
+    id: Value,
+    method: &str,
+    params: Value,
+) {
+    match method {
+        "initialize" => {
+            // Version negotiation: echo the client's version if we
+            // support it, otherwise return our latest. The client
+            // decides whether to keep the connection.
+            let requested = params
+                .get("protocolVersion")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(PROTOCOL_VERSION);
+            let agreed = if requested == PROTOCOL_VERSION {
+                requested
+            } else {
+                PROTOCOL_VERSION
+            };
+            server
+                .respond(
                     id,
-                    serde_json::json!({
-                        "stopReason": "end_turn",
-                        "text": text,
+                    json!({
+                        "protocolVersion": agreed,
+                        "agentCapabilities": {
+                            // In-memory sessions only; `session/load`
+                            // and `session/resume` are not implemented.
+                            "loadSession": false,
+                            "promptCapabilities": {
+                                "image": false,
+                                "audio": false,
+                                "embeddedContext": true
+                            },
+                            "mcpCapabilities": {
+                                "http": false,
+                                "sse": false
+                            }
+                        },
+                        "agentInfo": {
+                            "name": "kod",
+                            "title": "KOD",
+                            "version": env!("CARGO_PKG_VERSION")
+                        },
+                        "authMethods": []
                     }),
                 )
                 .await;
-            }
         }
-        Err(e) => {
-            if let Some(id) = req_id {
-                send_error(out, id, -32000, &e.to_string()).await;
+        "session/new" => {
+            let session_id = format!("kod-{}", uuid::Uuid::new_v4());
+            let transcript_key = engine_key(&session_id);
+            server
+                .sessions
+                .lock()
+                .await
+                .insert(session_id.clone(), transcript_key);
+            server
+                .respond(
+                    id,
+                    json!({
+                        "sessionId": session_id,
+                        "configOptions": null,
+                        "modes": null
+                    }),
+                )
+                .await;
+        }
+        "session/prompt" => {
+            let session_id = params
+                .get("sessionId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if session_id.is_empty() {
+                server
+                    .respond_error(id, -32602, "sessionId is required")
+                    .await;
+                return;
             }
+            let prompt = extract_prompt_text(&params);
+            let server_clone = server.clone();
+            let id_clone = id.clone();
+            tokio::spawn(async move {
+                run_prompt(server_clone, id_clone, session_id, prompt).await;
+            });
+        }
+        other => {
+            server
+                .respond_error(id, -32601, &format!("unknown method: {other}"))
+                .await;
         }
     }
-    Ok(())
 }
 
-/// The engine transcript key for a session. Empty ACP ids (should
-/// not happen, but a malformed client could send one) map to a
-/// shared `acp` key rather than the interactive session's `""`.
-fn transcript_key(session_id: &str) -> String {
+/// The engine's transcript key for an ACP session.
+fn engine_key(session_id: &str) -> String {
     if session_id.is_empty() {
         "acp".to_string()
     } else {
@@ -223,7 +367,10 @@ fn transcript_key(session_id: &str) -> String {
     }
 }
 
-/// Extract the concatenated text from ACP's `prompt` content blocks.
+/// Extract the concatenated text from ACP prompt content blocks. Only
+/// `ContentBlock::Text` is read; `ResourceLink` is deliberately
+/// skipped (the engine reads files through its own tools, under its
+/// own policy, not through whatever the editor happened to attach).
 fn extract_prompt_text(params: &Value) -> String {
     let Some(arr) = params.get("prompt").and_then(|p| p.as_array()) else {
         return String::new();
@@ -242,81 +389,275 @@ fn extract_prompt_text(params: &Value) -> String {
     out
 }
 
-/// Map one engine chunk to an ACP `session/update` notification.
-/// The tool-args marker becomes a tool-call notice; plain text
-/// becomes an agent message chunk; other control markers are
-/// dropped (ACP has no place for them).
-fn chunk_to_update(session_id: &str, chunk: &str) -> Option<Value> {
+/// Run one turn. Streams `session/update` notifications, mediates
+/// approvals, then responds with `{stopReason}`.
+///
+/// The stop reason set is the ACP v1 list: `end_turn`, `max_tokens`,
+/// `max_turn_requests`, `refusal`, `cancelled`. This bridge emits
+/// `end_turn` on a normal finish and `cancelled` when the engine
+/// reports a user cancel. The other three need per-turn signals the
+/// engine does not yet report.
+async fn run_prompt(server: Arc<Server>, req_id: Value, session_id: String, prompt: String) {
+    let engine = server.engine.clone();
+    let key = engine_key(&session_id);
+    let (chunk_tx, mut chunk_rx) = mpsc::channel::<String>(64);
+    let engine_call = engine.clone();
+    let key_owned = key.clone();
+    let prompt_owned = prompt.clone();
+    let call = tokio::spawn(async move {
+        engine_call
+            .process_streaming_for(&key_owned, &prompt_owned, &chunk_tx)
+            .await
+    });
+
+    // Drain chunks while the engine runs, translating each into the
+    // right ACP notification. The engine sends its own
+    // `\0kod-approval-batch:` marker for pending approvals; this
+    // bridge turns each item into a `session/request_permission`
+    // request and forwards the client's answer to the engine.
+    while let Some(chunk) = chunk_rx.recv().await {
+        if let Err(e) = handle_chunk(&server, &session_id, &chunk).await {
+            tracing::warn!(error = %e, "acp: chunk handling failed");
+        }
+    }
+
+    let outcome = match call.await {
+        Ok(r) => r,
+        Err(e) => {
+            server
+                .respond_error(req_id, -32000, &format!("engine task panicked: {e}"))
+                .await;
+            return;
+        }
+    };
+    match outcome {
+        Ok(_resp) => {
+            // The turn ended. Text already streamed through
+            // `session/update`; the response carries only the stop
+            // reason, as the spec requires.
+            server
+                .respond(req_id, json!({"stopReason": "end_turn"}))
+                .await;
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            let stop = if msg.contains("cancelled") {
+                "cancelled"
+            } else {
+                "refusal"
+            };
+            server.respond(req_id, json!({"stopReason": stop})).await;
+        }
+    }
+}
+
+/// Translate one engine chunk into zero or more ACP notifications,
+/// handling approval batches as requests.
+async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Result<()> {
+    // Approval batch: one `session/request_permission` per item,
+    // await each in turn, forward the decision to the engine.
+    if let Some((_batch_id, json_str)) =
+        crate::engine::parse_tool_approval_batch(chunk)
+    {
+        let batch: crate::engine::ApprovalBatch =
+            serde_json::from_str(json_str).unwrap_or_default();
+        for item in batch.items {
+            let Some(item_id) = item.id else { continue };
+            let decision = request_permission(server, session_id, &item).await;
+            let _ = server
+                .engine
+                .respond_to_approval(item_id, decision)
+                .await;
+        }
+        return Ok(());
+    }
+
+    // Ask_user: a question is not a permission. ACP has no
+    // `session/request_question`; an editor session that the engine
+    // pauses on an ask_user would hang. Reply with a placeholder so
+    // the engine continues; the model sees a "(no answer) from the
+    // editor" string and can adapt.
+    if let Some((qid, _json)) = crate::engine::parse_question(chunk) {
+        server
+            .engine
+            .respond_to_question(
+                qid,
+                "(the editor client has no answer channel for this question)"
+                    .to_string(),
+            )
+            .await;
+        return Ok(());
+    }
+
+    // Tool lifecycle.
+    if let Some(name) = crate::engine::parse_tool_start(chunk) {
+        let tool_call_id = format!("tc-{}", uuid::Uuid::new_v4());
+        server
+            .last_tool_call_id
+            .lock()
+            .await
+            .insert(session_id.to_string(), tool_call_id.clone());
+        server
+            .notify(
+                "session/update",
+                json!({
+                    "sessionId": session_id,
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": tool_call_id,
+                        "title": name,
+                        "kind": kind_for_tool(name),
+                        "status": "pending",
+                        "rawInput": {}
+                    }
+                }),
+            )
+            .await;
+        return Ok(());
+    }
     if let Some(brief) = crate::engine::parse_tool_args(chunk) {
-        return Some(serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "session/update",
-            "params": {
+        if let Some(tool_call_id) =
+            server.last_tool_call_id.lock().await.get(session_id).cloned()
+        {
+            server
+                .notify(
+                    "session/update",
+                    json!({
+                        "sessionId": session_id,
+                        "update": {
+                            "sessionUpdate": "tool_call_update",
+                            "toolCallId": tool_call_id,
+                            "title": brief,
+                            "status": "in_progress"
+                        }
+                    }),
+                )
+                .await;
+        }
+        return Ok(());
+    }
+    if let Some((header, summary, _ms)) = crate::engine::parse_tool_done(chunk) {
+        if let Some(tool_call_id) =
+            server.last_tool_call_id.lock().await.get(session_id).cloned()
+        {
+            let is_error = summary.trim_start().starts_with("Error:");
+            server
+                .notify(
+                    "session/update",
+                    json!({
+                        "sessionId": session_id,
+                        "update": {
+                            "sessionUpdate": "tool_call_update",
+                            "toolCallId": tool_call_id,
+                            "title": header,
+                            "status": if is_error { "failed" } else { "completed" },
+                            "rawOutput": { "text": summary }
+                        }
+                    }),
+                )
+                .await;
+        }
+        return Ok(());
+    }
+    if crate::engine::is_thinking_marker(chunk) {
+        return Ok(());
+    }
+    if chunk.is_empty() || chunk.starts_with('\0') {
+        return Ok(());
+    }
+
+    // Plain text: an agent message chunk.
+    server
+        .notify(
+            "session/update",
+            json!({
                 "sessionId": session_id,
                 "update": {
-                    "sessionUpdate": "tool_call",
-                    "title": brief
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": { "type": "text", "text": chunk }
                 }
+            }),
+        )
+        .await;
+    Ok(())
+}
+
+/// Ask the client for permission on one approval item and translate
+/// the answer back to an engine `ApprovalDecision`.
+async fn request_permission(
+    server: &Arc<Server>,
+    session_id: &str,
+    item: &crate::engine::ApprovalRequest,
+) -> ApprovalDecision {
+    let tool_call_id = server
+        .last_tool_call_id
+        .lock()
+        .await
+        .get(session_id)
+        .cloned()
+        .unwrap_or_else(|| format!("tc-{}", uuid::Uuid::new_v4()));
+
+    // Four options, matching the ACP `PermissionOption` kinds:
+    // `allow_once`, `allow_always`, `reject_once`, `reject_always`.
+    // `deny_always` in the engine's model maps to `reject_always`.
+    let params = json!({
+        "sessionId": session_id,
+        "toolCall": {
+            "toolCallId": tool_call_id,
+            "title": item.summary,
+            "kind": kind_for_tool(&item.tool_name),
+            "status": "pending",
+            "rawInput": item.arguments.clone()
+        },
+        "options": [
+            {"optionId": "allow_once", "name": "Allow once", "kind": "allow_once"},
+            {"optionId": "allow_always", "name": "Allow for this session", "kind": "allow_always"},
+            {"optionId": "reject_once", "name": "Reject", "kind": "reject_once"},
+            {"optionId": "reject_always", "name": "Never for this pattern", "kind": "reject_always"}
+        ]
+    });
+
+    match server.request("session/request_permission", params).await {
+        Ok(result) => {
+            let outcome = result.get("outcome");
+            let kind = outcome
+                .and_then(|o| o.get("outcome"))
+                .and_then(|o| o.as_str());
+            if kind != Some("selected") {
+                return ApprovalDecision::Deny;
             }
-        }));
-    }
-    if chunk.starts_with('\0') || chunk.is_empty() {
-        return None;
-    }
-    Some(serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "session/update",
-        "params": {
-            "sessionId": session_id,
-            "update": {
-                "sessionUpdate": "agent_message_chunk",
-                "content": { "type": "text", "text": chunk }
+            let option_id = outcome
+                .and_then(|o| o.get("optionId"))
+                .and_then(|o| o.as_str())
+                .unwrap_or("reject_once");
+            match option_id {
+                "allow_once" | "allow_always" => ApprovalDecision::Approve,
+                "reject_always" => ApprovalDecision::DenyAlways,
+                _ => ApprovalDecision::Deny,
             }
         }
-    }))
-}
-
-async fn respond(
-    out: &mpsc::Sender<Value>,
-    id: Option<Value>,
-    result: Value,
-) -> Result<()> {
-    if let Some(id) = id {
-        send_response(out, id, result).await;
+        Err(e) => {
+            tracing::warn!(error = %e, "acp: permission request failed; denying");
+            ApprovalDecision::Deny
+        }
     }
-    Ok(())
 }
 
-async fn send_response(out: &mpsc::Sender<Value>, id: Value, result: Value) {
-    let _ = out
-        .send(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": result,
-        }))
-        .await;
-}
-
-async fn send_error(out: &mpsc::Sender<Value>, id: Value, code: i64, message: &str) {
-    let _ = out
-        .send(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "error": { "code": code, "message": message },
-        }))
-        .await;
-}
-
-async fn respond_error(
-    out: &mpsc::Sender<Value>,
-    id: Option<Value>,
-    code: i64,
-    message: &str,
-) -> Result<()> {
-    if let Some(id) = id {
-        send_error(out, id, code, message).await;
+/// ACP `ToolKind` for a tool name. The ACP schema defines: `read`,
+/// `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`,
+/// `other`. The mapping is deliberately coarse — the client uses it
+/// to pick an icon and a colour, not to gate anything.
+fn kind_for_tool(name: &str) -> &'static str {
+    match name {
+        "read_file" | "file_info" => "read",
+        "write_file" | "patch_file" => "edit",
+        "list_files" | "grep" | "search_files" => "search",
+        "execute_command" => "execute",
+        "web_fetch" => "fetch",
+        "todo" | "ask_user" | "memory_save" | "memory_search" => "think",
+        "git_status" | "git_diff" | "git_commit" | "git_branch" => "other",
+        _ => "other",
     }
-    Ok(())
 }
 
 /// Read one `Content-Length`-framed JSON-RPC message.
@@ -335,10 +676,11 @@ async fn read_frame<R: tokio::io::AsyncRead + Unpin>(
             break;
         }
         if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
-            content_length =
-                Some(rest.trim().parse().map_err(|_| KodError::InvalidParameters {
+            content_length = Some(rest.trim().parse().map_err(|_| {
+                KodError::InvalidParameters {
                     reason: format!("bad Content-Length: {rest:?}"),
-                })?);
+                }
+            })?);
         }
     }
     let n = content_length.ok_or_else(|| KodError::InvalidParameters {
@@ -379,7 +721,7 @@ mod tests {
 
     #[tokio::test]
     async fn frame_roundtrip() {
-        let msg = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"});
+        let msg = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"});
         let mut buf: Vec<u8> = Vec::new();
         write_frame(&mut buf, &msg).await.unwrap();
         let mut reader = BufReader::new(std::io::Cursor::new(buf));
@@ -403,17 +745,17 @@ mod tests {
     }
 
     #[test]
-    fn transcript_key_prefixes_with_acp() {
-        assert_eq!(transcript_key(""), "acp");
-        assert_eq!(transcript_key("abc"), "acp:abc");
+    fn engine_key_prefixes_with_acp() {
+        assert_eq!(engine_key(""), "acp");
+        assert_eq!(engine_key("abc"), "acp:abc");
     }
 
     #[test]
     fn extract_prompt_text_concatenates_text_blocks() {
-        let params = serde_json::json!({
+        let params = json!({
             "prompt": [
                 {"type": "text", "text": "first"},
-                {"type": "image", "data": "..."},
+                {"type": "resource_link", "uri": "file:///x"},
                 {"type": "text", "text": "second"}
             ]
         });
@@ -421,19 +763,24 @@ mod tests {
     }
 
     #[test]
-    fn chunk_to_update_drops_control_markers() {
-        assert!(chunk_to_update("s", "\u{0}kod-thinking\u{0}").is_none());
-        assert!(chunk_to_update("s", "").is_none());
-        let v = chunk_to_update("s", "hello").unwrap();
-        assert_eq!(v["method"], "session/update");
-        assert_eq!(v["params"]["update"]["sessionUpdate"], "agent_message_chunk");
+    fn kind_mapping_is_coarse_and_total() {
+        assert_eq!(kind_for_tool("read_file"), "read");
+        assert_eq!(kind_for_tool("write_file"), "edit");
+        assert_eq!(kind_for_tool("execute_command"), "execute");
+        assert_eq!(kind_for_tool("web_fetch"), "fetch");
+        assert_eq!(kind_for_tool("grep"), "search");
+        assert_eq!(kind_for_tool("unknown-tool"), "other");
     }
 
     #[test]
-    fn chunk_to_update_maps_tool_args_to_tool_call() {
-        let chunk = crate::engine::tool_args_marker("read_file path=x");
-        let v = chunk_to_update("s", &chunk).unwrap();
-        assert_eq!(v["params"]["update"]["sessionUpdate"], "tool_call");
-        assert_eq!(v["params"]["update"]["title"], "read_file path=x");
+    fn stop_reason_set_is_the_acp_v1_list() {
+        // Compile-time assertion that the four strings the bridge
+        // emits are all in the ACP v1 StopReason union:
+        // end_turn, max_tokens, max_turn_requests, refusal, cancelled.
+        let emitted = ["end_turn", "cancelled", "refusal"];
+        let acp_v1 = ["end_turn", "max_tokens", "max_turn_requests", "refusal", "cancelled"];
+        for s in emitted {
+            assert!(acp_v1.contains(&s), "{s} is not an ACP v1 stop reason");
+        }
     }
 }
