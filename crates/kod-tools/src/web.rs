@@ -658,3 +658,217 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod coverage_ssrf_filter {
+    //! Additional cases for the SSRF filter. A regression here turns
+    //! an obvious attack surface into a live one — the model can be
+    //! prompted into fetching metadata endpoints, backend admin
+    //! ports, or the host's own loopback — without any visible
+    //! failure elsewhere in the suite. The existing tests cover the
+    //! obvious ranges; the corners are what this module pins.
+    use super::*;
+    use std::net::IpAddr;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap_or_else(|_| panic!("bad test IP: {s}"))
+    }
+
+    #[test]
+    fn ipv4_mapped_ipv6_is_unwrapped_and_rechecked() {
+        // The classic SSRF bypass: reject `127.0.0.1` but forget
+        // that `::ffff:127.0.0.1` is the same address in IPv6
+        // spelling. The filter must unwrap the mapped form and
+        // re-check it against the IPv4 rules.
+        assert!(block_private_ip(ip("::ffff:127.0.0.1")).is_some());
+        assert!(block_private_ip(ip("::ffff:10.0.0.1")).is_some());
+        assert!(block_private_ip(ip("::ffff:169.254.169.254")).is_some());
+        // And the mapped form of a public address is still allowed.
+        assert!(block_private_ip(ip("::ffff:8.8.8.8")).is_none());
+    }
+
+    #[test]
+    fn cgnat_range_boundaries_are_both_blocked() {
+        // 100.64.0.0/10 is CGNAT — space that a home router may
+        // route into a private segment. Both boundaries are inside
+        // the range and must be rejected; the neighbours just
+        // outside must not.
+        assert!(block_private_ip(ip("100.64.0.0")).is_some());
+        assert!(block_private_ip(ip("100.127.255.255")).is_some());
+        assert!(block_private_ip(ip("100.63.255.255")).is_none());
+        assert!(block_private_ip(ip("100.128.0.0")).is_none());
+    }
+
+    #[test]
+    fn zero_network_is_rejected() {
+        // 0.0.0.0/8 is "this network". `is_unspecified` only matches
+        // the exact 0.0.0.0; the explicit octet check catches the
+        // rest. A regression that dropped the explicit check would
+        // accept 0.1.2.3.
+        assert!(block_private_ip(ip("0.0.0.0")).is_some());
+        assert!(block_private_ip(ip("0.1.2.3")).is_some());
+        assert!(block_private_ip(ip("0.255.255.255")).is_some());
+    }
+
+    #[test]
+    fn broadcast_and_multicast_are_rejected() {
+        assert!(block_private_ip(ip("255.255.255.255")).is_some());
+        assert!(block_private_ip(ip("224.0.0.1")).is_some());
+        assert!(block_private_ip(ip("239.255.255.255")).is_some());
+    }
+
+    #[test]
+    fn ipv6_unique_local_and_link_local_are_rejected() {
+        // fc00::/7 (unique local) and fe80::/10 (link local) are the
+        // IPv6 equivalents of RFC1918 and APIPA.
+        assert!(block_private_ip(ip("fc00::1")).is_some());
+        assert!(block_private_ip(ip("fd12:3456:789a::1")).is_some());
+        assert!(block_private_ip(ip("fe80::1")).is_some());
+        assert!(block_private_ip(ip("febf::1")).is_some());
+        // Just outside the unique-local range.
+        assert!(block_private_ip(ip("fe00::1")).is_none());
+    }
+
+    #[test]
+    fn public_ipv6_is_allowed() {
+        // Cloudflare DNS, a well-known public address.
+        assert!(block_private_ip(ip("2606:4700:4700::1111")).is_none());
+        // Google DNS.
+        assert!(block_private_ip(ip("2001:4860:4860::8888")).is_none());
+    }
+
+    #[test]
+    fn localhost_variants_are_rejected_case_insensitively() {
+        assert!(block_private_host("localhost").is_some());
+        assert!(block_private_host("LOCALHOST").is_some());
+        assert!(block_private_host("LocalHost").is_some());
+        assert!(block_private_host("api.localhost").is_some());
+        assert!(block_private_host("ip6-localhost").is_some());
+        assert!(block_private_host("ip6-loopback").is_some());
+    }
+
+    #[test]
+    fn mdns_local_suffix_is_rejected() {
+        assert!(block_private_host("printer.local").is_some());
+        assert!(block_private_host("my-host.local").is_some());
+        assert!(block_private_host("PRINTER.LOCAL").is_some());
+        // But `.localhost` and `.local` are not the same — a domain
+        // ending in `local` as a substring (e.g. `local.example`)
+        // must not be caught.
+        assert!(block_private_host("local.example").is_none());
+    }
+
+    #[test]
+    fn google_metadata_hostname_is_rejected() {
+        // The GCP metadata service is reachable at
+        // `metadata.google.internal`. The address is also in the
+        // link-local range, but the hostname check catches it before
+        // any DNS resolution.
+        assert!(block_private_host("metadata.google.internal").is_some());
+    }
+
+    #[test]
+    fn public_domains_are_allowed() {
+        assert!(block_private_host("docs.rs").is_none());
+        assert!(block_private_host("api.github.com").is_none());
+        assert!(block_private_host("example.com").is_none());
+        // A subdomain whose parent happens to be one of the blocked
+        // names is not blocked — only exact `localhost` and the
+        // `.localhost`/`.local` suffixes.
+        assert!(block_private_host("notlocalhost.example.com").is_none());
+    }
+}
+
+#[cfg(test)]
+mod coverage_html_conversion {
+    //! The HTML→text converter is what turns a documentation page
+    //! into something the model can read. A regression that left
+    //! tags in the output would waste tokens on markup; one that
+    //! dropped entities would corrupt quotes and code samples.
+    use super::*;
+
+    #[test]
+    fn decodes_the_common_entities() {
+        // The five the converter handles: `&amp;`, `&lt;`, `&gt;`,
+        // `&quot;`, `&#39;`. Each appears in real documentation.
+        let html = "a &amp; b &lt; c &gt; d &quot;e&quot; &#39;f&#39;";
+        let text = html_to_text(html);
+        assert!(text.contains("a & b < c > d \"e\" 'f'"), "got: {text}");
+    }
+
+    #[test]
+    fn decodes_nbsp_mdash_and_hellip() {
+        let html = "a&nbsp;b&mdash;c&hellip;";
+        let text = html_to_text(html);
+        assert!(text.contains("a b—c…"), "got: {text}");
+    }
+
+    #[test]
+    fn amp_is_decoded_after_other_entities() {
+        // `&amp;lt;` is the escaped form of the literal string
+        // `&lt;`. Decoding `&amp;` first would produce `<`, which
+        // is wrong. The order in the converter is deliberate.
+        let text = html_to_text("&amp;lt;");
+        assert_eq!(text, "&lt;");
+    }
+
+    #[test]
+    fn svg_and_template_content_is_dropped() {
+        // Both can be huge and are never prose.
+        let html = "<svg><path d=\"M0 0\"/></svg>between<template>tpl</template>";
+        let text = html_to_text(html);
+        assert!(!text.contains("M0 0"), "svg leaked: {text}");
+        assert!(!text.contains("tpl"), "template leaked: {text}");
+        assert!(text.contains("between"), "between lost: {text}");
+    }
+
+    #[test]
+    fn noscript_content_is_dropped() {
+        let html = "before<noscript>enable js</noscript>after";
+        let text = html_to_text(html);
+        assert!(!text.contains("enable js"), "noscript leaked: {text}");
+        assert!(text.contains("before"));
+        assert!(text.contains("after"));
+    }
+
+    #[test]
+    fn unterminated_script_element_drops_the_tail() {
+        // A malformed server response can send `<script>` without a
+        // closing tag. The converter treats an unmatched open tag
+        // as "swallow everything to the end", which is the safest
+        // degradation.
+        let html = "visible<script>var x = 1; // never closes";
+        let text = html_to_text(html);
+        assert!(text.contains("visible"));
+        assert!(!text.contains("var x"), "script body leaked: {text}");
+    }
+
+    #[test]
+    fn unicode_inside_tags_is_preserved() {
+        let html = "<p>café — 日本語</p>";
+        let text = html_to_text(html);
+        assert!(text.contains("café"));
+        assert!(text.contains("日本語"));
+    }
+
+    #[test]
+    fn consecutive_tags_do_not_produce_multiple_spaces() {
+        // `<b></b><i></i>text` must not produce "  text" (leading
+        // spaces) or "  " between two text runs. The tag-boundary
+        // space rule is deliberately "one, and only when the
+        // previous char is not already whitespace".
+        let text = html_to_text("<b></b><i></i>text");
+        assert!(text.starts_with("text"), "leading space: {text:?}");
+    }
+
+    #[test]
+    fn attributes_with_angle_brackets_are_handled() {
+        // A `<` inside an attribute value is legal-ish HTML and
+        // common in templating. The converter's tag skipper
+        // terminates at the first `>`, which may cut the tag
+        // short — the observed output is documented here.
+        let html = "<a title=\"a > b\">link</a>";
+        let text = html_to_text(html);
+        assert!(text.contains("link"));
+    }
+}
