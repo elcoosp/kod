@@ -10,7 +10,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-mod common;
+#[path = "common/install_test_provider.rs"]
+mod install_test_provider_mod;
+use install_test_provider_mod::install_test_provider;
 
 /// Scripted provider: first round requests a real `list_files` call,
 /// second round answers in text.
@@ -46,7 +48,8 @@ impl LlmProvider for ScriptedProvider {
         *rounds += 1;
         if *rounds == 1 {
             Ok(GenerationResponse::ToolCalls {
-                calls: vec![ToolCall { id: None,
+                calls: vec![ToolCall {
+                    id: None,
                     tool_name: "list_files".to_string(),
                     arguments: serde_json::json!({"path": "."}),
                 }],
@@ -75,16 +78,21 @@ async fn test_engine_tool_loop_lists_working_dir() {
     std::fs::write(temp_dir.path().join("marker.txt"), "x").unwrap();
 
     let config = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
     };
     let engine = KodEngine::new(config, temp_dir.path().join("test.redb")).unwrap();
     engine.start().await.unwrap();
-    common::install_test_provider(&engine, Arc::new(ScriptedProvider {
+    install_test_provider(
+        &engine,
+        Arc::new(ScriptedProvider {
             rounds: Mutex::new(0),
-        })).await;
+        }),
+    )
+    .await;
 
     let response = engine.process("what is here?").await.unwrap();
 
@@ -108,16 +116,21 @@ async fn test_process_streaming_delivers_chunks_and_tool_marker() {
     std::fs::write(temp_dir.path().join("marker.txt"), "x").unwrap();
 
     let config = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
     };
     let engine = KodEngine::new(config, temp_dir.path().join("stream.redb")).unwrap();
     engine.start().await.unwrap();
-    common::install_test_provider(&engine, Arc::new(ScriptedProvider {
+    install_test_provider(
+        &engine,
+        Arc::new(ScriptedProvider {
             rounds: Mutex::new(0),
-        })).await;
+        }),
+    )
+    .await;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
     let response = engine
@@ -216,7 +229,8 @@ impl LlmProvider for CapturingProvider {
         *rounds += 1;
         if *rounds == 1 {
             Ok(GenerationResponse::ToolCalls {
-                calls: vec![ToolCall { id: None,
+                calls: vec![ToolCall {
+                    id: None,
                     tool_name: "list_files".to_string(),
                     arguments: serde_json::json!({"path": "."}),
                 }],
@@ -243,7 +257,8 @@ impl LlmProvider for CapturingProvider {
 async fn test_steer_note_reaches_next_round() {
     let temp_dir = TempDir::new().unwrap();
     let config = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
@@ -290,16 +305,21 @@ async fn test_steer_note_reaches_next_round() {
 async fn test_cancel_stops_process() {
     let temp_dir = TempDir::new().unwrap();
     let config = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
     };
     let engine = KodEngine::new(config, temp_dir.path().join("cancel.redb")).unwrap();
     engine.start().await.unwrap();
-    common::install_test_provider(&engine, Arc::new(ScriptedProvider {
+    install_test_provider(
+        &engine,
+        Arc::new(ScriptedProvider {
             rounds: Mutex::new(0),
-        })).await;
+        }),
+    )
+    .await;
 
     assert!(!engine.is_cancelled());
     engine.request_cancel();
@@ -346,7 +366,8 @@ impl LlmProvider for GoalProvider {
         *rounds += 1;
         if *rounds == 1 {
             Ok(GenerationResponse::ToolCalls {
-                calls: vec![ToolCall { id: None,
+                calls: vec![ToolCall {
+                    id: None,
                     tool_name: "list_files".to_string(),
                     arguments: serde_json::json!({"path": "."}),
                 }],
@@ -375,16 +396,21 @@ async fn test_goal_loop_stops_at_goal_met() {
 
     let temp_dir = TempDir::new().unwrap();
     let config = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
     };
     let engine = KodEngine::new(config, temp_dir.path().join("goal.redb")).unwrap();
     engine.start().await.unwrap();
-    common::install_test_provider(&engine, Arc::new(GoalProvider {
+    install_test_provider(
+        &engine,
+        Arc::new(GoalProvider {
             rounds: Mutex::new(0),
-        })).await;
+        }),
+    )
+    .await;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
     let response = engine
@@ -425,7 +451,8 @@ async fn test_skill_details_lists_descriptions() {
     .unwrap();
 
     let config = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
@@ -449,7 +476,8 @@ async fn test_second_turn_sees_first_turn_history() {
     // after a compact). The second prompt must contain turn one's text.
     let temp_dir = TempDir::new().unwrap();
     let config = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         context_window: 8192,
         working_dir: temp_dir.path().to_path_buf(),
         ..Default::default()
