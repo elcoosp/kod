@@ -33,16 +33,18 @@ impl QuestionWidget {
             Style::default(),
         )])];
         if let Some(hint) = &q.placeholder {
-            lines.push(Line::from(vec![Span::styled(
-                format!("hint: {hint}"),
-                dim,
-            )]));
+            lines.push(Line::from(vec![Span::styled(format!("hint: {hint}"), dim)]));
         }
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
             Span::styled("> ", Style::default().fg(theme.accent)),
             Span::styled(app.question_input().to_string(), Style::default()),
-            Span::styled("▌", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "▌",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]));
         lines.push(Line::from(""));
         lines.push(Line::from(vec![Span::styled(
