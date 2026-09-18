@@ -80,6 +80,143 @@ pub fn render(markdown: &str, width: usize, theme: &Theme) -> Vec<Line<'static>>
 }
 
 // ---------------------------------------------------------------------------
+// Render cache
+// ---------------------------------------------------------------------------
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+/// A bounded, keyed cache for `render`.
+///
+/// The chat widget re-renders every visible message every frame. Without
+/// a cache that means re-parsing the markdown and allocating fresh
+/// `Line` values on every keystroke — a cost that grows with the length
+/// of the transcript, which is exactly the kind of overhead that turns
+/// an otherwise interactive TUI into a laggy one on a long session.
+///
+/// The cache key includes the theme name so a theme switch invalidates
+/// every entry at once (a stale palette is worse than a re-render). The
+/// width is included so a chat with a sidebar (narrower assistant
+/// column) and a chat without one can share the cache.
+///
+/// Bounded by insertion order: the oldest entry beyond `capacity` is
+/// dropped on insert. A true LRU is overkill here — the working set is
+/// "what is on screen", which is naturally small and shifts with the
+/// scroll position, so FIFO eviction is effectively LRU for this
+/// access pattern.
+pub struct RenderCache {
+    entries: std::sync::Mutex<HashMap<CacheKey, Arc<Vec<Line<'static>>>>>,
+    /// Insertion order of live keys. Front = oldest.
+    order: std::sync::Mutex<std::collections::VecDeque<CacheKey>>,
+    capacity: usize,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct CacheKey {
+    content_hash: u64,
+    /// The exact byte length. Included alongside the hash so a collision
+    /// on the 64-bit hash of two different strings of different length
+    /// is *also* a length collision — astronomically unlikely on top of
+    /// an already 1-in-2^64 hash collision.
+    content_len: usize,
+    width: usize,
+    theme: String,
+}
+
+impl RenderCache {
+    /// Default capacity. 128 entries covers a session's visible
+    /// transcript several times over while keeping memory bounded at a
+    /// few hundred KB (a 40-line rendered message is a few KB, so 128
+    /// entries is ~0.5 MB at the outside).
+    pub const DEFAULT_CAPACITY: usize = 128;
+
+    pub fn new() -> Self {
+        Self::with_capacity(Self::DEFAULT_CAPACITY)
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            entries: std::sync::Mutex::new(HashMap::new()),
+            order: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            capacity: capacity.max(1),
+        }
+    }
+
+    /// Return the cached render for `content` at `width` under `theme`,
+    /// parsing only on a miss.
+    ///
+    /// The returned `Arc` is shared with the cache; the caller can clone
+    /// it cheaply to build a `Text` value without copying the lines.
+    pub fn get_or_render(
+        &self,
+        content: &str,
+        width: usize,
+        theme: &Theme,
+    ) -> Arc<Vec<Line<'static>>> {
+        let key = CacheKey {
+            content_hash: fnv1a(content.as_bytes()),
+            content_len: content.len(),
+            width,
+            theme: theme.name.clone(),
+        };
+
+        // Fast path: cache hit.
+        if let Ok(entries) = self.entries.lock()
+            && let Some(hit) = entries.get(&key)
+        {
+            return Arc::clone(hit);
+        }
+
+        // Miss: parse, insert, evict.
+        let rendered = Arc::new(render(content, width, theme));
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.insert(key.clone(), Arc::clone(&rendered));
+        }
+        if let Ok(mut order) = self.order.lock() {
+            order.push_back(key.clone());
+            // Evict oldest beyond capacity.
+            while order.len() > self.capacity {
+                if let Some(old) = order.pop_front()
+                    && let Ok(mut entries) = self.entries.lock()
+                {
+                    entries.remove(&old);
+                }
+            }
+        }
+        rendered
+    }
+
+    /// Number of live entries. Exposed for tests.
+    pub fn len(&self) -> usize {
+        self.entries.lock().map(|e| e.len()).unwrap_or(0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl Default for RenderCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// FNV-1a 64-bit. Same hasher the checkpoint directory uses; kept local
+/// so this module does not depend on a cross-crate helper for one
+/// function.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut h = OFFSET;
+    for b in bytes {
+        h ^= *b as u64;
+        h = h.wrapping_mul(PRIME);
+    }
+    h
+}
+
+// ---------------------------------------------------------------------------
 // Parsing
 // ---------------------------------------------------------------------------
 
@@ -839,6 +976,58 @@ mod tests {
         // coerces to 1 internally.
         let out = render("hello world", 0, &theme());
         assert!(!out.is_empty());
+    }
+
+    #[test]
+    fn cache_hit_returns_same_arc() {
+        let cache = RenderCache::new();
+        let theme = theme();
+        let a = cache.get_or_render("hello **world**", 40, &theme);
+        let b = cache.get_or_render("hello **world**", 40, &theme);
+        assert!(
+            std::sync::Arc::ptr_eq(&a, &b),
+            "second lookup of identical (content, width, theme) must hit the cache",
+        );
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn cache_miss_on_width_change() {
+        let cache = RenderCache::new();
+        let theme = theme();
+        let _a = cache.get_or_render("hello", 40, &theme);
+        let _b = cache.get_or_render("hello", 20, &theme);
+        assert_eq!(
+            cache.len(),
+            2,
+            "different widths must not share a cache entry",
+        );
+    }
+
+    #[test]
+    fn cache_miss_on_theme_change() {
+        let cache = RenderCache::new();
+        let _a = cache.get_or_render("hello", 40, &Theme::dark());
+        let _b = cache.get_or_render("hello", 40, &Theme::light());
+        assert_eq!(
+            cache.len(),
+            2,
+            "a theme switch must invalidate (the palette changed)",
+        );
+    }
+
+    #[test]
+    fn cache_evicts_beyond_capacity() {
+        let cache = RenderCache::with_capacity(3);
+        let theme = theme();
+        for i in 0..5 {
+            let _ = cache.get_or_render(&format!("msg {i}"), 40, &theme);
+        }
+        assert!(
+            cache.len() <= 3,
+            "cache must respect its capacity, got {}",
+            cache.len(),
+        );
     }
 
     #[test]
