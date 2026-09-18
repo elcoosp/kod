@@ -377,7 +377,10 @@ fn render_block(block: &Block, width: usize, theme: &Theme, out: &mut Vec<Line<'
             let prefix = "#".repeat(*level as usize);
             let mut spans = vec![Span::styled(format!("{prefix} "), style)];
             for span in parse_inline(text, theme) {
-                spans.push(Span::styled(span.content.into_owned(), style.patch(span.style)));
+                spans.push(Span::styled(
+                    span.content.into_owned(),
+                    style.patch(span.style),
+                ));
             }
             out.extend(wrap_spans(spans, width));
         }
@@ -479,7 +482,9 @@ fn render_block(block: &Block, width: usize, theme: &Theme, out: &mut Vec<Line<'
 }
 
 fn header_style(level: u8, theme: &Theme) -> Style {
-    let base = Style::default().fg(theme.accent).add_modifier(Modifier::BOLD);
+    let base = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
     match level {
         1 => base,
         2 => base,
@@ -512,9 +517,7 @@ fn parse_inline(text: &str, theme: &Theme) -> Vec<Span<'static>> {
                 }
                 spans.push(Span::styled(
                     content,
-                    Style::default()
-                        .fg(theme.code)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.code).add_modifier(Modifier::BOLD),
                 ));
                 i = end + 1;
                 continue;
@@ -551,9 +554,7 @@ fn parse_inline(text: &str, theme: &Theme) -> Vec<Span<'static>> {
             let right_is_word = i + 1 < chars.len() && is_word_char(chars[i + 1]);
             let escaped = c == '_' && (left_is_word || right_is_word);
 
-            if !escaped
-                && let Some(end) = find_char(&chars, i + 1, c)
-            {
+            if !escaped && let Some(end) = find_char(&chars, i + 1, c) {
                 let content: String = chars[i + 1..end].iter().collect();
                 if !buf.is_empty() {
                     spans.push(Span::raw(std::mem::take(&mut buf)));
@@ -630,8 +631,7 @@ fn wrap_spans(spans: Vec<Span<'static>>, width: usize) -> Vec<Line<'static>> {
         if c == ' ' || c == '\t' {
             // Peek at the next word's width.
             let mut word_end = i;
-            while word_end < chars.len()
-                && (chars[word_end].0 == ' ' || chars[word_end].0 == '\t')
+            while word_end < chars.len() && (chars[word_end].0 == ' ' || chars[word_end].0 == '\t')
             {
                 word_end += 1;
             }
@@ -664,10 +664,7 @@ fn wrap_spans(spans: Vec<Span<'static>>, width: usize) -> Vec<Line<'static>> {
         let word_start = i;
         let mut word_end = i;
         let mut word_width = 0usize;
-        while word_end < chars.len()
-            && chars[word_end].0 != ' '
-            && chars[word_end].0 != '\t'
-        {
+        while word_end < chars.len() && chars[word_end].0 != ' ' && chars[word_end].0 != '\t' {
             word_width += char_width(chars[word_end].0);
             word_end += 1;
         }
@@ -786,7 +783,10 @@ mod tests {
     fn paragraph_reflows_across_source_newlines() {
         let src = "this is a long\nparagraph that should\nreflow";
         let out = render(src, 80, &theme());
-        assert_eq!(rendered_text(&out), "this is a long paragraph that should reflow");
+        assert_eq!(
+            rendered_text(&out),
+            "this is a long paragraph that should reflow"
+        );
     }
 
     #[test]
@@ -794,16 +794,14 @@ mod tests {
         let src = "one two three four five six seven eight";
         let out = render(src, 20, &theme());
         for line in &out {
-            let w: usize = line
-                .spans
-                .iter()
-                .map(|s| s.content.chars().count())
-                .sum();
+            let w: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
             assert!(w <= 20, "line too wide: {:?}", line);
         }
         // All words preserved.
         let text = rendered_text(&out);
-        for word in ["one", "two", "three", "four", "five", "six", "seven", "eight"] {
+        for word in [
+            "one", "two", "three", "four", "five", "six", "seven", "eight",
+        ] {
             assert!(text.contains(word), "missing {word} in {text}");
         }
     }
@@ -940,11 +938,7 @@ mod tests {
         let src = "prefix supercalifragilisticexpialidocious suffix";
         let out = render(src, 15, &theme());
         for line in &out {
-            let w: usize = line
-                .spans
-                .iter()
-                .map(|s| s.content.chars().count())
-                .sum();
+            let w: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
             assert!(w <= 15, "line too wide: {:?}", line);
         }
         let text = rendered_text(&out);
