@@ -114,6 +114,40 @@ impl PromptBudget {
     }
 }
 
+/// What the engine hands to `/debug tokens`: the prompt that was sent,
+/// plus the character allocation the `PromptBudget` gave each truncatable
+/// section. The `alloc` is `None` only for a prompt built outside the
+/// budgeted path (a legacy caller that used `build_prompt` directly) —
+/// the engine always fills it.
+///
+/// `text` is byte-identical to what `/debug last-prompt` writes; the
+/// two views are the same prompt, one shown in full and one shown as a
+/// per-section budget table.
+#[derive(Debug, Clone)]
+pub struct PromptTrace {
+    pub text: String,
+    pub alloc: Option<Allocation>,
+}
+
+impl PromptTrace {
+    /// Total characters the prompt was budgeted for, or `None` when no
+    /// allocation was recorded. Equal to `alloc.request + alloc.history
+    /// + alloc.skills + alloc.memory + alloc.repomap` for a budgeted
+    /// prompt.
+    pub fn total_chars(&self) -> Option<usize> {
+        self.alloc.map(|a| a.request + a.truncatable_total())
+    }
+
+    /// The same total expressed in the workspace's 4-chars-per-token
+    /// convention. `/debug tokens` uses this for the "≈ N tokens"
+    /// figure so it is directly comparable to the `context_window`
+    /// the config carries.
+    pub fn total_tokens_estimate(&self) -> Option<usize> {
+        self.total_chars()
+            .map(|c| c / PromptBudget::CHARS_PER_TOKEN)
+    }
+}
+
 /// The request does not fit the window at all.
 #[derive(Debug, Clone, Copy)]
 pub struct BudgetError {
