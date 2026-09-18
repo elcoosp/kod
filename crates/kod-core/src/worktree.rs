@@ -70,11 +70,7 @@ impl WorktreeManager {
     /// to the shared workspace. `Ok(Some(mgr))` means worktrees are
     /// available.
     pub fn detect(repo: &Path) -> Result<Option<Self>> {
-        let inside = run_git(
-            repo,
-            &["rev-parse", "--is-inside-work-tree"],
-            10,
-        );
+        let inside = run_git(repo, &["rev-parse", "--is-inside-work-tree"], 10);
         match inside {
             Ok(out) if out.trim() == "true" => {}
             _ => return Ok(None),
@@ -172,7 +168,12 @@ impl WorktreeManager {
             // half-state would be worse than a clean failure.
             let _ = run_git_owned(
                 &self.repo,
-                &["worktree", "remove", "--force", path.to_string_lossy().as_ref()],
+                &[
+                    "worktree",
+                    "remove",
+                    "--force",
+                    path.to_string_lossy().as_ref(),
+                ],
                 self.git_timeout_secs,
             );
             let _ = run_git_owned(
@@ -186,11 +187,7 @@ impl WorktreeManager {
             )));
         }
 
-        let info = WorktreeInfo {
-            slug,
-            path,
-            branch,
-        };
+        let info = WorktreeInfo { slug, path, branch };
         self.created.push(info.clone());
         Ok(info)
     }
@@ -209,7 +206,13 @@ impl WorktreeManager {
         for info in &self.created {
             let result = run_git_owned(
                 &self.repo,
-                &["merge", "--no-ff", "-m", &format!("kod: merge {}", info.branch), &info.branch],
+                &[
+                    "merge",
+                    "--no-ff",
+                    "-m",
+                    &format!("kod: merge {}", info.branch),
+                    &info.branch,
+                ],
                 self.git_timeout_secs,
             );
             match result {
@@ -225,11 +228,8 @@ impl WorktreeManager {
                         let conflicted = self.conflicted_files().unwrap_or_default();
                         // Abort the merge so the caller sees a clean
                         // index, not a half-merged repo.
-                        let _ = run_git_owned(
-                            &self.repo,
-                            &["merge", "--abort"],
-                            self.git_timeout_secs,
-                        );
+                        let _ =
+                            run_git_owned(&self.repo, &["merge", "--abort"], self.git_timeout_secs);
                         if conflicted.is_empty() {
                             // Git mentioned a conflict but did not
                             // list unmerged paths (a submodule edge
@@ -245,11 +245,8 @@ impl WorktreeManager {
                         }
                     } else {
                         // Non-conflict failure: nothing to abort.
-                        let _ = run_git_owned(
-                            &self.repo,
-                            &["merge", "--abort"],
-                            self.git_timeout_secs,
-                        );
+                        let _ =
+                            run_git_owned(&self.repo, &["merge", "--abort"], self.git_timeout_secs);
                         report.failed.push((info.branch.clone(), msg));
                     }
                 }
@@ -299,11 +296,7 @@ impl WorktreeManager {
         // Prune any dangling worktree metadata (a worktree removed by
         // hand leaves an entry in .git/worktrees/ that would trip the
         // next add).
-        let _ = run_git_owned(
-            &self.repo,
-            &["worktree", "prune"],
-            self.git_timeout_secs,
-        );
+        let _ = run_git_owned(&self.repo, &["worktree", "prune"], self.git_timeout_secs);
     }
 
     /// Add `.kod/` to the repo's `.gitignore` if it is not there yet.
@@ -313,12 +306,11 @@ impl WorktreeManager {
     fn ensure_gitignored(&self) -> Result<()> {
         let gitignore = self.repo.join(".gitignore");
         let marker = ".kod/";
-        if gitignore.is_file() {
-            if let Ok(content) = std::fs::read_to_string(&gitignore) {
-                if content.lines().any(|l| l.trim() == marker) {
-                    return Ok(());
-                }
-            }
+        if gitignore.is_file()
+            && let Ok(content) = std::fs::read_to_string(&gitignore)
+            && content.lines().any(|l| l.trim() == marker)
+        {
+            return Ok(());
         }
         use std::io::Write;
         let mut f = std::fs::OpenOptions::new()
@@ -328,11 +320,7 @@ impl WorktreeManager {
             .map_err(KodError::Io)?;
         // Ensure a newline before appending so we do not merge with a
         // missing final newline.
-        let prefix = if gitignore
-            .metadata()
-            .map(|m| m.len() > 0)
-            .unwrap_or(false)
-        {
+        let prefix = if gitignore.metadata().map(|m| m.len() > 0).unwrap_or(false) {
             "\n"
         } else {
             ""
@@ -523,7 +511,10 @@ mod tests {
         let mut mgr = WorktreeManager::detect(tmp.path()).unwrap().unwrap();
         let info = mgr.create("agent-1").unwrap();
         assert!(info.path.is_dir(), "worktree path should exist");
-        assert!(info.path.join("seed.txt").is_file(), "seed should be checked out");
+        assert!(
+            info.path.join("seed.txt").is_file(),
+            "seed should be checked out"
+        );
         assert_eq!(info.branch, "kod/agent-agent-1");
     }
 
