@@ -136,16 +136,17 @@ impl Tool for TodoTool {
                 })))
             }
             "update" => {
-                let id = params["id"].as_u64().ok_or_else(|| {
-                    KodError::InvalidParameters {
+                let id = params["id"]
+                    .as_u64()
+                    .ok_or_else(|| KodError::InvalidParameters {
                         reason: "'update' requires 'id'".to_string(),
-                    }
-                })?;
-                let status_str = params["status"].as_str().ok_or_else(|| {
-                    KodError::InvalidParameters {
-                        reason: "'update' requires 'status'".to_string(),
-                    }
-                })?;
+                    })?;
+                let status_str =
+                    params["status"]
+                        .as_str()
+                        .ok_or_else(|| KodError::InvalidParameters {
+                            reason: "'update' requires 'status'".to_string(),
+                        })?;
                 let status = match status_str {
                     "pending" => TodoStatus::Pending,
                     "in_progress" => TodoStatus::InProgress,
@@ -254,12 +255,9 @@ mod tests {
     async fn update_changes_status() {
         let list = new_list();
         let tool = TodoTool::new(list.clone());
-        tool.execute(
-            &serde_json::json!({"action": "add", "text": "a"}),
-            &ctx(),
-        )
-        .await
-        .unwrap();
+        tool.execute(&serde_json::json!({"action": "add", "text": "a"}), &ctx())
+            .await
+            .unwrap();
         let r = tool
             .execute(
                 &serde_json::json!({"action": "update", "id": 1, "status": "completed"}),
