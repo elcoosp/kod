@@ -154,33 +154,37 @@ impl AgentSwarm {
 
     /// Start the agent with the given ID, if it is present.
     pub async fn start_agent(&self, agent_id: &AgentId) -> Result<()> {
-        let agent = self.get_agent(agent_id).await.ok_or_else(|| {
-            KodError::InvalidState(format!("Agent {} not in swarm", agent_id))
-        })?;
+        let agent = self
+            .get_agent(agent_id)
+            .await
+            .ok_or_else(|| KodError::InvalidState(format!("Agent {} not in swarm", agent_id)))?;
         agent.start().await
     }
 
     /// Pause the agent with the given ID, if it is present.
     pub async fn pause_agent(&self, agent_id: &AgentId) -> Result<()> {
-        let agent = self.get_agent(agent_id).await.ok_or_else(|| {
-            KodError::InvalidState(format!("Agent {} not in swarm", agent_id))
-        })?;
+        let agent = self
+            .get_agent(agent_id)
+            .await
+            .ok_or_else(|| KodError::InvalidState(format!("Agent {} not in swarm", agent_id)))?;
         agent.pause().await
     }
 
     /// Resume the agent with the given ID, if it is present.
     pub async fn resume_agent(&self, agent_id: &AgentId) -> Result<()> {
-        let agent = self.get_agent(agent_id).await.ok_or_else(|| {
-            KodError::InvalidState(format!("Agent {} not in swarm", agent_id))
-        })?;
+        let agent = self
+            .get_agent(agent_id)
+            .await
+            .ok_or_else(|| KodError::InvalidState(format!("Agent {} not in swarm", agent_id)))?;
         agent.resume().await
     }
 
     /// Stop the agent with the given ID, if it is present.
     pub async fn stop_agent(&self, agent_id: &AgentId) -> Result<()> {
-        let agent = self.get_agent(agent_id).await.ok_or_else(|| {
-            KodError::InvalidState(format!("Agent {} not in swarm", agent_id))
-        })?;
+        let agent = self
+            .get_agent(agent_id)
+            .await
+            .ok_or_else(|| KodError::InvalidState(format!("Agent {} not in swarm", agent_id)))?;
         agent.stop().await
     }
 
@@ -239,9 +243,7 @@ impl AgentSwarm {
     pub fn coordinator(&self) -> &TaskCoordinator {
         &self.coordinator
     }
-
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -258,7 +260,9 @@ mod tests {
     #[tokio::test]
     async fn add_and_get_agent_returns_a_live_handle() {
         let swarm = AgentSwarm::new(swarm_root());
-        let agent = Agent::new("solo").with_capability(Capability::Coding).build();
+        let agent = Agent::new("solo")
+            .with_capability(Capability::Coding)
+            .build();
         let id = agent.id().clone();
 
         swarm.add_agent(agent).await.unwrap();
@@ -276,16 +280,28 @@ mod tests {
         swarm.add_agent(agent).await.unwrap();
 
         swarm.start_agent(&id).await.unwrap();
-        assert_eq!(swarm.get_agent(&id).await.unwrap().state(), AgentState::Running);
+        assert_eq!(
+            swarm.get_agent(&id).await.unwrap().state(),
+            AgentState::Running
+        );
 
         swarm.pause_agent(&id).await.unwrap();
-        assert_eq!(swarm.get_agent(&id).await.unwrap().state(), AgentState::Paused);
+        assert_eq!(
+            swarm.get_agent(&id).await.unwrap().state(),
+            AgentState::Paused
+        );
 
         swarm.resume_agent(&id).await.unwrap();
-        assert_eq!(swarm.get_agent(&id).await.unwrap().state(), AgentState::Running);
+        assert_eq!(
+            swarm.get_agent(&id).await.unwrap().state(),
+            AgentState::Running
+        );
 
         swarm.stop_agent(&id).await.unwrap();
-        assert_eq!(swarm.get_agent(&id).await.unwrap().state(), AgentState::Stopped);
+        assert_eq!(
+            swarm.get_agent(&id).await.unwrap().state(),
+            AgentState::Stopped
+        );
     }
 
     #[tokio::test]
@@ -371,7 +387,10 @@ mod tests {
 
         swarm.shutdown().await.unwrap();
 
-        assert!(swarm.list_agents().await.is_empty(), "swarm should be empty");
+        assert!(
+            swarm.list_agents().await.is_empty(),
+            "swarm should be empty"
+        );
         assert_eq!(a_handle.state(), AgentState::Stopped);
         assert_eq!(b_handle.state(), AgentState::Stopped);
     }
@@ -390,7 +409,11 @@ mod tests {
         swarm.add_agent(b).await.unwrap();
 
         // Take b's receiver so its channel is live.
-        let _rx_b = swarm.communication().get_agent_receiver(&b_id).await.unwrap();
+        let _rx_b = swarm
+            .communication()
+            .get_agent_receiver(&b_id)
+            .await
+            .unwrap();
 
         swarm
             .communication()
