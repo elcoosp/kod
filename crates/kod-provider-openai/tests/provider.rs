@@ -42,8 +42,7 @@ fn test_new_normalizes_and_keeps_model() {
     assert_eq!(provider.base_url(), "http://localhost:11434/v1");
     assert_eq!(provider.default_model(), "llama3.1");
 
-    let provider =
-        OpenAICompatProvider::new("http://localhost:1234/v1", "local-model").unwrap();
+    let provider = OpenAICompatProvider::new("http://localhost:1234/v1", "local-model").unwrap();
     assert_eq!(provider.base_url(), "http://localhost:1234/v1");
     assert_eq!(provider.default_model(), "local-model");
 }
@@ -60,7 +59,6 @@ fn test_with_model_keeps_endpoint() {
 
 #[test]
 fn test_provider_name_is_stable() {
-    let provider =
-        OpenAICompatProvider::new("http://localhost:11434/v1", "x").unwrap();
+    let provider = OpenAICompatProvider::new("http://localhost:11434/v1", "x").unwrap();
     assert_eq!(provider.name(), "openai-compatible");
 }
