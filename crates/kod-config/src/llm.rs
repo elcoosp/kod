@@ -590,3 +590,289 @@ mod tests {
         assert_eq!(c.route_for_task("Debugging"), "default");
     }
 }
+
+#[cfg(test)]
+mod coverage_llm_validate {
+    //! `LlmConfig::validate` is called on every config load. A
+    //! regression here is invisible until a specific endpoint is
+    //! used — a bad temperature reaches the server, a bad URL drops
+    //! the request. The existing tests cover the individual
+    //! branches; these pin the interactions between them.
+    use super::*;
+
+    fn ep(name: &str, model: &str, url: &str) -> EndpointConfig {
+        EndpointConfig {
+            name: name.into(),
+            provider: ProviderKind::OpenAICompatible,
+            base_url: url.into(),
+            model: model.into(),
+            api_key_env: None,
+            temperature: Some(0.7),
+            max_tokens: Some(2048),
+            context_window: 8192,
+            timeout_secs: 300,
+            pricing: None,
+        }
+    }
+
+    #[test]
+    fn validate_does_not_change_an_already_valid_config() {
+        let mut c = LlmConfig {
+            endpoints: vec![ep("a", "m", "http://x")],
+            ..LlmConfig::default()
+        };
+        let before = c.default_endpoint().clone();
+        c.validate();
+        let after = c.default_endpoint();
+        assert_eq!(before.name, after.name);
+        assert_eq!(before.model, after.model);
+        assert_eq!(before.base_url, after.base_url);
+        assert_eq!(before.context_window, after.context_window);
+        assert_eq!(before.timeout_secs, after.timeout_secs);
+        assert_eq!(before.temperature, after.temperature);
+        assert_eq!(before.max_tokens, after.max_tokens);
+    }
+
+    #[test]
+    fn validate_is_idempotent() {
+        // A config that was already clamped must be unchanged by a
+        // second pass; a non-idempotent validate would keep
+        // re-clamping and either drift or log every load.
+        let mut c = LlmConfig {
+            endpoints: vec![ep("a", "m", "http://x")],
+            ..LlmConfig::default()
+        };
+        c.endpoints[0].temperature = Some(9.0);
+        c.endpoints[0].context_window = 100;
+        c.validate();
+        let first_pass = (
+            c.endpoints[0].temperature,
+            c.endpoints[0].context_window,
+        );
+        c.validate();
+        let second_pass = (
+            c.endpoints[0].temperature,
+            c.endpoints[0].context_window,
+        );
+        assert_eq!(first_pass, second_pass);
+    }
+
+    #[test]
+    fn validate_handles_multiple_endpoints_independently() {
+        let mut c = LlmConfig {
+            endpoints: vec![
+                ep("a", "ma", "http://a"),
+                ep("b", "mb", "http://b"),
+            ],
+            ..LlmConfig::default()
+        };
+        c.endpoints[0].temperature = Some(9.0);
+        c.endpoints[1].temperature = Some(-1.0);
+        c.validate();
+        assert_eq!(c.endpoints[0].temperature, Some(2.0));
+        assert_eq!(c.endpoints[1].temperature, Some(0.0));
+    }
+
+    #[test]
+    fn validate_drops_routing_entries_to_removed_endpoints() {
+        // The common scenario: a user removes an endpoint but
+        // forgets the routing line that pointed at it. Validate
+        // must drop the dead route, not fail the load.
+        let mut r = RoutingConfig::default();
+        r.by_task.insert("Simple".into(), "gone".into());
+        let mut c = LlmConfig {
+            endpoints: vec![ep("present", "m", "http://x")],
+            routing: Some(r),
+            ..LlmConfig::default()
+        };
+        c.validate();
+        let r = c.routing.as_ref().unwrap();
+        assert!(!r.by_task.contains_key("Simple"));
+    }
+
+    #[test]
+    fn default_endpoint_mut_populates_empty_endpoints_list() {
+        let mut c = LlmConfig {
+            endpoints: Vec::new(),
+            ..LlmConfig::default()
+        };
+        let _ = c.default_endpoint_mut();
+        assert_eq!(c.endpoints.len(), 1);
+        assert_eq!(c.endpoints[0].name, "default");
+    }
+
+    #[test]
+    fn route_for_task_falls_back_to_first_endpoint() {
+        let c = LlmConfig {
+            endpoints: vec![ep("first", "m", "http://x")],
+            ..LlmConfig::default()
+        };
+        // No routing table: every task routes to the first endpoint.
+        assert_eq!(c.route_for_task("Simple"), "first");
+        assert_eq!(c.route_for_task("Debugging"), "first");
+        assert_eq!(c.route_for_task("AKeyThatDoesNotExist"), "first");
+    }
+
+    #[test]
+    fn route_for_task_honors_per_task_overrides() {
+        let mut r = RoutingConfig::default();
+        r.by_task.insert("Simple".into(), "cheap".into());
+        let c = LlmConfig {
+            endpoints: vec![ep("cheap", "m1", "http://c"), ep("smart", "m2", "http://s")],
+            routing: Some(r),
+            ..LlmConfig::default()
+        };
+        assert_eq!(c.route_for_task("Simple"), "cheap");
+        // Any task without an explicit route falls back to the
+        // first endpoint, not the second.
+        assert_eq!(c.route_for_task("Debugging"), "cheap");
+    }
+
+    #[test]
+    fn duplicate_endpoint_names_do_not_panic() {
+        // Two endpoints named "same" is a config bug; validate
+        // logs a warning and keeps both. The registry later keeps
+        // the last under the name, but validate must not fail.
+        let mut c = LlmConfig {
+            endpoints: vec![
+                ep("same", "m1", "http://a"),
+                ep("same", "m2", "http://b"),
+            ],
+            ..LlmConfig::default()
+        };
+        c.validate();
+        assert_eq!(c.endpoints.len(), 2);
+    }
+
+    #[test]
+    fn non_finite_temperature_is_reset() {
+        let mut c = LlmConfig {
+            endpoints: vec![ep("a", "m", "http://x")],
+            ..LlmConfig::default()
+        };
+        c.endpoints[0].temperature = Some(f32::INFINITY);
+        c.validate();
+        assert_eq!(c.endpoints[0].temperature, Some(0.7));
+        c.endpoints[0].temperature = Some(f32::NEG_INFINITY);
+        c.validate();
+        assert_eq!(c.endpoints[0].temperature, Some(0.7));
+    }
+}
+
+#[cfg(test)]
+mod coverage_provider_kind {
+    //! `ProviderKind` is a serde rename-with-aliases enum: the
+    //! wire form is `"openai-compatible"`, but `"Ollama"` and
+    //! `"OpenAI"` parse as the same variant so a v1-style config
+    //! still loads. A regression that dropped an alias would
+    //! reject every legacy config with a provider field spelled
+    //! in one of the two legacy ways.
+    use super::*;
+
+    #[test]
+    fn serializes_to_the_kebab_case_wire_form() {
+        // The rename attribute is the contract; a caller writing
+        // `provider = "openai-compatible"` in TOML must round-trip.
+        let json = serde_json::to_string(&ProviderKind::OpenAICompatible).unwrap();
+        assert_eq!(json, "\"openai-compatible\"");
+        let json = serde_json::to_string(&ProviderKind::Anthropic).unwrap();
+        assert_eq!(json, "\"anthropic\"");
+    }
+
+    #[test]
+    fn legacy_aliases_map_to_openai_compatible() {
+        for alias in ["Ollama", "OpenAI"] {
+            let json = format!("\"{alias}\"");
+            let k: ProviderKind = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("alias {alias} rejected: {e}"));
+            assert_eq!(k, ProviderKind::OpenAICompatible, "for {alias}");
+        }
+    }
+
+    #[test]
+    fn canonical_wire_form_parses() {
+        let k: ProviderKind =
+            serde_json::from_str("\"openai-compatible\"").unwrap();
+        assert_eq!(k, ProviderKind::OpenAICompatible);
+        let k: ProviderKind = serde_json::from_str("\"anthropic\"").unwrap();
+        assert_eq!(k, ProviderKind::Anthropic);
+    }
+
+    #[test]
+    fn unknown_values_are_rejected() {
+        // A typo (`"openai"` lowercase, `"claude"`) must not fall
+        // through to a default — that would silently send an
+        // Anthropic-shaped request to an OpenAI endpoint or vice
+        // versa.
+        for bad in ["\"openai\"", "\"claude\"", "\"garbage\"", "1"] {
+            assert!(
+                serde_json::from_str::<ProviderKind>(bad).is_err(),
+                "unexpectedly accepted {bad}",
+            );
+        }
+    }
+
+    #[test]
+    fn minimal_endpoint_config_parses_with_defaults() {
+        // Required fields: name, provider, base_url, model,
+        // context_window. Everything else defaults.
+        let cfg: EndpointConfig = toml::from_str(
+            r#"
+            name = "local"
+            provider = "openai-compatible"
+            base_url = "http://localhost:11434/v1"
+            model = "qwen2.5:7b"
+            context_window = 8192
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.name, "local");
+        assert_eq!(cfg.provider, ProviderKind::OpenAICompatible);
+        assert_eq!(cfg.base_url, "http://localhost:11434/v1");
+        assert_eq!(cfg.model, "qwen2.5:7b");
+        assert_eq!(cfg.context_window, 8192);
+        assert!(cfg.api_key_env.is_none());
+        assert!(cfg.temperature.is_none());
+        assert!(cfg.max_tokens.is_none());
+        assert_eq!(cfg.timeout_secs, 300, "default timeout changed");
+        assert!(cfg.pricing.is_none());
+    }
+
+    #[test]
+    fn endpoint_config_honours_every_optional_field() {
+        let cfg: EndpointConfig = toml::from_str(
+            r#"
+            name = "cloud"
+            provider = "anthropic"
+            base_url = "https://api.anthropic.com"
+            model = "claude-sonnet-4-5"
+            api_key_env = "ANTHROPIC_API_KEY"
+            temperature = 0.3
+            max_tokens = 1024
+            context_window = 200000
+            timeout_secs = 120
+
+            [pricing]
+            input_per_mtok_usd = 3.0
+            output_per_mtok_usd = 15.0
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.provider, ProviderKind::Anthropic);
+        assert_eq!(cfg.api_key_env.as_deref(), Some("ANTHROPIC_API_KEY"));
+        assert!((cfg.temperature.unwrap() - 0.3).abs() < 1e-6);
+        assert_eq!(cfg.max_tokens, Some(1024));
+        assert_eq!(cfg.timeout_secs, 120);
+        let p = cfg.pricing.expect("pricing parsed");
+        assert!((p.input_per_mtok_usd - 3.0).abs() < 1e-9);
+        assert!((p.output_per_mtok_usd - 15.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pricing_config_rejects_missing_fields() {
+        // Both rates are required; a half-written block should be
+        // an error, not a silent zero.
+        assert!(toml::from_str::<PricingConfig>("input_per_mtok_usd = 3.0").is_err());
+        assert!(toml::from_str::<PricingConfig>("output_per_mtok_usd = 15.0").is_err());
+    }
+}
