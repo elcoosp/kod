@@ -267,3 +267,160 @@ Do things well.
         assert!(skill.instructions.contains("Do things well."));
     }
 }
+
+#[cfg(test)]
+mod coverage_front_matter {
+    //! The parser is the first thing that touches every skill file.
+    //! The common case is covered; these pin the shapes an author
+    //! writing by hand actually produces — YAML list forms, an
+    //! author-less file, CRLF line endings, front matter with no
+    //! body, and the strict-mode version requirement.
+    use super::*;
+
+    fn minimal(front_matter: &str, body: &str) -> String {
+        format!("---\n{front_matter}\n---\n{body}")
+    }
+
+    #[test]
+    fn yaml_block_list_form_is_accepted() {
+        // Two spellings are equally common in the wild:
+        //   tags:\n  - rust\n  - async
+        //   tags: [rust, async]
+        // A parser that only handled one would silently drop the
+        // tags for every skill written in the other.
+        let block = minimal(
+            "name: a\ndescription: d\nversion: 1.0.0\ncategory: x\ntags:\n  - rust\n  - async",
+            "## Instructions\nbody",
+        );
+        let skill = SkillParser::new().parse_content(&block, "t.md").unwrap();
+        assert_eq!(skill.metadata.tags, vec!["rust", "async"]);
+
+        let flow = minimal(
+            "name: a\ndescription: d\nversion: 1.0.0\ncategory: x\ntags: [rust, async]",
+            "## Instructions\nbody",
+        );
+        let skill = SkillParser::new().parse_content(&flow, "t.md").unwrap();
+        assert_eq!(skill.metadata.tags, vec!["rust", "async"]);
+    }
+
+    #[test]
+    fn optional_fields_absent_still_parse() {
+        // `version`, `author`, `tags`, `capabilities`, `triggers`
+        // are all `#[serde(default)]` in `SkillMetadata`. A file
+        // that omits them is a valid skill, not a broken one.
+        let content = minimal("name: a\ndescription: d", "## Instructions\nbody");
+        let skill = SkillParser::new().parse_content(&content, "t.md").unwrap();
+        assert_eq!(skill.metadata.name, "a");
+        assert!(skill.metadata.version.is_empty());
+        assert!(skill.metadata.tags.is_empty());
+        assert!(skill.metadata.triggers.is_empty());
+    }
+
+    #[test]
+    fn strict_mode_requires_version() {
+        // The non-strict parser tolerates a missing version; the
+        // strict one — used by `kod validate-skills --strict` — must
+        // not. A regression makes CI accept a skill missing the
+        // field the mode exists to enforce.
+        let content = minimal("name: a\ndescription: d", "## Instructions\nbody");
+        let lenient = SkillParser::new().parse_content(&content, "t.md");
+        assert!(lenient.is_ok());
+        let strict = SkillParser::new().strict().parse_content(&content, "t.md");
+        assert!(strict.is_err());
+        let msg = strict.unwrap_err().to_string();
+        assert!(msg.to_lowercase().contains("version"), "got: {msg}");
+    }
+
+    #[test]
+    fn empty_body_falls_back_to_empty_instructions() {
+        // A front-matter-only skill (the author has not written the
+        // body yet) must parse; the instructions are the whole body
+        // when there is no `## Instructions` header, and the whole
+        // body here is empty.
+        let content = "---\nname: a\ndescription: d\nversion: 1.0.0\ncategory: x\n---\n";
+        let skill = SkillParser::new().parse_content(content, "t.md").unwrap();
+        assert!(skill.instructions.is_empty());
+        assert!(skill.examples.is_empty());
+        assert!(skill.constraints.is_none());
+    }
+
+    #[test]
+    fn missing_front_matter_is_rejected() {
+        let content = "## Instructions\nno front matter at all";
+        let err = SkillParser::new()
+            .parse_content(content, "t.md")
+            .unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(msg.contains("front matter"), "got: {msg}");
+    }
+
+    #[test]
+    fn unterminated_front_matter_is_rejected() {
+        // An opening `---` with no closing `---` is the specific
+        // failure mode of a truncated write. The error must name
+        // the missing closing marker, not say "invalid YAML".
+        let content = "---\nname: a\ndescription: d\nversion: 1.0.0\ncategory: x";
+        let err = SkillParser::new()
+            .parse_content(content, "t.md")
+            .unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("closing") || msg.contains("---"),
+            "unhelpful error: {msg}"
+        );
+    }
+
+    #[test]
+    fn empty_name_is_rejected_by_validation() {
+        let content = minimal("name: \"\"\ndescription: d", "body");
+        let err = SkillParser::new()
+            .parse_content(&content, "t.md")
+            .unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("name"));
+    }
+
+    #[test]
+    fn empty_description_is_rejected_by_validation() {
+        let content = minimal("name: a\ndescription: \"\"", "body");
+        let err = SkillParser::new()
+            .parse_content(&content, "t.md")
+            .unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("description"));
+    }
+
+    #[test]
+    fn examples_without_input_attribute_are_captured() {
+        // The `<example input="…">` attribute is optional: a skill
+        // author may just wrap a code sample in `<example>…</example>`
+        // to mark it as a worked example.
+        let body = "<example>\nlet x = 1;\n</example>";
+        let content = minimal("name: a\ndescription: d", body);
+        let skill = SkillParser::new().parse_content(&content, "t.md").unwrap();
+        assert_eq!(skill.examples.len(), 1);
+        assert!(skill.examples[0].input.is_empty());
+        assert!(skill.examples[0].output.contains("let x = 1;"));
+    }
+
+    #[test]
+    fn multiple_examples_are_captured_in_order() {
+        let body = "<example input=\"first\">one</example>\n<example input=\"second\">two</example>";
+        let content = minimal("name: a\ndescription: d", body);
+        let skill = SkillParser::new().parse_content(&content, "t.md").unwrap();
+        assert_eq!(skill.examples.len(), 2);
+        assert_eq!(skill.examples[0].input, "first");
+        assert_eq!(skill.examples[1].input, "second");
+    }
+
+    #[test]
+    fn unrecognised_section_header_does_not_become_instructions() {
+        // A body whose only header is `## Notes` has no
+        // `## Instructions` block. The parser falls back to the
+        // entire body (the file is the instructions), which is the
+        // documented behaviour. This pins that the fallback is the
+        // body, not the empty string.
+        let content = minimal("name: a\ndescription: d", "## Notes\nsomething");
+        let skill = SkillParser::new().parse_content(&content, "t.md").unwrap();
+        assert!(skill.instructions.contains("## Notes"));
+        assert!(skill.instructions.contains("something"));
+    }
+}
