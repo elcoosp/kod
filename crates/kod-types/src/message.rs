@@ -200,15 +200,13 @@ mod tests {
             "legacy",
             OffsetDateTime::now_utc(),
         );
-        let mut v: serde_json::Value =
-            serde_json::to_value(&msg).expect("serialize");
+        let mut v: serde_json::Value = serde_json::to_value(&msg).expect("serialize");
         let obj = v.as_object_mut().expect("object");
         obj.remove("tool_calls");
         obj.remove("tool_call_id");
 
         let legacy = serde_json::to_string(&v).expect("re-serialize");
-        let parsed: ChatMessage =
-            serde_json::from_str(&legacy).expect("legacy json must parse");
+        let parsed: ChatMessage = serde_json::from_str(&legacy).expect("legacy json must parse");
         assert_eq!(parsed.content, "legacy");
         assert!(parsed.tool_calls.is_empty());
         assert!(parsed.tool_call_id.is_none());
