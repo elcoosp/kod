@@ -911,7 +911,10 @@ impl KodApp {
 
     /// True when the message at `idx` is pinned.
     pub fn is_message_pinned(&self, idx: usize) -> bool {
-        self.messages.get(idx).map(|m| m.metadata.pinned).unwrap_or(false)
+        self.messages
+            .get(idx)
+            .map(|m| m.metadata.pinned)
+            .unwrap_or(false)
     }
 
     /// Load your last user message back into the input box for editing.
@@ -1615,9 +1618,8 @@ impl KodApp {
             }
             if !chunk.is_empty() {
                 self.last_chunk_at = Some(Instant::now());
-                self.streamed_chars_this_turn = self
-                    .streamed_chars_this_turn
-                    .saturating_add(chunk.len());
+                self.streamed_chars_this_turn =
+                    self.streamed_chars_this_turn.saturating_add(chunk.len());
             }
             self.current_response.push_str(chunk);
             if self.phase == GenPhase::Connecting {
@@ -2385,9 +2387,7 @@ impl KodApp {
 
     /// The live swarm-agent views, keyed by id. Read by the agent
     /// panel (D4-D5) and any future status surface.
-    pub fn swarm_agents(
-        &self,
-    ) -> &std::collections::HashMap<kod_types::AgentId, SwarmAgentView> {
+    pub fn swarm_agents(&self) -> &std::collections::HashMap<kod_types::AgentId, SwarmAgentView> {
         &self.swarm_agents
     }
 
@@ -2427,10 +2427,7 @@ impl KodApp {
         subtask: &str,
         model: Option<String>,
     ) {
-        let header = format!(
-            "{name} — {}",
-            subtask.lines().next().unwrap_or(subtask)
-        );
+        let header = format!("{name} — {}", subtask.lines().next().unwrap_or(subtask));
         let msg_id = MessageId::new();
         self.add_message(Message {
             id: msg_id.clone(),
@@ -2784,7 +2781,7 @@ impl KodApp {
             self.next_seq = msgs.len() as u64;
         }
 
-                self.messages = msgs;
+        self.messages = msgs;
         self.scroll_to_bottom();
         n
     }
@@ -3121,7 +3118,9 @@ impl KodApp {
         out.push_str(".you{border-left-color:#3b82f6}");
         out.push_str(".ai{border-left-color:#10b981}");
         out.push_str(".sys{border-left-color:#f59e0b;color:#555}");
-        out.push_str(".tool{border-left-color:#a855f7;font-family:ui-monospace,monospace;font-size:.9em}");
+        out.push_str(
+            ".tool{border-left-color:#a855f7;font-family:ui-monospace,monospace;font-size:.9em}",
+        );
         out.push_str(".agent{border-left-color:#ec4899}");
         out.push_str(".role{font-size:.8em;text-transform:uppercase;letter-spacing:.05em;color:#666;margin-bottom:.25rem}");
         out.push_str(".time{font-size:.75em;color:#999;margin-left:.5rem}");
@@ -3236,7 +3235,10 @@ impl KodApp {
     /// them from firing on every trivial turn. 30 seconds is
     /// conservative — a user can react, but not every keystroke gets a
     /// beep.
-    pub fn notify_turn_complete(&mut self, threshold: std::time::Duration) -> Option<std::time::Duration> {
+    pub fn notify_turn_complete(
+        &mut self,
+        threshold: std::time::Duration,
+    ) -> Option<std::time::Duration> {
         if !self.notify_bell_enabled {
             // Still clear the timestamp so the state does not leak
             // into the next turn's measurement.
@@ -3252,10 +3254,7 @@ impl KodApp {
         eprint!("\x07");
         // OSC 9 notification (iTerm2, Windows Terminal, kitty). Some
         // terminals do not implement it and ignore the sequence.
-        let msg = format!(
-            "kod: turn completed in {}s",
-            elapsed.as_secs()
-        );
+        let msg = format!("kod: turn completed in {}s", elapsed.as_secs());
         eprint!("\x1b]9;{}\x07", msg);
         Some(elapsed)
     }
@@ -3541,17 +3540,9 @@ impl KodApp {
     /// Record session-wide token usage from a per-call breakdown.
     /// Separate from `note_real_usage` (window snapshot for the context
     /// meter): this counter only grows.
-    pub fn note_session_usage(
-        &mut self,
-        prompt_tokens: usize,
-        completion_tokens: usize,
-    ) {
-        self.session_input_tokens = self
-            .session_input_tokens
-            .saturating_add(prompt_tokens);
-        self.session_output_tokens = self
-            .session_output_tokens
-            .saturating_add(completion_tokens);
+    pub fn note_session_usage(&mut self, prompt_tokens: usize, completion_tokens: usize) {
+        self.session_input_tokens = self.session_input_tokens.saturating_add(prompt_tokens);
+        self.session_output_tokens = self.session_output_tokens.saturating_add(completion_tokens);
     }
 
     /// Context-aware hint line for the status bar.
@@ -3580,7 +3571,6 @@ impl KodApp {
     pub fn is_searching(&self) -> bool {
         self.search_query.as_deref().is_some_and(|q| !q.is_empty())
     }
-
 
     /// Active search text (empty when no search).
     pub fn search_query_text(&self) -> &str {
@@ -3644,11 +3634,12 @@ impl KodApp {
     pub fn search_status_label(&self) -> String {
         match self.search_status() {
             SearchStatus::Inactive => String::new(),
-            SearchStatus::Editing => format!(" /{} — typing… (Esc exits)", self.search_query_text()),
-            SearchStatus::NoMatches => format!(
-                " /{} — no matches (Esc exits)",
-                self.search_query_text()
-            ),
+            SearchStatus::Editing => {
+                format!(" /{} — typing… (Esc exits)", self.search_query_text())
+            }
+            SearchStatus::NoMatches => {
+                format!(" /{} — no matches (Esc exits)", self.search_query_text())
+            }
             SearchStatus::At { position, total } => format!(
                 " /{} — {}/{} (n next · N prev · Esc exits)",
                 self.search_query_text(),
@@ -3743,6 +3734,52 @@ impl KodApp {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tokens_per_sec_none_before_second_chunk() {
+        let mut app = KodApp::new();
+        app.begin_generation();
+        assert!(app.tokens_per_sec().is_none(), "no chunk, no rate");
+        app.add_response_chunk("first");
+        // A single chunk has no measurable interval: the first and
+        // last timestamps are the same instant. The accessor must
+        // return `None` rather than compute a divide-by-zero or an
+        // absurd instantaneous rate.
+        assert!(app.tokens_per_sec().is_none(), "one chunk yields no rate",);
+    }
+
+    #[test]
+    fn tokens_per_sec_positive_after_a_real_interval() {
+        let mut app = KodApp::new();
+        app.begin_generation();
+        app.add_response_chunk("first");
+        // Sleep long enough for the elapsed time to be meaningful
+        // (the accessor's floor is 0.05s).
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        // 400 chars = 100 tokens by the 4-chars-per-token rule.
+        app.add_response_chunk(&"x".repeat(400));
+        let rate = app
+            .tokens_per_sec()
+            .expect("a real interval must yield a rate");
+        assert!(rate > 0.0, "rate must be positive, got {rate}");
+        assert!(
+            rate < 10_000.0,
+            "rate must be finite and plausible, got {rate}",
+        );
+    }
+
+    #[test]
+    fn tokens_per_sec_resets_between_turns() {
+        let mut app = KodApp::new();
+        app.begin_generation();
+        app.add_response_chunk("first");
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        app.add_response_chunk("second");
+        assert!(app.tokens_per_sec().is_some());
+        // A new turn clears the state; the rate is per-turn.
+        app.begin_generation();
+        assert!(app.tokens_per_sec().is_none());
+    }
+
     fn push_user(app: &mut KodApp, text: &str) {
         app.add_message(Message {
             id: MessageId::new(),
@@ -4042,10 +4079,8 @@ mod tests {
         use crate::app::{KodApp, Message};
         use kod_types::{MessageId, MessageMetadata, MessageRole};
 
-        let tmp = std::env::temp_dir().join(format!(
-            "kod-tui-legacy-seq-test-{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("kod-tui-legacy-seq-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let _guard = session_state_dir_lock();
@@ -4261,7 +4296,10 @@ mod tests {
 
         // An empty chunk must not count.
         app.add_response_chunk("");
-        assert!(app.ttft_ms().is_none(), "empty chunk must not start the clock");
+        assert!(
+            app.ttft_ms().is_none(),
+            "empty chunk must not start the clock"
+        );
 
         // Sleep so the measured interval is a positive integer.
         sleep(Duration::from_millis(5));
@@ -4302,10 +4340,6 @@ mod tests {
             "second turn slept less; expected smaller ttft, got {second_ttft} vs {first_ttft}",
         );
     }
-
-
-
-
 
     /// `search_status` must distinguish the states the old
     /// `search_position` tuple collapsed together.
@@ -4358,28 +4392,46 @@ mod tests {
 
         assert!(matches!(
             app.search_status(),
-            SearchStatus::At { position: 1, total: 3 }
+            SearchStatus::At {
+                position: 1,
+                total: 3
+            }
         ));
         app.search_next();
         assert!(matches!(
             app.search_status(),
-            SearchStatus::At { position: 2, total: 3 }
+            SearchStatus::At {
+                position: 2,
+                total: 3
+            }
         ));
         app.search_next();
         assert!(matches!(
             app.search_status(),
-            SearchStatus::At { position: 3, total: 3 }
+            SearchStatus::At {
+                position: 3,
+                total: 3
+            }
         ));
         app.search_next();
         assert!(
-            matches!(app.search_status(), SearchStatus::At { position: 1, total: 3 }),
+            matches!(
+                app.search_status(),
+                SearchStatus::At {
+                    position: 1,
+                    total: 3
+                }
+            ),
             "next should wrap: {:?}",
             app.search_status()
         );
         app.search_prev();
         assert!(matches!(
             app.search_status(),
-            SearchStatus::At { position: 3, total: 3 }
+            SearchStatus::At {
+                position: 3,
+                total: 3
+            }
         ));
     }
 
@@ -4400,10 +4452,7 @@ mod tests {
         use crate::app::{KodApp, Message};
         use kod_types::{MessageId, MessageMetadata, MessageRole};
 
-        let tmp = std::env::temp_dir().join(format!(
-            "kod-tui-save-safety-{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("kod-tui-save-safety-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let _guard = session_state_dir_lock();
@@ -4463,7 +4512,10 @@ mod tests {
         // Also trigger a manual compact to set compacted_messages.
         app.compact_now();
         assert!(app.context_tokens() > 0);
-        assert!(app.messages().len() < 30, "compact should have dropped some");
+        assert!(
+            app.messages().len() < 30,
+            "compact should have dropped some"
+        );
 
         // Sanity: pre-clear state is not the fresh state.
         let pre_tokens = app.context_tokens();
@@ -4530,6 +4582,146 @@ mod tests {
     /// replaces the trailing buffer; merged answer lands as an
     /// assistant message.
     #[test]
+    fn swarm_agent_started_populates_model() {
+        let mut app = KodApp::new();
+        app.begin_swarm();
+        let id = kod_types::AgentId::new();
+        app.swarm_agent_started(
+            id.clone(),
+            "agent-1",
+            "write the schema",
+            Some("local-ollama/qwen2.5-coder:7b".to_string()),
+        );
+        let view = app
+            .swarm_agents()
+            .get(&id)
+            .expect("view must exist after start");
+        assert_eq!(view.name, "agent-1");
+        assert_eq!(view.subtask, "write the schema");
+        assert_eq!(
+            view.model.as_deref(),
+            Some("local-ollama/qwen2.5-coder:7b"),
+            "the model from the runner must reach the panel view — a blank              row is what the design's D4.6 aims to eliminate",
+        );
+        assert!(!view.finished);
+    }
+
+    #[test]
+    fn swarm_agent_started_accepts_no_model() {
+        // A run with no `[llm.routing.swarm]` table passes `None`; the
+        // view must tolerate that and the panel skips the row.
+        let mut app = KodApp::new();
+        app.begin_swarm();
+        let id = kod_types::AgentId::new();
+        app.swarm_agent_started(id.clone(), "agent-1", "task", None);
+        let view = app.swarm_agents().get(&id).unwrap();
+        assert!(view.model.is_none());
+    }
+
+    #[test]
+    fn swarm_agent_by_index_is_one_based_and_bounded() {
+        let mut app = KodApp::new();
+        app.begin_swarm();
+        let a = kod_types::AgentId::new();
+        let b = kod_types::AgentId::new();
+        let c = kod_types::AgentId::new();
+        app.swarm_agent_started(a.clone(), "a", "first", None);
+        app.swarm_agent_started(b.clone(), "b", "second", None);
+        app.swarm_agent_started(c.clone(), "c", "third", None);
+
+        // Index 0 is invalid (positions are 1-based).
+        assert!(app.swarm_agent_by_index(0).is_none());
+        // 1..=3 map to the agents in start order.
+        assert_eq!(app.swarm_agent_by_index(1), Some(&a));
+        assert_eq!(app.swarm_agent_by_index(2), Some(&b));
+        assert_eq!(app.swarm_agent_by_index(3), Some(&c));
+        // Anything past the end is `None`.
+        assert!(app.swarm_agent_by_index(4).is_none());
+        assert!(app.swarm_agent_by_index(usize::MAX).is_none());
+    }
+
+    #[test]
+    fn begin_swarm_resets_order_and_views() {
+        let mut app = KodApp::new();
+        app.begin_swarm();
+        let a = kod_types::AgentId::new();
+        app.swarm_agent_started(a.clone(), "a", "first run", None);
+        assert!(app.swarm_agent_by_index(1).is_some());
+
+        // A new run must clear both the map and the order vector so
+        // the next agent lands at index 1, not index 2.
+        app.begin_swarm();
+        assert!(app.swarm_agents().is_empty());
+        assert!(app.swarm_agent_by_index(1).is_none());
+
+        let b = kod_types::AgentId::new();
+        app.swarm_agent_started(b.clone(), "b", "second run", None);
+        assert_eq!(
+            app.swarm_agent_by_index(1),
+            Some(&b),
+            "the second run's first agent must be at index 1",
+        );
+    }
+
+    #[test]
+    fn swarm_set_worktree_attaches_to_the_view() {
+        let mut app = KodApp::new();
+        app.begin_swarm();
+        let id = kod_types::AgentId::new();
+        app.swarm_agent_started(id.clone(), "agent-1", "task", None);
+        app.swarm_set_worktree(
+            &id,
+            std::path::PathBuf::from("/tmp/worktree-agent-1"),
+            "kod/agent-agent-1".to_string(),
+        );
+        let view = app.swarm_agents().get(&id).unwrap();
+        assert_eq!(
+            view.worktree.as_deref(),
+            Some(std::path::Path::new("/tmp/worktree-agent-1")),
+        );
+        assert_eq!(view.branch.as_deref(), Some("kod/agent-agent-1"));
+    }
+
+    #[test]
+    fn swarm_set_retrying_records_a_note() {
+        let mut app = KodApp::new();
+        app.begin_swarm();
+        let id = kod_types::AgentId::new();
+        app.swarm_agent_started(id.clone(), "agent-1", "task", None);
+        app.swarm_set_retrying(&id, 2, 3, "connection reset");
+        let view = app.swarm_agents().get(&id).unwrap();
+        let note = view.retry_note.as_deref().unwrap_or("");
+        assert!(note.contains("2/3"), "got: {note}");
+        assert!(note.contains("connection reset"), "got: {note}");
+        // The panel uses `retry_note.is_some()` to render a warning
+        // marker; a regression that left the note behind after
+        // success would keep the warning on a healthy agent.
+        app.swarm_agent_finished(&id, "done");
+        let view = app.swarm_agents().get(&id).unwrap();
+        assert!(
+            view.retry_note.is_none(),
+            "finishing must clear the retry note",
+        );
+    }
+
+    #[test]
+    fn swarm_agent_finished_clears_failure_and_marks_done() {
+        let mut app = KodApp::new();
+        app.begin_swarm();
+        let id = kod_types::AgentId::new();
+        app.swarm_agent_started(id.clone(), "agent-1", "task", None);
+        // Mark a failure first, then a success; success wins.
+        app.swarm_agent_failed(&id, "transient");
+        app.swarm_agent_finished(&id, "final answer");
+        let view = app.swarm_agents().get(&id).unwrap();
+        assert!(view.finished);
+        assert!(
+            view.failure.is_none(),
+            "a successful finish must clear the failure marker",
+        );
+    }
+
+    #[test]
     fn test_swarm_state_machine() {
         let mut app = KodApp::new();
         app.begin_swarm();
@@ -4560,7 +4752,11 @@ mod tests {
             "implement the handler",
             Some("local-ollama/qwen2.5-coder:7b".to_string()),
         );
-        assert_eq!(app.messages().len(), 3, "two system/agent rows after decompose + starts");
+        assert_eq!(
+            app.messages().len(),
+            3,
+            "two system/agent rows after decompose + starts"
+        );
 
         let row_a = app
             .messages()
@@ -4577,7 +4773,11 @@ mod tests {
             .iter()
             .find(|m| matches!(&m.role, MessageRole::Agent(a) if a == &id_a))
             .unwrap();
-        assert!(row_a.content.contains("working on it"), "got: {}", row_a.content);
+        assert!(
+            row_a.content.contains("working on it"),
+            "got: {}",
+            row_a.content
+        );
 
         // Chunks after finish are ignored.
         app.swarm_agent_finished(&id_a, "DONE: schema written");
@@ -4589,7 +4789,11 @@ mod tests {
             .unwrap();
         assert!(!row_a.content.contains("late noise"));
         assert!(row_a.content.contains("DONE: schema written"));
-        assert!(row_a.content.contains("agent-1"), "header preserved: {}", row_a.content);
+        assert!(
+            row_a.content.contains("agent-1"),
+            "header preserved: {}",
+            row_a.content
+        );
 
         // Failure replaces the buffer.
         app.swarm_agent_failed(&id_b, "boom");
@@ -4618,18 +4822,15 @@ mod tests {
         let mut app = KodApp::new();
         app.begin_swarm();
         let id = kod_types::AgentId::new();
-        app.swarm_agent_started(
-            id.clone(),
-            "agent-1",
-            "first run",
-            None,
-        );
+        app.swarm_agent_started(id.clone(), "agent-1", "first run", None);
         // Finish it so the view is marked done, but keep the map entry.
         app.swarm_agent_finished(&id, "done");
         assert!(app.swarm_agents.contains_key(&id));
 
         app.begin_swarm();
-        assert!(app.swarm_agents.is_empty(), "begin_swarm clears the live map");
+        assert!(
+            app.swarm_agents.is_empty(),
+            "begin_swarm clears the live map"
+        );
     }
-
 }
