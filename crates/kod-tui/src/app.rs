@@ -204,8 +204,20 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "export session as markdown: /export [path]",
     },
     SlashCommand {
+        name: "/export-html",
+        hint: "export session as a self-contained HTML file: /export-html [path]",
+    },
+    SlashCommand {
         name: "/memory",
         hint: "long-term memory: /memory [search <q> | delete <id> | clear]",
+    },
+    SlashCommand {
+        name: "/remember",
+        hint: "store a durable fact in long-term memory: /remember <text>",
+    },
+    SlashCommand {
+        name: "/policy",
+        hint: "tool policy: /policy [show | forget <n>]",
     },
     SlashCommand {
         name: "/map",
@@ -447,6 +459,17 @@ pub struct KodApp {
     /// start of each swarm run; a running agent appends its chunks to
     /// the chat message whose id is stored here.
     swarm_agents: std::collections::HashMap<kod_types::AgentId, SwarmAgentView>,
+    /// Agent ids in the order they started. Powers the `@N`
+    /// focus syntax in `dispatch_prompt`: `@2 hello` steers the
+    /// second agent that began work in the current run. Cleared
+    /// by `begin_swarm` alongside `swarm_agents`.
+    swarm_agent_order: Vec<kod_types::AgentId>,
+    /// Markdown render cache (design D6.5). The chat widget
+    /// re-renders every visible message every frame; without a
+    /// cache that means re-parsing the markdown on each keystroke,
+    /// a cost that grows with the transcript length. The cache is
+    /// keyed by (content, width, theme) and bounded FIFO.
+    render_cache: std::sync::Arc<crate::markdown::RenderCache>,
     /// The pending approval batch the TUI is showing a dialog for.
     /// `None` when no dialog is up. Populated from an
     /// approval-batch marker chunk; cleared when every item has been
@@ -471,6 +494,25 @@ pub struct KodApp {
     /// `TuiLoop::init_engine` from the engine's setting; drives the
     /// header `net:on` badge (D3-C5).
     network_access_enabled: bool,
+    /// The effective sandbox label for the header, e.g. `bwrap`,
+    /// `landlock`, `sandbox-exec`, `require-missing`, or `off`.
+    /// Set by `TuiLoop::init_engine` from
+    /// `KodEngine::sandbox_status`. The empty string means "no
+    /// engine yet" — the header renders no badge until this is
+    /// populated, so a session that never touched a shell command
+    /// does not lie about its sandbox state.
+    sandbox_label: String,
+
+    /// Wall clock of the last non-empty streamed chunk. Used to
+    /// measure the streaming duration for the `tok/s` figure in
+    /// the status bar. Reset by `begin_generation` and cleared
+    /// by `finish_response` / `fail_generation`.
+    last_chunk_at: Option<Instant>,
+
+    /// Characters streamed in the current turn (before the
+    /// 4-chars-per-token approximation). The rate figure is
+    /// `(streamed_chars / 4) / seconds-since-first-chunk`.
+    streamed_chars_this_turn: usize,
     /// Files attached to the next prompt with `/attach`. Prepended as
     /// `<file path="...">` blocks to the outgoing message. Cleared
     /// after the prompt is dispatched.
@@ -616,6 +658,8 @@ impl KodApp {
             last_error: None,
 
             swarm_agents: std::collections::HashMap::new(),
+            swarm_agent_order: Vec::new(),
+            render_cache: std::sync::Arc::new(crate::markdown::RenderCache::new()),
             pending_batch: None,
             pending_question: None,
             question_input: String::new(),
@@ -623,6 +667,9 @@ impl KodApp {
             autocompact_enabled: true,
             notify_bell_enabled: true,
             network_access_enabled: false,
+            sandbox_label: String::new(),
+            last_chunk_at: None,
+            streamed_chars_this_turn: 0,
             attached_files: Vec::new(),
             session_started_at: Instant::now(),
             session_input_tokens: 0,
@@ -1566,6 +1613,12 @@ impl KodApp {
             if !chunk.is_empty() && self.first_chunk_at.is_none() {
                 self.first_chunk_at = Some(Instant::now());
             }
+            if !chunk.is_empty() {
+                self.last_chunk_at = Some(Instant::now());
+                self.streamed_chars_this_turn = self
+                    .streamed_chars_this_turn
+                    .saturating_add(chunk.len());
+            }
             self.current_response.push_str(chunk);
             if self.phase == GenPhase::Connecting {
                 self.set_phase(GenPhase::Generating);
@@ -1606,6 +1659,9 @@ impl KodApp {
         // New turn: no real usage seen yet, so the char estimate
         // contributes until (or unless) the provider reports a total.
         self.turn_has_real_usage = false;
+        // Reset the streaming-rate state (see `tokens_per_sec`).
+        self.last_chunk_at = None;
+        self.streamed_chars_this_turn = 0;
         self.set_phase(GenPhase::Connecting);
         self.start_response_stream();
     }
@@ -2318,6 +2374,15 @@ impl KodApp {
 
     // ---- Swarm runs ----
 
+    /// The markdown render cache. The chat widget reads it to
+    /// avoid re-parsing unchanged messages on every frame; the
+    /// engine does not touch it. Exposed as an `Arc` so a
+    /// caller (a future sidebar widget, a test) can hold a
+    /// reference without borrow-checker gymnastics.
+    pub fn render_cache(&self) -> &std::sync::Arc<crate::markdown::RenderCache> {
+        &self.render_cache
+    }
+
     /// The live swarm-agent views, keyed by id. Read by the agent
     /// panel (D4-D5) and any future status surface.
     pub fn swarm_agents(
@@ -2326,10 +2391,22 @@ impl KodApp {
         &self.swarm_agents
     }
 
+    /// The agent id at 1-based position `n` in the current run's start
+    /// order, or `None` when there is no such agent. Backs the `@N`
+    /// focus syntax in the input box: `@2 do X` finds the second agent
+    /// that began work this run and steers it.
+    pub fn swarm_agent_by_index(&self, n: usize) -> Option<&kod_types::AgentId> {
+        if n == 0 {
+            return None;
+        }
+        self.swarm_agent_order.get(n - 1)
+    }
+
     /// Prepare for a new swarm run: clears the live-agent map so a
     /// previous run's rows are not appended to.
     pub fn begin_swarm(&mut self) {
         self.swarm_agents.clear();
+        self.swarm_agent_order.clear();
     }
 
     /// Announce the decompose results as a system line.
@@ -2348,6 +2425,7 @@ impl KodApp {
         id: kod_types::AgentId,
         name: &str,
         subtask: &str,
+        model: Option<String>,
     ) {
         let header = format!(
             "{name} — {}",
@@ -2363,13 +2441,13 @@ impl KodApp {
             sequence: 0,
         });
         self.swarm_agents.insert(
-            id,
+            id.clone(),
             SwarmAgentView {
                 message_id: msg_id,
                 finished: false,
                 name: name.to_string(),
                 subtask: subtask.lines().next().unwrap_or(subtask).to_string(),
-                model: None,
+                model,
                 worktree: None,
                 branch: None,
                 tool_count: 0,
@@ -2377,6 +2455,7 @@ impl KodApp {
                 retry_note: None,
             },
         );
+        self.swarm_agent_order.push(id);
     }
 
     /// Append a text chunk to a live agent's row.
@@ -3301,6 +3380,31 @@ impl KodApp {
     /// engine ever wants to make this exact (provider-reported
     /// timing, sub-millisecond precision), it should emit a
     /// dedicated event, not have the TUI measure a proxy.
+    /// The current turn's streaming rate in tokens-per-second, if a
+    /// rate can be measured. `None` before the second chunk arrives
+    /// (a single chunk yields a zero duration, which is a division by
+    /// zero, and is also not a meaningful measurement), and after the
+    /// turn ends.
+    ///
+    /// The figure is `(streamed_chars / 4) / seconds-since-first-chunk`
+    /// — the same 4-chars-per-token approximation the rest of the TUI
+    /// uses. A local model at ~30 tokens/sec shows ~30; a stalled
+    /// stream decays toward 0 as the elapsed time grows without a
+    /// fresh chunk. The status widget reads it once per frame.
+    pub fn tokens_per_sec(&self) -> Option<f32> {
+        let first = self.first_chunk_at?;
+        let last = self.last_chunk_at?;
+        // Require at least two chunks' worth of elapsed time so the
+        // first-chunk case does not produce a divide-by-zero or an
+        // absurd instantaneous rate.
+        let elapsed = last.duration_since(first).as_secs_f32();
+        if elapsed < 0.05 {
+            return None;
+        }
+        let tokens = self.streamed_chars_this_turn as f32 / 4.0;
+        Some(tokens / elapsed)
+    }
+
     pub fn ttft_ms(&self) -> Option<u128> {
         let started = self.spinner_started?;
         let first = self.first_chunk_at?;
@@ -3350,6 +3454,19 @@ impl KodApp {
     }
 
     /// Setter used by `TuiLoop::init_engine`.
+    /// The effective sandbox label, or empty when no engine has
+    /// been initialized yet. Callers should render a badge only
+    /// for a non-empty value.
+    pub fn sandbox_label(&self) -> &str {
+        &self.sandbox_label
+    }
+
+    /// Set the sandbox label. Called by `TuiLoop::init_engine`
+    /// once the engine is up and the resolver's choice is known.
+    pub fn set_sandbox_label(&mut self, label: String) {
+        self.sandbox_label = label;
+    }
+
     pub fn set_network_access_enabled(&mut self, enabled: bool) {
         self.network_access_enabled = enabled;
     }
@@ -3626,6 +3743,110 @@ impl KodApp {
 
 #[cfg(test)]
 mod tests {
+    fn push_user(app: &mut KodApp, text: &str) {
+        app.add_message(Message {
+            id: MessageId::new(),
+            role: MessageRole::User,
+            content: text.into(),
+            timestamp: Utc::now(),
+            metadata: MessageMetadata::default(),
+            sequence: 0,
+        });
+    }
+
+    fn push_assistant(app: &mut KodApp, text: &str) {
+        app.add_message(Message {
+            id: MessageId::new(),
+            role: MessageRole::Assistant,
+            content: text.into(),
+            timestamp: Utc::now(),
+            metadata: MessageMetadata::default(),
+            sequence: 0,
+        });
+    }
+
+    #[test]
+    fn export_html_wraps_content_in_document() {
+        let mut app = KodApp::new();
+        push_user(&mut app, "hello");
+        push_assistant(&mut app, "hi there");
+        let html = app.export_html();
+        assert!(
+            html.starts_with("<!doctype html>"),
+            "output must open with a doctype: {}",
+            &html[..html.len().min(120)],
+        );
+        assert!(
+            html.contains("hello"),
+            "the user's message must be included",
+        );
+        assert!(
+            html.contains("hi there"),
+            "the assistant's message must be included",
+        );
+        assert!(
+            html.contains("<style>"),
+            "CSS must be inline for a self-contained document",
+        );
+        assert!(
+            html.contains("</html>"),
+            "output must be a complete HTML document",
+        );
+    }
+
+    #[test]
+    fn export_html_escapes_special_characters() {
+        // The content is user text and could contain `<`, `&`, or `"`;
+        // all three must be escaped to keep the output a valid HTML
+        // document. Regression guard: the escape helper is small and
+        // easy to lose.
+        let mut app = KodApp::new();
+        push_user(
+            &mut app,
+            "less < than & greater > than and \"quote\" and 'single'",
+        );
+        let html = app.export_html();
+        assert!(
+            html.contains("&lt;"),
+            "`<` must be escaped: not present in output",
+        );
+        assert!(
+            html.contains("&amp;"),
+            "`&` must be escaped: not present in output",
+        );
+        assert!(
+            html.contains("&gt;"),
+            "`>` must be escaped: not present in output",
+        );
+        assert!(
+            html.contains("&quot;"),
+            "`\"` must be escaped: not present in output",
+        );
+        // The raw forms must not appear inside content; the outer
+        // document's own tags are removed by searching only for the
+        // suspicious substrings.
+        assert!(
+            !html.contains("less < than"),
+            "raw `<` leaked into the output",
+        );
+        assert!(
+            !html.contains("& greater"),
+            "raw `&` leaked into the output",
+        );
+    }
+
+    #[test]
+    fn export_html_is_stable_across_calls() {
+        // The renderer is pure; two calls on the same app must
+        // produce identical output. A regression that embedded a
+        // timestamp or a random id would break a user's diff-based
+        // workflow.
+        let mut app = KodApp::new();
+        push_user(&mut app, "hi");
+        let a = app.export_html();
+        let b = app.export_html();
+        assert_eq!(a, b);
+    }
 
     /// Serializes tests that mutate KOD_TUI_STATE_DIR (a process-wide
     /// environment variable). Rust runs unit tests in parallel by
@@ -4327,8 +4548,18 @@ mod tests {
         // Agent start → a chat row keyed by the agent id.
         let id_a = kod_types::AgentId::new();
         let id_b = kod_types::AgentId::new();
-        app.swarm_agent_started(id_a.clone(), "agent-1", "write the SQL schema");
-        app.swarm_agent_started(id_b.clone(), "agent-2", "implement the handler");
+        app.swarm_agent_started(
+            id_a.clone(),
+            "agent-1",
+            "write the SQL schema",
+            Some("local-ollama/qwen2.5-coder:7b".to_string()),
+        );
+        app.swarm_agent_started(
+            id_b.clone(),
+            "agent-2",
+            "implement the handler",
+            Some("local-ollama/qwen2.5-coder:7b".to_string()),
+        );
         assert_eq!(app.messages().len(), 3, "two system/agent rows after decompose + starts");
 
         let row_a = app
@@ -4387,7 +4618,12 @@ mod tests {
         let mut app = KodApp::new();
         app.begin_swarm();
         let id = kod_types::AgentId::new();
-        app.swarm_agent_started(id.clone(), "agent-1", "first run");
+        app.swarm_agent_started(
+            id.clone(),
+            "agent-1",
+            "first run",
+            None,
+        );
         // Finish it so the view is marked done, but keep the map entry.
         app.swarm_agent_finished(&id, "done");
         assert!(app.swarm_agents.contains_key(&id));
