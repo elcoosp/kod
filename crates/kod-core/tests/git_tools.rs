@@ -12,9 +12,7 @@
 //! it is not (matching the `binary_on_path` pattern from the LSP
 //! crate).
 
-use kod_tools::{
-    GitBranchTool, GitCommitTool, GitDiffTool, GitStatusTool, Tool, ToolContext,
-};
+use kod_tools::{GitBranchTool, GitCommitTool, GitDiffTool, GitStatusTool, Tool, ToolContext};
 use kod_types::{GitAccess, ToolPermissions, ToolResult};
 
 fn binary_on_path(name: &str) -> bool {
@@ -108,10 +106,7 @@ async fn git_access_read_denies_commit() {
     let ctx = ctx_with(tmp.path(), GitAccess::Read);
 
     let err = GitCommitTool::new()
-        .execute(
-            &serde_json::json!({"message": "should not land"}),
-            &ctx,
-        )
+        .execute(&serde_json::json!({"message": "should not land"}), &ctx)
         .await
         .expect_err("Read must deny Write tools");
     match err {
@@ -144,8 +139,10 @@ async fn git_access_write_allows_commit_and_branch_create() {
         .unwrap();
     match commit {
         ToolResult::Success(v) => {
-            assert!(v["commit"].is_string() || v["commit"].is_null(),
-                "commit field missing: {v}");
+            assert!(
+                v["commit"].is_string() || v["commit"].is_null(),
+                "commit field missing: {v}"
+            );
         }
         other => panic!("expected commit success, got {other:?}"),
     }
@@ -160,19 +157,15 @@ async fn git_access_write_allows_commit_and_branch_create() {
         .unwrap();
 
     let list = GitBranchTool::new()
-        .execute(
-            &serde_json::json!({"action": "list"}),
-            &ctx,
-        )
+        .execute(&serde_json::json!({"action": "list"}), &ctx)
         .await
         .unwrap();
     match list {
         ToolResult::Success(v) => {
             let branches = v["branches"].as_array().unwrap();
-            let names: Vec<&str> =
-                branches.iter().filter_map(|b| b.as_str()).collect();
+            let names: Vec<&str> = branches.iter().filter_map(|b| b.as_str()).collect();
             assert!(
-                names.iter().any(|n| *n == "experiment"),
+                names.contains(&"experiment"),
                 "experiment should exist: {names:?}"
             );
         }
