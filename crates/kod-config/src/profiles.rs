@@ -72,7 +72,11 @@ pub fn by_name(name: &str) -> Option<&'static ModelProfile> {
 /// Comma-separated list of preset names, for an error message that
 /// names the alternatives.
 pub fn names_csv() -> String {
-    PRESETS.iter().map(|p| p.name).collect::<Vec<_>>().join(", ")
+    PRESETS
+        .iter()
+        .map(|p| p.name)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]
