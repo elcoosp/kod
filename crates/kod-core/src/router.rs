@@ -88,10 +88,7 @@ impl std::fmt::Debug for RouterConfig {
             .field("context_window", &self.context_window)
             .field("short_term_capacity", &self.short_term_capacity)
             .field("skill_threshold", &self.skill_threshold)
-            .field(
-                "embedder",
-                &self.embedder.as_ref().map(|e| e.name()),
-            )
+            .field("embedder", &self.embedder.as_ref().map(|e| e.name()))
             .finish()
     }
 }
@@ -328,7 +325,6 @@ impl TaskRouter {
             config.skill_threshold,
         )));
 
-
         Ok(Self {
             config,
             memory_manager,
@@ -380,6 +376,30 @@ impl TaskRouter {
         Ok(())
     }
 
+    /// Store an episodic memory entry with caller-supplied metadata
+    /// (design D2.5). Used by `KodEngine::extract_memories_now`: the
+    /// auto-extracted facts carry a `session_id` and the `auto-*` tags
+    /// the extractor produced, and they are stored as `Episodic` so the
+    /// consolidation pass can archive them on age without touching the
+    /// durable `LongTerm` layer.
+    ///
+    /// Errors when memory is disabled, matching `store_long_term`.
+    pub async fn store_episodic(
+        &self,
+        content: &str,
+        metadata: kod_types::MemoryMetadata,
+    ) -> Result<kod_types::MemoryId> {
+        let Some(manager) = &self.memory_manager else {
+            return Err(kod_error::KodError::Config(
+                "memory is disabled in this session (RouterConfig::enable_memory = false)"
+                    .to_string(),
+            ));
+        };
+        manager
+            .store_with_metadata(kod_types::MemoryType::Episodic, content, metadata)
+            .await
+    }
+
     /// Store a long-term memory entry with a project scope and tags
     /// (D2-B3a). Called by the `memory_save` tool. Returns the new
     /// entry's id. Errors when memory is disabled.
@@ -409,11 +429,7 @@ impl TaskRouter {
     /// return the top-k entries. Called by the `memory_search` tool.
     /// Empty result for a query with no match; empty result when memory
     /// is disabled.
-    pub async fn search_long_term(
-        &self,
-        query: &str,
-        k: usize,
-    ) -> Vec<kod_types::MemoryEntry> {
+    pub async fn search_long_term(&self, query: &str, k: usize) -> Vec<kod_types::MemoryEntry> {
         let Some(manager) = &self.memory_manager else {
             return Vec::new();
         };
@@ -434,9 +450,7 @@ impl TaskRouter {
     /// carried by `memory.compaction_interval_secs`. Best-effort: a
     /// store error is returned to the caller, which logs it; the task
     /// retries on its next tick.
-    pub async fn consolidate_memory(
-        &self,
-    ) -> Result<kod_memory::ConsolidationReport> {
+    pub async fn consolidate_memory(&self) -> Result<kod_memory::ConsolidationReport> {
         match &self.memory_manager {
             Some(m) => m.consolidate().await,
             None => Ok(kod_memory::ConsolidationReport::default()),
@@ -469,8 +483,8 @@ impl TaskRouter {
     /// the checkpoint manager uses for its per-project directory —
     /// one identity, one hash.
     pub fn project_key_for(working_dir: &std::path::Path) -> String {
-        let canonical = std::fs::canonicalize(working_dir)
-            .unwrap_or_else(|_| working_dir.to_path_buf());
+        let canonical =
+            std::fs::canonicalize(working_dir).unwrap_or_else(|_| working_dir.to_path_buf());
         crate::checkpoint::fnv1a_hex(&canonical.to_string_lossy())
     }
 
@@ -638,8 +652,7 @@ impl TaskRouter {
             let mut start = 0;
             while let Some(rel) = haystack[start..].find(needle) {
                 let abs = start + rel;
-                let before_ok = abs == 0
-                    || !haystack.as_bytes()[abs - 1].is_ascii_alphanumeric();
+                let before_ok = abs == 0 || !haystack.as_bytes()[abs - 1].is_ascii_alphanumeric();
                 let after_idx = abs + needle.len();
                 let after_ok = after_idx >= haystack.len()
                     || !haystack.as_bytes()[after_idx].is_ascii_alphanumeric();
@@ -728,7 +741,12 @@ impl TaskRouter {
 
         // 6. Documentation
         if [
-            "document", "documentation", "docs", "readme", "comment", "comments",
+            "document",
+            "documentation",
+            "docs",
+            "readme",
+            "comment",
+            "comments",
         ]
         .iter()
         .copied()
@@ -789,10 +807,7 @@ impl TaskRouter {
         // had a manager, i.e. always since `enable_memory` defaults on.
         let memory_used = memory_context
             .as_ref()
-            .map(|c| {
-                !c.working_memory.is_empty()
-                    || !c.long_term.is_empty()
-            })
+            .map(|c| !c.working_memory.is_empty() || !c.long_term.is_empty())
             .unwrap_or(false);
 
         // 4. The router does not generate text.
@@ -977,9 +992,7 @@ impl TaskRouter {
         // truncating here is a belt-and-braces guard so a
         // non-engine caller cannot ship an oversized prompt.
         let input = match budget {
-            Some(a) if input.len() > a.request => {
-                crate::engine::truncate_chars(input, a.request)
-            }
+            Some(a) if input.len() > a.request => crate::engine::truncate_chars(input, a.request),
             _ => input,
         };
         let history = match budget {
@@ -1050,7 +1063,11 @@ impl TaskRouter {
                 }
             });
         }
-        prompt.push_str(&self.build_context(input, &memory_context, task_type).await?);
+        prompt.push_str(
+            &self
+                .build_context(input, &memory_context, task_type)
+                .await?,
+        );
 
         // Skill knowledge, two layers: the full name+description inventory is
         // always present (so "which skills do you have?" is answerable), and
@@ -1151,10 +1168,7 @@ impl TaskRouter {
                     if let Some(constraints) = &skill.constraints
                         && !constraints.trim().is_empty()
                     {
-                        prompt.push_str(&format!(
-                            "Constraints:\n{}\n\n",
-                            constraints.trim()
-                        ));
+                        prompt.push_str(&format!("Constraints:\n{}\n\n", constraints.trim()));
                     }
                 }
             }
@@ -1193,13 +1207,7 @@ impl TaskRouter {
         budget: Option<&crate::budget::Allocation>,
     ) -> Result<PromptPlan> {
         let rendered = self
-            .build_prompt_with_budget(
-                input,
-                task_type,
-                history,
-                memory_context,
-                budget,
-            )
+            .build_prompt_with_budget(input, task_type, history, memory_context, budget)
             .await?;
         Ok(PromptPlan::from_rendered(&rendered))
     }
@@ -1215,7 +1223,6 @@ impl TaskRouter {
             Ok(Vec::new())
         }
     }
-
 }
 
 /// Repository map cache with mtime-based invalidation.
@@ -1406,7 +1413,8 @@ mod tests {
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
             RouterConfig {
-                embedder: None, skill_threshold: 0.3,
+                embedder: None,
+                skill_threshold: 0.3,
                 enable_memory: true,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
@@ -1470,7 +1478,8 @@ mod tests {
         let db_path = wd.join("test.redb");
         let router = TaskRouter::new(
             RouterConfig {
-                embedder: None, skill_threshold: 0.3,
+                embedder: None,
+                skill_threshold: 0.3,
                 enable_memory: false,
                 max_skills_per_query: 3,
                 working_dir: wd.clone(),
@@ -1508,7 +1517,8 @@ mod tests {
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
             RouterConfig {
-                embedder: None, skill_threshold: 0.3,
+                embedder: None,
+                skill_threshold: 0.3,
                 enable_memory: true,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
@@ -1525,16 +1535,16 @@ mod tests {
             .process_input("what is the meaning of life?")
             .await
             .unwrap();
-        assert!(
-            !resp.memory_used,
-            "empty memory must not report as used"
-        );
+        assert!(!resp.memory_used, "empty memory must not report as used");
 
         // Add a fact whose content shares a content word with the
         // next prompt, and confirm the flag flips.
         let manager = router.memory_manager.as_ref().unwrap();
         manager
-            .store(kod_types::MemoryType::LongTerm, "The project is called KOD.")
+            .store(
+                kod_types::MemoryType::LongTerm,
+                "The project is called KOD.",
+            )
             .await
             .unwrap();
         let resp = router
@@ -1572,7 +1582,8 @@ mod tests {
         // enable_memory on so the router constructs a MemoryManager.
         let router = TaskRouter::new(
             RouterConfig {
-                embedder: None, skill_threshold: 0.3,
+                embedder: None,
+                skill_threshold: 0.3,
                 enable_memory: true,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
@@ -1619,7 +1630,8 @@ mod tests {
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
             RouterConfig {
-                embedder: None, skill_threshold: 0.3,
+                embedder: None,
+                skill_threshold: 0.3,
                 enable_memory: true,
                 max_skills_per_query: 3,
                 working_dir: temp_dir.path().to_path_buf(),
@@ -1744,7 +1756,8 @@ mod tests {
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
             RouterConfig {
-                embedder: None, skill_threshold: 0.3,
+                embedder: None,
+                skill_threshold: 0.3,
                 enable_memory: false,
                 context_window: 8192,
                 short_term_capacity: 100,
@@ -1771,7 +1784,8 @@ mod tests {
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
             RouterConfig {
-                embedder: None, skill_threshold: 0.3,
+                embedder: None,
+                skill_threshold: 0.3,
                 enable_memory: false,
                 context_window: 8192,
                 short_term_capacity: 100,
@@ -1817,7 +1831,8 @@ mod tests {
         let db_path = temp_dir.path().join("test.redb");
         let router = TaskRouter::new(
             RouterConfig {
-                embedder: None, skill_threshold: 0.3,
+                embedder: None,
+                skill_threshold: 0.3,
                 enable_memory: false,
                 context_window: 8192,
                 short_term_capacity: 100,
