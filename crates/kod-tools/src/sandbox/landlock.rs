@@ -247,9 +247,8 @@ pub fn apply(profile: &LandlockProfile) -> Result<()> {
     let ruleset_fd: OwnedFd = unsafe { OwnedFd::from_raw_fd(ruleset_fd_raw as i32) };
 
     // 2. Read-only rules.
-    let ro_access = LANDLOCK_ACCESS_FS_EXECUTE
-        | LANDLOCK_ACCESS_FS_READ_FILE
-        | LANDLOCK_ACCESS_FS_READ_DIR;
+    let ro_access =
+        LANDLOCK_ACCESS_FS_EXECUTE | LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR;
     for path in &profile.ro_paths {
         add_path_rule(&ruleset_fd, path, ro_access)?;
     }
@@ -273,9 +272,7 @@ pub fn apply(profile: &LandlockProfile) -> Result<()> {
 
     // 5. Restrict self.
     // SAFETY: ruleset_fd is a valid Landlock ruleset fd.
-    let ret = unsafe {
-        libc::syscall(SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd.as_raw_fd(), 0u32)
-    };
+    let ret = unsafe { libc::syscall(SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd.as_raw_fd(), 0u32) };
     if ret != 0 {
         let err = std::io::Error::last_os_error();
         return Err(KodError::SandboxViolation(format!(
@@ -291,11 +288,7 @@ pub fn apply(profile: &LandlockProfile) -> Result<()> {
 /// may gain subdirectories after `restrict_self` (created by the
 /// sandboxed process itself), and the profile built before that
 /// cannot name them.
-fn add_path_rule(
-    ruleset_fd: &OwnedFd,
-    path: &Path,
-    allowed_access: u64,
-) -> Result<()> {
+fn add_path_rule(ruleset_fd: &OwnedFd, path: &Path, allowed_access: u64) -> Result<()> {
     // Open the path with O_PATH: the kernel only needs an fd to
     // identify the inode the rule applies beneath; O_PATH avoids
     // requiring read permission on the directory itself.
@@ -358,7 +351,10 @@ mod tests {
         // host, supported or not.
         let abi = probe_abi();
         if let Some(v) = abi {
-            assert!(v >= 1, "Landlock ABI reports 0, which is not a valid version");
+            assert!(
+                v >= 1,
+                "Landlock ABI reports 0, which is not a valid version"
+            );
         }
     }
 
