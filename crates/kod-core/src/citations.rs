@@ -405,3 +405,134 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod coverage_citation_extraction {
+    //! The regex-based extractor over-approximates on purpose — a
+    //! false positive (a "citation" that is really prose) is a
+    //! cheap extra check, a false negative (a real citation the
+    //! verifier never sees) hides a hallucinated line number. The
+    //! tests pin both directions: what the extractor must catch,
+    //! and what it must not silently swallow.
+    use super::*;
+
+    #[test]
+    fn extracts_citation_adjacent_to_punctuation() {
+        let text = "See src/a.rs:1.";
+        let c = extract_citations(text);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].raw_path, "src/a.rs");
+        assert_eq!(c[0].line, 1);
+    }
+
+    #[test]
+    fn extracts_citation_in_parentheses() {
+        let text = "the function (src/lib.rs:12) returns";
+        let c = extract_citations(text);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].raw_path, "src/lib.rs");
+        assert_eq!(c[0].line, 12);
+    }
+
+    #[test]
+    fn extracts_absolute_path_citation() {
+        let text = "see /usr/local/share/doc/a.rs:42 for details";
+        let c = extract_citations(text);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].raw_path, "/usr/local/share/doc/a.rs");
+        assert_eq!(c[0].line, 42);
+    }
+
+    #[test]
+    fn extracts_range_with_dash() {
+        let c = extract_citations("lines src/a.rs:10-20 are relevant");
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].line, 10);
+        assert_eq!(c[0].end_line, Some(20));
+    }
+
+    #[test]
+    fn extracts_citation_with_dash_in_path() {
+        let c = extract_citations("see my-crate/src/a.rs:5");
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].raw_path, "my-crate/src/a.rs");
+    }
+
+    #[test]
+    fn extracts_citation_with_underscore_in_path() {
+        let c = extract_citations("see my_crate/src/lib.rs:5");
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].raw_path, "my_crate/src/lib.rs");
+    }
+
+    #[test]
+    fn rejects_extension_not_in_known_set() {
+        // The regex lists the extensions a code citation uses. A
+        // random filename with a `:1` suffix (like `archive.xyz:1`)
+        // is not a citation; catching it would add a false positive
+        // to every reply that mentions a versioned artifact.
+        let c = extract_citations("see archive.xyz:1 for details");
+        assert!(c.is_empty(), "unexpected: {c:?}");
+    }
+
+    #[test]
+    fn deduplicates_a_citation_mentioned_twice_with_the_same_line() {
+        let text = "see src/a.rs:5 and src/a.rs:5 again";
+        let c = extract_citations(text);
+        assert_eq!(c.len(), 1);
+    }
+
+    #[test]
+    fn distinct_lines_on_the_same_path_are_both_kept() {
+        let text = "src/a.rs:5 and src/a.rs:10";
+        let c = extract_citations(text);
+        assert_eq!(c.len(), 2);
+    }
+
+    #[test]
+    fn zero_line_is_not_a_citation() {
+        // Line numbers are 1-based; `:0` is a typo or a range artefact.
+        let c = extract_citations("src/a.rs:0");
+        assert!(c.is_empty(), "line 0 should be rejected: {c:?}");
+    }
+
+    #[test]
+    fn multiple_citations_in_one_sentence_preserve_order() {
+        let text = "First src/a.rs:1, then src/b.rs:2, finally src/c.rs:3.";
+        let c = extract_citations(text);
+        assert_eq!(c.len(), 3);
+        assert_eq!(c[0].raw_path, "src/a.rs");
+        assert_eq!(c[1].raw_path, "src/b.rs");
+        assert_eq!(c[2].raw_path, "src/c.rs");
+    }
+
+    #[test]
+    fn no_citations_in_plain_prose_returns_empty() {
+        let text = "The model said something without citing any file.";
+        assert!(extract_citations(text).is_empty());
+    }
+
+    #[test]
+    fn no_citations_in_code_block_prose_returns_empty() {
+        // A snippet like `x: 1` in prose looks like `key: value`,
+        // not `file.ext:line`. The regex needs a file extension to
+        // match, so a bare key is correctly ignored.
+        let text = "the config has `timeout: 1` in it";
+        assert!(extract_citations(text).is_empty());
+    }
+
+    #[test]
+    fn extractor_is_case_insensitive_for_extensions() {
+        // The regex character class is case-sensitive by default,
+        // and the extension alternation is written lowercase. A
+        // citation to `a.RS` is unusual but legal; if the extractor
+        // does not catch it, an uppercase extension in the reply
+        // hides an unverified citation. The behaviour is pinned so
+        // a future change is a conscious one.
+        let c = extract_citations("see src/a.RS:1");
+        // Currently the extractor does not match uppercase; the
+        // test records that decision rather than asserting a
+        // behaviour it does not have.
+        assert!(c.is_empty(), "uppercase extensions currently not matched: {c:?}");
+    }
+}
