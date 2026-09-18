@@ -622,3 +622,335 @@ fn tool_declarations(tools: &[ToolDefinition]) -> HashMap<String, serde_json::Va
         })
         .collect()
 }
+
+#[cfg(test)]
+mod coverage_openai_helpers {
+    //! Coverage for the pure helpers at the top of the file. These
+    //! are the functions most likely to be silently broken by a
+    //! refactor — the retry classifier in particular, since a wrong
+    //! `is_retryable` answer means either "hang forever on a 401"
+    //! or "give up on a rate limit" and both are bad in different
+    //! directions.
+    use super::*;
+
+    // ---- is_retryable --------------------------------------------------
+
+    #[test]
+    fn is_retryable_recognizes_rate_limit_variants() {
+        assert!(is_retryable("rate limit exceeded"));
+        assert!(is_retryable("HTTP 429: Too Many Requests"));
+        assert!(is_retryable("too many requests"));
+    }
+
+    #[test]
+    fn is_retryable_recognizes_timeout_and_connection_errors() {
+        assert!(is_retryable("request timeout"));
+        assert!(is_retryable("connection timed out"));
+        assert!(is_retryable("connection reset by peer"));
+        assert!(is_retryable("connection closed before response"));
+    }
+
+    #[test]
+    fn is_retryable_recognizes_server_errors() {
+        assert!(is_retryable("503 Service Unavailable"));
+        assert!(is_retryable("502 Bad Gateway"));
+        assert!(is_retryable("504 Gateway Timeout"));
+        assert!(is_retryable("server temporarily unavailable"));
+        assert!(is_retryable("please try again"));
+    }
+
+    #[test]
+    fn is_retryable_is_case_insensitive() {
+        assert!(is_retryable("RATE LIMIT"));
+        assert!(is_retryable("Timeout"));
+        assert!(is_retryable("BAD GATEWAY"));
+    }
+
+    #[test]
+    fn is_retryable_rejects_auth_and_not_found_errors() {
+        // Retrying these wastes the user's time and hides the real
+        // problem behind a delay.
+        assert!(!is_retryable("401 Unauthorized"));
+        assert!(!is_retryable("invalid api key"));
+        assert!(!is_retryable("404 Not Found"));
+        assert!(!is_retryable("model not found"));
+        assert!(!is_retryable("400 Bad Request"));
+    }
+
+    #[test]
+    fn is_retryable_rejects_empty_and_unrelated_messages() {
+        assert!(!is_retryable(""));
+        assert!(!is_retryable("everything is fine"));
+        assert!(!is_retryable("some other problem"));
+    }
+
+    // ---- normalize_base_url --------------------------------------------
+
+    #[test]
+    fn normalize_base_url_appends_v1_when_missing() {
+        assert_eq!(
+            normalize_base_url("http://localhost:11434"),
+            "http://localhost:11434/v1"
+        );
+        assert_eq!(
+            normalize_base_url("http://localhost:1234"),
+            "http://localhost:1234/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_keeps_existing_v1() {
+        assert_eq!(
+            normalize_base_url("https://api.openai.com/v1"),
+            "https://api.openai.com/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_trims_trailing_slashes_before_appending() {
+        assert_eq!(
+            normalize_base_url("http://localhost:11434/"),
+            "http://localhost:11434/v1"
+        );
+        assert_eq!(
+            normalize_base_url("https://api.openai.com/v1/"),
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            normalize_base_url("https://api.openai.com/v1///"),
+            "https://api.openai.com/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_handles_a_bare_host() {
+        // No scheme — the function does not validate, only normalises.
+        assert_eq!(normalize_base_url("api.example.com"), "api.example.com/v1");
+    }
+
+    // ---- resolve_api_key -----------------------------------------------
+
+    #[test]
+    fn resolve_api_key_prefers_an_explicit_non_empty_value() {
+        assert_eq!(resolve_api_key(Some("sk-explicit".into())), "sk-explicit");
+    }
+
+    #[test]
+    fn resolve_api_key_rejects_a_whitespace_only_explicit_value() {
+        // A config file with `api_key = "   "` must fall through to
+        // the env var or the fallback, not be sent as a bearer token.
+        let key = resolve_api_key(Some("   ".into()));
+        assert_ne!(key, "   ", "whitespace-only must not be returned");
+        assert!(!key.is_empty(), "a key is always returned");
+    }
+
+    #[test]
+    fn resolve_api_key_returns_a_non_empty_string_for_none() {
+        // Either the env var (whatever it is in this test process)
+        // or the local fallback. Never empty — the OpenAI spec
+        // servers reject a missing Authorization header outright,
+        // so an empty string would be a hard failure for a user
+        // who configured no key at all.
+        let key = resolve_api_key(None);
+        assert!(!key.is_empty());
+    }
+
+    #[test]
+    fn local_fallback_api_key_is_the_documented_sentinel() {
+        // The value is what local servers (Ollama, LM Studio) see
+        // when no key is configured. Changing it is harmless but
+        // the constant should not silently become empty.
+        assert_eq!(LOCAL_FALLBACK_API_KEY, "not-needed");
+    }
+
+    // ---- consts --------------------------------------------------------
+
+    #[test]
+    fn retry_constants_have_sane_values() {
+        // `MAX_RETRIES` must be > 1 (one retry is not enough for the
+        // Ollama cold-start case the doc comment names) and the
+        // backoff must be sub-second so the user sees a retry, not
+        // a hang.
+        assert!(MAX_RETRIES >= 2, "MAX_RETRIES = {MAX_RETRIES}");
+        assert!(RETRY_BACKOFF_MS > 0);
+        assert!(RETRY_BACKOFF_MS < 5_000);
+    }
+}
+
+#[cfg(test)]
+mod coverage_openai_provider {
+    //! Coverage for provider construction and the accessors that
+    //! the TUI and CLI use to display and switch the endpoint. The
+    //! HTTP path (`collect`, `stream_request`) needs a mock server
+    //! and lives in `tests/contracts.rs`; these tests never touch
+    //! the network.
+    use super::*;
+
+    // ---- with_api_key --------------------------------------------------
+
+    #[test]
+    fn with_api_key_normalizes_a_bare_host() {
+        let p = OpenAICompatProvider::with_api_key(
+            "http://localhost:11434",
+            "qwen2.5-coder:7b",
+            "not-needed",
+        )
+        .unwrap();
+        assert_eq!(p.base_url(), "http://localhost:11434/v1");
+    }
+
+    #[test]
+    fn with_api_key_keeps_an_existing_v1_suffix() {
+        let p = OpenAICompatProvider::with_api_key(
+            "https://api.openai.com/v1",
+            "gpt-5",
+            "sk-test",
+        )
+        .unwrap();
+        assert_eq!(p.base_url(), "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn with_api_key_stores_the_default_model() {
+        let p = OpenAICompatProvider::with_api_key(
+            "http://localhost:11434",
+            "llama3.3:70b",
+            "not-needed",
+        )
+        .unwrap();
+        assert_eq!(p.default_model(), "llama3.3:70b");
+    }
+
+    // ---- with_model ----------------------------------------------------
+
+    #[test]
+    fn with_model_switches_the_model_and_keeps_the_endpoint() {
+        let p = OpenAICompatProvider::with_api_key(
+            "http://localhost:11434",
+            "qwen2.5-coder:7b",
+            "not-needed",
+        )
+        .unwrap();
+        let p2 = p.with_model("qwen2.5-coder:32b").unwrap();
+        assert_eq!(p2.default_model(), "qwen2.5-coder:32b");
+        assert_eq!(
+            p2.base_url(),
+            "http://localhost:11434/v1",
+            "a model switch must not change the endpoint",
+        );
+    }
+
+    #[test]
+    fn with_model_can_be_chained() {
+        // Three back-to-back switches must all succeed and land on
+        // the last model. This is the shape of a user cycling
+        // models in the TUI.
+        let p = OpenAICompatProvider::with_api_key(
+            "http://localhost:11434",
+            "m1",
+            "not-needed",
+        )
+        .unwrap();
+        let p = p.with_model("m2").unwrap();
+        let p = p.with_model("m3").unwrap();
+        assert_eq!(p.default_model(), "m3");
+        assert_eq!(p.base_url(), "http://localhost:11434/v1");
+    }
+
+    // ---- with_api_key_and_timeout --------------------------------------
+
+    #[test]
+    fn with_api_key_and_timeout_accepts_a_custom_timeout() {
+        // The timeout is stored (not just used to build the client)
+        // and carried forward by `with_model`.
+        let p = OpenAICompatProvider::with_api_key_and_timeout(
+            "http://localhost:11434",
+            "m",
+            "not-needed",
+            42,
+        )
+        .unwrap();
+        assert_eq!(p.timeout_secs, 42);
+        let p2 = p.with_model("m2").unwrap();
+        assert_eq!(
+            p2.timeout_secs, 42,
+            "with_model must carry the timeout forward",
+        );
+    }
+
+    #[test]
+    fn with_api_key_defaults_the_timeout_to_300() {
+        let p = OpenAICompatProvider::with_api_key(
+            "http://localhost:11434",
+            "m",
+            "not-needed",
+        )
+        .unwrap();
+        assert_eq!(p.timeout_secs, 300);
+    }
+
+    // ---- options_to_config ---------------------------------------------
+
+    #[test]
+    fn options_to_config_carries_temperature_and_top_p() {
+        let opts = GenerationOptions {
+            temperature: Some(0.7),
+            top_p: Some(0.9),
+            ..Default::default()
+        };
+        let cfg = options_to_config(&opts);
+        assert_eq!(cfg.temperature, Some(0.7));
+        assert_eq!(cfg.top_p, Some(0.9));
+    }
+
+    #[test]
+    fn options_to_config_defaults_to_none_when_options_are_unset() {
+        let opts = GenerationOptions::default();
+        let cfg = options_to_config(&opts);
+        assert!(cfg.temperature.is_none());
+        assert!(cfg.top_p.is_none());
+    }
+
+    #[test]
+    fn options_to_config_maps_max_tokens_through_i32() {
+        let opts = GenerationOptions {
+            max_tokens: Some(1024),
+            ..Default::default()
+        };
+        let cfg = options_to_config(&opts);
+        assert_eq!(cfg.max_output_tokens, Some(1024));
+    }
+
+    #[test]
+    fn options_to_config_drops_a_max_tokens_that_overflows_i32() {
+        // `u64::MAX` cannot fit in an `i32`; the `and_then` in the
+        // implementation drops it to `None` rather than truncating
+        // to a garbage value. Truncation would send the server a
+        // negative or tiny token budget.
+        let opts = GenerationOptions {
+            max_tokens: Some(usize::MAX),
+            ..Default::default()
+        };
+        let cfg = options_to_config(&opts);
+        assert!(
+            cfg.max_output_tokens.is_none(),
+            "overflowing max_tokens must be dropped, got {:?}",
+            cfg.max_output_tokens,
+        );
+    }
+
+    // ---- name ----------------------------------------------------------
+
+    #[test]
+    fn provider_name_is_stable() {
+        // The name is displayed in the TUI's header and used by the
+        // registry; changing it is a visible change.
+        let p = OpenAICompatProvider::with_api_key(
+            "http://localhost:11434",
+            "m",
+            "not-needed",
+        )
+        .unwrap();
+        assert_eq!(p.name(), "openai-compatible");
+    }
+}
