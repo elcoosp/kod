@@ -144,3 +144,91 @@ mod tests {
         assert_eq!(config.short_term_capacity, 42);
     }
 }
+
+#[cfg(test)]
+mod coverage_embedding_serde {
+    //! `EmbeddingEndpoint` selects the wire shape the memory
+    //! subsystem uses to compute embeddings. The `lowercase`
+    //! rename is the on-disk contract; a regression that changed
+    //! it silently disables semantic retrieval for every config
+    //! that spells `ollama` or `openai` in lowercase.
+    use super::*;
+
+    #[test]
+    fn endpoint_default_is_none() {
+        // The "no embeddings" state must be the default: a session
+        // that has not configured an embedder must not accidentally
+        // get semantic retrieval and start calling an endpoint
+        // nobody told it to reach.
+        let c = MemoryConfig::default();
+        assert_eq!(c.embedding_endpoint, EmbeddingEndpoint::None);
+    }
+
+    #[test]
+    fn endpoint_deserializes_from_lowercase() {
+        for (s, expected) in [
+            ("none", EmbeddingEndpoint::None),
+            ("ollama", EmbeddingEndpoint::Ollama),
+            ("openai", EmbeddingEndpoint::OpenAI),
+        ] {
+            let toml_str = format!("embedding_endpoint = \"{s}\"");
+            let c: MemoryConfig = toml::from_str(&toml_str).unwrap();
+            assert_eq!(c.embedding_endpoint, expected, "for {s:?}");
+        }
+    }
+
+    #[test]
+    fn endpoint_rejects_unknown_variants() {
+        let toml_str = "embedding_endpoint = \"something\"";
+        let r = toml::from_str::<MemoryConfig>(toml_str);
+        assert!(r.is_err(), "unknown variant accepted");
+    }
+
+    #[test]
+    fn embedding_url_and_key_env_default_to_none() {
+        let c = MemoryConfig::default();
+        assert!(c.embedding_url.is_none());
+        assert!(c.embedding_api_key_env.is_none());
+    }
+
+    #[test]
+    fn embedding_url_round_trips_when_set() {
+        let c: MemoryConfig = toml::from_str(
+            "embedding_url = \"http://localhost:11434\"\n\
+             embedding_api_key_env = \"MY_KEY\"",
+        )
+        .unwrap();
+        assert_eq!(
+            c.embedding_url.as_deref(),
+            Some("http://localhost:11434"),
+        );
+        assert_eq!(c.embedding_api_key_env.as_deref(), Some("MY_KEY"));
+    }
+
+    #[test]
+    fn extract_on_shutdown_defaults_to_false() {
+        // The extraction pass costs one LLM call at shutdown; the
+        // default must be opt-in or every session pays it silently.
+        assert!(!MemoryConfig::default().extract_on_shutdown);
+    }
+
+    #[test]
+    fn extract_max_entries_has_a_bounded_default() {
+        // A value the extractor can honour in one call; a 0 or a
+        // very large number would either disable extraction or
+        // produce a wall of entries.
+        let c = MemoryConfig::default();
+        assert!(c.extract_max_entries > 0);
+        assert!(c.extract_max_entries <= 100);
+    }
+
+    #[test]
+    fn extraction_fields_round_trip() {
+        let c: MemoryConfig = toml::from_str(
+            "extract_on_shutdown = true\nextract_max_entries = 25",
+        )
+        .unwrap();
+        assert!(c.extract_on_shutdown);
+        assert_eq!(c.extract_max_entries, 25);
+    }
+}
