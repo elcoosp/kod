@@ -157,11 +157,17 @@ mod tests {
     async fn release_all_clears_cells_and_allows_reacquire() {
         let table = PathLockTable::new();
         let path = Path::new("/tmp/release-all-test");
-        let g = table.acquire(path, "h", Duration::from_millis(50)).await.unwrap();
+        let g = table
+            .acquire(path, "h", Duration::from_millis(50))
+            .await
+            .unwrap();
         drop(g);
         table.release_all().await;
         // Reacquire succeeds (cells were cleared; new cell created).
-        let g2 = table.acquire(path, "h2", Duration::from_millis(50)).await.unwrap();
+        let g2 = table
+            .acquire(path, "h2", Duration::from_millis(50))
+            .await
+            .unwrap();
         drop(g2);
     }
 
