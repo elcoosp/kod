@@ -240,3 +240,122 @@ mod tests {
         assert!(idx.insert(id(), vec![]).is_err());
     }
 }
+
+#[cfg(test)]
+mod coverage_vector_search {
+    //! The vector index is a brute-force walk that the retrieval
+    //! path consults on every query. Its correctness condition is
+    //! "the top-k list is right" and "no vector that fails the
+    //! keep predicate leaks". A regression here silently reranks
+    //! memory on every retrieval.
+    use super::*;
+
+    fn id() -> MemoryId {
+        MemoryId::new()
+    }
+
+    #[test]
+    fn nan_vector_is_rejected() {
+        // A NaN in an embedding is a server bug, not valid data.
+        // The `norm_sq.is_finite()` guard is what stops it from
+        // poisoning every subsequent dot product.
+        let mut idx = VectorIndex::new(2);
+        assert!(idx.insert(id(), vec![f32::NAN, 0.0]).is_err());
+        assert!(idx.insert(id(), vec![f32::INFINITY, 0.0]).is_err());
+    }
+
+    #[test]
+    fn search_with_k_zero_returns_empty() {
+        let mut idx = VectorIndex::new(2);
+        idx.insert(id(), vec![1.0, 0.0]).unwrap();
+        let hits = idx.search(&[1.0, 0.0], 0, |_| true).unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn search_with_k_larger_than_len_returns_everything() {
+        let mut idx = VectorIndex::new(2);
+        for _ in 0..3 {
+            idx.insert(id(), vec![1.0, 0.0]).unwrap();
+        }
+        let hits = idx.search(&[1.0, 0.0], 100, |_| true).unwrap();
+        assert_eq!(hits.len(), 3);
+    }
+
+    #[test]
+    fn search_on_zero_query_vector_returns_empty() {
+        // A zero query vector has no direction; cosine is
+        // undefined. The safe answer is "no results", not a
+        // division by zero or a panic.
+        let mut idx = VectorIndex::new(2);
+        idx.insert(id(), vec![1.0, 0.0]).unwrap();
+        let hits = idx.search(&[0.0, 0.0], 5, |_| true).unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn replace_then_search_returns_the_new_vector() {
+        let mut idx = VectorIndex::new(2);
+        let i = id();
+        idx.insert(i.clone(), vec![1.0, 0.0]).unwrap();
+        idx.insert(i.clone(), vec![0.0, 1.0]).unwrap();
+        // The index is now a single vector along +y; a query
+        // along +x must not match it at the top of the ranking.
+        let hits_x = idx.search(&[1.0, 0.0], 5, |_| true).unwrap();
+        assert_eq!(hits_x.len(), 1);
+        assert!((hits_x[0].1 - 0.0).abs() < 1e-6);
+        let hits_y = idx.search(&[0.0, 1.0], 5, |_| true).unwrap();
+        assert!((hits_y[0].1 - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn remove_then_search_excludes_the_removed_id() {
+        let mut idx = VectorIndex::new(2);
+        let a = id();
+        let b = id();
+        idx.insert(a.clone(), vec![1.0, 0.0]).unwrap();
+        idx.insert(b.clone(), vec![0.9, 0.1]).unwrap();
+        idx.remove(&a);
+        let hits = idx.search(&[1.0, 0.0], 5, |_| true).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0, b);
+    }
+
+    #[test]
+    fn dim_reports_the_constructor_argument() {
+        assert_eq!(VectorIndex::new(4).dim(), 4);
+        assert_eq!(VectorIndex::new(0).dim(), 0);
+    }
+
+    #[test]
+    fn is_empty_is_true_initially_and_false_after_insert() {
+        let mut idx = VectorIndex::new(2);
+        assert!(idx.is_empty());
+        idx.insert(id(), vec![1.0, 0.0]).unwrap();
+        assert!(!idx.is_empty());
+    }
+
+    #[test]
+    fn remove_returns_false_for_unknown_id() {
+        let mut idx = VectorIndex::new(2);
+        assert!(!idx.remove(&id()));
+    }
+
+    #[test]
+    fn search_is_stable_across_calls_for_identical_inputs() {
+        // Two searches against the same index and the same query
+        // must produce the same ranking. A regression that used a
+        // HashMap internally would make the order
+        // non-deterministic and every golden snapshot of the
+        // retrieval path flaky.
+        let mut idx = VectorIndex::new(2);
+        for _ in 0..5 {
+            idx.insert(id(), vec![1.0, 0.0]).unwrap();
+        }
+        let a = idx.search(&[1.0, 0.0], 5, |_| true).unwrap();
+        let b = idx.search(&[1.0, 0.0], 5, |_| true).unwrap();
+        let ids_a: Vec<_> = a.iter().map(|(id, _)| id.clone()).collect();
+        let ids_b: Vec<_> = b.iter().map(|(id, _)| id.clone()).collect();
+        assert_eq!(ids_a, ids_b);
+    }
+}
