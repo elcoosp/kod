@@ -158,18 +158,41 @@ mod coverage_clipboard {
     #[test]
     fn write_then_read_round_trip_or_gracefully_degrades() {
         // On a machine with a working clipboard, a write followed
-        // by a read sees the same content. On one without, either
-        // (or both) calls return the graceful failure value.
-        // Either outcome is correct; a panic is not.
+        // by a read eventually sees the same content. On one
+        // without, either (or both) calls return the graceful
+        // failure value. Either outcome is correct; a panic is not.
+        //
+        // `pbcopy` / `xclip` / `wl-paste` hand the bytes to a
+        // system clipboard daemon asynchronously; the daemon makes
+        // no synchronization guarantee about when the new content
+        // becomes visible to the next read. The read is therefore
+        // retried a bounded number of times before the assertion
+        // applies, so a slow daemon under load (a coverage run is
+        // the classic case) is a scheduling fact rather than a
+        // test failure.
         let content = "kod-clipboard-test-unique-payload";
-        let wrote = write_clipboard(content);
-        let read = read_clipboard();
-        if wrote {
-            if let Some(got) = read {
-                // Some platforms append a newline; compare on the
-                // trimmed form.
-                assert_eq!(got.trim_end(), content);
+        if !write_clipboard(content) {
+            // No clipboard tool available on this host. Nothing
+            // to assert.
+            return;
+        }
+        let mut last: Option<String> = None;
+        for _ in 0..10 {
+            match read_clipboard() {
+                Some(got) if got.trim_end() == content => return,
+                other => last = other,
             }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // Reaching this point is a genuine inconsistency, not a
+        // timing fact: either the daemon accepted the write but
+        // never surfaced it (a real bug), or the read tool exists
+        // but is broken (also a real bug).
+        match last {
+            Some(got) => panic!(
+                "clipboard round trip never settled: wrote {content:?}, last read was {got:?}"
+            ),
+            None => panic!("clipboard write succeeded but every read returned None"),
         }
     }
 }
