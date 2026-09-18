@@ -85,7 +85,7 @@ async fn shutdown_request_terminates_the_daemon() {
     let stream = loop {
         match UnixStream::connect(&sock).await {
             Ok(s) => break s,
-            Err(e) if std::time::Instant::now() < __connect_deadline => {
+            Err(_e) if std::time::Instant::now() < __connect_deadline => {
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
             Err(e) => panic!("connect to daemon: {e}"),
