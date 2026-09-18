@@ -102,6 +102,50 @@ impl LongTermMemory {
         .await
     }
 
+    /// Store N entries in a single redb write transaction.
+    ///
+    /// The retrieval path updates `last_retrieved_at_ms` on every hit;
+    /// doing N individual `store` calls would open N write transactions
+    /// on a per-prompt hot path. This method amortises them. Entries
+    /// are serialized before the transaction opens, so a serialization
+    /// error fails the batch without touching redb.
+    pub async fn store_batch(&self, entries: Vec<MemoryEntry>) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let prepared: Vec<(Vec<u8>, Vec<u8>)> = entries
+            .into_iter()
+            .map(|e| {
+                let key = e.id.as_uuid().as_bytes().to_vec();
+                let value = serde_json::to_vec(&e)
+                    .map_err(|err| KodError::Serialization(err.to_string()))?;
+                Ok((key, value))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        self.blocking(move |db| {
+            let txn = db.begin_write().map_err(|e| {
+                KodError::MemoryDatabase(format!("Failed to start transaction: {}", e))
+            })?;
+            {
+                let mut table = txn.open_table(MEMORY_TABLE).map_err(|e| {
+                    KodError::MemoryDatabase(format!("Failed to open table: {}", e))
+                })?;
+                for (key, value) in &prepared {
+                    table
+                        .insert(key.as_slice(), value.as_slice())
+                        .map_err(|e| {
+                            KodError::MemoryDatabase(format!("Failed to insert: {}", e))
+                        })?;
+                }
+            }
+            txn.commit()
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {}", e)))?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Get an entry by id.
     pub async fn get(&self, id: &MemoryId) -> Result<Option<MemoryEntry>> {
         let key = id.as_uuid().as_bytes().to_vec();
@@ -220,6 +264,33 @@ impl LongTermMemory {
     }
 
     /// Remove every entry. Runs in one write transaction.
+    /// Explicitly close the underlying redb database handle held by
+    /// this instance.
+    ///
+    /// redb closes the file when the last `Arc<Database>` drops. This
+    /// method gives the caller a *deterministic* close point: it
+    /// consumes the `LongTermMemory` (and its strong reference), so a
+    /// subsequent call to any other method is a compile error, and the
+    /// OS file lock is released as soon as the engine's own handle
+    /// drops — rather than whenever the last clone of the `Arc`
+    /// happens to fall out of scope.
+    ///
+    /// Idempotency is by construction: consuming `self` means the
+    /// method can only be called once. `KodEngine::shutdown` therefore
+    /// does not need to guard against a double close; it guards on
+    /// `is_running` instead.
+    ///
+    /// The actual fsync happens inside redb's own `Database::drop`
+    /// (each write transaction already fsynced per commit, so this is
+    /// a final flush rather than a bulk sync).
+    pub fn close(self) {
+        // Consuming `self` is the whole contract — dropping it here
+        // releases the `Arc<Database>` this instance held. Other
+        // clones of that Arc (a caller that stored one) keep the file
+        // open; the engine holds no such clone.
+        drop(self);
+    }
+
     pub async fn clear(&self) -> Result<()> {
         self.blocking(|db| {
             let txn = db.begin_write().map_err(|e| {
