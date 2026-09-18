@@ -385,3 +385,315 @@ mod coverage_multi_dir_loading {
         assert_eq!(skills[0].metadata.name, "good");
     }
 }
+
+/// Coverage for the `SkillLoader` methods the existing tests do not
+/// reach: `search`, `get_all_skills`, `remove_skill`, `reload_skill`,
+/// `skills_dir`, `count` on empty, the error paths in `load_all`, and
+/// `enable_hot_reload` idempotence.
+#[cfg(test)]
+mod coverage_loader_api {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write_skill(dir: &std::path::Path, name: &str, description: &str) -> std::path::PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join(format!("{name}.md"));
+        std::fs::write(
+            &path,
+            format!(
+                "---\nname: {name}\ndescription: {description}\n\
+                 version: 1.0.0\ncategory: test\n\
+                 tags:\n  - demo\n  - loader\n\
+                 capabilities:\n  - search\n\
+                 ---\n\n## Instructions\n\nbody for {name}\n",
+            ),
+        )
+        .unwrap();
+        path
+    }
+
+    // ---- skills_dir ---------------------------------------------------
+
+    #[test]
+    fn skills_dir_returns_the_construction_argument() {
+        let loader = SkillLoader::new("/tmp/kod-loader-skills-dir");
+        assert_eq!(
+            loader.skills_dir(),
+            std::path::Path::new("/tmp/kod-loader-skills-dir"),
+        );
+    }
+
+    // ---- load_all error path -----------------------------------------
+
+    #[tokio::test]
+    async fn load_all_on_a_missing_directory_errors() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        let mut loader = SkillLoader::new(&missing);
+        let err = loader.load_all().await.unwrap_err();
+        // The error must name the directory so the user can see
+        // which config entry pointed at nothing.
+        assert!(
+            err.to_string().contains("does-not-exist")
+                || err.to_string().contains("does not exist"),
+            "error must name the missing directory: {err}",
+        );
+    }
+
+    #[tokio::test]
+    async fn load_all_on_an_empty_directory_returns_no_skills() {
+        let tmp = TempDir::new().unwrap();
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        let mut loader = SkillLoader::new(&empty);
+        let skills = loader.load_all().await.unwrap();
+        assert!(skills.is_empty());
+        assert_eq!(loader.count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn load_all_clears_the_cache_before_reloading() {
+        // The cache is cleared on every `load_all`, so a skill that
+        // was deleted from disk between calls must not survive in
+        // the cache.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        write_skill(&dir, "first", "first body");
+        let mut loader = SkillLoader::new(&dir);
+        loader.load_all().await.unwrap();
+        assert_eq!(loader.count().await, 1);
+
+        // Delete the file, reload, cache must be empty.
+        std::fs::remove_file(dir.join("first.md")).unwrap();
+        loader.load_all().await.unwrap();
+        assert_eq!(
+            loader.count().await,
+            0,
+            "load_all must clear the previous cache",
+        );
+    }
+
+    #[tokio::test]
+    async fn load_all_skips_malformed_files() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        write_skill(&dir, "good", "good body");
+        std::fs::write(dir.join("broken.md"), "no front matter").unwrap();
+        let mut loader = SkillLoader::new(&dir);
+        let skills = loader.load_all().await.unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].metadata.name, "good");
+    }
+
+    #[tokio::test]
+    async fn load_all_ignores_non_md_files() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        write_skill(&dir, "real", "body");
+        std::fs::write(dir.join("notes.txt"), "some text").unwrap();
+        std::fs::write(dir.join("data.json"), "{}").unwrap();
+        let mut loader = SkillLoader::new(&dir);
+        let skills = loader.load_all().await.unwrap();
+        assert_eq!(skills.len(), 1);
+    }
+
+    // ---- get_skill / count --------------------------------------------
+
+    #[tokio::test]
+    async fn get_skill_returns_none_for_an_unknown_name() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        write_skill(&dir, "present", "body");
+        let mut loader = SkillLoader::new(&dir);
+        loader.load_all().await.unwrap();
+        assert!(loader.get_skill("absent").await.is_none());
+        assert!(loader.get_skill("present").await.is_some());
+    }
+
+    // ---- get_all_skills -----------------------------------------------
+
+    #[tokio::test]
+    async fn get_all_skills_returns_every_cached_skill() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        write_skill(&dir, "a", "a body");
+        write_skill(&dir, "b", "b body");
+        write_skill(&dir, "c", "c body");
+        let mut loader = SkillLoader::new(&dir);
+        loader.load_all().await.unwrap();
+        let all = loader.get_all_skills().await;
+        assert_eq!(all.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn get_all_skills_on_a_fresh_loader_is_empty() {
+        let loader = SkillLoader::new("/tmp/unused");
+        assert!(loader.get_all_skills().await.is_empty());
+    }
+
+    // ---- search -------------------------------------------------------
+
+    #[tokio::test]
+    async fn search_matches_on_name() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        write_skill(&dir, "rust-helper", "some description");
+        write_skill(&dir, "python-helper", "some description");
+        let mut loader = SkillLoader::new(&dir);
+        loader.load_all().await.unwrap();
+        let hits = loader.search("rust").await;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].metadata.name, "rust-helper");
+    }
+
+    #[tokio::test]
+    async fn search_matches_on_description() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        write_skill(&dir, "one", "handles CSV parsing");
+        write_skill(&dir, "two", "handles JSON parsing");
+        let mut loader = SkillLoader::new(&dir);
+        loader.load_all().await.unwrap();
+        let hits = loader.search("csv").await;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].metadata.name, "one");
+    }
+
+    #[tokio::test]
+    async fn search_matches_on_tags_and_capabilities() {
+        // The helper writes `tags: [demo, loader]` and
+        // `capabilities: [search]` for every skill. Both must be
+        // searchable.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        write_skill(&dir, "anything", "body");
+        let mut loader = SkillLoader::new(&dir);
+        loader.load_all().await.unwrap();
+        assert_eq!(loader.search("demo").await.len(), 1, "tag hit");
+        assert_eq!(loader.search("loader").await.len(), 1, "tag hit");
+        assert_eq!(loader.search("search").await.len(), 1, "capability hit");
+    }
+
+    #[tokio::test]
+    async fn search_is_case_insensitive() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        write_skill(&dir, "UpperName", "body");
+        let mut loader = SkillLoader::new(&dir);
+        loader.load_all().await.unwrap();
+        assert_eq!(loader.search("uppername").await.len(), 1);
+        assert_eq!(loader.search("UPPERNAME").await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn search_with_no_matches_returns_empty() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        write_skill(&dir, "present", "body");
+        let mut loader = SkillLoader::new(&dir);
+        loader.load_all().await.unwrap();
+        assert!(loader.search("nothingmatchesthis").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn search_with_empty_query_matches_every_skill() {
+        // The empty string is contained in every string, so every
+        // skill matches. A regression that special-cased the empty
+        // query to return nothing would be defensible but is not
+        // what the implementation does.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        write_skill(&dir, "a", "a body");
+        write_skill(&dir, "b", "b body");
+        let mut loader = SkillLoader::new(&dir);
+        loader.load_all().await.unwrap();
+        assert_eq!(loader.search("").await.len(), 2);
+    }
+
+    // ---- reload_skill -------------------------------------------------
+
+    #[tokio::test]
+    async fn reload_skill_updates_the_cache() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        let path = write_skill(&dir, "target", "old description");
+        let mut loader = SkillLoader::new(&dir);
+        loader.load_all().await.unwrap();
+        assert!(loader.get_skill("target").await.is_some());
+
+        // Rewrite with a new description and reload just that file.
+        std::fs::write(
+            &path,
+            "---\nname: target\ndescription: NEW DESCRIPTION\n\
+             version: 1.0.0\ncategory: test\n---\n\nbody\n",
+        )
+        .unwrap();
+        let reloaded = loader.reload_skill(&path).await.unwrap();
+        assert!(reloaded.is_some());
+        let cached = loader.get_skill("target").await.unwrap();
+        assert_eq!(cached.metadata.description, "NEW DESCRIPTION");
+    }
+
+    #[tokio::test]
+    async fn reload_skill_on_a_missing_file_errors() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        std::fs::create_dir_all(&dir).unwrap();
+        let loader = SkillLoader::new(&dir);
+        let missing = dir.join("absent.md");
+        assert!(loader.reload_skill(&missing).await.is_err());
+    }
+
+    // ---- remove_skill -------------------------------------------------
+
+    #[tokio::test]
+    async fn remove_skill_drops_it_from_the_cache_by_path() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        let path = write_skill(&dir, "removable", "body");
+        let mut loader = SkillLoader::new(&dir);
+        loader.load_all().await.unwrap();
+        assert_eq!(loader.count().await, 1);
+
+        let removed = loader.remove_skill(&path).await;
+        assert!(removed.is_some(), "remove_skill must return the removed skill");
+        assert_eq!(removed.unwrap().metadata.name, "removable");
+        assert_eq!(loader.count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn remove_skill_on_an_unknown_path_returns_none() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        write_skill(&dir, "present", "body");
+        let mut loader = SkillLoader::new(&dir);
+        loader.load_all().await.unwrap();
+
+        let unknown = tmp.path().join("nope.md");
+        let result = loader.remove_skill(&unknown).await;
+        assert!(result.is_none());
+        // The cache is unchanged.
+        assert_eq!(loader.count().await, 1);
+    }
+
+    // ---- enable_hot_reload --------------------------------------------
+
+    #[tokio::test]
+    async fn enable_hot_reload_is_idempotent() {
+        // Calling twice must not error or spawn a second watcher.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("skills");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut loader = SkillLoader::new(&dir);
+        loader.enable_hot_reload().await.unwrap();
+        loader.enable_hot_reload().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn enable_hot_reload_on_a_missing_directory_errors() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("no-such-dir");
+        let mut loader = SkillLoader::new(&missing);
+        assert!(loader.enable_hot_reload().await.is_err());
+    }
+}
