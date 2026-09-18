@@ -4,8 +4,8 @@ use clap::Parser;
 use clap::Subcommand;
 use kod_config::KodConfig;
 use kod_core::KodEngine;
-use kod_core::{SwarmEvent, SwarmRunner};
 use kod_core::RouterConfig;
+use kod_core::{SwarmEvent, SwarmRunner};
 use kod_error::{KodError, Result};
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
@@ -16,15 +16,9 @@ use std::sync::Arc;
 fn parse_preset(s: Option<&str>) -> Result<Option<kod_config::Preset>> {
     match s {
         None => Ok(None),
-        Some("read-only") | Some("readonly") => {
-            Ok(Some(kod_config::Preset::ReadOnly))
-        }
-        Some("standard") | Some("default") => {
-            Ok(Some(kod_config::Preset::Standard))
-        }
-        Some("yolo") | Some("unrestricted") => {
-            Ok(Some(kod_config::Preset::Yolo))
-        }
+        Some("read-only") | Some("readonly") => Ok(Some(kod_config::Preset::ReadOnly)),
+        Some("standard") | Some("default") => Ok(Some(kod_config::Preset::Standard)),
+        Some("yolo") | Some("unrestricted") => Ok(Some(kod_config::Preset::Yolo)),
         Some(other) => Err(kod_error::KodError::Config(format!(
             "unknown --preset {other:?}. Known presets: read-only, standard, yolo"
         ))),
@@ -39,9 +33,8 @@ async fn install_policy_async(
     cli_preset: Option<&str>,
 ) -> Result<()> {
     let preset = parse_preset(cli_preset)?;
-    let cwd = std::env::current_dir().map_err(|e| {
-        kod_error::KodError::Config(format!("could not determine cwd: {e}"))
-    })?;
+    let cwd = std::env::current_dir()
+        .map_err(|e| kod_error::KodError::Config(format!("could not determine cwd: {e}")))?;
     let policy = kod_config::PolicyEngine::load(config, Some(&cwd), preset)?;
     engine.set_policy(std::sync::Arc::new(policy)).await;
     Ok(())
@@ -225,16 +218,9 @@ impl Cli {
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async {
                     if *remote {
-                        run_agent_remote(name.clone(), goal.clone(), socket.clone())
-                            .await
+                        run_agent_remote(name.clone(), goal.clone(), socket.clone()).await
                     } else {
-                        run_agent(
-                            name.clone(),
-                            goal.clone(),
-                            model.clone(),
-                            preset.clone(),
-                        )
-                        .await
+                        run_agent(name.clone(), goal.clone(), model.clone(), preset.clone()).await
                     }
                 })
             }
@@ -250,13 +236,7 @@ impl Cli {
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async {
                     if *remote {
-                        run_swarm_remote(
-                            goal.clone(),
-                            *agents,
-                            *merge,
-                            socket.clone(),
-                        )
-                        .await
+                        run_swarm_remote(goal.clone(), *agents, *merge, socket.clone()).await
                     } else {
                         run_swarm(goal.clone(), *agents, model.clone(), *merge).await
                     }
@@ -277,18 +257,14 @@ impl Cli {
                         Some(SkillsAction::Export { name, dest, force }) => {
                             run_skills_export(name, dest.clone(), *force).await
                         }
-                        Some(SkillsAction::Search { query }) => {
-                            run_skills_search(query).await
-                        }
+                        Some(SkillsAction::Search { query }) => run_skills_search(query).await,
                         Some(SkillsAction::Copy { name, new_name }) => {
                             run_skills_copy(name, new_name).await
                         }
                         Some(SkillsAction::Rename { name, new_name }) => {
                             run_skills_rename(name, new_name).await
                         }
-                        Some(SkillsAction::Source { name }) => {
-                            run_skills_source(name).await
-                        }
+                        Some(SkillsAction::Source { name }) => run_skills_source(name).await,
                     }
                 })
             }
@@ -311,9 +287,7 @@ impl Cli {
                         Some(ConfigAction::Path) => run_config_path().await,
                         Some(ConfigAction::Edit) => run_config_edit().await,
                         Some(ConfigAction::Validate) => run_config_validate().await,
-                        Some(ConfigAction::InitFrom { name }) => {
-                            run_config_init_from(name).await
-                        }
+                        Some(ConfigAction::InitFrom { name }) => run_config_init_from(name).await,
                         Some(ConfigAction::Migrate { dry_run }) => {
                             run_config_migrate(*dry_run).await
                         }
@@ -321,9 +295,7 @@ impl Cli {
                         Some(ConfigAction::Export { path: dest, force }) => {
                             run_config_export(dest.clone(), *force).await
                         }
-                        Some(ConfigAction::ShowMerged) => {
-                            run_config_show_merged().await
-                        }
+                        Some(ConfigAction::ShowMerged) => run_config_show_merged().await,
                     }
                 })
             }
@@ -430,9 +402,8 @@ impl Cli {
                 rt.block_on(async { run_serve(*stop, socket.clone()).await })
             }
             Some(Command::Acp { preset }) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    KodError::Internal(format!("Failed to create runtime: {}", e))
-                })?;
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_acp(preset.clone()).await })
             }
             Some(Command::SandboxExec { profile, cmd }) => {
@@ -1373,7 +1344,8 @@ pub async fn run_chat(
         &config.memory,
         Some(&config.llm.default_endpoint().base_url),
     );
-        let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
+    let router_config = RouterConfig {
+        skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         embedder,
@@ -1383,7 +1355,13 @@ pub async fn run_chat(
     // call `respond_to_approval` while `process_streaming` runs on the
     // same engine.
     let engine = Arc::new(KodEngine::new(router_config, db_path)?);
-    engine.set_history_budget(config.llm.default_endpoint().context_window.saturating_mul(3));
+    engine.set_history_budget(
+        config
+            .llm
+            .default_endpoint()
+            .context_window
+            .saturating_mul(3),
+    );
 
     // Set up OpenAI-compatible provider (Ollama /v1, LM Studio, MLX, ...)
     let (registry, default_model, routing) =
@@ -1442,7 +1420,11 @@ pub async fn run_chat(
             if dir.is_dir()
                 && let Err(e) = engine.enable_hot_reload(dir).await
             {
-                eprintln!("Could not enable skill hot reload for {}: {}", dir.display(), e);
+                eprintln!(
+                    "Could not enable skill hot reload for {}: {}",
+                    dir.display(),
+                    e
+                );
             }
         }
     }
@@ -1503,23 +1485,18 @@ pub async fn run_chat(
         let engine_for_approvals = engine.clone();
         let approval_forwarder = tokio::spawn(async move {
             while let Some((id, decision)) = approval_rx.recv().await {
-                let _ = engine_for_approvals
-                    .respond_to_approval(id, decision)
-                    .await;
+                let _ = engine_for_approvals.respond_to_approval(id, decision).await;
             }
         });
         // Clone so the outer scope retains its own sender: dropping it
         // after `process_streaming` closes the channel, and the pump's
         // clone is dropped with the task. Without the clone, the outer
         // `drop(approval_tx)` is a use-after-move.
-        let (question_tx, mut question_rx) =
-            tokio::sync::mpsc::channel::<(u64, String)>(16);
+        let (question_tx, mut question_rx) = tokio::sync::mpsc::channel::<(u64, String)>(16);
         let engine_for_questions = engine.clone();
         let question_forwarder = tokio::spawn(async move {
             while let Some((id, answer)) = question_rx.recv().await {
-                let _ = engine_for_questions
-                    .respond_to_question(id, answer)
-                    .await;
+                let _ = engine_for_questions.respond_to_question(id, answer).await;
             }
         });
         let approval_tx_pump = approval_tx.clone();
@@ -1558,12 +1535,10 @@ pub async fn run_chat(
                 // Any input error is treated as Deny.
                 // Question marker: ask_user wants a text answer.
                 if let Some((id, json)) = kod_core::engine::parse_question(&chunk) {
-                    let request: kod_tools::ask::QuestionRequest =
-                        serde_json::from_str(json).unwrap_or_else(|_| {
-                            kod_tools::ask::QuestionRequest {
-                                question: "(unparseable question)".to_string(),
-                                placeholder: None,
-                            }
+                    let request: kod_tools::ask::QuestionRequest = serde_json::from_str(json)
+                        .unwrap_or_else(|_| kod_tools::ask::QuestionRequest {
+                            question: "(unparseable question)".to_string(),
+                            placeholder: None,
                         });
                     println!();
                     println!("── question ──");
@@ -1582,23 +1557,16 @@ pub async fn run_chat(
                     continue;
                 }
 
-                if let Some((_batch_id, json)) =
-                    kod_core::engine::parse_tool_approval_batch(&chunk)
+                if let Some((_batch_id, json)) = kod_core::engine::parse_tool_approval_batch(&chunk)
                 {
-                    let batch: kod_core::engine::ApprovalBatch =
-                        serde_json::from_str(json).unwrap_or_else(|_| {
-                            kod_core::engine::ApprovalBatch { items: Vec::new() }
-                        });
+                    let batch: kod_core::engine::ApprovalBatch = serde_json::from_str(json)
+                        .unwrap_or_else(|_| kod_core::engine::ApprovalBatch { items: Vec::new() });
                     let total = batch.items.len();
                     for (n, item) in batch.items.iter().enumerate() {
                         let item_id = match item.id {
                             Some(i) => i,
                             None => {
-                                println!(
-                                    "(approval item {}/{} has no id; skipping)",
-                                    n + 1,
-                                    total
-                                );
+                                println!("(approval item {}/{} has no id; skipping)", n + 1, total);
                                 continue;
                             }
                         };
@@ -1637,15 +1605,13 @@ pub async fn run_chat(
                 }
 
                 if let Some((id, json)) = kod_core::engine::parse_tool_approval(&chunk) {
-                    let request: kod_core::engine::ApprovalRequest =
-                        serde_json::from_str(json).unwrap_or_else(|_| {
-                            kod_core::engine::ApprovalRequest {
-                                tool_name: "?".to_string(),
-                                arguments: serde_json::Value::Null,
-                                diff: None,
-                                summary: "(unparseable approval request)".to_string(),
-                                id: None,
-                            }
+                    let request: kod_core::engine::ApprovalRequest = serde_json::from_str(json)
+                        .unwrap_or_else(|_| kod_core::engine::ApprovalRequest {
+                            tool_name: "?".to_string(),
+                            arguments: serde_json::Value::Null,
+                            diff: None,
+                            summary: "(unparseable approval request)".to_string(),
+                            id: None,
                         });
                     println!();
                     println!("── approval required ──");
@@ -1671,9 +1637,7 @@ pub async fn run_chat(
                     };
                     let decision = match answer_lower.as_str() {
                         "y" | "yes" => kod_core::engine::ApprovalDecision::Approve,
-                        "a" | "always" | "never" => {
-                            kod_core::engine::ApprovalDecision::DenyAlways
-                        }
+                        "a" | "always" | "never" => kod_core::engine::ApprovalDecision::DenyAlways,
                         _ => kod_core::engine::ApprovalDecision::Deny,
                     };
                     let _ = approval_tx_pump.send((id, decision)).await;
@@ -1697,9 +1661,7 @@ pub async fn run_chat(
             Some(sys) => format!("[system override] {sys}\n\n{input_line}"),
             None => input_line.to_string(),
         };
-        let result = engine
-            .process_streaming(&input_with_system, &tx)
-            .await;
+        let result = engine.process_streaming(&input_with_system, &tx).await;
         drop(tx);
         drop(approval_tx);
         drop(question_tx);
@@ -1791,8 +1753,8 @@ pub async fn run_swarm_remote(
         "method": "swarm",
         "params": params,
     });
-    let mut frame = serde_json::to_string(&req)
-        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    let mut frame =
+        serde_json::to_string(&req).map_err(|e| KodError::Serialization(e.to_string()))?;
     frame.push('\n');
     write_half
         .write_all(frame.as_bytes())
@@ -1831,8 +1793,7 @@ pub async fn run_swarm_remote(
                 {
                     println!("\n{} file conflict(s):", conflicts.len());
                     for c in conflicts {
-                        let file =
-                            c.get("file").and_then(|f| f.as_str()).unwrap_or("?");
+                        let file = c.get("file").and_then(|f| f.as_str()).unwrap_or("?");
                         let agents = c
                             .get("agents")
                             .and_then(|a| a.as_array())
@@ -1902,14 +1863,21 @@ pub async fn run_swarm(
         &config.memory,
         Some(&config.llm.default_endpoint().base_url),
     );
-        let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
+    let router_config = RouterConfig {
+        skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         embedder,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
-    engine.set_history_budget(config.llm.default_endpoint().context_window.saturating_mul(3));
+    engine.set_history_budget(
+        config
+            .llm
+            .default_endpoint()
+            .context_window
+            .saturating_mul(3),
+    );
 
     let (registry, default_model, routing) =
         kod_core::build_registry(&config.llm, Some(&model_name))?;
@@ -1931,7 +1899,11 @@ pub async fn run_swarm(
             if dir.is_dir()
                 && let Err(e) = engine.enable_hot_reload(dir).await
             {
-                eprintln!("Could not enable skill hot reload for {}: {}", dir.display(), e);
+                eprintln!(
+                    "Could not enable skill hot reload for {}: {}",
+                    dir.display(),
+                    e
+                );
             }
         }
     }
@@ -1959,7 +1931,11 @@ pub async fn run_swarm(
                     println!();
                 }
                 SwarmEvent::AgentStarted { name, subtask, .. } => {
-                    println!("── {} starts on: {}", name, subtask.lines().next().unwrap_or(""));
+                    println!(
+                        "── {} starts on: {}",
+                        name,
+                        subtask.lines().next().unwrap_or("")
+                    );
                 }
                 SwarmEvent::AgentChunk { text, .. } => {
                     print!("{}", text);
@@ -1976,11 +1952,7 @@ pub async fn run_swarm(
                     // run sees overlapping work while the merge step
                     // is still ahead of them, not only in the final
                     // answer.
-                    eprintln!(
-                        "\n⚠ conflict: {} written by {}\n",
-                        file,
-                        agents.join(", ")
-                    );
+                    eprintln!("\n⚠ conflict: {} written by {}\n", file, agents.join(", "));
                 }
                 SwarmEvent::AgentRetrying {
                     id: _,
@@ -2015,10 +1987,7 @@ pub async fn run_swarm(
                     failed,
                 } => {
                     if conflicted.is_empty() && failed.is_empty() {
-                        println!(
-                            "\n── worktrees merged: {} ok ──\n",
-                            merged.len()
-                        );
+                        println!("\n── worktrees merged: {} ok ──\n", merged.len());
                     } else {
                         println!(
                             "\n── worktrees merged: {} ok, {} conflict(s), {} failed ──",
@@ -2055,9 +2024,7 @@ pub async fn run_swarm(
     println!("\n================ merged ================\n");
     println!("{}", resp.merged);
     if !resp.merged_by_model {
-        println!(
-            "\n(merged by concatenation — LLM synthesis was disabled or failed)"
-        );
+        println!("\n(merged by concatenation — LLM synthesis was disabled or failed)");
     }
 
     engine.shutdown().await?;
@@ -2115,8 +2082,8 @@ pub async fn run_agent_remote(
             "transcript_key": format!("agent:{name}"),
         },
     });
-    let mut frame = serde_json::to_string(&req)
-        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    let mut frame =
+        serde_json::to_string(&req).map_err(|e| KodError::Serialization(e.to_string()))?;
     frame.push('\n');
     write_half
         .write_all(frame.as_bytes())
@@ -2190,14 +2157,21 @@ pub async fn run_agent(
         &config.memory,
         Some(&config.llm.default_endpoint().base_url),
     );
-        let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
+    let router_config = RouterConfig {
+        skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         embedder,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
-    engine.set_history_budget(config.llm.default_endpoint().context_window.saturating_mul(3));
+    engine.set_history_budget(
+        config
+            .llm
+            .default_endpoint()
+            .context_window
+            .saturating_mul(3),
+    );
 
     let (registry, default_model, routing) =
         kod_core::build_registry(&config.llm, Some(&model_name))?;
@@ -2299,9 +2273,18 @@ pub async fn run_config_display() -> Result<()> {
     }
     println!("  Model: {}", config.llm.default_endpoint().model);
     println!("  Base URL: {}", config.llm.default_endpoint().base_url);
-    println!("  Context Window: {}", config.llm.default_endpoint().context_window);
-    println!("  Max Tokens: {}", config.llm.default_endpoint().max_tokens.unwrap_or(2048));
-    println!("  Temperature: {}", config.llm.default_endpoint().temperature.unwrap_or(0.7));
+    println!(
+        "  Context Window: {}",
+        config.llm.default_endpoint().context_window
+    );
+    println!(
+        "  Max Tokens: {}",
+        config.llm.default_endpoint().max_tokens.unwrap_or(2048)
+    );
+    println!(
+        "  Temperature: {}",
+        config.llm.default_endpoint().temperature.unwrap_or(0.7)
+    );
     println!(
         "  Network access: {}",
         if config.llm.network_access {
@@ -2310,9 +2293,7 @@ pub async fn run_config_display() -> Result<()> {
             "disabled"
         }
     );
-    println!(
-        "  Write approval: policy-gated (see [tools] and .kod/policy.toml)"
-    );
+    println!("  Write approval: policy-gated (see [tools] and .kod/policy.toml)");
     println!(
         "  Auto-check: {}",
         if config.tools.auto_check {
@@ -2407,7 +2388,10 @@ pub async fn run_tests() -> Result<()> {
 
     // Test 1: Configuration loading
     let config = KodConfig::load_default()?;
-    println!("  Config: OK (model={})", config.llm.default_endpoint().model);
+    println!(
+        "  Config: OK (model={})",
+        config.llm.default_endpoint().model
+    );
 
     // Test 2: Engine lifecycle.
     //
@@ -2448,8 +2432,7 @@ pub async fn run_tests() -> Result<()> {
 
     // Test 3: Provider setup
     {
-        let (registry, _default_model, _routing) =
-            kod_core::build_registry(&config.llm, None)?;
+        let (registry, _default_model, _routing) = kod_core::build_registry(&config.llm, None)?;
         let endpoint_names = registry.names();
         println!("  Provider setup: OK (endpoints={:?})", endpoint_names);
     }
@@ -2474,9 +2457,8 @@ pub async fn run_tests() -> Result<()> {
 /// by its top-level symbols. Summary counts go to stderr so stdout can be
 /// piped into a file cleanly.
 pub async fn run_map(max_chars: usize) -> Result<()> {
-    let cwd = std::env::current_dir().map_err(|e| {
-        KodError::Config(format!("Could not determine working directory: {}", e))
-    })?;
+    let cwd = std::env::current_dir()
+        .map_err(|e| KodError::Config(format!("Could not determine working directory: {}", e)))?;
     let map = kod_core::repomap::build_repo_map(&cwd);
     let rendered = map.render(max_chars);
     print!("{}", rendered);
@@ -2555,7 +2537,8 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool) -> Result<()> {
         &config.memory,
         Some(&config.llm.default_endpoint().base_url),
     );
-        let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
+    let router_config = RouterConfig {
+        skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         embedder,
@@ -2651,12 +2634,30 @@ pub async fn run_profile(action: ProfileAction) -> Result<()> {
                 let e = config.llm.default_endpoint();
                 println!("  provider       = {:?}", e.provider);
             }
-            println!("  model          = \"{}\"", config.llm.default_endpoint().model);
-            println!("  base_url       = \"{}\"", config.llm.default_endpoint().base_url);
-            println!("  context_window = {}", config.llm.default_endpoint().context_window);
-            println!("  max_tokens     = {}", config.llm.default_endpoint().max_tokens.unwrap_or(2048));
-            println!("  temperature    = {}", config.llm.default_endpoint().temperature.unwrap_or(0.7));
-            println!("  timeout_secs   = {}", config.llm.default_endpoint().timeout_secs);
+            println!(
+                "  model          = \"{}\"",
+                config.llm.default_endpoint().model
+            );
+            println!(
+                "  base_url       = \"{}\"",
+                config.llm.default_endpoint().base_url
+            );
+            println!(
+                "  context_window = {}",
+                config.llm.default_endpoint().context_window
+            );
+            println!(
+                "  max_tokens     = {}",
+                config.llm.default_endpoint().max_tokens.unwrap_or(2048)
+            );
+            println!(
+                "  temperature    = {}",
+                config.llm.default_endpoint().temperature.unwrap_or(0.7)
+            );
+            println!(
+                "  timeout_secs   = {}",
+                config.llm.default_endpoint().timeout_secs
+            );
             Ok(())
         }
         ProfileAction::Use { name, dry_run } => {
@@ -2675,7 +2676,11 @@ pub async fn run_profile(action: ProfileAction) -> Result<()> {
             let dir = KodConfig::config_dir()?;
             let path = dir.join("config.toml");
             if dry_run {
-                println!("Dry run — would write profile {:?} to {}.", name, path.display());
+                println!(
+                    "Dry run — would write profile {:?} to {}.",
+                    name,
+                    path.display()
+                );
                 println!("  model:          {}", profile.model);
                 println!("  base_url:       {}", profile.base_url);
                 println!("  context_window: {}", profile.context_window);
@@ -2784,7 +2789,11 @@ pub async fn run_init(force: bool) -> Result<()> {
                 println!("Backed up {} -> {}", path.display(), backup.display());
             }
         }
-        let fresh = if force { KodConfig::default() } else { config.clone() };
+        let fresh = if force {
+            KodConfig::default()
+        } else {
+            config.clone()
+        };
         if let Err(e) = fresh.save_to(&path) {
             eprintln!("Warning: could not write {}: {}", path.display(), e);
         }
@@ -2795,7 +2804,10 @@ pub async fn run_init(force: bool) -> Result<()> {
     if path.exists() {
         println!("Config:   {}", path.display());
     } else {
-        println!("Config:   (in memory only — could not write {})", path.display());
+        println!(
+            "Config:   (in memory only — could not write {})",
+            path.display()
+        );
     }
     println!("Model:    {}", config.llm.default_endpoint().model);
     println!("Endpoint: {}", config.llm.default_endpoint().base_url);
@@ -2807,9 +2819,7 @@ pub async fn run_init(force: bool) -> Result<()> {
             "disabled (set llm.network_access = true to enable)"
         }
     );
-    println!(
-        "Writes:   policy-gated (see [tools] and .kod/policy.toml)"
-    );
+    println!("Writes:   policy-gated (see [tools] and .kod/policy.toml)");
     println!();
     println!("Built-in model profiles:");
     for p in kod_config::profiles::PRESETS {
@@ -2824,7 +2834,10 @@ pub async fn run_init(force: bool) -> Result<()> {
     println!();
     println!("Next steps:");
     println!("  1. Start the model server (e.g. `ollama serve`)");
-    println!("  2. Pull the model (e.g. `ollama pull {}`)", config.llm.default_endpoint().model);
+    println!(
+        "  2. Pull the model (e.g. `ollama pull {}`)",
+        config.llm.default_endpoint().model
+    );
     println!("  3. Verify the setup:  kod doctor");
     println!("  4. Start a session:   kod tui    (interactive)");
     println!("                        kod chat   (plain REPL)");
@@ -2858,8 +2871,7 @@ pub async fn run_init(force: bool) -> Result<()> {
 /// command keeps the distinction visible.
 pub async fn run_models(filter: Option<String>) -> Result<()> {
     let config = KodConfig::load_default()?;
-    let (registry, default_model, _routing) =
-        kod_core::build_registry(&config.llm, None)?;
+    let (registry, default_model, _routing) = kod_core::build_registry(&config.llm, None)?;
 
     let provider = match registry.resolve(&default_model) {
         Ok(p) => p,
@@ -2878,7 +2890,8 @@ pub async fn run_models(filter: Option<String>) -> Result<()> {
         Err(e) => {
             eprintln!(
                 "Could not list models from {}: {}",
-                config.llm.default_endpoint().base_url, e
+                config.llm.default_endpoint().base_url,
+                e
             );
             eprintln!();
             eprintln!("Check that the server is running and `base_url` in the config is correct.");
@@ -2926,7 +2939,11 @@ pub async fn run_models(filter: Option<String>) -> Result<()> {
             n,
         );
     } else {
-        println!("{} model(s) on {}:", shown.len(), config.llm.default_endpoint().base_url);
+        println!(
+            "{} model(s) on {}:",
+            shown.len(),
+            config.llm.default_endpoint().base_url
+        );
     }
     for m in &shown {
         if m.as_str() == config.llm.default_endpoint().model {
@@ -2980,8 +2997,16 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
             );
             if let (Some(first), Some(last)) = (messages.first(), messages.last()) {
                 println!();
-                println!("First:   [{}] {}", first.timestamp.format("%Y-%m-%d %H:%M:%S"), preview(&first.content, 60));
-                println!("Last:    [{}] {}", last.timestamp.format("%Y-%m-%d %H:%M:%S"), preview(&last.content, 60));
+                println!(
+                    "First:   [{}] {}",
+                    first.timestamp.format("%Y-%m-%d %H:%M:%S"),
+                    preview(&first.content, 60)
+                );
+                println!(
+                    "Last:    [{}] {}",
+                    last.timestamp.format("%Y-%m-%d %H:%M:%S"),
+                    preview(&last.content, 60)
+                );
             }
             Ok(())
         }
@@ -3065,9 +3090,8 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
         SessionsAction::Import { path: src } => {
             let raw = std::fs::read_to_string(&src).map_err(KodError::Io)?;
             // Validate parse before touching the destination.
-            let messages: Vec<Message> = serde_json::from_str(&raw).map_err(|e| {
-                KodError::Deserialization(format!("{}: {}", src.display(), e))
-            })?;
+            let messages: Vec<Message> = serde_json::from_str(&raw)
+                .map_err(|e| KodError::Deserialization(format!("{}: {}", src.display(), e)))?;
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).map_err(KodError::Io)?;
             }
@@ -3084,10 +3108,7 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
             );
             Ok(())
         }
-        SessionsAction::Export {
-            path: dest,
-            format,
-        } => {
+        SessionsAction::Export { path: dest, format } => {
             let raw = std::fs::read_to_string(&path).map_err(KodError::Io)?;
             let messages: Vec<Message> = serde_json::from_str(&raw)
                 .map_err(|e| KodError::Deserialization(format!("{}: {}", path.display(), e)))?;
@@ -3204,20 +3225,14 @@ fn print_swarm_event(v: &serde_json::Value) {
             println!("\nDecomposed into {} subtasks:", subs.len());
             for (i, s) in subs.iter().enumerate() {
                 let name = s.get("name").and_then(|x| x.as_str()).unwrap_or("?");
-                let desc = s
-                    .get("description")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("");
+                let desc = s.get("description").and_then(|x| x.as_str()).unwrap_or("");
                 println!("  {}. {} \u{2014} {}", i + 1, name, desc);
             }
             println!();
         }
         "agent_started" => {
             let name = data.get("name").and_then(|x| x.as_str()).unwrap_or("?");
-            let subtask = data
-                .get("subtask")
-                .and_then(|x| x.as_str())
-                .unwrap_or("");
+            let subtask = data.get("subtask").and_then(|x| x.as_str()).unwrap_or("");
             println!(
                 "\u{2500}\u{2500} {} starts on: {}",
                 name,
@@ -3236,10 +3251,7 @@ fn print_swarm_event(v: &serde_json::Value) {
         }
         "agent_failed" => {
             let name = data.get("name").and_then(|x| x.as_str()).unwrap_or("?");
-            let error = data
-                .get("error")
-                .and_then(|x| x.as_str())
-                .unwrap_or("");
+            let error = data.get("error").and_then(|x| x.as_str()).unwrap_or("");
             eprintln!("\n\u{2500}\u{2500} {} failed: {}\n", name, error);
         }
         "agent_retrying" => {
@@ -3281,10 +3293,7 @@ fn print_swarm_event(v: &serde_json::Value) {
                 .and_then(|x| x.as_str())
                 .unwrap_or("?");
             let path = data.get("path").and_then(|x| x.as_str()).unwrap_or("");
-            let branch = data
-                .get("branch")
-                .and_then(|x| x.as_str())
-                .unwrap_or("");
+            let branch = data.get("branch").and_then(|x| x.as_str()).unwrap_or("");
             println!(
                 "\u{2500}\u{2500} {}: worktree {} (branch {})",
                 agent, path, branch
@@ -3349,11 +3358,14 @@ pub async fn run_acp(cli_preset: Option<String>) -> Result<()> {
     };
     let engine = Arc::new(KodEngine::new(router_config, db_path)?);
     engine.set_history_budget(
-        config.llm.default_endpoint().context_window.saturating_mul(3),
+        config
+            .llm
+            .default_endpoint()
+            .context_window
+            .saturating_mul(3),
     );
 
-    let (registry, default_model, routing) =
-        kod_core::build_registry(&config.llm, None)?;
+    let (registry, default_model, routing) = kod_core::build_registry(&config.llm, None)?;
     engine.set_registry(registry, default_model, routing).await;
     engine.set_hooks(config.hooks.clone());
     engine.set_network_access(config.llm.network_access);
@@ -3394,10 +3406,7 @@ pub async fn run_acp(cli_preset: Option<String>) -> Result<()> {
 /// does not exit cleanly in that window gets a warning, not a hard
 /// failure — the file may have been unlinked by an earlier run and
 /// the actual process is what matters.
-pub async fn run_serve(
-    stop: bool,
-    socket: Option<std::path::PathBuf>,
-) -> Result<()> {
+pub async fn run_serve(stop: bool, socket: Option<std::path::PathBuf>) -> Result<()> {
     let socket_path = socket.unwrap_or_else(kod_core::serve::default_socket_path);
 
     if stop {
@@ -3439,7 +3448,7 @@ pub async fn run_serve(
         &config.memory,
         Some(&config.llm.default_endpoint().base_url),
     );
-        let router_config = RouterConfig {
+    let router_config = RouterConfig {
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         skill_threshold: config.skills.match_threshold,
@@ -3448,11 +3457,14 @@ pub async fn run_serve(
     };
     let engine = KodEngine::new(router_config, db_path)?;
     engine.set_history_budget(
-        config.llm.default_endpoint().context_window.saturating_mul(3),
+        config
+            .llm
+            .default_endpoint()
+            .context_window
+            .saturating_mul(3),
     );
 
-    let (registry, default_model, routing) =
-        kod_core::build_registry(&config.llm, None)?;
+    let (registry, default_model, routing) = kod_core::build_registry(&config.llm, None)?;
     engine.set_registry(registry, default_model, routing).await;
     engine.set_hooks(config.hooks.clone());
     engine.set_network_access(config.llm.network_access);
@@ -3460,9 +3472,8 @@ pub async fn run_serve(
     engine.set_auto_lsp(config.tools.auto_lsp);
 
     // Policy: a daemon has no CLI preset.
-    let cwd = std::env::current_dir().map_err(|e| {
-        KodError::Config(format!("could not determine cwd: {e}"))
-    })?;
+    let cwd = std::env::current_dir()
+        .map_err(|e| KodError::Config(format!("could not determine cwd: {e}")))?;
     let policy = kod_config::PolicyEngine::load(&config, Some(&cwd), None)?;
     engine.set_policy(std::sync::Arc::new(policy)).await;
     kod_core::mcp_adapters::install_from_config(&engine, &config).await;
@@ -3498,10 +3509,7 @@ pub async fn run_serve(
 /// fallback to running the command unsandboxed: a caller that
 /// reached `SandboxMode::Require` and got a launcher failure did
 /// so on purpose.
-pub fn run_sandbox_exec(
-    profile_path: std::path::PathBuf,
-    cmd: Vec<String>,
-) -> Result<()> {
+pub fn run_sandbox_exec(profile_path: std::path::PathBuf, cmd: Vec<String>) -> Result<()> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (profile_path, cmd);
@@ -3578,11 +3586,11 @@ pub async fn run_checkpoint(action: CheckpointAction) -> Result<()> {
 
     match action {
         CheckpointAction::Diff { id } => {
-            let snap = manager.find(&id)?.ok_or_else(|| {
-                KodError::InvalidParameters {
+            let snap = manager
+                .find(&id)?
+                .ok_or_else(|| KodError::InvalidParameters {
                     reason: format!("no checkpoint with id {id:?}"),
-                }
-            })?;
+                })?;
             let now = std::fs::read_to_string(&snap.path).unwrap_or_default();
             let diff = kod_tools::patch::render_unified_diff(
                 &snap.content,
@@ -3590,7 +3598,10 @@ pub async fn run_checkpoint(action: CheckpointAction) -> Result<()> {
                 &snap.path.display().to_string(),
             );
             if diff.trim().is_empty() {
-                println!("{}: no difference between snapshot and current content.", snap.path.display());
+                println!(
+                    "{}: no difference between snapshot and current content.",
+                    snap.path.display()
+                );
             } else {
                 print!("{diff}");
             }
@@ -3755,8 +3766,7 @@ pub async fn run_skills_validate() -> Result<()> {
 /// install command the tool prints.
 pub async fn run_update() -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
-    let repo = std::env::var("KOD_UPDATE_REPO")
-        .unwrap_or_else(|_| "elcoosp/kod".to_string());
+    let repo = std::env::var("KOD_UPDATE_REPO").unwrap_or_else(|_| "elcoosp/kod".to_string());
     let url = format!("https://api.github.com/repos/{repo}/releases/latest");
 
     println!("Current: v{}", current);
@@ -3798,14 +3808,8 @@ pub async fn run_update() -> Result<()> {
         .await
         .map_err(|e| KodError::Provider(format!("invalid JSON: {e}")))?;
 
-    let tag = body
-        .get("tag_name")
-        .and_then(|t| t.as_str())
-        .unwrap_or("");
-    let html_url = body
-        .get("html_url")
-        .and_then(|u| u.as_str())
-        .unwrap_or("");
+    let tag = body.get("tag_name").and_then(|t| t.as_str()).unwrap_or("");
+    let html_url = body.get("html_url").and_then(|u| u.as_str()).unwrap_or("");
     let tag_clean = tag.trim_start_matches('v');
 
     if tag_clean.is_empty() {
@@ -3859,51 +3863,6 @@ fn version_is_older(candidate: &str, running: &str) -> bool {
     (cm, cn, cp) < (rm, rn, rp) || ((cm, cn, cp) == (rm, rn, rp) && cpre && !rpre)
 }
 
-#[cfg(test)]
-mod update_tests {
-    use super::{version_is_older, versions_equal};
-
-    #[test]
-    fn versions_equal_ignores_leading_v() {
-        assert!(versions_equal("0.1.0", "0.1.0"));
-        assert!(versions_equal("v0.1.0", "0.1.0"));
-        assert!(versions_equal("0.1.0", "v0.1.0"));
-        assert!(!versions_equal("0.1.0", "0.1.1"));
-    }
-
-    #[test]
-    fn version_is_older_compares_semver_triples() {
-        assert!(version_is_older("0.1.0", "0.1.1"));
-        assert!(version_is_older("0.1.9", "0.2.0"));
-        assert!(version_is_older("0.9.9", "1.0.0"));
-        assert!(!version_is_older("0.1.0", "0.1.0"));
-        assert!(!version_is_older("0.2.0", "0.1.9"));
-        assert!(!version_is_older("1.0.0", "0.9.9"));
-    }
-
-    #[test]
-    fn version_is_older_handles_missing_components() {
-        assert!(version_is_older("1", "1.0.1"));
-        assert!(!version_is_older("1.0.1", "1"));
-        assert!(version_is_older("1.0", "1.0.1"));
-        assert!(version_is_older("0", "0.0.1"));
-    }
-
-    #[test]
-    fn version_is_older_treats_prerelease_as_older() {
-        assert!(version_is_older("0.1.0-rc1", "0.1.0"));
-        assert!(!version_is_older("0.1.0", "0.1.0-rc1"));
-        assert!(version_is_older("0.1.0-rc1", "0.1.1-rc1"));
-    }
-
-    #[test]
-    fn version_is_older_with_leading_v() {
-        assert!(version_is_older("v0.1.0", "v0.1.1"));
-        assert!(version_is_older("v0.1.0", "0.1.1"));
-        assert!(version_is_older("0.1.0", "v0.1.1"));
-    }
-}
-
 /// Print just the config file path. Useful for `$(kod config path)`.
 pub async fn run_config_path() -> Result<()> {
     let dir = KodConfig::config_dir()?;
@@ -3936,7 +3895,11 @@ pub async fn run_config_edit() -> Result<()> {
         // `sh -c` so a value like `code --wait` works.
         let status = std::process::Command::new("sh")
             .arg("-c")
-            .arg(format!("{} {}", editor, shell_quote(&path.to_string_lossy())))
+            .arg(format!(
+                "{} {}",
+                editor,
+                shell_quote(&path.to_string_lossy())
+            ))
             .status();
         match status {
             Ok(s) if s.success() => return Ok(()),
@@ -3999,9 +3962,7 @@ pub async fn run_skills_new(name: &str) -> Result<()> {
         .or_else(|| dirs.first())
         .cloned()
         .ok_or_else(|| {
-            KodError::Config(
-                "could not determine a skills directory to write to".to_string(),
-            )
+            KodError::Config("could not determine a skills directory to write to".to_string())
         })?;
 
     std::fs::create_dir_all(&target_dir).map_err(KodError::Io)?;
@@ -4107,15 +4068,9 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
             } else {
                 let n = matching.len();
                 for e in &matching {
-                    let _ = manager
-                        .remove(kod_types::MemoryType::LongTerm, &e.id)
-                        .await;
+                    let _ = manager.remove(kod_types::MemoryType::LongTerm, &e.id).await;
                 }
-                println!(
-                    "Forgot {} entr{}.",
-                    n,
-                    if n == 1 { "y" } else { "ies" },
-                );
+                println!("Forgot {} entr{}.", n, if n == 1 { "y" } else { "ies" },);
             }
             Ok(())
         }
@@ -4162,8 +4117,8 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
             } else {
                 std::fs::read_to_string(&src).map_err(KodError::Io)?
             };
-            let arr: Vec<serde_json::Value> = serde_json::from_str(&raw)
-                .map_err(|e| KodError::Deserialization(e.to_string()))?;
+            let arr: Vec<serde_json::Value> =
+                serde_json::from_str(&raw).map_err(|e| KodError::Deserialization(e.to_string()))?;
             let mut added = 0usize;
             for v in &arr {
                 if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
@@ -4173,7 +4128,11 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
                     added += 1;
                 }
             }
-            println!("Imported {} long-term entr{}.", added, if added == 1 { "y" } else { "ies" });
+            println!(
+                "Imported {} long-term entr{}.",
+                added,
+                if added == 1 { "y" } else { "ies" }
+            );
             Ok(())
         }
         MemoryAction::List => {
@@ -4209,9 +4168,9 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
         }
         MemoryAction::Delete { id } => {
             let all = manager.get_all_long_term().await?;
-            let full = all.iter().find(|e| {
-                e.id.as_uuid().to_string().starts_with(&id)
-            });
+            let full = all
+                .iter()
+                .find(|e| e.id.as_uuid().to_string().starts_with(&id));
             match full {
                 Some(entry) => {
                     manager
@@ -4228,9 +4187,7 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
         }
         MemoryAction::Clear { yes } => {
             if !yes {
-                eprint!(
-                    "Delete all long-term memory entries? This cannot be undone. [y/N] "
-                );
+                eprint!("Delete all long-term memory entries? This cannot be undone. [y/N] ");
                 use std::io::Write;
                 let _ = std::io::stderr().flush();
                 let mut line = String::new();
@@ -4245,11 +4202,13 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
             }
             let all = manager.get_all_long_term().await?;
             for e in &all {
-                let _ = manager
-                    .remove(kod_types::MemoryType::LongTerm, &e.id)
-                    .await;
+                let _ = manager.remove(kod_types::MemoryType::LongTerm, &e.id).await;
             }
-            println!("Deleted {} entr{}.", all.len(), if all.len() == 1 { "y" } else { "ies" });
+            println!(
+                "Deleted {} entr{}.",
+                all.len(),
+                if all.len() == 1 { "y" } else { "ies" }
+            );
             Ok(())
         }
     }
@@ -4329,7 +4288,10 @@ pub async fn run_skills_remove(name: &str, yes: bool) -> Result<()> {
     let path = match find_skill_path(name).await? {
         Some(p) => p,
         None => {
-            eprintln!("No skill named {:?} in any configured skills directory.", name);
+            eprintln!(
+                "No skill named {:?} in any configured skills directory.",
+                name
+            );
             std::process::exit(1);
         }
     };
@@ -4376,7 +4338,10 @@ pub async fn run_skills_edit(name: &str) -> Result<()> {
     let path = match find_skill_path(name).await? {
         Some(p) => p,
         None => {
-            eprintln!("No skill named {:?} in any configured skills directory.", name);
+            eprintln!(
+                "No skill named {:?} in any configured skills directory.",
+                name
+            );
             std::process::exit(1);
         }
     };
@@ -4386,7 +4351,11 @@ pub async fn run_skills_edit(name: &str) -> Result<()> {
         .unwrap_or_else(|_| "vi".to_string());
     let status = std::process::Command::new("sh")
         .arg("-c")
-        .arg(format!("{} {}", editor, shell_quote(&path.to_string_lossy())))
+        .arg(format!(
+            "{} {}",
+            editor,
+            shell_quote(&path.to_string_lossy())
+        ))
         .status();
     match status {
         Ok(s) if s.success() => Ok(()),
@@ -4419,8 +4388,10 @@ pub async fn run_config_migrate(dry_run: bool) -> Result<()> {
     let path = dir.join("config.toml");
 
     if !path.exists() {
-        let mut fresh = KodConfig::default();
-        fresh.config_version = 2;
+        let fresh = KodConfig {
+            config_version: 2,
+            ..KodConfig::default()
+        };
         if dry_run {
             let s = toml::to_string_pretty(&fresh)
                 .map_err(|e| KodError::Serialization(e.to_string()))?;
@@ -4449,8 +4420,8 @@ pub async fn run_config_migrate(dry_run: bool) -> Result<()> {
 
     cfg.config_version = 2;
 
-    let migrated = toml::to_string_pretty(&cfg)
-        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    let migrated =
+        toml::to_string_pretty(&cfg).map_err(|e| KodError::Serialization(e.to_string()))?;
 
     if dry_run {
         eprintln!(
@@ -4487,7 +4458,6 @@ pub async fn run_config_migrate(dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-
 /// Parse the config file and report whether it is valid.
 ///
 /// Differs from `kod config` (which shows the *effective* config,
@@ -4512,7 +4482,9 @@ pub async fn run_config_validate() -> Result<()> {
             println!("{}: valid.", path.display());
             println!(
                 "  model = {:?}, base_url = {:?}, context_window = {}",
-                cfg.llm.default_endpoint().model, cfg.llm.default_endpoint().base_url, cfg.llm.default_endpoint().context_window,
+                cfg.llm.default_endpoint().model,
+                cfg.llm.default_endpoint().base_url,
+                cfg.llm.default_endpoint().context_window,
             );
             if !cfg.commands.is_empty() {
                 println!(
@@ -4541,7 +4513,10 @@ pub async fn run_skills_show(name: &str) -> Result<()> {
     let path = match find_skill_path(name).await? {
         Some(p) => p,
         None => {
-            eprintln!("No skill named {:?} in any configured skills directory.", name);
+            eprintln!(
+                "No skill named {:?} in any configured skills directory.",
+                name
+            );
             std::process::exit(1);
         }
     };
@@ -4561,9 +4536,8 @@ pub async fn run_skills_show(name: &str) -> Result<()> {
 /// spun up — this is a pure read of the policy layers.
 pub async fn run_policy(action: PolicyAction) -> Result<()> {
     let config = KodConfig::load_default()?;
-    let cwd = std::env::current_dir().map_err(|e| {
-        KodError::Config(format!("could not determine cwd: {e}"))
-    })?;
+    let cwd = std::env::current_dir()
+        .map_err(|e| KodError::Config(format!("could not determine cwd: {e}")))?;
     let policy = kod_config::PolicyEngine::load(&config, Some(&cwd), None)?;
 
     match action {
@@ -4679,8 +4653,8 @@ fn parse_kv_args(args: &[String]) -> Result<serde_json::Value> {
                 reason: format!("argument {token:?} has an empty key"),
             });
         }
-        let value: serde_json::Value = serde_json::from_str(v)
-            .unwrap_or_else(|_| serde_json::Value::String(v.to_string()));
+        let value: serde_json::Value =
+            serde_json::from_str(v).unwrap_or_else(|_| serde_json::Value::String(v.to_string()));
         obj.insert(k.to_string(), value);
     }
     Ok(serde_json::Value::Object(obj))
@@ -4690,8 +4664,7 @@ fn parse_kv_args(args: &[String]) -> Result<serde_json::Value> {
 /// available on this platform. Read-only: never installs anything.
 pub async fn run_sandbox_check() -> Result<()> {
     use kod_tools::context::{SandboxMode, sandbox_invocation};
-    let cwd = std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
     println!("Sandbox check");
     println!();
@@ -4746,10 +4719,7 @@ pub async fn run_sandbox_check() -> Result<()> {
 /// fall back to the in-process path — a user who asked for the
 /// daemon wants the daemon, and a silent fallback would mask a
 /// misconfigured socket.
-pub async fn run_prompt_remote(
-    prompt: String,
-    socket: Option<std::path::PathBuf>,
-) -> Result<()> {
+pub async fn run_prompt_remote(prompt: String, socket: Option<std::path::PathBuf>) -> Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     let input = if prompt.trim() == "-" {
@@ -4784,10 +4754,13 @@ pub async fn run_prompt_remote(
         "method": "process_streaming",
         "params": { "input": input, "transcript_key": "" },
     });
-    let mut line = serde_json::to_string(&req)
-        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    let mut line =
+        serde_json::to_string(&req).map_err(|e| KodError::Serialization(e.to_string()))?;
     line.push('\n');
-    write_half.write_all(line.as_bytes()).await.map_err(KodError::Io)?;
+    write_half
+        .write_all(line.as_bytes())
+        .await
+        .map_err(KodError::Io)?;
     write_half.flush().await.map_err(KodError::Io)?;
 
     let mut reader = BufReader::new(read_half).lines();
@@ -4885,14 +4858,21 @@ pub async fn run_prompt(
         &config.memory,
         Some(&config.llm.default_endpoint().base_url),
     );
-        let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
+    let router_config = RouterConfig {
+        skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         embedder,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
-    engine.set_history_budget(config.llm.default_endpoint().context_window.saturating_mul(3));
+    engine.set_history_budget(
+        config
+            .llm
+            .default_endpoint()
+            .context_window
+            .saturating_mul(3),
+    );
 
     let (registry, default_model, routing) =
         kod_core::build_registry(&config.llm, Some(&model_name))?;
@@ -4909,12 +4889,11 @@ pub async fn run_prompt(
     engine.start().await?;
 
     // Optional session recorder.
-    if !no_log {
-        if let Some(path) = kod_core::session_log::default_session_path() {
-            if let Ok(recorder) = kod_core::session_log::SessionRecorder::open(path) {
-                engine.set_session_recorder(Arc::new(recorder));
-            }
-        }
+    if !no_log
+        && let Some(path) = kod_core::session_log::default_session_path()
+        && let Ok(recorder) = kod_core::session_log::SessionRecorder::open(path)
+    {
+        engine.set_session_recorder(Arc::new(recorder));
     }
 
     let resp = engine.process(&input).await?;
@@ -4930,15 +4909,14 @@ pub async fn run_prompt(
 
 /// Copy a skill file to a destination. `dest` may be `-` for stdout.
 /// Refuses to overwrite a non-`-` destination unless `force`.
-pub async fn run_skills_export(
-    name: &str,
-    dest: std::path::PathBuf,
-    force: bool,
-) -> Result<()> {
+pub async fn run_skills_export(name: &str, dest: std::path::PathBuf, force: bool) -> Result<()> {
     let src = match find_skill_path(name).await? {
         Some(p) => p,
         None => {
-            eprintln!("No skill named {:?} in any configured skills directory.", name);
+            eprintln!(
+                "No skill named {:?} in any configured skills directory.",
+                name
+            );
             std::process::exit(1);
         }
     };
@@ -4955,7 +4933,10 @@ pub async fn run_skills_export(
     // If dest is an existing directory, or has no extension and looks
     // like one, write inside it under the skill's file name.
     let target = if dest.is_dir() {
-        dest.join(src.file_name().unwrap_or_else(|| std::ffi::OsStr::new("skill.md")))
+        dest.join(
+            src.file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("skill.md")),
+        )
     } else {
         dest
     };
@@ -5045,10 +5026,16 @@ pub async fn run_skills_search(query: &str) -> Result<()> {
         return Ok(());
     }
 
-    hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.metadata.name.cmp(&b.1.metadata.name)));
+    hits.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.metadata.name.cmp(&b.1.metadata.name))
+    });
     println!("{} skill(s) match {:?}:", hits.len(), query);
     for (_, skill) in &hits {
-        println!("  - {}: {}", skill.metadata.name, skill.metadata.description);
+        println!(
+            "  - {}: {}",
+            skill.metadata.name, skill.metadata.description
+        );
     }
     Ok(())
 }
@@ -5071,37 +5058,93 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
     // state. If a name in that list drifts from what the engine
     // registers, the engine's own tests catch it — not this command.
     let registry = ToolRegistry::new();
-    registry.register(Box::new(kod_tools::ReadFileTool::new())).await;
-    registry.register(Box::new(kod_tools::WriteFileTool::new())).await;
-    registry.register(Box::new(kod_tools::PatchFileTool::new())).await;
-    registry.register(Box::new(kod_tools::ListFilesTool::new())).await;
-    registry.register(Box::new(kod_tools::GrepTool::new())).await;
-    registry.register(Box::new(kod_tools::FileInfoTool::new())).await;
-    registry.register(Box::new(kod_tools::ExecuteCommandTool::new())).await;
-    registry.register(Box::new(kod_tools::GitStatusTool::new())).await;
-    registry.register(Box::new(kod_tools::GitDiffTool::new())).await;
-    registry.register(Box::new(kod_tools::GitCommitTool::new())).await;
-    registry.register(Box::new(kod_tools::GitBranchTool::new())).await;
-    registry.register(Box::new(kod_tools::WebFetchTool::new())).await;
-    registry.register(Box::new(kod_tools::SearchFilesTool::new())).await;
+    registry
+        .register(Box::new(kod_tools::ReadFileTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::WriteFileTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::PatchFileTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::ListFilesTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::GrepTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::FileInfoTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::ExecuteCommandTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::GitStatusTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::GitDiffTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::GitCommitTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::GitBranchTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::WebFetchTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::SearchFilesTool::new()))
+        .await;
     let todo_list = kod_tools::new_todo_list();
-    registry.register(Box::new(kod_tools::TodoTool::new(todo_list))).await;
-    registry.register(Box::new(kod_tools::AskUserTool::new())).await;
-    registry.register(Box::new(kod_tools::CheckTool::new())).await;
+    registry
+        .register(Box::new(kod_tools::TodoTool::new(todo_list)))
+        .await;
+    registry
+        .register(Box::new(kod_tools::AskUserTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::CheckTool::new()))
+        .await;
 
     // Engine-scoped tools, listed but not constructed. Each needs a
     // handle the CLI does not have without an engine: an LSP client
     // slot, a memory router, or the swarm communication hub.
     const CORE_ONLY: &[(&str, &str)] = &[
-        ("lsp_diagnostics", "LSP diagnostics for one file (engine-scoped, D5.3)"),
-        ("lsp_definition", "LSP go-to-definition (engine-scoped, D5.3)"),
-        ("lsp_references", "LSP find-references (engine-scoped, D5.3)"),
+        (
+            "lsp_diagnostics",
+            "LSP diagnostics for one file (engine-scoped, D5.3)",
+        ),
+        (
+            "lsp_definition",
+            "LSP go-to-definition (engine-scoped, D5.3)",
+        ),
+        (
+            "lsp_references",
+            "LSP find-references (engine-scoped, D5.3)",
+        ),
         ("lsp_hover", "LSP hover summary (engine-scoped, D5.3)"),
-        ("memory_save", "store a fact in long-term memory (engine-scoped, D2.4)"),
-        ("memory_search", "search long-term memory (engine-scoped, D2.4)"),
-        ("swarm_note", "broadcast a fact to the other swarm agents (engine-scoped, D4.3)"),
-        ("swarm_read", "read facts broadcast by the other swarm agents (engine-scoped, D4.3)"),
-        ("mcp:<server>.<tool>", "one tool per MCP server tool, added at engine start (D6.1)"),
+        (
+            "memory_save",
+            "store a fact in long-term memory (engine-scoped, D2.4)",
+        ),
+        (
+            "memory_search",
+            "search long-term memory (engine-scoped, D2.4)",
+        ),
+        (
+            "swarm_note",
+            "broadcast a fact to the other swarm agents (engine-scoped, D4.3)",
+        ),
+        (
+            "swarm_read",
+            "read facts broadcast by the other swarm agents (engine-scoped, D4.3)",
+        ),
+        (
+            "mcp:<server>.<tool>",
+            "one tool per MCP server tool, added at engine start (D6.1)",
+        ),
     ];
 
     match action {
@@ -5199,7 +5242,11 @@ pub async fn run_config_init_from(name: &str) -> Result<()> {
     config.llm.default_endpoint_mut().max_tokens = Some(profile.max_tokens);
     config.save_to(&path)?;
 
-    println!("Wrote new config from profile {:?} to {}", name, path.display());
+    println!(
+        "Wrote new config from profile {:?} to {}",
+        name,
+        path.display()
+    );
     if let Some(cmd) = profile.install_command {
         println!();
         println!("Next step (if not already installed):");
@@ -5256,7 +5303,12 @@ pub async fn run_skills_validate_strict() -> Result<()> {
     }
 
     println!();
-    println!("strict: {} checked, {} ok, {} failed.", total, ok, failed.len());
+    println!(
+        "strict: {} checked, {} ok, {} failed.",
+        total,
+        ok,
+        failed.len()
+    );
     if !failed.is_empty() {
         std::process::exit(1);
     }
@@ -5304,7 +5356,9 @@ pub async fn run_doctor_fix(json: bool) -> Result<()> {
     // Every skills directory.
     if let Ok(dirs) = config.skills_dirs() {
         for d in &dirs {
-            if !d.exists() && let Err(e) = std::fs::create_dir_all(d) {
+            if !d.exists()
+                && let Err(e) = std::fs::create_dir_all(d)
+            {
                 failed.push((d.display().to_string(), e.to_string()));
             } else if d.exists() {
                 created.push(d.display().to_string());
@@ -5326,7 +5380,9 @@ pub async fn run_doctor_fix(json: bool) -> Result<()> {
         && let Some(cp) = kod_core::checkpoint::CheckpointManager::for_working_dir(&cwd)
     {
         let dir = cp.dir();
-        if !dir.exists() && let Err(e) = std::fs::create_dir_all(dir) {
+        if !dir.exists()
+            && let Err(e) = std::fs::create_dir_all(dir)
+        {
             failed.push((dir.display().to_string(), e.to_string()));
         }
     }
@@ -5391,7 +5447,10 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
     let src = match find_skill_path(name).await? {
         Some(p) => p,
         None => {
-            eprintln!("No skill named {:?} in any configured skills directory.", name);
+            eprintln!(
+                "No skill named {:?} in any configured skills directory.",
+                name
+            );
             std::process::exit(1);
         }
     };
@@ -5414,10 +5473,7 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
     let mut rewrote = false;
     for line in content.lines() {
         if !rewrote && line.trim_start().starts_with("name:") {
-            let indent: String = line
-                .chars()
-                .take_while(|c| c.is_whitespace())
-                .collect();
+            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
             out.push_str(&format!("{}name: {}\n", indent, new_name));
             rewrote = true;
         } else {
@@ -5465,7 +5521,12 @@ pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
     // place.
     run_skills_copy(name, new_name).await?;
     std::fs::remove_file(&src).map_err(KodError::Io)?;
-    println!("Renamed {} -> {} (removed {})", name, new_name, src.display());
+    println!(
+        "Renamed {} -> {} (removed {})",
+        name,
+        new_name,
+        src.display()
+    );
     Ok(())
 }
 
@@ -5476,8 +5537,7 @@ pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
 /// fully self-documenting config with no defaults hidden.
 pub async fn run_config_show_merged() -> Result<()> {
     let config = KodConfig::load_default()?;
-    let s = toml::to_string_pretty(&config)
-        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    let s = toml::to_string_pretty(&config).map_err(|e| KodError::Serialization(e.to_string()))?;
     print!("{}", s);
     if !s.ends_with('\n') {
         println!();
@@ -5506,13 +5566,9 @@ pub async fn run_skills_source(name: &str) -> Result<()> {
 
 /// Write the effective config (defaults + user) to `dest`. Refuses to
 /// overwrite unless `force`. `-` writes to stdout.
-pub async fn run_config_export(
-    dest: std::path::PathBuf,
-    force: bool,
-) -> Result<()> {
+pub async fn run_config_export(dest: std::path::PathBuf, force: bool) -> Result<()> {
     let config = KodConfig::load_default()?;
-    let s = toml::to_string_pretty(&config)
-        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    let s = toml::to_string_pretty(&config).map_err(|e| KodError::Serialization(e.to_string()))?;
     if dest.as_os_str() == "-" {
         print!("{}", s);
         if !s.ends_with('\n') {
@@ -5571,14 +5627,21 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
         &config.memory,
         Some(&config.llm.default_endpoint().base_url),
     );
-        let router_config = RouterConfig { skill_threshold: config.skills.match_threshold,
+    let router_config = RouterConfig {
+        skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
         short_term_capacity: config.memory.short_term_capacity,
         embedder,
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
-    engine.set_history_budget(config.llm.default_endpoint().context_window.saturating_mul(3));
+    engine.set_history_budget(
+        config
+            .llm
+            .default_endpoint()
+            .context_window
+            .saturating_mul(3),
+    );
     let (registry, default_model, routing) =
         kod_core::build_registry(&config.llm, Some(&model_name))?;
     engine.set_registry(registry, default_model, routing).await;
@@ -5614,4 +5677,49 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
     println!();
     engine.shutdown().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::{version_is_older, versions_equal};
+
+    #[test]
+    fn versions_equal_ignores_leading_v() {
+        assert!(versions_equal("0.1.0", "0.1.0"));
+        assert!(versions_equal("v0.1.0", "0.1.0"));
+        assert!(versions_equal("0.1.0", "v0.1.0"));
+        assert!(!versions_equal("0.1.0", "0.1.1"));
+    }
+
+    #[test]
+    fn version_is_older_compares_semver_triples() {
+        assert!(version_is_older("0.1.0", "0.1.1"));
+        assert!(version_is_older("0.1.9", "0.2.0"));
+        assert!(version_is_older("0.9.9", "1.0.0"));
+        assert!(!version_is_older("0.1.0", "0.1.0"));
+        assert!(!version_is_older("0.2.0", "0.1.9"));
+        assert!(!version_is_older("1.0.0", "0.9.9"));
+    }
+
+    #[test]
+    fn version_is_older_handles_missing_components() {
+        assert!(version_is_older("1", "1.0.1"));
+        assert!(!version_is_older("1.0.1", "1"));
+        assert!(version_is_older("1.0", "1.0.1"));
+        assert!(version_is_older("0", "0.0.1"));
+    }
+
+    #[test]
+    fn version_is_older_treats_prerelease_as_older() {
+        assert!(version_is_older("0.1.0-rc1", "0.1.0"));
+        assert!(!version_is_older("0.1.0", "0.1.0-rc1"));
+        assert!(version_is_older("0.1.0-rc1", "0.1.1-rc1"));
+    }
+
+    #[test]
+    fn version_is_older_with_leading_v() {
+        assert!(version_is_older("v0.1.0", "v0.1.1"));
+        assert!(version_is_older("v0.1.0", "0.1.1"));
+        assert!(version_is_older("0.1.0", "v0.1.1"));
+    }
 }
