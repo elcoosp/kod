@@ -25,7 +25,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-mod common;
+#[path = "common/install_test_provider.rs"]
+mod install_test_provider_mod;
+use install_test_provider_mod::install_test_provider;
 
 /// A provider that emits a fixed tool-call sequence on the first call,
 /// then a plain-text reply. `calls` is consumed in order: one entry
@@ -72,10 +74,7 @@ impl LlmProvider for ScriptedProvider {
                 usage: None,
             })
         } else {
-            Ok(GenerationResponse::ToolCalls {
-                calls,
-                usage: None,
-            })
+            Ok(GenerationResponse::ToolCalls { calls, usage: None })
         }
     }
     fn stream(
@@ -91,7 +90,8 @@ fn engine_in(dir: &std::path::Path) -> KodEngine {
     std::fs::write(dir.join("main.rs"), "pub fn main() {}\n").unwrap();
     let db_path = dir.join("test.redb");
     let cfg = RouterConfig {
-        embedder: None, skill_threshold: 0.3,
+        embedder: None,
+        skill_threshold: 0.3,
         working_dir: dir.to_path_buf(),
         enable_memory: false,
         max_skills_per_query: 3,
@@ -102,7 +102,8 @@ fn engine_in(dir: &std::path::Path) -> KodEngine {
 }
 
 fn write_call(path: &str) -> Vec<ToolCall> {
-    vec![ToolCall { id: None,
+    vec![ToolCall {
+        id: None,
         tool_name: "write_file".to_string(),
         arguments: serde_json::json!({
             "path": path,
@@ -116,7 +117,7 @@ async fn read_only_preset_denies_write_file() {
     let temp = TempDir::new().unwrap();
     let engine = engine_in(temp.path());
     let provider = Arc::new(ScriptedProvider::new(vec![write_call("out.txt")]));
-    common::install_test_provider(&engine, provider).await;
+    install_test_provider(&engine, provider).await;
 
     let effective = Policy {
         preset: Preset::ReadOnly,
@@ -132,9 +133,7 @@ async fn read_only_preset_denies_write_file() {
     match &resp.tool_results[0] {
         ToolResult::Error(msg) => {
             assert!(
-                msg.contains("policy")
-                    || msg.contains("deny")
-                    || msg.contains("preset"),
+                msg.contains("policy") || msg.contains("deny") || msg.contains("preset"),
                 "unexpected error: {msg}"
             );
         }
@@ -150,7 +149,7 @@ async fn yolo_preset_allows_write_file() {
     let temp = TempDir::new().unwrap();
     let engine = engine_in(temp.path());
     let provider = Arc::new(ScriptedProvider::new(vec![write_call("out.txt")]));
-    common::install_test_provider(&engine, provider).await;
+    install_test_provider(&engine, provider).await;
 
     let effective = Policy {
         preset: Preset::Yolo,
@@ -177,7 +176,7 @@ async fn per_tool_deny_overrides_yolo() {
     let temp = TempDir::new().unwrap();
     let engine = engine_in(temp.path());
     let provider = Arc::new(ScriptedProvider::new(vec![write_call("out.txt")]));
-    common::install_test_provider(&engine, provider).await;
+    install_test_provider(&engine, provider).await;
 
     let mut tools = BTreeMap::new();
     tools.insert(
@@ -212,7 +211,7 @@ async fn session_deny_rule_wins_over_allow() {
     let temp = TempDir::new().unwrap();
     let engine = engine_in(temp.path());
     let provider = Arc::new(ScriptedProvider::new(vec![write_call("out.txt")]));
-    common::install_test_provider(&engine, provider).await;
+    install_test_provider(&engine, provider).await;
 
     let effective = Policy {
         preset: Preset::Yolo,
@@ -252,7 +251,7 @@ async fn no_policy_allows_every_call() {
     let temp = TempDir::new().unwrap();
     let engine = engine_in(temp.path());
     let provider = Arc::new(ScriptedProvider::new(vec![write_call("out.txt")]));
-    common::install_test_provider(&engine, provider).await;
+    install_test_provider(&engine, provider).await;
     engine.start().await.unwrap();
 
     let resp = engine.process("write out.txt").await.unwrap();
