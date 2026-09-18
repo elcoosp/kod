@@ -28,8 +28,8 @@ pub use engine::KodEngine;
 pub use memory_tools::{MemorySaveTool, MemorySearchTool};
 pub use provider_setup::build_registry;
 pub use router::{RouterConfig, TaskResponse, TaskRouter, TaskType};
-pub use worktree::{MergeReport, WorktreeInfo, WorktreeManager};
 pub use swarm_runner::{
     AgentOutcome, AgentResult, Subtask, SwarmEvent, SwarmResponse, SwarmRunner,
     WorktreeMergeOutcome,
 };
+pub use worktree::{MergeReport, WorktreeInfo, WorktreeManager};
