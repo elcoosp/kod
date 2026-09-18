@@ -102,8 +102,8 @@ impl CheckpointManager {
     /// (a stripped container, a test).
     pub fn for_working_dir(working_dir: &Path) -> Option<Self> {
         let home = dirs::home_dir()?;
-        let canonical = std::fs::canonicalize(working_dir)
-            .unwrap_or_else(|_| working_dir.to_path_buf());
+        let canonical =
+            std::fs::canonicalize(working_dir).unwrap_or_else(|_| working_dir.to_path_buf());
         let hash = fnv1a_hex(canonical.to_string_lossy().as_ref());
         let dir = home.join(".kod").join("checkpoints").join(hash);
         Some(Self::new(dir))
@@ -227,8 +227,8 @@ impl CheckpointManager {
             return Ok(None);
         }
         let raw = std::fs::read_to_string(&path).map_err(KodError::Io)?;
-        let s: Snapshot = serde_json::from_str(&raw)
-            .map_err(|e| KodError::Deserialization(e.to_string()))?;
+        let s: Snapshot =
+            serde_json::from_str(&raw).map_err(|e| KodError::Deserialization(e.to_string()))?;
         Ok(Some(s))
     }
 
