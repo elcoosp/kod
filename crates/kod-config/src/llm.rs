@@ -876,3 +876,86 @@ mod coverage_provider_kind {
         assert!(toml::from_str::<PricingConfig>("output_per_mtok_usd = 15.0").is_err());
     }
 }
+
+#[cfg(test)]
+mod coverage_routing_shape {
+    //! `RoutingConfig` carries three independent maps. A
+    //! regression that collapsed two of them or dropped one would
+    //! silently disable either per-task routing or per-capability
+    //! swarm routing — both invisible until a user with a routing
+    //! table finds every task going to the default endpoint.
+    use super::*;
+
+    #[test]
+    fn default_has_three_empty_maps() {
+        let r = RoutingConfig::default();
+        assert!(r.by_task.is_empty());
+        assert!(r.fallback.is_empty());
+        assert!(r.swarm.is_empty());
+    }
+
+    #[test]
+    fn by_task_round_trips_through_toml() {
+        let toml_str = r#"
+            [by_task]
+            Simple = "cheap"
+            Debugging = "smart"
+        "#;
+        let r: RoutingConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(r.by_task.len(), 2);
+        assert_eq!(r.by_task.get("Simple").map(String::as_str), Some("cheap"));
+        assert_eq!(
+            r.by_task.get("Debugging").map(String::as_str),
+            Some("smart"),
+        );
+    }
+
+    #[test]
+    fn fallback_is_an_ordered_vec() {
+        // The fallback chain is order-sensitive: the engine tries
+        // each entry in turn. A regression to a `BTreeMap` would
+        // sort alphabetically and change the retry order.
+        let toml_str = r#"fallback = ["b", "a", "c"]"#;
+        let r: RoutingConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(r.fallback, vec!["b".to_string(), "a".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn swarm_map_parses_per_capability_entries() {
+        let toml_str = r#"
+            [swarm]
+            coding = "local"
+            planning = "cloud"
+        "#;
+        let r: RoutingConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(r.swarm.len(), 2);
+        assert_eq!(r.swarm.get("coding").map(String::as_str), Some("local"));
+        assert_eq!(r.swarm.get("planning").map(String::as_str), Some("cloud"));
+    }
+
+    #[test]
+    fn routing_config_clones_independently() {
+        // The engine clones the routing table at startup and reads
+        // it concurrently. A shallow copy sharing the inner maps
+        // would let a caller's mutation leak into the engine.
+        let mut r = RoutingConfig::default();
+        r.by_task.insert("Simple".into(), "a".into());
+        let mut r2 = r.clone();
+        r2.by_task.insert("Debugging".into(), "b".into());
+        assert_eq!(r.by_task.len(), 1);
+        assert_eq!(r2.by_task.len(), 2);
+    }
+
+    #[test]
+    fn routing_config_serializes_to_toml_without_the_optional_maps() {
+        // A default RoutingConfig serializes to a table with every
+        // map present (as an empty table). Round-tripping through
+        // TOML preserves the shape.
+        let r = RoutingConfig::default();
+        let s = toml::to_string(&r).unwrap();
+        let parsed: RoutingConfig = toml::from_str(&s).unwrap();
+        assert!(parsed.by_task.is_empty());
+        assert!(parsed.fallback.is_empty());
+        assert!(parsed.swarm.is_empty());
+    }
+}

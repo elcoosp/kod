@@ -261,3 +261,90 @@ mod tests {
         assert_eq!(all[1].content, "third");
     }
 }
+
+#[cfg(test)]
+mod coverage_short_term_accessors {
+    //! Small accessors on `ShortTermMemory` that the existing
+    //! tests do not exercise: `is_empty`, `capacity`, and
+    //! `get_recent` beyond the size limit. A regression here
+    //! silently breaks a caller's sizing logic.
+    use super::*;
+    use kod_types::MemoryType;
+    use time::OffsetDateTime;
+
+    fn e(content: &str) -> MemoryEntry {
+        MemoryEntry {
+            id: MemoryId::new(),
+            memory_type: MemoryType::ShortTerm,
+            content: content.to_string(),
+            timestamp: OffsetDateTime::now_utc(),
+            relevance: 1.0,
+            metadata: Default::default(),
+        }
+    }
+
+    #[test]
+    fn is_empty_matches_len_zero() {
+        let m = ShortTermMemory::new(5);
+        assert!(m.is_empty());
+        assert_eq!(m.len(), 0);
+        m.store(e("a"));
+        assert!(!m.is_empty());
+        assert_eq!(m.len(), 1);
+        m.clear();
+        assert!(m.is_empty());
+    }
+
+    #[test]
+    fn capacity_reports_the_construction_argument() {
+        assert_eq!(ShortTermMemory::new(42).capacity(), 42);
+        assert_eq!(ShortTermMemory::new(0).capacity(), 0);
+    }
+
+    #[test]
+    fn get_recent_beyond_len_returns_everything_in_order() {
+        let m = ShortTermMemory::new(10);
+        for i in 0..3 {
+            m.store(e(&format!("v{i}")));
+        }
+        let got = m.get_recent(100);
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0].content, "v0");
+        assert_eq!(got[2].content, "v2");
+    }
+
+    #[test]
+    fn get_recent_zero_returns_empty() {
+        let m = ShortTermMemory::new(10);
+        m.store(e("a"));
+        assert!(m.get_recent(0).is_empty());
+    }
+
+    #[test]
+    fn search_is_case_insensitive_substring() {
+        let m = ShortTermMemory::new(10);
+        m.store(e("Hello World"));
+        m.store(e("goodbye"));
+        assert_eq!(m.search("hello").len(), 1);
+        assert_eq!(m.search("WORLD").len(), 1);
+        assert_eq!(m.search("nope").len(), 0);
+    }
+
+    #[test]
+    fn search_on_empty_memory_is_empty() {
+        let m = ShortTermMemory::new(10);
+        assert!(m.search("anything").is_empty());
+    }
+
+    #[test]
+    fn get_all_returns_insertion_order() {
+        let m = ShortTermMemory::new(10);
+        for i in 0..5 {
+            m.store(e(&format!("v{i}")));
+        }
+        let all = m.get_all();
+        for (i, item) in all.iter().enumerate() {
+            assert_eq!(item.content, format!("v{i}"));
+        }
+    }
+}

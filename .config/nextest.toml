@@ -1,0 +1,20 @@
+# Nextest configuration.
+#
+# The kod-tui clipboard tests all share the system pasteboard
+# (pbcopy / pbpaste on macOS, xclip / xsel / wl-paste on Linux).
+# Nextest runs each test in its own process and, by default, many of
+# them in parallel, so two clipboard tests can interleave a write and
+# a read: the round-trip test writes its unique payload, another test
+# overwrites the pasteboard with "" or a unicode string, and the
+# subsequent read sees the wrong content.
+#
+# Put every test whose name contains "clipboard" into a single-thread
+# test group. That removes the cross-process race without changing
+# production code and without weakening the round-trip assertion.
+
+[test-groups.clipboard]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'test(/clipboard/)'
+test-group = 'clipboard'

@@ -282,6 +282,16 @@ impl CheckpointManager {
     /// Public so `KodEngine::shutdown()` can run it explicitly rather
     /// than relying on the next snapshot write to trigger it.
     pub fn enforce_retention(&self) -> Result<()> {
+        // Consistent with `clear` and `list`: a manager whose
+        // directory has not been created yet (nothing has been
+        // snapshotted) is a no-op, not an error. `snapshot_before`
+        // creates the directory before writing, so this guard only
+        // fires for a caller that calls `enforce_retention` directly
+        // before any snapshot has been taken — including the
+        // shutdown path, which runs on a fresh session.
+        if !self.dir.is_dir() {
+            return Ok(());
+        }
         let mut entries: Vec<PathBuf> = std::fs::read_dir(&self.dir)
             .map_err(KodError::Io)?
             .filter_map(|e| e.ok().map(|e| e.path()))
@@ -624,5 +634,75 @@ mod coverage_checkpoint_corners {
         let s = cp.find(&id).unwrap().unwrap();
         assert!(!s.existed, "directory must be recorded as not-a-file");
         assert!(s.content.is_empty(), "directory has no content");
+    }
+}
+
+#[cfg(test)]
+mod coverage_manager_accessors {
+    //! Small accessors and clamps on `CheckpointManager`. A
+    //! regression here is invisible until a user inspects their
+    //! checkpoint directory or configures a zero retention cap.
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn dir_returns_the_construction_argument() {
+        let tmp = TempDir::new().unwrap();
+        let d = tmp.path().join("nested").join("checkpoints");
+        let cp = CheckpointManager::new(d.clone());
+        assert_eq!(cp.dir(), d.as_path());
+    }
+
+    #[test]
+    fn with_max_snapshots_zero_clamps_to_one() {
+        // A zero cap would delete every snapshot the moment one is
+        // written — including the one just written. The clamp to
+        // 1 keeps the newest snapshot alive.
+        let tmp = TempDir::new().unwrap();
+        let cp = CheckpointManager::new(tmp.path().join("cp")).with_max_snapshots(0);
+        let f = tmp.path().join("f.txt");
+        std::fs::write(&f, "v0").unwrap();
+        cp.snapshot_before(&f, "write_file").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        std::fs::write(&f, "v1").unwrap();
+        cp.snapshot_before(&f, "write_file").unwrap();
+        let listed = cp.list().unwrap();
+        assert_eq!(listed.len(), 1, "clamp to 1 was not applied: {listed:?}");
+        assert_eq!(listed[0].content, "v1", "the newest snapshot must survive");
+    }
+
+    #[test]
+    fn for_working_dir_uses_a_hash_suffix() {
+        // The directory name is a deterministic 16-hex-char hash of
+        // the canonical working directory. Two calls on the same
+        // path return the same directory; two different paths
+        // return different ones.
+        let a = TempDir::new().unwrap();
+        let b = TempDir::new().unwrap();
+        let da = CheckpointManager::for_working_dir(a.path()).map(|m| m.dir().to_path_buf());
+        let db = CheckpointManager::for_working_dir(b.path()).map(|m| m.dir().to_path_buf());
+        assert!(da.is_some());
+        assert!(db.is_some());
+        assert_ne!(da.unwrap(), db.unwrap());
+    }
+
+    #[test]
+    fn enforce_retention_on_an_empty_dir_is_a_noop() {
+        let tmp = TempDir::new().unwrap();
+        let cp = CheckpointManager::new(tmp.path().join("cp"));
+        // The directory does not exist yet; the call must succeed
+        // rather than error.
+        cp.enforce_retention().unwrap();
+    }
+
+    #[test]
+    fn snapshot_before_creates_the_directory_on_demand() {
+        let tmp = TempDir::new().unwrap();
+        let cp = CheckpointManager::new(tmp.path().join("deeply").join("nested").join("cp"));
+        let f = tmp.path().join("f.txt");
+        std::fs::write(&f, "content").unwrap();
+        let id = cp.snapshot_before(&f, "write_file").unwrap().unwrap();
+        assert!(cp.dir().is_dir(), "snapshot directory must be created");
+        assert!(cp.find(&id).unwrap().is_some());
     }
 }

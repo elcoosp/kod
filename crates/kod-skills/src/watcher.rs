@@ -165,3 +165,52 @@ mod tests {
         assert_eq!(watcher.watch_dir(), skills_dir);
     }
 }
+
+#[cfg(test)]
+mod coverage_watch_event {
+    //! `WatchEvent` is `PartialEq`, and a caller that branches on
+    //! the variant needs equality to behave. The variant's inner
+    //! path is part of the identity — two Created events on
+    //! different paths are not equal, and that is what makes a
+    //! filter like `matches!(ev, WatchEvent::Created(p) if
+    //! p.ends_with("x"))` work.
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn events_with_the_same_variant_and_path_are_equal() {
+        let a = WatchEvent::Created(PathBuf::from("/a/b"));
+        let b = WatchEvent::Created(PathBuf::from("/a/b"));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn events_with_the_same_variant_but_different_paths_are_not_equal() {
+        let a = WatchEvent::Created(PathBuf::from("/a/b"));
+        let c = WatchEvent::Created(PathBuf::from("/a/c"));
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn events_with_different_variants_are_not_equal() {
+        let p = PathBuf::from("/a/b");
+        assert_ne!(WatchEvent::Created(p.clone()), WatchEvent::Modified(p.clone()));
+        assert_ne!(WatchEvent::Created(p.clone()), WatchEvent::Removed(p.clone()));
+        assert_ne!(WatchEvent::Modified(p.clone()), WatchEvent::Removed(p));
+    }
+
+    #[test]
+    fn events_clone_preserves_identity() {
+        let e = WatchEvent::Modified(PathBuf::from("/x/y"));
+        let c = e.clone();
+        assert_eq!(e, c);
+    }
+
+    #[test]
+    fn debug_output_names_the_variant() {
+        let e = WatchEvent::Created(PathBuf::from("/a"));
+        let s = format!("{e:?}");
+        assert!(s.contains("Created"), "got: {s}");
+        assert!(s.contains("/a"), "got: {s}");
+    }
+}
