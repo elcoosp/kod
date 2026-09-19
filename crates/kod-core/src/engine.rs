@@ -5527,7 +5527,8 @@ impl KodEngine {
         self.reset_taint();
         // Tier 1.4 — open a turn trace. Emitted when this call returns.
         let trace_id = self.next_turn_id();
-        let mut trace = crate::trace::TurnTraceBuilder::new(trace_id, key);
+        let trace = std::sync::Mutex::new(crate::trace::TurnTraceBuilder::new(trace_id, key));
+        let trace_ref: Option<&std::sync::Mutex<crate::trace::TurnTraceBuilder>> = Some(&trace);
         self.cost_tracker.begin_turn();
         // P3.3 — ask Jev whether the request is ambiguous; if so and
         // a streaming consumer is attached, prompt for clarification
@@ -5678,7 +5679,7 @@ impl KodEngine {
                     definitions: &definitions,
                     options: &options,
                     holder: key,
-                    trace: None,
+                    trace: trace_ref,
                 };
                 match self
                     .run_streaming_loop(
@@ -5805,8 +5806,28 @@ impl KodEngine {
             self.remember_turn_for(key, false, &final_text).await;
 
             // Tier 1.4 — finish and emit the trace.
-            trace.set_reply_chars(final_text.len());
-            self.emit_turn_trace(&trace.finish());
+            if let Ok(mut g) = trace.lock() {
+                g.set_reply_chars(final_text.len());
+            }
+            // We have to move the builder out of the Mutex to finish
+            // it; since we are the only owner at this point, this is
+            // a simple `into_inner` on the tracked cell.
+            let finished = match std::sync::Arc::try_unwrap(std::sync::Arc::new(trace)) {
+                Ok(m) => m.into_inner().unwrap_or_else(|e| e.into_inner()),
+                Err(_) => return Ok(TaskResponse {
+                    task_type: response.task_type,
+                    text: Some(final_text),
+                    tool_calls,
+                    tool_results,
+                    skills_used: refined_skills.clone(),
+                    memory_used: response.memory_used,
+                    execution_time_ms: response.execution_time_ms,
+                    usage,
+                    pricing,
+                    memory_context: response.memory_context,
+                }),
+            };
+            self.emit_turn_trace(&finished.finish());
 
             return Ok(TaskResponse {
                 task_type: response.task_type,
