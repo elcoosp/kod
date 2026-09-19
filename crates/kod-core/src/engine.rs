@@ -1803,6 +1803,64 @@ impl KodEngine {
         Some(n)
     }
 
+    /// Decide the sandbox mode for one `execute_command` (P3.4).
+    ///
+    /// The engine's global mode is the default. On a session with
+    /// the sandbox in `Auto`, Jev is asked whether the command needs
+    /// OS-level sandboxing. A `safe` / `network_risk` command runs
+    /// unsandboxed (sandbox disabled for this one call); a
+    /// `filesystem_risk` or `destructive` command keeps the
+    /// configured mode. `Require` is never downgraded — a user who
+    /// asked for mandatory sandboxing gets it.
+    ///
+    /// Fail-open: any error keeps the configured mode.
+    async fn choose_sandbox_mode_for_command(
+        &self,
+        holder: &str,
+        command: &str,
+        configured: kod_tools::context::SandboxMode,
+    ) -> kod_tools::context::SandboxMode {
+        use kod_tools::context::SandboxMode;
+        // Only `Auto` is negotiable: `Disabled` already means no
+        // sandbox, and `Require` is a user-enforced guarantee.
+        if !matches!(configured, SandboxMode::Auto) {
+            return configured;
+        }
+        let Some(jev) = self.jev_client() else {
+            return configured;
+        };
+        let state = crate::jev::build_state(command, &[]);
+        let labels = &["safe", "network_risk", "filesystem_risk", "destructive"];
+        let started = std::time::Instant::now();
+        let decision = jev
+            .evaluate_score(&state, "Command risk level", labels)
+            .await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let (level, source) = match decision {
+            Ok(d) => (d.value, crate::jev::DecisionSource::Jev),
+            Err(_) => (String::new(), crate::jev::DecisionSource::Heuristic),
+        };
+        let result = match level.as_str() {
+            "safe" | "network_risk" => SandboxMode::Disabled,
+            _ => SandboxMode::Auto,
+        };
+        self.log_jev_decision(
+            holder,
+            "sandbox_decision",
+            command,
+            "risk_level",
+            serde_json::json!({
+                "risk_level": level,
+                "sandbox_mode": format!("{result:?}"),
+            }),
+            1.0,
+            elapsed_ms,
+            false,
+            source,
+        );
+        result
+    }
+
     /// Refine the router's skill match with Jev (P4.2).
     ///
     /// The router's substring matcher misses semantic matches — a
@@ -5861,10 +5919,31 @@ impl KodEngine {
                     out.push((Ok(ToolResult::Error(format!("write denied: {reason}"))), 0));
                     continue;
                 }
+                // P3.4 — per-command sandbox decision. Only
+                // `execute_command` is negotiable; other tools keep
+                // the round's configured mode. A clone of the
+                // context is used so the decision does not leak to
+                // sibling calls.
+                let call_ctx = if call.tool_name == "execute_command"
+                    && let Some(cmd) = call.arguments.get("command").and_then(|v| v.as_str())
+                {
+                    let chosen = self
+                        .choose_sandbox_mode_for_command(
+                            effective_holder,
+                            cmd,
+                            tool_context.sandbox,
+                        )
+                        .await;
+                    let mut c = tool_context.clone();
+                    c.sandbox = chosen;
+                    c
+                } else {
+                    tool_context.clone()
+                };
                 let start = std::time::Instant::now();
                 let res = self
                     .tools
-                    .execute_tool(&call.tool_name, &call.arguments, &tool_context)
+                    .execute_tool(&call.tool_name, &call.arguments, &call_ctx)
                     .await;
                 out.push((res, start.elapsed().as_millis() as u64));
             }
