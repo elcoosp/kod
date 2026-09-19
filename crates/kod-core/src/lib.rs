@@ -13,6 +13,7 @@ pub mod context;
 pub mod doctor;
 pub mod engine;
 pub mod hooks;
+pub mod fixture;
 pub mod jev;
 pub mod lsp_tools;
 pub mod mcp_adapters;
@@ -28,6 +29,7 @@ pub mod swarm_adapters;
 pub mod swarm_runner;
 pub mod worktree;
 
+pub use fixture::{diff_rounds, Fixture, RequestSummary, ResponseFixture, RoundFixture};
 pub use engine::KodEngine;
 pub use trace::{RoundKind, ToolOutcomeKind, TurnId, TurnOutcome, TurnTrace, TurnTraceBuilder,
 };
