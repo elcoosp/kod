@@ -1010,6 +1010,10 @@ pub struct KodEngine {
     /// Absent for the default session — that key falls through to
     /// `self.working_dir`, which is the pre-D4 behaviour.
     transcript_working_dirs: RwLock<HashMap<String, PathBuf>>,
+    /// Per-transcript plan (Tier 2.1). Populated by the model on the
+    /// first turn of a Complex/MultiStep task, re-rendered in every
+    /// subsequent system prompt. Absent when the task is simple.
+    plans: RwLock<HashMap<String, crate::plan::Plan>>,
     /// Per-transcript write set (D4.2). The swarm runner registers
     /// each agent's `expected_writes` under the agent's transcript
     /// key before the agent starts. The engine applies the globs to
@@ -1365,6 +1369,7 @@ impl KodEngine {
             cancels: RwLock::new(std::collections::HashSet::new()),
             history: RwLock::new(HashMap::new()),
             transcript_working_dirs: RwLock::new(HashMap::new()),
+            plans: RwLock::new(HashMap::new()),
             transcript_write_globs: RwLock::new(HashMap::new()),
             history_budget: std::sync::atomic::AtomicUsize::new(DEFAULT_HISTORY_CHAR_BUDGET),
             last_prompt: RwLock::new(HashMap::new()),
@@ -1517,6 +1522,37 @@ impl KodEngine {
             .or_else(|| map.get("default"))
             .filter(|q| q.per_turn > 0 || q.per_session > 0 || q.per_command > 0)
             .cloned()
+    }
+
+    /// The plan for a transcript, if one has been created (Tier 2.1).
+    pub async fn plan_for(&self, key: &str) -> Option<crate::plan::Plan> {
+        self.plans.read().await.get(key).cloned()
+    }
+
+    /// Replace the plan for a transcript.
+    pub async fn set_plan(&self, key: &str, plan: crate::plan::Plan) {
+        self.plans.write().await.insert(key.to_string(), plan);
+    }
+
+    /// Drop the plan for a transcript.
+    pub async fn clear_plan(&self, key: &str) {
+        self.plans.write().await.remove(key);
+    }
+
+    /// Apply a `PlanUpdate` to the transcript's plan, if one exists.
+    /// Returns the human-readable description from `Plan::apply`, or
+    /// a message saying no plan exists.
+    pub async fn apply_plan_update(
+        &self,
+        key: &str,
+        update: crate::plan::PlanUpdate,
+    ) -> String {
+        let mut g = self.plans.write().await;
+        match g.get_mut(key) {
+            Some(p) => p.apply(update),
+            None => "No plan exists for this session. A plan is created                      on the first turn of a complex task."
+                .to_string(),
+        }
     }
 
     pub fn cost_tracker(&self) -> &crate::cost::CostTracker {
@@ -6816,6 +6852,20 @@ impl KodEngine {
             self.working_dir.display(),
             std::env::consts::OS
         ));
+        // Tier 2.1 — if a plan exists for the default transcript,
+        // prepend it to the prompt. The plan is a stable target the
+        // model can consult on every round.
+        //
+        // `ground_prompt` is synchronous, so we peek at the map with
+        // a `try_read`; a rare miss is fine (the plan appears on the
+        // next round).
+        if let Ok(g) = self.plans.try_read()
+            && let Some(plan) = g.get(DEFAULT_TRANSCRIPT_KEY)
+        {
+            prompt.push_str("\n\n");
+            prompt.push_str(&plan.render_prompt_block());
+        }
+
         if !definitions.is_empty() {
             let names: Vec<String> = definitions
                 .iter()
