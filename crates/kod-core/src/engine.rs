@@ -1803,6 +1803,133 @@ impl KodEngine {
         Some(n)
     }
 
+    /// Rank grep / search_files results by Jev relevance (P2.3).
+    ///
+    /// When a search returns more than `MIN_RESULTS_TO_RANK` hits,
+    /// ask Jev which ones best address the user's request, then drop
+    /// the ones scored below `[jev.thresholds].memory_filter_min`.
+    /// The tool's own caps still bound the size; this pass just
+    /// removes hits that are syntactically matches but semantically
+    /// noise.
+    ///
+    /// Returns `None` when:
+    ///
+    /// * Jev is disabled,
+    /// * the search returned fewer than `MIN_RESULTS_TO_RANK` hits,
+    /// * the result payload does not carry a `results` array,
+    /// * every hit scored relevant, or Jev errored.
+    ///
+    /// The `results` key is what the tool writes; a caller that
+    /// renames it must update this helper.
+    async fn rank_search_results_with_jev(
+        &self,
+        holder: &str,
+        call: &ToolCall,
+        result: &ToolResult,
+    ) -> Option<ToolResult> {
+        const MIN_RESULTS_TO_RANK: usize = 20;
+        const MAX_RESULTS_TO_RANK: usize = 60;
+        let jev = self.jev_client()?;
+        let request = self.current_request(holder).await?;
+        let ToolResult::Success(v) = result else {
+            return None;
+        };
+        let arr = v.get("results").and_then(|r| r.as_array())?;
+        if arr.len() < MIN_RESULTS_TO_RANK {
+            return None;
+        }
+        let slice: Vec<&serde_json::Value> = arr.iter().take(MAX_RESULTS_TO_RANK).collect();
+
+        // One yes/no per hit; the "question" carries the search line.
+        let questions: Vec<(String, String)> = slice
+            .iter()
+            .enumerate()
+            .map(|(i, hit)| {
+                let line = hit
+                    .get("text")
+                    .or_else(|| hit.get("line"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+                let path = hit
+                    .get("file")
+                    .or_else(|| hit.get("path"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+                (
+                    format!("hit_{i}"),
+                    format!(
+                        "Is this {} result relevant to the request? \"{}\" in {}: {}",
+                        call.tool_name, request, path,
+                        crate::jev::preview_chars(line, 200),
+                    ),
+                )
+            })
+            .collect();
+
+        let state = crate::jev::build_state(&request, &[]);
+        let started = std::time::Instant::now();
+        let rows = jev.evaluate_yes_no_batch(&state, &questions).await.ok()?;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let threshold = jev.thresholds().memory_filter_min;
+
+        let mut keep_idx: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+        let mut answers = serde_json::Map::new();
+        for (i, hit) in slice.iter().enumerate() {
+            let p = rows
+                .iter()
+                .find(|(id, _)| id == &format!("hit_{i}"))
+                .map(|(_, p)| *p)
+                .unwrap_or(1.0);
+            answers.insert(format!("hit_{i}"), serde_json::json!(p));
+            if p >= threshold {
+                keep_idx.insert(i);
+            }
+            let _ = hit;
+        }
+        // Keep everything beyond the classification window.
+        for i in slice.len()..arr.len() {
+            keep_idx.insert(i);
+        }
+        let dropped = arr.len() - keep_idx.len();
+        if dropped == 0 {
+            return None;
+        }
+        self.log_jev_decision(
+            holder,
+            "search_rank",
+            &crate::jev::preview_chars(&request, 200),
+            &format!("{} hits", arr.len()),
+            serde_json::Value::Object(answers),
+            1.0,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+
+        let filtered: Vec<serde_json::Value> = arr
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| keep_idx.contains(i))
+            .map(|(_, v)| v.clone())
+            .collect();
+        let mut new_v = v.clone();
+        if let Some(obj) = new_v.as_object_mut() {
+            obj.insert(
+                "results".to_string(),
+                serde_json::Value::Array(filtered),
+            );
+            obj.insert(
+                "ranked_by_jev".to_string(),
+                serde_json::json!({
+                    "dropped": dropped,
+                    "kept": keep_idx.len(),
+                }),
+            );
+        }
+        Some(ToolResult::Success(new_v))
+    }
+
     /// Ask Jev to triage the hunks in a unified diff (P2.4) before
     /// the diff reaches the model's prompt block.
     ///
@@ -5808,6 +5935,14 @@ impl KodEngine {
                 "write_file" | "patch_file"
             ) {
                 self.filter_diff_hunks_with_jev(effective_holder, &result)
+                    .await
+                    .unwrap_or_else(|| result.clone())
+            } else if matches!(call.tool_name.as_str(), "grep" | "search_files") {
+                // P2.3 — rank the search hits before the prompt
+                // block is built. `None` means the ranking did not
+                // run (disabled Jev, few hits, or Jev error); the
+                // original result flows through unchanged.
+                self.rank_search_results_with_jev(effective_holder, call, &result)
                     .await
                     .unwrap_or_else(|| result.clone())
             } else {
