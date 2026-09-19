@@ -117,6 +117,33 @@ impl Fixture {
         serde_json::to_string_pretty(self).unwrap_or_default()
     }
 
+    /// Save to `path` in pretty JSON, creating parents.
+    pub fn save_to(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, self.to_json())
+    }
+
+    /// Load from `path`.
+    pub fn load_from(path: &std::path::Path) -> std::io::Result<Self> {
+        let s = std::fs::read_to_string(path)?;
+        Self::from_json(&s)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+
+    /// The default directory for user fixtures.
+    /// `<home>/.kod/fixtures/`. Returns `None` when no home dir is
+    /// available.
+    pub fn fixtures_dir() -> Option<std::path::PathBuf> {
+        dirs::home_dir().map(|h| h.join(".kod").join("fixtures"))
+    }
+
+    /// The default path for a fixture by name.
+    pub fn default_path(name: &str) -> Option<std::path::PathBuf> {
+        Self::fixtures_dir().map(|d| d.join(format!("{name}.json")))
+    }
+
     /// Parse a fixture. Errors carry the field path when possible.
     pub fn from_json(s: &str) -> Result<Self, String> {
         serde_json::from_str(s).map_err(|e| e.to_string())
