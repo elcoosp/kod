@@ -355,6 +355,10 @@ impl TuiLoop {
             engine.set_sandbox_mode(kod_tools::context::SandboxMode::Require);
         }
         kod_core::mcp_adapters::install_from_config(&engine, &config).await;
+        // Tier 1.3 — read-protection from the effective policy.
+        if let Some(policy) = engine.policy().await {
+            engine.set_read_protection(policy.read_protection().clone());
+        }
 
         // Install the Jev (TypeSafe AI) client when enabled. A
         // disabled block (the default) is a silent no-op; an

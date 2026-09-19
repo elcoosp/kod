@@ -1376,6 +1376,10 @@ pub async fn run_chat(
         Some(config.llm.default_endpoint().max_tokens.unwrap_or(2048)),
     );
     install_policy_async(&engine, &config, cli_preset.as_deref()).await?;
+    // Tier 1.3 — install read-protection from the effective policy.
+    if let Some(policy) = engine.policy().await {
+        engine.set_read_protection(policy.read_protection().clone());
+    }
     kod_core::mcp_adapters::install_from_config(&engine, &config).await;
 
     // Start the engine
@@ -2191,6 +2195,10 @@ pub async fn run_agent(
     engine.set_auto_check(config.tools.auto_check);
     engine.set_auto_lsp(config.tools.auto_lsp);
     install_policy_async(&engine, &config, cli_preset.as_deref()).await?;
+    // Tier 1.3 — install read-protection from the effective policy.
+    if let Some(policy) = engine.policy().await {
+        engine.set_read_protection(policy.read_protection().clone());
+    }
     kod_core::mcp_adapters::install_from_config(&engine, &config).await;
 
     engine.start().await?;
@@ -3391,6 +3399,10 @@ pub async fn run_acp(cli_preset: Option<String>) -> Result<()> {
     engine.set_auto_check(config.tools.auto_check);
     engine.set_auto_lsp(config.tools.auto_lsp);
     install_policy_async(&engine, &config, cli_preset.as_deref()).await?;
+    // Tier 1.3 — install read-protection from the effective policy.
+    if let Some(policy) = engine.policy().await {
+        engine.set_read_protection(policy.read_protection().clone());
+    }
     kod_core::mcp_adapters::install_from_config(&engine, &config).await;
 
     engine.start().await?;

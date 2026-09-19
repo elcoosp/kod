@@ -1068,6 +1068,10 @@ pub struct KodEngine {
     /// so `set_sandbox_mode` works through `&self` — the engine is
     /// shared as `Arc<KodEngine>`.
     sandbox_mode_atomic: std::sync::atomic::AtomicU8,
+    /// Read-protection rules (Tier 1.3).
+    read_protection: std::sync::RwLock<Option<kod_config::ReadProtection>>,
+    /// The redactor used for content sanitization (Tier 1.3).
+    redactor: std::sync::Arc<kod_types::redact::Redactor>,
     /// Whether `web_fetch` may reach the network. `AtomicBool` so the
     /// setter works through `&self`, matching the sandbox flag. Off by
     /// default; the CLI and TUI apply `LlmConfig::network_access` at
@@ -1355,6 +1359,8 @@ impl KodEngine {
             // and TUI escalate to Require via `--sandbox`; a caller
             // that never touches this gets the design's safe default.
             sandbox_mode_atomic: std::sync::atomic::AtomicU8::new(2),
+            read_protection: std::sync::RwLock::new(None),
+            redactor: std::sync::Arc::new(kod_types::redact::Redactor::default()),
             network_access_atomic: std::sync::atomic::AtomicBool::new(false),
             auto_check_atomic: std::sync::atomic::AtomicBool::new(false),
             auto_lsp_atomic: std::sync::atomic::AtomicBool::new(true),
@@ -1413,6 +1419,28 @@ impl KodEngine {
     /// Set the sandbox mode for shell commands. `Required` wraps every
     /// `execute_command` in `bwrap` or `sandbox-exec`; a missing
     /// primitive fails each such call with a named reason.
+    /// Install read-protection rules (Tier 1.3).
+    pub fn set_read_protection(&self, rp: kod_config::ReadProtection) {
+        if let Ok(mut slot) = self.read_protection.write() {
+            *slot = Some(rp);
+        }
+    }
+
+    /// Replace the default redactor (Tier 1.3).
+    pub fn set_redactor(&mut self, redactor: kod_types::redact::Redactor) {
+        self.redactor = std::sync::Arc::new(redactor);
+    }
+
+    /// The current read-protection, if any.
+    pub fn read_protection_setting(&self) -> Option<kod_config::ReadProtection> {
+        self.read_protection.read().ok().and_then(|g| g.clone())
+    }
+
+    /// The current redactor (shared handle).
+    pub fn redactor(&self) -> std::sync::Arc<kod_types::redact::Redactor> {
+        self.redactor.clone()
+    }
+
     pub fn set_sandbox_mode(&self, mode: kod_tools::context::SandboxMode) {
         use std::sync::atomic::Ordering;
         let v = match mode {
@@ -6585,6 +6613,12 @@ impl KodEngine {
             .clone()
             .with_locks(Arc::clone(&self.lock_table), effective_holder)
             .with_sandbox(self.sandbox_setting());
+        // Tier 1.3 — thread the engine's read-protection and
+        // redactor into the per-call context.
+        if let Ok(guard) = self.read_protection.read() {
+            tool_context.read_protection = guard.clone();
+        }
+        tool_context.redactor = Some(self.redactor.clone());
         if per_transcript_wd != self.working_dir {
             tool_context.working_dir = per_transcript_wd;
         }
