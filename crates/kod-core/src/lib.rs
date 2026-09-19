@@ -24,6 +24,7 @@ pub mod repomap;
 pub mod router;
 pub mod serve;
 pub mod trace;
+pub mod tool_quota;
 pub mod trace_writer;
 pub mod session_log;
 pub mod swarm_adapters;
@@ -32,6 +33,7 @@ pub mod worktree;
 
 pub use fixture::{diff_rounds, Fixture, RequestSummary, ResponseFixture, RoundFixture};
 pub use retry_strategy::{choose_action, RetryAction, TurnFailure};
+pub use tool_quota::{check as check_quota, QuotaVerdict, ToolCounts};
 pub use engine::KodEngine;
 pub use trace::{RoundKind, ToolOutcomeKind, TurnId, TurnOutcome, TurnTrace, TurnTraceBuilder,
 };

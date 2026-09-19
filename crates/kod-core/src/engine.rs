@@ -1078,6 +1078,12 @@ pub struct KodEngine {
     /// Session cost accumulator (Tier 1.2). Clone the engine to
     /// share it with a UI.
     cost_tracker: crate::cost::CostTracker,
+    /// Per-tool quota counters (Tier 2.5). Reset per turn and per
+    /// session; enforced before every dispatch.
+    tool_counts: std::sync::Arc<crate::tool_quota::ToolCounts>,
+    /// The [limits.tools] configuration loaded at startup. `None`
+    /// until `install_limits` runs.
+    tool_quotas: std::sync::RwLock<Option<std::collections::BTreeMap<String, kod_config::ToolQuota>>>,
     /// Monotonic per-session turn id for the trace log (Tier 1.4).
     next_turn_id: std::sync::atomic::AtomicU64,
     /// Append-only writer for `turns.jsonl`, next to the session log.
@@ -1377,6 +1383,8 @@ impl KodEngine {
             read_protection: std::sync::RwLock::new(None),
             redactor: std::sync::Arc::new(kod_types::redact::Redactor::default()),
             cost_tracker: crate::cost::CostTracker::new(),
+            tool_counts: std::sync::Arc::new(crate::tool_quota::ToolCounts::new()),
+            tool_quotas: std::sync::RwLock::new(None),
             next_turn_id: std::sync::atomic::AtomicU64::new(1),
             turn_trace_writer: std::sync::RwLock::new(None),
             taint: std::sync::RwLock::new(kod_types::trust::TrustLevel::Assistant),
@@ -1490,13 +1498,38 @@ impl KodEngine {
         )
     }
 
+    /// Snapshot of per-tool counters, for `/limits`.
+    pub fn tool_count_snapshot(&self) -> Vec<(String, usize, usize)> {
+        self.tool_counts.snapshot()
+    }
+
+    /// Reset per-session tool counters. `/limits reset`.
+    pub fn reset_tool_counts(&self) {
+        self.tool_counts.reset();
+    }
+
+    /// The resolved quota for a tool, if any is installed. Explicit
+    /// entry first, then the `"default"` entry.
+    fn quota_for(&self, tool: &str) -> Option<kod_config::ToolQuota> {
+        let g = self.tool_quotas.read().ok()?;
+        let map = g.as_ref()?;
+        map.get(tool)
+            .or_else(|| map.get("default"))
+            .filter(|q| q.per_turn > 0 || q.per_session > 0 || q.per_command > 0)
+            .cloned()
+    }
+
     pub fn cost_tracker(&self) -> &crate::cost::CostTracker {
         &self.cost_tracker
     }
 
-    /// Install the `[limits]` block on the cost tracker (Tier 1.2).
+    /// Install the `[limits]` block on the cost tracker (Tier 1.2)
+    /// and the per-tool quotas (Tier 2.5).
     pub fn install_limits(&self, cfg: &kod_config::LimitsConfig) {
         self.cost_tracker.install_config(cfg);
+        if let Ok(mut g) = self.tool_quotas.write() {
+            *g = Some(cfg.tools.clone());
+        }
     }
 
     pub fn set_read_protection(&self, rp: kod_config::ReadProtection) {
@@ -5563,6 +5596,7 @@ impl KodEngine {
         self.set_current_request(key, input).await;
         // Tier 1.1 — a fresh user turn clears any prior taint.
         self.reset_taint();
+        self.tool_counts.begin_turn();
         // Tier 1.4 — open a turn trace. Emitted when this call returns.
         let trace_id = self.next_turn_id();
         let trace = std::sync::Mutex::new(crate::trace::TurnTraceBuilder::new(trace_id, key));
@@ -7388,6 +7422,32 @@ impl KodEngine {
                 } else {
                     tool_context.clone()
                 };
+                // Tier 2.5 — quota check before dispatch.
+                let command = if call.tool_name == "execute_command" {
+                    call.arguments.get("command").and_then(|v| v.as_str())
+                } else {
+                    None
+                };
+                let quota = self.quota_for(&call.tool_name);
+                match crate::tool_quota::check(
+                    &self.tool_counts,
+                    &call.tool_name,
+                    quota.as_ref(),
+                    command,
+                ) {
+                    crate::tool_quota::QuotaVerdict::Hard { reason } => {
+                        out.push((
+                            Ok(ToolResult::Error(format!("quota exceeded: {reason}"))),
+                            0,
+                        ));
+                        continue;
+                    }
+                    crate::tool_quota::QuotaVerdict::Soft { reason } => {
+                        tracing::warn!(tool = %call.tool_name, "tool quota soft: {reason}");
+                    }
+                    crate::tool_quota::QuotaVerdict::Ok => {}
+                }
+                self.tool_counts.record(&call.tool_name, command);
                 let start = std::time::Instant::now();
                 let res = self
                     .tools
@@ -7401,6 +7461,13 @@ impl KodEngine {
             // only requested for write_file / patch_file, both of
             // which set `any_mutating` above), so the concurrent path
             // is unchanged.
+            // Tier 2.5 — count the read-only dispatches before they
+            // run. Enforcement (refusal) is serial-only; a
+            // read-only round that hits a hard cap still runs its
+            // peers so the model gets a complete answer.
+            for call in calls.iter() {
+                self.tool_counts.record(&call.tool_name, None);
+            }
             let futs: Vec<_> = calls
                 .iter()
                 .map(|call| {
