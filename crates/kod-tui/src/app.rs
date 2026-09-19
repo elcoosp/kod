@@ -111,6 +111,82 @@ pub enum InputMode {
     Insert,
 }
 
+/// One entry in the command palette (Ctrl+K). Derived from
+/// `SLASH_COMMANDS` plus keybindings, so a new command or key appears
+/// automatically (Tier UX).
+#[derive(Debug, Clone)]
+pub struct CommandPaletteEntry {
+    pub label: String,
+    pub hint: String,
+    /// The value inserted into the input when the entry is accepted.
+    /// For a slash command this is the command name; for a keybinding
+    /// it is the key's description for the help card.
+    pub insert: String,
+}
+
+/// Command palette state. `None` on the app means "closed"; the
+/// palette is a single-use overlay, not a mode.
+#[derive(Debug, Clone, Default)]
+pub struct CommandPaletteState {
+    pub query: String,
+    pub selected: usize,
+}
+
+impl CommandPaletteState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Filter the palette's entry list by the current query. The
+    /// comparison is case-insensitive substring on the label; an
+    /// empty query returns the full list.
+    pub fn filtered(&self, all: &[CommandPaletteEntry]) -> Vec<CommandPaletteEntry> {
+        if self.query.is_empty() {
+            return all.to_vec();
+        }
+        let q = self.query.to_lowercase();
+        all.iter()
+            .filter(|e| e.label.to_lowercase().contains(&q)
+                || e.hint.to_lowercase().contains(&q))
+            .cloned()
+            .collect()
+    }
+}
+
+/// Build the palette's entry list. Slash commands come from
+/// `SLASH_COMMANDS`; the remaining entries surface the cheat-sheet
+/// keys so a user can find them by typing.
+pub fn build_palette_entries() -> Vec<CommandPaletteEntry> {
+    let mut entries: Vec<CommandPaletteEntry> = SLASH_COMMANDS
+        .iter()
+        .map(|c| CommandPaletteEntry {
+            label: c.name.to_string(),
+            hint: c.hint.to_string(),
+            insert: c.name.to_string(),
+        })
+        .collect();
+    // A small set of key-only actions that a user might search for.
+    for (label, hint, key) in [
+        ("ctrl+k", "command palette", "Ctrl+K"),
+        ("ctrl+e", "edit last message", "Ctrl+E"),
+        ("ctrl+u", "delete to line start", "Ctrl+U"),
+        ("ctrl+w", "delete previous word", "Ctrl+W"),
+        ("ctrl+j", "insert newline in input", "Ctrl+J"),
+        ("? / h", "help overlay", "?"),
+        ("t", "toggle tool output", "t"),
+        ("g / G", "scroll top / bottom", "g/G"),
+        ("q", "quit", "q"),
+        ("esc", "cancel running prompt", "Esc"),
+    ] {
+        entries.push(CommandPaletteEntry {
+            label: label.to_string(),
+            hint: hint.to_string(),
+            insert: key.to_string(),
+        });
+    }
+    entries
+}
+
 /// A slash command the TUI understands
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlashCommand {
@@ -394,6 +470,8 @@ pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", 
 /// Main application state
 pub struct KodApp {
     mode: AppMode,
+    /// Command palette overlay (Ctrl+K). `None` when closed.
+    palette: Option<CommandPaletteState>,
     input_mode: InputMode,
     input: String,
     cursor_position: usize,
@@ -665,6 +743,7 @@ impl KodApp {
     pub fn new() -> Self {
         Self {
             mode: AppMode::Normal,
+            palette: None,
             input_mode: InputMode::Normal,
             input: String::new(),
             cursor_position: 0,
@@ -742,6 +821,88 @@ impl KodApp {
 
     pub fn set_mode(&mut self, mode: AppMode) {
         self.mode = mode;
+    }
+
+    // --- Command palette (Tier UX) --------------------------------------
+
+    pub fn palette(&self) -> Option<&CommandPaletteState> {
+        self.palette.as_ref()
+    }
+
+    pub fn is_palette_open(&self) -> bool {
+        self.palette.is_some()
+    }
+
+    /// Open the palette. Idempotent — a second call while already
+    /// open is a no-op, so Ctrl+K twice does not reset the query.
+    pub fn open_palette(&mut self) {
+        if self.palette.is_none() {
+            self.palette = Some(CommandPaletteState::new());
+        }
+    }
+
+    pub fn close_palette(&mut self) {
+        self.palette = None;
+    }
+
+    /// Push a character into the query.
+    pub fn palette_push_char(&mut self, c: char) {
+        if let Some(p) = self.palette.as_mut() {
+            p.query.push(c);
+            p.selected = 0;
+        }
+    }
+
+    pub fn palette_backspace(&mut self) {
+        if let Some(p) = self.palette.as_mut() {
+            p.query.pop();
+            p.selected = 0;
+        }
+    }
+
+    /// Move the selection down, wrapping.
+    pub fn palette_next(&mut self) {
+        let len = self.palette_candidates().len();
+        if len == 0 {
+            return;
+        }
+        if let Some(p) = self.palette.as_mut() {
+            p.selected = (p.selected + 1) % len;
+        }
+    }
+
+    /// Move the selection up, wrapping.
+    pub fn palette_prev(&mut self) {
+        let len = self.palette_candidates().len();
+        if len == 0 {
+            return;
+        }
+        if let Some(p) = self.palette.as_mut() {
+            p.selected = (p.selected + len - 1) % len;
+        }
+    }
+
+    /// The palette's currently-filtered entries.
+    pub fn palette_candidates(&self) -> Vec<CommandPaletteEntry> {
+        match self.palette.as_ref() {
+            Some(p) => p.filtered(&build_palette_entries()),
+            None => Vec::new(),
+        }
+    }
+
+    pub fn palette_query(&self) -> Option<&str> {
+        self.palette.as_ref().map(|p| p.query.as_str())
+    }
+
+    pub fn palette_selected(&self) -> usize {
+        self.palette.as_ref().map(|p| p.selected).unwrap_or(0)
+    }
+
+    /// The currently-selected entry, if any.
+    pub fn palette_selected_entry(&self) -> Option<CommandPaletteEntry> {
+        let candidates = self.palette_candidates();
+        let idx = self.palette_selected();
+        candidates.get(idx).cloned()
     }
 
     pub fn input_mode(&self) -> &InputMode {
