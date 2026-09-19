@@ -132,7 +132,98 @@ fn default_true() -> bool {
     true
 }
 
-/// The full policy: a preset, per-tool overrides, and a git block.
+/// How `read_file` / `list_files` treat known-secret paths (Tier 1.3).
+///
+/// The default is `redact`: the file is read, matches from the
+/// redactor's rule set are replaced by `[REDACTED:<rule>]` markers,
+/// and a one-line header is prepended so the model knows content was
+/// removed. `Refuse` returns a `ToolResult::Error` for the matched
+/// path instead — a stricter posture for a shared or regulated
+/// environment. `Allow` disables the check for this session; it is
+/// the right choice for a caller that has already reviewed its own
+/// secret handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ReadMode {
+    #[default]
+    Redact,
+    Refuse,
+    Allow,
+}
+
+/// Read-protection rules for high-risk paths. Patterns are matched
+/// as globs against the *resolved* path (same engine as forbidden
+/// paths, so a project-relative glob and an absolute pattern both
+/// work). The default list covers the conventional locations of
+/// long-lived credentials in a developer's home directory and any
+/// project tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReadProtection {
+    pub enabled: bool,
+    pub mode: ReadMode,
+    pub deny: Vec<String>,
+}
+
+impl Default for ReadProtection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            mode: ReadMode::Redact,
+            deny: vec![
+                ".env".to_string(),
+                ".env.*".to_string(),
+                "**/.env".to_string(),
+                "**/.env.*".to_string(),
+                "**/*.pem".to_string(),
+                "**/*.key".to_string(),
+                "**/id_rsa*".to_string(),
+                "**/id_ed25519*".to_string(),
+                "**/id_ecdsa*".to_string(),
+                "**/.aws/credentials".to_string(),
+                "**/.aws/config".to_string(),
+                "**/.ssh/**".to_string(),
+                "**/.docker/config.json".to_string(),
+                "**/.netrc".to_string(),
+                "**/.pgpass".to_string(),
+                "**/credentials.json".to_string(),
+                "**/service-account*.json".to_string(),
+            ],
+        }
+    }
+}
+
+impl ReadProtection {
+    /// Does `path` match any deny glob?
+    pub fn matches(&self, path: &std::path::Path) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        let path_str = path.to_string_lossy();
+        let basename = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        for pat in &self.deny {
+            // Same glob semantics as the policy engine's forbidden
+            // paths: a pattern with a slash is matched against the
+            // full path; a pattern without is matched against the
+            // basename at any depth.
+            let (target, pat_use) = if pat.contains('/') {
+                (path_str.as_ref(), pat.as_str())
+            } else {
+                (basename, pat.as_str())
+            };
+            if let Ok(glob) = globset::Glob::new(pat_use)
+                && glob.compile_matcher().is_match(target)
+            {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Policy {
     #[serde(default)]
@@ -150,6 +241,10 @@ pub struct Policy {
     pub tools: BTreeMap<String, ToolPolicy>,
     #[serde(default)]
     pub git: GitPolicy,
+
+    /// Read-protection rules for known-secret paths (Tier 1.3).
+    #[serde(default)]
+    pub read_protection: ReadProtection,
 }
 
 impl Default for Policy {
@@ -159,6 +254,7 @@ impl Default for Policy {
             preset_explicit: false,
             tools: BTreeMap::new(),
             git: GitPolicy::default(),
+            read_protection: ReadProtection::default(),
         }
     }
 }
@@ -209,6 +305,13 @@ pub struct PolicyEngine {
 }
 
 impl PolicyEngine {
+    /// The effective read-protection rules — the highest layer that
+    /// set the block wins, matching the policy engine's standard
+    /// layering.
+    pub fn read_protection(&self) -> &ReadProtection {
+        &self.effective().read_protection
+    }
+
     /// Build the effective policy from a full `KodConfig` (which
     /// carries the global `[tools]` section), an optional project
     /// root, and an optional CLI `--preset` override.

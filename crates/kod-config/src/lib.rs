@@ -15,7 +15,7 @@ pub use mcp::{McpConfig, McpServerConfig};
 pub use memory::{EmbeddingEndpoint, MemoryConfig, MemoryScope};
 pub use policy::{
     Decision, GitPolicy, Policy, PolicyDecision, PolicyEngine, PolicySource, Preset, SessionDeny,
-    ToolPolicy,
+    ToolPolicy, ReadMode, ReadProtection,
 };
 pub use skills::SkillsConfig;
 pub use swarm::SwarmConfig;
