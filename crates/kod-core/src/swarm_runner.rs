@@ -339,6 +339,25 @@ impl SwarmRunner {
         //     accepted: the claims are enforced at the tool-call
         //     boundary regardless, and the merge-time conflict
         //     detector is the second line of defence.
+        // P4.7 — after the syntactic overlap check, ask Jev
+        // whether any pairs touch the same conceptual file even
+        // without a shared glob prefix. A semantic hit is logged
+        // and (for now) left to the merge-time conflict detector;
+        // the flag is available to callers that want to serialize.
+        {
+            let pairs: Vec<(String, Vec<String>)> = subtasks
+                .iter()
+                .map(|s| (s.description.clone(), s.expected_writes.clone()))
+                .collect();
+            let semantic = self.engine.semantic_overlap_check(&pairs).await;
+            if !semantic.is_empty() {
+                tracing::warn!(
+                    count = semantic.len(),
+                    "Jev found semantic write overlaps the glob check missed",
+                );
+            }
+        }
+
         if let Some((i, j, common)) = detect_overlap(&subtasks) {
             tracing::warn!(
                 first = %subtasks[i].name,

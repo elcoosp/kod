@@ -2749,6 +2749,87 @@ impl KodEngine {
         }
     }
 
+    /// Semantic swarm overlap check (P4.7). Given the parsed
+    /// subtasks, ask Jev which pairs touch the same conceptual file
+    /// even when their globs do not share a prefix. Returns a list
+    /// of `(i, j)` index pairs the caller may want to serialize,
+    /// or an empty vec when Jev is disabled or finds no semantic
+    /// overlap.
+    ///
+    /// Bounded to `MAX_PAIRS` pairs (`{n choose 2}` of the first few
+    /// subtasks) so a large swarm does not produce a pathological
+    /// request.
+    ///
+    /// Uses one score question per candidate pair, joined in a
+    /// single batch of yes/no.
+    pub async fn semantic_overlap_check(
+        &self,
+        subtasks: &[(String, Vec<String>)],
+    ) -> Vec<(usize, usize)> {
+        const MAX_SUBTASKS: usize = 6;
+        let Some(jev) = self.jev_client() else {
+            return Vec::new();
+        };
+        if subtasks.len() < 2 {
+            return Vec::new();
+        }
+        let slice = &subtasks[..subtasks.len().min(MAX_SUBTASKS)];
+        // Build the state once: the descriptions plus each subtask's
+        // declared globs.
+        let mut ctx = String::from("Subtasks:\n");
+        for (i, (desc, globs)) in slice.iter().enumerate() {
+            ctx.push_str(&format!(
+                "[{}] {} :: {}\n",
+                i,
+                crate::jev::preview_chars(desc, 200),
+                globs.join(", ")
+            ));
+        }
+        let state = crate::jev::build_state(&ctx, &[]);
+        let mut questions: Vec<(String, String)> = Vec::new();
+        for i in 0..slice.len() {
+            for j in (i + 1)..slice.len() {
+                questions.push((
+                    format!("pair_{i}_{j}"),
+                    format!(
+                        "Do subtasks {i} and {j} touch the same conceptual file, even if their declared globs differ?"
+                    ),
+                ));
+            }
+        }
+        let started = std::time::Instant::now();
+        let rows = match jev.evaluate_yes_no_batch(&state, &questions).await {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let threshold = jev.thresholds().memory_filter_min;
+        let mut out: Vec<(usize, usize)> = Vec::new();
+        let mut answers = serde_json::Map::new();
+        for (id, p) in &rows {
+            answers.insert(id.clone(), serde_json::json!(p));
+            if *p >= threshold
+                && let Some(rest) = id.strip_prefix("pair_")
+                && let Some((a, b)) = rest.split_once('_')
+                && let (Ok(i), Ok(j)) = (a.parse::<usize>(), b.parse::<usize>())
+            {
+                out.push((i, j));
+            }
+        }
+        self.log_jev_decision(
+            DEFAULT_TRANSCRIPT_KEY,
+            "swarm_overlap",
+            &crate::jev::preview_chars(&ctx, 200),
+            "colliding_pairs",
+            serde_json::Value::Object(answers),
+            1.0,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+        out
+    }
+
     /// Ask Jev which capability best fits a subtask description
     /// (P4.6). Returns the answer as a string label so the caller
     /// maps it back through `kod_swarm::Capability::from_str`. Returns
