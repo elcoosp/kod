@@ -409,6 +409,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "list or clear session-scoped learned approvals: /learned [clear]",
     },
     SlashCommand {
+        name: "/decisions",
+        hint: "durable decisions this session: /decisions [drop <id> | clear]",
+    },
+    SlashCommand {
         name: "/plan",
         hint: "show plan: /plan [next | skip | note <text> | clear]",
     },

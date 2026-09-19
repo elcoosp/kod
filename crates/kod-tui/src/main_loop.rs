@@ -82,6 +82,7 @@ const SLASH_HELP: &str = "Commands:\n\
 /trust — show or clear the round's taint: /trust [show | clear]\n\
 /blackboard — swarm blackboard: /blackboard [show | clear]\n\
 /learned — list or clear session-scoped learned approvals: /learned [clear]\n\
+/decisions — durable decisions: /decisions [drop <id> | clear]\n\
 /plan — show plan: /plan [next | skip | note <text> | clear]\n\
 /limits — per-tool quotas: /limits [show | reset]\n\
 /budget — session cost and limits: /budget | /budget raise <usd> | /budget reset\n\
@@ -3299,6 +3300,83 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                     Some(other) => {
                         self.app.push_system_message(&format!(
                             "Unknown /learned sub-command: {other}. Try /learned or /learned clear.",
+                        ));
+                    }
+                }
+            }
+            "/decisions" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                match parts.next() {
+                    None | Some("show") => {
+                        let log = engine.decisions_for("session").await;
+                        if log.entries.is_empty() {
+                            self.app.push_system_message(
+                                "No durable decisions recorded yet. Decisions are \
+                                 logged automatically on turns that state a \
+                                 preference, approach, file change, or constraint.",
+                            );
+                            return Ok(());
+                        }
+                        let mut msg = format!(
+                            "Decisions ({} entries)\n",
+                            log.entries.len(),
+                        );
+                        for d in log.entries.iter().rev().take(20) {
+                            let tag = match d.kind {
+                                kod_core::DecisionKind::UserPreference => "pref",
+                                kod_core::DecisionKind::Approach => "appr",
+                                kod_core::DecisionKind::FileChange => "file",
+                                kod_core::DecisionKind::Constraint => "cons",
+                                kod_core::DecisionKind::Other => "othr",
+                            };
+                            msg.push_str(&format!(
+                                "  [{}] {}\n",
+                                tag,
+                                &d.text.chars().take(120).collect::<String>(),
+                            ));
+                        }
+                        if log.entries.len() > 20 {
+                            msg.push_str(&format!(
+                                "  … and {} more\n",
+                                log.entries.len() - 20,
+                            ));
+                        }
+                        msg.push_str("\n  /decisions drop <id> | /decisions clear");
+                        self.app.push_system_message(msg.trim_end());
+                    }
+                    Some("drop") => {
+                        let id: Option<u64> =
+                            parts.next().and_then(|s| s.parse().ok());
+                        match id {
+                            Some(id) => {
+                                if engine.drop_decision("session", id).await {
+                                    self.app
+                                        .push_system_message(&format!("Dropped decision {id}."));
+                                } else {
+                                    self.app.push_system_message(&format!(
+                                        "No decision with id {id}.",
+                                    ));
+                                }
+                            }
+                            None => self.app.push_system_message(
+                                "Usage: /decisions drop <id>",
+                            ),
+                        }
+                    }
+                    Some("clear") => {
+                        let mut g = engine.decisions_for("session").await;
+                        g.entries.clear();
+                        // Replace the log with the empty one.
+                        engine.set_decision_log("session", g).await;
+                        self.app
+                            .push_system_message("Decision log cleared.");
+                    }
+                    Some(other) => {
+                        self.app.push_system_message(&format!(
+                            "Unknown /decisions sub-command: {other}. Try /decisions, /decisions drop <id>, or /decisions clear.",
                         ));
                     }
                 }

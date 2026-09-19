@@ -1753,6 +1753,107 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         }
     }
 
+    /// Tier 3.4 — classify a completed turn for durable decisions.
+    ///
+    /// Two Jev calls per turn, gated by the first: a yes/no question
+    /// on the whole turn ("durable decision?"), then a score question
+    /// on the kind. Cheap when the turn is a plain question, and
+    /// produces one `DecisionRecord` when it is not.
+    ///
+    /// No-op when Jev is disabled, when either side of the exchange
+    /// is trivially short, or when the classifier scores the turn
+    /// below the threshold.
+    async fn extract_decisions_with_jev(
+        &self,
+        key: &str,
+        turn_id: u64,
+        input: &str,
+        reply: &str,
+    ) -> usize {
+        let Some(jev) = self.jev_client() else {
+            return 0;
+        };
+        if input.len() < 30 || reply.len() < 30 {
+            return 0;
+        }
+        let state = crate::jev::build_state(
+            &format!(
+                "User request: {}\n\nAssistant reply: {}",
+                crate::jev::preview_chars(input, 400),
+                crate::jev::preview_chars(reply, 400),
+            ),
+            &[],
+        );
+        let pairs = [(
+            "is_decision".to_string(),
+            "Does this exchange contain a durable decision, preference, \
+             or constraint worth remembering for future turns? A one-off \
+             factual answer or a plain status update does not count."
+                .to_string(),
+        )];
+        let started = std::time::Instant::now();
+        let rows = match jev.evaluate_yes_no_batch(&state, &pairs).await {
+            Ok(r) => r,
+            Err(_) => return 0,
+        };
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let p = rows.first().map(|(_, p)| *p).unwrap_or(0.0);
+        if p < 0.7 {
+            return 0;
+        }
+        // Kind classification.
+        let labels = &[
+            "user_preference",
+            "approach",
+            "file_change",
+            "constraint",
+            "other",
+        ];
+        let kind_decision = jev
+            .evaluate_score(
+                &state,
+                "What kind of durable decision is this?",
+                labels,
+            )
+            .await
+            .ok();
+        let kind = match kind_decision.as_ref().map(|d| d.value.as_str()) {
+            Some("user_preference") => crate::decisions::DecisionKind::UserPreference,
+            Some("approach") => crate::decisions::DecisionKind::Approach,
+            Some("file_change") => crate::decisions::DecisionKind::FileChange,
+            Some("constraint") => crate::decisions::DecisionKind::Constraint,
+            _ => crate::decisions::DecisionKind::Other,
+        };
+        let text = format!(
+            "{} → {}",
+            crate::jev::preview_chars(input, 150),
+            crate::jev::preview_chars(reply, 150),
+        );
+        self.log_jev_decision(
+            key,
+            "decision_extract",
+            &crate::jev::preview_chars(input, 200),
+            "is_decision,kind",
+            serde_json::json!({
+                "is_decision": p,
+                "kind": kind_decision.as_ref().map(|d| d.value.clone()),
+            }),
+            p,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+        self.add_decision(
+            key,
+            turn_id,
+            kind,
+            text,
+            crate::decisions::DecisionAuthor::Assistant,
+        )
+        .await;
+        1
+    }
+
     /// The durable decisions for a transcript (Tier 3.4).
     pub async fn decisions_for(&self, key: &str) -> crate::decisions::DecisionLog {
         self.decision_logs
@@ -1761,6 +1862,18 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             .get(key)
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// Replace the entire decision log for a transcript.
+    pub async fn set_decision_log(
+        &self,
+        key: &str,
+        log: crate::decisions::DecisionLog,
+    ) {
+        self.decision_logs
+            .write()
+            .await
+            .insert(key.to_string(), log);
     }
 
     /// Append a decision to a transcript's log.
@@ -6359,6 +6472,12 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                 None => final_text,
             };
             self.remember_turn_for(key, false, &final_text).await;
+
+            // Tier 3.4 — extract durable decisions from this turn.
+            // Two Jev calls, gated; no-op when Jev is disabled.
+            let _ = self
+                .extract_decisions_with_jev(key, trace_id, input, &final_text)
+                .await;
 
             // Tier 1.4 — finish and emit the trace.
             if let Ok(mut g) = trace.lock() {
