@@ -1803,6 +1803,154 @@ impl KodEngine {
         Some(n)
     }
 
+    /// Ask Jev to triage the hunks in a unified diff (P2.4) before
+    /// the diff reaches the model's prompt block.
+    ///
+    /// Splits the diff by `@@` hunk headers, asks Jev to score each
+    /// one's relevance to the user's request (`context_only`,
+    /// `relevant`, `critical`), and replaces the `context_only`
+    /// hunks with a one-line `… (N lines elided, context only)` note.
+    /// The unified-diff framing (--- / +++ headers) is preserved so
+    /// the model can still parse the result.
+    ///
+    /// Returns `None` when:
+    ///
+    /// * Jev is disabled or has no current request for this transcript,
+    /// * the diff has fewer than 2 hunks (nothing to compress),
+    /// * every hunk scores `relevant` or `critical`,
+    /// * the whole call errors.
+    ///
+    /// Returning `None` leaves the original result untouched — the
+    /// caller uses the same `ToolResult` it already had.
+    async fn filter_diff_hunks_with_jev(
+        &self,
+        holder: &str,
+        call: &ToolCall,
+        result: &ToolResult,
+    ) -> Option<ToolResult> {
+        let jev = self.jev_client()?;
+        let request = self.current_request(holder).await?;
+        let ToolResult::Success(v) = result else {
+            return None;
+        };
+        let diff = v.get("diff").and_then(|d| d.as_str())?;
+        if diff.is_empty() {
+            return None;
+        }
+        // Split into header + hunks. The header is everything before
+        // the first `@@ ` line.
+        let mut lines = diff.lines();
+        let mut header_lines: Vec<&str> = Vec::new();
+        let mut hunks: Vec<Vec<&str>> = Vec::new();
+        let mut cur: Vec<&str> = Vec::new();
+        let mut seen_hunk = false;
+        for line in lines.by_ref() {
+            if line.starts_with("@@") {
+                if !cur.is_empty() {
+                    hunks.push(std::mem::take(&mut cur));
+                }
+                cur.push(line);
+                seen_hunk = true;
+            } else if seen_hunk {
+                cur.push(line);
+            } else {
+                header_lines.push(line);
+            }
+        }
+        if !cur.is_empty() {
+            hunks.push(cur);
+        }
+        if hunks.len() < 2 {
+            return None;
+        }
+
+        // One score per hunk, in a single batch of yes/no for the
+        // binary "is this context-only vs relevant?".
+        const MAX_HUNKS: usize = 20;
+        let evaluated = hunks.iter().take(MAX_HUNKS);
+        let questions: Vec<(String, String)> = evaluated
+            .enumerate()
+            .map(|(i, h)| {
+                (
+                    format!("hunk_{i}"),
+                    format!(
+                        "Is this diff hunk relevant to the user's request, or context-only? Request: {request}. Hunk:\n{}",
+                        h.iter().take(30).copied().collect::<Vec<_>>().join("\n"),
+                    ),
+                )
+            })
+            .collect();
+        let state = crate::jev::build_state(&request, &[]);
+        let started = std::time::Instant::now();
+        let rows = jev
+            .evaluate_yes_no_batch(&state, &questions)
+            .await
+            .ok()?;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let threshold = jev.thresholds().memory_filter_min;
+        let mut elided = 0_usize;
+        let mut kept_hunks: Vec<&Vec<&str>> = Vec::new();
+        let mut answers = serde_json::Map::new();
+        for (i, h) in hunks.iter().enumerate() {
+            if i >= MAX_HUNKS {
+                // Past the cap: keep, do not classify.
+                kept_hunks.push(h);
+                continue;
+            }
+            let p = rows
+                .iter()
+                .find(|(id, _)| id == &format!("hunk_{i}"))
+                .map(|(_, p)| *p)
+                .unwrap_or(1.0);
+            answers.insert(format!("hunk_{i}"), serde_json::json!(p));
+            if p < threshold {
+                elided += h.len();
+            } else {
+                kept_hunks.push(h);
+            }
+        }
+        if elided == 0 {
+            // Nothing to compress — leave the result untouched.
+            return None;
+        }
+
+        self.log_jev_decision(
+            holder,
+            "diff_triage",
+            &crate::jev::preview_chars(diff, 200),
+            &format!("{} hunks", hunks.len()),
+            serde_json::Value::Object(answers),
+            1.0,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+
+        let mut filtered = header_lines.join("\n");
+        for h in kept_hunks {
+            filtered.push('\n');
+            filtered.push_str(&h.join("\n"));
+        }
+        if elided > 0 {
+            filtered.push_str(&format!(
+                "\n… ({} lines of context-only hunks elided by Jev)",
+                elided,
+            ));
+        }
+
+        // Rebuild the result with the filtered diff. The TUI still
+        // sees the original via the raw results map — only the
+        // prompt block the model reads goes through here.
+        let mut new_v = v.clone();
+        if let Some(obj) = new_v.as_object_mut() {
+            obj.insert(
+                "diff".to_string(),
+                serde_json::Value::String(filtered),
+            );
+        }
+        Some(ToolResult::Success(new_v))
+    }
+
     /// Write a `SessionEntry::ToolOutcome` for a completed tool call
     /// when the call is "interesting" (P5.3): it took at least
     /// `MIN_JEV_CLASSIFY_MS`, or it failed. The gate keeps the
@@ -5652,6 +5800,21 @@ impl KodEngine {
             // per-round budget once history, identity, and tools are
             // added on top.
             const RENDERED_RESULT_CAP: usize = 8_000;
+            // P2.4 — for write_file / patch_file, ask Jev to
+            // triage the diff's hunks before the prompt block is
+            // built. `None` means "leave the diff alone" and the
+            // original result flows through unchanged.
+            let result_for_prompt: ToolResult = if matches!(
+                call.tool_name.as_str(),
+                "write_file" | "patch_file"
+            ) {
+                self.filter_diff_hunks_with_jev(effective_holder, call, &result)
+                    .await
+                    .unwrap_or_else(|| result.clone())
+            } else {
+                result.clone()
+            };
+            let result = result_for_prompt;
             let rendered = match &result {
                 // list_files raw JSON is one quoted path per entry; a repo
                 // with a target/ dir produces 40k+ entries and the model
