@@ -19,6 +19,7 @@ pub mod lsp_tools;
 pub mod mcp_adapters;
 pub mod memory_tools;
 pub mod provider_setup;
+pub mod plan;
 pub mod retry_strategy;
 pub mod repomap;
 pub mod router;
@@ -34,6 +35,7 @@ pub mod worktree;
 pub use fixture::{diff_rounds, Fixture, RequestSummary, ResponseFixture, RoundFixture};
 pub use retry_strategy::{choose_action, RetryAction, TurnFailure};
 pub use tool_quota::{check as check_quota, QuotaVerdict, ToolCounts};
+pub use plan::{Plan, PlanStatus, PlanStep, PlanUpdate};
 pub use engine::KodEngine;
 pub use trace::{RoundKind, ToolOutcomeKind, TurnId, TurnOutcome, TurnTrace, TurnTraceBuilder,
 };
