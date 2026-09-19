@@ -1803,6 +1803,81 @@ impl KodEngine {
         Some(n)
     }
 
+    /// Try to answer an `ask_user` question from the existing
+    /// context (P3.5). Returns `Some(answer)` when Jev is confident
+    /// the question can be answered from the request text plus a
+    /// recent history excerpt; `None` when the user should be asked.
+    ///
+    /// The caller uses the returned answer as the tool result
+    /// instead of emitting a question marker, so the model proceeds
+    /// without interrupting the user. Logged as a JevDecision.
+    async fn try_answer_question_from_context(
+        &self,
+        key: &str,
+        question: &str,
+    ) -> Option<String> {
+        let jev = self.jev_client()?;
+        let request = self.current_request(key).await?;
+        // Recent history gives Jev enough state to answer "what file"
+        // style questions. Bounded so the state stays cheap.
+        let hist = self.render_history_for(key).await;
+        let hist_tail: String = hist
+            .chars()
+            .rev()
+            .take(2000)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+
+        let state = crate::jev::build_state(
+            &format!(
+                "User request: {request}\n\nRecent conversation excerpt:\n{hist_tail}\n\nQuestion the model wants to ask: {question}"
+            ),
+            &[],
+        );
+        let pairs = [
+            (
+                "can_answer_from_context".to_string(),
+                "Can this question be answered from the available context?"
+                    .to_string(),
+            ),
+        ];
+        let started = std::time::Instant::now();
+        let result = jev.evaluate_yes_no_batch(&state, &pairs).await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let (p_yes, source) = match result {
+            Ok(rows) => (
+                rows.first().map(|(_, p)| *p).unwrap_or(0.0),
+                crate::jev::DecisionSource::Jev,
+            ),
+            Err(_) => (0.0, crate::jev::DecisionSource::Heuristic),
+        };
+        let threshold = jev.thresholds().ambiguity_min;
+        self.log_jev_decision(
+            key,
+            "ask_user_check",
+            question,
+            "can_answer_from_context",
+            serde_json::json!({ "can_answer_from_context": p_yes }),
+            p_yes,
+            elapsed_ms,
+            false,
+            source,
+        );
+        if p_yes < threshold {
+            return None;
+        }
+        // A confident "yes" does not by itself produce an answer. If
+        // the model asked the user for a string, the context has one;
+        // re-ask with the same request as the "answer". This keeps
+        // the wrapper's shape unchanged — one yes/no gate, then the
+        // caller's existing flow.
+        Some(format!(
+            "(Jev answered from context — the request already specified this.) {request}"
+        ))
+    }
+
     /// Choose the endpoint for a streaming round (P1.3).
     ///
     /// On the first round of a turn, and on every round after a tool
@@ -4680,14 +4755,26 @@ impl KodEngine {
             if call.tool_name != "ask_user" {
                 continue;
             }
+            // P3.5 — before emitting the question, ask Jev whether
+            // the request already contains the answer. A confident
+            // "yes" skips the interruption entirely; the model sees
+            // the request text as the tool's result and carries on.
+            let question_text = call
+                .arguments
+                .get("question")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(no question)")
+                .to_string();
+            if let Some(auto_answer) = self
+                .try_answer_question_from_context(effective_holder, &question_text)
+                .await
+            {
+                answers.insert(i, auto_answer);
+                continue;
+            }
             match chunk_tx {
                 Some(tx) => {
-                    let question = call
-                        .arguments
-                        .get("question")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("(no question)")
-                        .to_string();
+                    let question = question_text;
                     let placeholder = call
                         .arguments
                         .get("placeholder")
