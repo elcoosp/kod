@@ -1407,6 +1407,15 @@ pub async fn run_chat(
         }
     }
 
+    // Install the Jev (TypeSafe AI) client when enabled in config.
+    // A misconfigured enabled block is a loud startup error; a
+    // disabled block (the default) is a silent no-op.
+    match kod_core::install_jev_from_config(&engine, &config.jev) {
+        Ok(true) => eprintln!("Jev: enabled"),
+        Ok(false) => {}
+        Err(e) => eprintln!("Jev configuration error (continuing without): {e}"),
+    }
+
     // Load skills from every standard location so the router has the
     // same inventory the TUI session sees.
     let skills_dirs = config.skills_dirs()?;
@@ -4904,6 +4913,11 @@ pub async fn run_prompt(
         && let Ok(recorder) = kod_core::session_log::SessionRecorder::open(path)
     {
         engine.set_session_recorder(Arc::new(recorder));
+    }
+
+    // Install the Jev client when enabled.
+    if let Err(e) = kod_core::install_jev_from_config(&engine, &config.jev) {
+        eprintln!("Jev configuration error (continuing without): {e}");
     }
 
     let resp = engine.process(&input).await?;

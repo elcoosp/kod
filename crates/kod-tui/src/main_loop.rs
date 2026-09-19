@@ -356,6 +356,20 @@ impl TuiLoop {
         }
         kod_core::mcp_adapters::install_from_config(&engine, &config).await;
 
+        // Install the Jev (TypeSafe AI) client when enabled. A
+        // disabled block (the default) is a silent no-op; an
+        // enabled-but-misconfigured block is logged but does not
+        // stop startup — the TUI must always reach its prompt.
+        match kod_core::install_jev_from_config(&engine, &config.jev) {
+            Ok(true) => self
+                .app
+                .push_system_message("Jev (TypeSafe AI) integration enabled."),
+            Ok(false) => {}
+            Err(e) => self.app.push_system_message(&format!(
+                "Jev configuration error (continuing without): {e}",
+            )),
+        }
+
         engine.start().await?;
         // Sandbox label for the header (design D3.3 / AD-10). Rendered
         // as a badge only when non-empty; the value reflects the
