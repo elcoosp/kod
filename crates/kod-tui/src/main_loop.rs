@@ -716,6 +716,15 @@ impl TuiLoop {
                     if self.app.is_approving() {
                         ApprovalWidget::new().render(&self.app, size, f.buffer_mut());
                     }
+                    if crate::ui::PaletteWidget::should_show(&self.app) {
+                        let h = crate::ui::PaletteWidget::height(&self.app);
+                        let w = (64u16).min(size.width);
+                        let x = size.x + size.width.saturating_sub(w) / 2;
+                        let y = size.y + 2;
+                        let area = ratatui::layout::Rect::new(x, y, w, h);
+                        crate::ui::PaletteWidget::new()
+                            .render(&self.app, area, f.buffer_mut());
+                    }
                     if self.app.is_asking() {
                         QuestionWidget::new().render(&self.app, size, f.buffer_mut());
                     }

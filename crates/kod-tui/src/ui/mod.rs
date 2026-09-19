@@ -7,6 +7,7 @@ pub mod completions;
 pub mod header;
 pub mod help;
 pub mod input;
+pub mod palette;
 pub mod question;
 pub mod status;
 
@@ -17,5 +18,6 @@ pub use completions::CompletionsWidget;
 pub use header::HeaderWidget;
 pub use help::HelpWidget;
 pub use input::InputWidget;
+pub use palette::PaletteWidget;
 pub use question::QuestionWidget;
 pub use status::StatusWidget;
