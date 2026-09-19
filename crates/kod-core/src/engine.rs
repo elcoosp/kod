@@ -1201,6 +1201,10 @@ pub struct KodEngine {
     /// and so the swarm runner has one to spawn its `AgentSwarm`
     /// with. Replaced per-run by the runner calling `clear_all()`.
     swarm_hub: Arc<kod_swarm::AgentCommunicationHub>,
+    /// Shared blackboard for the current swarm run (Tier 3.5).
+    /// Auto-populated with write claims, discovered files, and
+    /// completed subtasks; empty when no swarm is running.
+    blackboard: kod_swarm::Blackboard,
     /// The engine's own identity on the hub. Stable for the life of
     /// the engine — the runner registers its own per-agent ids on
     /// top, and the note/read tools broadcast as this id.
@@ -1472,6 +1476,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             pending_questions: RwLock::new(std::collections::HashMap::new()),
             next_question_id: std::sync::atomic::AtomicU64::new(1),
             swarm_hub: Arc::new(kod_swarm::AgentCommunicationHub::new()),
+            blackboard: kod_swarm::Blackboard::new(),
             session_id: kod_types::SessionId::new(),
 
             swarm_coordinator_id: kod_types::AgentId::new(),
@@ -1774,6 +1779,68 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     async fn is_learned_allowed(&self, call: &ToolCall) -> bool {
         let key = LearnedAllow::from_call(call);
         self.learned_allows.read().await.contains(&key)
+    }
+
+    /// The swarm blackboard (Tier 3.5).
+    pub fn blackboard(&self) -> &kod_swarm::Blackboard {
+        &self.blackboard
+    }
+
+    /// Publish a file discovery to the blackboard. Called after a
+    /// successful `read_file` / `grep` / `search_files`.
+    pub fn note_file_seen(
+        &self,
+        agent: &str,
+        path: &str,
+        summary: &str,
+    ) {
+        self.blackboard.put(
+            format!("file:{path}"),
+            serde_json::json!({
+                "path": path,
+                "summary": summary,
+            }),
+            agent,
+            kod_swarm::AuthorKind::Engine,
+            vec!["file".to_string(), "team".to_string()],
+        );
+    }
+
+    /// Publish a write claim. Called by the swarm runner before an
+    /// agent runs.
+    pub fn note_write_claim(
+        &self,
+        agent: &str,
+        glob: &str,
+    ) {
+        self.blackboard.put(
+            format!("claim:{agent}:{glob}"),
+            serde_json::json!({ "glob": glob, "agent": agent }),
+            agent,
+            kod_swarm::AuthorKind::Engine,
+            vec!["claim".to_string(), "team".to_string()],
+        );
+    }
+
+    /// Publish a completed subtask. Called by the swarm runner when
+    /// an agent finishes.
+    pub fn note_subtask_done(
+        &self,
+        agent: &str,
+        name: &str,
+        summary: &str,
+    ) {
+        self.blackboard.put(
+            format!("done:{name}"),
+            serde_json::json!({
+                "subtask": name,
+                "summary": summary,
+                "agent": agent,
+            }),
+            agent,
+            kod_swarm::AuthorKind::Engine,
+            vec!["done".to_string(), "team".to_string()],
+        );
     }
 
     pub fn cost_tracker(&self) -> &crate::cost::CostTracker {
