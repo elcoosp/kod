@@ -1754,6 +1754,86 @@ impl KodEngine {
         self.jev_client.read().ok().and_then(|g| g.clone())
     }
 
+    /// Choose the endpoint for a streaming round (P1.3).
+    ///
+    /// On the first round of a turn, and on every round after a tool
+    /// execution, asks Jev what kind of round this is (planning,
+    /// tool_execution, synthesis, summary) and maps the answer to an
+    /// endpoint via `[jev.round_routing]`. Returns `None` when Jev is
+    /// disabled, the kind has no mapping, the mapping does not name a
+    /// registered endpoint, or the state does not warrant a route.
+    ///
+    /// Fail-open: any error returns `None` and the caller keeps the
+    /// chain-resolved endpoint for this round.
+    async fn pick_round_endpoint(
+        &self,
+        key: &str,
+        round_idx: usize,
+        had_tool_results: bool,
+    ) -> Option<ModelRef> {
+        let jev = self.jev_client()?;
+        let cfg = jev.config();
+        if cfg.round_routing.is_empty() {
+            return None;
+        }
+        let request_text = self.current_request(key).await?;
+
+        // State distilled from the loop counters. Short so the
+        // request stays cheap.
+        let state = crate::jev::build_state(
+            &format!("User request: {request_text}"),
+            &[
+                ("round_index", &round_idx.to_string()),
+                ("tool_ran", if had_tool_results { "yes" } else { "no" }),
+            ],
+        );
+        let labels = &["planning", "tool_execution", "synthesis", "summary"];
+        let question = "What kind of round is this?";
+        let started = std::time::Instant::now();
+        let decision = jev.evaluate_score(&state, question, labels).await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+
+        let (kind, source) = match decision {
+            Ok(d) => (d.value, crate::jev::DecisionSource::Jev),
+            Err(_) => (String::new(), crate::jev::DecisionSource::Heuristic),
+        };
+        let endpoint = if kind.is_empty() {
+            None
+        } else {
+            cfg.endpoint_for_round(&kind).map(String::from)
+        };
+
+        // Resolve to a ModelRef only when the endpoint is registered.
+        let result = match endpoint.as_deref() {
+            Some(name) => {
+                let registry = self.registry.read().await.clone();
+                registry.and_then(|reg| {
+                    reg.default_model(name)
+                        .map(|model| ModelRef::new(name.to_string(), model))
+                })
+            }
+            None => None,
+        };
+
+        let answers = serde_json::json!({
+            "round_kind": kind,
+            "endpoint": endpoint,
+            "applied": result.is_some(),
+        });
+        self.log_jev_decision(
+            key,
+            "round_routing",
+            &format!("round {round_idx}"),
+            "round_kind",
+            answers,
+            1.0,
+            elapsed_ms,
+            false,
+            source,
+        );
+        result
+    }
+
     /// Should the stream be cut short? Called from `stream_round` on
     /// every `EARLY_TERM_CHECK_EVERY_CHUNKS`-th chunk after the
     /// accumulated response reaches `EARLY_TERM_MIN_CHARS`
@@ -3746,23 +3826,64 @@ impl KodEngine {
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut tool_results: Vec<ToolResult> = Vec::new();
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
-        for _ in 0..MAX_TOOL_ROUNDS {
+        // Per-round routing (P1.3). `current_provider` and
+        // `current_model_ref` are the round's effective provider and
+        // model; the loop starts with the chain-resolved choice and
+        // swaps to whatever `pick_round_endpoint` returns.
+        let mut current_provider: Arc<dyn LlmProvider> = provider.clone();
+        let mut current_model_ref: ModelRef = round.model_ref.clone();
+        let mut had_tool_results = false;
+        for round_idx in 0..MAX_TOOL_ROUNDS {
             if self.is_cancelled_for(round.holder) {
                 return Err(KodError::InvalidState("cancelled by user".to_string()));
             }
             // Pre-queued steers reach round 1. See the same comment in
             // `run_collected_loop`.
             self.apply_steers(pending, messages, round.holder).await;
+
+            // Ask Jev what kind of round this is and whether a
+            // different endpoint should serve it. A `None` result is
+            // the common case (no routing configured) and leaves the
+            // chain-resolved choice in place.
+            if let Some(next) = self
+                .pick_round_endpoint(round.holder, round_idx, had_tool_results)
+                .await
+            {
+                match self.resolve_provider_for_model_ref(&next).await {
+                    Ok(p) => {
+                        current_provider = p;
+                        current_model_ref = next;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            endpoint = %next.endpoint,
+                            error = %e,
+                            "round-routed endpoint did not resolve; keeping current"
+                        );
+                    }
+                }
+            }
+
+            // Rebuild a RoundContext for this round so the
+            // effective model_ref is visible to the grounded
+            // request and the tool calls below.
+            let round_for_this = RoundContext {
+                system_text: round.system_text,
+                model_ref: &current_model_ref,
+                definitions: round.definitions,
+                options: round.options,
+                holder: round.holder,
+            };
             let (text, calls, usage) = self
                 .stream_round(
-                    provider,
-                    round.system_text,
+                    &current_provider,
+                    round_for_this.system_text,
                     messages,
-                    round.model_ref,
-                    round.definitions,
-                    round.options,
+                    round_for_this.model_ref,
+                    round_for_this.definitions,
+                    round_for_this.options,
                     chunk_tx,
-                    round.holder,
+                    round_for_this.holder,
                 )
                 .await?;
             last_usage = usage.or(last_usage);
@@ -3770,6 +3891,9 @@ impl KodEngine {
             if calls.is_empty() {
                 break;
             }
+            // A tool round just started: mark the state so the next
+            // iteration's Jev question sees "tool_ran = yes".
+            had_tool_results = true;
             // The running indicator now shows what each call actually does
             // (`execute_command cargo test …`), not just the tool name.
             for call in &calls {

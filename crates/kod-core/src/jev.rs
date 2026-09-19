@@ -180,6 +180,14 @@ impl JevClient {
         &self.config.thresholds
     }
 
+    /// The full config the client was built from. Call sites
+    /// that read `round_routing` or any non-threshold field go
+    /// through here rather than plumbing a second config
+    /// handle.
+    pub fn config(&self) -> &kod_config::JevConfig {
+        &self.config
+    }
+
     /// True when the cache is enabled (a zero TTL disables it).
     pub fn cache_enabled(&self) -> bool {
         self.config.cache_ttl_secs > 0
