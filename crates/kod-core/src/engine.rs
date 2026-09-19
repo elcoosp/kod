@@ -986,6 +986,13 @@ pub struct KodEngine {
     /// default) is the right shape for a test or a one-shot command.
     session_recorder:
         std::sync::RwLock<Option<std::sync::Arc<crate::session_log::SessionRecorder>>>,
+    /// The active user request per transcript key (P3.1). Set
+    /// at the top of `process_streaming_with_model_for` and
+    /// `process_for` so tool-call helpers that fire deep in the
+    /// stack (auto-approval, early termination) can include the
+    /// request in their Jev state. Cleared when the call
+    /// returns.
+    current_requests: RwLock<HashMap<String, String>>,
     /// Optional Jev (TypeSafe System One) client (design P0.1).
     /// `None` — the default — means every Jev-aware call site
     /// runs its pre-Jev heuristic with no network call. The
@@ -1280,6 +1287,7 @@ impl KodEngine {
             last_prompt: RwLock::new(HashMap::new()),
             generation_defaults: RwLock::new(GenerationDefaults::default()),
             session_recorder: std::sync::RwLock::new(None),
+            current_requests: RwLock::new(HashMap::new()),
             jev_client: std::sync::RwLock::new(None),
             hooks: std::sync::RwLock::new(
                 std::sync::Arc::new(crate::hooks::HookRunner::disabled()),
@@ -1687,6 +1695,29 @@ impl KodEngine {
             .and_then(|guard| guard.as_ref().map(|r| r.path().to_path_buf()))
     }
 
+    /// Record the current user request for `key`. Called at the top
+    /// of each `process*` entry point so deeper helpers can include
+    /// the request in their Jev state. Idempotent — a caller that
+    /// forgets to clear a previous request still sees the newest one.
+    async fn set_current_request(&self, key: &str, input: &str) {
+        self.current_requests
+            .write()
+            .await
+            .insert(key.to_string(), input.to_string());
+    }
+
+    /// The active user request for `key`, if any.
+    async fn current_request(&self, key: &str) -> Option<String> {
+        self.current_requests.read().await.get(key).cloned()
+    }
+
+    /// Drop the request recorded for `key`. Called at the end of a
+    /// `process*` call so a subsequent tool round on a stale key does
+    /// not see the wrong request.
+    async fn clear_current_request(&self, key: &str) {
+        self.current_requests.write().await.remove(key);
+    }
+
     /// Install a Jev client (design P0.1). Call sites that
     /// consult Jev check [`KodEngine::jev_client`] first and
     /// fall through to their heuristic when it is `None`.
@@ -1700,6 +1731,136 @@ impl KodEngine {
     /// does not hold the lock across an await.
     pub fn jev_client(&self) -> Option<crate::jev::JevClient> {
         self.jev_client.read().ok().and_then(|g| g.clone())
+    }
+
+    /// Ask Jev whether a batch of `Ask`-decision tool calls is safe
+    /// to auto-approve (P3.1).
+    ///
+    /// For each call, two questions are asked in one round-trip:
+    ///
+    /// * `likely_approved`: would the user almost certainly approve
+    ///   this call?
+    /// * `risk_level`: read_only | reversible | destructive |
+    ///   irreversible.
+    ///
+    /// A call is auto-approved only when:
+    ///
+    /// * `likely_approved >= jev.thresholds.auto_approve_min`, AND
+    /// * `risk_level` is not `destructive` or `irreversible`.
+    ///
+    /// The set of auto-approved call indices is returned. Every
+    /// decision is logged as a `SessionEntry::JevDecision`.
+    ///
+    /// Fail-open: on any Jev error, an empty set is returned and the
+    /// caller's existing dialog path runs unchanged.
+    async fn auto_approve_with_jev(
+        &self,
+        key: &str,
+        calls: &[ToolCall],
+        ask_indices: &std::collections::HashSet<usize>,
+    ) -> std::collections::HashSet<usize> {
+        let mut approved: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+        if ask_indices.is_empty() {
+            return approved;
+        }
+        let Some(jev) = self.jev_client() else {
+            return approved;
+        };
+        let Some(request_text) = self.current_request(key).await else {
+            return approved;
+        };
+        let threshold = jev.thresholds().auto_approve_min;
+
+        for &i in ask_indices {
+            let Some(call) = calls.get(i) else { continue };
+            let state = crate::jev::build_state(
+                &format!(
+                    "User request: {request_text}\nTool: {}\nArguments: {}",
+                    call.tool_name,
+                    serde_json::to_string(&call.arguments).unwrap_or_default()
+                ),
+                &[],
+            );
+            let started = std::time::Instant::now();
+
+            // Ask both questions in one round-trip via the batch API
+            // for yes/no; risk_level is a separate score call because
+            // it has an ordered label set.
+            let pairs = [
+                (
+                    "likely_approved".to_string(),
+                    "Would the user almost certainly approve this tool call?".to_string(),
+                ),
+            ];
+            let yes = jev.evaluate_yes_no_batch(&state, &pairs).await;
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+
+            let (p_yes, yes_source) = match yes {
+                Ok(rows) => (
+                    rows.first().map(|(_, p)| *p).unwrap_or(0.0),
+                    crate::jev::DecisionSource::Jev,
+                ),
+                Err(_) => (0.0, crate::jev::DecisionSource::Heuristic),
+            };
+
+            // Short-circuit: skip the second call when the first is
+            // already below the threshold — the risk question costs a
+            // network round-trip and cannot flip a "no".
+            let (risk_label, risk_source) = if p_yes >= threshold {
+                let risk_labels =
+                    &["read_only", "reversible", "destructive", "irreversible"];
+                match jev
+                    .evaluate_score(
+                        &state,
+                        "How risky is this operation?",
+                        risk_labels,
+                    )
+                    .await
+                {
+                    Ok(d) => (Some(d.value), crate::jev::DecisionSource::Jev),
+                    Err(_) => (None, crate::jev::DecisionSource::Heuristic),
+                }
+            } else {
+                (None, crate::jev::DecisionSource::Heuristic)
+            };
+
+            let risk_blocking = matches!(
+                risk_label.as_deref(),
+                Some("destructive") | Some("irreversible")
+            );
+            let final_decision = p_yes >= threshold && !risk_blocking;
+
+            if final_decision {
+                approved.insert(i);
+            }
+
+            let source = if matches!(yes_source, crate::jev::DecisionSource::Heuristic)
+                || matches!(risk_source, crate::jev::DecisionSource::Heuristic)
+            {
+                crate::jev::DecisionSource::Heuristic
+            } else {
+                crate::jev::DecisionSource::Jev
+            };
+            let answers = serde_json::json!({
+                "likely_approved": p_yes,
+                "risk_level": risk_label,
+                "auto_approved": final_decision,
+            });
+            self.log_jev_decision(
+                key,
+                "auto_approve",
+                &format!("{} {}", call.tool_name, format_call_brief(&call.tool_name, &call.arguments)),
+                "likely_approved,risk_level",
+                answers,
+                p_yes,
+                elapsed_ms,
+                false,
+                source,
+            );
+        }
+
+        approved
     }
 
     /// Pre-filter the tool inventory with Jev (P1.1).
@@ -2815,6 +2976,7 @@ impl KodEngine {
                 return Err(KodError::InvalidState("Engine not running".to_string()));
             }
         }
+        self.set_current_request(key, input).await;
         let expanded_input = expand_at_references(input, &self.working_dir);
         let input = expanded_input.as_str();
 
@@ -3065,6 +3227,7 @@ impl KodEngine {
                 return Err(KodError::InvalidState("Engine not running".to_string()));
             }
         }
+        self.set_current_request(key, input).await;
         let expanded_input = expand_at_references(input, &self.working_dir);
         let input = expanded_input.as_str();
 
@@ -4002,6 +4165,43 @@ impl KodEngine {
                     source: format!("{:?}", d.source).to_lowercase(),
                 };
                 let _ = rec.record(&entry);
+            }
+        }
+
+        // Jev-gated auto-approval (P3.1). Before emitting a
+        // dialog, ask Jev whether the user would almost
+        // certainly approve each `Ask` call. Calls that clear
+        // both the `likely_approved` threshold and the risk
+        // gate are removed from `need_approval` and logged as
+        // auto-approved `SessionEntry::Approval` entries, so the
+        // audit trail is identical to a user approving them by
+        // hand.
+        if !need_approval.is_empty() {
+            let auto = self
+                .auto_approve_with_jev(effective_holder, calls, &need_approval)
+                .await;
+            if !auto.is_empty() {
+                for i in &auto {
+                    if let Some(call) = calls.get(*i)
+                        && let Ok(guard) = self.session_recorder.read()
+                        && let Some(rec) = guard.as_ref()
+                    {
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        let entry = crate::session_log::SessionEntry::Approval {
+                            timestamp_ms: now_ms,
+                            holder: effective_holder.to_string(),
+                            tool_name: call.tool_name.clone(),
+                            decision: "auto-approve".to_string(),
+                        };
+                        let _ = rec.record(&entry);
+                    }
+                }
+                for i in &auto {
+                    need_approval.remove(i);
+                }
             }
         }
 
