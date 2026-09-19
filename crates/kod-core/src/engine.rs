@@ -930,6 +930,33 @@ const MIN_HISTORY_CHAR_BUDGET: usize = 4_000;
 /// `clippy::too_many_arguments` enforces and making the parameter list
 /// hard to read. Bundling loses nothing — the fields do not vary
 /// between rounds of a turn — and the caller builds the bundle once.
+/// A session-scoped learned approval (Tier 2.3). Populated by the
+/// "always approve" action; two calls match when their tool name and
+/// arguments' hash are identical.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct LearnedAllow {
+    pub tool_name: String,
+    /// FNV-1a hash of the call's arguments in their canonical JSON
+    /// form. Whitespace and key order are not normalized — a
+    /// differing call is a new request for approval.
+    pub args_hash: String,
+}
+
+impl LearnedAllow {
+    pub fn from_call(call: &ToolCall) -> Self {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let bytes = serde_json::to_vec(&call.arguments).unwrap_or_default();
+        for b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        Self {
+            tool_name: call.tool_name.clone(),
+            args_hash: format!("{h:016x}"),
+        }
+    }
+}
+
 struct RoundContext<'a> {
     system_text: &'a str,
     model_ref: &'a ModelRef,
@@ -1122,6 +1149,11 @@ pub struct KodEngine {
     /// rule that matches a call is denied before any policy layer is
     /// consulted — the highest priority.
     deny_rules: RwLock<std::collections::HashSet<kod_config::SessionDeny>>,
+    /// Session-scoped learned allow rules (Tier 2.3). Populated by
+    /// the approval overlay's "always approve this" action. A
+    /// matching call is pre-approved before the policy or taint
+    /// gates are consulted.
+    learned_allows: RwLock<std::collections::HashSet<LearnedAllow>>,
 
     /// Multi-language LSP pool (design D5.1). One `LspClient` per
     /// server binary, lazily started on the first request for its
@@ -1427,6 +1459,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             auto_lsp_atomic: std::sync::atomic::AtomicBool::new(true),
             policy: RwLock::new(None),
             deny_rules: RwLock::new(std::collections::HashSet::new()),
+            learned_allows: RwLock::new(std::collections::HashSet::new()),
             lsp_manager: Arc::new(kod_lsp::LspManager::new(working_dir.clone())),
             check_baseline: Arc::new(RwLock::new(None)),
             next_approval_id: std::sync::atomic::AtomicU64::new(1),
@@ -1681,6 +1714,31 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             None => "No plan exists for this session. A plan is created                      on the first turn of a complex task."
                 .to_string(),
         }
+    }
+
+    /// Record a session-scoped learned allow for a tool call
+    /// (Tier 2.3). Called by the approval overlay's "always" action.
+    pub async fn learn_allow(&self, call: &ToolCall) {
+        self.learned_allows
+            .write()
+            .await
+            .insert(LearnedAllow::from_call(call));
+    }
+
+    /// Number of learned allows this session.
+    pub async fn learned_allow_count(&self) -> usize {
+        self.learned_allows.read().await.len()
+    }
+
+    /// Forget every learned allow.
+    pub async fn clear_learned_allows(&self) {
+        self.learned_allows.write().await.clear();
+    }
+
+    /// True when `call` matches a learned allow.
+    async fn is_learned_allowed(&self, call: &ToolCall) -> bool {
+        let key = LearnedAllow::from_call(call);
+        self.learned_allows.read().await.contains(&key)
     }
 
     pub fn cost_tracker(&self) -> &crate::cost::CostTracker {
@@ -7226,6 +7284,18 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         let mut decisions: Vec<(usize, kod_config::PolicyDecision)> = Vec::new();
 
         for (i, call) in calls.iter().enumerate() {
+            // Tier 2.3 — a learned allow short-circuits every gate.
+            // The user explicitly approved this exact call earlier in
+            // the session; re-prompting would be noise.
+            if self.is_learned_allowed(call).await {
+                let decision = kod_config::PolicyDecision {
+                    outcome: kod_config::Decision::Allow,
+                    rule: "session learned allow (Tier 2.3)".to_string(),
+                    source: kod_config::PolicySource::Preset,
+                };
+                decisions.push((i, decision));
+                continue;
+            }
             // Tier 1.1 — a high-impact tool call under a tainted round
             // forces an `Ask` regardless of what policy says. The
             // taint is the stricter signal.
