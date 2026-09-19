@@ -300,6 +300,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "run the project compiler/linter (Cargo, tsc, ruff, go vet)",
     },
     SlashCommand {
+        name: "/jev",
+        hint: "TypeSafe AI integration: /jev [status | stats | cache clear | test]",
+    },
+    SlashCommand {
         name: "/log",
         hint: "show recent session log entries: /log [N]",
     },
