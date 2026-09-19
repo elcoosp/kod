@@ -413,6 +413,22 @@ impl Cli {
                 // launcher's startup path as small as possible.
                 run_sandbox_exec(profile.clone(), cmd.clone())
             }
+            Some(Command::Fixture { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async {
+                    match action {
+                        FixtureAction::Save { name, turns, force } => {
+                            run_fixture_save_v2(name, turns.clone(), *force).await
+                        }
+                        FixtureAction::Replay { name, strict } => {
+                            let _ = run_fixture_replay(name, *strict).await?;
+                            Ok(())
+                        }
+                        FixtureAction::List => run_fixture_list().await,
+                    }
+                })
+            }
             Some(Command::Memory { action }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
@@ -920,6 +936,47 @@ pub enum Command {
         #[arg(short, long)]
         model: Option<String>,
     },
+
+    /// Save and replay deterministic fixtures (Tier 1.5). Fixtures
+    /// capture one complete streaming session as an ordered list of
+    /// rounds; replay drives the engine against the fixture to
+    /// detect a request-shape drift.
+    Fixture {
+        #[command(subcommand)]
+        action: FixtureAction,
+    },
+}
+
+/// `kod fixture` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum FixtureAction {
+    /// Save the current session's turn traces as a named fixture.
+    /// Reads `~/.kod/sessions/turns.jsonl` by default; `--turns`
+    /// overrides the path.
+    Save {
+        /// Fixture name (also the file stem under
+        /// `~/.kod/fixtures/`).
+        name: String,
+        /// Path to the turn-traces JSONL. Defaults to the standard
+        /// session directory.
+        #[arg(long)]
+        turns: Option<std::path::PathBuf>,
+        /// Overwrite an existing fixture with the same name.
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
+    /// Replay a saved fixture against the current engine and report
+    /// any request-shape divergence.
+    Replay {
+        /// Fixture name.
+        name: String,
+        /// Exit non-zero on any divergence, including a benign one
+        /// (round count mismatch).
+        #[arg(long, default_value_t = false)]
+        strict: bool,
+    },
+    /// List available fixtures under `~/.kod/fixtures/`.
+    List,
 }
 
 /// `kod theme` subcommands.
@@ -7204,6 +7261,89 @@ pub async fn run_fixture_replay(name: &str, strict: bool) -> Result<i32> {
     let _ = strict;
     eprintln!("(replay mode is a follow-up; the fixture loaded cleanly)");
     Ok(0)
+}
+
+/// Tier 1.5 — save turn traces as a fixture, taking the turns path
+/// explicitly. Prefers `<home>/.kod/sessions/turns.jsonl` when
+/// `turns` is `None`.
+///
+/// Refuses to overwrite an existing fixture unless `force` is set.
+pub async fn run_fixture_save_v2(
+    name: &str,
+    turns: Option<std::path::PathBuf>,
+    force: bool,
+) -> Result<()> {
+    let turns_path = match turns {
+        Some(p) => p,
+        None => {
+            let home = dirs::home_dir()
+                .ok_or_else(|| KodError::Config("no home directory".to_string()))?;
+            home.join(".kod").join("sessions").join("turns.jsonl")
+        }
+    };
+    if !turns_path.exists() {
+        return Err(KodError::Config(format!(
+            "no turn traces at {} — run a session with \
+             KOD_SESSION_LOG unset first, or pass --turns <path>",
+            turns_path.display(),
+        )));
+    }
+    let dest = kod_core::Fixture::default_path(name).ok_or_else(|| {
+        KodError::Config("could not determine fixtures directory".to_string())
+    })?;
+    if dest.exists() && !force {
+        return Err(KodError::Config(format!(
+            "fixture {} already exists; pass --force to overwrite",
+            dest.display(),
+        )));
+    }
+    run_fixture_save(name, &turns_path).await
+}
+
+/// Tier 1.5 — list the fixtures under `~/.kod/fixtures/`.
+pub async fn run_fixture_list() -> Result<()> {
+    let Some(dir) = kod_core::Fixture::fixtures_dir() else {
+        return Err(KodError::Config("no home directory".to_string()));
+    };
+    if !dir.exists() {
+        eprintln!("no fixtures directory at {}", dir.display());
+        return Ok(());
+    }
+    let mut rows: Vec<(String, u64, usize)> = Vec::new();
+    for entry in std::fs::read_dir(&dir).map_err(KodError::Io)? {
+        let entry = entry.map_err(KodError::Io)?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("(unknown)")
+            .to_string();
+        match kod_core::Fixture::load_from(&path) {
+            Ok(f) => rows.push((name, f.created_at_ms, f.rounds.len())),
+            Err(e) => {
+                eprintln!("WARN: could not load {}: {e}", path.display());
+                rows.push((name, 0, 0));
+            }
+        }
+    }
+    if rows.is_empty() {
+        eprintln!("no fixtures in {}", dir.display());
+        return Ok(());
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    println!("Fixtures in {}", dir.display());
+    for (name, ms, n) in &rows {
+        let when = if *ms > 0 {
+            format!("{ms}")
+        } else {
+            "(unreadable)".to_string()
+        };
+        println!("  {name:<32}  rounds={n:<5}  created_at_ms={when}");
+    }
+    Ok(())
 }
 
 /// Save the current session's turns as a fixture.
