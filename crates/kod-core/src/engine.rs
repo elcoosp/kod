@@ -8121,6 +8121,21 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             block.push('\n');
             results.push(result);
         }
+        // Tier 3.5 — publish every file the round touched to the
+        // blackboard so sibling agents can see it.
+        for call in calls.iter() {
+            let path = call
+                .arguments
+                .get("path")
+                .and_then(|v| v.as_str());
+            if let Some(p) = path {
+                self.note_file_seen(
+                    effective_holder,
+                    p,
+                    &format!("{} by {}", call.tool_name, effective_holder),
+                );
+            }
+        }
         // Auto-check: when enabled, and at least one of the calls was
         // a successful write_file / patch_file, run the project's
         // compiler/linter and append its diagnostics to the prompt
