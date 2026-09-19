@@ -1803,6 +1803,106 @@ impl KodEngine {
         Some(n)
     }
 
+    /// Pre-detect ambiguous requests and, on a streaming call,
+    /// prompt the user for clarification before the first LLM round
+    /// (P3.3).
+    ///
+    /// Returns the input unchanged when:
+    ///
+    /// * Jev is disabled,
+    /// * the request is trivially short (`< 10` chars) — nothing to
+    ///   disambiguate,
+    /// * `is_ambiguous` scores below `[jev.thresholds].ambiguity_min`,
+    /// * the caller has no chunk channel (`process` non-streaming),
+    /// * the user cancels or times out the clarification dialog.
+    ///
+    /// Returns `input + "\n\nAdditional clarification from user:
+    /// <answer>"` when the user supplies one. Every path logs a
+    /// `SessionEntry::JevDecision` with `purpose = "ambiguity"`.
+    ///
+    /// Fail-open: a Jev error logs `Heuristic` and returns the input
+    /// unchanged.
+    async fn augment_input_with_jev_ambiguity_check(
+        &self,
+        key: &str,
+        input: &str,
+        chunk_tx: Option<&tokio::sync::mpsc::Sender<String>>,
+    ) -> String {
+        if input.len() < 10 {
+            return input.to_string();
+        }
+        let Some(jev) = self.jev_client() else {
+            return input.to_string();
+        };
+        let state = crate::jev::build_state(input, &[]);
+        let pairs = [(
+            "is_ambiguous".to_string(),
+            "Is this request ambiguous without more context?".to_string(),
+        )];
+        let started = std::time::Instant::now();
+        let result = jev.evaluate_yes_no_batch(&state, &pairs).await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let (p_amb, source) = match result {
+            Ok(rows) => (
+                rows.first().map(|(_, p)| *p).unwrap_or(0.0),
+                crate::jev::DecisionSource::Jev,
+            ),
+            Err(_) => (0.0, crate::jev::DecisionSource::Heuristic),
+        };
+        self.log_jev_decision(
+            key,
+            "ambiguity",
+            input,
+            "is_ambiguous",
+            serde_json::json!({ "is_ambiguous": p_amb }),
+            p_amb,
+            elapsed_ms,
+            false,
+            source,
+        );
+        let threshold = jev.thresholds().ambiguity_min;
+        if p_amb < threshold {
+            return input.to_string();
+        }
+        // Non-streaming callers cannot ask the user — the log entry
+        // above is the only side effect for them.
+        let Some(tx) = chunk_tx else {
+            return input.to_string();
+        };
+        let question_text = format!(
+            "Your request may be ambiguous. Add any missing context, \
+             or press Enter to continue as-is:\n\n> {input}"
+        );
+        let req = kod_tools::ask::QuestionRequest {
+            question: question_text,
+            placeholder: Some("(clarification)".to_string()),
+        };
+        let json = serde_json::to_string(&req).unwrap_or_else(|_| "{}".to_string());
+        let id = self
+            .next_question_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (otx, orx) = tokio::sync::oneshot::channel();
+        self.pending_questions.write().await.insert(id, otx);
+        let _ = tx.send(question_marker(id, &json)).await;
+        let answer = tokio::time::timeout(
+            std::time::Duration::from_secs(AWAIT_APPROVAL_SECS),
+            orx,
+        )
+        .await;
+        match answer {
+            Ok(Ok(text))
+                if !text.is_empty()
+                    && text != "(cancelled)"
+                    && text != "(question cancelled)" =>
+            {
+                format!(
+                    "{input}\n\nAdditional clarification from user: {text}"
+                )
+            }
+            _ => input.to_string(),
+        }
+    }
+
     /// Filter memory entries by Jev relevance (P4.1). Given a list
     /// of `(id, text)` pairs and the user's current request, returns
     /// the subset Jev scores as `relevant` or `essential`.
@@ -3398,7 +3498,18 @@ impl KodEngine {
             }
         }
         self.set_current_request(key, input).await;
-        let expanded_input = expand_at_references(input, &self.working_dir);
+        // P3.3 — ask Jev whether the request is ambiguous; if so and
+        // a streaming consumer is attached, prompt for clarification
+        // before the LLM ever sees the request.
+        let clarified = self
+            .augment_input_with_jev_ambiguity_check(key, input, Some(chunk_tx))
+            .await;
+        if clarified != input {
+            // Update the stored request so downstream Jev checks see
+            // the clarified version.
+            self.set_current_request(key, &clarified).await;
+        }
+        let expanded_input = expand_at_references(&clarified, &self.working_dir);
         let input = expanded_input.as_str();
 
         // See process(): clone out of the lock before any long await.
@@ -3649,7 +3760,18 @@ impl KodEngine {
             }
         }
         self.set_current_request(key, input).await;
-        let expanded_input = expand_at_references(input, &self.working_dir);
+        // P3.3 — ask Jev whether the request is ambiguous; if so and
+        // a streaming consumer is attached, prompt for clarification
+        // before the LLM ever sees the request.
+        let clarified = self
+            .augment_input_with_jev_ambiguity_check(key, input, Some(chunk_tx))
+            .await;
+        if clarified != input {
+            // Update the stored request so downstream Jev checks see
+            // the clarified version.
+            self.set_current_request(key, &clarified).await;
+        }
+        let expanded_input = expand_at_references(&clarified, &self.working_dir);
         let input = expanded_input.as_str();
 
         // See process(): clone out of the lock before any long await.
