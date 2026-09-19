@@ -1803,6 +1803,83 @@ impl KodEngine {
         Some(n)
     }
 
+    /// Refine the router's skill match with Jev (P4.2).
+    ///
+    /// The router's substring matcher misses semantic matches — a
+    /// request to "design a landing page" does not contain the
+    /// substring "ui-ux" and so the `ui-ux-designer` skill loses to
+    /// whatever named-skill happened to match lexically. This helper
+    /// asks Jev to score each available skill against the request
+    /// and returns the names of the skills that scored at or above
+    /// `[jev.thresholds].memory_filter_min`.
+    ///
+    /// The union of the router's match and Jev's semantic score is
+    /// returned, so a lexical match is never dropped. Bounded to
+    /// `MAX_SKILLS` (a project with 100 skills still costs one
+    /// round-trip).
+    ///
+    /// Returns `None` when Jev is disabled, the loaded skill set is
+    /// empty, or the call errors. `None` means "keep the router's
+    /// answer as-is".
+    async fn rank_skills_with_jev(
+        &self,
+        holder: &str,
+        input: &str,
+        router_match: &[String],
+    ) -> Option<Vec<String>> {
+        const MAX_SKILLS: usize = 30;
+        let jev = self.jev_client()?;
+        let all = self.loaded_skill_details().await;
+        if all.is_empty() {
+            return None;
+        }
+        let slice: Vec<(String, String)> = all.into_iter().take(MAX_SKILLS).collect();
+        let questions: Vec<(String, String)> = slice
+            .iter()
+            .enumerate()
+            .map(|(i, (name, desc))| {
+                (
+                    format!("skill_{i}"),
+                    format!(
+                        "Is this skill relevant to the user's request? Skill: {name} — {}",
+                        crate::jev::preview_chars(desc, 300),
+                    ),
+                )
+            })
+            .collect();
+        let state = crate::jev::build_state(input, &[]);
+        let started = std::time::Instant::now();
+        let rows = jev.evaluate_yes_no_batch(&state, &questions).await.ok()?;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let threshold = jev.thresholds().memory_filter_min;
+
+        let mut merged: Vec<String> = router_match.to_vec();
+        let mut answers = serde_json::Map::new();
+        for (i, (name, _)) in slice.iter().enumerate() {
+            let p = rows
+                .iter()
+                .find(|(id, _)| id == &format!("skill_{i}"))
+                .map(|(_, p)| *p)
+                .unwrap_or(0.0);
+            answers.insert(format!("skill_{i}"), serde_json::json!(p));
+            if p >= threshold && !merged.contains(name) {
+                merged.push(name.clone());
+            }
+        }
+        self.log_jev_decision(
+            holder,
+            "skill_match",
+            input,
+            "relevance_per_skill",
+            serde_json::Value::Object(answers),
+            1.0,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+        Some(merged)
+    }
+
     /// Rank grep / search_files results by Jev relevance (P2.3).
     ///
     /// When a search returns more than `MIN_RESULTS_TO_RANK` hits,
@@ -3870,6 +3947,14 @@ impl KodEngine {
             let task_type = self
                 .refine_task_type_with_jev(key, input, response.task_type)
                 .await;
+            // P4.2 — augment the router's lexical skill match with
+            // Jev's semantic scoring. The union keeps every lexical
+            // match and adds semantic ones the substring matcher
+            // would have missed. `None` leaves the router's list.
+            let refined_skills = self
+                .rank_skills_with_jev(key, input, &response.skills_used)
+                .await
+                .unwrap_or_else(|| response.skills_used.clone());
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
             let alloc = self.prompt_allocation(input, &history).await;
@@ -4110,7 +4195,7 @@ impl KodEngine {
                 text: Some(final_text),
                 tool_calls,
                 tool_results,
-                skills_used: response.skills_used,
+                skills_used: refined_skills.clone(),
                 memory_used: response.memory_used,
                 execution_time_ms: response.execution_time_ms,
                 usage,
@@ -4199,6 +4284,14 @@ impl KodEngine {
             let task_type = self
                 .refine_task_type_with_jev(key, input, response.task_type)
                 .await;
+            // P4.2 — augment the router's lexical skill match with
+            // Jev's semantic scoring. The union keeps every lexical
+            // match and adds semantic ones the substring matcher
+            // would have missed. `None` leaves the router's list.
+            let refined_skills = self
+                .rank_skills_with_jev(key, input, &response.skills_used)
+                .await
+                .unwrap_or_else(|| response.skills_used.clone());
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
             let alloc = self.prompt_allocation(input, &history).await;
@@ -4409,7 +4502,7 @@ impl KodEngine {
                 text: Some(final_text),
                 tool_calls,
                 tool_results,
-                skills_used: response.skills_used,
+                skills_used: refined_skills.clone(),
                 memory_used: response.memory_used,
                 execution_time_ms: response.execution_time_ms,
                 usage,
@@ -4476,6 +4569,14 @@ impl KodEngine {
             let task_type = self
                 .refine_task_type_with_jev(key, input, response.task_type)
                 .await;
+            // P4.2 — augment the router's lexical skill match with
+            // Jev's semantic scoring. The union keeps every lexical
+            // match and adds semantic ones the substring matcher
+            // would have missed. `None` leaves the router's list.
+            let refined_skills = self
+                .rank_skills_with_jev(key, input, &response.skills_used)
+                .await
+                .unwrap_or_else(|| response.skills_used.clone());
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
             let alloc = self.prompt_allocation(input, &history).await;
@@ -4675,7 +4776,7 @@ impl KodEngine {
                 text: Some(all_text),
                 tool_calls,
                 tool_results,
-                skills_used: response.skills_used,
+                skills_used: refined_skills.clone(),
                 memory_used: response.memory_used,
                 execution_time_ms: response.execution_time_ms,
                 usage: last_usage,
