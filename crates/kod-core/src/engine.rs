@@ -1702,6 +1702,75 @@ impl KodEngine {
         self.jev_client.read().ok().and_then(|g| g.clone())
     }
 
+    /// Ask Jev which `TaskType` best describes `input`, and merge
+    /// that answer with the keyword heuristic's. The rule is:
+    ///
+    /// * Jev disabled            -> return the heuristic as-is.
+    /// * Jev returns unknown     -> return the heuristic as-is.
+    /// * Jev confidence < threshold (from `JevConfig::thresholds`) ->
+    ///   return the heuristic as-is.
+    /// * Otherwise               -> return Jev's answer.
+    ///
+    /// Every path logs a `SessionEntry::JevDecision` so `/jev stats`
+    /// sees the call. The state is a one-line description of the
+    /// request; it deliberately does not carry file contents.
+    async fn refine_task_type_with_jev(
+        &self,
+        key: &str,
+        input: &str,
+        heuristic: crate::router::TaskType,
+    ) -> crate::router::TaskType {
+        let Some(jev) = self.jev_client() else {
+            return heuristic;
+        };
+        let state = crate::jev::build_state(
+            input,
+            &[("heuristic_task_type", heuristic.as_label())],
+        );
+        let question = "Which task type best describes this request?";
+        let labels = crate::router::TaskType::all_labels();
+        let started = std::time::Instant::now();
+        let decision = jev.evaluate_choice(&state, question, labels).await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+
+        let (final_type, confidence, source) = match decision {
+            Ok(d) => {
+                let parsed = crate::router::TaskType::from_label(&d.value);
+                let threshold = jev.thresholds().task_classify_min;
+                match parsed {
+                    Some(t) if d.confidence >= threshold => {
+                        (t, d.confidence, crate::jev::DecisionSource::Jev)
+                    }
+                    _ => (heuristic, d.confidence, crate::jev::DecisionSource::Heuristic),
+                }
+            }
+            Err(_) => (
+                heuristic,
+                1.0,
+                crate::jev::DecisionSource::Heuristic,
+            ),
+        };
+
+        let answers = serde_json::json!({
+            "task_type": final_type.as_label(),
+            "confidence": confidence,
+        });
+        let questions_summary = "task_type".to_string();
+        self.log_jev_decision(
+            key,
+            "task_classify",
+            input,
+            &questions_summary,
+            answers,
+            confidence,
+            elapsed_ms,
+            false,
+            source,
+        );
+
+        final_type
+    }
+
     /// Write one `SessionEntry::JevDecision` to the installed
     /// session log. No-op when no recorder is installed. Every
     /// Jev-aware call site goes through this helper so the log
@@ -2363,7 +2432,9 @@ impl KodEngine {
             let response = self.router.process_input(input).await?;
 
             // Build the full prompt using the router's context builder
-            let task_type = response.task_type;
+            let task_type = self
+                .refine_task_type_with_jev(key, input, response.task_type)
+                .await;
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
             let alloc = self.prompt_allocation(input, &history).await;
@@ -2652,7 +2723,9 @@ impl KodEngine {
         let _provider_probe = self.registry.read().await.clone();
         if _provider_probe.is_some() {
             let response = self.router.process_input(input).await?;
-            let task_type = response.task_type;
+            let task_type = self
+                .refine_task_type_with_jev(key, input, response.task_type)
+                .await;
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
             let alloc = self.prompt_allocation(input, &history).await;
@@ -2898,7 +2971,9 @@ impl KodEngine {
         let _provider_probe = self.registry.read().await.clone();
         if _provider_probe.is_some() {
             let response = self.router.process_input(input).await?;
-            let task_type = response.task_type;
+            let task_type = self
+                .refine_task_type_with_jev(key, input, response.task_type)
+                .await;
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
             let alloc = self.prompt_allocation(input, &history).await;

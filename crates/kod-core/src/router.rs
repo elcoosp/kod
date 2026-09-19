@@ -39,6 +39,55 @@ pub enum TaskType {
     MultiStep,
 }
 
+impl TaskType {
+    /// Canonical string used by the Jev classifier and logged
+    /// decisions. Kept stable so a log viewer can branch on it.
+    pub fn as_label(&self) -> &'static str {
+        match self {
+            TaskType::Simple => "Simple",
+            TaskType::CodeModification => "CodeModification",
+            TaskType::Debugging => "Debugging",
+            TaskType::Research => "Research",
+            TaskType::Testing => "Testing",
+            TaskType::Documentation => "Documentation",
+            TaskType::Complex => "Complex",
+            TaskType::MultiStep => "MultiStep",
+        }
+    }
+
+    /// Inverse of [`TaskType::as_label`]. Returns `None` for an
+    /// unrecognised label so a Jev answer the build does not know
+    /// falls back to the heuristic instead of being coerced.
+    pub fn from_label(s: &str) -> Option<Self> {
+        match s {
+            "Simple" => Some(TaskType::Simple),
+            "CodeModification" => Some(TaskType::CodeModification),
+            "Debugging" => Some(TaskType::Debugging),
+            "Research" => Some(TaskType::Research),
+            "Testing" => Some(TaskType::Testing),
+            "Documentation" => Some(TaskType::Documentation),
+            "Complex" => Some(TaskType::Complex),
+            "MultiStep" => Some(TaskType::MultiStep),
+            _ => None,
+        }
+    }
+
+    /// Every label, in a stable order. Used to build the Jev choice
+    /// criteria so the wire form matches [`TaskType::as_label`].
+    pub fn all_labels() -> &'static [&'static str] {
+        &[
+            "Simple",
+            "CodeModification",
+            "Debugging",
+            "Research",
+            "Testing",
+            "Documentation",
+            "Complex",
+            "MultiStep",
+        ]
+    }
+}
+
 /// Configuration for the task router
 #[derive(Clone)]
 pub struct RouterConfig {
