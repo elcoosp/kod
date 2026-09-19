@@ -1041,6 +1041,10 @@ pub struct KodEngine {
     /// first turn of a Complex/MultiStep task, re-rendered in every
     /// subsequent system prompt. Absent when the task is simple.
     plans: RwLock<HashMap<String, crate::plan::Plan>>,
+    /// Per-transcript durable decisions (Tier 3.4). Populated on
+    /// every turn from the classifier; rendered into the prompt after
+    /// the plan.
+    decision_logs: RwLock<HashMap<String, crate::decisions::DecisionLog>>,
     /// Per-transcript write set (D4.2). The swarm runner registers
     /// each agent's `expected_writes` under the agent's transcript
     /// key before the agent starts. The engine applies the globs to
@@ -1431,6 +1435,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             history: RwLock::new(HashMap::new()),
             transcript_working_dirs: RwLock::new(HashMap::new()),
             plans: RwLock::new(HashMap::new()),
+            decision_logs: RwLock::new(HashMap::new()),
             transcript_write_globs: RwLock::new(HashMap::new()),
             history_budget: std::sync::atomic::AtomicUsize::new(DEFAULT_HISTORY_CHAR_BUDGET),
             last_prompt: RwLock::new(HashMap::new()),
@@ -1683,6 +1688,36 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         {
             tracing::warn!(error = %e, "could not append MemoryRetrieval to session log");
         }
+    }
+
+    /// The durable decisions for a transcript (Tier 3.4).
+    pub async fn decisions_for(&self, key: &str) -> crate::decisions::DecisionLog {
+        self.decision_logs
+            .read()
+            .await
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Append a decision to a transcript's log.
+    pub async fn add_decision(
+        &self,
+        key: &str,
+        turn_id: u64,
+        kind: crate::decisions::DecisionKind,
+        text: String,
+        author: crate::decisions::DecisionAuthor,
+    ) -> u64 {
+        let mut g = self.decision_logs.write().await;
+        let log = g.entry(key.to_string()).or_default();
+        log.push(turn_id, kind, text, author)
+    }
+
+    /// Drop a decision by id.
+    pub async fn drop_decision(&self, key: &str, id: u64) -> bool {
+        let mut g = self.decision_logs.write().await;
+        g.get_mut(key).map(|l| l.drop(id)).unwrap_or(false)
     }
 
     /// The plan for a transcript, if one has been created (Tier 2.1).
@@ -7093,6 +7128,15 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         {
             prompt.push_str("\n\n");
             prompt.push_str(&plan.render_prompt_block());
+        }
+        // Tier 3.4 — recent durable decisions. Bounded to 20 so the
+        // block stays small even in a long session.
+        if let Ok(g) = self.decision_logs.try_read()
+            && let Some(log) = g.get(DEFAULT_TRANSCRIPT_KEY)
+            && !log.entries.is_empty()
+        {
+            prompt.push_str("\n\n");
+            prompt.push_str(&log.render_prompt_block(20));
         }
 
         if !definitions.is_empty() {
