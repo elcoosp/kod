@@ -9,3 +9,7 @@ dump.txt
 wr.sh
 warnings.txt
 *.bak.*
+
+# Stray binaries in docs/brainstorms
+docs/brainstorms/*.zip
+docs/brainstorms/*.app
