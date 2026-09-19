@@ -1803,6 +1803,124 @@ impl KodEngine {
         Some(n)
     }
 
+    /// Ask Jev whether each citation in `text` is substantiated by
+    /// the cited location (P4.5). The syntactic check in
+    /// `citations::check_and_annotate` verifies the file exists and
+    /// the line is in range; this pass checks the stronger claim —
+    /// that the cited line actually supports the prose.
+    ///
+    /// Returns `text` unchanged when Jev is disabled, there are no
+    /// citations, or every citation scores `relevant`/`essential`.
+    /// Otherwise returns `text + "\n\n<semantic block>"` naming
+    /// the citations that did not pass.
+    ///
+    /// Fail-open: on Jev error, the original text is returned and
+    /// the failure is logged at `Heuristic`.
+    async fn semantic_verify_citations(&self, key: &str, text: &str) -> String {
+        let Some(jev) = self.jev_client() else {
+            return text.to_string();
+        };
+        let citations = crate::citations::extract_citations(text);
+        if citations.is_empty() {
+            return text.to_string();
+        }
+        // Bound the batch — a reply with 100 citations is pathological.
+        const MAX_CITATIONS: usize = 10;
+        let slice: Vec<_> = citations.iter().take(MAX_CITATIONS).collect();
+
+        // Read each cited file and capture the surrounding line(s).
+        // A file that cannot be read is skipped — the syntactic
+        // checker already reported it.
+        let mut questions: Vec<(String, String)> = Vec::with_capacity(slice.len());
+        for (idx, c) in slice.iter().enumerate() {
+            let abs = self.working_dir.join(&c.raw_path);
+            let Ok(content) = std::fs::read_to_string(&abs) else {
+                continue;
+            };
+            let mut lines_iter = content.lines();
+            let line_text = if c.line == 0 {
+                String::new()
+            } else {
+                lines_iter
+                    .nth(c.line.saturating_sub(1) as usize)
+                    .unwrap_or("")
+                    .to_string()
+            };
+            let end = c.end_line.unwrap_or(c.line);
+            let slice_text = if end > c.line {
+                content
+                    .lines()
+                    .skip(c.line.saturating_sub(1) as usize)
+                    .take((end - c.line + 1) as usize)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                line_text
+            };
+            if slice_text.trim().is_empty() {
+                continue;
+            }
+            questions.push((
+                format!("citation_{idx}"),
+                format!(
+                    "Does the code at {}:{} support the claim made about it? Code excerpt:\n{}",
+                    c.raw_path, c.line, slice_text
+                ),
+            ));
+        }
+        if questions.is_empty() {
+            return text.to_string();
+        }
+
+        let state = crate::jev::build_state(text, &[]);
+        let started = std::time::Instant::now();
+        let result = jev.evaluate_yes_no_batch(&state, &questions).await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let (rows, source) = match result {
+            Ok(r) => (r, crate::jev::DecisionSource::Jev),
+            Err(_) => (Vec::new(), crate::jev::DecisionSource::Heuristic),
+        };
+
+        let threshold = jev.thresholds().memory_filter_min; // 0.7 default
+        let mut failing: Vec<String> = Vec::new();
+        let mut answers = serde_json::Map::new();
+        for (id, p) in &rows {
+            answers.insert(id.clone(), serde_json::json!(p));
+            if *p < threshold
+                && let Some(rest) = id.strip_prefix("citation_")
+                && let Ok(idx) = rest.parse::<usize>()
+                && let Some(c) = slice.get(idx)
+            {
+                failing.push(format!("{}:{}", c.raw_path, c.line));
+            }
+        }
+
+        self.log_jev_decision(
+            key,
+            "citation_semantic",
+            &crate::jev::preview_chars(text, 200),
+            "per_citation_support",
+            serde_json::Value::Object(answers),
+            1.0,
+            elapsed_ms,
+            false,
+            source,
+        );
+
+        if failing.is_empty() {
+            return text.to_string();
+        }
+        let mut out = String::from(text);
+        out.push_str("\n\n## Citation semantic check\n\n");
+        out.push_str(
+            "Jev could not confirm that the following cited lines support the claims made about them:\n",
+        );
+        for f in &failing {
+            out.push_str(&format!("- {f}\n"));
+        }
+        out
+    }
+
     /// Pre-detect ambiguous requests and, on a streaming call,
     /// prompt the user for clarification before the first LLM round
     /// (P3.3).
@@ -3416,7 +3534,14 @@ impl KodEngine {
             // network. The block appears only when at least one
             // citation fails to verify; a clean reply stays clean.
             let final_text = if matches!(task_type, crate::router::TaskType::Research) {
-                crate::citations::check_and_annotate(&final_text, &self.working_dir).text
+                let syntactic =
+                    crate::citations::check_and_annotate(&final_text, &self.working_dir).text;
+                // P4.5 — after the syntactic check, run the semantic
+                // pass. The two are additive: the syntactic block
+                // reports missing/out-of-range citations, the
+                // semantic block reports lines that do not support
+                // their claim.
+                self.semantic_verify_citations(key, &syntactic).await
             } else {
                 final_text
             };
