@@ -300,6 +300,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "run the project compiler/linter (Cargo, tsc, ruff, go vet)",
     },
     SlashCommand {
+        name: "/trace",
+        hint: "structured turn traces: /trace [last | list]",
+    },
+    SlashCommand {
         name: "/trust",
         hint: "show or clear the round's taint: /trust [show | clear]",
     },

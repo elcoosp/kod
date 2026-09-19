@@ -1863,6 +1863,14 @@ impl KodEngine {
         }
     }
 
+    /// The trace log path, when a writer is installed.
+    pub fn trace_path(&self) -> Option<std::path::PathBuf> {
+        self.turn_trace_writer
+            .read()
+            .ok()
+            .and_then(|g| g.as_ref().map(|w| w.path().to_path_buf()))
+    }
+
     /// Allocate the next turn id. Monotonic; scoped to the session.
     fn next_turn_id(&self) -> crate::trace::TurnId {
         self.next_turn_id

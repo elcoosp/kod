@@ -78,6 +78,7 @@ const SLASH_HELP: &str = "Commands:\n\
 /fork — save the current chat as a restorable fork: /fork [label]\n\
 /check — run the project compiler/linter (Cargo, tsc, ruff, go vet)\n\
 /log — show recent session log entries: /log [N]\n\
+/trace — structured turn traces: /trace [last | list | <id>]\n\
 /trust — show or clear the round's taint: /trust [show | clear]\n\
 /budget — session cost and limits: /budget | /budget raise <usd> | /budget reset\n\
 /jev — TypeSafe AI integration: /jev [status | stats | cache clear | test]\n\
@@ -3149,6 +3150,76 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                     self.app.push_system_message(&msg);
                 }
             }
+            "/trace" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                let Some(path) = engine.trace_path() else {
+                    self.app.push_system_message(
+                        "No turn trace writer installed. Set KOD_SESSION_LOG to enable one.",
+                    );
+                    return Ok(());
+                };
+                let traces = match kod_core::read_traces(&path) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        self.app
+                            .push_system_message(&format!("Could not read traces: {e}"));
+                        return Ok(());
+                    }
+                };
+                if traces.is_empty() {
+                    self.app.push_system_message("No turn traces recorded yet.");
+                    return Ok(());
+                }
+                let which = parts.next();
+                match which {
+                    None | Some("last") => {
+                        let t = traces.last().unwrap();
+                        self.app
+                            .push_system_message(&format_turn_trace_verbose(t));
+                    }
+                    Some("list") => {
+                        let mut msg = String::from("Turn traces (newest first)\n");
+                        for t in traces.iter().rev().take(20) {
+                            msg.push_str(&format!(
+                                "  #{:<4} {:<10} {:>7.2}s  ${:.4}  {:>5}in {:>5}out  {} tools  {}\n",
+                                t.id,
+                                t.holder,
+                                t.duration_ms() as f64 / 1000.0,
+                                t.cost_usd,
+                                t.prompt_tokens,
+                                t.completion_tokens,
+                                t.tool_call_count,
+                                match t.outcome {
+                                    kod_core::TurnOutcome::Completed => "ok",
+                                    kod_core::TurnOutcome::Cancelled => "cancelled",
+                                    kod_core::TurnOutcome::Failed => "failed",
+                                    kod_core::TurnOutcome::BudgetExhausted => "budget",
+                                },
+                            ));
+                        }
+                        self.app.push_system_message(msg.trim_end());
+                    }
+                    Some(id_str) => {
+                        if let Ok(id) = id_str.parse::<u64>() {
+                            match traces.iter().find(|t| t.id == id) {
+                                Some(t) => self
+                                    .app
+                                    .push_system_message(&format_turn_trace_verbose(t)),
+                                None => self.app.push_system_message(&format!(
+                                    "No trace with id {id}.",
+                                )),
+                            }
+                        } else {
+                            self.app.push_system_message(&format!(
+                                "Unknown /trace arg: {id_str}. Try /trace, /trace last, /trace list, or /trace <id>.",
+                            ));
+                        }
+                    }
+                }
+            }
             "/trust" => {
                 let Some(engine) = &self.engine else {
                     self.app.push_system_message("Engine not initialized.");
@@ -4492,6 +4563,74 @@ fn shell_quote(s: &str) -> String {
 /// Deliberately compact: a session log over a busy run has
 /// thousands of entries, and a `/log` view is meant to be scanned.
 /// The full JSON is one `kod replay` or `cat` away.
+/// Render a `TurnTrace` as a readable tree (Tier 1.4).
+fn format_turn_trace_verbose(t: &kod_core::TurnTrace) -> String {
+    let mut msg = format!(
+        "Turn #{} ({})   {:.2}s   ${:.4}   {}in → {}out\n",
+        t.id,
+        t.holder,
+        t.duration_ms() as f64 / 1000.0,
+        t.cost_usd,
+        t.prompt_tokens,
+        t.completion_tokens,
+    );
+    msg.push_str(&format!(
+        "  prompt: {} chars   reply: {} chars   tools: {}\n",
+        t.prompt_chars, t.reply_chars, t.tool_call_count,
+    ));
+    msg.push_str(&format!(
+        "  jev: {} decisions ({} cached)\n",
+        t.jev_decisions, t.jev_cache_hits,
+    ));
+    msg.push_str(&format!(
+        "  outcome: {:?}",
+        t.outcome,
+    ));
+    if let Some(r) = &t.reason {
+        msg.push_str(&format!(" — {r}"));
+    }
+    msg.push('\n');
+    if !t.rounds.is_empty() {
+        msg.push_str("\nRounds\n");
+        for (i, r) in t.rounds.iter().enumerate() {
+            msg.push_str(&format!(
+                "  {:>2}  {:<12} {:<20} {:>6}ms  {}in→{}out",
+                i + 1,
+                format!("{:?}", r.kind).to_lowercase(),
+                format!("{}/{}", r.endpoint, r.model),
+                r.duration_ms,
+                r.input_tokens,
+                r.output_tokens,
+            ));
+            if let Some(c) = r.cache_read_tokens {
+                msg.push_str(&format!("  cache:{c}"));
+            }
+            msg.push('\n');
+            for c in &r.tool_calls {
+                msg.push_str(&format!(
+                    "       tool  {:<16} {}ms  {}  {}B\n",
+                    c.name,
+                    c.duration_ms,
+                    match c.outcome {
+                        kod_core::ToolOutcomeKind::Success => "ok",
+                        kod_core::ToolOutcomeKind::Error => "err",
+                        kod_core::ToolOutcomeKind::Denied => "denied",
+                        kod_core::ToolOutcomeKind::RequiresConfirmation => "ask",
+                    },
+                    c.output_bytes,
+                ));
+            }
+            for rr in &r.retries {
+                msg.push_str(&format!(
+                    "       retry  {} → {}  ({})\n",
+                    rr.from_endpoint, rr.to_endpoint, rr.reason,
+                ));
+            }
+        }
+    }
+    msg
+}
+
 fn format_entry_one_line(entry: &kod_core::session_log::SessionEntry) -> String {
     use kod_core::session_log::SessionEntry;
     match entry {
