@@ -220,6 +220,12 @@ pub struct ApprovalItem {
     pub summary: String,
     #[serde(default)]
     pub diff: Option<String>,
+
+    /// The call's arguments, carried so an "always approve" action
+    /// can hash the exact call rather than its displayed summary
+    /// (Tier 2.3).
+    #[serde(default)]
+    pub arguments: serde_json::Value,
 }
 
 /// Event handler that manages the event loop

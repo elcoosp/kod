@@ -576,6 +576,11 @@ pub struct PendingApproval {
     pub tool_name: String,
     pub summary: String,
     pub diff: Option<String>,
+
+    /// The call's arguments (Tier 2.3). Carried so the "learn an
+    /// allow" action can hash the exact call rather than its
+    /// displayed summary.
+    pub arguments: serde_json::Value,
 }
 
 /// A batch of pending approvals — the shape the engine emits per

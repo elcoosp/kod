@@ -844,6 +844,7 @@ impl TuiLoop {
                         tool_name: i.tool_name,
                         summary: i.summary,
                         diff: i.diff,
+                        arguments: i.arguments,
                     })
                     .collect();
                 self.app
@@ -1239,6 +1240,7 @@ impl TuiLoop {
                                     tool_name: i.tool_name,
                                     summary: i.summary,
                                     diff: i.diff,
+                                    arguments: i.arguments.clone(),
                                 })
                             })
                             .collect();
@@ -4287,6 +4289,44 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                     }
                 }
                 self.app.clear_pending_approval();
+                return Ok(());
+            }
+
+            // Tier 2.3 — "l" learns an allow for the current call
+            // for the rest of the session and approves it. Distinct
+            // from "a" (deny-always) so the operator can capture a
+            // recurring safe call without re-prompting.
+            if matches!(key, KeyCode::Char('l') | KeyCode::Char('L')) {
+                let (id, call_opt, done) = {
+                    let Some(batch) = self.app.pending_batch_mut() else {
+                        return Ok(());
+                    };
+                    let Some(item) = batch.current_item() else {
+                        return Ok(());
+                    };
+                    let id = item.id;
+                    let call = kod_types::ToolCall {
+                        id: None,
+                        tool_name: item.tool_name.clone(),
+                        arguments: item.arguments.clone(),
+                    };
+                    batch.advance();
+                    (id, Some(call), batch.current_item().is_none())
+                };
+                if let Some(engine) = &self.engine {
+                    if let Some(call) = call_opt {
+                        engine.learn_allow(&call).await;
+                    }
+                    engine
+                        .respond_to_approval(
+                            id,
+                            kod_core::engine::ApprovalDecision::Approve,
+                        )
+                        .await;
+                }
+                if done {
+                    self.app.clear_pending_approval();
+                }
                 return Ok(());
             }
 
