@@ -1613,6 +1613,45 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         tracing::info!(steps = step_count, "plan created");
     }
 
+    /// Log one memory retrieval event (Tier 2.4). Called once per
+    /// prompt that retrieves anything; a no-op when no recorder is
+    /// installed or the retrieval was empty.
+    fn log_memory_retrieval(
+        &self,
+        turn_id: u64,
+        query: &str,
+        retrieved: &[(String, f32)],
+    ) {
+        if retrieved.is_empty() {
+            return;
+        }
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        // Hash the query so the log carries a stable identity without
+        // storing the (potentially sensitive) text itself.
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in query.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        let entry = crate::session_log::SessionEntry::MemoryRetrieval {
+            timestamp_ms: now_ms,
+            turn_id,
+            query_hash: format!("{h:016x}"),
+            retrieved: retrieved.to_vec(),
+            referenced: Vec::new(),
+            user_corrected: false,
+        };
+        if let Ok(guard) = self.session_recorder.read()
+            && let Some(rec) = guard.as_ref()
+            && let Err(e) = rec.record(&entry)
+        {
+            tracing::warn!(error = %e, "could not append MemoryRetrieval to session log");
+        }
+    }
+
     /// The plan for a transcript, if one has been created (Tier 2.1).
     pub async fn plan_for(&self, key: &str) -> Option<crate::plan::Plan> {
         self.plans.read().await.get(key).cloned()
@@ -5357,6 +5396,20 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             response.memory_context = self
                 .filter_memory_context_with_jev(key, response.memory_context)
                 .await;
+            // Tier 2.4 — record this turn's retrieval so `/memory
+            // eval` can score the retrieval hit rate later.
+            if let Some(ctx) = response.memory_context.as_ref() {
+                let entries: Vec<(String, f32)> = ctx
+                    .working_memory
+                    .iter()
+                    .chain(ctx.long_term.iter())
+                    .map(|e| (e.id.to_string(), e.relevance))
+                    .collect();
+                // No turn id in the collected path; use 0 to mean
+                // "collected-path turn". The streaming path uses the
+                // real trace id.
+                self.log_memory_retrieval(0, input, &entries);
+            }
 
             // Build the full prompt using the router's context builder
             let task_type = self
@@ -5767,6 +5820,18 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             response.memory_context = self
                 .filter_memory_context_with_jev(key, response.memory_context)
                 .await;
+            // Tier 2.4 — log this turn's retrieval with the real
+            // trace id so `/memory eval` can correlate entries with
+            // the reply that used them.
+            if let Some(ctx) = response.memory_context.as_ref() {
+                let entries: Vec<(String, f32)> = ctx
+                    .working_memory
+                    .iter()
+                    .chain(ctx.long_term.iter())
+                    .map(|e| (e.id.to_string(), e.relevance))
+                    .collect();
+                self.log_memory_retrieval(trace_id, input, &entries);
+            }
             let task_type = self
                 .refine_task_type_with_jev(key, input, response.task_type)
                 .await;
