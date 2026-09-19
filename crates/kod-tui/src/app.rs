@@ -476,6 +476,8 @@ pub struct KodApp {
     mode: AppMode,
     /// Command palette overlay (Ctrl+K). `None` when closed.
     palette: Option<CommandPaletteState>,
+    /// Approval-edit modal (Tier 2.3). `None` when not editing.
+    pending_edit: Option<PendingEdit>,
     input_mode: InputMode,
     input: String,
     cursor_position: usize,
@@ -674,6 +676,19 @@ pub const DEFAULT_CONTEXT_LIMIT: usize = 128_000;
 pub const COMPACT_AT_FRACTION_NUM: usize = 4;
 pub const COMPACT_AT_FRACTION_DEN: usize = 5;
 
+/// Tier 2.3 — an in-progress approval-argument edit. The user has
+/// pressed `e` in the approval dialog; the input box edits the call's
+/// JSON arguments instead of the prompt.
+#[derive(Debug, Clone)]
+pub struct PendingEdit {
+    /// Approval id whose call is being edited.
+    pub approval_id: u64,
+    /// Original arguments, kept so Esc can restore.
+    pub original: serde_json::Value,
+    /// Current text in the input box.
+    pub buffer: String,
+}
+
 /// An approval request currently waiting for a yes/no answer in the
 /// TUI. The `id` matches the engine's request id; the decision is
 /// sent back via `KodEngine::respond_to_approval`.
@@ -748,6 +763,7 @@ impl KodApp {
         Self {
             mode: AppMode::Normal,
             palette: None,
+            pending_edit: None,
             input_mode: InputMode::Normal,
             input: String::new(),
             cursor_position: 0,
@@ -828,6 +844,75 @@ impl KodApp {
     }
 
     // --- Command palette (Tier UX) --------------------------------------
+
+    // --- Approval edit modal (Tier 2.3) --------------------------------
+
+    pub fn is_editing_approval(&self) -> bool {
+        self.pending_edit.is_some()
+    }
+
+    pub fn edit_buffer(&self) -> Option<&str> {
+        self.pending_edit.as_ref().map(|e| e.buffer.as_str())
+    }
+
+    pub fn begin_edit_current_approval(&mut self) {
+        let Some(batch) = self.pending_batch.as_ref() else {
+            return;
+        };
+        let Some(item) = batch.current_item() else {
+            return;
+        };
+        let buffer = serde_json::to_string_pretty(&item.arguments)
+            .unwrap_or_else(|_| "{}".to_string());
+        self.pending_edit = Some(PendingEdit {
+            approval_id: item.id,
+            original: item.arguments.clone(),
+            buffer,
+        });
+    }
+
+    pub fn cancel_edit(&mut self) {
+        self.pending_edit = None;
+    }
+
+    pub fn edit_push_char(&mut self, c: char) {
+        if let Some(e) = self.pending_edit.as_mut() {
+            e.buffer.push(c);
+        }
+    }
+
+    pub fn edit_push_newline(&mut self) {
+        if let Some(e) = self.pending_edit.as_mut() {
+            e.buffer.push('\n');
+        }
+    }
+
+    pub fn edit_backspace(&mut self) {
+        if let Some(e) = self.pending_edit.as_mut() {
+            e.buffer.pop();
+        }
+    }
+
+    /// Parse the buffer; on success, return `(id, arguments)` and
+    /// leave the modal closed. On parse failure the modal stays open
+    /// and `None` is returned.
+    pub fn edit_commit(&mut self) -> Option<(u64, serde_json::Value)> {
+        let Some(edit) = self.pending_edit.as_ref() else {
+            return None;
+        };
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&edit.buffer) else {
+            return None;
+        };
+        let id = edit.approval_id;
+        // Apply to the pending item so the dialog shows the new args.
+        if let Some(batch) = self.pending_batch.as_mut()
+            && let Some(item) = batch.items.iter_mut().find(|i| i.id == id)
+        {
+            item.arguments = parsed.clone();
+        }
+        self.pending_edit = None;
+        Some((id, parsed))
+    }
 
     pub fn palette(&self) -> Option<&CommandPaletteState> {
         self.palette.as_ref()

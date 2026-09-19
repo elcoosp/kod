@@ -139,6 +139,10 @@ impl ApprovalWidget {
                 Span::styled(" always  ", Style::default()),
                 Span::styled("a", label_style.add_modifier(Modifier::BOLD)),
                 Span::styled(" never  ", Style::default()),
+                Span::styled("l", label_style.add_modifier(Modifier::BOLD)),
+                Span::styled(" learn  ", Style::default()),
+                Span::styled("e", label_style.add_modifier(Modifier::BOLD)),
+                Span::styled(" edit  ", Style::default()),
                 Span::styled("↑/↓", label_style.add_modifier(Modifier::BOLD)),
                 Span::styled(" navigate  ", Style::default()),
                 Span::styled("Esc", label_style.add_modifier(Modifier::BOLD)),
@@ -153,7 +157,11 @@ impl ApprovalWidget {
                 Span::styled("l", label_style.add_modifier(Modifier::BOLD)),
                 Span::styled(" always   ", Style::default()),
                 Span::styled("a", label_style.add_modifier(Modifier::BOLD)),
-                Span::styled(" never (session)", Style::default()),
+                Span::styled(" never (session)   ", Style::default()),
+                Span::styled("l", label_style.add_modifier(Modifier::BOLD)),
+                Span::styled(" learn   ", Style::default()),
+                Span::styled("e", label_style.add_modifier(Modifier::BOLD)),
+                Span::styled(" edit args", Style::default()),
             ]));
         }
 

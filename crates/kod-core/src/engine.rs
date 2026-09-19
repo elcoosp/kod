@@ -1327,14 +1327,28 @@ pub struct ApprovalBatch {
 }
 
 /// What the consumer decides.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ApprovalDecision {
+    /// Run the call as the model proposed it.
     Approve,
+    /// Run the call with these arguments substituted for the model's
+    /// (Tier 2.3). The approval overlay's "edit" action sends this.
+    ApproveWith { arguments: serde_json::Value },
     Deny,
     /// Same as `Deny` in this version; the variant exists so that
     /// adding a "remember my choice" set later does not change the
     /// wire format.
     DenyAlways,
+}
+
+impl ApprovalDecision {
+    /// True for both `Approve` and `ApproveWith`.
+    pub fn is_approve(&self) -> bool {
+        matches!(
+            self,
+            ApprovalDecision::Approve | ApprovalDecision::ApproveWith { .. },
+        )
+    }
 }
 
 impl KodEngine {
@@ -7627,6 +7641,11 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             self.deny_rules.read().await.clone();
         let mut denied: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
         let mut need_approval: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        // Tier 2.3 — argument substitutions captured by the approval
+        // loop, keyed by the call's index in `calls`. Empty when no
+        // edit was submitted this round.
+        let mut edited_args: std::collections::HashMap<usize, serde_json::Value> =
+            std::collections::HashMap::new();
         let mut decisions: Vec<(usize, kod_config::PolicyDecision)> = Vec::new();
 
         for (i, call) in calls.iter().enumerate() {
@@ -7873,6 +7892,10 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                             .unwrap_or_default();
                         let (log_decision, allow) = match decision {
                             Ok(Ok(ApprovalDecision::Approve)) => ("approve", true),
+                            Ok(Ok(ApprovalDecision::ApproveWith { arguments })) => {
+                                edited_args.insert(i, arguments);
+                                ("approve-edited", true)
+                            }
                             Ok(Ok(ApprovalDecision::Deny)) => ("deny", false),
                             Ok(Ok(ApprovalDecision::DenyAlways)) => ("deny-always", false),
                             Ok(Err(_)) => ("cancelled", false),
@@ -8022,9 +8045,28 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             }
         }
 
+        // Tier 2.3 — apply any argument edits captured by the
+        // approval loop. Empty map means "dispatch as proposed".
+        let calls_for_dispatch: Vec<ToolCall> = if edited_args.is_empty() {
+            calls.to_vec()
+        } else {
+            calls
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    if let Some(new_args) = edited_args.get(&i) {
+                        let mut c2 = c.clone();
+                        c2.arguments = new_args.clone();
+                        c2
+                    } else {
+                        c.clone()
+                    }
+                })
+                .collect()
+        };
         let mut raw_results: Vec<(Result<ToolResult>, u64)> = if any_mutating {
             let mut out = Vec::with_capacity(calls.len());
-            for (i, call) in calls.iter().enumerate() {
+            for (i, call) in calls_for_dispatch.iter().enumerate() {
                 if let Some(reason) = hook_denied.get(&i) {
                     out.push((
                         Ok(ToolResult::Error(format!(
@@ -8105,7 +8147,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             for call in calls.iter() {
                 self.tool_counts.record(&call.tool_name, None);
             }
-            let futs: Vec<_> = calls
+            let futs: Vec<_> = calls_for_dispatch
                 .iter()
                 .map(|call| {
                     let start = std::time::Instant::now();

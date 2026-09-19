@@ -4369,6 +4369,51 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
 
     /// Handle key events
     async fn handle_key(&mut self, key: KeyCode) -> Result<()> {
+        // Approval-edit modal (Tier 2.3). While open, the input box
+        // edits the call's JSON arguments. Enter commits; Esc cancels.
+        if self.app.is_editing_approval() {
+            match key {
+                KeyCode::Escape | KeyCode::CtrlC => {
+                    self.app.cancel_edit();
+                    return Ok(());
+                }
+                KeyCode::Enter | KeyCode::CtrlJ | KeyCode::ShiftEnter => {
+                    if let Some((id, args)) = self.app.edit_commit() {
+                        if let Some(engine) = &self.engine {
+                            engine
+                                .respond_to_approval(
+                                    id,
+                                    kod_core::engine::ApprovalDecision::ApproveWith {
+                                        arguments: args,
+                                    },
+                                )
+                                .await;
+                            if let Some(batch) = self.app.pending_batch_mut() {
+                                batch.advance();
+                                if batch.current_item().is_none() {
+                                    self.app.clear_pending_approval();
+                                }
+                            }
+                        }
+                    } else {
+                        self.app.push_system_message(
+                            "Edit is not valid JSON; fix the buffer or press Esc.",
+                        );
+                    }
+                    return Ok(());
+                }
+                KeyCode::Backspace => {
+                    self.app.edit_backspace();
+                    return Ok(());
+                }
+                KeyCode::Char(c) => {
+                    self.app.edit_push_char(c);
+                    return Ok(());
+                }
+                _ => return Ok(()),
+            }
+        }
+
         // Command palette (Ctrl+K). When open, every key belongs to
         // the palette: type filters, arrows move, Enter accepts,
         // Esc closes. Nothing else on the app sees the key.
@@ -4546,6 +4591,12 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                 if done {
                     self.app.clear_pending_approval();
                 }
+                return Ok(());
+            }
+
+            // Tier 2.3 — "e" opens the argument editor.
+            if matches!(key, KeyCode::Char('e') | KeyCode::Char('E')) {
+                self.app.begin_edit_current_approval();
                 return Ok(());
             }
 
