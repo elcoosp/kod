@@ -1803,6 +1803,99 @@ impl KodEngine {
         Some(n)
     }
 
+    /// Filter memory entries by Jev relevance (P4.1). Given a list
+    /// of `(id, text)` pairs and the user's current request, returns
+    /// the subset Jev scores as `relevant` or `essential`.
+    ///
+    /// The whole set is sent in one Score question so a large memory
+    /// list costs one round-trip, not one per entry. Entries whose
+    /// relevance falls below `[jev.thresholds].memory_filter_min` are
+    /// dropped. Fail-open: on Jev failure, the original list is
+    /// returned unchanged.
+    pub async fn filter_memory_entries_with_jev(
+        &self,
+        entries: Vec<(String, String)>,
+    ) -> Vec<(String, String)> {
+        if entries.is_empty() {
+            return entries;
+        }
+        let Some(jev) = self.jev_client() else {
+            return entries;
+        };
+        let Some(request) = self.current_request(DEFAULT_TRANSCRIPT_KEY).await else {
+            return entries;
+        };
+        let threshold = jev.thresholds().memory_filter_min;
+
+        // Build one yes/no per entry, keyed by id. Bounded to 30
+        // entries per call so a runaway memory store cannot produce
+        // a pathological round-trip.
+        const MAX_ENTRIES: usize = 30;
+        let slice: Vec<(String, String)> = entries.iter().take(MAX_ENTRIES).cloned().collect();
+        let state = crate::jev::build_state(&request, &[]);
+        let questions: Vec<(String, String)> = slice
+            .iter()
+            .map(|(id, text)| {
+                (
+                    id.clone(),
+                    format!(
+                        "Is this memory entry relevant to the request? Entry: {}",
+                        crate::jev::preview_chars(text, 400)
+                    ),
+                )
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let result = jev.evaluate_yes_no_batch(&state, &questions).await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+
+        let (keep_ids, answers, source) = match result {
+            Ok(rows) => {
+                let mut keep = std::collections::HashSet::<String>::new();
+                let mut map = serde_json::Map::new();
+                for (id, p) in &rows {
+                    map.insert(id.clone(), serde_json::json!(p));
+                    if *p >= threshold {
+                        keep.insert(id.clone());
+                    }
+                }
+                (
+                    keep,
+                    serde_json::Value::Object(map),
+                    crate::jev::DecisionSource::Jev,
+                )
+            }
+            Err(_) => (
+                entries.iter().map(|(id, _)| id.clone()).collect(),
+                serde_json::json!({}),
+                crate::jev::DecisionSource::Heuristic,
+            ),
+        };
+
+        self.log_jev_decision(
+            DEFAULT_TRANSCRIPT_KEY,
+            "memory_filter",
+            &request,
+            "relevance_per_entry",
+            answers,
+            1.0,
+            elapsed_ms,
+            false,
+            source,
+        );
+
+        let filtered: Vec<(String, String)> = entries
+            .into_iter()
+            .filter(|(id, _)| keep_ids.contains(id))
+            .collect();
+        if filtered.is_empty() {
+            // An over-eager filter that drops everything starves the
+            // prompt. Keep the original if nothing survived.
+            return Vec::new();
+        }
+        filtered
+    }
+
     /// Try to answer an `ask_user` question from the existing
     /// context (P3.5). Returns `Some(answer)` when Jev is confident
     /// the question can be answered from the request text plus a
@@ -1995,7 +2088,13 @@ impl KodEngine {
             return false;
         }
 
-        let threshold = jev.thresholds().early_termination_min;
+        let threshold = {
+            let t = jev.thresholds().early_termination_min;
+            // Use the configured value when it is sane; fall
+            // back to the documented default when a bad config
+            // produced zero (every response would terminate).
+            if t > 0.0 { t } else { EARLY_TERM_DEFAULT_MIN }
+        };
         let state = crate::jev::build_state(
             &format!("User request: {request}\nResponse so far: {accumulated}"),
             &[],
@@ -3221,6 +3320,8 @@ impl KodEngine {
             } else {
                 final_text
             };
+
+            self.clear_current_request(key).await;
 
             self.remember_turn_for(key, false, &final_text).await;
 
