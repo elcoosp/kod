@@ -110,6 +110,12 @@ pub enum SessionEntry {
         holder: String,
         tool_name: String,
         decision: String,
+        /// Tier 2.3 — when the caller substituted arguments (an
+        /// `ApproveWith` decision), the new arguments are recorded
+        /// here so `/log` shows what changed and by how much. `None`
+        /// for every plain approve/deny.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        edit: Option<serde_json::Value>,
     },
     /// A post-write LSP diagnostics pass ran on a file (D5.2,
     /// AD-15). One entry per file per pass. The counts let a reader
@@ -564,7 +570,8 @@ mod coverage_entry_roundtrip {
                 timestamp_ms: 6,
                 holder: "s".into(),
                 tool_name: "write_file".into(),
-                decision: "approve".into(),
+                decision: "approve".into(), edit: None,
+                edit: None,
             },
             SessionEntry::Diagnostics {
                 timestamp_ms: 7,
@@ -647,7 +654,7 @@ mod coverage_entry_roundtrip {
                     timestamp_ms: 0,
                     holder: "h".into(),
                     tool_name: "t".into(),
-                    decision: "deny".into(),
+                    decision: "deny".into(), edit: None,
                 },
                 "approval",
             ),
@@ -729,7 +736,7 @@ mod coverage_session_paths {
             timestamp_ms: 1,
             holder: "h".into(),
             tool_name: "write_file".into(),
-            decision: "approve".into(),
+            decision: "approve".into(), edit: None,
         };
         rec.record(&entry).unwrap();
         let read = read_session(&nested).unwrap();
@@ -769,7 +776,7 @@ mod coverage_session_paths {
             timestamp_ms: 1,
             holder: "a".into(),
             tool_name: "t".into(),
-            decision: "approve".into(),
+            decision: "approve".into(), edit: None,
         })
         .unwrap();
         let b = SessionRecorder::open(p.clone()).unwrap();
@@ -777,7 +784,7 @@ mod coverage_session_paths {
             timestamp_ms: 2,
             holder: "b".into(),
             tool_name: "t".into(),
-            decision: "deny".into(),
+            decision: "deny".into(), edit: None,
         })
         .unwrap();
         let read = read_session(&p).unwrap();

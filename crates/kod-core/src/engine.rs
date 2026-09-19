@@ -7775,6 +7775,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                             holder: effective_holder.to_string(),
                             tool_name: call.tool_name.clone(),
                             decision: "auto-approve".to_string(),
+                            edit: None,
                         };
                         let _ = rec.record(&entry);
                     }
@@ -7908,11 +7909,13 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_millis() as u64)
                                 .unwrap_or(0);
+                            let edit_snapshot = edited_args.get(&i).cloned();
                             let entry = crate::session_log::SessionEntry::Approval {
                                 timestamp_ms: now_ms,
                                 holder: effective_holder.to_string(),
                                 tool_name: tool_name.clone(),
                                 decision: log_decision.to_string(),
+                                edit: edit_snapshot,
                             };
                             let _ = rec.record(&entry);
                         }
@@ -8064,6 +8067,45 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                 })
                 .collect()
         };
+        // Tier 2.3 — re-run the policy gate on every edited call. An
+        // edit that would have been DENIED by the current policy is
+        // refused even though the user pressed `e` then `Enter`. The
+        // user's consent to a specific edit is not consent to bypass
+        // the session's policy preset. A taint escalation is *not*
+        // re-asked because the user is the approving party here.
+        if !edited_args.is_empty() {
+            let deny_rules_snapshot: std::collections::HashSet<kod_config::SessionDeny> =
+                self.deny_rules.read().await.clone();
+            for (i, _) in edited_args.iter() {
+                let Some(call) = calls_for_dispatch.get(*i) else {
+                    continue;
+                };
+                let decision = match &policy {
+                    Some(p) => p.decide(
+                        &call.tool_name,
+                        &call.arguments,
+                        &tool_context.working_dir,
+                        &deny_rules_snapshot,
+                    ),
+                    None => kod_config::PolicyDecision {
+                        outcome: kod_config::Decision::Allow,
+                        rule: "no policy installed".to_string(),
+                        source: kod_config::PolicySource::Preset,
+                    },
+                };
+                if matches!(decision.outcome, kod_config::Decision::Deny) {
+                    denied.insert(
+                        *i,
+                        format!("edited call denied by policy: {}", decision.rule),
+                    );
+                    tracing::warn!(
+                        index = *i,
+                        rule = %decision.rule,
+                        "approval edit refused by policy"
+                    );
+                }
+            }
+        }
         let mut raw_results: Vec<(Result<ToolResult>, u64)> = if any_mutating {
             let mut out = Vec::with_capacity(calls.len());
             for (i, call) in calls_for_dispatch.iter().enumerate() {
