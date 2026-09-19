@@ -5378,3 +5378,158 @@ mod coverage_app_state {
         assert!(app.goal().is_none());
     }
 }
+
+
+#[cfg(test)]
+mod coverage_command_palette {
+    //! Tests for the Ctrl+K command palette (Tier UX).
+    use super::*;
+
+    #[test]
+    fn new_app_has_closed_palette() {
+        let app = KodApp::new();
+        assert!(!app.is_palette_open());
+        assert!(app.palette().is_none());
+    }
+
+    #[test]
+    fn open_palette_is_idempotent() {
+        let mut app = KodApp::new();
+        app.open_palette();
+        app.palette_push_char('t');
+        app.open_palette();
+        // Query retained on a second open — the user pressed Ctrl+K
+        // twice but the palette keeps its state.
+        assert_eq!(app.palette_query(), Some("t"));
+    }
+
+    #[test]
+    fn close_palette_clears_state() {
+        let mut app = KodApp::new();
+        app.open_palette();
+        app.palette_push_char('x');
+        app.close_palette();
+        assert!(!app.is_palette_open());
+    }
+
+    #[test]
+    fn filter_empty_query_returns_everything() {
+        let mut app = KodApp::new();
+        app.open_palette();
+        let all = app.palette_candidates();
+        assert!(all.len() > 10, "expected many entries, got {}", all.len());
+    }
+
+    #[test]
+    fn filter_narrows_the_list() {
+        let mut app = KodApp::new();
+        app.open_palette();
+        for c in "plan".chars() {
+            app.palette_push_char(c);
+        }
+        let filtered = app.palette_candidates();
+        assert!(!filtered.is_empty());
+        assert!(
+            filtered.iter().any(|e| e.label.contains("plan")),
+            "no /plan entry: {:?}",
+            filtered.iter().map(|e| &e.label).collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn backspace_removes_a_query_char() {
+        let mut app = KodApp::new();
+        app.open_palette();
+        app.palette_push_char('a');
+        app.palette_push_char('b');
+        app.palette_backspace();
+        assert_eq!(app.palette_query(), Some("a"));
+    }
+
+    #[test]
+    fn next_wraps_around() {
+        let mut app = KodApp::new();
+        app.open_palette();
+        let total = app.palette_candidates().len();
+        assert!(total >= 2);
+        for _ in 0..total {
+            app.palette_next();
+        }
+        // Wrapped back to start.
+        assert_eq!(app.palette_selected(), 0);
+    }
+
+    #[test]
+    fn prev_wraps_around_backwards() {
+        let mut app = KodApp::new();
+        app.open_palette();
+        let total = app.palette_candidates().len();
+        assert!(total >= 2);
+        app.palette_prev();
+        assert_eq!(app.palette_selected(), total - 1);
+    }
+
+    #[test]
+    fn selected_entry_matches_index() {
+        let mut app = KodApp::new();
+        app.open_palette();
+        app.palette_next();
+        let entry = app.palette_selected_entry().unwrap();
+        let candidates = app.palette_candidates();
+        assert_eq!(entry.label, candidates[1].label);
+    }
+
+    #[test]
+    fn no_candidates_for_unknown_query() {
+        let mut app = KodApp::new();
+        app.open_palette();
+        for c in "zzzzzzzz".chars() {
+            app.palette_push_char(c);
+        }
+        assert!(app.palette_candidates().is_empty());
+        assert!(app.palette_selected_entry().is_none());
+    }
+
+    #[test]
+    fn navigation_on_empty_filter_is_a_no_op() {
+        let mut app = KodApp::new();
+        app.open_palette();
+        for c in "zzzzzzzz".chars() {
+            app.palette_push_char(c);
+        }
+        // Should not panic.
+        app.palette_next();
+        app.palette_prev();
+        assert_eq!(app.palette_selected(), 0);
+    }
+
+    #[test]
+    fn build_palette_includes_all_slash_commands() {
+        let entries = build_palette_entries();
+        for cmd in SLASH_COMMANDS {
+            assert!(
+                entries.iter().any(|e| e.label == cmd.name),
+                "missing {} from palette",
+                cmd.name,
+            );
+        }
+    }
+
+    #[test]
+    fn build_palette_includes_key_actions() {
+        let entries = build_palette_entries();
+        assert!(entries.iter().any(|e| e.label == "ctrl+k"));
+        assert!(entries.iter().any(|e| e.label == "esc"));
+    }
+
+    #[test]
+    fn push_char_resets_selection() {
+        let mut app = KodApp::new();
+        app.open_palette();
+        app.palette_next();
+        app.palette_next();
+        assert!(app.palette_selected() >= 2);
+        app.palette_push_char('x');
+        assert_eq!(app.palette_selected(), 0);
+    }
+}
