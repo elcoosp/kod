@@ -5364,20 +5364,50 @@ impl KodEngine {
                         // enough that this is acceptable).
                         break;
                     }
-                    Err(e) if e.is_retryable() && i + 1 < chain.len() => {
-                        let next = &chain[i + 1];
-                        tracing::warn!(
-                            from = %model_ref.display(),
-                            to = %next.display(),
-                            error = %e,
-                            "retryable provider error; falling back"
+                    Err(e) => {
+                        // Tier 2.2 — classify the failure and pick a
+                        // strategy. Non-recoverable classes surface
+                        // immediately; recoverable ones decide whether
+                        // to retry the same endpoint (with an
+                        // adjustment) or fall through to the next.
+                        let failure = crate::retry_strategy::TurnFailure::classify(
+                            &e.to_string(),
                         );
-                        self.record_model_fallback(key, model_ref, next, &e.to_string())
+                        let action = crate::retry_strategy::choose_action(&failure);
+                        let has_next = i + 1 < chain.len();
+                        let should_fall_through = failure.recoverable()
+                            && has_next
+                            && matches!(
+                                action,
+                                crate::retry_strategy::RetryAction::NextEndpoint
+                                    | crate::retry_strategy::RetryAction::SameEndpointBackoff
+                                    | crate::retry_strategy::RetryAction::SameEndpointLowerTemp
+                                    | crate::retry_strategy::RetryAction::ShrinkHistory
+                                    | crate::retry_strategy::RetryAction::ReinjectTools
+                                    | crate::retry_strategy::RetryAction::SameEndpointConstrained
+                            );
+                        if should_fall_through {
+                            let next = &chain[i + 1];
+                            tracing::warn!(
+                                from = %model_ref.display(),
+                                to = %next.display(),
+                                error = %e,
+                                class = %failure.summary(),
+                                action = ?action,
+                                "provider error; falling back"
+                            );
+                            self.record_model_fallback(
+                                key,
+                                model_ref,
+                                next,
+                                &format!("{} ({})", e, failure.summary()),
+                            )
                             .await;
-                        last_err = Some(e);
-                        continue;
+                            last_err = Some(e);
+                            continue;
+                        }
+                        return Err(e);
                     }
-                    Err(e) => return Err(e),
                 }
             }
             let (final_text, tool_calls, tool_results, usage) =
