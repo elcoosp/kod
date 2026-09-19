@@ -2749,6 +2749,69 @@ impl KodEngine {
         }
     }
 
+    /// Filter a whole `MemoryContext` through Jev (P2.5). Applies
+    /// `filter_memory_entries_with_jev` to both the working and the
+    /// long-term halves, keyed by memory id, and rebuilds the
+    /// context with the surviving entries.
+    ///
+    /// The `total_tokens` field is recomputed as the sum of the
+    /// survivors' estimated lengths, so the prompt budget sees the
+    /// post-filter number, not the pre-filter one.
+    ///
+    /// No-op when Jev is disabled, the context is empty, or the
+    /// transcript has no current request (a caller that never ran a
+    /// `process_*` entry point).
+    async fn filter_memory_context_with_jev(
+        &self,
+        holder: &str,
+        ctx: Option<kod_types::MemoryContext>,
+    ) -> Option<kod_types::MemoryContext> {
+        let mut ctx = ctx?;
+        let jev = self.jev_client()?;
+        let Some(request) = self.current_request(holder).await else {
+            return Some(ctx);
+        };
+        // Skip when the total content is trivial — nothing to save.
+        let total_chars = ctx
+            .working_memory
+            .iter()
+            .chain(ctx.long_term.iter())
+            .map(|e| e.content.len())
+            .sum::<usize>();
+        if total_chars < 400 {
+            return Some(ctx);
+        }
+
+        // Build the id→text list for both halves in one request.
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        for e in &ctx.working_memory {
+            pairs.push((format!("w:{}", e.id), e.content.clone()));
+        }
+        for e in &ctx.long_term {
+            pairs.push((format!("l:{}", e.id), e.content.clone()));
+        }
+        let kept = self.filter_memory_entries_with_jev(pairs).await;
+        let keep_set: std::collections::HashSet<String> = kept.into_iter().map(|(id, _)| id).collect();
+
+        ctx.working_memory
+            .retain(|e| keep_set.contains(&format!("w:{}", e.id)));
+        ctx.long_term
+            .retain(|e| keep_set.contains(&format!("l:{}", e.id)));
+
+        // Recompute the token estimate from the survivors. The exact
+        // formula is not important here — this is a bookkeeping
+        // value the budget pass reads.
+        ctx.total_tokens = ctx
+            .working_memory
+            .iter()
+            .chain(ctx.long_term.iter())
+            .map(|e| e.content.len() / 4)
+            .sum();
+        let _ = request; // documented use above, kept for symmetry
+        let _ = jev;
+        Some(ctx)
+    }
+
     /// Filter memory entries by Jev relevance (P4.1). Given a list
     /// of `(id, text)` pairs and the user's current request, returns
     /// the subset Jev scores as `relevant` or `essential`.
@@ -4052,7 +4115,12 @@ impl KodEngine {
         let _provider_probe = self.registry.read().await.clone();
         if _provider_probe.is_some() {
             // Process through router for task classification and context
-            let response = self.router.process_input(input).await?;
+            let mut response = self.router.process_input(input).await?;
+            // P2.5 — drop memory entries Jev judges irrelevant
+            // before the prompt budget sees them.
+            response.memory_context = self
+                .filter_memory_context_with_jev(key, response.memory_context)
+                .await;
 
             // Build the full prompt using the router's context builder
             let task_type = self
@@ -4391,7 +4459,12 @@ impl KodEngine {
         // See process(): clone out of the lock before any long await.
         let _provider_probe = self.registry.read().await.clone();
         if _provider_probe.is_some() {
-            let response = self.router.process_input(input).await?;
+            let mut response = self.router.process_input(input).await?;
+            // P2.5 — drop memory entries Jev judges irrelevant
+            // before the prompt budget sees them.
+            response.memory_context = self
+                .filter_memory_context_with_jev(key, response.memory_context)
+                .await;
             let task_type = self
                 .refine_task_type_with_jev(key, input, response.task_type)
                 .await;
@@ -4676,7 +4749,12 @@ impl KodEngine {
         // See process(): clone out of the lock before any long await.
         let _provider_probe = self.registry.read().await.clone();
         if _provider_probe.is_some() {
-            let response = self.router.process_input(input).await?;
+            let mut response = self.router.process_input(input).await?;
+            // P2.5 — drop memory entries Jev judges irrelevant
+            // before the prompt budget sees them.
+            response.memory_context = self
+                .filter_memory_context_with_jev(key, response.memory_context)
+                .await;
             let task_type = self
                 .refine_task_type_with_jev(key, input, response.task_type)
                 .await;
