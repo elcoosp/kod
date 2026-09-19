@@ -1327,7 +1327,9 @@ impl SwarmRunner {
                 },
             )
             .await?;
-        Ok(parse_subtasks(&text, self.max_agents).unwrap_or_default())
+        let mut subs = parse_subtasks(&text, self.max_agents).unwrap_or_default();
+        self.refine_subtask_metadata(&mut subs).await;
+        Ok(subs)
     }
 
     /// Ask the model to split `goal` into at most `max_agents` subtasks.
@@ -1776,6 +1778,39 @@ fn capability_for(description: &str) -> Capability {
         Capability::Refactoring
     } else {
         Capability::Coding
+    }
+}
+
+/// Method added to `SwarmRunner` via the inherent impl below: run
+/// Jev's capability classifier and globs validation on each parsed
+/// subtask (P4.6). A subtask whose capability the planner left
+/// ambiguous gets the classifier's verdict; a subtask whose globs do
+/// not match its description is logged for the caller to act on.
+impl SwarmRunner {
+    async fn refine_subtask_metadata(&self, subtasks: &mut [Subtask]) {
+        for st in subtasks.iter_mut() {
+            // Capability: Jev's classification wins over the
+            // heuristic when it has an answer.
+            if let Some(label) =
+                self.engine.validate_subtask_capability(&st.description).await
+                && let Ok(c) = label.parse::<kod_swarm::Capability>()
+            {
+                st.capability = c;
+            }
+            // Globs: log a warning when they do not plausibly match
+            // the description. The runner still proceeds — the
+            // merge-time conflict detector is the backstop.
+            if let Some(false) = self
+                .engine
+                .validate_subtask_globs(&st.description, &st.expected_writes)
+                .await
+            {
+                tracing::warn!(
+                    subtask = %st.name,
+                    "Jev flagged subtask globs as not matching the description",
+                );
+            }
+        }
     }
 }
 

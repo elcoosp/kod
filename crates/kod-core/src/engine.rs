@@ -2749,6 +2749,97 @@ impl KodEngine {
         }
     }
 
+    /// Ask Jev which capability best fits a subtask description
+    /// (P4.6). Returns the answer as a string label so the caller
+    /// maps it back through `kod_swarm::Capability::from_str`. Returns
+    /// `None` when Jev is disabled or errors — the caller's
+    /// heuristic (`capability_for`) is the fallback.
+    ///
+    /// Public because `swarm_runner` is a different module and calls
+    /// this through the `Arc<KodEngine>`.
+    pub async fn validate_subtask_capability(
+        &self,
+        description: &str,
+    ) -> Option<String> {
+        let jev = self.jev_client()?;
+        let state = crate::jev::build_state(description, &[]);
+        let labels = &[
+            "coding",
+            "testing",
+            "documentation",
+            "code-review",
+            "planning",
+            "research",
+            "debugging",
+            "refactoring",
+        ];
+        let started = std::time::Instant::now();
+        let decision = jev
+            .evaluate_score(
+                &state,
+                "Which capability best describes this subtask?",
+                labels,
+            )
+            .await
+            .ok()?;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        self.log_jev_decision(
+            DEFAULT_TRANSCRIPT_KEY,
+            "swarm_capability",
+            description,
+            "capability",
+            serde_json::json!({ "capability": decision.value }),
+            decision.confidence,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+        Some(decision.value)
+    }
+
+    /// Ask Jev whether a subtask's write-set globs plausibly match
+    /// its description (P4.6). Returns `Some(true)` for "yes",
+    /// `Some(false)` for a confident "no", `None` when Jev is
+    /// disabled or errors.
+    pub async fn validate_subtask_globs(
+        &self,
+        description: &str,
+        globs: &[String],
+    ) -> Option<bool> {
+        if globs.is_empty() {
+            return None;
+        }
+        let jev = self.jev_client()?;
+        let state = crate::jev::build_state(
+            &format!(
+                "Subtask: {description}\nWrite-set globs: {}",
+                globs.join(", ")
+            ),
+            &[],
+        );
+        let pairs = [(
+            "globs_match".to_string(),
+            "Do these file globs plausibly match the subtask description?".to_string(),
+        )];
+        let started = std::time::Instant::now();
+        let rows = jev.evaluate_yes_no_batch(&state, &pairs).await.ok()?;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let p_yes = rows.first().map(|(_, p)| *p).unwrap_or(1.0);
+        self.log_jev_decision(
+            DEFAULT_TRANSCRIPT_KEY,
+            "swarm_globs",
+            description,
+            "globs_match",
+            serde_json::json!({ "globs_match": p_yes }),
+            p_yes,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+        let threshold = jev.thresholds().task_classify_min;
+        Some(p_yes >= threshold)
+    }
+
     /// Reweight a `PromptBudget` allocation based on Jev (P2.1).
     ///
     /// The base allocation is the fixed 50/20/20/10 split for
