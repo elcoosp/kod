@@ -1803,6 +1803,59 @@ impl KodEngine {
         Some(n)
     }
 
+    /// Ask Jev what kind of text a streamed chunk is (P1.4).
+    ///
+    /// Returns one of `prose_answer`, `reasoning`, `restatement`,
+    /// `code_block`. The TUI routes `reasoning` and `restatement`
+    /// into a collapsed row so the user perceives the model as
+    /// faster without any actual latency change.
+    ///
+    /// Cheap: the state is a short buffer tail, the question is a
+    /// four-label score. The TUI calls it at most once per second,
+    /// not per chunk.
+    ///
+    /// Returns `None` when Jev is disabled or errored — the caller
+    /// then renders the chunk as normal prose, which is the
+    /// pre-Jev behaviour.
+    pub async fn classify_chunk_with_jev(
+        &self,
+        holder: &str,
+        buffer_tail: &str,
+    ) -> Option<String> {
+        let jev = self.jev_client()?;
+        let request = self.current_request(holder).await.unwrap_or_default();
+        let state = crate::jev::build_state(
+            &format!(
+                "User request: {request}\n\nRecent buffer: {}",
+                crate::jev::preview_chars(buffer_tail, 500),
+            ),
+            &[],
+        );
+        let labels = &["prose_answer", "reasoning", "restatement", "code_block"];
+        let started = std::time::Instant::now();
+        let decision = jev
+            .evaluate_score(
+                &state,
+                "What kind of text is this streamed chunk?",
+                labels,
+            )
+            .await
+            .ok()?;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        self.log_jev_decision(
+            holder,
+            "chunk_classify",
+            &crate::jev::preview_chars(buffer_tail, 200),
+            "chunk_kind",
+            serde_json::json!({ "kind": decision.value }),
+            decision.confidence,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+        Some(decision.value)
+    }
+
     /// Decide the sandbox mode for one `execute_command` (P3.4).
     ///
     /// The engine's global mode is the default. On a session with
