@@ -22,13 +22,16 @@ pub mod repomap;
 pub mod router;
 pub mod serve;
 pub mod trace;
+pub mod trace_writer;
 pub mod session_log;
 pub mod swarm_adapters;
 pub mod swarm_runner;
 pub mod worktree;
 
 pub use engine::KodEngine;
-pub use trace::{RoundKind, ToolOutcomeKind, TurnId, TurnOutcome, TurnTrace, TurnTraceBuilder};
+pub use trace::{RoundKind, ToolOutcomeKind, TurnId, TurnOutcome, TurnTrace, TurnTraceBuilder,
+};
+pub use trace_writer::{read_traces, TraceWriter};
 pub use cost::{CostSnapshot, CostTracker, SoftWarningTrigger};
 pub use jev::{Decision, DecisionSource, JevClient, JevError};
 

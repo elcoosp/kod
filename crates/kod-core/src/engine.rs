@@ -1075,6 +1075,12 @@ pub struct KodEngine {
     /// Session cost accumulator (Tier 1.2). Clone the engine to
     /// share it with a UI.
     cost_tracker: crate::cost::CostTracker,
+    /// Monotonic per-session turn id for the trace log (Tier 1.4).
+    next_turn_id: std::sync::atomic::AtomicU64,
+    /// Append-only writer for `turns.jsonl`, next to the session log.
+    /// `None` — the default — is the right shape for a test or a
+    /// one-shot command that does not want a trace file.
+    turn_trace_writer: std::sync::RwLock<Option<std::sync::Arc<crate::trace_writer::TraceWriter>>>,
     /// The current round's taint level (Tier 1.1). Escalated by every
     /// untrusted tool call; reset at the start of every user turn.
     taint: std::sync::RwLock<kod_types::trust::TrustLevel>,
@@ -1368,6 +1374,8 @@ impl KodEngine {
             read_protection: std::sync::RwLock::new(None),
             redactor: std::sync::Arc::new(kod_types::redact::Redactor::default()),
             cost_tracker: crate::cost::CostTracker::new(),
+            next_turn_id: std::sync::atomic::AtomicU64::new(1),
+            turn_trace_writer: std::sync::RwLock::new(None),
             taint: std::sync::RwLock::new(kod_types::trust::TrustLevel::Assistant),
             network_access_atomic: std::sync::atomic::AtomicBool::new(false),
             auto_check_atomic: std::sync::atomic::AtomicBool::new(false),
@@ -1838,6 +1846,39 @@ impl KodEngine {
     pub fn set_session_recorder(&self, recorder: Arc<crate::session_log::SessionRecorder>) {
         if let Ok(mut slot) = self.session_recorder.write() {
             *slot = Some(recorder);
+        }
+    }
+
+    /// Install a turn-trace writer (Tier 1.4). One `TurnTrace` per
+    /// `process_*` call is appended to the file the writer holds.
+    pub fn set_turn_trace_writer(
+        &self,
+        writer: std::sync::Arc<crate::trace_writer::TraceWriter>,
+    ) {
+        if let Ok(mut slot) = self.turn_trace_writer.write() {
+            *slot = Some(writer);
+        }
+    }
+
+    /// Allocate the next turn id. Monotonic; scoped to the session.
+    fn next_turn_id(&self) -> crate::trace::TurnId {
+        self.next_turn_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Emit a completed trace, if a writer is installed. Failure to
+    /// write is logged but never propagated — the trace is
+    /// diagnostic, not functional.
+    fn emit_turn_trace(&self, trace: &crate::trace::TurnTrace) {
+        if let Ok(guard) = self.turn_trace_writer.read()
+            && let Some(w) = guard.as_ref()
+            && let Err(e) = w.record(trace)
+        {
+            tracing::warn!(
+                error = %e,
+                path = %w.path().display(),
+                "could not append turn trace",
+            );
         }
     }
 
@@ -5480,6 +5521,10 @@ impl KodEngine {
         self.set_current_request(key, input).await;
         // Tier 1.1 — a fresh user turn clears any prior taint.
         self.reset_taint();
+        // Tier 1.4 — open a turn trace. Emitted when this call returns.
+        let trace_id = self.next_turn_id();
+        let mut trace = crate::trace::TurnTraceBuilder::new(trace_id, key);
+        self.cost_tracker.begin_turn();
         // P3.3 — ask Jev whether the request is ambiguous; if so and
         // a streaming consumer is attached, prompt for clarification
         // before the LLM ever sees the request.
@@ -5753,6 +5798,10 @@ impl KodEngine {
                 None => final_text,
             };
             self.remember_turn_for(key, false, &final_text).await;
+
+            // Tier 1.4 — finish and emit the trace.
+            trace.set_reply_chars(final_text.len());
+            self.emit_turn_trace(&trace.finish());
 
             return Ok(TaskResponse {
                 task_type: response.task_type,
