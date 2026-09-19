@@ -129,6 +129,19 @@ impl Tool for ReadFileTool {
             })?;
 
         let resolved = context.resolve_path(path)?;
+        // Tier 1.3 — known-secret path check.
+        if let Some(rp) = context.read_protection.as_ref()
+            && rp.matches(&resolved)
+        {
+            use kod_config::ReadMode;
+            if let ReadMode::Refuse = rp.mode {
+                return Ok(ToolResult::Error(format!(
+                    "read_file refused: {} matches a read-protection pattern. \
+                     Edit [policy.read_protection] in the config to allow.",
+                    resolved.display(),
+                )));
+            }
+        }
         context.can_read(&resolved)?;
 
         // Total size from metadata (the byte cap below can hide it).
@@ -220,6 +233,10 @@ impl Tool for ReadFileTool {
             Ok(s) => s.to_string(),
             Err(e) => String::from_utf8_lossy(&buf[..e.valid_up_to()]).into_owned(),
         };
+
+        // Tier 1.3 — sanitize the content when the path matched a
+        // read-protection pattern and the mode is `Redact`.
+        let content = redact_read_content(&content, context, &resolved);
 
         Ok(ToolResult::Success(serde_json::json!({
             "path": resolved.to_string_lossy().to_string(),
@@ -1231,6 +1248,38 @@ impl Tool for FileInfoTool {
             "modified": metadata.modified().map(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)).unwrap_or(0),
         })))
     }
+}
+
+
+/// Tier 1.3 — sanitize a read_file payload.
+fn redact_read_content(
+    content: &str,
+    context: &ToolContext,
+    resolved: &std::path::Path,
+) -> String {
+    let Some(redactor) = context.redactor.as_ref() else {
+        return content.to_string();
+    };
+    let Some(rp) = context.read_protection.as_ref() else {
+        return content.to_string();
+    };
+    if !rp.matches(resolved) {
+        return content.to_string();
+    }
+    let (sanitized, events) = redactor.redact(content);
+    if events.is_empty() {
+        return sanitized;
+    }
+    let summary = events
+        .iter()
+        .map(|e| format!("{}×{}", e.rule, e.count))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "// ⓘ {} secret(s) redacted ({summary}).\n{}",
+        events.iter().map(|e| e.count).sum::<usize>(),
+        sanitized,
+    )
 }
 
 #[cfg(test)]

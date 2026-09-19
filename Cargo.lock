@@ -2319,6 +2319,7 @@ dependencies = [
  "futures",
  "globset",
  "ignore",
+ "kod-config",
  "kod-error",
  "kod-types",
  "libc",

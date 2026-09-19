@@ -527,6 +527,14 @@ pub struct ToolContext {
     /// stopped at the tool-call boundary; the file is not touched,
     /// and the failure reaches the model as a `ToolResult::Error`.
     pub allowed_write_globs: Option<Vec<String>>,
+
+    /// Read-protection rules for known-secret paths (Tier 1.3).
+    /// `None` means "no protection" — the pre-1.3 behaviour a test
+    /// or embedder that builds a bare context sees.
+    pub read_protection: Option<kod_config::ReadProtection>,
+    /// The redactor used to sanitize file content under `Redact`
+    /// mode. `None` disables redaction even when a rule matched.
+    pub redactor: Option<std::sync::Arc<kod_types::redact::Redactor>>,
 }
 
 impl ToolContext {
@@ -540,6 +548,8 @@ impl ToolContext {
             holder: "session".to_string(),
             lock_timeout: std::time::Duration::from_secs(2),
             sandbox: SandboxMode::Auto,
+            read_protection: None,
+            redactor: None,
             allowed_domains: Vec::new(),
             allowed_write_globs: None,
         }
