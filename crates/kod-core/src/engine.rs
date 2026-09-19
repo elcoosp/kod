@@ -2823,6 +2823,7 @@ impl KodEngine {
     /// Fail-open: disabled/errored Jev returns `None` (keep the
     /// current provider) — the fallback chain on error paths still
     /// works as before.
+    #[allow(dead_code)]
     async fn provider_quality_looks_off(
         &self,
         holder: &str,
@@ -6759,6 +6760,20 @@ impl KodEngine {
         // marker from the consumer's perspective — the dialog just
         // shows one row.
         if !need_approval.is_empty() {
+            // P3.2 — ask Jev to group the pending approvals by
+            // logical change. The result is logged for `/jev stats`
+            // and is available to a future UI that renders grouped
+            // dialogs. A no-op (empty map) when Jev is disabled or
+            // the batch has fewer than 2 items.
+            {
+                let pending_calls: Vec<ToolCall> = need_approval
+                    .iter()
+                    .filter_map(|i| calls.get(*i).cloned())
+                    .collect();
+                let _groups = self
+                    .group_approvals_with_jev(effective_holder, &pending_calls)
+                    .await;
+            }
             match chunk_tx {
                 Some(tx) => {
                     // Phase 1 — build every request and register every
