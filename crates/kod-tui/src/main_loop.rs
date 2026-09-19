@@ -80,6 +80,7 @@ const SLASH_HELP: &str = "Commands:\n\
 /log — show recent session log entries: /log [N]\n\
 /trace — structured turn traces: /trace [last | list | <id>]\n\
 /trust — show or clear the round's taint: /trust [show | clear]\n\
+/blackboard — swarm blackboard: /blackboard [show | clear]\n\
 /learned — list or clear session-scoped learned approvals: /learned [clear]\n\
 /plan — show plan: /plan [next | skip | note <text> | clear]\n\
 /limits — per-tool quotas: /limits [show | reset]\n\
@@ -3213,6 +3214,53 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                         ),
                     };
                     self.app.push_system_message(&msg);
+                }
+            }
+            "/blackboard" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                match parts.next() {
+                    None | Some("show") => {
+                        let entries = engine.blackboard().all();
+                        if entries.is_empty() {
+                            self.app.push_system_message(
+                                "Blackboard is empty. It is populated during a swarm run.",
+                            );
+                            return Ok(());
+                        }
+                        let mut msg =
+                            format!("Blackboard ({} entries)\n", entries.len());
+                        for e in entries.iter().take(40) {
+                            msg.push_str(&format!(
+                                "  {:<40} {}\n",
+                                e.key,
+                                serde_json::to_string(&e.value)
+                                    .unwrap_or_default()
+                                    .chars()
+                                    .take(60)
+                                    .collect::<String>(),
+                            ));
+                        }
+                        if entries.len() > 40 {
+                            msg.push_str(&format!(
+                                "  … and {} more\n",
+                                entries.len() - 40,
+                            ));
+                        }
+                        self.app.push_system_message(msg.trim_end());
+                    }
+                    Some("clear") => {
+                        engine.blackboard().clear();
+                        self.app
+                            .push_system_message("Blackboard cleared.");
+                    }
+                    Some(other) => {
+                        self.app.push_system_message(&format!(
+                            "Unknown /blackboard sub-command: {other}. Try /blackboard or /blackboard clear.",
+                        ));
+                    }
                 }
             }
             "/learned" => {
