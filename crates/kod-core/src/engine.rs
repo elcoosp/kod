@@ -936,6 +936,9 @@ struct RoundContext<'a> {
     definitions: &'a [ToolDefinition],
     options: &'a GenerationOptions,
     holder: &'a str,
+    /// Turn trace builder (Tier 1.4). `None` when no trace writer is
+    /// installed — every trace call is a no-op in that case.
+    trace: Option<&'a std::sync::Mutex<crate::trace::TurnTraceBuilder>>,
 }
 
 /// Outcome of one tool-execution round: results for the response plus a
@@ -5325,6 +5328,7 @@ impl KodEngine {
                     definitions: &definitions,
                     options: &options,
                     holder: key,
+                    trace: None,
                 };
                 match self
                     .run_collected_loop(
@@ -5674,6 +5678,7 @@ impl KodEngine {
                     definitions: &definitions,
                     options: &options,
                     holder: key,
+                    trace: None,
                 };
                 match self
                     .run_streaming_loop(
@@ -6045,6 +6050,7 @@ impl KodEngine {
                         definitions: &definitions,
                         options: &options,
                         holder: key,
+                        trace: None,
                     };
                     match self
                         .run_streaming_loop(
@@ -6348,6 +6354,7 @@ impl KodEngine {
                 definitions: round.definitions,
                 options: round.options,
                 holder: round.holder,
+                trace: None,
             };
             let (text, calls, usage, off_track) = self
                 .stream_round(
@@ -6359,6 +6366,7 @@ impl KodEngine {
                     round_for_this.options,
                     chunk_tx,
                     round_for_this.holder,
+                    round_for_this.trace,
                 )
                 .await?;
             // P5.6 — on the very first round, an off-track verdict
@@ -6486,6 +6494,7 @@ impl KodEngine {
         options: &GenerationOptions,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
         holder: &str,
+        round_trace: Option<&std::sync::Mutex<crate::trace::TurnTraceBuilder>>,
     ) -> Result<(
         String,
         Vec<ToolCall>,
@@ -6564,6 +6573,18 @@ impl KodEngine {
                 StreamChunk::Done => break,
             }
         }
+        // Tier 1.4 — record this round's usage into the trace before
+        // returning. No-op when no writer is installed.
+        if let Some(mutex) = round_trace {
+            let (prompt, completion) = match last_usage.as_ref() {
+                Some(u) => (u.prompt_tokens, u.completion_tokens),
+                None => (0_usize, 0_usize),
+            };
+            if let Ok(mut g) = mutex.lock() {
+                g.add_usage(prompt, completion, None, 0.0);
+            }
+        }
+
         let mut calls = Vec::with_capacity(partials.len());
         for (_, p) in partials {
             let Some(name) = p.name else { continue };

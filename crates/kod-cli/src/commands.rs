@@ -1413,6 +1413,15 @@ pub async fn run_chat(
         }
     }
 
+    // Tier 1.4 — open a turn-trace writer next to the session log.
+    if let Some(log_path) = engine.session_log_path()
+        && let Some(trace_path) =
+            kod_core::TraceWriter::default_for_session(&log_path)
+        && let Ok(w) = kod_core::TraceWriter::open(trace_path)
+    {
+        engine.set_turn_trace_writer(std::sync::Arc::new(w));
+    }
+
     // Install the Jev (TypeSafe AI) client when enabled in config.
     // A misconfigured enabled block is a loud startup error; a
     // disabled block (the default) is a silent no-op.

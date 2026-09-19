@@ -363,6 +363,15 @@ impl TuiLoop {
         }
         // Tier 1.2 — install the session cost caps.
         engine.install_limits(&config.limits);
+        // Tier 1.4 — trace writer next to the session log, when one
+        // is installed.
+        if let Some(log_path) = engine.session_log_path()
+            && let Some(trace_path) =
+                kod_core::TraceWriter::default_for_session(&log_path)
+            && let Ok(w) = kod_core::TraceWriter::open(trace_path)
+        {
+            engine.set_turn_trace_writer(std::sync::Arc::new(w));
+        }
 
         // Install the Jev (TypeSafe AI) client when enabled. A
         // disabled block (the default) is a silent no-op; an
