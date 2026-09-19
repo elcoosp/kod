@@ -80,6 +80,7 @@ const SLASH_HELP: &str = "Commands:\n\
 /log — show recent session log entries: /log [N]\n\
 /trace — structured turn traces: /trace [last | list | <id>]\n\
 /trust — show or clear the round's taint: /trust [show | clear]\n\
+/learned — list or clear session-scoped learned approvals: /learned [clear]\n\
 /plan — show plan: /plan [next | skip | note <text> | clear]\n\
 /limits — per-tool quotas: /limits [show | reset]\n\
 /budget — session cost and limits: /budget | /budget raise <usd> | /budget reset\n\
@@ -3212,6 +3213,37 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                         ),
                     };
                     self.app.push_system_message(&msg);
+                }
+            }
+            "/learned" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                match parts.next() {
+                    None | Some("show") => {
+                        let n = engine.learned_allow_count().await;
+                        if n == 0 {
+                            self.app.push_system_message(
+                                "No learned allows this session. Use 'l' in an approval dialog to teach one.",
+                            );
+                        } else {
+                            self.app.push_system_message(&format!(
+                                "{n} learned allow(s) this session. \
+                                 /learned clear to forget them all.",
+                            ));
+                        }
+                    }
+                    Some("clear") => {
+                        engine.clear_learned_allows().await;
+                        self.app
+                            .push_system_message("Learned allows cleared.");
+                    }
+                    Some(other) => {
+                        self.app.push_system_message(&format!(
+                            "Unknown /learned sub-command: {other}. Try /learned or /learned clear.",
+                        ));
+                    }
                 }
             }
             "/plan" => {

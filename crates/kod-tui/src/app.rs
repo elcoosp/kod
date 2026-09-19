@@ -308,6 +308,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "show or clear the round's taint: /trust [show | clear]",
     },
     SlashCommand {
+        name: "/learned",
+        hint: "list or clear session-scoped learned approvals: /learned [clear]",
+    },
+    SlashCommand {
         name: "/plan",
         hint: "show plan: /plan [next | skip | note <text> | clear]",
     },
