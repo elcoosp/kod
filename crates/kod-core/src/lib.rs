@@ -8,6 +8,7 @@ pub mod budget;
 pub mod checkpoint;
 pub mod citations;
 pub mod config;
+pub mod cost;
 pub mod context;
 pub mod doctor;
 pub mod engine;
@@ -26,6 +27,7 @@ pub mod swarm_runner;
 pub mod worktree;
 
 pub use engine::KodEngine;
+pub use cost::{CostSnapshot, CostTracker, SoftWarningTrigger};
 pub use jev::{Decision, DecisionSource, JevClient, JevError};
 
 /// Build a `JevClient` from config and install it on `engine`.

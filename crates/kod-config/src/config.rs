@@ -23,6 +23,7 @@ impl Default for KodConfig {
             lsp: LspConfig::default(),
             mcp: crate::McpConfig::default(),
             jev: crate::JevConfig::default(),
+            limits: crate::LimitsConfig::default(),
             commands: Default::default(),
         }
     }
@@ -64,6 +65,8 @@ pub struct KodConfig {
     /// construct a `JevClient` from this block at startup and
     /// install it on the engine.
     pub jev: crate::JevConfig,
+    /// Session cost and token limits (Tier 1.2).
+    pub limits: crate::LimitsConfig,
     /// User-defined slash commands. A key `foo` registers `/foo <args>`,
     /// whose body is the prompt sent to the model. `{args}` in the
     /// body is replaced by everything after the command name; `{cwd}`
@@ -207,6 +210,7 @@ impl KodConfig {
                     // gets a working session and a warning, not a silent
                     // failure three prompts later.
                     cfg.llm.validate();
+                    cfg.limits.clamp();
                     Ok(cfg)
                 }
                 Err(e) => {

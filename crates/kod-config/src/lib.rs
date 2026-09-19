@@ -1,4 +1,5 @@
 pub mod config;
+pub mod limits;
 pub mod jev;
 pub mod llm;
 pub mod mcp;
@@ -9,6 +10,7 @@ pub mod skills;
 pub mod swarm;
 
 pub use config::{HooksConfig, KodConfig, LspConfig, ToolsConfig};
+pub use limits::{LimitsConfig, OnExhausted, ToolQuota};
 pub use jev::{JevConfig, JevThresholds};
 pub use llm::{EndpointConfig, LlmConfig, PricingConfig, ProviderKind, RoutingConfig};
 pub use mcp::{McpConfig, McpServerConfig};
