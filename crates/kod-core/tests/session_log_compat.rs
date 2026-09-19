@@ -26,6 +26,7 @@ const FIXTURE: &str = r#"{"kind":"tool_call","timestamp_ms":1,"holder":"session"
 {"kind":"memory_write","timestamp_ms":5,"memory_id":"mem-abc","channel":"extraction","tags":["auto-fact","rust"]}
 {"kind":"approval","timestamp_ms":6,"holder":"session","tool_name":"write_file","decision":"approve"}
 {"kind":"diagnostics","timestamp_ms":7,"file":"src/main.rs","error_count":1,"warning_count":2}
+{"kind":"jev_decision","timestamp_ms":8,"holder":"session","purpose":"tool_filter","state_preview":"User request: run tests","questions_summary":"filesystem,shell","answers":{"filesystem":0.92,"shell":0.31},"confidence":0.92,"latency_ms":210,"cached":false,"source":"jev"}
 {"kind":"future_kind_this_build_does_not_know","timestamp_ms":8,"payload":{"anything":42}}
 {"kind":"tool_call","timestamp_ms":9,"holder":"session","tool_name":"write_file","arguments":{"path":"src/out.rs","content":"x"},"duration_ms":5,"result":{"success":{"path":"src/out.rs","written":1}}}
 "#;
@@ -39,12 +40,12 @@ fn reads_every_known_variant_and_skips_the_unknown_one() {
     let entries = read_session(&path).expect("read must succeed");
 
     // Every known line: 2 tool calls + policy + fallback + cost +
-    // memory write + approval + diagnostics = 8. The synthetic future
-    // line is skipped.
+    // memory write + approval + diagnostics + jev_decision = 9. The
+    // synthetic future line is skipped.
     assert_eq!(
         entries.len(),
-        8,
-        "expected 8 known entries; got {} — a variant was dropped or \
+        9,
+        "expected 9 known entries; got {} — a variant was dropped or \
          the unknown-kind skip regressed",
         entries.len(),
     );
@@ -93,6 +94,7 @@ fn reads_every_known_variant_and_skips_the_unknown_one() {
                 assert!(to.contains("claude-sonnet"));
             }
             SessionEntry::ToolCall { .. } => {}
+            SessionEntry::JevDecision { .. } => {}
         }
     }
 }

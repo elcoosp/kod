@@ -2138,12 +2138,14 @@ dependencies = [
  "kod-swarm",
  "kod-tools",
  "kod-types",
+ "parking_lot",
  "proptest",
  "regex",
  "rstest",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.20",
  "time",
  "tokio",
  "toml",
@@ -4318,7 +4320,8 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 [[package]]
 name = "typesafe-ai-rs"
 version = "0.1.0"
-source = "git+https://github.com/gilljon/typesafe-ai-rs?tag=v0.1.0#4eea46f7e3e143bb4c5d26cadac53ee87b14c1c0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff02359c23a580b0b431c44b4a3e463f334ef2d6215612b0a35cc79aeb0f4903"
 dependencies = [
  "bytes",
  "fastrand",

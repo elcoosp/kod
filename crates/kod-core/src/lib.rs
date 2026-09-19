@@ -12,6 +12,7 @@ pub mod context;
 pub mod doctor;
 pub mod engine;
 pub mod hooks;
+pub mod jev;
 pub mod lsp_tools;
 pub mod mcp_adapters;
 pub mod memory_tools;
@@ -25,6 +26,7 @@ pub mod swarm_runner;
 pub mod worktree;
 
 pub use engine::KodEngine;
+pub use jev::{Decision, DecisionSource, JevClient, JevError};
 pub use memory_tools::{MemorySaveTool, MemorySearchTool};
 pub use provider_setup::build_registry;
 pub use router::{RouterConfig, TaskResponse, TaskRouter, TaskType};

@@ -121,6 +121,36 @@ pub enum SessionEntry {
         error_count: usize,
         warning_count: usize,
     },
+    /// One Jev (TypeSafe System One) decision. Written by the
+    /// `JevClient` wrapper for every call site — including the
+    /// heuristic fallback when Jev is disabled or errors. The
+    /// `source` field distinguishes the three cases so
+    /// `/jev stats` can report Jev's share without re-parsing
+    /// the purpose string.
+    JevDecision {
+        timestamp_ms: u64,
+        /// The engine-transcript key the decision served.
+        holder: String,
+        /// A short label for the call site (`tool_filter`,
+        /// `task_classify`, `auto_approve`, ...). Not sent to
+        /// TypeSafe.
+        purpose: String,
+        /// First 200 characters of the state sent to Jev.
+        state_preview: String,
+        /// Summary of the question(s) — for a multi-question
+        /// call, a comma-separated list of keys.
+        questions_summary: String,
+        /// The typed answers, in a shape the call site chose.
+        answers: serde_json::Value,
+        /// The winning answer's confidence in [0, 1].
+        confidence: f32,
+        /// Wall time for the Jev call, in milliseconds.
+        latency_ms: u64,
+        /// True when the answer came from the decision cache.
+        cached: bool,
+        /// "jev" | "heuristic" | "llm".
+        source: String,
+    },
 }
 
 /// Append-only writer for a session log.
@@ -410,6 +440,18 @@ mod coverage_entry_roundtrip {
                 file: "a.rs".into(),
                 error_count: 2,
                 warning_count: 3,
+            },
+            SessionEntry::JevDecision {
+                timestamp_ms: 8,
+                holder: "s".into(),
+                purpose: "tool_filter".into(),
+                state_preview: "User request: run the tests".into(),
+                questions_summary: "filesystem,shell".into(),
+                answers: serde_json::json!({"filesystem": 0.92, "shell": 0.31}),
+                confidence: 0.92,
+                latency_ms: 210,
+                cached: false,
+                source: "jev".into(),
             },
         ]
     }
