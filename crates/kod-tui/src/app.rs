@@ -11,6 +11,23 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 /// Message displayed in the chat
+/// Current on-disk session schema version. Bump when a field
+/// changes meaning, not merely when a field is added — the loader
+/// tolerates unknown fields.
+pub const SESSION_SCHEMA_VERSION: u32 = 1;
+
+/// The current on-disk shape of `~/.kod/tui_session.json` (Tier 3.2).
+///
+/// Pre-3.2 files are a bare JSON array of `Message`. Those are
+/// loaded via the legacy fallback in `load_session`; any file written
+/// from this build carries `schema_version` and `messages`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSnapshot {
+    #[serde(default)]
+    pub schema_version: u32,
+    pub messages: Vec<Message>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: MessageId,
@@ -2765,7 +2782,16 @@ impl KodApp {
         let snapshot = &self.messages[keep..];
         let _ = std::fs::create_dir_all(parent);
 
-        let Ok(raw) = serde_json::to_string(snapshot) else {
+        // Tier 3.2 — wrap the array in a `SessionSnapshot` so a
+        // future schema bump is detectable. The `.messages` field is
+        // byte-identical to the legacy array, so the file is not
+        // substantially larger.
+        let snapshot_owned = snapshot.to_vec();
+        let wrapper = SessionSnapshot {
+            schema_version: SESSION_SCHEMA_VERSION,
+            messages: snapshot_owned,
+        };
+        let Ok(raw) = serde_json::to_string(&wrapper) else {
             return;
         };
 
@@ -2800,8 +2826,27 @@ impl KodApp {
         let Ok(raw) = std::fs::read_to_string(&path) else {
             return 0;
         };
-        let Ok(mut msgs) = serde_json::from_str::<Vec<Message>>(&raw) else {
-            return 0;
+        // Tier 3.2 — accept both the current wrapper shape and the
+        // pre-3.2 bare-array shape. The wrapper is tried first; a
+        // bare array fails its `messages` field and falls through.
+        let mut msgs: Vec<Message> = match serde_json::from_str::<SessionSnapshot>(&raw) {
+            Ok(snap) => {
+                // A future file's schema_version we do not know: the
+                // loader tolerates it (messages parse) but logs so a
+                // downgrade is visible.
+                if snap.schema_version > SESSION_SCHEMA_VERSION {
+                    tracing::warn!(
+                        found = snap.schema_version,
+                        expected = SESSION_SCHEMA_VERSION,
+                        "tui_session.json was written by a newer kod; loading best-effort",
+                    );
+                }
+                snap.messages
+            }
+            Err(_) => match serde_json::from_str::<Vec<Message>>(&raw) {
+                Ok(v) => v,
+                Err(_) => return 0,
+            },
         };
         let n = msgs.len();
         // Restore monotonic sequence after a restart: `next_seq` must
