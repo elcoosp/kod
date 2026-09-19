@@ -267,7 +267,7 @@ fn redact_high_entropy(input: &str, floor: f64) -> (String, Vec<Redaction>) {
     }
     static WORD: OnceLock<Regex> = OnceLock::new();
     static KEYWORD: OnceLock<Regex> = OnceLock::new();
-    let word = WORD.get_or_init(|| Regex::new(r"[A-Za-z0-9/+=_\-]{24,}").unwrap());
+    let word = WORD.get_or_init(|| Regex::new(r"[A-Za-z0-9/+_\-]{24,}").unwrap());
     let keyword = KEYWORD.get_or_init(|| {
         Regex::new(r"(?i)key|token|secret|password|passwd|pwd|api[_-]?key|access[_-]?key").unwrap()
     });
