@@ -17,3 +17,4 @@ docs/brainstorms/*.app
 # Local history-rewrite backups (never commit)
 .git-backup-*/
 wr1.sh
+.git-backup2-*/
