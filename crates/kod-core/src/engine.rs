@@ -2749,6 +2749,112 @@ impl KodEngine {
         }
     }
 
+    /// Ask Jev whether the session has moved to a new phase (P5.5).
+    ///
+    /// Returns `Some((old, new))` when Jev is confident the phase
+    /// changed between the last N turns and now, where N is the
+    /// last `PHASE_WINDOW` user+assistant messages. The labels are
+    /// drawn from a fixed set (`exploring`, `coding`, `debugging`,
+    /// `testing`, `refactoring`, `documenting`).
+    ///
+    /// The caller (`Event::ResponseComplete` in the TUI) uses a
+    /// positive return to suggest `/handoff`.
+    ///
+    /// Returns `None` when Jev is disabled, the transcript is too
+    /// short to judge, the phase is unchanged, or the confidence
+    /// is below `[jev.thresholds].auto_approve_min`.
+    pub async fn detect_phase_change_with_jev(
+        &self,
+        holder: &str,
+    ) -> Option<(String, String)> {
+        const PHASE_WINDOW: usize = 6;
+        let jev = self.jev_client()?;
+        // Pull the recent transcript. Bounded so a long session
+        // does not blow the state.
+        let history = {
+            let g = self.history.read().await;
+            g.get(holder).cloned().unwrap_or_default()
+        };
+        if history.len() < 3 {
+            return None;
+        }
+        let tail: Vec<String> = history
+            .iter()
+            .rev()
+            .take(PHASE_WINDOW)
+            .map(|m| {
+                let role = match m.role {
+                    kod_types::MessageRole::User => "user",
+                    kod_types::MessageRole::Assistant => "assistant",
+                    _ => "other",
+                };
+                format!("{role}: {}", crate::jev::preview_chars(&m.content, 300))
+            })
+            .collect();
+        let transcript_tail = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
+        let state = crate::jev::build_state(&transcript_tail, &[]);
+
+        // Ask the current phase, then the previous phase. Compare
+        // and gate on confidence.
+        let labels = &[
+            "exploring",
+            "coding",
+            "debugging",
+            "testing",
+            "refactoring",
+            "documenting",
+        ];
+        let started = std::time::Instant::now();
+        let now = jev
+            .evaluate_score(
+                &state,
+                "What phase is the session currently in?",
+                labels,
+            )
+            .await
+            .ok()?;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        // Previous phase: use the earliest half of the window as the
+        // state for a second question. Reuses the same Jev client.
+        let earlier: String = transcript_tail
+            .lines()
+            .take(transcript_tail.lines().count() / 2)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let state2 = crate::jev::build_state(&earlier, &[]);
+        let prev = jev
+            .evaluate_score(
+                &state2,
+                "What phase was the session in before the most recent turn?",
+                labels,
+            )
+            .await
+            .ok()?;
+        let confidence = now.confidence.min(prev.confidence);
+        self.log_jev_decision(
+            holder,
+            "phase_detect",
+            &crate::jev::preview_chars(&transcript_tail, 200),
+            "current_phase,previous_phase",
+            serde_json::json!({
+                "current_phase": now.value,
+                "previous_phase": prev.value,
+                "confidence": confidence,
+            }),
+            confidence,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+        if now.value == prev.value {
+            return None;
+        }
+        if confidence < jev.thresholds().auto_approve_min {
+            return None;
+        }
+        Some((prev.value, now.value))
+    }
+
     /// Compress a large `read_file` result by dropping lines Jev
     /// judges irrelevant (P2.2).
     ///

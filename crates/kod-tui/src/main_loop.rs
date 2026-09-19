@@ -754,6 +754,26 @@ impl TuiLoop {
                 if self.persist_history {
                     self.app.save_session();
                 }
+                // P5.5 — after each completed turn, ask Jev whether
+                // the session has moved to a new phase. A confident
+                // change suggests /handoff so the user can reset the
+                // transcript cleanly. The engine returns `None` for
+                // every case where a hint would be noise.
+                if let Some(engine) = self.engine.clone() {
+                    let holder = "session".to_string();
+                    // Cheap synchronous check; the engine handles
+                    // the network call. The hint is non-blocking —
+                    // a busy session just does not show it.
+                    let phase_change = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current()
+                            .block_on(engine.detect_phase_change_with_jev(&holder))
+                    });
+                    if let Some((old, new)) = phase_change {
+                        self.app.push_system_message(&format!(
+                            "(phase changed: {old} → {new}. Consider /handoff to start fresh with a clean context.)"
+                        ));
+                    }
+                }
             }
             Event::TokenUsage(total) => {
                 self.app.note_real_usage(total);
