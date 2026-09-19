@@ -258,6 +258,73 @@ impl JevClient {
         Ok(Decision::jev(p_yes >= 0.5, (p_yes - 0.5).abs() * 2.0))
     }
 
+    /// Ask several yes/no questions about one state in a single
+    /// round-trip. Returns `(label, p_yes)` pairs in the order the
+    /// labels were supplied. An empty label list returns an empty
+    /// vec without a network call.
+    pub async fn evaluate_yes_no_batch(
+        &self,
+        state: &Value,
+        questions: &[(String, String)],
+    ) -> Result<Vec<(String, f32)>, JevError> {
+        if questions.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Cache: one hash of the whole batch, so a repeated batch is
+        // one lookup, not N.
+        let mut cache_buf = String::from("batch|");
+        if let Ok(s) = serde_json::to_string(state) {
+            cache_buf.push_str(&s);
+        }
+        for (k, q) in questions {
+            cache_buf.push('|');
+            cache_buf.push_str(k);
+            cache_buf.push('=');
+            cache_buf.push_str(q);
+        }
+        let cache_hit_key = fnv1a_64(cache_buf.as_bytes());
+        // A dedicated cache slot per batch; store the answers as a
+        // JSON array under a synthetic "score" entry.
+        if let Some(CachedAnswer::Choice { label, .. }) = self.cache_get(cache_hit_key) {
+            // We stored the serialized answers in `label`; decode.
+            if let Ok(v) = serde_json::from_str::<Vec<(String, f32)>>(&label) {
+                return Ok(v);
+            }
+        }
+
+        let mut pairs: Vec<(String, Question)> = Vec::with_capacity(questions.len());
+        for (k, q) in questions {
+            pairs.push((k.clone(), Question::from(Noul::new(q.clone()))));
+        }
+        let request = SystemOneRequest::new(state.clone(), pairs);
+        let response = self
+            .inner
+            .system_one(request)
+            .await
+            .map_err(|e| JevError::Sdk(e.to_string()))?;
+        let nouls = response.nouls();
+        let mut out = Vec::with_capacity(questions.len());
+        for (k, _) in questions {
+            let answer = nouls
+                .get(k.as_str())
+                .ok_or_else(|| JevError::Malformed(format!("no noul answer for key '{k}'")))?;
+            out.push((k.clone(), answer.noul as f32));
+        }
+
+        // Persist the whole batch so the next identical call is free.
+        if let Ok(serialized) = serde_json::to_string(&out) {
+            self.cache_put(
+                cache_hit_key,
+                CachedAnswer::Choice {
+                    label: serialized,
+                    confidence: 1.0,
+                },
+            );
+        }
+        Ok(out)
+    }
+
     /// Ask one ordered-rubric question about `state`. The value is the
     /// winning level from `levels`.
     pub async fn evaluate_score(

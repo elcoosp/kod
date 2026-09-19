@@ -1702,6 +1702,103 @@ impl KodEngine {
         self.jev_client.read().ok().and_then(|g| g.clone())
     }
 
+    /// Pre-filter the tool inventory with Jev (P1.1).
+    ///
+    /// One yes/no question per [`kod_types::ToolCategory`] asks
+    /// "does this request need a category of tool?". Categories with
+    /// a probability at or above `[jev.thresholds].tool_filter_min`
+    /// survive; every other category's definitions are dropped.
+    ///
+    /// Safety valve: a filter that would leave the tool list empty
+    /// returns the full list unchanged — asking a model to act
+    /// without a single tool is never the right answer. Likewise,
+    /// when Jev is disabled or errors, the full list is returned
+    /// (fail-open).
+    ///
+    /// Logs one `SessionEntry::JevDecision` per call.
+    async fn filter_tool_definitions_with_jev(
+        &self,
+        key: &str,
+        input: &str,
+        definitions: Vec<ToolDefinition>,
+    ) -> Vec<ToolDefinition> {
+        let Some(jev) = self.jev_client() else {
+            return definitions;
+        };
+        let threshold = jev.thresholds().tool_filter_min;
+        let state = crate::jev::build_state(input, &[]);
+        let labels = kod_types::ToolCategory::all_labels();
+        let questions: Vec<(String, String)> = labels
+            .iter()
+            .map(|l| {
+                (
+                    (*l).to_string(),
+                    format!("Does the user's request require a {l} tool?"),
+                )
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let decision = jev.evaluate_yes_no_batch(&state, &questions).await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+
+        let (categories, answers_json, confidence, source) = match decision {
+            Ok(pairs) => {
+                let mut cats: Vec<kod_types::ToolCategory> = Vec::new();
+                let mut map = serde_json::Map::new();
+                let mut min_conf = 1.0_f32;
+                for (label, p) in &pairs {
+                    map.insert(label.clone(), serde_json::json!(p));
+                    if *p >= threshold {
+                        if let Some(c) = kod_types::ToolCategory::from_label(label) {
+                            cats.push(c);
+                        }
+                    }
+                    min_conf = min_conf.min((*p - 0.5).abs() * 2.0);
+                }
+                (
+                    cats,
+                    serde_json::Value::Object(map),
+                    min_conf,
+                    crate::jev::DecisionSource::Jev,
+                )
+            }
+            Err(_) => (
+                labels
+                    .iter()
+                    .filter_map(|l| kod_types::ToolCategory::from_label(l))
+                    .collect(),
+                serde_json::json!({}),
+                1.0,
+                crate::jev::DecisionSource::Heuristic,
+            ),
+        };
+
+        let filtered: Vec<ToolDefinition> = definitions
+            .iter()
+            .filter(|d| categories.contains(&d.category))
+            .cloned()
+            .collect();
+
+        let questions_summary = labels.join(",");
+        self.log_jev_decision(
+            key,
+            "tool_filter",
+            input,
+            &questions_summary,
+            answers_json,
+            confidence,
+            elapsed_ms,
+            false,
+            source,
+        );
+
+        if filtered.is_empty() {
+            definitions
+        } else {
+            filtered
+        }
+    }
+
     /// Ask Jev which `TaskType` best describes `input`, and merge
     /// that answer with the keyword heuristic's. The rule is:
     ///
@@ -2460,7 +2557,9 @@ impl KodEngine {
             // Ground the model: where it runs and what it can touch.
             // Without this it claims "no filesystem access" even though
             // tools are wired below.
-            let definitions = self.tools.get_definitions().await;
+            let definitions = self
+                .filter_tool_definitions_with_jev(key, input, self.tools.get_definitions().await)
+                .await;
             let convo = self.ground_prompt(prompt.clone(), &definitions);
 
             // Snapshot the grounded prompt before the loop mutates it
@@ -2747,7 +2846,9 @@ impl KodEngine {
                     });
                 }
             };
-            let definitions = self.tools.get_definitions().await;
+            let definitions = self
+                .filter_tool_definitions_with_jev(key, input, self.tools.get_definitions().await)
+                .await;
             let pending = self.ground_prompt(prompt.clone(), &definitions);
 
             // Snapshot the grounded prompt for /debug last-prompt and
@@ -2995,7 +3096,9 @@ impl KodEngine {
                     });
                 }
             };
-            let definitions = self.tools.get_definitions().await;
+            let definitions = self
+                .filter_tool_definitions_with_jev(key, input, self.tools.get_definitions().await)
+                .await;
             let mut pending = self.ground_prompt(prompt.clone(), &definitions);
             pending.push_str(&format!(
                 "\n## Goal\n\n{goal}\n\nWork turn by turn toward this goal using tools. Do not ask the user for confirmation — act. When the goal is fully reached, end your reply with a line containing exactly GOAL MET and summarize what was done. If a tool errors, work around it and keep going.\n"

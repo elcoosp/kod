@@ -23,6 +23,40 @@ pub enum ToolCategory {
     System,
 }
 
+impl ToolCategory {
+    /// Canonical lowercase label used by the Jev filter and by the
+    /// session log. Stable across builds.
+    pub fn as_label(self) -> &'static str {
+        match self {
+            ToolCategory::FileSystem => "filesystem",
+            ToolCategory::Git => "git",
+            ToolCategory::Web => "web",
+            ToolCategory::Code => "code",
+            ToolCategory::System => "system",
+        }
+    }
+
+    /// Every label, in a stable order. The Jev filter builds one
+    /// yes/no question per label, so this list is the wire contract.
+    pub fn all_labels() -> &'static [&'static str] {
+        &["filesystem", "git", "web", "code", "system"]
+    }
+
+    /// Inverse of [`ToolCategory::as_label`]. `None` for an unknown
+    /// string so a Jev answer we do not know does not silently
+    /// become a category.
+    pub fn from_label(s: &str) -> Option<Self> {
+        match s {
+            "filesystem" => Some(ToolCategory::FileSystem),
+            "git" => Some(ToolCategory::Git),
+            "web" => Some(ToolCategory::Web),
+            "code" => Some(ToolCategory::Code),
+            "system" => Some(ToolCategory::System),
+            _ => None,
+        }
+    }
+}
+
 /// Git capability level. Replaces the pre-D3 `git_operations: bool`.
 ///
 /// - `None`: no git tool runs. The default.
