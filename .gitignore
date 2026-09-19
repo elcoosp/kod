@@ -13,3 +13,7 @@ warnings.txt
 # Stray binaries in docs/brainstorms
 docs/brainstorms/*.zip
 docs/brainstorms/*.app
+
+# Local history-rewrite backups (never commit)
+.git-backup-*/
+wr1.sh
