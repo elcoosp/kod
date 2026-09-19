@@ -49,6 +49,27 @@ const MAX_GOAL_TURNS: usize = 6;
 /// `tools.confirm_writes = false` to skip the prompt entirely.
 const AWAIT_APPROVAL_SECS: u64 = 120;
 
+/// Streaming chunk count between Jev early-termination checks
+/// (P1.2). Every check is a Jev round-trip; running one per
+/// chunk would double the stream's wall time on a fast
+/// provider. Five is the empirical sweet spot: enough
+/// coverage that we rarely miss a completion, few enough
+/// that the network cost stays under 10% of streaming time.
+const EARLY_TERM_CHECK_EVERY_CHUNKS: usize = 5;
+
+/// Minimum accumulated response length (in chars) before an
+/// early-termination check runs. A model that has emitted
+/// fewer than this many characters has not yet said anything
+/// a completion check could meaningfully judge. 400 chars ≈
+/// 100 tokens — the same floor the design document cites.
+const EARLY_TERM_MIN_CHARS: usize = 400;
+
+/// Probability at or above which Jev is considered certain
+/// the response is complete (P1.2). Below `[jev.thresholds]
+/// .early_termination_min`, the stream continues. The default
+/// matches `JevThresholds::default().early_termination_min`.
+const EARLY_TERM_DEFAULT_MIN: f32 = 0.9;
+
 /// Marker prefix for tool-start notices inside the `process_streaming`
 /// chunk channel: `\0kod-tool:<name>\0`. The TUI turns these into its
 /// "running …" indicator instead of chat text (see `parse_tool_start`).
@@ -1731,6 +1752,101 @@ impl KodEngine {
     /// does not hold the lock across an await.
     pub fn jev_client(&self) -> Option<crate::jev::JevClient> {
         self.jev_client.read().ok().and_then(|g| g.clone())
+    }
+
+    /// Should the stream be cut short? Called from `stream_round` on
+    /// every `EARLY_TERM_CHECK_EVERY_CHUNKS`-th chunk after the
+    /// accumulated response reaches `EARLY_TERM_MIN_CHARS`
+    /// (P1.2).
+    ///
+    /// Asks two questions in one round-trip:
+    ///
+    /// * `is_complete`: does the accumulated response fully answer
+    ///   the user's request?
+    /// * `is_off_track`: has the model drifted from the request?
+    ///
+    /// Returns `true` when either clears the configured
+    /// `[jev.thresholds].early_termination_min`. Logs a
+    /// `SessionEntry::JevDecision` on every call — a false positive
+    /// here (cutting a response short) is exactly the failure mode
+    /// the log exists to diagnose.
+    ///
+    /// Fail-open: disabled or errored Jev returns `false` and the
+    /// stream continues to the model's natural terminator.
+    async fn should_early_terminate(
+        &self,
+        key: &str,
+        accumulated: &str,
+    ) -> bool {
+        let Some(jev) = self.jev_client() else {
+            return false;
+        };
+        let Some(request) = self.current_request(key).await else {
+            return false;
+        };
+        // Require at least one full sentence: a model that has
+        // emitted only "Let me" is not done, however confident Jev
+        // sounds about it.
+        if !accumulated.contains(['.', '!', '?', '\n']) {
+            return false;
+        }
+
+        let threshold = jev.thresholds().early_termination_min;
+        let state = crate::jev::build_state(
+            &format!("User request: {request}\nResponse so far: {accumulated}"),
+            &[],
+        );
+        let pairs = [
+            (
+                "is_complete".to_string(),
+                "Does the accumulated response fully answer the user's request?"
+                    .to_string(),
+            ),
+            (
+                "is_off_track".to_string(),
+                "Has the model drifted away from the user's request?".to_string(),
+            ),
+        ];
+        let started = std::time::Instant::now();
+        let result = jev.evaluate_yes_no_batch(&state, &pairs).await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+
+        let (complete_p, off_track_p, source) = match result {
+            Ok(rows) => {
+                let c = rows
+                    .iter()
+                    .find(|(k, _)| k == "is_complete")
+                    .map(|(_, p)| *p)
+                    .unwrap_or(0.0);
+                let o = rows
+                    .iter()
+                    .find(|(k, _)| k == "is_off_track")
+                    .map(|(_, p)| *p)
+                    .unwrap_or(0.0);
+                (c, o, crate::jev::DecisionSource::Jev)
+            }
+            Err(_) => (0.0, 0.0, crate::jev::DecisionSource::Heuristic),
+        };
+
+        let stop = complete_p >= threshold || off_track_p >= threshold;
+        let answers = serde_json::json!({
+            "is_complete": complete_p,
+            "is_off_track": off_track_p,
+            "stop": stop,
+        });
+        let conf = complete_p.max(off_track_p);
+        self.log_jev_decision(
+            key,
+            "early_termination",
+            &crate::jev::preview_chars(accumulated, 200),
+            "is_complete,is_off_track",
+            answers,
+            conf,
+            elapsed_ms,
+            false,
+            source,
+        );
+        stop
     }
 
     /// Ask Jev whether a batch of `Ask`-decision tool calls is safe
@@ -3646,6 +3762,7 @@ impl KodEngine {
                     round.definitions,
                     round.options,
                     chunk_tx,
+                    round.holder,
                 )
                 .await?;
             last_usage = usage.or(last_usage);
@@ -3750,6 +3867,7 @@ impl KodEngine {
         definitions: &[ToolDefinition],
         options: &GenerationOptions,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
+        holder: &str,
     ) -> Result<(String, Vec<ToolCall>, Option<kod_provider::TokenUsage>)> {
         use futures::StreamExt;
         use std::collections::BTreeMap;
@@ -3778,11 +3896,24 @@ impl KodEngine {
         let mut text = String::new();
         let mut partials: BTreeMap<usize, Partial> = BTreeMap::new();
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
+        let mut chunk_count: usize = 0;
         while let Some(item) = stream.next().await {
             match item? {
                 StreamChunk::Text(t) => {
                     text.push_str(&t);
                     let _ = chunk_tx.send(t).await;
+                    chunk_count += 1;
+                    // Early-termination check (P1.2). The
+                    // character floor and the sentence
+                    // requirement are enforced inside the helper;
+                    // the chunk counter here just gates the call
+                    // rate.
+                    if chunk_count % EARLY_TERM_CHECK_EVERY_CHUNKS == 0
+                        && text.len() >= EARLY_TERM_MIN_CHARS
+                        && self.should_early_terminate(holder, &text).await
+                    {
+                        break;
+                    }
                 }
                 StreamChunk::ToolCallStart { index, id, name } => {
                     let entry = partials.entry(index).or_default();
