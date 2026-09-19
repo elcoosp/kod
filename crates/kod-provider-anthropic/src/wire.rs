@@ -770,3 +770,414 @@ mod tests {
         );
     }
 }
+
+/// Coverage for the request builders' optional fields and the
+/// tolerance branches in `messages_array` that the existing tests do
+/// not reach. The SSE parser gets its own module elsewhere; this one
+/// is only about what `build_messages_body` and its helpers emit.
+#[cfg(test)]
+mod coverage_wire_builders {
+    use super::*;
+    use kod_provider::{ModelRef, SystemPrompt};
+    use kod_types::{MessageId, MessageRole, ToolCall, ToolDefinition};
+    use serde_json::json;
+    use time::OffsetDateTime;
+
+    fn ts() -> OffsetDateTime {
+        OffsetDateTime::from_unix_timestamp(0).unwrap()
+    }
+
+    fn assistant_with_calls(text: &str, calls: Vec<ToolCall>) -> ChatMessage {
+        let mut m = ChatMessage::text(
+            MessageId::new(),
+            MessageRole::Assistant,
+            text,
+            ts(),
+        );
+        m.tool_calls = calls;
+        m
+    }
+
+    fn tool_message(content: &str, id: Option<&str>) -> ChatMessage {
+        let mut m = ChatMessage::text(
+            MessageId::new(),
+            MessageRole::Tool,
+            content,
+            ts(),
+        );
+        m.tool_call_id = id.map(String::from);
+        m
+    }
+
+    fn user_message(content: &str) -> ChatMessage {
+        ChatMessage::text(MessageId::new(), MessageRole::User, content, ts())
+    }
+
+    fn a_tool_call(id: Option<&str>, name: &str) -> ToolCall {
+        ToolCall {
+            id: id.map(String::from),
+            tool_name: name.to_string(),
+            arguments: json!({"path": "src/lib.rs"}),
+        }
+    }
+
+    fn a_tool_def(name: &str) -> ToolDefinition {
+        ToolDefinition {
+            id: kod_types::ToolId::new(),
+            name: name.to_string(),
+            description: format!("does {name}"),
+            category: kod_types::ToolCategory::Code,
+            parameters_schema: json!({"type": "object"}),
+            permissions: kod_types::ToolPermissions::default(),
+        }
+    }
+
+    fn base_req() -> CompletionRequest {
+        CompletionRequest::new(ModelRef::new("anthropic", "claude-sonnet-4-5"))
+    }
+
+    // ---- build_messages_body optional fields --------------------------
+
+    #[test]
+    fn body_defaults_max_tokens_to_4096_when_unset() {
+        let req = base_req();
+        let body = build_messages_body(&req);
+        assert_eq!(body["max_tokens"], 4096);
+    }
+
+    #[test]
+    fn body_carries_max_tokens_when_set() {
+        let mut req = base_req();
+        req.options.max_tokens = Some(1024);
+        let body = build_messages_body(&req);
+        assert_eq!(body["max_tokens"], 1024);
+    }
+
+    #[test]
+    fn body_carries_the_model_from_the_model_ref() {
+        let req = CompletionRequest::new(ModelRef::new("endpoint-ignored", "the-model"));
+        let body = build_messages_body(&req);
+        assert_eq!(body["model"], "the-model");
+    }
+
+    #[test]
+    fn body_omits_temperature_when_unset() {
+        // Anthropic's API will use its own default. Sending an
+        // explicit null or a wrong default would override that.
+        let req = base_req();
+        let body = build_messages_body(&req);
+        assert!(
+            body.get("temperature").is_none(),
+            "unset temperature must be omitted, got: {body}",
+        );
+    }
+
+    #[test]
+    fn body_carries_temperature_when_set() {
+        let mut req = base_req();
+        req.options.temperature = Some(0.7);
+        let body = build_messages_body(&req);
+        assert_eq!(body["temperature"], 0.7f32 as f64);
+    }
+
+    #[test]
+    fn body_omits_top_p_when_unset() {
+        let req = base_req();
+        let body = build_messages_body(&req);
+        assert!(body.get("top_p").is_none());
+    }
+
+    #[test]
+    fn body_carries_top_p_when_set() {
+        let mut req = base_req();
+        req.options.top_p = Some(0.9);
+        let body = build_messages_body(&req);
+        assert_eq!(body["top_p"], 0.9f32 as f64);
+    }
+
+    #[test]
+    fn body_omits_stop_sequences_when_empty() {
+        let req = base_req();
+        let body = build_messages_body(&req);
+        assert!(body.get("stop_sequences").is_none());
+    }
+
+    #[test]
+    fn body_carries_stop_sequences_when_present() {
+        let mut req = base_req();
+        req.options.stop_sequences = vec!["STOP".to_string(), "\n\n".to_string()];
+        let body = build_messages_body(&req);
+        let arr = body["stop_sequences"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0], "STOP");
+        assert_eq!(arr[1], "\n\n");
+    }
+
+    #[test]
+    fn body_omits_tools_when_empty() {
+        let req = base_req();
+        let body = build_messages_body(&req);
+        assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn body_includes_tools_when_present() {
+        let mut req = base_req();
+        req.tools = vec![a_tool_def("read_file"), a_tool_def("grep")];
+        let body = build_messages_body(&req);
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0]["name"], "read_file");
+        assert_eq!(tools[1]["name"], "grep");
+        // Anthropic uses `input_schema`; the shape is the tool
+        // definition's `parameters_schema` verbatim.
+        assert_eq!(tools[0]["input_schema"]["type"], "object");
+    }
+
+    #[test]
+    fn body_never_emits_the_stream_key() {
+        // The non-streaming endpoint rejects a `stream: false` on some
+        // proxies; the streaming builder adds it explicitly. The two
+        // bodies must stay distinguishable.
+        let req = base_req();
+        let body = build_messages_body(&req);
+        assert!(
+            body.get("stream").is_none(),
+            "non-streaming body must not carry `stream`: {body}",
+        );
+    }
+
+    // ---- build_streaming_body ----------------------------------------
+
+    #[test]
+    fn streaming_body_sets_stream_true() {
+        let req = base_req();
+        let body = build_streaming_body(&req);
+        assert_eq!(body["stream"], true);
+    }
+
+    #[test]
+    fn streaming_body_has_the_same_non_stream_fields_as_the_plain_body() {
+        // A regression that built the streaming body from scratch
+        // (instead of delegating to `build_messages_body`) would
+        // silently drop an option. Compare a few representative keys
+        // rather than the whole object so the test is not brittle
+        // against unrelated additions.
+        let mut req = base_req();
+        req.options.max_tokens = Some(2048);
+        req.options.temperature = Some(0.5);
+        let plain = build_messages_body(&req);
+        let stream = build_streaming_body(&req);
+        for key in ["model", "max_tokens", "temperature", "system", "messages"] {
+            assert_eq!(stream[key], plain[key], "streaming body dropped `{key}`");
+        }
+        assert!(plain.get("stream").is_none());
+        assert_eq!(stream["stream"], true);
+    }
+
+    // ---- messages_array tolerance branches ----------------------------
+
+    #[test]
+    fn empty_assistant_message_becomes_an_empty_text_block() {
+        // A truly empty assistant turn — the API rejects an empty
+        // content array, so the converter emits one empty text block.
+        // This is the least-wrong placeholder for a caller bug
+        // upstream.
+        let msgs = vec![assistant_with_calls("", vec![])];
+        let arr = messages_array(&msgs);
+        let first = &arr[0];
+        assert_eq!(first["role"], "assistant");
+        let content = first["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "");
+    }
+
+    #[test]
+    fn assistant_with_text_and_tool_calls_emits_text_first() {
+        let msgs = vec![assistant_with_calls(
+            "thinking…",
+            vec![a_tool_call(Some("c1"), "read_file")],
+        )];
+        let arr = messages_array(&msgs);
+        let content = arr[0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2, "text + one tool_use block");
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "thinking…");
+        assert_eq!(content[1]["type"], "tool_use");
+        assert_eq!(content[1]["id"], "c1");
+        assert_eq!(content[1]["name"], "read_file");
+    }
+
+    #[test]
+    fn assistant_tool_call_with_no_id_becomes_an_empty_id_string() {
+        // `unwrap_or_default()` on the call id. A missing id is a
+        // caller bug — the server will reject it — but the converter
+        // must not panic.
+        let msgs = vec![assistant_with_calls(
+            "",
+            vec![a_tool_call(None, "grep")],
+        )];
+        let arr = messages_array(&msgs);
+        let content = arr[0]["content"].as_array().unwrap();
+        // Only the tool_use block (no empty text prefix since the
+        // call exists).
+        let tool_use = content.iter().find(|b| b["type"] == "tool_use").unwrap();
+        assert_eq!(tool_use["id"], "");
+    }
+
+    #[test]
+    fn agent_role_is_treated_as_assistant() {
+        // The transcript should never contain an Agent message, but
+        // if one leaks the converter maps it to assistant rather
+        // than emit an invalid request.
+        let msgs = vec![ChatMessage::text(
+            MessageId::new(),
+            MessageRole::Agent(kod_types::AgentId::new()),
+            "agent says hi",
+            ts(),
+        )];
+        let arr = messages_array(&msgs);
+        assert_eq!(arr[0]["role"], "assistant");
+        assert_eq!(arr[0]["content"][0]["text"], "agent says hi");
+    }
+
+    #[test]
+    fn tool_message_without_a_call_id_uses_an_empty_string() {
+        // Same tolerance as the assistant case: the API rejects an
+        // empty `tool_use_id`, but a local reject is closer to the
+        // caller's bug than a panic.
+        let msgs = vec![tool_message("result body", None)];
+        let arr = messages_array(&msgs);
+        assert_eq!(arr[0]["role"], "user");
+        let block = &arr[0]["content"][0];
+        assert_eq!(block["type"], "tool_result");
+        assert_eq!(block["tool_use_id"], "");
+        assert_eq!(block["content"], "result body");
+    }
+
+    #[test]
+    fn consecutive_assistant_messages_are_merged_into_one_turn() {
+        // Same merge rule as for user messages — the API requires
+        // alternating roles, so two adjacent assistant turns collapse
+        // into one content array.
+        let msgs = vec![
+            assistant_with_calls("first", vec![]),
+            assistant_with_calls("second", vec![]),
+        ];
+        let arr = messages_array(&msgs);
+        assert_eq!(arr.as_array().unwrap().len(), 1, "expected one turn");
+        let content = arr[0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2, "both text blocks preserved");
+        assert_eq!(content[0]["text"], "first");
+        assert_eq!(content[1]["text"], "second");
+    }
+
+    #[test]
+    fn consecutive_tool_messages_are_merged_into_one_user_turn() {
+        // A round of N tool results arrives as N consecutive `Tool`
+        // messages; the API wants one user turn with N `tool_result`
+        // blocks.
+        let msgs = vec![
+            tool_message("result a", Some("c1")),
+            tool_message("result b", Some("c2")),
+        ];
+        let arr = messages_array(&msgs);
+        assert_eq!(arr.as_array().unwrap().len(), 1);
+        assert_eq!(arr[0]["role"], "user");
+        let content = arr[0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["tool_use_id"], "c1");
+        assert_eq!(content[1]["tool_use_id"], "c2");
+    }
+
+    #[test]
+    fn a_full_user_assistant_user_conversation_alternates_roles() {
+        let msgs = vec![
+            user_message("hi"),
+            assistant_with_calls("hello", vec![]),
+            user_message("bye"),
+        ];
+        let arr = messages_array(&msgs);
+        let roles: Vec<&str> = arr
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, vec!["user", "assistant", "user"]);
+    }
+
+    #[test]
+    fn empty_messages_array_is_an_empty_array() {
+        let arr = messages_array(&[]);
+        assert_eq!(arr, json!([]));
+    }
+
+    // ---- system_blocks non-last cacheable segment --------------------
+
+    #[test]
+    fn system_blocks_marks_only_the_last_cacheable_segment() {
+        // Three segments, two cacheable. The marker must land on the
+        // *later* cacheable one — a regression that marked the first,
+        // or marked both, would make the cache split point wrong.
+        let prompt = SystemPrompt::new()
+            .with("first cacheable", true)
+            .with("volatile", false)
+            .with("last cacheable", true);
+        let blocks = system_blocks(&prompt);
+        let arr = blocks.as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+        assert!(arr[0].get("cache_control").is_none(), "first must not be marked");
+        assert!(arr[1].get("cache_control").is_none(), "volatile must not be marked");
+        assert_eq!(arr[2]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn system_blocks_with_all_cacheable_marks_only_the_last() {
+        let prompt = SystemPrompt::new()
+            .with("a", true)
+            .with("b", true)
+            .with("c", true);
+        let blocks = system_blocks(&prompt);
+        let arr = blocks.as_array().unwrap();
+        let marked: Vec<bool> = arr
+            .iter()
+            .map(|b| b.get("cache_control").is_some())
+            .collect();
+        assert_eq!(marked, vec![false, false, true]);
+    }
+
+    #[test]
+    fn system_blocks_preserves_segment_order_in_the_blocks_array() {
+        // The array order is the prompt's cache-prefix order; a
+        // reorder would put the breakpoint after the wrong text.
+        let prompt = SystemPrompt::new()
+            .with("first", true)
+            .with("second", true);
+        let blocks = system_blocks(&prompt);
+        assert_eq!(blocks[0]["text"], "first");
+        assert_eq!(blocks[1]["text"], "second");
+    }
+
+    #[test]
+    fn system_blocks_with_no_segments_is_empty_array() {
+        let prompt = SystemPrompt::new();
+        let blocks = system_blocks(&prompt);
+        assert_eq!(blocks, json!([]));
+    }
+
+    // ---- tools_array edge cases ---------------------------------------
+
+    #[test]
+    fn tools_array_of_empty_slice_is_empty_array() {
+        assert_eq!(tools_array(&[]), json!([]));
+    }
+
+    #[test]
+    fn tools_array_passes_the_description_verbatim() {
+        let t = a_tool_def("custom_tool");
+        let arr = tools_array(&[t]);
+        assert_eq!(arr[0]["description"], "does custom_tool");
+    }
+}
