@@ -1072,6 +1072,9 @@ pub struct KodEngine {
     read_protection: std::sync::RwLock<Option<kod_config::ReadProtection>>,
     /// The redactor used for content sanitization (Tier 1.3).
     redactor: std::sync::Arc<kod_types::redact::Redactor>,
+    /// Session cost accumulator (Tier 1.2). Clone the engine to
+    /// share it with a UI.
+    cost_tracker: crate::cost::CostTracker,
     /// Whether `web_fetch` may reach the network. `AtomicBool` so the
     /// setter works through `&self`, matching the sandbox flag. Off by
     /// default; the CLI and TUI apply `LlmConfig::network_access` at
@@ -1361,6 +1364,7 @@ impl KodEngine {
             sandbox_mode_atomic: std::sync::atomic::AtomicU8::new(2),
             read_protection: std::sync::RwLock::new(None),
             redactor: std::sync::Arc::new(kod_types::redact::Redactor::default()),
+            cost_tracker: crate::cost::CostTracker::new(),
             network_access_atomic: std::sync::atomic::AtomicBool::new(false),
             auto_check_atomic: std::sync::atomic::AtomicBool::new(false),
             auto_lsp_atomic: std::sync::atomic::AtomicBool::new(true),
@@ -1420,6 +1424,16 @@ impl KodEngine {
     /// `execute_command` in `bwrap` or `sandbox-exec`; a missing
     /// primitive fails each such call with a named reason.
     /// Install read-protection rules (Tier 1.3).
+    /// The session cost accumulator (Tier 1.2).
+    pub fn cost_tracker(&self) -> &crate::cost::CostTracker {
+        &self.cost_tracker
+    }
+
+    /// Install the `[limits]` block on the cost tracker (Tier 1.2).
+    pub fn install_limits(&self, cfg: &kod_config::LimitsConfig) {
+        self.cost_tracker.install_config(cfg);
+    }
+
     pub fn set_read_protection(&self, rp: kod_config::ReadProtection) {
         if let Ok(mut slot) = self.read_protection.write() {
             *slot = Some(rp);
