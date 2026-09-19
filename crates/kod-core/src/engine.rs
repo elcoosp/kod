@@ -1303,7 +1303,36 @@ impl KodEngine {
     /// is not part of the production API any more; this helper keeps
     /// the in-crate tests readable without rebuilding a registry at
     /// every call site.
-    #[cfg(test)]
+    
+/// Extract a JSON array of step strings from a model reply that may
+/// carry prose around it (Tier 2.1). Tolerant: first `[` to last `]`,
+/// every element coerced to a string.
+fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
+    let start = text.find('[')?;
+    let end = text.rfind(']')?;
+    if end <= start {
+        return None;
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&text[start..=end]).ok()?;
+    let arr = v.as_array()?;
+    let steps: Vec<String> = arr
+        .iter()
+        .filter_map(|x| {
+            x.as_str()
+                .map(String::from)
+                .or_else(|| x.as_str().map(String::from))
+        })
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    if steps.is_empty() {
+        None
+    } else {
+        Some(steps)
+    }
+}
+
+#[cfg(test)]
     pub(crate) async fn install_test_provider(&self, provider: Arc<dyn LlmProvider>) {
         let mut reg = kod_provider::ProviderRegistry::new();
         reg.insert(
@@ -1522,6 +1551,66 @@ impl KodEngine {
             .or_else(|| map.get("default"))
             .filter(|q| q.per_turn > 0 || q.per_session > 0 || q.per_command > 0)
             .cloned()
+    }
+
+    /// On the first turn of a Complex or MultiStep task, ask the
+    /// model for a step-by-step plan and store it (Tier 2.1).
+    ///
+    /// The plan prompt is deliberately short — the model already has
+    /// the user's request as the input. The result is JSON-parsed
+    /// with a tolerant parser (first `[` to last `]`), the same
+    /// pattern `parse_subtasks` uses for swarm.
+    ///
+    /// Fail-silent: no plan is a valid outcome. A bad Jev signal, a
+    /// short request, or a malformed reply all leave the session
+    /// without a plan, which is the pre-2.1 behaviour.
+    async fn maybe_create_plan(
+        &self,
+        key: &str,
+        input: &str,
+        task_type: crate::router::TaskType,
+        provider: &Arc<dyn LlmProvider>,
+        options: &GenerationOptions,
+    ) {
+        use crate::router::TaskType;
+        if !matches!(task_type, TaskType::Complex | TaskType::MultiStep) {
+            return;
+        }
+        // Do not overwrite an existing plan.
+        if self.plans.read().await.contains_key(key) {
+            return;
+        }
+        // A very short request cannot carry a plan worth generating.
+        if input.len() < 30 {
+            return;
+        }
+        let prompt = format!(
+            "Produce a concise, ordered plan for the request below.\n\
+             Output ONLY a JSON array of strings, one per step.\n\
+             Rules:\n\
+             - 3 to 8 steps.\n\
+             - Each step is one imperative sentence.\n\
+             - No explanations, no headers, no wrapping prose.\n\n\
+             Request: {input}"
+        );
+        let raw = match provider.generate(&prompt, options).await {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::debug!(error = %e, "plan generation skipped");
+                return;
+            }
+        };
+        let Some(steps) = Self::parse_plan_steps(&raw) else {
+            tracing::debug!("plan reply did not contain a JSON array");
+            return;
+        };
+        if steps.is_empty() {
+            return;
+        }
+        let plan = crate::plan::Plan::new(input, steps);
+        let step_count = plan.steps.len();
+        self.set_plan(key, plan).await;
+        tracing::info!(steps = step_count, "plan created");
     }
 
     /// The plan for a transcript, if one has been created (Tier 2.1).
@@ -5270,6 +5359,20 @@ impl KodEngine {
             let task_type = self
                 .refine_task_type_with_jev(key, input, response.task_type)
                 .await;
+            // Tier 2.1 — on Complex/MultiStep tasks, ask the model
+            // for a plan on the first turn. Bounded cost: one short
+            // generation call.
+            {
+                let options_for_plan =
+                    self.generation_defaults.read().await.to_options();
+                if let Ok(provider) = self
+                    .resolve_provider_for_model_ref(&self.current_model.read().await.clone())
+                    .await
+                {
+                    self.maybe_create_plan(key, input, task_type, &provider, &options_for_plan)
+                        .await;
+                }
+            }
             // P4.2 — augment the router's lexical skill match with
             // Jev's semantic scoring. The union keeps every lexical
             // match and adds semantic ones the substring matcher
