@@ -1803,6 +1803,115 @@ impl KodEngine {
         Some(n)
     }
 
+    /// Refine the diagnostic baseline diff with Jev (P4.4).
+    ///
+    /// The syntactic `diag_key` comparison treats a line-shifted
+    /// diagnostic as new — "unused variable `x` at line 42" and
+    /// "unused variable `x` at line 45" hash differently, so the
+    /// second counts as introduced by the write even when it moved
+    /// because an earlier edit added lines. Jev reads the (file,
+    /// code, message) triple and answers whether each "new"
+    /// diagnostic is genuinely new or a shifted version of one in
+    /// the baseline.
+    ///
+    /// The return value is the index set of diagnostics the caller
+    /// should still treat as new. On disabled/errored Jev, every
+    /// index is returned (the syntactic diff stands).
+    ///
+    /// Logged as a JevDecision with `purpose = "diagnostic_triage"`.
+    async fn classify_new_diagnostics_with_jev(
+        &self,
+        key: &str,
+        new_diags: &[&kod_tools::check::Diagnostic],
+        baseline: &[kod_tools::check::Diagnostic],
+    ) -> std::collections::HashSet<usize> {
+        let all: std::collections::HashSet<usize> =
+            (0..new_diags.len()).collect();
+        let Some(jev) = self.jev_client() else {
+            return all;
+        };
+        if new_diags.is_empty() {
+            return all;
+        }
+        // One state carrying the new diagnostics and a compact
+        // rendering of the baseline. The baseline is bounded so a
+        // project with hundreds of pre-existing diagnostics does
+        // not produce a pathological request.
+        let baseline_preview: String = baseline
+            .iter()
+            .take(40)
+            .map(|d| format!("{}:{} [{}] {}", d.file, d.line, d.code.as_deref().unwrap_or("?"), d.message))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let current_preview: String = new_diags
+            .iter()
+            .enumerate()
+            .map(|(i, d)| format!("[{i}] {}:{} [{}] {}", d.file, d.line, d.code.as_deref().unwrap_or("?"), d.message))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let state = crate::jev::build_state(
+            &format!(
+                "Baseline diagnostics (before the write):\n{baseline_preview}\n\nCurrent diagnostics (after the write):\n{current_preview}"
+            ),
+            &[],
+        );
+        // One yes/no per entry: is this genuinely new, or a shifted
+        // duplicate of one in the baseline?
+        let questions: Vec<(String, String)> = new_diags
+            .iter()
+            .enumerate()
+            .map(|(i, d)| {
+                (
+                    format!("diag_{i}"),
+                    format!(
+                        "Is diagnostic [{i}] ({file}:{line} [{code}] {msg}) genuinely new, or the same as one of the baseline diagnostics just at a different line?",
+                        i = i,
+                        file = d.file,
+                        line = d.line,
+                        code = d.code.as_deref().unwrap_or("?"),
+                        msg = d.message,
+                    ),
+                )
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let result = jev.evaluate_yes_no_batch(&state, &questions).await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let (rows, source) = match result {
+            Ok(r) => (r, crate::jev::DecisionSource::Jev),
+            Err(_) => (Vec::new(), crate::jev::DecisionSource::Heuristic),
+        };
+        let threshold = jev.thresholds().task_classify_min;
+        let mut truly_new: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut answers = serde_json::Map::new();
+        for (id, p) in &rows {
+            answers.insert(id.clone(), serde_json::json!(p));
+            if let Some(rest) = id.strip_prefix("diag_")
+                && let Ok(idx) = rest.parse::<usize>()
+                && *p >= threshold
+            {
+                truly_new.insert(idx);
+            }
+        }
+        // Fail-open: if Jev answered nothing, keep the syntactic
+        // verdict (every entry is "new").
+        if rows.is_empty() {
+            return all;
+        }
+        self.log_jev_decision(
+            key,
+            "diagnostic_triage",
+            &format!("{} new diagnostics", new_diags.len()),
+            "genuinely_new",
+            serde_json::Value::Object(answers),
+            1.0,
+            elapsed_ms,
+            false,
+            source,
+        );
+        truly_new
+    }
+
     /// Ask Jev whether each citation in `text` is substantiated by
     /// the cited location (P4.5). The syntactic check in
     /// `citations::check_and_annotate` verifies the file exists and
@@ -5571,10 +5680,33 @@ impl KodEngine {
                     let current_keys: std::collections::HashSet<(String, Option<String>, String)> =
                         diags.iter().map(diag_key).collect();
 
-                    let new_diags: Vec<&kod_tools::check::Diagnostic> = diags
+                    let syntactically_new: Vec<&kod_tools::check::Diagnostic> = diags
                         .iter()
                         .filter(|d| !baseline_keys.contains(&diag_key(d)))
                         .collect();
+                    // P4.4 — ask Jev which of these are genuinely
+                    // new versus shifted copies of a baseline
+                    // diagnostic. Falls through to "all new" when
+                    // Jev is disabled or errors, so the pre-Jev
+                    // behaviour is the fallback.
+                    let new_diags: Vec<&kod_tools::check::Diagnostic> =
+                        if let Some(b) = baseline.as_ref() {
+                            let keep = self
+                                .classify_new_diagnostics_with_jev(
+                                    effective_holder,
+                                    &syntactically_new,
+                                    b,
+                                )
+                                .await;
+                            syntactically_new
+                                .into_iter()
+                                .enumerate()
+                                .filter(|(i, _)| keep.contains(i))
+                                .map(|(_, d)| d)
+                                .collect()
+                        } else {
+                            syntactically_new
+                        };
                     let resolved_count = if baseline.is_some() {
                         baseline_keys
                             .iter()
