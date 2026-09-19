@@ -12,6 +12,7 @@ pub mod cost;
 pub mod context;
 pub mod doctor;
 pub mod engine;
+pub mod decisions;
 pub mod hooks;
 pub mod fixture;
 pub mod jev;
@@ -36,6 +37,7 @@ pub use fixture::{diff_rounds, Fixture, RequestSummary, ResponseFixture, RoundFi
 pub use retry_strategy::{choose_action, RetryAction, TurnFailure};
 pub use tool_quota::{check as check_quota, QuotaVerdict, ToolCounts};
 pub use plan::{Plan, PlanStatus, PlanStep, PlanUpdate};
+pub use decisions::{DecisionAuthor, DecisionKind, DecisionLog, DecisionRecord};
 pub use engine::KodEngine;
 pub use trace::{RoundKind, ToolOutcomeKind, TurnId, TurnOutcome, TurnTrace, TurnTraceBuilder,
 };
