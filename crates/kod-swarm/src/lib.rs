@@ -16,10 +16,12 @@
 //! ```
 
 pub mod agent;
+pub mod blackboard;
 pub mod communication;
 pub mod coordination;
 pub mod swarm;
 
+pub use blackboard::{AuthorKind, Blackboard, BlackboardEntry};
 pub use agent::{Agent, AgentBuilder, AgentState, Capability, ModelConfig};
 pub use communication::{
     AgentCommunicationHub, AgentMessageReceiver, MessageContent, MessageDestination, SwarmMessage,
