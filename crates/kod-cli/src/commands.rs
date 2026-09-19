@@ -6591,6 +6591,91 @@ mod coverage_cli_parsing {
     fn skills_export_without_a_destination_is_rejected() {
         parse_err(&["kod", "skills", "export", "name-only"]);
     }
+
+    #[test]
+    fn fixture_save_parses() {
+        match parse_ok(&["kod", "fixture", "save", "auth"]).command {
+            Some(Command::Fixture {
+                action: FixtureAction::Save { name, turns, force },
+            }) => {
+                assert_eq!(name, "auth");
+                assert!(turns.is_none());
+                assert!(!force);
+            }
+            _ => panic!("expected Fixture::Save"),
+        }
+    }
+
+    #[test]
+    fn fixture_save_accepts_turns_path_and_force() {
+        match parse_ok(&[
+            "kod", "fixture", "save", "auth",
+            "--turns", "/tmp/turns.jsonl",
+            "--force",
+        ])
+        .command
+        {
+            Some(Command::Fixture {
+                action: FixtureAction::Save { name, turns, force },
+            }) => {
+                assert_eq!(name, "auth");
+                assert_eq!(
+                    turns,
+                    Some(std::path::PathBuf::from("/tmp/turns.jsonl"))
+                );
+                assert!(force);
+            }
+            _ => panic!("expected Fixture::Save with flags"),
+        }
+    }
+
+    #[test]
+    fn fixture_replay_parses() {
+        match parse_ok(&["kod", "fixture", "replay", "auth"]).command {
+            Some(Command::Fixture {
+                action: FixtureAction::Replay { name, strict },
+            }) => {
+                assert_eq!(name, "auth");
+                assert!(!strict);
+            }
+            _ => panic!("expected Fixture::Replay"),
+        }
+    }
+
+    #[test]
+    fn fixture_replay_strict_flag() {
+        match parse_ok(&["kod", "fixture", "replay", "auth", "--strict"]).command {
+            Some(Command::Fixture {
+                action: FixtureAction::Replay { strict, .. },
+            }) => assert!(strict),
+            _ => panic!("expected Fixture::Replay with --strict"),
+        }
+    }
+
+    #[test]
+    fn fixture_list_parses() {
+        match parse_ok(&["kod", "fixture", "list"]).command {
+            Some(Command::Fixture {
+                action: FixtureAction::List,
+            }) => {}
+            _ => panic!("expected Fixture::List"),
+        }
+    }
+
+    #[test]
+    fn fixture_without_subcommand_is_rejected() {
+        parse_err(&["kod", "fixture"]);
+    }
+
+    #[test]
+    fn fixture_save_without_a_name_is_rejected() {
+        parse_err(&["kod", "fixture", "save"]);
+    }
+
+    #[test]
+    fn fixture_unknown_subcommand_is_rejected() {
+        parse_err(&["kod", "fixture", "frobnicate"]);
+    }
 }
 
 /// Coverage for the pure rendering helpers that turn messages into
