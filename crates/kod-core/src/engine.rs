@@ -5207,6 +5207,9 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         self.tools
             .register(Box::new(kod_tools::AskUserTool::new()))
             .await;
+        self.tools
+            .register(Box::new(kod_tools::PlanTool::new()))
+            .await;
         // `web_fetch` is registered unconditionally; the per-context
         // `network_access` permission gates the actual call. This is
         // the same shape the git tools use, and it means a future
@@ -7702,7 +7705,25 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             }
         }
 
+        // Tier 2.1 — plan_update interception. The tool cannot reach
+        // the engine's plan map, so we apply the update here and
+        // replace whatever the tool returned.
+        for (i, call) in calls.iter().enumerate() {
+            if call.tool_name != "plan_update" {
+                continue;
+            }
+            let update = serde_json::from_value::<crate::plan::PlanUpdate>(
+                call.arguments.clone(),
+            );
+            let answer = match update {
+                Ok(u) => self.apply_plan_update(effective_holder, u).await,
+                Err(e) => format!("plan_update: invalid arguments: {e}"),
+            };
+            answers.insert(i, answer);
+        }
+
         // P5.3 — semantic outcome classification for interesting
+
         // tool calls. Runs after the raw entries are written so the
         // syntactic trail is always on disk even if Jev is down.
         // Every call is a no-op when Jev is disabled.
