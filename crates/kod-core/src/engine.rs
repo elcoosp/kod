@@ -2749,6 +2749,128 @@ impl KodEngine {
         }
     }
 
+    /// Reweight a `PromptBudget` allocation based on Jev (P2.1).
+    ///
+    /// The base allocation is the fixed 50/20/20/10 split for
+    /// history / skills / memory / repomap. This helper asks Jev
+    /// three yes/no questions — does this round need repomap, full
+    /// history, and skill instructions — and shifts the `remaining`
+    /// budget between sections accordingly. The total is preserved:
+    /// sections only trade, they never grow the prompt.
+    ///
+    /// A section that says "no" contributes its share to the
+    /// sections that said "yes". `memory` always contributes when it
+    /// exists (dropping it has a bigger cost than any tokens saved),
+    /// so it does not get its own question.
+    ///
+    /// Returns `base` unchanged when Jev is disabled, errors, or the
+    /// input is too short to classify.
+    async fn reallocate_with_jev(
+        &self,
+        holder: &str,
+        input: &str,
+        base: &crate::budget::Allocation,
+    ) -> crate::budget::Allocation {
+        let Some(jev) = self.jev_client() else {
+            return *base;
+        };
+        if input.len() < 20 {
+            return *base;
+        }
+        let state = crate::jev::build_state(input, &[]);
+        let pairs = [
+            (
+                "needs_repomap".to_string(),
+                "Does this request need the repository's symbol map?".to_string(),
+            ),
+            (
+                "needs_history".to_string(),
+                "Does this request need the full conversation history?".to_string(),
+            ),
+            (
+                "needs_skills".to_string(),
+                "Does this request need skill instructions?".to_string(),
+            ),
+        ];
+        let started = std::time::Instant::now();
+        let rows = match jev.evaluate_yes_no_batch(&state, &pairs).await {
+            Ok(r) => r,
+            Err(_) => return *base,
+        };
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let get = |k: &str| {
+            rows.iter()
+                .find(|(id, _)| id == k)
+                .map(|(_, p)| *p)
+                .unwrap_or(1.0)
+        };
+        let wants = [
+            get("needs_history"),
+            get("needs_skills"),
+            1.0_f32,
+            get("needs_repomap"),
+        ];
+        let threshold = jev.thresholds().task_classify_min;
+        let total_share: u32 = base.history as u32
+            + base.skills as u32
+            + base.memory as u32
+            + base.repomap as u32;
+        let mut yes_count = 0_u32;
+        for w in &wants {
+            if *w >= threshold {
+                yes_count += 1;
+            }
+        }
+        if yes_count == 0 || total_share == 0 {
+            return *base;
+        }
+        let per_section = total_share / yes_count;
+        let mut leftover = total_share - per_section * yes_count;
+
+        let mut out = crate::budget::Allocation {
+            request: base.request,
+            history: 0,
+            skills: 0,
+            memory: 0,
+            repomap: 0,
+        };
+        let mut give = |slot: &mut usize| {
+            let mut add = per_section as usize;
+            if leftover > 0 {
+                add += 1;
+                leftover -= 1;
+            }
+            *slot = add;
+        };
+        if wants[0] >= threshold { give(&mut out.history); }
+        if wants[1] >= threshold { give(&mut out.skills); }
+        if wants[2] >= threshold { give(&mut out.memory); }
+        if wants[3] >= threshold { give(&mut out.repomap); }
+
+        self.log_jev_decision(
+            holder,
+            "budget_reweight",
+            input,
+            "needs_history,needs_skills,needs_repomap",
+            serde_json::json!({
+                "needs_history": wants[0],
+                "needs_skills": wants[1],
+                "needs_repomap": wants[3],
+                "alloc": {
+                    "history": out.history,
+                    "skills": out.skills,
+                    "memory": out.memory,
+                    "repomap": out.repomap,
+                },
+            }),
+            1.0,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+        out
+    }
+
     /// Filter a whole `MemoryContext` through Jev (P2.5). Applies
     /// `filter_memory_entries_with_jev` to both the working and the
     /// long-term halves, keyed by memory id, and rebuilds the
@@ -4136,7 +4258,14 @@ impl KodEngine {
                 .unwrap_or_else(|| response.skills_used.clone());
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
-            let alloc = self.prompt_allocation(input, &history).await;
+            let base_alloc = self.prompt_allocation(input, &history).await;
+            // P2.1 — modulate the fixed 50/20/20/10 shares with
+            // Jev's per-round read. The total is preserved; only
+            // the split changes.
+            let alloc = match &base_alloc {
+                Ok(a) => Ok(self.reallocate_with_jev(key, input, a).await),
+                Err(e) => Err(*e),
+            };
             let prompt = match &alloc {
                 Ok(a) => {
                     self.router
@@ -4478,7 +4607,14 @@ impl KodEngine {
                 .unwrap_or_else(|| response.skills_used.clone());
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
-            let alloc = self.prompt_allocation(input, &history).await;
+            let base_alloc = self.prompt_allocation(input, &history).await;
+            // P2.1 — modulate the fixed 50/20/20/10 shares with
+            // Jev's per-round read. The total is preserved; only
+            // the split changes.
+            let alloc = match &base_alloc {
+                Ok(a) => Ok(self.reallocate_with_jev(key, input, a).await),
+                Err(e) => Err(*e),
+            };
             let prompt = match &alloc {
                 Ok(a) => {
                     self.router
@@ -4768,7 +4904,14 @@ impl KodEngine {
                 .unwrap_or_else(|| response.skills_used.clone());
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
-            let alloc = self.prompt_allocation(input, &history).await;
+            let base_alloc = self.prompt_allocation(input, &history).await;
+            // P2.1 — modulate the fixed 50/20/20/10 shares with
+            // Jev's per-round read. The total is preserved; only
+            // the split changes.
+            let alloc = match &base_alloc {
+                Ok(a) => Ok(self.reallocate_with_jev(key, input, a).await),
+                Err(e) => Err(*e),
+            };
             let prompt = match &alloc {
                 Ok(a) => {
                     self.router
