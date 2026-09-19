@@ -2749,6 +2749,119 @@ impl KodEngine {
         }
     }
 
+    /// Group approval requests by logical change (P3.2).
+    ///
+    /// One ask per pending call; the answers group calls that Jev
+    /// scores as belonging to the same logical change (`change_a`
+    /// through `change_d`, or `standalone`). The caller uses the
+    /// grouping to present a single dialog with a combined summary
+    /// instead of N dialogs, each of which the user must click
+    /// through.
+    ///
+    /// Returns a map from group label to the indices in the input
+    /// slice. The caller renders one row per group.
+    ///
+    /// Returns an empty map when Jev is disabled or the batch has
+    /// fewer than 2 items.
+    async fn group_approvals_with_jev(
+        &self,
+        holder: &str,
+        calls: &[ToolCall],
+    ) -> std::collections::HashMap<String, Vec<usize>> {
+        let mut out: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        if calls.len() < 2 {
+            return out;
+        }
+        let Some(jev) = self.jev_client() else {
+            return out;
+        };
+        let state = crate::jev::build_state(
+            &format!("Pending approvals: {} items", calls.len()),
+            &[],
+        );
+        let labels = &["change_a", "change_b", "change_c", "standalone"];
+        for (i, call) in calls.iter().enumerate() {
+            let question = format!(
+                "Which logical change does this approval belong to? Call: {} {}",
+                call.tool_name,
+                crate::jev::preview_chars(
+                    &serde_json::to_string(&call.arguments).unwrap_or_default(),
+                    200,
+                ),
+            );
+            let decision = match jev.evaluate_score(&state, &question, labels).await {
+                Ok(d) => d,
+                Err(_) => return out,
+            };
+            out.entry(decision.value).or_default().push(i);
+        }
+        self.log_jev_decision(
+            holder,
+            "approval_group",
+            &format!("{} approvals", calls.len()),
+            "group_per_call",
+            serde_json::json!({
+                "groups": out.iter().map(|(k, v)| (k.clone(), v.len())).collect::<std::collections::HashMap<_,_>>(),
+            }),
+            1.0,
+            0,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+        out
+    }
+
+    /// Ask Jev whether the current round's text is on track (P5.6).
+    ///
+    /// Called from `stream_round` after a partial response has
+    /// accumulated. A confident "off track" (p_yes < 0.5 with
+    /// confidence > `[jev.thresholds].ambiguity_min`) on an early
+    /// round signals the caller may want to fall through to the
+    /// next endpoint in the chain.
+    ///
+    /// Fail-open: disabled/errored Jev returns `None` (keep the
+    /// current provider) — the fallback chain on error paths still
+    /// works as before.
+    async fn provider_quality_looks_off(
+        &self,
+        holder: &str,
+        request: &str,
+        partial: &str,
+    ) -> Option<f32> {
+        let jev = self.jev_client()?;
+        if partial.len() < 200 {
+            return None;
+        }
+        let state = crate::jev::build_state(
+            &format!("User request: {request}\n\nPartial response: {partial}"),
+            &[],
+        );
+        let pairs = [(
+            "on_track".to_string(),
+            "Is the model's response on track to answer the request?".to_string(),
+        )];
+        let started = std::time::Instant::now();
+        let rows = jev
+            .evaluate_yes_no_batch(&state, &pairs)
+            .await
+            .ok()?;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let p_yes = rows.first().map(|(_, p)| *p).unwrap_or(1.0);
+        self.log_jev_decision(
+            holder,
+            "quality_switch",
+            request,
+            "on_track",
+            serde_json::json!({ "on_track": p_yes }),
+            p_yes,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+        Some(p_yes)
+    }
+
     /// Pre-extract handoff facts from a transcript (P4.8).
     ///
     /// Given the transcript's user+assistant messages, ask Jev three
