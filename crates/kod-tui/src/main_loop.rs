@@ -4291,6 +4291,58 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
 
     /// Handle key events
     async fn handle_key(&mut self, key: KeyCode) -> Result<()> {
+        // Command palette (Ctrl+K). When open, every key belongs to
+        // the palette: type filters, arrows move, Enter accepts,
+        // Esc closes. Nothing else on the app sees the key.
+        if self.app.is_palette_open() {
+            match key {
+                KeyCode::Escape | KeyCode::CtrlC => {
+                    self.app.close_palette();
+                    return Ok(());
+                }
+                KeyCode::Enter => {
+                    let entry = self.app.palette_selected_entry();
+                    self.app.close_palette();
+                    if let Some(e) = entry {
+                        // A slash-command entry inserts the command
+                        // into the input box, ready to be completed.
+                        // A key-only entry just shows its key as a
+                        // system message.
+                        if e.insert.starts_with('/') {
+                            self.app.set_input(e.insert.clone());
+                        } else {
+                            self.app.push_system_message(&format!(
+                                "\u{2192} {} ({})",
+                                e.hint, e.insert,
+                            ));
+                        }
+                    }
+                    return Ok(());
+                }
+                KeyCode::Up => {
+                    self.app.palette_prev();
+                    return Ok(());
+                }
+                KeyCode::Down => {
+                    self.app.palette_next();
+                    return Ok(());
+                }
+                KeyCode::Backspace => {
+                    self.app.palette_backspace();
+                    return Ok(());
+                }
+                KeyCode::Char(c) => {
+                    self.app.palette_push_char(c);
+                    return Ok(());
+                }
+                _ => return Ok(()),
+            }
+        }
+        // Ctrl+K opens the palette, unless a modal is up.
+        if matches!(key, KeyCode::CtrlK) && !self.app.is_asking() && !self.app.is_approving() {
+            self.app.open_palette();
+            return Ok(());
+        }
         // Question dialog: while it is up, all printable characters
         // go into the answer buffer, Backspace edits, Enter submits,
         // Esc/Ctrl+C cancels.
