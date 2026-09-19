@@ -1380,6 +1380,8 @@ pub async fn run_chat(
     if let Some(policy) = engine.policy().await {
         engine.set_read_protection(policy.read_protection().clone());
     }
+    // Tier 1.2 — install the session cost caps.
+    engine.install_limits(&config.limits);
     kod_core::mcp_adapters::install_from_config(&engine, &config).await;
 
     // Start the engine

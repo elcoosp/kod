@@ -359,6 +359,8 @@ impl TuiLoop {
         if let Some(policy) = engine.policy().await {
             engine.set_read_protection(policy.read_protection().clone());
         }
+        // Tier 1.2 — install the session cost caps.
+        engine.install_limits(&config.limits);
 
         // Install the Jev (TypeSafe AI) client when enabled. A
         // disabled block (the default) is a silent no-op; an

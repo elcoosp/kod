@@ -4673,6 +4673,10 @@ impl KodEngine {
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
             let cost = pricing.cost_usd(usage.prompt_tokens, usage.completion_tokens);
+            // Tier 1.2 — update the live tracker. Done *before* the
+            // log write so a UI sees the updated spend even if the
+            // recorder fails.
+            self.cost_tracker.record(cost);
             let entry = crate::session_log::SessionEntry::Cost {
                 timestamp_ms: now_ms,
                 holder: holder.to_string(),
