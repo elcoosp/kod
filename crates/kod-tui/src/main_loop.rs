@@ -80,6 +80,7 @@ const SLASH_HELP: &str = "Commands:\n\
 /log — show recent session log entries: /log [N]\n\
 /trace — structured turn traces: /trace [last | list | <id>]\n\
 /trust — show or clear the round's taint: /trust [show | clear]\n\
+/plan — show plan: /plan [next | skip | note <text> | clear]\n\
 /limits — per-tool quotas: /limits [show | reset]\n\
 /budget — session cost and limits: /budget | /budget raise <usd> | /budget reset\n\
 /jev — TypeSafe AI integration: /jev [status | stats | cache clear | test]\n\
@@ -3149,6 +3150,115 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                         ),
                     };
                     self.app.push_system_message(&msg);
+                }
+            }
+            "/plan" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                match parts.next() {
+                    None | Some("show") => {
+                        match engine.plan_for("session").await {
+                            Some(plan) => {
+                                let mut msg = format!("Plan for: {}\n\n", plan.goal);
+                                for step in &plan.steps {
+                                    let marker = match step.status {
+                                        kod_core::PlanStatus::Done => "✓",
+                                        kod_core::PlanStatus::InProgress => "→",
+                                        kod_core::PlanStatus::Blocked => "!",
+                                        kod_core::PlanStatus::Skipped => "·",
+                                        kod_core::PlanStatus::Pending => " ",
+                                    };
+                                    msg.push_str(&format!(
+                                        "{} {}. {}\n",
+                                        marker,
+                                        step.id + 1,
+                                        step.text,
+                                    ));
+                                    if let Some(notes) = plan.notes.get(&step.id) {
+                                        for n in notes {
+                                            msg.push_str(&format!("   note: {n}\n"));
+                                        }
+                                    }
+                                }
+                                msg.push_str(&format!(
+                                    "\nProgress: {:.0}%\n",
+                                    plan.progress() * 100.0,
+                                ));
+                                self.app.push_system_message(msg.trim_end());
+                            }
+                            None => {
+                                self.app.push_system_message(
+                                    "No plan for this session. Plans are created \
+                                     automatically on Complex or MultiStep tasks.",
+                                );
+                            }
+                        }
+                    }
+                    Some("next") => {
+                        let desc = engine
+                            .apply_plan_update(
+                                "session",
+                                kod_core::PlanUpdate::Advance,
+                            )
+                            .await;
+                        self.app.push_system_message(&desc);
+                    }
+                    Some("skip") => {
+                        // Skip == set current step Skipped, then advance.
+                        if let Some(plan) = engine.plan_for("session").await
+                            && let Some(cur) = plan.current_step()
+                        {
+                            let id = cur.id;
+                            let desc = engine
+                                .apply_plan_update(
+                                    "session",
+                                    kod_core::PlanUpdate::SetStatus {
+                                        step_id: id,
+                                        status: kod_core::PlanStatus::Skipped,
+                                    },
+                                )
+                                .await;
+                            self.app.push_system_message(&desc);
+                        } else {
+                            self.app.push_system_message("No current step to skip.");
+                        }
+                    }
+                    Some("note") => {
+                        let note: String = parts.collect::<Vec<_>>().join(" ");
+                        if note.is_empty() {
+                            self.app.push_system_message(
+                                "Usage: /plan note <text>",
+                            );
+                            return Ok(());
+                        }
+                        let Some(plan) = engine.plan_for("session").await else {
+                            self.app.push_system_message("No plan for this session.");
+                            return Ok(());
+                        };
+                        let Some(cur) = plan.current_step() else {
+                            self.app.push_system_message("No current step.");
+                            return Ok(());
+                        };
+                        let id = cur.id;
+                        let desc = engine
+                            .apply_plan_update(
+                                "session",
+                                kod_core::PlanUpdate::Annotate { step_id: id, note },
+                            )
+                            .await;
+                        self.app.push_system_message(&desc);
+                    }
+                    Some("clear") => {
+                        engine.clear_plan("session").await;
+                        self.app.push_system_message("Plan cleared.");
+                    }
+                    Some(other) => {
+                        self.app.push_system_message(&format!(
+                            "Unknown /plan sub-command: {other}. Try /plan, /plan next, /plan skip, /plan note <text>, /plan clear.",
+                        ));
+                    }
                 }
             }
             "/limits" => {
