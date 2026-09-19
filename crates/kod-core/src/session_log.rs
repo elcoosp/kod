@@ -571,7 +571,6 @@ mod coverage_entry_roundtrip {
                 holder: "s".into(),
                 tool_name: "write_file".into(),
                 decision: "approve".into(), edit: None,
-                edit: None,
             },
             SessionEntry::Diagnostics {
                 timestamp_ms: 7,
