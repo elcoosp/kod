@@ -103,6 +103,11 @@ pub enum Event {
     ToolProgress(String),
     /// A running prompt was cancelled (Esc / Ctrl+C / `/cancel`).
     Cancelled,
+    /// P5.6 — the engine abandoned the current endpoint mid-stream
+    /// because Jev flagged the partial response off-track. Drop the
+    /// pending streamed text; the retry against the next endpoint
+    /// will start fresh.
+    StreamReset,
     /// `/handoff` produced its document. The main loop writes the
     /// file, resets the display and the engine transcript, and seeds
     /// the transcript with this text as its only context.

@@ -724,6 +724,9 @@ impl TuiLoop {
             Event::ResponseChunk(chunk) => {
                 self.app.add_response_chunk(&chunk);
             }
+            Event::StreamReset => {
+                self.app.drop_response_stream();
+            }
             Event::ResponseComplete(text) => {
                 self.gen_task = None;
                 self.app.finish_response(&text);
@@ -1233,6 +1236,12 @@ impl TuiLoop {
                             .await;
                     } else if kod_core::engine::is_thinking_marker(&chunk) {
                         let _ = event_tx_chunks.send(Event::Thinking).await;
+                    } else if kod_core::engine::is_stream_reset_marker(&chunk) {
+                        // P5.6 — the engine abandoned the current
+                        // endpoint mid-stream. Drop whatever we
+                        // accumulated so the retry against the next
+                        // endpoint lands in a clean bubble.
+                        let _ = event_tx_chunks.send(Event::StreamReset).await;
                     } else {
                         let _ = event_tx_chunks.send(Event::ResponseChunk(chunk)).await;
                     }

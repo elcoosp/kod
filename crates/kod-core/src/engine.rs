@@ -70,6 +70,43 @@ const EARLY_TERM_MIN_CHARS: usize = 400;
 /// matches `JevThresholds::default().early_termination_min`.
 const EARLY_TERM_DEFAULT_MIN: f32 = 0.9;
 
+/// Sent on the chunk channel when the engine abandons the current
+/// endpoint mid-stream because Jev judged the partial response
+/// off-track (P5.6). The TUI drops whatever it accumulated for
+/// the current attempt so the retry against the next endpoint
+/// starts from a clean bubble. Emitted only from `stream_round`
+/// on the very first round, before any tool call has run, so no
+/// tool row can exist to clean up.
+pub const STREAM_RESET_MARKER: &str = "\0kod-stream-reset\0";
+
+/// The reset-marker chunk.
+pub fn stream_reset_marker() -> String {
+    STREAM_RESET_MARKER.to_string()
+}
+
+/// True for exactly the reset marker (no id, no JSON).
+pub fn is_stream_reset_marker(chunk: &str) -> bool {
+    chunk == STREAM_RESET_MARKER
+}
+
+/// Why `stream_round` decided to stop reading chunks (P1.2 + P5.6).
+///
+/// `Complete` is the classic early termination: the response
+/// already answers the request, drop the rest of the stream. The
+/// caller keeps the text.
+///
+/// `OffTrack` is P5.6's signal: Jev is confident the model
+/// drifted from the request. The caller discards the text and —
+/// when a fallback endpoint remains — retries against it.
+///
+/// `None` is the common case: keep streaming.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EarlyTermination {
+    None,
+    Complete,
+    OffTrack,
+}
+
 /// Marker prefix for tool-start notices inside the `process_streaming`
 /// chunk channel: `\0kod-tool:<name>\0`. The TUI turns these into its
 /// "running …" indicator instead of chat text (see `parse_tool_start`).
@@ -3945,18 +3982,18 @@ impl KodEngine {
         &self,
         key: &str,
         accumulated: &str,
-    ) -> bool {
+    ) -> EarlyTermination {
         let Some(jev) = self.jev_client() else {
-            return false;
+            return EarlyTermination::None;
         };
         let Some(request) = self.current_request(key).await else {
-            return false;
+            return EarlyTermination::None;
         };
         // Require at least one full sentence: a model that has
         // emitted only "Let me" is not done, however confident Jev
         // sounds about it.
         if !accumulated.contains(['.', '!', '?', '\n']) {
-            return false;
+            return EarlyTermination::None;
         }
 
         let threshold = {
@@ -4002,11 +4039,26 @@ impl KodEngine {
             Err(_) => (0.0, 0.0, crate::jev::DecisionSource::Heuristic),
         };
 
-        let stop = complete_p >= threshold || off_track_p >= threshold;
+        // Off-track beats complete when both fire: cutting the
+        // stream is the right local action, but so is signalling
+        // the caller to try a different endpoint. A model that is
+        // confidently wrong on the first try should not be trusted
+        // to finish the sentence.
+        let verdict = if off_track_p >= threshold {
+            EarlyTermination::OffTrack
+        } else if complete_p >= threshold {
+            EarlyTermination::Complete
+        } else {
+            EarlyTermination::None
+        };
         let answers = serde_json::json!({
             "is_complete": complete_p,
             "is_off_track": off_track_p,
-            "stop": stop,
+            "verdict": match verdict {
+                EarlyTermination::None => "none",
+                EarlyTermination::Complete => "complete",
+                EarlyTermination::OffTrack => "off_track",
+            },
         });
         let conf = complete_p.max(off_track_p);
         self.log_jev_decision(
@@ -4020,7 +4072,7 @@ impl KodEngine {
             false,
             source,
         );
-        stop
+        verdict
     }
 
     /// Ask Jev whether a batch of `Ask`-decision tool calls is safe
@@ -5486,8 +5538,30 @@ impl KodEngine {
                     )
                     .await
                 {
-                    Ok(v) => {
-                        outcome = Some(v);
+                    Ok((text, calls, results, usage, retry)) => {
+                        // P5.6 — Jev said the round was off-track. If
+                        // a fallback endpoint remains, keep the
+                        // retry going; otherwise accept the result
+                        // (fail-open: a bad reply is better than no
+                        // reply).
+                        if retry && i + 1 < chain.len() {
+                            let next = &chain[i + 1];
+                            tracing::warn!(
+                                from = %model_ref.display(),
+                                to = %next.display(),
+                                "Jev flagged the reply off-track; trying next endpoint"
+                            );
+                            self.record_model_fallback(
+                                key,
+                                model_ref,
+                                next,
+                                "jev quality gate",
+                            )
+                            .await;
+                            last_err = None;
+                            continue;
+                        }
+                        outcome = Some((text, calls, results, usage));
                         winning_provider = Some(this_provider);
                         winning_model = Some(model_ref.clone());
                         break;
@@ -5793,6 +5867,10 @@ impl KodEngine {
                     Vec<ToolCall>,
                     Vec<ToolResult>,
                     Option<kod_provider::TokenUsage>,
+                    // P5.6 — ignored in the goal loop; only the
+                    // streaming single-turn path uses the retry
+                    // signal.
+                    bool,
                 )> = None;
                 let mut turn_err: Option<KodError> = None;
                 for (i, model_ref) in goal_chain.iter().enumerate() {
@@ -5852,7 +5930,7 @@ impl KodEngine {
                         Err(e) => return Err(e),
                     }
                 }
-                let (final_text, calls, results, usage) =
+                let (final_text, calls, results, usage, _retry) =
                     turn_outcome.ok_or_else(|| turn_err.unwrap_or_else(Self::no_provider_error))?;
                 last_usage = usage.or(last_usage);
                 if !all_text.is_empty() && !final_text.trim().is_empty() {
@@ -6063,6 +6141,10 @@ impl KodEngine {
         Vec<ToolCall>,
         Vec<ToolResult>,
         Option<kod_provider::TokenUsage>,
+        // P5.6 — Jev flagged the round off-track and the caller may
+        // want to retry against the next endpoint. Only ever true on
+        // round 0 (before any tool call has run).
+        bool,
     )> {
         let mut final_text = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
@@ -6116,7 +6198,7 @@ impl KodEngine {
                 options: round.options,
                 holder: round.holder,
             };
-            let (text, calls, usage) = self
+            let (text, calls, usage, off_track) = self
                 .stream_round(
                     &current_provider,
                     round_for_this.system_text,
@@ -6128,6 +6210,20 @@ impl KodEngine {
                     round_for_this.holder,
                 )
                 .await?;
+            // P5.6 — on the very first round, an off-track verdict
+            // is a hard stop: discard the round's text and signal
+            // the caller to try the next endpoint. Emit the reset
+            // marker so the TUI drops what it displayed.
+            if off_track && round_idx == 0 {
+                let _ = chunk_tx.send(stream_reset_marker()).await;
+                return Ok((
+                    String::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    true,
+                ));
+            }
             last_usage = usage.or(last_usage);
             append_round_text(&mut final_text, &text);
             if calls.is_empty() {
@@ -6220,10 +6316,15 @@ impl KodEngine {
                 ))
                 .await;
         }
-        Ok((final_text, tool_calls, tool_results, last_usage))
+        Ok((final_text, tool_calls, tool_results, last_usage, false))
     }
 
     /// One streaming round: forward text live, assemble tool calls from
+    /// Round outcome: text, tool calls, usage, and — new for P5.6 —
+    /// a `retry_suggested` flag. `true` means Jev judged the round
+    /// off-track and the caller may want to try the next endpoint
+    /// with a fresh stream. The text in that case is whatever was
+    /// accumulated before the abort; the caller discards it.
     async fn stream_round(
         &self,
         provider: &Arc<dyn LlmProvider>,
@@ -6234,7 +6335,12 @@ impl KodEngine {
         options: &GenerationOptions,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
         holder: &str,
-    ) -> Result<(String, Vec<ToolCall>, Option<kod_provider::TokenUsage>)> {
+    ) -> Result<(
+        String,
+        Vec<ToolCall>,
+        Option<kod_provider::TokenUsage>,
+        bool,
+    )> {
         use futures::StreamExt;
         use std::collections::BTreeMap;
 
@@ -6263,6 +6369,7 @@ impl KodEngine {
         let mut partials: BTreeMap<usize, Partial> = BTreeMap::new();
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
         let mut chunk_count: usize = 0;
+        let mut retry_suggested = false;
         while let Some(item) = stream.next().await {
             match item? {
                 StreamChunk::Text(t) => {
@@ -6276,9 +6383,15 @@ impl KodEngine {
                     // rate.
                     if chunk_count % EARLY_TERM_CHECK_EVERY_CHUNKS == 0
                         && text.len() >= EARLY_TERM_MIN_CHARS
-                        && self.should_early_terminate(holder, &text).await
                     {
-                        break;
+                        match self.should_early_terminate(holder, &text).await {
+                            EarlyTermination::Complete => break,
+                            EarlyTermination::OffTrack => {
+                                retry_suggested = true;
+                                break;
+                            }
+                            EarlyTermination::None => {}
+                        }
                     }
                 }
                 StreamChunk::ToolCallStart { index, id, name } => {
@@ -6311,7 +6424,7 @@ impl KodEngine {
                 arguments,
             });
         }
-        Ok((text, calls, last_usage))
+        Ok((text, calls, last_usage, retry_suggested))
     }
 
     /// Stream a plain-text summary (tools already ran): forwards chunks live.

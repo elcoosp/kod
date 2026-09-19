@@ -1676,6 +1676,20 @@ impl KodApp {
     /// bubble, keeping the stream open. Called when a tool call starts or
     /// lands so text stays interleaved with tool rows in event order
     /// instead of merging into one giant trailing bubble.
+    /// P5.6 — drop whatever the current streaming attempt has
+    /// accumulated without pushing it as a bubble. Called when the
+    /// engine signals an off-track abort; the next endpoint's
+    /// stream then lands in a clean state. Resets the per-turn
+    /// char counters so `tokens_per_sec` does not report a phantom
+    /// rate from chunks that were thrown away.
+    pub fn drop_response_stream(&mut self) {
+        self.current_response.clear();
+        self.first_chunk_at = None;
+        self.last_chunk_at = None;
+        self.streamed_chars_this_turn = 0;
+        self.set_phase(GenPhase::Connecting);
+    }
+
     pub fn flush_streamed_text(&mut self) {
         let text = Self::trim_blank_lines(&self.current_response);
         self.current_response.clear();
