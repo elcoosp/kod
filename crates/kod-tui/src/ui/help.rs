@@ -55,7 +55,7 @@ impl HelpWidget {
             Self::row(
                 &key,
                 &normal,
-                "Ctrl+U/K/W",
+                "Ctrl+K/U/W",
                 "clear line · cut to end · cut word",
             ),
             Self::row(&key, &normal, "Ctrl+Left/Right", "jump by word"),

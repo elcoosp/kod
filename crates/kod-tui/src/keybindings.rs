@@ -124,6 +124,7 @@ fn parse_action(name: &str) -> Option<KeyAction> {
 pub fn cheat_sheet() -> &'static [(&'static str, &'static str)] {
     &[
         ("i / Esc", "type / back to commands"),
+        ("Ctrl+K", "command palette"),
         ("Enter", "send (Ctrl+J adds a newline)"),
         ("Ctrl+J", "newline in the input box"),
         ("←/→, Ctrl+W/U", "move cursor, delete word/line"),
