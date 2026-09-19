@@ -2729,6 +2729,66 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                             self.app.push_system_message(&msg);
                         }
                     }
+                    Some("eval") => {
+                        // Tier 2.4 — retrieval hit-rate report.
+                        let Some(engine) = &self.engine else {
+                            self.app.push_system_message("Engine not initialized.");
+                            return Ok(());
+                        };
+                        let Some(path) = engine.session_log_path() else {
+                            self.app.push_system_message(
+                                "No session log installed. Set KOD_SESSION_LOG.",
+                            );
+                            return Ok(());
+                        };
+                        match kod_core::session_log::read_session(&path) {
+                            Ok(entries) => {
+                                let mut total = 0_usize;
+                                let mut with_refs = 0_usize;
+                                let mut empty = 0_usize;
+                                for e in &entries {
+                                    if let kod_core::session_log::SessionEntry::MemoryRetrieval {
+                                        retrieved,
+                                        referenced,
+                                        ..
+                                    } = e
+                                    {
+                                        total += 1;
+                                        if retrieved.is_empty() {
+                                            empty += 1;
+                                        }
+                                        if !referenced.is_empty() {
+                                            with_refs += 1;
+                                        }
+                                    }
+                                }
+                                if total == 0 {
+                                    self.app.push_system_message(
+                                        "No memory retrievals logged yet.",
+                                    );
+                                    return Ok(());
+                                }
+                                let rate = if total > 0 {
+                                    with_refs as f64 / total as f64 * 100.0
+                                } else {
+                                    0.0
+                                };
+                                self.app.push_system_message(&format!(
+                                    "Memory retrieval ({} events)\n  \
+                                     with references: {} ({:.0}%)\n  \
+                                     empty: {}\n\n\
+                                     (references are classified by Jev; a \
+                                     follow-up pass fills this in.)",
+                                    total, with_refs, rate, empty,
+                                ));
+                            }
+                            Err(e) => {
+                                self.app.push_system_message(&format!(
+                                    "Could not read session log: {e}",
+                                ));
+                            }
+                        }
+                    }
                     Some("clear") => {
                         let n = self.app.attached_files().len();
                         self.app.clear_attachments();
