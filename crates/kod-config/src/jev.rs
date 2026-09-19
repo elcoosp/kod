@@ -1,0 +1,244 @@
+//! Jev (TypeSafe AI System One) configuration.
+//!
+//! The `[jev]` section of the KOD config controls the optional
+//! TypeSafe AI integration. Every field has a safe default that
+//! keeps the integration disabled until the user opts in — an
+//! unconfigured KOD runs identically to one built before Jev existed.
+//!
+//! The wrapper in `kod-core` reads this struct and turns it into a
+//! concrete client. Nothing in this module performs I/O; it is pure
+//! data so `kod config export` and the `/jev` command can print the
+//! effective settings.
+
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::time::Duration;
+
+/// The whole `[jev]` block. All fields have defaults, so a config
+/// that omits the block entirely still produces a usable (disabled)
+/// `JevConfig`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct JevConfig {
+    /// Master switch. When false, every call site falls back to the
+    /// pre-Jev heuristic without making a network call. Default
+    /// false: Jev is opt-in.
+    pub enabled: bool,
+    /// Explicit API key. When `None`, the client reads
+    /// `TYPESAFE_API_KEY` from the environment. An explicit value
+    /// wins over the environment.
+    pub api_key: Option<String>,
+    /// Override for the TypeSafe API root. When `None`, the client
+    /// uses the SDK default (`https://api.typesafe.ai`).
+    pub base_url: Option<String>,
+    /// Model alias. When `None`, the client uses `jev-latest`.
+    pub model: Option<String>,
+    /// How long a cached decision stays valid, in seconds. A cached
+    /// decision is free — this is the knob that trades memory for
+    /// network calls.
+    pub cache_ttl_secs: u64,
+    /// Per-request timeout in milliseconds. The SDK default is ten
+    /// seconds; KOD's interactive round needs a much tighter budget
+    /// because the decision gates a user-visible action.
+    pub timeout_ms: u64,
+    /// When true (the default), a Jev failure is caught and the
+    /// caller runs its heuristic. When false, the error propagates
+    /// and the caller decides what to do. The default is the safe
+    /// choice: Jev is an optimisation, not a hard dependency.
+    pub fail_open: bool,
+    /// When true, absolute paths in the state are hashed before the
+    /// state is sent to TypeSafe. Trade-off: Jev's judgment gets a
+    /// little weaker, and the user keeps the paths on their machine.
+    pub redact_paths: bool,
+    /// Confidence thresholds for every boolean Jev decision. One
+    /// table so a user can tighten or loosen the whole integration.
+    pub thresholds: JevThresholds,
+    /// Per-round model routing. Keys are the round kinds the engine
+    /// scores (`planning`, `tool_execution`, `synthesis`, `summary`),
+    /// values are endpoint names from `[llm]`. Empty means "no
+    /// per-round routing".
+    pub round_routing: HashMap<String, String>,
+}
+
+impl Default for JevConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key: None,
+            base_url: None,
+            model: None,
+            cache_ttl_secs: 300,
+            timeout_ms: 800,
+            fail_open: true,
+            redact_paths: false,
+            thresholds: JevThresholds::default(),
+            round_routing: HashMap::new(),
+        }
+    }
+}
+
+impl JevConfig {
+    /// True when the integration is switched on. Call sites check
+    /// this before doing anything else so the disabled path never
+    /// touches the network.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// The per-request timeout, floored at 50 ms so a typo cannot
+    /// produce a zero-length timeout that fails on every call.
+    pub fn timeout(&self) -> Duration {
+        Duration::from_millis(self.timeout_ms.max(50))
+    }
+
+    /// The cache TTL as a `Duration`. A TTL of zero disables the
+    /// cache entirely (every lookup misses).
+    pub fn cache_ttl(&self) -> Duration {
+        Duration::from_secs(self.cache_ttl_secs)
+    }
+
+    /// The endpoint name configured for a round kind, if any.
+    pub fn endpoint_for_round(&self, kind: &str) -> Option<&str> {
+        self.round_routing.get(kind).map(String::as_str)
+    }
+}
+
+/// Thresholds for every Jev boolean decision. A probability at or
+/// above the threshold counts as "yes". Values are in `[0.0, 1.0]`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct JevThresholds {
+    pub task_classify_min: f32,
+    pub tool_filter_min: f32,
+    pub early_termination_min: f32,
+    pub auto_approve_min: f32,
+    pub memory_filter_min: f32,
+    pub ambiguity_min: f32,
+}
+
+impl Default for JevThresholds {
+    fn default() -> Self {
+        Self {
+            task_classify_min: 0.6,
+            tool_filter_min: 0.7,
+            early_termination_min: 0.9,
+            auto_approve_min: 0.95,
+            memory_filter_min: 0.7,
+            ambiguity_min: 0.85,
+        }
+    }
+}
+
+impl JevThresholds {
+    /// Clamp every threshold into `[0.0, 1.0]` so a bad config does
+    /// not make every decision fail (or succeed).
+    pub fn clamp(&mut self) {
+        fn c(x: &mut f32) {
+            if !x.is_finite() {
+                *x = 0.5;
+            } else {
+                *x = x.clamp(0.0, 1.0);
+            }
+        }
+        c(&mut self.task_classify_min);
+        c(&mut self.tool_filter_min);
+        c(&mut self.early_termination_min);
+        c(&mut self.auto_approve_min);
+        c(&mut self.memory_filter_min);
+        c(&mut self.ambiguity_min);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_is_disabled_and_fail_open() {
+        let c = JevConfig::default();
+        assert!(!c.enabled);
+        assert!(c.fail_open);
+        assert_eq!(c.cache_ttl_secs, 300);
+        assert_eq!(c.timeout_ms, 800);
+        assert!(c.round_routing.is_empty());
+    }
+
+    #[test]
+    fn thresholds_match_the_documented_values() {
+        let t = JevThresholds::default();
+        assert!((t.task_classify_min - 0.6).abs() < 1e-6);
+        assert!((t.tool_filter_min - 0.7).abs() < 1e-6);
+        assert!((t.early_termination_min - 0.9).abs() < 1e-6);
+        assert!((t.auto_approve_min - 0.95).abs() < 1e-6);
+        assert!((t.memory_filter_min - 0.7).abs() < 1e-6);
+        assert!((t.ambiguity_min - 0.85).abs() < 1e-6);
+    }
+
+    #[test]
+    fn empty_toml_table_uses_all_defaults() {
+        let parsed: JevConfig = toml::from_str("").unwrap();
+        assert!(!parsed.enabled);
+        assert!(parsed.fail_open);
+        assert_eq!(parsed.cache_ttl_secs, 300);
+    }
+
+    #[test]
+    fn full_config_round_trips_through_toml() {
+        let mut c = JevConfig::default();
+        c.enabled = true;
+        c.model = Some("jev-latest".into());
+        c.round_routing.insert("planning".into(), "cloud".into());
+        let s = toml::to_string(&c).unwrap();
+        let back: JevConfig = toml::from_str(&s).unwrap();
+        assert!(back.enabled);
+        assert_eq!(back.model.as_deref(), Some("jev-latest"));
+        assert_eq!(back.endpoint_for_round("planning"), Some("cloud"));
+    }
+
+    #[test]
+    fn timeout_is_floored_at_50ms() {
+        let mut c = JevConfig::default();
+        c.timeout_ms = 0;
+        assert_eq!(c.timeout(), Duration::from_millis(50));
+    }
+
+    #[test]
+    fn every_field_parses_independently() {
+        let s = r#"
+            enabled = true
+            cache_ttl_secs = 60
+            timeout_ms = 250
+            fail_open = false
+            redact_paths = true
+        "#;
+        let c: JevConfig = toml::from_str(s).unwrap();
+        assert!(c.enabled);
+        assert_eq!(c.cache_ttl_secs, 60);
+        assert_eq!(c.timeout_ms, 250);
+        assert!(!c.fail_open);
+        assert!(c.redact_paths);
+    }
+
+    #[test]
+    fn threshold_clamp_handles_out_of_range_values() {
+        let mut t = JevThresholds {
+            task_classify_min: -1.0,
+            tool_filter_min: 2.0,
+            early_termination_min: f32::NAN,
+            auto_approve_min: 0.5,
+            memory_filter_min: 0.7,
+            ambiguity_min: 0.85,
+        };
+        t.clamp();
+        assert_eq!(t.task_classify_min, 0.0);
+        assert_eq!(t.tool_filter_min, 1.0);
+        assert_eq!(t.early_termination_min, 0.5);
+    }
+
+    #[test]
+    fn zero_cache_ttl_disables_the_cache() {
+        let mut c = JevConfig::default();
+        c.cache_ttl_secs = 0;
+        assert_eq!(c.cache_ttl(), Duration::from_secs(0));
+    }
+}

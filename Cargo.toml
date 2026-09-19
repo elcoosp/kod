@@ -89,6 +89,9 @@ proptest = "1.11.0"
 rstest = "0.26.1"
 criterion = "0.5"
 
+# TypeSafe AI / Jev client (git dependency, gilljon/typesafe-ai-rs v0.1.0).
+typesafe-ai-rs = { git = "https://github.com/gilljon/typesafe-ai-rs", tag = "v0.1.0", default-features = false, features = ["rustls-tls"] }
+
 [profile.release]
 opt-level = 3
 lto = true

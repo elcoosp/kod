@@ -2148,6 +2148,7 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+ "typesafe-ai-rs",
  "uuid",
 ]
 
@@ -4137,6 +4138,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",
@@ -4312,6 +4314,22 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "typesafe-ai-rs"
+version = "0.1.0"
+source = "git+https://github.com/gilljon/typesafe-ai-rs?tag=v0.1.0#4eea46f7e3e143bb4c5d26cadac53ee87b14c1c0"
+dependencies = [
+ "bytes",
+ "fastrand",
+ "httpdate",
+ "log",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+]
 
 [[package]]
 name = "unarray"
