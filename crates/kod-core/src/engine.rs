@@ -6580,6 +6580,17 @@ impl KodEngine {
     }
 
     /// Append the environment + tool inventory grounding to a router prompt.
+    /// Look up the trust level of a tool by name (Tier 1.1).
+    async fn tool_trust_level(
+        &self,
+        name: &str,
+    ) -> Option<kod_types::trust::TrustLevel> {
+        let defs = self.tools.get_definitions().await;
+        defs.into_iter()
+            .find(|d| d.name == name)
+            .map(|d| d.trust_level)
+    }
+
     fn ground_prompt(&self, mut prompt: String, definitions: &[ToolDefinition]) -> String {
         prompt.push_str(&format!(
             "\n## Environment\n\n- Working directory: {}\n- OS: {}\n",
@@ -6595,6 +6606,13 @@ impl KodEngine {
                 "\n## Tool use\n\nYou have these tools (function calls, rooted at the working directory above):\n{}\nCall them when you need facts from this machine instead of guessing. Tool outputs return as `## Tool results` blocks — then answer the user.\n",
                 names.join("\n")
             ));
+            // Tier 1.1 — the trust invariant. Injected whenever the
+            // prompt carries a tool inventory, since that is the
+            // precondition for a tool result block later in the turn.
+            // The wording is load-bearing; see TRUST_INVARIANT.
+            prompt.push_str("\n## Trust boundary\n\n");
+            prompt.push_str(kod_types::trust::TRUST_INVARIANT);
+            prompt.push('\n');
         }
         prompt
     }
@@ -7380,10 +7398,21 @@ impl KodEngine {
                     format!("requires confirmation (auto-skipped in TUI): {description}")
                 }
             };
-            block.push_str(&format!(
-                "\n### {} {}\n{}\n",
-                call.tool_name, call.arguments, rendered
-            ));
+            // Tier 1.1 — wrap the rendered result in a source-trust
+            // marker so the model can tell tool output from its own
+            // prior text. `run_tool_calls` does not carry the
+            // definitions slice; look up the level by name.
+            let trust = self
+                .tool_trust_level(&call.tool_name)
+                .await
+                .unwrap_or(kod_types::trust::TrustLevel::ToolTrusted);
+            block.push_str(&format!("\n### {} {}\n", call.tool_name, call.arguments));
+            block.push_str(&trust.open_marker(&call.tool_name, None));
+            block.push('\n');
+            block.push_str(&rendered);
+            block.push('\n');
+            block.push_str(kod_types::trust::TrustLevel::close_marker());
+            block.push('\n');
             results.push(result);
         }
         // Auto-check: when enabled, and at least one of the calls was
