@@ -117,6 +117,7 @@ impl GitStatusTool {
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "git_status".to_string(),
                 description: "Show the repository status: current branch, staged and unstaged changes, and untracked files. Read-only; never modifies the index or the worktree.".to_string(),
@@ -235,6 +236,7 @@ impl GitDiffTool {
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "git_diff".to_string(),
                 description: "Show a diff. By default, the unstaged changes in the worktree. With `staged: true`, the changes already staged for the next commit. `stat: true` returns the summary (`--stat`) instead of the full patch. Optionally restrict to `path`.".to_string(),
@@ -352,6 +354,7 @@ impl GitCommitTool {
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "git_commit".to_string(),
                 description: "Stage the named files and create a commit. This is the only \
@@ -499,6 +502,7 @@ impl GitBranchTool {
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "git_branch".to_string(),
                 description: "List branches, or create a new one. Never deletes, never \

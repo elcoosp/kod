@@ -57,6 +57,7 @@ impl AskUserTool {
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "ask_user".to_string(),
                 description: "Ask the user a question and wait for the answer. Use this \

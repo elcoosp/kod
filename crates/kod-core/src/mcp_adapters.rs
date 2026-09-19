@@ -280,6 +280,7 @@ impl McpToolAdapter {
             server,
             tool_name: def.name,
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::ToolUntrusted,
                 id: ToolId::new(),
                 name: full_name,
                 description,

@@ -52,6 +52,7 @@ impl LspDiagnosticsTool {
     pub fn new(manager: Arc<kod_lsp::LspManager>) -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "lsp_diagnostics".to_string(),
                 description: "Ask the language server for diagnostics on one file. \
@@ -134,6 +135,7 @@ impl LspDefinitionTool {
     pub fn new(manager: Arc<kod_lsp::LspManager>) -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "lsp_definition".to_string(),
                 description: "Ask the language server where the symbol at a given \
@@ -216,6 +218,7 @@ impl LspReferencesTool {
     pub fn new(manager: Arc<kod_lsp::LspManager>) -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "lsp_references".to_string(),
                 description: "Ask the language server for every reference to the \
@@ -308,6 +311,7 @@ impl LspHoverTool {
     pub fn new(manager: Arc<kod_lsp::LspManager>) -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "lsp_hover".to_string(),
                 description: "Ask the language server for its summary of the symbol \

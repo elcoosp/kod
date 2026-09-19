@@ -12,6 +12,13 @@ pub struct ToolDefinition {
     pub category: ToolCategory,
     pub parameters_schema: Value,
     pub permissions: ToolPermissions,
+
+    /// Content trust level for this tool's output (Tier 1.1).
+    /// Defaults to `ToolTrusted` for local tools; a remote tool sets
+    /// `ToolUntrusted`. The engine consults this when rendering the
+    /// prompt block and when computing the round's taint.
+    #[serde(default = "default_trust")]
+    pub trust_level: crate::trust::TrustLevel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -135,6 +142,10 @@ pub struct ToolExecution {
     pub result: ToolResult,
     pub execution_time_ms: u64,
     pub timestamp: String,
+}
+
+fn default_trust() -> crate::trust::TrustLevel {
+    crate::trust::TrustLevel::ToolTrusted
 }
 
 #[cfg(test)]

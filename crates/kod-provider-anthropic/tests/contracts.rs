@@ -227,6 +227,7 @@ async fn complete_uses_input_schema_not_parameters() {
     let provider = provider_for(&mock);
     let mut req = request_with(vec![user("read a file")], SystemPrompt::default());
     req.tools = vec![ToolDefinition {
+        trust_level: kod_types::trust::TrustLevel::default(),
         id: ToolId::new(),
         name: "read_file".into(),
         description: "read a file".into(),

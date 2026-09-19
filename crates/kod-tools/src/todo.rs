@@ -54,6 +54,7 @@ impl TodoTool {
     pub fn new(list: TodoList) -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "todo".to_string(),
                 description: "Maintain a task list for the current session. Call it to \

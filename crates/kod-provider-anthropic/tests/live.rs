@@ -137,6 +137,7 @@ async fn live_tool_use_round_trip() {
         "Use the get_time tool to fetch the current time.",
     )]);
     req.tools = vec![ToolDefinition {
+        trust_level: kod_types::trust::TrustLevel::default(),
         id: ToolId::new(),
         name: "get_time".into(),
         description: "Return the current time in UTC.".into(),

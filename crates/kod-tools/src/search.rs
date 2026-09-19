@@ -23,6 +23,7 @@ impl SearchFilesTool {
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "search_files".to_string(),
                 description: "Search file contents with a regex, returning each match \

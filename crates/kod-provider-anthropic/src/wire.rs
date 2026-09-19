@@ -749,6 +749,7 @@ mod tests {
     fn tools_array_uses_input_schema() {
         use kod_types::{ToolCategory, ToolId, ToolPermissions};
         let tool = ToolDefinition {
+            trust_level: kod_types::trust::TrustLevel::default(),
             id: ToolId::new(),
             name: "read_file".into(),
             description: "read a file".into(),
@@ -823,6 +824,7 @@ mod coverage_wire_builders {
 
     fn a_tool_def(name: &str) -> ToolDefinition {
         ToolDefinition {
+            trust_level: kod_types::trust::TrustLevel::default(),
             id: kod_types::ToolId::new(),
             name: name.to_string(),
             description: format!("does {name}"),

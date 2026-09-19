@@ -32,6 +32,7 @@ impl MemorySaveTool {
     pub fn new(router: Arc<crate::router::TaskRouter>) -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "memory_save".to_string(),
                 description: "Save a fact, preference, or project decision to long-term \
@@ -126,6 +127,7 @@ impl MemorySearchTool {
     pub fn new(router: Arc<crate::router::TaskRouter>) -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "memory_search".to_string(),
                 description: "Search long-term memory for entries that match a query. \

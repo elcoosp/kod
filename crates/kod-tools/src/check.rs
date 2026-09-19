@@ -357,6 +357,7 @@ impl CheckTool {
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "check".to_string(),
                 description: "Run the project's compiler or linter and return structured \

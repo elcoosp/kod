@@ -81,6 +81,7 @@ impl ReadFileTool {
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "read_file".to_string(),
                 description: "Read a file and return its contents".to_string(),
@@ -256,6 +257,7 @@ impl WriteFileTool {
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "write_file".to_string(),
                 description: "Write content to a file".to_string(),
@@ -410,6 +412,7 @@ impl ExecuteCommandTool {
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "execute_command".to_string(),
                 description: "Execute a shell command via `sh -c` on Unix and `cmd /C` on Windows. The command runs in the working directory and inherits no shell aliases or profile; write POSIX syntax on Unix and cmd.exe syntax on Windows.".to_string(),
@@ -658,6 +661,7 @@ impl ListFilesTool {
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "list_files".to_string(),
                 description: "List files in a directory. Respects .gitignore (skips target/, node_modules/, .git, …); results cap at 5000 entries".to_string(),
@@ -868,6 +872,7 @@ impl PatchFileTool {
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "patch_file".to_string(),
                 description: "Apply a unified diff to an existing file. The diff format is `--- a/path`, `+++ b/path`, then one or more `@@ -l,n +l,n @@` hunks with ` ` prefix for context, `-` for removal, `+` for addition. The patch must apply cleanly — a context mismatch is returned as an error with the line and text that failed to match.".to_string(),
@@ -997,6 +1002,7 @@ impl GrepTool {
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "grep".to_string(),
                 description: "Search file contents with a regular expression. Respects .gitignore (skips target/, node_modules/, .git, …); results cap at 500 matches. Use \\b, \\w, [abc], (a|b), etc. — not PCRE lookarounds.".to_string(),
@@ -1188,6 +1194,7 @@ impl FileInfoTool {
     pub fn new() -> Self {
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "file_info".to_string(),
                 description: "Get information about a file".to_string(),

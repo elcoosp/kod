@@ -92,6 +92,7 @@ mod tests {
     impl Tool for TestTool {
         fn definition(&self) -> ToolDefinition {
             ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "test".to_string(),
                 description: "Test tool".to_string(),

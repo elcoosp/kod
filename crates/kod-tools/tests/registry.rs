@@ -10,6 +10,7 @@ struct EchoTool;
 impl Tool for EchoTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
+            trust_level: kod_types::trust::TrustLevel::default(),
             id: ToolId::new(),
             name: "echo".to_string(),
             description: "Echo back the input".to_string(),

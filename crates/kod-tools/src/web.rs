@@ -62,6 +62,7 @@ impl WebFetchTool {
             .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             definition: ToolDefinition {
+                trust_level: kod_types::trust::TrustLevel::ToolUntrusted,
                 id: ToolId::new(),
                 name: "web_fetch".to_string(),
                 description: "Fetch a URL over HTTP/HTTPS and return its text. HTML is \

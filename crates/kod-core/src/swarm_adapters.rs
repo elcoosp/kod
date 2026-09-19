@@ -58,6 +58,7 @@ async fn ensure_registered(hub: &AgentCommunicationHub, agent: &AgentId) {
 /// The shared `ToolDefinition` skeleton for the two swarm tools.
 fn base_definition(name: &str, description: &str, schema: Value) -> ToolDefinition {
     ToolDefinition {
+        trust_level: kod_types::trust::TrustLevel::default(),
         id: ToolId::new(),
         name: name.to_string(),
         description: description.to_string(),
