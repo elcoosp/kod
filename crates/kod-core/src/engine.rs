@@ -1803,6 +1803,70 @@ impl KodEngine {
         Some(n)
     }
 
+    /// Ask Jev whether the reply answers the user's request (P5.4).
+    ///
+    /// Returns a short advisory string to append to the reply when
+    /// Jev is confident the reply is off-track (`answers_the_question
+    /// < 0.5` AND the response is at least 200 chars long). Returns
+    /// `None` for every other case, so a normal reply is unchanged.
+    ///
+    /// Not a hard gate — the reply is still delivered. The advisory
+    /// tells the user *why* they might want to /regenerate, which is
+    /// often more useful than a silent quality score.
+    ///
+    /// Logged as `JevDecision` with `purpose = "quality_gate"`.
+    async fn check_response_quality_with_jev(
+        &self,
+        key: &str,
+        request: &str,
+        response: &str,
+    ) -> Option<String> {
+        if response.len() < 200 {
+            return None;
+        }
+        let jev = self.jev_client()?;
+        let state = crate::jev::build_state(
+            &format!("User request: {request}\n\nAssistant response: {response}"),
+            &[],
+        );
+        let pairs = [
+            (
+                "answers_the_question".to_string(),
+                "Does the assistant's response answer the user's request?"
+                    .to_string(),
+            ),
+        ];
+        let started = std::time::Instant::now();
+        let result = jev.evaluate_yes_no_batch(&state, &pairs).await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let (p_yes, source) = match result {
+            Ok(rows) => (
+                rows.first().map(|(_, p)| *p).unwrap_or(1.0),
+                crate::jev::DecisionSource::Jev,
+            ),
+            Err(_) => (1.0, crate::jev::DecisionSource::Heuristic),
+        };
+        self.log_jev_decision(
+            key,
+            "quality_gate",
+            &crate::jev::preview_chars(request, 200),
+            "answers_the_question",
+            serde_json::json!({ "answers_the_question": p_yes }),
+            p_yes,
+            elapsed_ms,
+            false,
+            source,
+        );
+        if p_yes < 0.5 {
+            Some(format!(
+                "\n\n---\n\n*Note: Jev flagged this reply as possibly off-track                  (confidence the response answers the request: {:.0}%). If it missed                  the point, /regenerate to try again.*",
+                p_yes * 100.0,
+            ))
+        } else {
+            None
+        }
+    }
+
     /// Refine the diagnostic baseline diff with Jev (P4.4).
     ///
     /// The syntactic `diag_key` comparison treats a line-shifted
@@ -3657,6 +3721,21 @@ impl KodEngine {
 
             self.clear_current_request(key).await;
 
+            // P5.4 — response quality gate. Non-blocking: the
+            // reply is delivered unchanged; only an advisory is
+            // appended when Jev is confident the reply missed
+            // the request.
+            let request_text = self
+                .current_request(key)
+                .await
+                .unwrap_or_default();
+            let final_text = match self
+                .check_response_quality_with_jev(key, &request_text, &final_text)
+                .await
+            {
+                Some(advisory) => format!("{final_text}{advisory}"),
+                None => final_text,
+            };
             self.remember_turn_for(key, false, &final_text).await;
 
             return Ok(TaskResponse {
@@ -3941,6 +4020,21 @@ impl KodEngine {
                 final_text
             };
 
+            // P5.4 — response quality gate. Non-blocking: the
+            // reply is delivered unchanged; only an advisory is
+            // appended when Jev is confident the reply missed
+            // the request.
+            let request_text = self
+                .current_request(key)
+                .await
+                .unwrap_or_default();
+            let final_text = match self
+                .check_response_quality_with_jev(key, &request_text, &final_text)
+                .await
+            {
+                Some(advisory) => format!("{final_text}{advisory}"),
+                None => final_text,
+            };
             self.remember_turn_for(key, false, &final_text).await;
 
             return Ok(TaskResponse {
