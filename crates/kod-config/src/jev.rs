@@ -28,8 +28,20 @@ pub struct JevConfig {
     /// `TYPESAFE_API_KEY` from the environment. An explicit value
     /// wins over the environment.
     pub api_key: Option<String>,
-    /// Override for the TypeSafe API root. When `None`, the client
-    /// uses the SDK default (`https://api.typesafe.ai`).
+    /// Override for the TypeSafe API root.
+    ///
+    /// Resolution order (highest precedence first):
+    ///
+    /// 1. `[jev] base_url` — this field. Example: `base_url =
+    ///    "https://api.typesafe.ai"` for the public endpoint, or a
+    ///    self-hosted gateway like `"http://localhost:8080"` or a
+    ///    Vercel AI Gateway URL.
+    /// 2. `TYPESAFE_BASE_URL` environment variable (read by the
+    ///    SDK).
+    /// 3. The SDK default, `https://api.typesafe.ai`.
+    ///
+    /// Whitespace-only values are treated as unset so a placeholder
+    /// in a config file does not produce an invalid request.
     pub base_url: Option<String>,
     /// Model alias. When `None`, the client uses `jev-latest`.
     pub model: Option<String>,

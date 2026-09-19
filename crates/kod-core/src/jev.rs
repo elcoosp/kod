@@ -163,7 +163,10 @@ impl JevClient {
             builder = builder.api_key(k);
         }
         if let Some(u) = cfg.base_url.as_deref() {
-            builder = builder.base_url(u);
+            let trimmed = u.trim();
+            if !trimmed.is_empty() {
+                builder = builder.base_url(trimmed);
+            }
         }
         let inner = builder.build().map_err(|e| JevError::Sdk(e.to_string()))?;
 

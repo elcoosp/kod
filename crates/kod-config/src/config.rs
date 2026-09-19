@@ -22,6 +22,7 @@ impl Default for KodConfig {
             tools: ToolsConfig::default(),
             lsp: LspConfig::default(),
             mcp: crate::McpConfig::default(),
+            jev: crate::JevConfig::default(),
             commands: Default::default(),
         }
     }
@@ -57,6 +58,12 @@ pub struct KodConfig {
     /// section, which is the default — no plugin is registered
     /// unless the user writes a block for it.
     pub mcp: crate::McpConfig,
+    /// TypeSafe AI / Jev integration (design P0.1). Disabled by
+    /// default — an unconfigured KOD runs identically to a
+    /// build that predates the integration. The CLI and TUI
+    /// construct a `JevClient` from this block at startup and
+    /// install it on the engine.
+    pub jev: crate::JevConfig,
     /// User-defined slash commands. A key `foo` registers `/foo <args>`,
     /// whose body is the prompt sent to the model. `{args}` in the
     /// body is replaced by everything after the command name; `{cwd}`
