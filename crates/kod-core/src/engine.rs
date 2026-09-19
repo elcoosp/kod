@@ -2749,6 +2749,137 @@ impl KodEngine {
         }
     }
 
+    /// Compress a large `read_file` result by dropping lines Jev
+    /// judges irrelevant (P2.2).
+    ///
+    /// Only `read_file` benefits meaningfully: the other tools'
+    /// output is already structured (grep results, diffs, JSON) and
+    /// the caller's own caps already handle those. A read_file of
+    /// 400 lines for a task that needs 20 is the common case this
+    /// targets.
+    ///
+    /// Bounded to `MAX_LINES_TO_SCORE` lines. Every line is asked
+    /// about in one batch. Lines scored above `[jev.thresholds]
+    /// .memory_filter_min` are kept; dropped runs are replaced with
+    /// a one-line `… N lines elided` marker so line numbers stay
+    /// meaningful to a caller that wants them.
+    ///
+    /// Returns `None` when Jev is disabled, the result is not a
+    /// `read_file` success, the content is shorter than
+    /// `MIN_LINES_TO_COMPRESS`, or the call errors.
+    async fn compress_tool_result_with_jev(
+        &self,
+        holder: &str,
+        call: &ToolCall,
+        result: &ToolResult,
+    ) -> Option<ToolResult> {
+        const MIN_LINES_TO_COMPRESS: usize = 60;
+        const MAX_LINES_TO_SCORE: usize = 200;
+        let jev = self.jev_client()?;
+        let request = self.current_request(holder).await?;
+        let ToolResult::Success(v) = result else {
+            return None;
+        };
+        if call.tool_name != "read_file" {
+            return None;
+        }
+        let content = v.get("content").and_then(|c| c.as_str())?;
+        let lines: Vec<&str> = content.lines().collect();
+        if lines.len() < MIN_LINES_TO_COMPRESS {
+            return None;
+        }
+        let slice = &lines[..lines.len().min(MAX_LINES_TO_SCORE)];
+
+        let state = crate::jev::build_state(&request, &[]);
+        let questions: Vec<(String, String)> = slice
+            .iter()
+            .enumerate()
+            .map(|(i, line)| {
+                (
+                    format!("line_{i}"),
+                    format!(
+                        "Is this file line relevant to the request? Line: {}",
+                        crate::jev::preview_chars(line, 160),
+                    ),
+                )
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let rows = jev.evaluate_yes_no_batch(&state, &questions).await.ok()?;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let threshold = jev.thresholds().memory_filter_min;
+
+        let mut keep_idx: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+        let mut answers = serde_json::Map::new();
+        for (i, line) in slice.iter().enumerate() {
+            let p = rows
+                .iter()
+                .find(|(id, _)| id == &format!("line_{i}"))
+                .map(|(_, p)| *p)
+                .unwrap_or(1.0);
+            answers.insert(format!("line_{i}"), serde_json::json!(p));
+            if p >= threshold {
+                keep_idx.insert(i);
+            }
+            let _ = line;
+        }
+        // Keep everything past the classification window.
+        for i in slice.len()..lines.len() {
+            keep_idx.insert(i);
+        }
+        let dropped = lines.len() - keep_idx.len();
+        if dropped < 10 {
+            // Not worth the substitution — keep the original.
+            return None;
+        }
+        self.log_jev_decision(
+            holder,
+            "tool_result_compress",
+            &request,
+            "per_line_relevance",
+            serde_json::Value::Object(answers),
+            1.0,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+
+        // Rebuild content with elision markers.
+        let mut out_lines: Vec<String> = Vec::with_capacity(keep_idx.len());
+        let mut i = 0_usize;
+        let mut elided_run = 0_usize;
+        while i < lines.len() {
+            if keep_idx.contains(&i) {
+                if elided_run > 0 {
+                    out_lines.push(format!("… {elided_run} lines elided by Jev"));
+                    elided_run = 0;
+                }
+                out_lines.push(lines[i].to_string());
+            } else {
+                elided_run += 1;
+            }
+            i += 1;
+        }
+        if elided_run > 0 {
+            out_lines.push(format!("… {elided_run} lines elided by Jev"));
+        }
+        let new_content = out_lines.join("\n");
+
+        let mut new_v = v.clone();
+        if let Some(obj) = new_v.as_object_mut() {
+            obj.insert(
+                "content".to_string(),
+                serde_json::Value::String(new_content),
+            );
+            obj.insert(
+                "lines_elided_by_jev".to_string(),
+                serde_json::json!(dropped),
+            );
+        }
+        Some(ToolResult::Success(new_v))
+    }
+
     /// Ask Jev which registered endpoint should serve a task
     /// (P5.2). Returns `None` when Jev is disabled, no registry is
     /// installed, or Jev fails — the caller falls back to the static
@@ -6610,6 +6741,13 @@ impl KodEngine {
                 "write_file" | "patch_file"
             ) {
                 self.filter_diff_hunks_with_jev(effective_holder, &result)
+                    .await
+                    .unwrap_or_else(|| result.clone())
+            } else if call.tool_name == "read_file" {
+                // P2.2 — compress large read_file results by
+                // dropping lines Jev judges irrelevant. `None`
+                // means leave the original untouched.
+                self.compress_tool_result_with_jev(effective_holder, call, &result)
                     .await
                     .unwrap_or_else(|| result.clone())
             } else if matches!(call.tool_name.as_str(), "grep" | "search_files") {
