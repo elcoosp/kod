@@ -96,6 +96,7 @@ fn reads_every_known_variant_and_skips_the_unknown_one() {
             SessionEntry::ToolCall { .. } => {}
             SessionEntry::JevDecision { .. } => {}
             SessionEntry::ToolOutcome { .. } => {}
+            SessionEntry::Redaction { .. } => {}
         }
     }
 }

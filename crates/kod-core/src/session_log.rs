@@ -121,6 +121,16 @@ pub enum SessionEntry {
         error_count: usize,
         warning_count: usize,
     },
+    /// One redaction event, aggregated per rule per write (Tier 1.3).
+    /// Emitted *after* the entry whose payload was redacted, so a
+    /// reader that wants the raw trail sees what fired where.
+    Redaction {
+        timestamp_ms: u64,
+        /// The rule names that fired, with their counts. Aggregated
+        /// over the whole entry so a tool result with three OpenAI
+        /// keys produces one `openai-key: 3` item.
+        rules: Vec<kod_types::redact::Redaction>,
+    },
     /// Semantic classification of a tool call's outcome (P5.3).
     /// Written only when the Jev integration is enabled and the call
     /// ran for at least [`MIN_JEV_CLASSIFY_MS`] — a sub-100ms call is
@@ -180,6 +190,12 @@ pub enum SessionEntry {
 pub struct SessionRecorder {
     path: PathBuf,
     writer: Mutex<std::fs::File>,
+    /// Applied to every entry's payload before serialisation. The
+    /// default uses the built-in rule set; `with_redactor` swaps it.
+    /// The field is never `None` — a caller that wants no redaction
+    /// passes a `Redactor::with_rules(vec![])` and pays a small
+    /// hashmap lookup per line.
+    redactor: kod_types::redact::Redactor,
 }
 
 impl SessionRecorder {
@@ -199,18 +215,89 @@ impl SessionRecorder {
         Ok(Self {
             path,
             writer: Mutex::new(file),
+            redactor: kod_types::redact::Redactor::default(),
         })
+    }
+
+    /// Replace the redactor. A caller that wants a stricter or
+    /// looser rule set builds one and installs it here; the field is
+    /// used for every subsequent `record`.
+    pub fn with_redactor(mut self, redactor: kod_types::redact::Redactor) -> Self {
+        self.redactor = redactor;
+        self
     }
 
     /// Append one entry. Flushes after every write: a crash mid-session
     /// should leave a complete log up to the last call, not a buffered
     /// prefix that `kod replay` cannot parse.
+    ///
+    /// The entry's payload is redacted in place before serialisation
+    /// (Tier 1.3). Redaction counts are appended as one
+    /// `SessionEntry::Redaction` line so `/stats` can report them
+    /// without a second scan.
     pub fn record(&self, entry: &SessionEntry) -> Result<()> {
-        let line =
-            serde_json::to_string(entry).map_err(|e| KodError::Serialization(e.to_string()))?;
-        let mut w = self.writer.lock().unwrap();
-        writeln!(w, "{}", line).map_err(KodError::Io)?;
-        w.flush().map_err(KodError::Io)?;
+        // Clone so we can mutate for redaction without changing the
+        // caller's entry.
+        let mut cloned = entry.clone();
+        let mut redactions: Vec<kod_types::redact::Redaction> = Vec::new();
+        match &mut cloned {
+            SessionEntry::ToolCall { arguments, result, .. } => {
+                redactions.extend(self.redactor.redact_json(arguments));
+                redactions.extend(self.redactor.redact_json(result));
+            }
+            SessionEntry::PolicyDecision { rule, .. } => {
+                let (r, ev) = self.redactor.redact(rule);
+                if !ev.is_empty() {
+                    *rule = r;
+                    redactions.extend(ev);
+                }
+            }
+            SessionEntry::ModelFallback { error, .. } => {
+                let (r, ev) = self.redactor.redact(error);
+                if !ev.is_empty() {
+                    *error = r;
+                    redactions.extend(ev);
+                }
+            }
+            SessionEntry::JevDecision { state_preview, answers, .. } => {
+                let (r, ev) = self.redactor.redact(state_preview);
+                if !ev.is_empty() {
+                    *state_preview = r;
+                    redactions.extend(ev);
+                }
+                redactions.extend(self.redactor.redact_json(answers));
+            }
+            _ => {}
+        }
+        let line = serde_json::to_string(&cloned)
+            .map_err(|e| KodError::Serialization(e.to_string()))?;
+        {
+            let mut w = self.writer.lock().unwrap();
+            writeln!(w, "{}", line).map_err(KodError::Io)?;
+            if !redactions.is_empty() {
+                // Aggregate by rule for a compact line.
+                use std::collections::BTreeMap;
+                let mut agg: BTreeMap<String, usize> = BTreeMap::new();
+                for r in redactions {
+                    *agg.entry(r.rule).or_insert(0) += r.count;
+                }
+                let rules: Vec<kod_types::redact::Redaction> = agg
+                    .into_iter()
+                    .map(|(rule, count)| kod_types::redact::Redaction { rule, count })
+                    .collect();
+                let entry = SessionEntry::Redaction {
+                    timestamp_ms: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0),
+                    rules,
+                };
+                let line = serde_json::to_string(&entry)
+                    .map_err(|e| KodError::Serialization(e.to_string()))?;
+                writeln!(w, "{}", line).map_err(KodError::Io)?;
+            }
+            w.flush().map_err(KodError::Io)?;
+        }
         Ok(())
     }
 
@@ -463,6 +550,13 @@ mod coverage_entry_roundtrip {
                 file: "a.rs".into(),
                 error_count: 2,
                 warning_count: 3,
+            },
+            SessionEntry::Redaction {
+                timestamp_ms: 10,
+                rules: vec![kod_types::redact::Redaction {
+                    rule: "openai-key".to_string(),
+                    count: 2,
+                }],
             },
             SessionEntry::ToolOutcome {
                 timestamp_ms: 9,

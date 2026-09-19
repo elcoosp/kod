@@ -2372,6 +2372,7 @@ name = "kod-types"
 version = "0.1.0"
 dependencies = [
  "compact_str 0.10.0",
+ "regex",
  "rstest",
  "serde",
  "serde_json",

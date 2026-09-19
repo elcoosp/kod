@@ -1,5 +1,6 @@
 pub mod ids;
 pub mod memory;
+pub mod redact;
 pub mod message;
 pub mod skill;
 pub mod tool;

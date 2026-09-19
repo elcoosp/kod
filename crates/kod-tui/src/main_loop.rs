@@ -4425,6 +4425,14 @@ fn format_entry_one_line(entry: &kod_core::session_log::SessionEntry) -> String 
         } => format!(
             "  {holder:>8}  outcome  {tool_name} = {outcome} impact={user_visible_impact} conf={confidence:.2}",
         ),
+        SessionEntry::Redaction { rules, .. } => {
+            let list = rules
+                .iter()
+                .map(|r| format!("{}×{}", r.rule, r.count))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("  ------   redact   {list}")
+        }
     }
 }
 
