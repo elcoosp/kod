@@ -4855,6 +4855,15 @@ fn format_entry_one_line(entry: &kod_core::session_log::SessionEntry) -> String 
                 .join(", ");
             format!("  ------   redact   {list}")
         }
+        SessionEntry::MemoryRetrieval {
+            retrieved,
+            referenced,
+            ..
+        } => format!(
+            "  ------   memory   retrieved={} referenced={}",
+            retrieved.len(),
+            referenced.len(),
+        ),
     }
 }
 

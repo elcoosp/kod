@@ -121,6 +121,27 @@ pub enum SessionEntry {
         error_count: usize,
         warning_count: usize,
     },
+    /// One memory retrieval event (Tier 2.4). Logged per prompt so
+    /// `/memory eval` can compute hit rates and identify queries
+    /// that repeatedly miss.
+    MemoryRetrieval {
+        timestamp_ms: u64,
+        /// Monotonic turn id that triggered the retrieval.
+        turn_id: u64,
+        /// FNV-1a hash of the query text.
+        query_hash: String,
+        /// Retrieved entry ids with their relevance scores, in the
+        /// order they were selected.
+        retrieved: Vec<(String, f32)>,
+        /// Entries the reply actually referenced, as classified by
+        /// Jev. Empty when the classifier did not run.
+        #[serde(default)]
+        referenced: Vec<String>,
+        /// True when the next user message looked like a correction
+        /// of this turn. Filled in on the *next* turn.
+        #[serde(default)]
+        user_corrected: bool,
+    },
     /// One redaction event, aggregated per rule per write (Tier 1.3).
     /// Emitted *after* the entry whose payload was redacted, so a
     /// reader that wants the raw trail sees what fired where.
@@ -550,6 +571,14 @@ mod coverage_entry_roundtrip {
                 file: "a.rs".into(),
                 error_count: 2,
                 warning_count: 3,
+            },
+            SessionEntry::MemoryRetrieval {
+                timestamp_ms: 11,
+                turn_id: 42,
+                query_hash: "deadbeef".into(),
+                retrieved: vec![("mem-1".into(), 0.9), ("mem-2".into(), 0.4)],
+                referenced: vec!["mem-1".into()],
+                user_corrected: false,
             },
             SessionEntry::Redaction {
                 timestamp_ms: 10,
