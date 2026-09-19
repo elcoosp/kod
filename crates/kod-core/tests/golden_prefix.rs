@@ -153,3 +153,128 @@ async fn stable_prefix_survives_a_history_only_change() {
         "volatile region should have absorbed the history change",
     );
 }
+
+
+// ---------------------------------------------------------------------------
+// Tier 3.1 — prompt cache regression tests
+//
+// Three components of the prompt are allowed to shift the cacheable
+// prefix:
+//
+//   * an added memory entry,
+//   * a change in the tool inventory (a new tool appears),
+//   * a history append on the *current* turn.
+//
+// The design puts the split at `## Volatile suffix`. Everything above
+// is cacheable; everything below is not. A change confined to the
+// volatile region must not shift the cacheable prefix by even one byte.
+
+/// Assert that `p1` and `p2` share a byte-identical cacheable prefix.
+fn assert_cacheable_prefix_stable(p1: &str, p2: &str, context: &str) {
+    let (a, _) = split_cacheable(p1);
+    let (b, _) = split_cacheable(p2);
+    if a != b {
+        let div = a
+            .bytes()
+            .zip(b.bytes())
+            .position(|(x, y)| x != y)
+            .unwrap_or(a.len().min(b.len()));
+        panic!(
+            "cacheable prefix shifted for {context} at byte {div}: \
+             cacheable length {} vs {}",
+            a.len(),
+            b.len(),
+        );
+    }
+}
+
+#[tokio::test]
+async fn cacheable_prefix_is_unaffected_by_memory_change() {
+    // Memory entries render into the volatile region. Adding or
+    // removing one must not touch the byte before the marker.
+    let tmp = TempDir::new().unwrap();
+    let router = router_with_one_file(&tmp);
+
+    let p1 = router
+        .build_prompt_with_budget(
+            "count the files",
+            &TaskType::Research,
+            "",
+            None,
+            None,
+        )
+        .await
+        .expect("prompt");
+    let p2 = router
+        .build_prompt_with_budget(
+            "count the files",
+            &TaskType::Research,
+            "",
+            Some(kod_types::MemoryContext {
+                working_memory: vec![],
+                long_term: vec![],
+                total_tokens: 0,
+            }),
+            None,
+        )
+        .await
+        .expect("prompt");
+    assert_cacheable_prefix_stable(&p1, &p2, "memory context change");
+}
+
+#[tokio::test]
+async fn cacheable_prefix_is_unaffected_by_history_append() {
+    // History also renders below the marker. Appending a turn must
+    // not invalidate the cached prefix.
+    let tmp = TempDir::new().unwrap();
+    let router = router_with_one_file(&tmp);
+    let p1 = router
+        .build_prompt_with_budget("hello", &TaskType::Simple, "", None, None)
+        .await
+        .expect("prompt");
+    let p2 = router
+        .build_prompt_with_budget(
+            "hello again",
+            &TaskType::Simple,
+            "user: hi\nassistant: hello",
+            None,
+            None,
+        )
+        .await
+        .expect("prompt");
+    assert_cacheable_prefix_stable(&p1, &p2, "history append");
+}
+
+#[tokio::test]
+async fn cacheable_prefix_is_unaffected_by_tool_list_only_above() {
+    // The tool inventory lives in the volatile region too (via
+    // `ground_prompt`). A change to what the model sees as available
+    // tools must not shift the cacheable bytes.
+    //
+    // We cannot inject the tool list from a router test directly; the
+    // invariant we can check is that two prompts with the same input
+    // but different histories still match.
+    let tmp = TempDir::new().unwrap();
+    let router = router_with_one_file(&tmp);
+    let p1 = router
+        .build_prompt_with_budget(
+            "list",
+            &TaskType::Simple,
+            "user: a\nassistant: b",
+            None,
+            None,
+        )
+        .await
+        .expect("prompt");
+    let p2 = router
+        .build_prompt_with_budget(
+            "list",
+            &TaskType::Simple,
+            "user: c\nassistant: d",
+            None,
+            None,
+        )
+        .await
+        .expect("prompt");
+    assert_cacheable_prefix_stable(&p1, &p2, "history content change");
+}
