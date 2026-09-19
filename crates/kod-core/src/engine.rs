@@ -1075,6 +1075,9 @@ pub struct KodEngine {
     /// Session cost accumulator (Tier 1.2). Clone the engine to
     /// share it with a UI.
     cost_tracker: crate::cost::CostTracker,
+    /// The current round's taint level (Tier 1.1). Escalated by every
+    /// untrusted tool call; reset at the start of every user turn.
+    taint: std::sync::RwLock<kod_types::trust::TrustLevel>,
     /// Whether `web_fetch` may reach the network. `AtomicBool` so the
     /// setter works through `&self`, matching the sandbox flag. Off by
     /// default; the CLI and TUI apply `LlmConfig::network_access` at
@@ -1365,6 +1368,7 @@ impl KodEngine {
             read_protection: std::sync::RwLock::new(None),
             redactor: std::sync::Arc::new(kod_types::redact::Redactor::default()),
             cost_tracker: crate::cost::CostTracker::new(),
+            taint: std::sync::RwLock::new(kod_types::trust::TrustLevel::Assistant),
             network_access_atomic: std::sync::atomic::AtomicBool::new(false),
             auto_check_atomic: std::sync::atomic::AtomicBool::new(false),
             auto_lsp_atomic: std::sync::atomic::AtomicBool::new(true),
@@ -1425,6 +1429,56 @@ impl KodEngine {
     /// primitive fails each such call with a named reason.
     /// Install read-protection rules (Tier 1.3).
     /// The session cost accumulator (Tier 1.2).
+    /// The current round's taint (Tier 1.1). `Assistant` when no
+    /// tool has run in this round.
+    pub fn taint_level(&self) -> kod_types::trust::TrustLevel {
+        match self.taint.read() {
+            Ok(g) => *g,
+            Err(p) => *p.into_inner(),
+        }
+    }
+
+    /// Public taint reset — the user reviewed the content.
+    pub fn clear_taint(&self) {
+        if let Ok(mut g) = self.taint.write() {
+            *g = kod_types::trust::TrustLevel::Assistant;
+        }
+    }
+
+    fn reset_taint(&self) {
+        if let Ok(mut g) = self.taint.write() {
+            *g = kod_types::trust::TrustLevel::Assistant;
+        }
+    }
+
+    fn escalate_taint(&self, level: kod_types::trust::TrustLevel) {
+        if let Ok(mut g) = self.taint.write()
+            && level > *g
+        {
+            *g = level;
+        }
+    }
+
+    /// Tier 1.1 — a call requires escalation only when the round's
+    /// taint is one of the two adversarial levels AND the call is one
+    /// of the high-impact tools. The policy engine has already had
+    /// its chance to deny; this gate converts `Allow` into `Ask`
+    /// under a tainted round.
+    fn requires_approval_for_taint(&self, call: &ToolCall) -> bool {
+        let t = self.taint_level();
+        if !t.is_tainting() {
+            return false;
+        }
+        matches!(
+            call.tool_name.as_str(),
+            "execute_command"
+                | "write_file"
+                | "patch_file"
+                | "git_commit"
+                | "git_branch_create"
+        )
+    }
+
     pub fn cost_tracker(&self) -> &crate::cost::CostTracker {
         &self.cost_tracker
     }
@@ -5424,6 +5478,8 @@ impl KodEngine {
             }
         }
         self.set_current_request(key, input).await;
+        // Tier 1.1 — a fresh user turn clears any prior taint.
+        self.reset_taint();
         // P3.3 — ask Jev whether the request is ambiguous; if so and
         // a streaming consumer is attached, prompt for clarification
         // before the LLM ever sees the request.
@@ -6786,6 +6842,31 @@ impl KodEngine {
         let mut decisions: Vec<(usize, kod_config::PolicyDecision)> = Vec::new();
 
         for (i, call) in calls.iter().enumerate() {
+            // Tier 1.1 — a high-impact tool call under a tainted round
+            // forces an `Ask` regardless of what policy says. The
+            // taint is the stricter signal.
+            if self.requires_approval_for_taint(call) {
+                let decision = kod_config::PolicyDecision {
+                    outcome: kod_config::Decision::Ask,
+                    rule: format!(
+                        "taint escalation: {} under {:?}",
+                        call.tool_name,
+                        self.taint_level(),
+                    ),
+                    source: kod_config::PolicySource::SessionDeny,
+                };
+                decisions.push((i, decision.clone()));
+                match decision.outcome {
+                    kod_config::Decision::Allow => {}
+                    kod_config::Decision::Deny => {
+                        denied.insert(i, decision.rule.clone());
+                    }
+                    kod_config::Decision::Ask => {
+                        need_approval.insert(i);
+                    }
+                }
+                continue;
+            }
             let decision = match &policy {
                 Some(p) => p.decide(
                     &call.tool_name,
@@ -7260,6 +7341,15 @@ impl KodEngine {
                         "could not append session log entry"
                     );
                 }
+            }
+        }
+
+        // Tier 1.1 — every tool that ran escalates the round's
+        // taint to the worse of the current level and the tool's
+        // declared trust. The escalation is synchronous and cheap.
+        for call in calls.iter() {
+            if let Some(t) = self.tool_trust_level(&call.tool_name).await {
+                self.escalate_taint(t);
             }
         }
 
