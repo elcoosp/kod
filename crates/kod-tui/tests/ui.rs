@@ -589,6 +589,7 @@ mod widget_overlays {
             tool_name: tool.to_string(),
             summary: summary.to_string(),
             diff: None,
+            arguments: serde_json::json!({}),
         }
     }
 
@@ -621,6 +622,7 @@ mod widget_overlays {
                 tool_name: "write_file".into(),
                 summary: "src/main.rs".into(),
                 diff: Some("+ new line\n- old line\n context".into()),
+                arguments: serde_json::json!({}),
             }],
             current: 0,
         });

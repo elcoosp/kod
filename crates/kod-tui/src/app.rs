@@ -4897,6 +4897,7 @@ mod coverage_approval_batch {
             tool_name: "write_file".into(),
             summary: format!("write {id}"),
             diff: None,
+            arguments: serde_json::json!({}),
         }
     }
 
