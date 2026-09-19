@@ -1754,6 +1754,55 @@ impl KodEngine {
         self.jev_client.read().ok().and_then(|g| g.clone())
     }
 
+    /// True when a Jev client is installed on this engine.
+    /// Cheap — used by `/jev` and by any UI that wants to
+    /// indicate the integration is live.
+    pub fn jev_enabled(&self) -> bool {
+        self.jev_client.read().map(|g| g.is_some()).unwrap_or(false)
+    }
+
+    /// A short status line for `/jev`. `None` when no client is
+    /// installed.
+    pub fn jev_status(&self) -> Option<String> {
+        let client = self.jev_client()?;
+        let cfg = client.config();
+        Some(format!(
+            "enabled={} model={} cache_ttl={}s cache_entries={} timeout={}ms fail_open={} redact_paths={}",
+            cfg.enabled,
+            cfg.model.as_deref().unwrap_or("jev-latest"),
+            cfg.cache_ttl_secs,
+            client.cache_len(),
+            cfg.timeout_ms,
+            cfg.fail_open,
+            cfg.redact_paths,
+        ))
+    }
+
+    /// The active thresholds for `/jev`, formatted for display.
+    pub fn jev_thresholds_line(&self) -> Option<String> {
+        let client = self.jev_client()?;
+        let t = client.thresholds();
+        Some(format!(
+            "task_classify={:.2} tool_filter={:.2} early_term={:.2} auto_approve={:.2} memory_filter={:.2} ambiguity={:.2}",
+            t.task_classify_min,
+            t.tool_filter_min,
+            t.early_termination_min,
+            t.auto_approve_min,
+            t.memory_filter_min,
+            t.ambiguity_min,
+        ))
+    }
+
+    /// Drop every cached Jev decision. Returns the number of
+    /// entries that were dropped, or `None` when no client is
+    /// installed.
+    pub fn jev_clear_cache(&self) -> Option<usize> {
+        let client = self.jev_client()?;
+        let n = client.cache_len();
+        client.clear_cache();
+        Some(n)
+    }
+
     /// Choose the endpoint for a streaming round (P1.3).
     ///
     /// On the first round of a turn, and on every round after a tool

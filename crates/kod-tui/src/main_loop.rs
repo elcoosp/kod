@@ -78,6 +78,7 @@ const SLASH_HELP: &str = "Commands:\n\
 /fork — save the current chat as a restorable fork: /fork [label]\n\
 /check — run the project compiler/linter (Cargo, tsc, ruff, go vet)\n\
 /log — show recent session log entries: /log [N]\n\
+/jev — TypeSafe AI integration: /jev [status | stats | cache clear | test]\n\
 /pin — pin a message so it survives history compaction: /pin <n>\n\
 /unpin — remove a pin: /unpin <n>\n\
 /handoff — write a handoff document and start a fresh session with it as context\n\
@@ -3063,6 +3064,173 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                     self.app.push_system_message(&msg);
                 }
             }
+            "/jev" => {
+                // Jev (TypeSafe AI) integration control and
+                // observability. Sub-commands:
+                //
+                //   /jev              status line
+                //   /jev stats        decision summary from the
+                //                     session log
+                //   /jev cache clear  drop the in-memory decision
+                //                     cache
+                //   /jev test         smoke check the endpoint
+                //
+                // On/off and threshold changes require a restart;
+                // the config is loaded once at startup. Guidance is
+                // printed so a user who expected those to work
+                // mid-session knows where to edit.
+                let sub = parts.next();
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                match sub {
+                    None | Some("status") => {
+                        match engine.jev_status() {
+                            Some(line) => {
+                                let mut msg =
+                                    format!("Jev status\n  {line}\n");
+                                if let Some(t) = engine.jev_thresholds_line() {
+                                    msg.push_str(&format!("  thresholds: {t}\n"));
+                                }
+                                msg.push_str(
+                                    "\nSub-commands: /jev stats | /jev cache clear | /jev test",
+                                );
+                                self.app.push_system_message(&msg);
+                            }
+                            None => {
+                                self.app.push_system_message(
+                                    "Jev is disabled. Enable it in ~/.kod/config.toml under \
+                                     [jev] enabled = true, and set TYPESAFE_API_KEY (or a key in \
+                                     [jev] api_key). Restart kod after editing.",
+                                );
+                            }
+                        }
+                    }
+                    Some("stats") => {
+                        let Some(path) = engine.session_log_path() else {
+                            self.app.push_system_message(
+                                "No session log installed for this run. \
+                                 Set KOD_SESSION_LOG to enable one.",
+                            );
+                            return Ok(());
+                        };
+                        match kod_core::session_log::read_session(&path) {
+                            Ok(entries) => {
+                                let mut total: usize = 0;
+                                let mut by_source: std::collections::HashMap<String, usize> =
+                                    std::collections::HashMap::new();
+                                let mut by_purpose: std::collections::HashMap<String, usize> =
+                                    std::collections::HashMap::new();
+                                let mut total_latency_ms: u64 = 0;
+                                let mut cached: usize = 0;
+                                for e in &entries {
+                                    if let kod_core::session_log::SessionEntry::JevDecision {
+                                        purpose,
+                                        latency_ms,
+                                        cached: c,
+                                        source,
+                                        ..
+                                    } = e
+                                    {
+                                        total += 1;
+                                        *by_source.entry(source.clone()).or_insert(0) += 1;
+                                        *by_purpose
+                                            .entry(purpose.clone())
+                                            .or_insert(0) += 1;
+                                        total_latency_ms += latency_ms;
+                                        if *c {
+                                            cached += 1;
+                                        }
+                                    }
+                                }
+                                if total == 0 {
+                                    self.app.push_system_message(
+                                        "No Jev decisions recorded in this session log.",
+                                    );
+                                    return Ok(());
+                                }
+                                let mut msg = format!(
+                                    "Jev decisions this session: {total}\n",
+                                );
+                                for (src, n) in by_source.iter() {
+                                    let pct = (*n as f64 / total as f64) * 100.0;
+                                    msg.push_str(&format!(
+                                        "  {:<10} {n:>4}  ({pct:.0}%)\n",
+                                        src,
+                                    ));
+                                }
+                                msg.push_str(&format!(
+                                    "\nCache hits:      {cached} ({}%)\n",
+                                    if total > 0 {
+                                        (cached as f64 / total as f64 * 100.0).round() as u64
+                                    } else {
+                                        0
+                                    },
+                                ));
+                                msg.push_str(&format!(
+                                    "Avg Jev latency: {}ms\n",
+                                    total_latency_ms / total as u64,
+                                ));
+                                msg.push_str("\nBy purpose\n");
+                                let mut rows: Vec<(&String, &usize)> =
+                                    by_purpose.iter().collect();
+                                rows.sort_by(|a, b| b.1.cmp(a.1));
+                                for (p, n) in rows {
+                                    msg.push_str(&format!("  {:<20} {n}\n", p));
+                                }
+                                self.app.push_system_message(msg.trim_end());
+                            }
+                            Err(e) => {
+                                self.app.push_system_message(&format!(
+                                    "Could not read session log: {e}",
+                                ));
+                            }
+                        }
+                    }
+                    Some("cache") => {
+                        match parts.next() {
+                            Some("clear") => match engine.jev_clear_cache() {
+                                Some(n) => self.app.push_system_message(&format!(
+                                    "Cleared {n} cached Jev decision{}. ",
+                                    if n == 1 { "" } else { "s" },
+                                )),
+                                None => self.app.push_system_message(
+                                    "Jev is disabled — nothing to clear.",
+                                ),
+                            },
+                            _ => self.app.push_system_message(
+                                "Usage: /jev cache clear",
+                            ),
+                        }
+                    }
+                    Some("test") => {
+                        if engine.jev_enabled() {
+                            self.app.push_system_message(
+                                "Jev client is installed. First live check runs on the next prompt; \
+                                 /jev stats will show the outcome.",
+                            );
+                        } else {
+                            self.app.push_system_message(
+                                "Jev is disabled. Edit [jev] in ~/.kod/config.toml and restart.",
+                            );
+                        }
+                    }
+                    Some("on") | Some("off") | Some("strict") | Some("balanced")
+                    | Some("lenient") => {
+                        self.app.push_system_message(
+                            "Changing Jev enabled/thresholds requires a restart. \
+                             Edit [jev] in ~/.kod/config.toml, then restart kod.",
+                        );
+                    }
+                    Some(other) => {
+                        self.app.push_system_message(&format!(
+                            "Unknown /jev sub-command: {other}. \
+                             Try /jev, /jev stats, /jev cache clear, /jev test.",
+                        ));
+                    }
+                }
+            }
             "/log" => {
                 // Session log viewer. Reads the recorder's JSONL
                 // file (the one `kod replay` reads) and prints the
@@ -4176,6 +4344,20 @@ fn format_entry_one_line(entry: &kod_core::session_log::SessionEntry) -> String 
             warning_count,
             ..
         } => format!("  ------   lsp   {file} ({error_count}E/{warning_count}W)"),
+        SessionEntry::JevDecision {
+            holder,
+            purpose,
+            confidence,
+            latency_ms,
+            cached,
+            source,
+            ..
+        } => format!(
+            "  {holder:>8}  jev    {purpose} src={source} conf={confidence:.2} ",
+        ) + &format!(
+            "({latency_ms}ms{}))",
+            if *cached { ", cached" } else { "" },
+        ),
     }
 }
 
