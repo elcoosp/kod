@@ -135,6 +135,8 @@ impl ApprovalWidget {
                 Span::styled(" approve  ", Style::default()),
                 Span::styled("n", label_style.add_modifier(Modifier::BOLD)),
                 Span::styled(" deny  ", Style::default()),
+                Span::styled("l", label_style.add_modifier(Modifier::BOLD)),
+                Span::styled(" always  ", Style::default()),
                 Span::styled("a", label_style.add_modifier(Modifier::BOLD)),
                 Span::styled(" never  ", Style::default()),
                 Span::styled("↑/↓", label_style.add_modifier(Modifier::BOLD)),
@@ -148,6 +150,8 @@ impl ApprovalWidget {
                 Span::styled(" approve   ", Style::default()),
                 Span::styled("n / Esc", label_style.add_modifier(Modifier::BOLD)),
                 Span::styled(" deny   ", Style::default()),
+                Span::styled("l", label_style.add_modifier(Modifier::BOLD)),
+                Span::styled(" always   ", Style::default()),
                 Span::styled("a", label_style.add_modifier(Modifier::BOLD)),
                 Span::styled(" never (session)", Style::default()),
             ]));
