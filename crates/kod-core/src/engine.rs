@@ -2749,6 +2749,46 @@ impl KodEngine {
         }
     }
 
+    /// Ask Jev which registered endpoint should serve a task
+    /// (P5.2). Returns `None` when Jev is disabled, no registry is
+    /// installed, or Jev fails — the caller falls back to the static
+    /// `[llm.routing.by_task]` table.
+    ///
+    /// Public so the swarm runner can consult it for a capability
+    /// before the per-round dispatch.
+    pub async fn pick_endpoint_with_jev(&self, task_key: &str) -> Option<ModelRef> {
+        let jev = self.jev_client()?;
+        let registry = self.registry.read().await.clone()?;
+        let names = registry.names();
+        if names.len() < 2 {
+            return None;
+        }
+        let state = crate::jev::build_state(
+            &format!("Task type: {task_key}"),
+            &[],
+        );
+        let started = std::time::Instant::now();
+        let labels: Vec<&str> = names.iter().map(String::as_str).collect();
+        let decision = jev
+            .evaluate_score(&state, "Which endpoint should handle this task?", &labels)
+            .await
+            .ok()?;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let model = registry.default_model(&decision.value)?;
+        self.log_jev_decision(
+            DEFAULT_TRANSCRIPT_KEY,
+            "endpoint_routing",
+            task_key,
+            "endpoint",
+            serde_json::json!({ "endpoint": decision.value }),
+            decision.confidence,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+        Some(ModelRef::new(decision.value, model))
+    }
+
     /// Semantic swarm overlap check (P4.7). Given the parsed
     /// subtasks, ask Jev which pairs touch the same conceptual file
     /// even when their globs do not share a prefix. Returns a list
@@ -3943,6 +3983,15 @@ impl KodEngine {
 
         let mut chain: Vec<ModelRef> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // P5.2 — Jev's dynamic routing decision, when available,
+        // goes first. The static table's entry, if any, still
+        // appears in the chain as a fallback.
+        if let Some(primary) = self.pick_endpoint_with_jev(task_key).await {
+            if seen.insert(primary.endpoint.clone()) {
+                chain.push(primary);
+            }
+        }
 
         if let Some(r) = &routing
             && let Some(primary) = r.by_task.get(task_key)
