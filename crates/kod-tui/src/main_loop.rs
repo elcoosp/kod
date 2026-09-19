@@ -2576,7 +2576,21 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                 self.app.begin_generation();
                 self.app.push_system_message("Generating handoff document…");
                 let event_tx = self.event_handler.sender();
+                // P4.8 — pre-extract the durable facts with Jev
+                // before the LLM reads the transcript. Empty when
+                // Jev is disabled; the LLM then does the extraction
+                // itself as before.
+                let facts = engine.extract_handoff_facts_with_jev(&transcript).await;
                 tokio::spawn(async move {
+                    let facts_block = if facts.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "\n\nPre-extracted facts (already vetted by a prior pass; \n\
+                             use them as the source of truth for the sections below):\n\n{}\n",
+                            facts.join("\n"),
+                        )
+                    };
                     let prompt = format!(
                         "Produce a handoff document for the coding session \
                          below. Use exactly these markdown sections, in this \
@@ -2593,7 +2607,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                          - Next steps: concrete, imperative, at most 6 \
                            bullets.\n\
                          - Key files: paths only, one per line, no prose.\n\
-                         - Be terse. No introduction, no closing.\n\n\
+                         - Be terse. No introduction, no closing.{facts_block}\n\
                          Session:\n\n{transcript}",
                     );
                     match engine.process(&prompt).await {

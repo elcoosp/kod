@@ -2749,6 +2749,123 @@ impl KodEngine {
         }
     }
 
+    /// Pre-extract handoff facts from a transcript (P4.8).
+    ///
+    /// Given the transcript's user+assistant messages, ask Jev three
+    /// yes/no questions per message:
+    ///
+    /// * `is_decision` — does this message contain a durable decision?
+    /// * `is_unfinished_task` — does this message describe an
+    ///   unfinished task?
+    /// * `is_file_reference` — does this message reference a file
+    ///   path?
+    ///
+    /// The messages that score above threshold on any question are
+    /// returned in their original order, tagged with which categories
+    /// they matched. The `/handoff` command embeds this list in the
+    /// LLM prompt so the model has a curated list of the durable
+    /// facts to render, instead of having to re-read every turn.
+    ///
+    /// Bounded to `MAX_MESSAGES` messages. Returns an empty vec when
+    /// Jev is disabled or errors, and the caller falls back to its
+    /// current behaviour.
+    pub async fn extract_handoff_facts_with_jev(
+        &self,
+        transcript: &str,
+    ) -> Vec<String> {
+        const MAX_MESSAGES: usize = 40;
+        let Some(jev) = self.jev_client() else {
+            return Vec::new();
+        };
+        // Split the transcript into paragraph-sized chunks. The
+        // handoff input comes in as one markdown string; splitting on
+        // double newlines produces one message per turn in the
+        // format the TUI exports.
+        let chunks: Vec<&str> = transcript
+            .split("\n\n")
+            .filter(|s| s.trim().len() > 20)
+            .take(MAX_MESSAGES)
+            .collect();
+        if chunks.is_empty() {
+            return Vec::new();
+        }
+
+        let state = crate::jev::build_state(transcript, &[]);
+        let mut questions: Vec<(String, String)> = Vec::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            questions.push((
+                format!("decision_{i}"),
+                format!(
+                    "Does this message contain a durable decision or a concrete chosen approach? Message: {}",
+                    crate::jev::preview_chars(chunk, 400),
+                ),
+            ));
+            questions.push((
+                format!("unfinished_{i}"),
+                format!(
+                    "Does this message describe an unfinished task, a TODO, or the next step? Message: {}",
+                    crate::jev::preview_chars(chunk, 400),
+                ),
+            ));
+            questions.push((
+                format!("file_{i}"),
+                format!(
+                    "Does this message reference a specific file path? Message: {}",
+                    crate::jev::preview_chars(chunk, 400),
+                ),
+            ));
+        }
+        let started = std::time::Instant::now();
+        let rows = match jev.evaluate_yes_no_batch(&state, &questions).await {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let threshold = jev.thresholds().task_classify_min;
+
+        let mut facts: Vec<String> = Vec::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let get = |prefix: &str| {
+                rows.iter()
+                    .find(|(id, _)| id == &format!("{prefix}_{i}"))
+                    .map(|(_, p)| *p)
+                    .unwrap_or(0.0)
+            };
+            let mut tags: Vec<&str> = Vec::new();
+            if get("decision") >= threshold {
+                tags.push("decision");
+            }
+            if get("unfinished") >= threshold {
+                tags.push("unfinished");
+            }
+            if get("file") >= threshold {
+                tags.push("file");
+            }
+            if !tags.is_empty() {
+                facts.push(format!(
+                    "[{}] {}",
+                    tags.join(","),
+                    crate::jev::preview_chars(chunk, 400),
+                ));
+            }
+        }
+        self.log_jev_decision(
+            DEFAULT_TRANSCRIPT_KEY,
+            "handoff_extract",
+            &crate::jev::preview_chars(transcript, 200),
+            "decision,unfinished,file",
+            serde_json::json!({
+                "chunks": chunks.len(),
+                "facts": facts.len(),
+            }),
+            1.0,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+        facts
+    }
+
     /// Filter MCP tools before they reach the LLM (P5.1).
     ///
     /// An MCP filesystem server exposes ~10 tools; a GitHub server
