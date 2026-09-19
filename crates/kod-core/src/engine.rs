@@ -2812,57 +2812,6 @@ impl KodEngine {
         out
     }
 
-    /// Ask Jev whether the current round's text is on track (P5.6).
-    ///
-    /// Called from `stream_round` after a partial response has
-    /// accumulated. A confident "off track" (p_yes < 0.5 with
-    /// confidence > `[jev.thresholds].ambiguity_min`) on an early
-    /// round signals the caller may want to fall through to the
-    /// next endpoint in the chain.
-    ///
-    /// Fail-open: disabled/errored Jev returns `None` (keep the
-    /// current provider) — the fallback chain on error paths still
-    /// works as before.
-    #[allow(dead_code)]
-    async fn provider_quality_looks_off(
-        &self,
-        holder: &str,
-        request: &str,
-        partial: &str,
-    ) -> Option<f32> {
-        let jev = self.jev_client()?;
-        if partial.len() < 200 {
-            return None;
-        }
-        let state = crate::jev::build_state(
-            &format!("User request: {request}\n\nPartial response: {partial}"),
-            &[],
-        );
-        let pairs = [(
-            "on_track".to_string(),
-            "Is the model's response on track to answer the request?".to_string(),
-        )];
-        let started = std::time::Instant::now();
-        let rows = jev
-            .evaluate_yes_no_batch(&state, &pairs)
-            .await
-            .ok()?;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
-        let p_yes = rows.first().map(|(_, p)| *p).unwrap_or(1.0);
-        self.log_jev_decision(
-            holder,
-            "quality_switch",
-            request,
-            "on_track",
-            serde_json::json!({ "on_track": p_yes }),
-            p_yes,
-            elapsed_ms,
-            false,
-            crate::jev::DecisionSource::Jev,
-        );
-        Some(p_yes)
-    }
-
     /// Pre-extract handoff facts from a transcript (P4.8).
     ///
     /// Given the transcript's user+assistant messages, ask Jev three
