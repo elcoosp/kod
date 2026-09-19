@@ -1825,7 +1825,6 @@ impl KodEngine {
     async fn filter_diff_hunks_with_jev(
         &self,
         holder: &str,
-        call: &ToolCall,
         result: &ToolResult,
     ) -> Option<ToolResult> {
         let jev = self.jev_client()?;
@@ -5808,7 +5807,7 @@ impl KodEngine {
                 call.tool_name.as_str(),
                 "write_file" | "patch_file"
             ) {
-                self.filter_diff_hunks_with_jev(effective_holder, call, &result)
+                self.filter_diff_hunks_with_jev(effective_holder, &result)
                     .await
                     .unwrap_or_else(|| result.clone())
             } else {
