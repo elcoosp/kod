@@ -986,6 +986,12 @@ pub struct KodEngine {
     /// default) is the right shape for a test or a one-shot command.
     session_recorder:
         std::sync::RwLock<Option<std::sync::Arc<crate::session_log::SessionRecorder>>>,
+    /// Optional Jev (TypeSafe System One) client (design P0.1).
+    /// `None` — the default — means every Jev-aware call site
+    /// runs its pre-Jev heuristic with no network call. The
+    /// CLI/TUI install one via `set_jev_client` when
+    /// `JevConfig::enabled` is true.
+    jev_client: std::sync::RwLock<Option<crate::jev::JevClient>>,
     /// Shell hooks around tool execution. `RwLock<Arc<...>>` so
     /// `set_hooks` works through `&self` — the engine is shared as
     /// `Arc<KodEngine>` by both the CLI and the TUI, so `&mut self`
@@ -1274,6 +1280,7 @@ impl KodEngine {
             last_prompt: RwLock::new(HashMap::new()),
             generation_defaults: RwLock::new(GenerationDefaults::default()),
             session_recorder: std::sync::RwLock::new(None),
+            jev_client: std::sync::RwLock::new(None),
             hooks: std::sync::RwLock::new(
                 std::sync::Arc::new(crate::hooks::HookRunner::disabled()),
             ),
@@ -1678,6 +1685,60 @@ impl KodEngine {
             .read()
             .ok()
             .and_then(|guard| guard.as_ref().map(|r| r.path().to_path_buf()))
+    }
+
+    /// Install a Jev client (design P0.1). Call sites that
+    /// consult Jev check [`KodEngine::jev_client`] first and
+    /// fall through to their heuristic when it is `None`.
+    pub fn set_jev_client(&self, client: crate::jev::JevClient) {
+        if let Ok(mut slot) = self.jev_client.write() {
+            *slot = Some(client);
+        }
+    }
+
+    /// The installed Jev client, if any. Cloned so the caller
+    /// does not hold the lock across an await.
+    pub fn jev_client(&self) -> Option<crate::jev::JevClient> {
+        self.jev_client.read().ok().and_then(|g| g.clone())
+    }
+
+    /// Write one `SessionEntry::JevDecision` to the installed
+    /// session log. No-op when no recorder is installed. Every
+    /// Jev-aware call site goes through this helper so the log
+    /// shape stays uniform and `/jev stats` can rely on it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn log_jev_decision(
+        &self,
+        holder: &str,
+        purpose: &str,
+        state_preview: &str,
+        questions_summary: &str,
+        answers: serde_json::Value,
+        confidence: f32,
+        latency_ms: u64,
+        cached: bool,
+        source: crate::jev::DecisionSource,
+    ) {
+        if let Ok(guard) = self.session_recorder.read() {
+            if let Some(rec) = guard.as_ref() {
+                let entry = crate::session_log::SessionEntry::JevDecision {
+                    timestamp_ms: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0),
+                    holder: holder.to_string(),
+                    purpose: purpose.to_string(),
+                    state_preview: crate::jev::preview_chars(state_preview, 200),
+                    questions_summary: questions_summary.to_string(),
+                    answers,
+                    confidence,
+                    latency_ms,
+                    cached,
+                    source: source.as_str().to_string(),
+                };
+                let _ = rec.record(&entry);
+            }
+        }
     }
 
     /// Install a `ProviderRegistry` (A4b). The registry becomes the
