@@ -1338,7 +1338,65 @@ pub enum ApprovalDecision {
 }
 
 impl KodEngine {
-    /// Test-only shim: install a bare provider behind a one-endpoint
+    /// Tier 3.3 — apply a same-endpoint retry strategy to a fresh
+    /// request. Returns `true` when the adjustment succeeded; `false`
+    /// means "this strategy cannot help here, fall through".
+    ///
+    /// The three adjusters are deliberately conservative:
+    ///
+    /// * `LowerTemp` halves the temperature (clamped at 0.0).
+    /// * `Reinject` / `Constrained` prepend a system nudge to the
+    ///   attempt's messages so the model sees what went wrong.
+    /// * `ShrinkHistory` drops the oldest half of the messages.
+    fn apply_retry_adjustment(
+        action: crate::retry_strategy::RetryAction,
+        options: &mut GenerationOptions,
+        messages: &mut Vec<kod_types::ChatMessage>,
+    ) -> bool {
+        use crate::retry_strategy::RetryAction as A;
+        match action {
+            A::SameEndpointLowerTemp => {
+                options.temperature = Some((options.temperature.unwrap_or(0.7) * 0.5).max(0.0));
+                true
+            }
+            A::ReinjectTools => {
+                messages.push(kod_types::ChatMessage::text(
+                    kod_types::MessageId::new(),
+                    kod_types::MessageRole::System,
+                    "Your previous reply named a tool that does not exist. \
+                     Re-read the tool inventory above and only use tools \
+                     listed there."
+                        .to_string(),
+                    time::OffsetDateTime::now_utc(),
+                ));
+                true
+            }
+            A::SameEndpointConstrained => {
+                messages.push(kod_types::ChatMessage::text(
+                    kod_types::MessageId::new(),
+                    kod_types::MessageRole::System,
+                    "Your previous reply did not parse. Respond again, \
+                     being careful to produce valid JSON for any tool \
+                     call, matching the schema exactly."
+                        .to_string(),
+                    time::OffsetDateTime::now_utc(),
+                ));
+                true
+            }
+            A::ShrinkHistory => {
+                if messages.len() < 4 {
+                    return false;
+                }
+                let keep = messages.len() / 2;
+                let drop = messages.len() - keep;
+                messages.drain(0..drop);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Test-only shim: install a bare provider behind a one-endpoint    /// Test-only shim: install a bare provider behind a one-endpoint
     /// registry named "default". The pre-cleanup `set_provider` shape
     /// is not part of the production API any more; this helper keeps
     /// the in-crate tests readable without rebuilding a registry at
@@ -5718,22 +5776,80 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                 };
                 let mut attempt_pending = convo.clone();
                 let mut attempt_messages = initial_messages.clone();
-                let round = RoundContext {
-                    system_text: &system_text,
-                    model_ref,
-                    definitions: &definitions,
-                    options: &options,
-                    holder: key,
-                    trace: None,
+                // Tier 3.3 — a same-endpoint retry attempt loop. Bounded
+                // to 2 retries so a bad strategy cannot chain. Each
+                // strategy adjusts the request (temperature, messages,
+                // or both) and reruns the same endpoint.
+                let mut same_endpoint_attempts: u8 = 0;
+                let mut result_opt: Option<Result<(
+                    String,
+                    Vec<ToolCall>,
+                    Vec<ToolResult>,
+                    Option<kod_provider::TokenUsage>,
+                )>> = None;
+                let mut last_failure: Option<KodError> = None;
+                loop {
+                    let mut attempt_options = options.clone();
+                    let round = RoundContext {
+                        system_text: &system_text,
+                        model_ref,
+                        definitions: &definitions,
+                        options: &attempt_options,
+                        holder: key,
+                        trace: None,
+                    };
+                    let result = self
+                        .run_collected_loop(
+                            &this_provider,
+                            &mut attempt_pending,
+                            &mut attempt_messages,
+                            &round,
+                        )
+                        .await;
+                    match result {
+                        Ok(v) => {
+                            result_opt = Some(Ok(v));
+                            break;
+                        }
+                        Err(e) => {
+                            let failure =
+                                crate::retry_strategy::TurnFailure::classify(&e.to_string());
+                            let action = crate::retry_strategy::choose_action(&failure);
+                            let is_same_endpoint = matches!(
+                                action,
+                                crate::retry_strategy::RetryAction::SameEndpointLowerTemp
+                                    | crate::retry_strategy::RetryAction::SameEndpointConstrained
+                                    | crate::retry_strategy::RetryAction::ReinjectTools
+                                    | crate::retry_strategy::RetryAction::ShrinkHistory
+                            );
+                            if is_same_endpoint
+                                && same_endpoint_attempts < 2
+                                && Self::apply_retry_adjustment(
+                                    action,
+                                    &mut attempt_options,
+                                    &mut attempt_messages,
+                                )
+                            {
+                                same_endpoint_attempts += 1;
+                                tracing::warn!(
+                                    endpoint = %model_ref.endpoint,
+                                    class = %failure.summary(),
+                                    action = ?action,
+                                    attempt = same_endpoint_attempts,
+                                    "retrying same endpoint with adjustment"
+                                );
+                                continue;
+                            }
+                            last_failure = Some(e);
+                            break;
+                        }
+                    }
+                }
+                let collected = match result_opt {
+                    Some(Ok(v)) => Ok(v),
+                    _ => Err(last_failure.unwrap_or_else(Self::no_provider_error)),
                 };
-                match self
-                    .run_collected_loop(
-                        &this_provider,
-                        &mut attempt_pending,
-                        &mut attempt_messages,
-                        &round,
-                    )
-                    .await
+                match collected
                 {
                     Ok(v) => {
                         // Save the pending buffer back: `run_collected_loop`
