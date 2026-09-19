@@ -235,11 +235,28 @@ mod tests {
     }
 
     #[test]
-    fn hard_cap_on_per_turn() {
+    fn soft_then_hard_on_per_turn() {
+        // 80% of 10 = 8, so after 8 calls the verdict is Soft; after
+        // 10 it is Hard.
+        let c = ToolCounts::new();
+        let q = ToolQuota { per_turn: 10, per_session: 0, per_command: 0 };
+        for _ in 0..8 {
+            c.record("grep", None);
+        }
+        assert!(matches!(check(&c, "grep", Some(&q), None), QuotaVerdict::Soft { .. }));
+        c.record("grep", None);
+        c.record("grep", None);
+        assert!(matches!(check(&c, "grep", Some(&q), None), QuotaVerdict::Hard { .. }));
+    }
+
+    #[test]
+    fn small_caps_skip_the_soft_window() {
+        // A cap of 2 has no reachable 80%..99% window: 1 is below
+        // soft, 2 is hard.
         let c = ToolCounts::new();
         let q = ToolQuota { per_turn: 2, per_session: 0, per_command: 0 };
         c.record("grep", None);
-        assert!(matches!(check(&c, "grep", Some(&q), None), QuotaVerdict::Soft { .. }));
+        assert_eq!(check(&c, "grep", Some(&q), None), QuotaVerdict::Ok);
         c.record("grep", None);
         assert!(matches!(check(&c, "grep", Some(&q), None), QuotaVerdict::Hard { .. }));
     }

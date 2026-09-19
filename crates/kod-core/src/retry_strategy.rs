@@ -25,6 +25,10 @@ pub enum TurnFailure {
     },
     /// The provider refused to answer (safety, policy, "cannot help").
     ProviderRefused { reason: String },
+    /// Authentication or authorization failed (401/403). Never
+    /// recoverable — the API key is wrong or the endpoint is
+    /// forbidden for this account.
+    ProviderAuthError { detail: String },
     /// The request exceeded the model's context window.
     ContextWindowExceeded { over_by: Option<usize> },
     /// The model produced JSON that did not parse.
@@ -64,6 +68,17 @@ impl TurnFailure {
         }
         if l.contains("timed out") || l.contains("timeout") {
             return TurnFailure::TransportTimeout;
+        }
+        if l.contains("401")
+            || l.contains("403")
+            || l.contains("unauthorized")
+            || l.contains("forbidden")
+            || l.contains("invalid api key")
+            || l.contains("authentication")
+        {
+            return TurnFailure::ProviderAuthError {
+                detail: raw.to_string(),
+            };
         }
         if l.contains("connection") || l.contains("dns") || l.contains("tls") {
             return TurnFailure::TransportNetwork;
@@ -113,6 +128,7 @@ impl TurnFailure {
                 | TurnFailure::BudgetExhausted
                 | TurnFailure::PolicyDenied { .. }
                 | TurnFailure::ContentFiltered { .. }
+                | TurnFailure::ProviderAuthError { .. }
         )
     }
 
@@ -126,6 +142,9 @@ impl TurnFailure {
                 None => "rate limited".to_string(),
             },
             TurnFailure::ProviderRefused { .. } => "provider refused".to_string(),
+            TurnFailure::ProviderAuthError { .. } => {
+                "provider auth error".to_string()
+            }
             TurnFailure::ContextWindowExceeded { .. } => {
                 "context window exceeded".to_string()
             }
@@ -172,6 +191,7 @@ pub fn choose_action(f: &TurnFailure) -> RetryAction {
         }
         TurnFailure::TransportRateLimit { .. } => RetryAction::SameEndpointBackoff,
         TurnFailure::ProviderRefused { .. } => RetryAction::SameEndpointLowerTemp,
+        TurnFailure::ProviderAuthError { .. } => RetryAction::NoRetry,
         TurnFailure::ContextWindowExceeded { .. } => RetryAction::ShrinkHistory,
         TurnFailure::MalformedJson { .. } => RetryAction::SameEndpointConstrained,
         TurnFailure::HallucinatedTool { .. } => RetryAction::ReinjectTools,
@@ -217,6 +237,21 @@ mod tests {
     fn classify_unknown_tool() {
         let f = TurnFailure::classify("unknown tool: frobnicate");
         assert!(matches!(f, TurnFailure::HallucinatedTool { .. }));
+    }
+
+    #[test]
+    fn classify_401_is_auth_error() {
+        let f = TurnFailure::classify("HTTP 401 unauthorized");
+        assert!(matches!(f, TurnFailure::ProviderAuthError { .. }));
+        assert!(!f.recoverable());
+        assert_eq!(choose_action(&f), RetryAction::NoRetry);
+    }
+
+    #[test]
+    fn classify_403_is_auth_error() {
+        let f = TurnFailure::classify("403 forbidden: invalid api key");
+        assert!(matches!(f, TurnFailure::ProviderAuthError { .. }));
+        assert!(!f.recoverable());
     }
 
     #[test]
@@ -272,6 +307,7 @@ mod tests {
             TurnFailure::TransportNetwork,
             TurnFailure::TransportRateLimit { retry_after_secs: None },
             TurnFailure::ProviderRefused { reason: "x".into() },
+            TurnFailure::ProviderAuthError { detail: "x".into() },
             TurnFailure::ContextWindowExceeded { over_by: None },
             TurnFailure::MalformedJson { snippet: "x".into() },
             TurnFailure::HallucinatedTool { name: "x".into() },
@@ -292,6 +328,7 @@ mod tests {
             TurnFailure::TransportTimeout,
             TurnFailure::TransportRateLimit { retry_after_secs: Some(30) },
             TurnFailure::ProviderRefused { reason: "x".into() },
+            TurnFailure::ProviderAuthError { detail: "401".into() },
             TurnFailure::Unknown { raw: "y".into() },
         ];
         for v in &variants {
