@@ -80,6 +80,7 @@ const SLASH_HELP: &str = "Commands:\n\
 /log — show recent session log entries: /log [N]\n\
 /trace — structured turn traces: /trace [last | list | <id>]\n\
 /trust — show or clear the round's taint: /trust [show | clear]\n\
+/limits — per-tool quotas: /limits [show | reset]\n\
 /budget — session cost and limits: /budget | /budget raise <usd> | /budget reset\n\
 /jev — TypeSafe AI integration: /jev [status | stats | cache clear | test]\n\
 /pin — pin a message so it survives history compaction: /pin <n>\n\
@@ -3148,6 +3149,43 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                         ),
                     };
                     self.app.push_system_message(&msg);
+                }
+            }
+            "/limits" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                match parts.next() {
+                    None | Some("show") => {
+                        let snap = engine.tool_count_snapshot();
+                        if snap.is_empty() {
+                            self.app.push_system_message(
+                                "No tool calls this session yet.",
+                            );
+                            return Ok(());
+                        }
+                        let mut msg =
+                            String::from("Per-tool counts (this turn / this session)\n");
+                        for (name, turn, session) in &snap {
+                            msg.push_str(&format!(
+                                "  {:<20} {:>6} / {}\n",
+                                name, turn, session,
+                            ));
+                        }
+                        self.app.push_system_message(msg.trim_end());
+                    }
+                    Some("reset") => {
+                        engine.reset_tool_counts();
+                        self.app.push_system_message(
+                            "Per-session tool counters reset.",
+                        );
+                    }
+                    Some(other) => {
+                        self.app.push_system_message(&format!(
+                            "Unknown /limits sub-command: {other}. Try /limits or /limits reset.",
+                        ));
+                    }
                 }
             }
             "/trace" => {

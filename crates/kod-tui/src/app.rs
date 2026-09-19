@@ -308,6 +308,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "show or clear the round's taint: /trust [show | clear]",
     },
     SlashCommand {
+        name: "/limits",
+        hint: "per-tool quotas: /limits [show | reset]",
+    },
+    SlashCommand {
         name: "/budget",
         hint: "session cost and limits: /budget | /budget raise <usd> | /budget reset",
     },
