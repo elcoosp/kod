@@ -4,6 +4,7 @@
 
 pub mod registry;
 pub mod request;
+pub mod replay;
 pub mod retry;
 pub mod traits;
 pub mod types;
