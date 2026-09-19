@@ -200,7 +200,6 @@ mod tests {
                     prompt_tokens: 10,
                     completion_tokens: 2,
                     total_tokens: 12,
-                    cached_tokens: 0,
                 }),
             },
             ReplayRound {
