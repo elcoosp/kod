@@ -103,6 +103,14 @@ impl CostTracker {
     }
 
     /// Snapshot the state.
+    /// Reset every counter. Called by `/budget reset`.
+    pub fn reset(&self) {
+        self.inner.session_micro.store(0, Ordering::Relaxed);
+        self.inner.turn_micro.store(0, Ordering::Relaxed);
+        *self.inner.session_warned.write() = false;
+        *self.inner.turn_warned.write() = false;
+    }
+
     pub fn snapshot(&self) -> CostSnapshot {
         let session_micro = self.inner.session_micro.load(Ordering::Relaxed);
         let turn_micro = self.inner.turn_micro.load(Ordering::Relaxed);

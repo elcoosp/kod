@@ -78,6 +78,7 @@ const SLASH_HELP: &str = "Commands:\n\
 /fork — save the current chat as a restorable fork: /fork [label]\n\
 /check — run the project compiler/linter (Cargo, tsc, ruff, go vet)\n\
 /log — show recent session log entries: /log [N]\n\
+/budget — session cost and limits: /budget | /budget raise <usd> | /budget reset\n\
 /jev — TypeSafe AI integration: /jev [status | stats | cache clear | test]\n\
 /pin — pin a message so it survives history compaction: /pin <n>\n\
 /unpin — remove a pin: /unpin <n>\n\
@@ -3125,6 +3126,82 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                         ),
                     };
                     self.app.push_system_message(&msg);
+                }
+            }
+            "/budget" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                match parts.next() {
+                    None | Some("show") => {
+                        let snap = engine.cost_tracker().snapshot();
+                        let mut msg = String::from("Session budget\n");
+                        if snap.session_cap_usd > 0.0 {
+                            msg.push_str(&format!(
+                                "  session:  ${:.4} / ${:.2}  ({:.0}%)\n",
+                                snap.session_usd,
+                                snap.session_cap_usd,
+                                snap.session_fraction * 100.0,
+                            ));
+                        } else {
+                            msg.push_str(&format!(
+                                "  session:  ${:.4} (no cap)\n",
+                                snap.session_usd,
+                            ));
+                        }
+                        if snap.turn_cap_usd > 0.0 {
+                            msg.push_str(&format!(
+                                "  turn:     ${:.4} / ${:.2}  ({:.0}%)\n",
+                                snap.turn_usd,
+                                snap.turn_cap_usd,
+                                snap.turn_fraction * 100.0,
+                            ));
+                        } else {
+                            msg.push_str(&format!(
+                                "  turn:     ${:.4} (no cap)\n",
+                                snap.turn_usd,
+                            ));
+                        }
+                        msg.push_str(&format!(
+                            "  policy:   {:?}\n",
+                            engine.cost_tracker().on_exhausted(),
+                        ));
+                        if snap.exhausted {
+                            msg.push_str("\n⛔ A cap is exhausted. /budget raise <usd> to lift it.");
+                        } else if snap.session_warned || snap.turn_warned {
+                            msg.push_str("\n⚠ Approaching a cap.");
+                        }
+                        self.app.push_system_message(msg.trim_end());
+                    }
+                    Some("reset") => {
+                        engine.cost_tracker().reset();
+                        self.app
+                            .push_system_message("Session cost counters reset.");
+                    }
+                    Some("raise") => {
+                        let amount: f64 = parts
+                            .next()
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0.0);
+                        if amount <= 0.0 {
+                            self.app.push_system_message(
+                                "Usage: /budget raise <usd> (e.g. /budget raise 5)",
+                            );
+                            return Ok(());
+                        }
+                        engine.cost_tracker().raise_session_cap(amount);
+                        let snap = engine.cost_tracker().snapshot();
+                        self.app.push_system_message(&format!(
+                            "Session cap raised by ${amount:.2}. New cap: ${:.2}",
+                            snap.session_cap_usd,
+                        ));
+                    }
+                    Some(other) => {
+                        self.app.push_system_message(&format!(
+                            "Unknown /budget sub-command: {other}. Try /budget, /budget raise <usd>, or /budget reset.",
+                        ));
+                    }
                 }
             }
             "/jev" => {
