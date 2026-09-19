@@ -2749,6 +2749,117 @@ impl KodEngine {
         }
     }
 
+    /// Filter MCP tools before they reach the LLM (P5.1).
+    ///
+    /// An MCP filesystem server exposes ~10 tools; a GitHub server
+    /// exposes ~20. When more than `MIN_MCP_TOOLS_TO_FILTER` MCP
+    /// tools are registered on the engine, ask Jev which one should
+    /// handle the current request and return only that one (plus a
+    /// small safety margin of `KEEP_TOP_N`). When the registry has
+    /// few or no MCP tools, returns the input unchanged.
+    ///
+    /// Fail-open: on any Jev error or a request with no current text,
+    /// the input is returned unchanged.
+    async fn filter_mcp_tools_with_jev(
+        &self,
+        holder: &str,
+        input: &str,
+        definitions: Vec<ToolDefinition>,
+    ) -> Vec<ToolDefinition> {
+        const MIN_MCP_TOOLS_TO_FILTER: usize = 5;
+        const KEEP_TOP_N: usize = 3;
+        // Partition into MCP and non-MCP. The non-MCP half is
+        // untouched by this filter.
+        let (mcp, other): (Vec<ToolDefinition>, Vec<ToolDefinition>) = definitions
+            .into_iter()
+            .partition(|d| d.name.starts_with(crate::mcp_adapters::MCP_TOOL_PREFIX));
+        if mcp.len() < MIN_MCP_TOOLS_TO_FILTER {
+            let mut out = other;
+            out.extend(mcp);
+            return out;
+        }
+        let Some(jev) = self.jev_client() else {
+            let mut out = other;
+            out.extend(mcp);
+            return out;
+        };
+        // One yes/no per MCP tool name. Bounded to avoid a
+        // pathological request.
+        const MAX_TOOL_NAMES: usize = 30;
+        let slice: Vec<ToolDefinition> =
+            mcp.iter().take(MAX_TOOL_NAMES).cloned().collect();
+        let questions: Vec<(String, String)> = slice
+            .iter()
+            .enumerate()
+            .map(|(i, d)| {
+                (
+                    format!("tool_{i}"),
+                    format!(
+                        "Would the tool `{}` (whose description is {}) be useful for this request?",
+                        d.name,
+                        crate::jev::preview_chars(&d.description, 200),
+                    ),
+                )
+            })
+            .collect();
+        let state = crate::jev::build_state(input, &[]);
+        let started = std::time::Instant::now();
+        let rows = match jev.evaluate_yes_no_batch(&state, &questions).await {
+            Ok(r) => r,
+            Err(_) => {
+                let mut out = other;
+                out.extend(mcp);
+                return out;
+            }
+        };
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let threshold = jev.thresholds().tool_filter_min;
+        // Sort MCP tools by p descending, keep top N above threshold.
+        let mut scored: Vec<(usize, f32)> = slice
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let p = rows
+                    .iter()
+                    .find(|(id, _)| id == &format!("tool_{i}"))
+                    .map(|(_, p)| *p)
+                    .unwrap_or(0.0);
+                (i, p)
+            })
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let kept_mcp: Vec<ToolDefinition> = scored
+            .iter()
+            .take(KEEP_TOP_N)
+            .filter(|(_, p)| *p >= threshold)
+            .filter_map(|(i, _)| slice.get(*i).cloned())
+            .collect();
+        // If the filter dropped everything, keep the original set
+        // — an LLM with no MCP tool is worse than one with ten.
+        if kept_mcp.is_empty() {
+            let mut out = other;
+            out.extend(mcp);
+            return out;
+        }
+        self.log_jev_decision(
+            holder,
+            "mcp_filter",
+            input,
+            "per_mcp_tool_relevance",
+            serde_json::json!({
+                "total_mcp": mcp.len(),
+                "kept": kept_mcp.iter().map(|d| d.name.clone()).collect::<Vec<_>>(),
+            }),
+            1.0,
+            elapsed_ms,
+            false,
+            crate::jev::DecisionSource::Jev,
+        );
+        let mut out = other;
+        out.extend(kept_mcp);
+        out
+    }
+
     /// Ask Jev whether the session has moved to a new phase (P5.5).
     ///
     /// Returns `Some((old, new))` when Jev is confident the phase
@@ -4749,6 +4860,12 @@ impl KodEngine {
             let definitions = self
                 .filter_tool_definitions_with_jev(key, input, self.tools.get_definitions().await)
                 .await;
+            // P5.1 — trim the MCP half of the tool list. Independent
+            // of the category filter above; both feed the same
+            // `definitions` value the LLM sees.
+            let definitions = self
+                .filter_mcp_tools_with_jev(key, input, definitions)
+                .await;
             let convo = self.ground_prompt(prompt.clone(), &definitions);
 
             // Snapshot the grounded prompt before the loop mutates it
@@ -5094,6 +5211,12 @@ impl KodEngine {
             let definitions = self
                 .filter_tool_definitions_with_jev(key, input, self.tools.get_definitions().await)
                 .await;
+            // P5.1 — trim the MCP half of the tool list. Independent
+            // of the category filter above; both feed the same
+            // `definitions` value the LLM sees.
+            let definitions = self
+                .filter_mcp_tools_with_jev(key, input, definitions)
+                .await;
             let pending = self.ground_prompt(prompt.clone(), &definitions);
 
             // Snapshot the grounded prompt for /debug last-prompt and
@@ -5390,6 +5513,12 @@ impl KodEngine {
             };
             let definitions = self
                 .filter_tool_definitions_with_jev(key, input, self.tools.get_definitions().await)
+                .await;
+            // P5.1 — trim the MCP half of the tool list. Independent
+            // of the category filter above; both feed the same
+            // `definitions` value the LLM sees.
+            let definitions = self
+                .filter_mcp_tools_with_jev(key, input, definitions)
                 .await;
             let mut pending = self.ground_prompt(prompt.clone(), &definitions);
             pending.push_str(&format!(
