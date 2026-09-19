@@ -78,6 +78,7 @@ const SLASH_HELP: &str = "Commands:\n\
 /fork — save the current chat as a restorable fork: /fork [label]\n\
 /check — run the project compiler/linter (Cargo, tsc, ruff, go vet)\n\
 /log — show recent session log entries: /log [N]\n\
+/trust — show or clear the round's taint: /trust [show | clear]\n\
 /budget — session cost and limits: /budget | /budget raise <usd> | /budget reset\n\
 /jev — TypeSafe AI integration: /jev [status | stats | cache clear | test]\n\
 /pin — pin a message so it survives history compaction: /pin <n>\n\
@@ -737,6 +738,17 @@ impl TuiLoop {
             Event::ResponseComplete(text) => {
                 self.gen_task = None;
                 self.app.finish_response(&text);
+
+                // Tier 1.1 — surface a tainted round in one line.
+                if let Some(engine) = self.engine.clone() {
+                    let t = engine.taint_level();
+                    if t.is_tainting() {
+                        self.app.push_system_message(&format!(
+                            "⛨ round tainted by {} — high-impact tools will ask. /trust show",
+                            t.as_str(),
+                        ));
+                    }
+                }
                 // Notify only for turns longer than 30 seconds — a
                 // quick exchange does not deserve a bell.
                 if let Some(elapsed) = self
@@ -3126,6 +3138,37 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                         ),
                     };
                     self.app.push_system_message(&msg);
+                }
+            }
+            "/trust" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                match parts.next() {
+                    None | Some("show") => {
+                        let t = engine.taint_level();
+                        let msg = format!(
+                            "Current round taint: {}\n\n\
+                             Content at trust=untrusted or trust=retrieved forces \
+                             an approval prompt for high-impact tools (execute_command, \
+                             write_file, patch_file, git_commit, git_branch_create).\n\
+                             /trust clear resets to assistant until the next tool call.",
+                            t.as_str(),
+                        );
+                        self.app.push_system_message(&msg);
+                    }
+                    Some("clear") => {
+                        engine.clear_taint();
+                        self.app.push_system_message(
+                            "Taint cleared. Any future untrusted tool call will re-escalate.",
+                        );
+                    }
+                    Some(other) => {
+                        self.app.push_system_message(&format!(
+                            "Unknown /trust sub-command: {other}. Try /trust or /trust clear.",
+                        ));
+                    }
                 }
             }
             "/budget" => {
