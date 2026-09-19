@@ -1803,6 +1803,99 @@ impl KodEngine {
         Some(n)
     }
 
+    /// Write a `SessionEntry::ToolOutcome` for a completed tool call
+    /// when the call is "interesting" (P5.3): it took at least
+    /// `MIN_JEV_CLASSIFY_MS`, or it failed. The gate keeps the
+    /// classification cost off trivially fast read tools while
+    /// preserving the signal on the calls that matter for
+    /// `/debug tokens` and `/jev stats`.
+    ///
+    /// Fail-silent: any error or timeout writes nothing — the raw
+    /// `ToolCall` entry is the ground truth; this is enrichment.
+    async fn classify_tool_outcome_with_jev(
+        &self,
+        holder: &str,
+        call: &ToolCall,
+        result: &ToolResult,
+        duration_ms: u64,
+    ) {
+        const MIN_JEV_CLASSIFY_MS: u64 = 100;
+        let failed = matches!(result, ToolResult::Error(_));
+        if duration_ms < MIN_JEV_CLASSIFY_MS && !failed {
+            return;
+        }
+        let Some(jev) = self.jev_client() else {
+            return;
+        };
+        let Some(request_text) = self.current_request(holder).await else {
+            return;
+        };
+        let result_text = match result {
+            ToolResult::Success(v) => {
+                serde_json::to_string(v).unwrap_or_default()
+            }
+            ToolResult::Error(e) => format!("ERROR: {e}"),
+            _ => String::new(),
+        };
+        let state = crate::jev::build_state(
+            &format!(
+                "User request: {request_text}\nTool: {}\nArguments: {}\nDuration: {duration_ms}ms\nResult: {}",
+                call.tool_name,
+                serde_json::to_string(&call.arguments).unwrap_or_default(),
+                crate::jev::preview_chars(&result_text, 800),
+            ),
+            &[],
+        );
+        let outcome_labels = &["success", "partial", "failure", "irrelevant"];
+        let impact_labels = &["none", "minor", "significant", "critical"];
+        let started = std::time::Instant::now();
+        let outcome = jev
+            .evaluate_score(&state, "What was the outcome of this tool call?", outcome_labels)
+            .await;
+        let impact = jev
+            .evaluate_score(
+                &state,
+                "How significant is this tool call's impact on the user's task?",
+                impact_labels,
+            )
+            .await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+
+        let (outcome_label, impact_label, confidence, source) = match (outcome, impact) {
+            (Ok(o), Ok(i)) => (
+                o.value,
+                i.value,
+                o.confidence.max(i.confidence),
+                crate::jev::DecisionSource::Jev,
+            ),
+            _ => (
+                if failed { "failure".to_string() } else { "success".to_string() },
+                "minor".to_string(),
+                1.0,
+                crate::jev::DecisionSource::Heuristic,
+            ),
+        };
+
+        if let Ok(guard) = self.session_recorder.read()
+            && let Some(rec) = guard.as_ref()
+        {
+            let entry = crate::session_log::SessionEntry::ToolOutcome {
+                timestamp_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0),
+                holder: holder.to_string(),
+                tool_name: call.tool_name.clone(),
+                outcome: outcome_label,
+                user_visible_impact: impact_label,
+                confidence,
+                latency_ms: elapsed_ms,
+                source: source.as_str().to_string(),
+            };
+            let _ = rec.record(&entry);
+        }
+    }
+
     /// Ask Jev whether the reply answers the user's request (P5.4).
     ///
     /// Returns a short advisory string to append to the reply when
@@ -5476,6 +5569,23 @@ impl KodEngine {
                     );
                 }
             }
+        }
+
+        // P5.3 — semantic outcome classification for interesting
+        // tool calls. Runs after the raw entries are written so the
+        // syntactic trail is always on disk even if Jev is down.
+        // Every call is a no-op when Jev is disabled.
+        for (i, call) in calls.iter().enumerate() {
+            let Some((result, ms)) = raw_results.get(i) else {
+                continue;
+            };
+            // Only successful or errored calls are worth classifying;
+            // a `RequiresConfirmation` never actually ran.
+            let Ok(result) = result.as_ref() else {
+                continue;
+            };
+            self.classify_tool_outcome_with_jev(effective_holder, call, result, *ms)
+                .await;
         }
 
         // Diff augmentation: for every successful write_file / patch_file

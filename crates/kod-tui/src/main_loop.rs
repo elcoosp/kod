@@ -4372,6 +4372,16 @@ fn format_entry_one_line(entry: &kod_core::session_log::SessionEntry) -> String 
             "({latency_ms}ms{}))",
             if *cached { ", cached" } else { "" },
         ),
+        SessionEntry::ToolOutcome {
+            holder,
+            tool_name,
+            outcome,
+            user_visible_impact,
+            confidence,
+            ..
+        } => format!(
+            "  {holder:>8}  outcome  {tool_name} = {outcome} impact={user_visible_impact} conf={confidence:.2}",
+        ),
     }
 }
 

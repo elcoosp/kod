@@ -121,6 +121,29 @@ pub enum SessionEntry {
         error_count: usize,
         warning_count: usize,
     },
+    /// Semantic classification of a tool call's outcome (P5.3).
+    /// Written only when the Jev integration is enabled and the call
+    /// ran for at least [`MIN_JEV_CLASSIFY_MS`] — a sub-100ms call is
+    /// not worth a network round-trip. Distinct from `ToolCall`
+    /// (which is syntactic: name, args, duration, raw result) so a
+    /// reader that wants the raw trail is not slowed by the extra
+    /// entries.
+    ToolOutcome {
+        timestamp_ms: u64,
+        holder: String,
+        tool_name: String,
+        /// One of `success` | `partial` | `failure` | `irrelevant`.
+        outcome: String,
+        /// One of `none` | `minor` | `significant` | `critical`.
+        user_visible_impact: String,
+        /// Confidence in `[0, 1]`; the maximum of the two answer
+        /// probabilities below.
+        confidence: f32,
+        /// Wall time for the classification call, ms.
+        latency_ms: u64,
+        /// `"jev"` | `"heuristic"`.
+        source: String,
+    },
     /// One Jev (TypeSafe System One) decision. Written by the
     /// `JevClient` wrapper for every call site — including the
     /// heuristic fallback when Jev is disabled or errors. The
@@ -440,6 +463,16 @@ mod coverage_entry_roundtrip {
                 file: "a.rs".into(),
                 error_count: 2,
                 warning_count: 3,
+            },
+            SessionEntry::ToolOutcome {
+                timestamp_ms: 9,
+                holder: "s".into(),
+                tool_name: "read_file".into(),
+                outcome: "success".into(),
+                user_visible_impact: "significant".into(),
+                confidence: 0.92,
+                latency_ms: 180,
+                source: "jev".into(),
             },
             SessionEntry::JevDecision {
                 timestamp_ms: 8,
