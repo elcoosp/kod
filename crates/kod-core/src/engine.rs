@@ -2494,6 +2494,42 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         }
     }
 
+    /// Update a single Jev threshold and rebuild the client so the
+    /// change takes effect immediately (P0.1 follow-up).
+    ///
+    /// Returns `Ok(())` on success. The caller decides whether to
+    /// persist the new value to config — the engine only owns the
+    /// in-process client.
+    pub async fn update_jev_threshold(
+        &self,
+        name: &str,
+        value: f32,
+    ) -> Result<()> {
+        let Some(client) = self.jev_client() else {
+            return Err(KodError::InvalidState(
+                "Jev is not enabled on this engine".to_string(),
+            ));
+        };
+        let mut cfg = client.config().clone();
+        if !cfg.thresholds.set(name, value) {
+            return Err(KodError::InvalidParameters {
+                reason: format!("unknown threshold name: {name}"),
+            });
+        }
+        cfg.thresholds.clamp();
+        let new_client = crate::jev::JevClient::from_config(&cfg)
+            .map_err(|e| KodError::InvalidState(format!("rebuild JevClient: {e}")))?
+            .ok_or_else(|| {
+                KodError::InvalidState(
+                    "JevConfig disabled during threshold update".to_string(),
+                )
+            })?;
+        if let Ok(mut slot) = self.jev_client.write() {
+            *slot = Some(new_client);
+        }
+        Ok(())
+    }
+
     /// The installed Jev client, if any. Cloned so the caller
     /// does not hold the lock across an await.
     pub fn jev_client(&self) -> Option<crate::jev::JevClient> {

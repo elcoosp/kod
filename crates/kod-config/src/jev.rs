@@ -155,6 +155,51 @@ impl Default for JevThresholds {
 }
 
 impl JevThresholds {
+    /// Names accepted by `/jev tune set`. Stable strings — the
+    /// command's docs and the config file's keys must agree.
+    pub const NAMES: &'static [&'static str] = &[
+        "task_classify_min",
+        "tool_filter_min",
+        "early_termination_min",
+        "auto_approve_min",
+        "memory_filter_min",
+        "ambiguity_min",
+    ];
+
+    /// Read a threshold by name. `None` for an unknown name.
+    pub fn get(&self, name: &str) -> Option<f32> {
+        Some(match name {
+            "task_classify_min" => self.task_classify_min,
+            "tool_filter_min" => self.tool_filter_min,
+            "early_termination_min" => self.early_termination_min,
+            "auto_approve_min" => self.auto_approve_min,
+            "memory_filter_min" => self.memory_filter_min,
+            "ambiguity_min" => self.ambiguity_min,
+            _ => return None,
+        })
+    }
+
+    /// Set a threshold by name. Returns `false` for an unknown name.
+    /// The value is clamped into `[0.0, 1.0]` and NaN is coerced to
+    /// `0.5` so a bad input cannot make every decision fail.
+    pub fn set(&mut self, name: &str, value: f32) -> bool {
+        let v = if !value.is_finite() {
+            0.5
+        } else {
+            value.clamp(0.0, 1.0)
+        };
+        match name {
+            "task_classify_min" => self.task_classify_min = v,
+            "tool_filter_min" => self.tool_filter_min = v,
+            "early_termination_min" => self.early_termination_min = v,
+            "auto_approve_min" => self.auto_approve_min = v,
+            "memory_filter_min" => self.memory_filter_min = v,
+            "ambiguity_min" => self.ambiguity_min = v,
+            _ => return false,
+        }
+        true
+    }
+
     /// Clamp every threshold into `[0.0, 1.0]` so a bad config does
     /// not make every decision fail (or succeed).
     pub fn clamp(&mut self) {
@@ -242,6 +287,39 @@ mod tests {
         assert_eq!(c.timeout_ms, 250);
         assert!(!c.fail_open);
         assert!(c.redact_paths);
+    }
+
+    #[test]
+    fn threshold_get_round_trips_every_name() {
+        let t = JevThresholds::default();
+        for name in JevThresholds::NAMES {
+            assert!(t.get(name).is_some(), "get({name}) returned None");
+        }
+        assert!(t.get("nope").is_none());
+    }
+
+    #[test]
+    fn threshold_set_rejects_unknown_names() {
+        let mut t = JevThresholds::default();
+        assert!(!t.set("nope", 0.5));
+    }
+
+    #[test]
+    fn threshold_set_clamps_and_stores() {
+        let mut t = JevThresholds::default();
+        assert!(t.set("task_classify_min", 1.5));
+        assert_eq!(t.task_classify_min, 1.0);
+        assert!(t.set("task_classify_min", -1.0));
+        assert_eq!(t.task_classify_min, 0.0);
+        assert!(t.set("tool_filter_min", 0.55));
+        assert!((t.tool_filter_min - 0.55).abs() < 1e-6);
+    }
+
+    #[test]
+    fn threshold_set_handles_nan() {
+        let mut t = JevThresholds::default();
+        t.set("ambiguity_min", f32::NAN);
+        assert_eq!(t.ambiguity_min, 0.5);
     }
 
     #[test]

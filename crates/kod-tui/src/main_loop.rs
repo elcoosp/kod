@@ -3821,7 +3821,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                                     msg.push_str(&format!("  thresholds: {t}\n"));
                                 }
                                 msg.push_str(
-                                    "\nSub-commands: /jev stats | /jev cache clear | /jev test",
+                                    "\nSub-commands: /jev stats | /jev cache clear | /jev test | /jev tune",
                                 );
                                 self.app.push_system_message(&msg);
                             }
@@ -3968,6 +3968,108 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                             Err(e) => {
                                 self.app.push_system_message(&format!(
                                     "✗ Jev call failed: {e}",
+                                ));
+                            }
+                        }
+                    }
+                    Some("tune") => {
+                        // Inspect or set a Jev threshold. Persistent:
+                        // the change is written to config and the
+                        // in-process client is rebuilt immediately.
+                        let sub = parts.next();
+                        match sub {
+                            None => {
+                                let Some(client) = engine.jev_client() else {
+                                    self.app.push_system_message("Jev is disabled.");
+                                    return Ok(());
+                                };
+                                let t = client.thresholds();
+                                let mut msg =
+                                    String::from("Jev thresholds (name = value)\n");
+                                for name in kod_config::JevThresholds::NAMES {
+                                    if let Some(v) = t.get(name) {
+                                        msg.push_str(&format!("  {:<24} {:.2}\n", name, v));
+                                    }
+                                }
+                                msg.push_str(
+                                    "\n  /jev tune set <name> <value>\n\
+                                     /jev tune reset",
+                                );
+                                self.app.push_system_message(msg.trim_end());
+                            }
+                            Some("set") => {
+                                let name = parts.next().map(String::from);
+                                let value: Option<f32> =
+                                    parts.next().and_then(|s| s.parse().ok());
+                                match (name, value) {
+                                    (Some(n), Some(v)) => {
+                                        match engine.update_jev_threshold(&n, v).await {
+                                            Ok(()) => {
+                                                let persisted = (|| -> kod_error::Result<()> {
+                                                    let mut cfg = KodConfig::load_default()?;
+                                                    if !cfg.jev.thresholds.set(&n, v) {
+                                                        return Err(
+                                                            kod_error::KodError::InvalidParameters {
+                                                                reason: format!(
+                                                                    "unknown threshold: {n}",
+                                                                ),
+                                                            },
+                                                        );
+                                                    }
+                                                    cfg.jev.thresholds.clamp();
+                                                    let path = KodConfig::config_dir()?
+                                                        .join("config.toml");
+                                                    cfg.save_to(&path)?;
+                                                    Ok(())
+                                                })();
+                                                match persisted {
+                                                    Ok(()) => self.app.push_system_message(
+                                                        &format!("Set {n} = {v:.2} (persisted)."),
+                                                    ),
+                                                    Err(e) => self.app.push_system_message(
+                                                        &format!(
+                                                            "Set {n} = {v:.2} in this session; \
+                                                             could not persist: {e}",
+                                                        ),
+                                                    ),
+                                                }
+                                            }
+                                            Err(e) => self.app.push_system_message(&format!(
+                                                "Could not set {n}: {e}",
+                                            )),
+                                        }
+                                    }
+                                    _ => self.app.push_system_message(
+                                        "Usage: /jev tune set <name> <value>",
+                                    ),
+                                }
+                            }
+                            Some("reset") => {
+                                let defaults = kod_config::JevThresholds::default();
+                                let mut all_ok = true;
+                                for name in kod_config::JevThresholds::NAMES {
+                                    if let Some(v) = defaults.get(name)
+                                        && engine
+                                            .update_jev_threshold(name, v)
+                                            .await
+                                            .is_err()
+                                    {
+                                        all_ok = false;
+                                    }
+                                }
+                                if all_ok {
+                                    self.app.push_system_message(
+                                        "Jev thresholds reset to defaults (this session).",
+                                    );
+                                } else {
+                                    self.app.push_system_message(
+                                        "Some thresholds could not be reset; see the session log.",
+                                    );
+                                }
+                            }
+                            Some(other) => {
+                                self.app.push_system_message(&format!(
+                                    "Unknown /jev tune sub-command: {other}. Try /jev tune, /jev tune set <name> <value>, or /jev tune reset.",
                                 ));
                             }
                         }
