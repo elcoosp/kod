@@ -1120,6 +1120,10 @@ pub struct KodEngine {
     /// Session cost accumulator (Tier 1.2). Clone the engine to
     /// share it with a UI.
     cost_tracker: crate::cost::CostTracker,
+    /// On-disk persistence for plans and decision logs (Tier 3.4).
+    /// `None` until `set_state_store` installs one — the default for
+    /// a test or an embedder that does not want disk state.
+    state_store: std::sync::RwLock<Option<crate::state::StateStore>>,
     /// Per-tool quota counters (Tier 2.5). Reset per turn and per
     /// session; enforced before every dispatch.
     tool_counts: std::sync::Arc<crate::tool_quota::ToolCounts>,
@@ -1543,6 +1547,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             read_protection: std::sync::RwLock::new(None),
             redactor: std::sync::Arc::new(kod_types::redact::Redactor::default()),
             cost_tracker: crate::cost::CostTracker::new(),
+            state_store: std::sync::RwLock::new(None),
             tool_counts: std::sync::Arc::new(crate::tool_quota::ToolCounts::new()),
             tool_quotas: std::sync::RwLock::new(None),
             next_turn_id: std::sync::atomic::AtomicU64::new(1),
@@ -1902,6 +1907,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             .write()
             .await
             .insert(key.to_string(), log);
+        self.persist_state().await;
     }
 
     /// Append a decision to a transcript's log.
@@ -1915,13 +1921,21 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     ) -> u64 {
         let mut g = self.decision_logs.write().await;
         let log = g.entry(key.to_string()).or_default();
-        log.push(turn_id, kind, text, author)
+        let id = log.push(turn_id, kind, text, author);
+        drop(g);
+        self.persist_state().await;
+        id
     }
 
     /// Drop a decision by id.
     pub async fn drop_decision(&self, key: &str, id: u64) -> bool {
         let mut g = self.decision_logs.write().await;
-        g.get_mut(key).map(|l| l.drop(id)).unwrap_or(false)
+        let r = g.get_mut(key).map(|l| l.drop(id)).unwrap_or(false);
+        drop(g);
+        if r {
+            self.persist_state().await;
+        }
+        r
     }
 
     /// The plan for a transcript, if one has been created (Tier 2.1).
@@ -1932,11 +1946,13 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     /// Replace the plan for a transcript.
     pub async fn set_plan(&self, key: &str, plan: crate::plan::Plan) {
         self.plans.write().await.insert(key.to_string(), plan);
+        self.persist_state().await;
     }
 
     /// Drop the plan for a transcript.
     pub async fn clear_plan(&self, key: &str) {
         self.plans.write().await.remove(key);
+        self.persist_state().await;
     }
 
     /// Apply a `PlanUpdate` to the transcript's plan, if one exists.
@@ -2052,6 +2068,105 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             kod_swarm::AuthorKind::Engine,
             vec!["done".to_string(), "team".to_string()],
         );
+    }
+
+    /// Install an on-disk state store (Tier 3.4). Loads any
+    /// previously-saved plans and decision logs into memory. Call
+    /// once at engine startup.
+    pub async fn set_state_store(&self, store: crate::state::StateStore) {
+        // Load whatever is on disk before installing the store, so
+        // a caller sees the persisted plans and decisions
+        // immediately.
+        let loaded = store.load();
+        {
+            let mut plans = self.plans.write().await;
+            for (k, v) in loaded.plans {
+                plans.insert(k, v);
+            }
+        }
+        {
+            let mut logs = self.decision_logs.write().await;
+            for (k, v) in loaded.decision_logs {
+                logs.insert(k, v);
+            }
+        }
+        if let Ok(mut slot) = self.state_store.write() {
+            *slot = Some(store);
+        }
+    }
+
+    /// Persist the current plans and decision logs. Best-effort: a
+    /// write failure logs and the in-memory state is unchanged.
+    pub async fn persist_state(&self) {
+        let store = match self.state_store.read() {
+            Ok(g) => match g.as_ref() {
+                Some(s) => s.clone(),
+                None => return,
+            },
+            Err(_) => return,
+        };
+        let plans = self.plans.read().await.clone();
+        let logs = self.decision_logs.read().await.clone();
+        let state = crate::state::EngineState {
+            schema_version: crate::state::STATE_SCHEMA_VERSION,
+            plans,
+            decision_logs: logs,
+        };
+        if let Err(e) = store.save(&state) {
+            tracing::warn!(
+                error = %e,
+                path = %store.path().display(),
+                "could not persist engine state",
+            );
+        }
+    }
+
+    /// Redact secrets from a message list before the prompt is built
+    /// (Tier 1.3). No-op when `[security.redact] in_prompt = false`.
+    ///
+    /// Returns the redacted list and the total number of redactions
+    /// that fired. Content is redacted in place; `tool_call_id`,
+    /// `role`, and `id` are untouched so the transcript stays
+    /// coherent.
+    pub fn redact_messages_for_prompt(
+        &self,
+        messages: &mut [kod_types::ChatMessage],
+    ) -> usize {
+        let cfg = match kod_config::KodConfig::load_default() {
+            Ok(c) => c,
+            Err(_) => return 0,
+        };
+        if !cfg.security.redact.in_prompt {
+            return 0;
+        }
+        let redactor = self.redactor.clone();
+        let mut total = 0_usize;
+        for m in messages.iter_mut() {
+            let (redacted, events) = redactor.redact(&m.content);
+            if !events.is_empty() {
+                m.content = redacted;
+                total += events.iter().map(|e| e.count).sum::<usize>();
+            }
+        }
+        total
+    }
+
+    /// Redact secrets from a single tool result's rendered payload.
+    /// Called by `cap_rendered_result`'s caller path when in-prompt
+    /// redaction is on.
+    pub fn redact_tool_result_for_prompt(
+        &self,
+        rendered: String,
+    ) -> String {
+        let cfg = match kod_config::KodConfig::load_default() {
+            Ok(c) => c,
+            Err(_) => return rendered,
+        };
+        if !cfg.security.redact.in_prompt {
+            return rendered;
+        }
+        let (out, _events) = self.redactor.redact(&rendered);
+        out
     }
 
     pub fn cost_tracker(&self) -> &crate::cost::CostTracker {
@@ -6943,6 +7058,9 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             // Rebuild the structured request every round. Only the
             // `messages` field changes; the system prompt, tools,
             // options and model are constant for the turn.
+            // Tier 1.3 — redact before grounding. No-op by default.
+            let _ = self.redact_messages_for_prompt(messages);
+
             let req = self.build_grounded_request(
                 round.holder,
                 round.system_text,
@@ -7134,6 +7252,11 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                 }
             }
 
+            // Tier 1.3 — redact the outgoing messages before the
+            // provider sees them. No-op when `[security.redact]
+            // in_prompt = false` (the default).
+            let _ = self.redact_messages_for_prompt(messages);
+
             // Rebuild a RoundContext for this round so the
             // effective model_ref is visible to the grounded
             // request and the tool calls below.
@@ -7216,6 +7339,15 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                 let _ = chunk_tx
                     .send(tool_done_marker(&header, &summary, *ms))
                     .await;
+            }
+            // Tier 1.5 — record the results we just got into the
+            // trace's tool-call records. `add_tool_call` already ran
+            // before dispatch; we retroactively attach the summary
+            // now that it exists.
+            if let Some(mutex) = round.trace
+                && let Ok(mut g) = mutex.lock()
+            {
+                g.attach_results(&section.results, &calls);
             }
             tool_calls.extend(calls);
             tool_results.extend(section.results.clone());
@@ -12784,5 +12916,49 @@ mod coverage_offtrack_switch {
             streamed.contains("FALLBACK_MARKER_TEXT"),
             "expected the fallback's text after the mid-stream switch,              got: {streamed}",
         );
+    }
+}
+
+
+#[cfg(test)]
+mod coverage_prompt_redaction {
+    //! Pins the in-prompt redaction pass (Tier 1.3).
+    use super::*;
+
+    async fn engine() -> KodEngine {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let e = KodEngine::new(cfg, tmp.path().join("test.redb")).unwrap();
+        std::mem::forget(tmp);
+        e
+    }
+
+    #[tokio::test]
+    async fn redactor_is_a_noop_by_default() {
+        let e = engine().await;
+        let mut msgs = vec![kod_types::ChatMessage::text(
+            kod_types::MessageId::new(),
+            kod_types::MessageRole::User,
+            "key is sk-abcdef1234567890ABCDEFGH".to_string(),
+            time::OffsetDateTime::now_utc(),
+        )];
+        // `[security.redact] in_prompt = false` is the default, so
+        // the caller's string is untouched.
+        let n = e.redact_messages_for_prompt(&mut msgs);
+        assert_eq!(n, 0);
+        assert!(msgs[0].content.contains("sk-abcdef"));
+    }
+
+    #[tokio::test]
+    async fn tool_result_redaction_is_a_noop_by_default() {
+        let e = engine().await;
+        let s = e.redact_tool_result_for_prompt(
+            "token=sk-abcdef1234567890ABCDEFGH".to_string(),
+        );
+        assert!(s.contains("sk-abcdef"));
     }
 }

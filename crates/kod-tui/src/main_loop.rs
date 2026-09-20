@@ -378,6 +378,15 @@ impl TuiLoop {
         {
             engine.set_turn_trace_writer(std::sync::Arc::new(w));
         }
+        // Tier 3.4 — persist plans and decisions across restarts.
+        // `state.json` sits next to the trace log so a reviewer finds
+        // both in the same directory.
+        if let Some(log_path) = engine.session_log_path()
+            && let Some(state_path) = kod_core::StateStore::sibling_of(&log_path)
+        {
+            let store = kod_core::StateStore::open(state_path);
+            engine.set_state_store(store).await;
+        }
 
         // Install the Jev (TypeSafe AI) client when enabled. A
         // disabled block (the default) is a silent no-op; an

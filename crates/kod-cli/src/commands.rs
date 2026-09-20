@@ -1536,6 +1536,13 @@ pub async fn run_chat(
     {
         engine.set_turn_trace_writer(std::sync::Arc::new(w));
     }
+    // Tier 3.4 — persist plans and decisions across restarts.
+    if let Some(log_path) = engine.session_log_path()
+        && let Some(state_path) = kod_core::StateStore::sibling_of(&log_path)
+    {
+        let store = kod_core::StateStore::open(state_path);
+        engine.set_state_store(store).await;
+    }
 
     // Install the Jev (TypeSafe AI) client when enabled in config.
     // A misconfigured enabled block is a loud startup error; a
@@ -7914,19 +7921,12 @@ pub async fn run_fixture_save(name: &str, turns_path: &std::path::Path) -> Resul
         for r in &t.rounds {
             for c in &r.tool_calls {
                 tool_calls.push(kod_core::fixture::ToolCallFixture {
-                    // The trace does not carry the call id; leave it
-                    // None and let replay generate one.
                     id: None,
                     name: c.name.clone(),
-                    // The trace stores the args hash, not the args.
-                    // A fixture replayed for shape detection can
-                    // tolerate this; a fixture replayed for exact
-                    // tool execution will need the args, which is a
-                    // future schema bump.
-                    arguments: serde_json::json!({
-                        "_args_hash": c.args_hash,
-                        "_output_bytes": c.output_bytes,
-                    }),
+                    // Tier 1.5 — the args now flow through the
+                    // trace verbatim, so a fixture can drive the
+                    // tool round trip on replay.
+                    arguments: c.arguments.clone(),
                 });
                 tool_results.push(kod_core::ToolResultFixture {
                     tool_name: c.name.clone(),
@@ -7935,6 +7935,7 @@ pub async fn run_fixture_save(name: &str, turns_path: &std::path::Path) -> Resul
                         "duration_ms": c.duration_ms,
                         "output_bytes": c.output_bytes,
                         "elided_lines": c.elided_lines,
+                        "summary": c.result_summary,
                     }),
                 });
             }

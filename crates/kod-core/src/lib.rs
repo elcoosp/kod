@@ -29,6 +29,7 @@ pub mod trace;
 pub mod tool_quota;
 pub mod trace_writer;
 pub mod session_log;
+pub mod state;
 pub mod swarm_adapters;
 pub mod swarm_runner;
 pub mod worktree;
@@ -38,6 +39,7 @@ pub use retry_strategy::{choose_action, RetryAction, TurnFailure};
 pub use tool_quota::{check as check_quota, QuotaVerdict, ToolCounts};
 pub use plan::{Plan, PlanStatus, PlanStep, PlanUpdate};
 pub use decisions::{DecisionAuthor, DecisionKind, DecisionLog, DecisionRecord};
+pub use state::{EngineState, StateStore, STATE_SCHEMA_VERSION};
 pub use engine::KodEngine;
 pub use trace::{RoundKind, ToolOutcomeKind, TurnId, TurnOutcome, TurnTrace, TurnTraceBuilder,
 };

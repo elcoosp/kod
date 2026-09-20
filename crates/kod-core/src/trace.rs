@@ -38,15 +38,26 @@ pub enum TurnOutcome {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallTrace {
     pub name: String,
-    /// Short FNV-1a hash of the arguments so two calls can be
-    /// distinguished without storing the args themselves.
+    /// Short FNV-1a hash of the arguments, retained for a quick
+    /// identity check without comparing the full value. Kept
+    /// alongside `arguments` for a reader that wants to dedupe.
     pub args_hash: String,
+    /// The arguments the model passed, verbatim (Tier 1.5). Fixture
+    /// replay uses this to drive the tool round-trip without the
+    /// model. Empty for a trace written before this field existed.
+    #[serde(default)]
+    pub arguments: serde_json::Value,
     pub duration_ms: u64,
     pub outcome: ToolOutcomeKind,
     pub output_bytes: usize,
     /// Lines elided by the Jev compression pass, when it fired.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elided_lines: Option<usize>,
+    /// A short human-readable summary of the tool's result, captured
+    /// for the fixture (Tier 1.5). The full result is in the session
+    /// log; this is what a fixture stores.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -266,20 +277,48 @@ impl TurnTraceBuilder {
         &mut self,
         name: &str,
         args_hash: String,
+        arguments: serde_json::Value,
         duration_ms: u64,
         outcome: ToolOutcomeKind,
         output_bytes: usize,
         elided_lines: Option<usize>,
+        result_summary: Option<String>,
     ) {
         self.round_tool_calls.push(ToolCallTrace {
             name: name.to_string(),
             args_hash,
+            arguments,
             duration_ms,
             outcome,
             output_bytes,
             elided_lines,
+            result_summary,
         });
         self.trace.tool_call_count += 1;
+    }
+
+    /// Attach tool-result summaries to the round's tool-call
+    /// records (Tier 1.5). Called after the tools run, matching by
+    /// index.
+    pub fn attach_results(
+        &mut self,
+        results: &[kod_types::ToolResult],
+        calls: &[kod_types::ToolCall],
+    ) {
+        for (i, result) in results.iter().enumerate() {
+            let Some(call) = calls.get(i) else { continue };
+            // Find the matching entry in `round_tool_calls` by name
+            // and args hash. A duplicate call name with different
+            // args is the common case; the hash disambiguates.
+            let args_hash = hash_short(&call.arguments);
+            if let Some(entry) = self
+                .round_tool_calls
+                .iter_mut()
+                .find(|t| t.name == call.tool_name && t.args_hash == args_hash)
+            {
+                entry.result_summary = Some(summarize_result(result));
+            }
+        }
     }
 
     pub fn add_retry(&mut self, from: &str, to: &str, reason: &str) {
@@ -321,6 +360,25 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// A short human-readable summary of a tool result, used by the
+/// fixture and the trace (Tier 1.5).
+fn summarize_result(result: &kod_types::ToolResult) -> String {
+    match result {
+        kod_types::ToolResult::Success(v) => {
+            let s = v.to_string();
+            if s.len() > 240 {
+                format!("{}…", &s[..240])
+            } else {
+                s
+            }
+        }
+        kod_types::ToolResult::Error(e) => format!("ERROR: {e}"),
+        kod_types::ToolResult::RequiresConfirmation { description, .. } => {
+            format!("requires confirmation: {description}")
+        }
+    }
 }
 
 /// Short FNV-1a hash of a value's serialized form, for `args_hash`.

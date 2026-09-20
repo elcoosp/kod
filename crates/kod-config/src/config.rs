@@ -23,8 +23,53 @@ impl Default for KodConfig {
             lsp: LspConfig::default(),
             mcp: crate::McpConfig::default(),
             jev: crate::JevConfig::default(),
+            security: crate::SecurityConfig::default(),
             limits: crate::LimitsConfig::default(),
             commands: Default::default(),
+        }
+    }
+}
+
+/// `[security]` — the reserved block from the config reference.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SecurityConfig {
+    /// Prompt-path redaction.
+    pub redact: RedactConfig,
+}
+
+/// `[security.redact]` — in-prompt secret redaction (Tier 1.3).
+///
+/// Log-write redaction is always on and not configurable. This block
+/// controls the *prompt-path* redactor, which runs over every message
+/// and tool result before it reaches the model.
+///
+/// The default is off. Turning it on is the right choice when the
+/// workspace may contain live credentials the model does not need to
+/// see; turning it off (the default) is the right choice for a normal
+/// code-editing session, where a redacted `read_file` result would
+/// prevent the model from proposing the change the user asked for.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RedactConfig {
+    /// Redact secrets in the prompt before the model sees it.
+    pub in_prompt: bool,
+    /// When set, paths that match this list are additionally redacted
+    /// in `ToolCall.arguments` before being rendered into the prompt.
+    /// Same glob semantics as `[policy.read_protection].deny`.
+    ///
+    /// Redacting arguments is stronger than redacting results: the
+    /// model cannot see the arguments at all, which is what you want
+    /// when a `write_file` is about to place a literal credential.
+    #[serde(default)]
+    pub redact_argument_paths: Vec<String>,
+}
+
+impl Default for RedactConfig {
+    fn default() -> Self {
+        Self {
+            in_prompt: false,
+            redact_argument_paths: Vec::new(),
         }
     }
 }
@@ -65,6 +110,8 @@ pub struct KodConfig {
     /// construct a `JevClient` from this block at startup and
     /// install it on the engine.
     pub jev: crate::JevConfig,
+    /// In-prompt secret redaction (Tier 1.3).
+    pub security: SecurityConfig,
     /// Session cost and token limits (Tier 1.2).
     pub limits: crate::LimitsConfig,
     /// User-defined slash commands. A key `foo` registers `/foo <args>`,
