@@ -1231,9 +1231,19 @@ impl TuiLoop {
                 // text once every 5 chunks; a `reasoning` /
                 // `restatement` verdict folds the chunk into the
                 // thinking spinner instead of the chat.
+                //
+                // Safety valve: if classification has been hiding
+                // text for more than REASONING_TIMEOUT, we assume
+                // the classifier misfired and force prose for the
+                // rest of the turn. The accumulated buffer is
+                // flushed so nothing is lost.
+                const REASONING_TIMEOUT: std::time::Duration =
+                    std::time::Duration::from_secs(20);
                 let mut is_reasoning: bool = false;
                 let mut chunk_count: usize = 0;
                 let mut accumulated: String = String::new();
+                let mut reasoning_since: Option<std::time::Instant> = None;
+                let mut disabled_for_turn: bool = false;
                 while let Some(chunk) = chunk_rx.recv().await {
                     if let Some((id, json)) = kod_core::engine::parse_question(&chunk) {
                         let req: kod_tools::ask::QuestionRequest = serde_json::from_str(json)
@@ -1304,6 +1314,8 @@ impl TuiLoop {
                         accumulated.clear();
                         chunk_count = 0;
                         is_reasoning = false;
+                        reasoning_since = None;
+                        disabled_for_turn = false;
                     } else {
                         // P1.4 — classify the running buffer every
                         // 5 text chunks once we have enough to
@@ -1311,7 +1323,8 @@ impl TuiLoop {
                         // by chunk count and buffer length.
                         accumulated.push_str(&chunk);
                         chunk_count += 1;
-                        if chunk_count % 5 == 0
+                        if !disabled_for_turn
+                            && chunk_count % 5 == 0
                             && accumulated.len() > 200
                             && let Some(kind) = engine_for_pump
                                 .classify_chunk_with_jev("session", &accumulated)
@@ -1319,6 +1332,32 @@ impl TuiLoop {
                         {
                             is_reasoning =
                                 matches!(kind.as_str(), "reasoning" | "restatement");
+                            if is_reasoning && reasoning_since.is_none() {
+                                reasoning_since = Some(std::time::Instant::now());
+                            } else if !is_reasoning {
+                                reasoning_since = None;
+                            }
+                        }
+                        // Safety valve: too long spent hiding text.
+                        if let Some(started) = reasoning_since
+                            && started.elapsed() >= REASONING_TIMEOUT
+                        {
+                            // Dump the buffer as one prose chunk so
+                            // nothing is lost, then stop classifying
+                            // for the rest of the turn.
+                            tracing::warn!(
+                                hidden_chars = accumulated.len(),
+                                "P1.4 safety valve: forcing prose after timeout"
+                            );
+                            let flushed = std::mem::take(&mut accumulated);
+                            if !flushed.is_empty() {
+                                let _ = event_tx_chunks
+                                    .send(Event::ResponseChunk(flushed))
+                                    .await;
+                            }
+                            is_reasoning = false;
+                            reasoning_since = None;
+                            disabled_for_turn = true;
                         }
                         if is_reasoning {
                             // Fold the chunk into the spinner. The
