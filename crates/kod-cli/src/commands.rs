@@ -6895,6 +6895,21 @@ mod coverage_cli_parsing {
         parse_err(&["kod", "trace", "show"]);
     }
 
+    #[tokio::test]
+    async fn drive_prompt_captures_a_request() {
+        // `drive_prompt_through_fresh_engine` is what powers
+        // `kod trace replay`. A regression that dropped the
+        // concrete provider handle would silently return an empty
+        // capture, which turns every replay into a no-op. This
+        // asserts the capture is non-empty for a trivial prompt.
+        let (captured, err) = drive_prompt_through_fresh_engine("hi").await;
+        assert!(err.is_none(), "engine error: {err:?}");
+        assert!(
+            !captured.is_empty(),
+            "replay must capture the request the engine built",
+        );
+    }
+
     #[test]
     fn trace_replay_parses() {
         match parse_ok(&["kod", "trace", "replay", "42"]).command {
@@ -8283,12 +8298,16 @@ async fn drive_prompt_through_fresh_engine(
     // A provider that answers with a single empty text round. The
     // engine's first request is what we want; the answer does not
     // matter.
-    let provider: std::sync::Arc<dyn kod_provider::LlmProvider> =
-        std::sync::Arc::new(ReplayProvider::new(vec![ReplayRound {
-            text: String::new(),
-            tool_calls: Vec::new(),
-            usage: None,
-        }]));
+    //
+    // Two handles to the same provider: the concrete one is what
+    // `captured()` lives on, and the `dyn LlmProvider` is what the
+    // registry stores.
+    let replay_concrete = std::sync::Arc::new(ReplayProvider::new(vec![ReplayRound {
+        text: String::new(),
+        tool_calls: Vec::new(),
+        usage: None,
+    }]));
+    let provider: std::sync::Arc<dyn kod_provider::LlmProvider> = replay_concrete.clone();
 
     let mut registry = kod_provider::ProviderRegistry::new();
     registry.insert(
@@ -8338,13 +8357,10 @@ async fn drive_prompt_through_fresh_engine(
     let _ = engine.process_for("session", prompt).await;
     let _ = engine.shutdown().await;
     let _ = std::fs::remove_dir_all(&tmp);
-    // The ReplayProvider logs the request; but we constructed it as
-    // `dyn LlmProvider` and lost the concrete handle. To recover
-    // the capture we would need the concrete `Arc<ReplayProvider>`
-    // — that is why the CLI's fixture-replay path keeps both. Here
-    // we fall back to an empty capture and report "no request".
-    let _ = provider;
-    (Vec::new(), None)
+    // The concrete handle is what `captured()` lives on; the
+    // provider we gave the registry shares the same inner state.
+    let captured = replay_concrete.captured();
+    (captured, None)
 }
 
 /// `kod trace json` — every turn as a JSON array.
