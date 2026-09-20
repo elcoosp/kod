@@ -413,6 +413,64 @@ impl Cli {
                 // launcher's startup path as small as possible.
                 run_sandbox_exec(profile.clone(), cmd.clone())
             }
+            Some(Command::Jev { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async {
+                    match action {
+                        JevAction::Status => run_jev_status().await,
+                        JevAction::Stats { log } => run_jev_stats(log.clone()).await,
+                        JevAction::Test => run_jev_test().await,
+                        JevAction::Tune => run_jev_tune_show().await,
+                        JevAction::TuneSet { name, value } => {
+                            run_jev_tune_set(name, *value).await
+                        }
+                        JevAction::TuneReset => run_jev_tune_reset().await,
+                    }
+                })
+            }
+            Some(Command::Budget { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async {
+                    match action {
+                        BudgetAction::Show { log } => run_budget_show(log.clone()).await,
+                    }
+                })
+            }
+            Some(Command::Limits { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async {
+                    match action {
+                        LimitsAction::Show => run_limits_show().await,
+                    }
+                })
+            }
+            Some(Command::Plan { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async {
+                    match action {
+                        PlanAction::Show { state } => run_plan_show(state.clone()).await,
+                        PlanAction::Json { state } => run_plan_json(state.clone()).await,
+                    }
+                })
+            }
+            Some(Command::Decisions { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async {
+                    match action {
+                        DecisionsAction::Show { state, limit } => {
+                            run_decisions_show(state.clone(), *limit).await
+                        }
+                        DecisionsAction::Json { state } => {
+                            run_decisions_json(state.clone()).await
+                        }
+                    }
+                })
+            }
             Some(Command::Trace { action }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
@@ -953,6 +1011,36 @@ pub enum Command {
         model: Option<String>,
     },
 
+    /// Jev (TypeSafe AI) status, statistics, and threshold tuning.
+    Jev {
+        #[command(subcommand)]
+        action: JevAction,
+    },
+
+    /// Session cost and limits.
+    Budget {
+        #[command(subcommand)]
+        action: BudgetAction,
+    },
+
+    /// Per-tool quotas and counters.
+    Limits {
+        #[command(subcommand)]
+        action: LimitsAction,
+    },
+
+    /// Plan artifact for the current session.
+    Plan {
+        #[command(subcommand)]
+        action: PlanAction,
+    },
+
+    /// Durable decisions for the current session.
+    Decisions {
+        #[command(subcommand)]
+        action: DecisionsAction,
+    },
+
     /// Inspect the structured turn traces written by `KodEngine`
     /// (Tier 1.4). Reads `turns.jsonl` from the session directory;
     /// `--path` overrides.
@@ -1036,6 +1124,93 @@ pub enum TraceAction {
         path: Option<std::path::PathBuf>,
     },
 }
+
+/// `kod jev` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum JevAction {
+    /// Print the current session's Jev status and thresholds.
+    Status,
+    /// Print a decision summary from the session log (share,
+    /// cache hits, average latency, breakdown by purpose).
+    Stats {
+        /// Path to the session log. Defaults to the newest file
+        /// under `~/.kod/sessions/`.
+        #[arg(long)]
+        log: Option<std::path::PathBuf>,
+    },
+    /// Ping the endpoint with a trivial question. Exits non-zero on
+    /// failure.
+    Test,
+    /// Show the configured thresholds.
+    Tune,
+    /// Set one threshold. Persists to `~/.kod/config.toml`.
+    TuneSet {
+        /// Threshold name (e.g. `task_classify_min`).
+        name: String,
+        /// New value, in `[0, 1]`. Values outside the range are
+        /// clamped.
+        value: f32,
+    },
+    /// Restore every threshold to its default.
+    TuneReset,
+}
+
+/// `kod budget` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum BudgetAction {
+    /// Print the session cost from the most recent log.
+    Show {
+        /// Path to the session log. Defaults to the newest file
+        /// under `~/.kod/sessions/`.
+        #[arg(long)]
+        log: Option<std::path::PathBuf>,
+    },
+}
+
+/// `kod limits` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum LimitsAction {
+    /// Print the effective `[limits]` block. The per-tool counters
+    /// live in memory and are not visible from the CLI; this prints
+    /// the configured quotas.
+    Show,
+}
+
+/// `kod plan` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum PlanAction {
+    /// Print the persisted plan for the default transcript.
+    Show {
+        /// Path to `state.json`. Defaults to
+        /// `~/.kod/sessions/state.json`.
+        #[arg(long)]
+        state: Option<std::path::PathBuf>,
+    },
+    /// Print the plan as JSON.
+    Json {
+        #[arg(long)]
+        state: Option<std::path::PathBuf>,
+    },
+}
+
+/// `kod decisions` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum DecisionsAction {
+    /// Print the persisted decisions for the default transcript.
+    Show {
+        #[arg(long)]
+        state: Option<std::path::PathBuf>,
+        /// Cap on rows printed. Default 30, max 200.
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
+    },
+    /// Print the decisions as JSON.
+    Json {
+        #[arg(long)]
+        state: Option<std::path::PathBuf>,
+    },
+}
+
 
 /// `kod theme` subcommands.
 #[derive(Subcommand, Debug, Clone)]
@@ -7462,6 +7637,374 @@ mod coverage_cli_subactions {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Tier 3.4 / P0.1 — CLI mirrors for TUI commands
+// ---------------------------------------------------------------------------
+
+/// Find the newest `.jsonl` under `~/.kod/sessions/`.
+fn newest_session_log() -> Result<Option<std::path::PathBuf>> {
+    let Some(home) = dirs::home_dir() else {
+        return Ok(None);
+    };
+    let dir = home.join(".kod").join("sessions");
+    if !dir.is_dir() {
+        return Ok(None);
+    }
+    let mut entries: Vec<(std::time::SystemTime, std::path::PathBuf)> = Vec::new();
+    for e in std::fs::read_dir(&dir).map_err(KodError::Io)? {
+        let e = e.map_err(KodError::Io)?;
+        let path = e.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let meta = match e.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+        entries.push((mtime, path));
+    }
+    entries.sort_by(|a, b| b.0.cmp(&a.0));
+    Ok(entries.into_iter().next().map(|(_, p)| p))
+}
+
+/// `kod jev status` — print the effective Jev config.
+pub async fn run_jev_status() -> Result<()> {
+    let cfg = KodConfig::load_default()?;
+    let jev = &cfg.jev;
+    if !jev.enabled {
+        eprintln!("Jev is disabled. Set [jev] enabled = true and restart.");
+        return Ok(());
+    }
+    println!("Jev (TypeSafe AI)");
+    println!(
+        "  model:            {}",
+        jev.model.as_deref().unwrap_or("jev-latest"),
+    );
+    if let Some(u) = &jev.base_url {
+        println!("  base_url:         {u}");
+    }
+    println!("  cache_ttl_secs:   {}", jev.cache_ttl_secs);
+    println!("  timeout_ms:       {}", jev.timeout_ms);
+    println!("  fail_open:        {}", jev.fail_open);
+    println!("  redact_paths:     {}", jev.redact_paths);
+    println!("  reasoning_timeout: {}s", jev.reasoning_timeout_secs);
+    println!();
+    println!("Thresholds");
+    for name in kod_config::JevThresholds::NAMES {
+        if let Some(v) = jev.thresholds.get(name) {
+            println!("  {name:<24} {v:.2}");
+        }
+    }
+    if !jev.round_routing.is_empty() {
+        println!();
+        println!("Round routing");
+        let mut keys: Vec<&String> = jev.round_routing.keys().collect();
+        keys.sort();
+        for k in keys {
+            println!("  {k:<24} {}", jev.round_routing[k]);
+        }
+    }
+    Ok(())
+}
+
+/// `kod jev stats` — read JevDecision entries from a session log.
+pub async fn run_jev_stats(log: Option<std::path::PathBuf>) -> Result<()> {
+    let path = match log {
+        Some(p) => p,
+        None => newest_session_log()?.ok_or_else(|| {
+            KodError::Config("no session log found under ~/.kod/sessions/".to_string())
+        })?,
+    };
+    let entries = kod_core::session_log::read_session(&path)?;
+    let mut total = 0_usize;
+    let mut cached = 0_usize;
+    let mut total_latency_ms: u64 = 0;
+    let mut by_source: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut by_purpose: std::collections::BTreeMap<String, usize> = Default::default();
+    for e in &entries {
+        if let kod_core::session_log::SessionEntry::JevDecision {
+            purpose,
+            latency_ms,
+            cached: c,
+            source,
+            ..
+        } = e
+        {
+            total += 1;
+            total_latency_ms += *latency_ms;
+            if *c {
+                cached += 1;
+            }
+            *by_source.entry(source.clone()).or_insert(0) += 1;
+            *by_purpose.entry(purpose.clone()).or_insert(0) += 1;
+        }
+    }
+    if total == 0 {
+        eprintln!("No Jev decisions recorded in {}", path.display());
+        return Ok(());
+    }
+    println!("Jev decisions in {}", path.display());
+    println!("  total:      {total}");
+    for (src, n) in &by_source {
+        let pct = *n as f64 / total as f64 * 100.0;
+        println!("  {src:<10} {n:>5}  ({pct:.0}%)");
+    }
+    println!("  cached:     {cached} ({}%)", cached * 100 / total);
+    println!("  avg latency: {}ms", total_latency_ms / total as u64);
+    println!();
+    println!("By purpose");
+    let mut rows: Vec<(&String, &usize)> = by_purpose.iter().collect();
+    rows.sort_by(|a, b| b.1.cmp(a.1));
+    for (p, n) in rows {
+        println!("  {p:<24} {n}");
+    }
+    Ok(())
+}
+
+/// `kod jev test` — ping the endpoint. Exits non-zero on failure.
+pub async fn run_jev_test() -> Result<()> {
+    let cfg = KodConfig::load_default()?;
+    let client = kod_core::JevClient::from_config(&cfg.jev)
+        .map_err(|e| KodError::Config(format!("Jev config: {e}")))?
+        .ok_or_else(|| {
+            KodError::Config("Jev is disabled in config; enable [jev] first".to_string())
+        })?;
+    let state = kod_core::jev::build_state(
+        "The sky is blue on a clear day.",
+        &[],
+    );
+    let started = std::time::Instant::now();
+    match client
+        .evaluate_yes_no(
+            &state,
+            "Is the sky described here as blue? Answer yes or no.",
+        )
+        .await
+    {
+        Ok(d) => {
+            let ms = started.elapsed().as_millis();
+            println!("✓ Jev responded in {ms}ms: value={} confidence={:.2}", d.value, d.confidence);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("✗ Jev call failed: {e}");
+            Err(KodError::InvalidState(format!("jev test: {e}")))
+        }
+    }
+}
+
+/// `kod jev tune` — print thresholds.
+pub async fn run_jev_tune_show() -> Result<()> {
+    let cfg = KodConfig::load_default()?;
+    println!("Jev thresholds");
+    for name in kod_config::JevThresholds::NAMES {
+        if let Some(v) = cfg.jev.thresholds.get(name) {
+            println!("  {name:<24} {v:.2}");
+        }
+    }
+    Ok(())
+}
+
+/// `kod jev tune set <name> <value>` — set a threshold and persist.
+pub async fn run_jev_tune_set(name: &str, value: f32) -> Result<()> {
+    let mut cfg = KodConfig::load_default()?;
+    if !cfg.jev.thresholds.set(name, value) {
+        return Err(KodError::InvalidParameters {
+            reason: format!(
+                "unknown threshold {name:?}; known: {}",
+                kod_config::JevThresholds::NAMES.join(", "),
+            ),
+        });
+    }
+    cfg.jev.thresholds.clamp();
+    let path = KodConfig::config_dir()?.join("config.toml");
+    cfg.save_to(&path)?;
+    eprintln!("Set {name} = {value:.2} in {}", path.display());
+    Ok(())
+}
+
+/// `kod jev tune reset` — restore defaults.
+pub async fn run_jev_tune_reset() -> Result<()> {
+    let mut cfg = KodConfig::load_default()?;
+    cfg.jev.thresholds = kod_config::JevThresholds::default();
+    let path = KodConfig::config_dir()?.join("config.toml");
+    cfg.save_to(&path)?;
+    eprintln!("Reset every threshold to default in {}", path.display());
+    Ok(())
+}
+
+/// `kod budget show` — total cost from the newest session log.
+pub async fn run_budget_show(log: Option<std::path::PathBuf>) -> Result<()> {
+    let path = match log {
+        Some(p) => p,
+        None => newest_session_log()?.ok_or_else(|| {
+            KodError::Config("no session log found under ~/.kod/sessions/".to_string())
+        })?,
+    };
+    let entries = kod_core::session_log::read_session(&path)?;
+    let mut total_cost = 0.0_f64;
+    let mut per_endpoint: std::collections::BTreeMap<String, (usize, usize, f64)> =
+        Default::default();
+    for e in &entries {
+        if let kod_core::session_log::SessionEntry::Cost {
+            endpoint,
+            prompt_tokens,
+            completion_tokens,
+            cost_usd,
+            ..
+        } = e
+        {
+            total_cost += *cost_usd;
+            let slot = per_endpoint
+                .entry(endpoint.clone())
+                .or_insert((0, 0, 0.0));
+            slot.0 += prompt_tokens;
+            slot.1 += completion_tokens;
+            slot.2 += cost_usd;
+        }
+    }
+    println!("Session cost for {}", path.display());
+    println!("  total: ${total_cost:.4}");
+    if !per_endpoint.is_empty() {
+        println!();
+        println!("  endpoint                in tok   out tok        cost");
+        for (ep, (p, c, cost)) in &per_endpoint {
+            println!("  {ep:<24} {p:>7} {c:>9}  ${cost:.4}");
+        }
+    }
+    let cfg = KodConfig::load_default()?;
+    if cfg.limits.max_cost_usd_per_session > 0.0 {
+        let cap = cfg.limits.max_cost_usd_per_session;
+        let pct = total_cost / cap * 100.0;
+        println!();
+        println!("  session cap: ${cap:.2} ({pct:.1}% used)");
+    }
+    Ok(())
+}
+
+/// `kod limits show` — effective `[limits]` config.
+pub async fn run_limits_show() -> Result<()> {
+    let cfg = KodConfig::load_default()?;
+    let l = &cfg.limits;
+    println!("Limits");
+    println!("  max_cost_usd_per_session:   {}", l.max_cost_usd_per_session);
+    println!("  max_cost_usd_per_turn:      {}", l.max_cost_usd_per_turn);
+    println!("  max_input_tokens_per_turn:  {}", l.max_input_tokens_per_turn);
+    println!("  max_output_tokens_per_turn: {}", l.max_output_tokens_per_turn);
+    println!("  on_exhausted:               {:?}", l.on_exhausted);
+    println!("  soft_warn_at:               {}", l.soft_warn_at);
+    if !l.tools.is_empty() {
+        println!();
+        println!("Per-tool quotas");
+        for (tool, q) in &l.tools {
+            println!(
+                "  {tool:<24} per_turn={} per_session={} per_command={}",
+                q.per_turn, q.per_session, q.per_command,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `kod plan show` — read state.json's plan for the default
+/// transcript.
+pub async fn run_plan_show(state: Option<std::path::PathBuf>) -> Result<()> {
+    let path = match state {
+        Some(p) => p,
+        None => kod_core::StateStore::default_path().ok_or_else(|| {
+            KodError::Config("no home directory for state.json".to_string())
+        })?,
+    };
+    let store = kod_core::StateStore::open(path.clone());
+    let loaded = store.load();
+    let Some(plan) = loaded.plans.get("session") else {
+        eprintln!("No plan recorded in {}", path.display());
+        return Ok(());
+    };
+    println!("Plan for: {}", plan.goal);
+    println!();
+    for step in &plan.steps {
+        let marker = match step.status {
+            kod_core::PlanStatus::Done => "✓",
+            kod_core::PlanStatus::InProgress => "→",
+            kod_core::PlanStatus::Blocked => "!",
+            kod_core::PlanStatus::Skipped => "·",
+            kod_core::PlanStatus::Pending => " ",
+        };
+        println!("{} {}. {}", marker, step.id + 1, step.text);
+    }
+    println!();
+    println!("Progress: {:.0}%", plan.progress() * 100.0);
+    Ok(())
+}
+
+/// `kod plan json` — plan as JSON.
+pub async fn run_plan_json(state: Option<std::path::PathBuf>) -> Result<()> {
+    let path = match state {
+        Some(p) => p,
+        None => kod_core::StateStore::default_path().ok_or_else(|| {
+            KodError::Config("no home directory for state.json".to_string())
+        })?,
+    };
+    let store = kod_core::StateStore::open(path);
+    let loaded = store.load();
+    let plan = loaded.plans.get("session");
+    let s = serde_json::to_string_pretty(&plan)
+        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    println!("{s}");
+    Ok(())
+}
+
+/// `kod decisions show` — decisions from state.json.
+pub async fn run_decisions_show(
+    state: Option<std::path::PathBuf>,
+    limit: usize,
+) -> Result<()> {
+    let path = match state {
+        Some(p) => p,
+        None => kod_core::StateStore::default_path().ok_or_else(|| {
+            KodError::Config("no home directory for state.json".to_string())
+        })?,
+    };
+    let store = kod_core::StateStore::open(path.clone());
+    let loaded = store.load();
+    let Some(log) = loaded.decision_logs.get("session") else {
+        eprintln!("No decisions recorded in {}", path.display());
+        return Ok(());
+    };
+    let cap = limit.min(200).min(log.entries.len());
+    println!("Decisions ({} total, newest {}):", log.entries.len(), cap);
+    for d in log.entries.iter().rev().take(cap) {
+        let tag = match d.kind {
+            kod_core::DecisionKind::UserPreference => "pref",
+            kod_core::DecisionKind::Approach => "appr",
+            kod_core::DecisionKind::FileChange => "file",
+            kod_core::DecisionKind::Constraint => "cons",
+            kod_core::DecisionKind::Other => "othr",
+        };
+        println!("  [{}] {}", tag, d.text);
+    }
+    Ok(())
+}
+
+/// `kod decisions json` — decisions as JSON.
+pub async fn run_decisions_json(state: Option<std::path::PathBuf>) -> Result<()> {
+    let path = match state {
+        Some(p) => p,
+        None => kod_core::StateStore::default_path().ok_or_else(|| {
+            KodError::Config("no home directory for state.json".to_string())
+        })?,
+    };
+    let store = kod_core::StateStore::open(path);
+    let loaded = store.load();
+    let log = loaded.decision_logs.get("session");
+    let s = serde_json::to_string_pretty(&log)
+        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    println!("{s}");
+    Ok(())
+}
 
 // ---------------------------------------------------------------------------
 // Tier 1.4 — `kod trace`
