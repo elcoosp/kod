@@ -670,7 +670,7 @@ mod widget_overlays {
             "item 3 listed, got: {text}"
         );
         assert!(
-            text.contains("deny all remaining"),
+            text.contains("deny all"),
             "batch legend, got: {text}"
         );
     }

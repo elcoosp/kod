@@ -144,9 +144,9 @@ impl ApprovalWidget {
                 Span::styled("h", label_style.add_modifier(Modifier::BOLD)),
                 Span::styled(" hunks  ", Style::default()),
                 Span::styled("↑/↓", label_style.add_modifier(Modifier::BOLD)),
-                Span::styled(" navigate  ", Style::default()),
+                Span::styled(" nav  ", Style::default()),
                 Span::styled("Esc", label_style.add_modifier(Modifier::BOLD)),
-                Span::styled(" deny all remaining", Style::default()),
+                Span::styled(" deny all", Style::default()),
             ]));
         } else {
             lines.push(Line::from(vec![
