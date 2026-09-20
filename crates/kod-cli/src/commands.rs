@@ -421,8 +421,9 @@ impl Cli {
                         FixtureAction::Save { name, turns, force } => {
                             run_fixture_save_v2(name, turns.clone(), *force).await
                         }
-                        FixtureAction::Replay { name, strict } => {
-                            let _ = run_fixture_replay(name, *strict).await?;
+                        FixtureAction::Replay { name, strict, first_round_only } => {
+                            let _ = run_fixture_replay(name, *strict, *first_round_only)
+                                .await?;
                             Ok(())
                         }
                         FixtureAction::List => run_fixture_list().await,
@@ -974,6 +975,12 @@ pub enum FixtureAction {
         /// (round count mismatch).
         #[arg(long, default_value_t = false)]
         strict: bool,
+        /// Replay only the first round. Safe mode: a first-round
+        /// divergence is where almost all prompt drift surfaces, and
+        /// this avoids re-executing any tool side-effects the later
+        /// rounds would otherwise trigger.
+        #[arg(long, default_value_t = false)]
+        first_round_only: bool,
     },
     /// List available fixtures under `~/.kod/fixtures/`.
     List,
@@ -6633,10 +6640,15 @@ mod coverage_cli_parsing {
     fn fixture_replay_parses() {
         match parse_ok(&["kod", "fixture", "replay", "auth"]).command {
             Some(Command::Fixture {
-                action: FixtureAction::Replay { name, strict },
+                action: FixtureAction::Replay {
+                    name,
+                    strict,
+                    first_round_only,
+                },
             }) => {
                 assert_eq!(name, "auth");
                 assert!(!strict);
+                assert!(!first_round_only);
             }
             _ => panic!("expected Fixture::Replay"),
         }
@@ -6649,6 +6661,20 @@ mod coverage_cli_parsing {
                 action: FixtureAction::Replay { strict, .. },
             }) => assert!(strict),
             _ => panic!("expected Fixture::Replay with --strict"),
+        }
+    }
+
+    #[test]
+    fn fixture_replay_first_round_only_flag() {
+        match parse_ok(&[
+            "kod", "fixture", "replay", "auth", "--first-round-only",
+        ])
+        .command
+        {
+            Some(Command::Fixture {
+                action: FixtureAction::Replay { first_round_only, .. },
+            }) => assert!(first_round_only),
+            _ => panic!("expected Fixture::Replay with --first-round-only"),
         }
     }
 
@@ -7319,7 +7345,11 @@ mod coverage_cli_subactions {
 /// Replay a saved fixture against the current engine, printing any
 /// divergence in the request shape (Tier 1.5). Returns the number of
 /// divergent rounds; zero means a clean replay.
-pub async fn run_fixture_replay(name: &str, strict: bool) -> Result<i32> {
+pub async fn run_fixture_replay(
+    name: &str,
+    strict: bool,
+    first_round_only: bool,
+) -> Result<i32> {
     use kod_provider::replay::{ReplayProvider, ReplayRound, ReplayToolCall};
 
     let path = kod_core::Fixture::default_path(name).ok_or_else(|| {
@@ -7412,7 +7442,17 @@ pub async fn run_fixture_replay(name: &str, strict: bool) -> Result<i32> {
     // ReplayProvider answers with the recorded response, and captures
     // the request the engine built.
     let mut divergent = 0_i32;
-    for (idx, round) in fixture.rounds.iter().enumerate() {
+    let rounds_to_run = if first_round_only {
+        fixture
+            .rounds
+            .iter()
+            .position(|r| !r.user_prompt.is_empty())
+            .map(|i| i + 1)
+            .unwrap_or(fixture.rounds.len())
+    } else {
+        fixture.rounds.len()
+    };
+    for (idx, round) in fixture.rounds.iter().take(rounds_to_run).enumerate() {
         if round.user_prompt.is_empty() {
             continue;
         }
@@ -7459,8 +7499,10 @@ pub async fn run_fixture_replay(name: &str, strict: bool) -> Result<i32> {
         }
     }
 
-    // Round-count mismatch is a soft divergence unless strict.
-    if captured.len() != fixture.rounds.len() {
+    // Round-count mismatch is a soft divergence unless strict. When
+    // `--first-round-only` is set, we only ran one round; comparing
+    // counts is not meaningful.
+    if !first_round_only && captured.len() != fixture.rounds.len() {
         let msg = format!(
             "round count: fixture has {}, replay produced {}",
             fixture.rounds.len(),
