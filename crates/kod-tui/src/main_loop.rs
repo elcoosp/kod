@@ -2186,14 +2186,20 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                         return Ok(());
                     }
                 };
-                let path = match config.memory_db_path() {
-                    Ok(p) => p,
-                    Err(e) => {
-                        self.app.push_system_message(&format!(
-                            "Could not determine memory database path: {e}"
-                        ));
-                        return Ok(());
-                    }
+                // Same isolation as the TUI's engine init: a test
+                // that runs `/remember` writes to `KOD_TEST_DB` when
+                // set, never to the user's real database.
+                let path = match std::env::var("KOD_TEST_DB") {
+                    Ok(p) => std::path::PathBuf::from(p),
+                    Err(_) => match config.memory_db_path() {
+                        Ok(p) => p,
+                        Err(e) => {
+                            self.app.push_system_message(&format!(
+                                "Could not determine memory database path: {e}"
+                            ));
+                            return Ok(());
+                        }
+                    },
                 };
                 let manager =
                     match kod_memory::MemoryManager::new(path, config.memory.short_term_capacity) {
@@ -6713,14 +6719,39 @@ mod coverage_slash_dispatch {
     }
 
     #[tokio::test]
-    async fn remember_without_engine_reports() {
+    async fn remember_without_engine_succeeds_via_direct_db_write() {
+        // `/remember` does not need the engine: it loads the config,
+        // resolves the memory DB path, opens a MemoryManager, and
+        // writes the entry. KOD_TEST_DB keeps this test off the
+        // user's real database.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db_path = tmp.path().join("remember-test.redb");
+        // `set_var` is process-global; the guard restores the prior
+        // value on drop so a parallel test runner is not affected
+        // past this test's scope.
+        struct EnvGuard {
+            prior: Option<String>,
+        }
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match &self.prior {
+                    Some(v) => unsafe { std::env::set_var("KOD_TEST_DB", v) },
+                    None => unsafe { std::env::remove_var("KOD_TEST_DB") },
+                }
+            }
+        }
+        let prior = std::env::var("KOD_TEST_DB").ok();
+        // SAFETY: the test is short and the guard restores.
+        unsafe { std::env::set_var("KOD_TEST_DB", &db_path) };
+        let _guard = EnvGuard { prior };
+
         let mut tui = TuiLoop::new();
         tui.handle_command("/remember cats are nice").await.unwrap();
-        // Engine missing OR memory disabled — both are honest
-        // non-silent failures.
-        assert_last_contains_any(
-            &tui,
-            &["Engine not initialized", "memory"],
+        let msgs = tui.app().messages();
+        let last = msgs.last().map(|m| m.content.as_str()).unwrap_or("");
+        assert!(
+            last.contains("Remembered"),
+            "expected a 'Remembered' acknowledgement, got: {last}",
         );
     }
 
