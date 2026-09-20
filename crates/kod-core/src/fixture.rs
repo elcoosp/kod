@@ -17,6 +17,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundFixture {
     pub seq: u32,
+    /// The user's input that triggered this round (Tier 1.5). Replay
+    /// re-feeds this to a fresh engine so the same shape of request
+    /// is rebuilt from scratch. An empty string is allowed for a
+    /// round whose input is not reproducible (e.g. a summary call);
+    /// replay skips such rounds.
+    #[serde(default)]
+    pub user_prompt: String,
     /// FNV-1a of the request shape. What replay compares against
     /// today's engine to catch a prompt drift.
     pub request_hash: String,
@@ -40,6 +47,27 @@ pub struct RequestSummary {
 }
 
 impl RequestSummary {
+    /// Build a summary from a live `CompletionRequest`. Used by replay
+    /// to capture what the current engine actually sent so it can be
+    /// diffed against the fixture.
+    pub fn from_request(req: &kod_provider::CompletionRequest) -> Self {
+        let model = req.model.model.clone();
+        let endpoint = req.model.endpoint.clone();
+        let mut tool_names: Vec<String> =
+            req.tools.iter().map(|t| t.name.clone()).collect();
+        tool_names.sort();
+        Self {
+            // `system` renders to text; its length is the proxy for
+            // the invariant prefix. `messages.len()` counts the
+            // conversation slice.
+            system_chars: req.system.render_text().len(),
+            message_count: req.messages.len(),
+            tool_names,
+            model,
+            endpoint,
+        }
+    }
+
     /// FNV-1a hash of the summary fields. Stable across runs; the
     /// diff is meaningful because the components are stable strings
     /// or counts.
@@ -217,6 +245,7 @@ mod tests {
             let hash = summary.hash();
             f.rounds.push(RoundFixture {
                 seq,
+                user_prompt: format!("prompt {seq}"),
                 request_hash: hash,
                 request_summary: summary,
                 response: ResponseFixture {
@@ -310,6 +339,7 @@ mod tests {
             engine_version: "test".into(),
             rounds: vec![RoundFixture {
                 seq: 0,
+                user_prompt: "hello".into(),
                 request_hash: "abc".into(),
                 request_summary: RequestSummary {
                     system_chars: 1,

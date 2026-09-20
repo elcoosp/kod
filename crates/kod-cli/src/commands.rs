@@ -7317,9 +7317,11 @@ mod coverage_cli_subactions {
 // ---------------------------------------------------------------------------
 
 /// Replay a saved fixture against the current engine, printing any
-/// divergence in the request shape. Returns 0 on a match, 1 on a
-/// mismatch, 2 on a load error.
+/// divergence in the request shape (Tier 1.5). Returns the number of
+/// divergent rounds; zero means a clean replay.
 pub async fn run_fixture_replay(name: &str, strict: bool) -> Result<i32> {
+    use kod_provider::replay::{ReplayProvider, ReplayRound, ReplayToolCall};
+
     let path = kod_core::Fixture::default_path(name).ok_or_else(|| {
         KodError::Config("could not determine fixtures directory".to_string())
     })?;
@@ -7327,25 +7329,161 @@ pub async fn run_fixture_replay(name: &str, strict: bool) -> Result<i32> {
         KodError::Config(format!("could not load fixture {}: {e}", path.display()))
     })?;
     eprintln!(
-        "Fixture {} ({} rounds, created at {})",
+        "Replaying fixture {} ({} rounds, created at {})",
         fixture.name,
         fixture.rounds.len(),
         fixture.created_at_ms,
     );
 
-    // Build a fresh engine in-process, run a ReplayProvider through
-    // it, and compare the round-by-round request summaries.
-    //
-    // For the first cut we only *diff the recorded fixture against
-    // itself* — a real replay requires plumbing the ReplayProvider
-    // into the engine, which needs a small extension. That plumbing
-    // is deliberately left out of this pass; the fixture format and
-    // the offline diff below are the load-bearing artifacts. CI
-    // can shell out to `kod replay-fixture <name>` and diff the
-    // output against a stored baseline.
-    let _ = strict;
-    eprintln!("(replay mode is a follow-up; the fixture loaded cleanly)");
-    Ok(0)
+    // Build the replay provider from the fixture.
+    let rounds: Vec<ReplayRound> = fixture
+        .rounds
+        .iter()
+        .map(|r| ReplayRound {
+            text: r.response.text.clone(),
+            tool_calls: r
+                .response
+                .tool_calls
+                .iter()
+                .map(|c| ReplayToolCall {
+                    id: c.id.clone(),
+                    name: c.name.clone(),
+                    arguments: c.arguments.clone(),
+                })
+                .collect(),
+            usage: r.response.usage.as_ref().map(|u| kod_provider::TokenUsage {
+                prompt_tokens: u.prompt_tokens,
+                completion_tokens: u.completion_tokens,
+                total_tokens: u.prompt_tokens + u.completion_tokens,
+            }),
+        })
+        .collect();
+    // Two handles to the same provider: the concrete one for
+    // `.captured()`, and an `Arc<dyn LlmProvider>` to install on the
+    // registry.
+    let replay_concrete = std::sync::Arc::new(ReplayProvider::new(rounds));
+    let replay: std::sync::Arc<dyn kod_provider::LlmProvider> = replay_concrete.clone();
+
+    // Build a fresh engine with the replay provider installed as the
+    // only endpoint. We assemble the registry directly with
+    // `ProviderRegistry::insert` — the in-crate `install_test_provider`
+    // shim is `pub(crate)` and not reachable from kod-cli.
+    let tmp_root = std::env::temp_dir().join(format!(
+        "kod-fixture-replay-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+    ));
+    std::fs::create_dir_all(&tmp_root).map_err(KodError::Io)?;
+    let cfg = kod_core::RouterConfig {
+        working_dir: std::env::current_dir()
+            .map_err(|e| KodError::Internal(format!("cwd: {e}")))?,
+        enable_memory: false,
+        ..kod_core::RouterConfig::default()
+    };
+    let engine = kod_core::KodEngine::new(cfg, tmp_root.join("replay.redb"))
+        .map_err(|e| KodError::Internal(format!("engine: {e}")))?;
+    let mut registry = kod_provider::ProviderRegistry::new();
+    registry.insert(
+        "replay",
+        replay.clone(),
+        kod_provider::ProviderCapabilities {
+            tools: true,
+            streaming_tools: true,
+            ..kod_provider::ProviderCapabilities::conservative()
+        },
+        "replay-fixture",
+    );
+    engine
+        .set_registry(
+            std::sync::Arc::new(registry),
+            kod_provider::ModelRef::new("replay", "replay-fixture"),
+            None,
+        )
+        .await;
+    engine
+        .start()
+        .await
+        .map_err(|e| KodError::Internal(format!("start: {e}")))?;
+
+    // Drive each round's user prompt through the engine. The
+    // ReplayProvider answers with the recorded response, and captures
+    // the request the engine built.
+    let mut divergent = 0_i32;
+    for (idx, round) in fixture.rounds.iter().enumerate() {
+        if round.user_prompt.is_empty() {
+            continue;
+        }
+        if let Err(e) = engine.process_for("session", &round.user_prompt).await {
+            eprintln!("  round {idx}: engine error: {e}");
+            divergent += 1;
+            continue;
+        }
+    }
+    let _ = engine.shutdown().await;
+    // Best-effort cleanup of the scratch directory.
+    let _ = std::fs::remove_dir_all(&tmp_root);
+
+    // Compare the captured requests to the fixture's summaries.
+    let captured = replay_concrete.captured();
+    let cmp_len = captured.len().min(fixture.rounds.len());
+    for i in 0..cmp_len {
+        let want = &fixture.rounds[i].request_summary;
+        let got = kod_core::RequestSummary::from_request(&captured[i]);
+        if want.hash() != got.hash() {
+            divergent += 1;
+            eprintln!();
+            eprintln!(
+                "✗ round {i} request mismatch (expected hash {}, got {})",
+                &fixture.rounds[i].request_hash[..8.min(fixture.rounds[i].request_hash.len())],
+                &got.hash()[..8],
+            );
+            let diff = kod_core::diff_rounds(
+                &fixture.rounds[i],
+                &kod_core::RoundFixture {
+                    seq: i as u32,
+                    user_prompt: fixture.rounds[i].user_prompt.clone(),
+                    request_hash: got.hash(),
+                    request_summary: got.clone(),
+                    response: kod_core::ResponseFixture {
+                        text: String::new(),
+                        tool_calls: Vec::new(),
+                        usage: None,
+                    },
+                    at_ms: 0,
+                },
+            );
+            eprint!("{diff}");
+        }
+    }
+
+    // Round-count mismatch is a soft divergence unless strict.
+    if captured.len() != fixture.rounds.len() {
+        let msg = format!(
+            "round count: fixture has {}, replay produced {}",
+            fixture.rounds.len(),
+            captured.len(),
+        );
+        if strict {
+            eprintln!("✗ {msg} (strict)");
+            divergent += 1;
+        } else {
+            eprintln!("⚠ {msg}");
+        }
+    }
+
+    if divergent == 0 {
+        eprintln!(
+            "✓ replay clean: {} round(s) matched",
+            cmp_len,
+        );
+        Ok(0)
+    } else {
+        eprintln!("✗ replay diverged on {} round(s)", divergent);
+        Ok(1)
+    }
 }
 
 /// Tier 1.5 — save turn traces as a fixture, taking the turns path
@@ -7453,6 +7591,10 @@ pub async fn run_fixture_save(name: &str, turns_path: &std::path::Path) -> Resul
         let hash = summary.hash();
         fixture.rounds.push(kod_core::RoundFixture {
             seq: i as u32,
+            // Best-effort: the turn trace does not carry the exact
+            // user input; replay leaves this empty and skips the
+            // round. A future trace-schema bump can populate it.
+            user_prompt: String::new(),
             request_hash: hash,
             request_summary: summary,
             response: kod_core::ResponseFixture {

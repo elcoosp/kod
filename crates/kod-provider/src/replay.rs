@@ -37,6 +37,10 @@ pub struct ReplayToolCall {
 pub struct ReplayProvider {
     rounds: Vec<ReplayRound>,
     cursor: Mutex<usize>,
+    /// Every `CompletionRequest` this provider saw, in call order.
+    /// Replay uses this to compare the shape of the request the
+    /// current engine sent against the shape the fixture recorded.
+    captured: Mutex<Vec<crate::request::CompletionRequest>>,
 }
 
 impl ReplayProvider {
@@ -44,6 +48,7 @@ impl ReplayProvider {
         Self {
             rounds,
             cursor: Mutex::new(0),
+            captured: Mutex::new(Vec::new()),
         }
     }
 
@@ -61,6 +66,14 @@ impl ReplayProvider {
     pub fn remaining(&self) -> usize {
         let cur = self.cursor.lock().map(|g| *g).unwrap_or(0);
         self.rounds.len().saturating_sub(cur)
+    }
+
+    /// A snapshot of every request the provider has seen.
+    pub fn captured(&self) -> Vec<crate::request::CompletionRequest> {
+        self.captured
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
     }
 
     /// Rewind the cursor. Useful for a fresh test.
@@ -180,6 +193,10 @@ impl LlmProvider for ReplayProvider {
     /// `complete` (which delegates to `generate_with_tools`) is
     /// exactly what we want.
     async fn complete(&self, req: &CompletionRequest) -> Result<GenerationResponse> {
+        // Capture the request before delegating.
+        if let Ok(mut g) = self.captured.lock() {
+            g.push(req.clone());
+        }
         let prompt = req.render_text();
         self.generate_with_tools(&prompt, &req.tools, &req.options)
             .await
