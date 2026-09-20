@@ -12598,19 +12598,32 @@ mod coverage_offtrack_switch {
         async fn evaluate_yes_no(
             &self,
             _state: &serde_json::Value,
-            question: &str,
+            _question: &str,
         ) -> std::result::Result<crate::jev::Decision<bool>, crate::jev::JevError> {
-            let p = self.p_for(question);
-            Ok(crate::jev::Decision::jev(p >= 0.5, (p - 0.5).abs() * 2.0))
+            // Neutral by default. The mid-stream switch path uses
+            // the batch method; a single-call path would need a
+            // different scripting strategy.
+            Ok(crate::jev::Decision::jev(true, 0.0))
         }
         async fn evaluate_yes_no_batch(
             &self,
             _state: &serde_json::Value,
             questions: &[(String, String)],
         ) -> std::result::Result<Vec<(String, f32)>, crate::jev::JevError> {
+            // `should_early_terminate` keys its questions with
+            // `is_off_track` and `is_complete`; return the scripted
+            // probability for the off-track key and a neutral 0.5
+            // for everything else.
             Ok(questions
                 .iter()
-                .map(|(k, q)| (k.clone(), self.p_for(q)))
+                .map(|(k, _q)| {
+                    let p = if k == "is_off_track" {
+                        self.off_track_p
+                    } else {
+                        0.5
+                    };
+                    (k.clone(), p)
+                })
                 .collect())
         }
         async fn evaluate_score(
@@ -12643,12 +12656,15 @@ mod coverage_offtrack_switch {
     }
 
     impl ScriptedJev {
+        /// Answer a *question text* — used by the single-call
+        /// method. The switch path uses the batch method with keys
+        /// and does not call this.
+        #[allow(dead_code)]
         fn p_for(&self, question: &str) -> f32 {
             let l = question.to_lowercase();
-            if l.contains("is_off_track") {
+            if l.contains("off track") || l.contains("off_track") {
                 self.off_track_p
             } else {
-                // Everything else: neutral.
                 0.5
             }
         }
@@ -12671,8 +12687,12 @@ mod coverage_offtrack_switch {
         // (400) and enough chunks to hit the every-5 check. The
         // primary's text contains a sentence-terminator so the
         // helper's sentence gate passes.
+        // 40 chunks × ~17 chars ≈ 680 chars, well above the 400
+        // character floor `EARLY_TERM_MIN_CHARS` enforces. The
+        // every-5 check fires at chunk 5, 10, …, and passes once
+        // the text is long enough.
         let primary_chunks: Vec<String> =
-            (0..8).map(|i| format!("primary line {i}. ")).collect();
+            (0..40).map(|i| format!("primary line {i}. ")).collect();
         let primary: Arc<dyn LlmProvider> = Arc::new(ChunkedProvider {
             name: "primary".to_string(),
             chunks: primary_chunks,
