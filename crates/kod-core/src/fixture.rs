@@ -270,6 +270,7 @@ mod tests {
                     text: format!("reply {seq}"),
                     tool_calls: vec![],
                     usage: None,
+                    tool_results: Vec::new(),
                 },
                 at_ms: 0,
             });
@@ -422,6 +423,7 @@ mod tests {
                         prompt_tokens: 10,
                         completion_tokens: 5,
                     }),
+                    tool_results: Vec::new(),
                 },
                 at_ms: 0,
             }],

@@ -18,3 +18,4 @@ docs/brainstorms/*.app
 .git-backup-*/
 wr1.sh
 .git-backup2-*/
+CHANGELOG.md.bak
