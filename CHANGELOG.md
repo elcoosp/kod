@@ -1,5 +1,165 @@
 # Changelog
 
+## Unreleased — production hardening
+
+A large batch of features landed on top of the v0.1.0 baseline. Every
+item below is tested; the workspace suite is green. The shape of the
+changes, in the order they matter for a new user:
+
+### Speed: tools and routing get out of the way
+
+- **Tool inventory pre-filtering** — Jev picks which tool categories
+  the request needs; the model sees only those. Cuts TTFT 30–50 % on
+  small models. Opt-in via `[jev] enabled = true`.
+- **Interruptible streaming** — every 5 chunks after 200 chars, Jev
+  judges whether the reply already answers the request. If so, the
+  stream is cut. Model-agnostic, gated by `early_termination_min`.
+- **Per-round model routing** — planning, tool execution, synthesis,
+  and summary rounds can each route to a different endpoint via
+  `[jev.round_routing]`. Route a summary to a local model, keep the
+  planner on cloud.
+- **Prose vs reasoning filter (TUI)** — every 5 chunks, Jev
+  classifies the running text. Reasoning and restatement fold into
+  the existing spinner instead of the chat. A 20-second safety valve
+  (`[jev] reasoning_timeout_secs`) forces the buffer to render as
+  prose if the classifier has been hiding text too long.
+
+### Tokens: less input, same answers
+
+- **Dynamic prompt budget** — the fixed 50/20/20/10 share between
+  history, skills, memory, and repomap is now reweighted per round by
+  Jev.
+- **Tool result compression** — large `read_file` results drop the
+  lines Jev judges irrelevant; the shape is preserved with an
+  elision marker so line numbers stay meaningful.
+- **Grep/search ranking** — a search with more than 20 hits is
+  ranked by Jev and trimmed to the top few.
+- **Diff hunk triage** — context-only hunks are elided from the
+  prompt; the unified-diff header is preserved.
+- **Memory entry filter** — the hybrid retrieval's top-N is filtered
+  again by Jev relevance before the prompt is built.
+
+### Friction: fewer dialogs, fewer re-asks
+
+- **Confidence-gated auto-approval** — a tool call that Jev thinks
+  the user would almost certainly approve, and that is not
+  destructive, runs without a dialog. Session-scoped.
+- **Learned allows** — `l` in an approval dialog teaches a
+  session-wide allow for that exact call. `/learned clear` forgets.
+- **Partial-hunk approval** — `h` in a `patch_file` dialog enters
+  hunk selection. Toggle with Space, commit with Enter; the engine
+  runs the policy gate on the filtered patch.
+- **Edit-and-approve** — `e` opens a JSON editor for the call's
+  arguments. Enter sends `ApproveWith` with the modified args; the
+  policy gate re-runs on the edit.
+- **Ambiguity pre-detection** — a request Jev judges ambiguous
+  prompts for clarification before the LLM sees it.
+- **Ask-user context answer** — an `ask_user` the request already
+  answers is answered from context instead of interrupting.
+- **Per-command sandbox decision** — `Auto` mode asks Jev whether
+  the command needs OS-level sandboxing; `safe` runs unbubbled,
+  `filesystem_risk` keeps the sandbox.
+
+### Quality: better defaults, better behaviour
+
+- **Task classification refinement** — the keyword router's verdict
+  is overridden by Jev when Jev is more confident.
+- **Skill semantic matching** — the substring matcher's results are
+  unioned with Jev's semantic scoring, catching skills the lexical
+  match missed.
+- **Diagnostic line-shift handling** — a diagnostic that moved
+  because of an earlier edit is no longer reported as new.
+- **Citation semantic verification** — after the syntactic
+  file:line check, a semantic pass catches citations whose lines
+  do not support the claim.
+- **Response quality gate** — a reply Jev judges off-track gets an
+  advisory at the end, suggesting `/regenerate`.
+- **Tool outcome classification** — every slow or failed tool call
+  is classified (success / partial / failure / irrelevant) and
+  logged as a `ToolOutcome` session entry.
+- **Plan artifact** — Complex and MultiStep tasks get a plan on the
+  first turn, re-rendered into every subsequent system prompt.
+  `/plan` views and edits it. A `plan_update` tool lets the model
+  keep it in sync.
+- **Decisions log** — durable decisions (preference, approach, file
+  change, constraint) are extracted automatically and survive FIFO
+  history truncation. `/decisions` views and prunes.
+- **Phase-aware handoff** — a confident phase change suggests
+  `/handoff`.
+
+### Safety: new default protections
+
+- **Secret redaction** — the session log redacts API keys, JWTs,
+  PEM blocks, and high-entropy tokens near key-ish keywords before
+  writing. `/redact test <string>` shows what would be redacted.
+- **Read-protection policy** — `.env`, `**/*.pem`, `.aws/credentials`,
+  `.ssh/**`, and similar paths are redacted (default) or refused on
+  read. Configured under `[policy.read_protection]`.
+- **Cost caps** — `[limits] max_cost_usd_per_session` and
+  `max_cost_usd_per_turn` refuse a round that would exceed them.
+  `/budget` shows the current spend; `/budget raise <usd>` lifts the
+  cap for the session.
+- **Tool quotas** — `[limits.tools]` caps per-tool calls per turn
+  and per session. A `per_command` sub-cap catches
+  retry-the-same-broken-thing loops.
+- **Trust boundaries** — `web_fetch` and MCP output is marked
+  `trust=untrusted` in the prompt. A high-impact tool whose call was
+  suggested by untrusted content forces an approval dialog
+  regardless of policy. `/trust` shows the current taint; `/trust
+  clear` resets it.
+
+### Observability: fewer mysteries
+
+- **Turn traces** — one JSONL record per turn with rounds, tools,
+  retries, cost, tokens, Jev decisions. `/trace` renders the tree;
+  `kod trace list/show/json` does the same from the shell.
+- **`/jev stats`** — the Jev share of decisions, cache hit rate, and
+  average latency for the current session.
+- **`/jev tune`** — set any threshold, persist to config, hot-reload
+  the client.
+- **`/jev test`** — pings the endpoint with a trivial question and
+  reports the reply.
+- **`kod fixture save/replay/list`** — save a session's turns as a
+  deterministic fixture; replay detects prompt-shape drift. `--first-round-only`
+  is safe in CI.
+- **`/limits`** — per-tool counters, one table.
+- **`/blackboard`** — the shared swarm key-value store.
+
+### UX: fewer keys to remember
+
+- **Command palette (Ctrl+K)** — every slash command and keybinding
+  in one fuzzy-searchable list. Enter accepts, Esc closes.
+- **Session schema version** — `tui_session.json` now carries a
+  `schema_version`; old bare-array files are still loaded.
+
+### Error handling
+
+- **TurnFailure taxonomy** — timeouts, auth errors, refused
+  prompts, context overflow, malformed JSON, and hallucinated tool
+  names are distinguished. Same-endpoint retries use different
+  strategies (lower temperature, constrained output, shrink
+  history, reinject tools) before falling through to the next
+  endpoint. Non-retryable classes (auth, policy, budget, content
+  filter) surface immediately.
+
+### Behaviour changes worth noting
+
+- **`/remember` and `/memory` now require an engine.** They
+  previously opened a second `MemoryManager` on the same redb file,
+  which collided with the engine's own handle. Both now report
+  "Engine not initialized" rather than failing with a redb lock
+  error.
+- **Session log has new entry kinds.** `Redaction`, `MemoryRetrieval`,
+  `ToolOutcome`, and `JevDecision` are all append-only; an older
+  kod build reading a newer log skips them with a warning.
+- **`[limits]`, `[jev]`, and `[policy.read_protection]` are new
+  config blocks.** All three default to safe values; a config that
+  omits them behaves exactly as before.
+
+---
+
+## Prior history
+
 All notable changes to KOD will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
