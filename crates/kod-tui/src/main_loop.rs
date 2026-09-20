@@ -1233,12 +1233,20 @@ impl TuiLoop {
                 // thinking spinner instead of the chat.
                 //
                 // Safety valve: if classification has been hiding
-                // text for more than REASONING_TIMEOUT, we assume
-                // the classifier misfired and force prose for the
-                // rest of the turn. The accumulated buffer is
+                // text for more than the configured timeout, we
+                // assume the classifier misfired and force prose for
+                // the rest of the turn. The accumulated buffer is
                 // flushed so nothing is lost.
-                const REASONING_TIMEOUT: std::time::Duration =
-                    std::time::Duration::from_secs(20);
+                //
+                // The timeout is `[jev] reasoning_timeout_secs`
+                // (default 20). `None` means the valve is off —
+                // a config with `reasoning_timeout_secs = 0` trusts
+                // the classifier absolutely.
+                let reasoning_timeout: Option<std::time::Duration> =
+                    engine_for_pump.jev_client().and_then(|c| {
+                        let d = c.reasoning_timeout();
+                        if d.is_zero() { None } else { Some(d) }
+                    });
                 let mut is_reasoning: bool = false;
                 let mut chunk_count: usize = 0;
                 let mut accumulated: String = String::new();
@@ -1339,8 +1347,9 @@ impl TuiLoop {
                             }
                         }
                         // Safety valve: too long spent hiding text.
-                        if let Some(started) = reasoning_since
-                            && started.elapsed() >= REASONING_TIMEOUT
+                        if let Some(timeout) = reasoning_timeout
+                            && let Some(started) = reasoning_since
+                            && started.elapsed() >= timeout
                         {
                             // Dump the buffer as one prose chunk so
                             // nothing is lost, then stop classifying
@@ -3923,15 +3932,44 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                         }
                     }
                     Some("test") => {
-                        if engine.jev_enabled() {
-                            self.app.push_system_message(
-                                "Jev client is installed. First live check runs on the next prompt; \
-                                 /jev stats will show the outcome.",
-                            );
-                        } else {
+                        let Some(client) = engine.jev_client() else {
                             self.app.push_system_message(
                                 "Jev is disabled. Edit [jev] in ~/.kod/config.toml and restart.",
                             );
+                            return Ok(());
+                        };
+                        self.app
+                            .push_system_message("Jev smoke test: pinging the endpoint…");
+                        // A minimal yes/no question with a clear
+                        // answer. The endpoint gets a real state and
+                        // a real question; the reply tells us both
+                        // that auth works and that the model is
+                        // answering.
+                        let state = kod_core::jev::build_state(
+                            "The sky is blue on a clear day.",
+                            &[],
+                        );
+                        let started = std::time::Instant::now();
+                        match client
+                            .evaluate_yes_no(
+                                &state,
+                                "Is the sky described here as blue? Answer yes or no.",
+                            )
+                            .await
+                        {
+                            Ok(d) => {
+                                let ms = started.elapsed().as_millis();
+                                self.app.push_system_message(&format!(
+                                    "✓ Jev responded in {ms}ms: value={} confidence={:.2}",
+                                    d.value,
+                                    d.confidence,
+                                ));
+                            }
+                            Err(e) => {
+                                self.app.push_system_message(&format!(
+                                    "✗ Jev call failed: {e}",
+                                ));
+                            }
                         }
                     }
                     Some("on") | Some("off") | Some("strict") | Some("balanced")

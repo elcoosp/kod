@@ -62,6 +62,12 @@ pub struct JevConfig {
     /// state is sent to TypeSafe. Trade-off: Jev's judgment gets a
     /// little weaker, and the user keeps the paths on their machine.
     pub redact_paths: bool,
+    /// Seconds the TUI will hide reasoning-classified text before it
+    /// forces the buffer to render as prose (P1.4 safety valve). A
+    /// value of 0 disables the valve — the classifier is trusted
+    /// absolutely, which is a choice worth making only on a model
+    /// with well-calibrated classification behaviour.
+    pub reasoning_timeout_secs: u64,
     /// Confidence thresholds for every boolean Jev decision. One
     /// table so a user can tighten or loosen the whole integration.
     pub thresholds: JevThresholds,
@@ -83,6 +89,7 @@ impl Default for JevConfig {
             timeout_ms: 800,
             fail_open: true,
             redact_paths: false,
+            reasoning_timeout_secs: 20,
             thresholds: JevThresholds::default(),
             round_routing: HashMap::new(),
         }
@@ -101,6 +108,12 @@ impl JevConfig {
     /// produce a zero-length timeout that fails on every call.
     pub fn timeout(&self) -> Duration {
         Duration::from_millis(self.timeout_ms.max(50))
+    }
+
+    /// The reasoning-timeout as a `Duration`. Zero means the valve
+    /// is disabled and the classifier is trusted absolutely.
+    pub fn reasoning_timeout(&self) -> Duration {
+        Duration::from_secs(self.reasoning_timeout_secs)
     }
 
     /// The cache TTL as a `Duration`. A TTL of zero disables the
@@ -245,6 +258,20 @@ mod tests {
         assert_eq!(t.task_classify_min, 0.0);
         assert_eq!(t.tool_filter_min, 1.0);
         assert_eq!(t.early_termination_min, 0.5);
+    }
+
+    #[test]
+    fn reasoning_timeout_default_is_twenty_seconds() {
+        let c = JevConfig::default();
+        assert_eq!(c.reasoning_timeout_secs, 20);
+        assert_eq!(c.reasoning_timeout(), Duration::from_secs(20));
+    }
+
+    #[test]
+    fn reasoning_timeout_zero_disables_the_valve() {
+        let mut c = JevConfig::default();
+        c.reasoning_timeout_secs = 0;
+        assert_eq!(c.reasoning_timeout(), Duration::from_secs(0));
     }
 
     #[test]

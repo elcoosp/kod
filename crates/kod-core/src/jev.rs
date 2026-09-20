@@ -183,6 +183,11 @@ impl JevClient {
         &self.config.thresholds
     }
 
+    /// The TUI's reasoning-hide timeout (P1.4).
+    pub fn reasoning_timeout(&self) -> std::time::Duration {
+        self.config.reasoning_timeout()
+    }
+
     /// The full config the client was built from. Call sites
     /// that read `round_routing` or any non-threshold field go
     /// through here rather than plumbing a second config
