@@ -1221,7 +1221,19 @@ impl TuiLoop {
             // markers refresh it with the actual command/file excerpt.
             let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<String>(64);
             let event_tx_chunks = event_tx.clone();
+            // P1.4 — the pump needs an `Arc<KodEngine>` to classify
+            // chunks. Clone before the pump so the outer task still
+            // owns its own handle for `process_streaming`.
+            let engine_for_pump = engine.clone();
             let pump = tokio::spawn(async move {
+                // P1.4 — prose vs reasoning classification state.
+                // Accumulates text so Jev can judge the *kind* of
+                // text once every 5 chunks; a `reasoning` /
+                // `restatement` verdict folds the chunk into the
+                // thinking spinner instead of the chat.
+                let mut is_reasoning: bool = false;
+                let mut chunk_count: usize = 0;
+                let mut accumulated: String = String::new();
                 while let Some(chunk) = chunk_rx.recv().await {
                     if let Some((id, json)) = kod_core::engine::parse_question(&chunk) {
                         let req: kod_tools::ask::QuestionRequest = serde_json::from_str(json)
@@ -1287,8 +1299,35 @@ impl TuiLoop {
                         // accumulated so the retry against the next
                         // endpoint lands in a clean bubble.
                         let _ = event_tx_chunks.send(Event::StreamReset).await;
+                        // P1.4 — reset the classifier state so the
+                        // retry starts from a clean slate.
+                        accumulated.clear();
+                        chunk_count = 0;
+                        is_reasoning = false;
                     } else {
-                        let _ = event_tx_chunks.send(Event::ResponseChunk(chunk)).await;
+                        // P1.4 — classify the running buffer every
+                        // 5 text chunks once we have enough to
+                        // judge. Cheap: one short Jev call, gated
+                        // by chunk count and buffer length.
+                        accumulated.push_str(&chunk);
+                        chunk_count += 1;
+                        if chunk_count % 5 == 0
+                            && accumulated.len() > 200
+                            && let Some(kind) = engine_for_pump
+                                .classify_chunk_with_jev("session", &accumulated)
+                                .await
+                        {
+                            is_reasoning =
+                                matches!(kind.as_str(), "reasoning" | "restatement");
+                        }
+                        if is_reasoning {
+                            // Fold the chunk into the spinner. The
+                            // user perceives "thinking"; the
+                            // boilerplate never hits the chat.
+                            let _ = event_tx_chunks.send(Event::Thinking).await;
+                        } else {
+                            let _ = event_tx_chunks.send(Event::ResponseChunk(chunk)).await;
+                        }
                     }
                 }
             });
