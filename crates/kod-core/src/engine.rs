@@ -11762,6 +11762,270 @@ mod auto_check_tests {
 }
 
 #[cfg(test)]
+mod coverage_decision_log {
+    //! Pins the engine's decision-log accessors (Tier 3.4).
+    use super::*;
+    use crate::decisions::{DecisionAuthor, DecisionKind, DecisionLog};
+
+    async fn engine() -> KodEngine {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let e = KodEngine::new(cfg, tmp.path().join("test.redb")).unwrap();
+        // Keep the TempDir alive by leaking it — tests are short.
+        std::mem::forget(tmp);
+        e
+    }
+
+    #[tokio::test]
+    async fn empty_log_is_the_default() {
+        let e = engine().await;
+        let log = e.decisions_for("session").await;
+        assert!(log.entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_then_read() {
+        let e = engine().await;
+        let id = e
+            .add_decision(
+                "session",
+                1,
+                DecisionKind::UserPreference,
+                "prefer tabs".into(),
+                DecisionAuthor::User,
+            )
+            .await;
+        assert_eq!(id, 0);
+        let log = e.decisions_for("session").await;
+        assert_eq!(log.entries.len(), 1);
+        assert_eq!(log.entries[0].text, "prefer tabs");
+    }
+
+    #[tokio::test]
+    async fn drop_by_id() {
+        let e = engine().await;
+        let id = e
+            .add_decision(
+                "session",
+                1,
+                DecisionKind::Approach,
+                "use similar".into(),
+                DecisionAuthor::Assistant,
+            )
+            .await;
+        assert!(e.drop_decision("session", id).await);
+        assert!(!e.drop_decision("session", 999).await);
+        assert!(e.decisions_for("session").await.entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn set_decision_log_replaces() {
+        let e = engine().await;
+        e.add_decision(
+            "session",
+            1,
+            DecisionKind::Other,
+            "will be replaced".into(),
+            DecisionAuthor::User,
+        )
+        .await;
+        let mut fresh = DecisionLog::new();
+        fresh.push(
+            2,
+            DecisionKind::Constraint,
+            "no new deps".into(),
+            DecisionAuthor::User,
+        );
+        e.set_decision_log("session", fresh).await;
+        let log = e.decisions_for("session").await;
+        assert_eq!(log.entries.len(), 1);
+        assert_eq!(log.entries[0].text, "no new deps");
+    }
+
+    #[tokio::test]
+    async fn logs_are_per_key() {
+        let e = engine().await;
+        e.add_decision(
+            "session",
+            1,
+            DecisionKind::Other,
+            "a".into(),
+            DecisionAuthor::User,
+        )
+        .await;
+        e.add_decision(
+            "swarm:agent-1",
+            2,
+            DecisionKind::Other,
+            "b".into(),
+            DecisionAuthor::User,
+        )
+        .await;
+        assert_eq!(e.decisions_for("session").await.entries.len(), 1);
+        assert_eq!(e.decisions_for("swarm:agent-1").await.entries.len(), 1);
+        assert_eq!(e.decisions_for("swarm:agent-2").await.entries.len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod coverage_retry_adjustment {
+    //! Pins the shape of `KodEngine::apply_retry_adjustment`
+    //! (Tier 3.3). The function is pure: it mutates two locals and
+    //! returns whether the strategy could help. A regression either
+    //! changes the resulting options/messages or the return
+    //! sentinel, both of which a caller relies on.
+    use super::*;
+
+    fn empty_opts() -> GenerationOptions {
+        GenerationOptions::default()
+    }
+
+    fn empty_msgs() -> Vec<kod_types::ChatMessage> {
+        Vec::new()
+    }
+
+    #[test]
+    fn lower_temp_halves_the_temperature() {
+        use crate::retry_strategy::RetryAction;
+        let mut o = empty_opts();
+        o.temperature = Some(0.8);
+        let mut m = empty_msgs();
+        let ok = KodEngine::apply_retry_adjustment(
+            RetryAction::SameEndpointLowerTemp,
+            &mut o,
+            &mut m,
+        );
+        assert!(ok);
+        assert!((o.temperature.unwrap() - 0.4).abs() < 1e-6);
+        assert!(m.is_empty(), "no message change expected");
+    }
+
+    #[test]
+    fn lower_temp_defaults_when_unset() {
+        use crate::retry_strategy::RetryAction;
+        let mut o = empty_opts();
+        o.temperature = None;
+        let mut m = empty_msgs();
+        let ok = KodEngine::apply_retry_adjustment(
+            RetryAction::SameEndpointLowerTemp,
+            &mut o,
+            &mut m,
+        );
+        assert!(ok);
+        // Default 0.7 halved is 0.35.
+        assert!((o.temperature.unwrap() - 0.35).abs() < 1e-6);
+    }
+
+    #[test]
+    fn reinject_tools_appends_a_system_nudge() {
+        use crate::retry_strategy::RetryAction;
+        let mut o = empty_opts();
+        let mut m = empty_msgs();
+        let ok = KodEngine::apply_retry_adjustment(
+            RetryAction::ReinjectTools,
+            &mut o,
+            &mut m,
+        );
+        assert!(ok);
+        assert_eq!(m.len(), 1);
+        assert!(matches!(m[0].role, kod_types::MessageRole::System));
+        assert!(m[0].content.contains("tool"));
+    }
+
+    #[test]
+    fn constrained_appends_a_json_nudge() {
+        use crate::retry_strategy::RetryAction;
+        let mut o = empty_opts();
+        let mut m = empty_msgs();
+        let ok = KodEngine::apply_retry_adjustment(
+            RetryAction::SameEndpointConstrained,
+            &mut o,
+            &mut m,
+        );
+        assert!(ok);
+        assert_eq!(m.len(), 1);
+        assert!(m[0].content.to_lowercase().contains("json"));
+    }
+
+    #[test]
+    fn shrink_history_refuses_short_conversations() {
+        use crate::retry_strategy::RetryAction;
+        let mut o = empty_opts();
+        let mut m = vec![
+            kod_types::ChatMessage::text(
+                kod_types::MessageId::new(),
+                kod_types::MessageRole::User,
+                String::from("a"),
+                time::OffsetDateTime::now_utc(),
+            ),
+            kod_types::ChatMessage::text(
+                kod_types::MessageId::new(),
+                kod_types::MessageRole::Assistant,
+                String::from("b"),
+                time::OffsetDateTime::now_utc(),
+            ),
+        ];
+        let ok = KodEngine::apply_retry_adjustment(
+            RetryAction::ShrinkHistory,
+            &mut o,
+            &mut m,
+        );
+        assert!(!ok, "less than 4 messages cannot be shrunk");
+        assert_eq!(m.len(), 2, "messages unchanged on refusal");
+    }
+
+    #[test]
+    fn shrink_history_drops_oldest_half() {
+        use crate::retry_strategy::RetryAction;
+        let mut o = empty_opts();
+        let mut m: Vec<kod_types::ChatMessage> = (0..6)
+            .map(|i| {
+                kod_types::ChatMessage::text(
+                    kod_types::MessageId::new(),
+                    kod_types::MessageRole::User,
+                    format!("m{i}"),
+                    time::OffsetDateTime::now_utc(),
+                )
+            })
+            .collect();
+        let ok = KodEngine::apply_retry_adjustment(
+            RetryAction::ShrinkHistory,
+            &mut o,
+            &mut m,
+        );
+        assert!(ok);
+        assert_eq!(m.len(), 3, "kept the newer half");
+        assert!(m[0].content.ends_with('3'));
+    }
+
+    #[test]
+    fn next_endpoint_is_not_handled_here() {
+        use crate::retry_strategy::RetryAction;
+        let mut o = empty_opts();
+        let mut m = empty_msgs();
+        assert!(!KodEngine::apply_retry_adjustment(
+            RetryAction::NextEndpoint,
+            &mut o,
+            &mut m,
+        ));
+        assert!(!KodEngine::apply_retry_adjustment(
+            RetryAction::SameEndpointBackoff,
+            &mut o,
+            &mut m,
+        ));
+        assert!(!KodEngine::apply_retry_adjustment(
+            RetryAction::NoRetry,
+            &mut o,
+            &mut m,
+        ));
+    }
+}
+
+#[cfg(test)]
 mod coverage_at_references {
     //! `expand_at_references` is the @-syntax preprocessor for a
     //! prompt. The containment rule it enforces is the same one

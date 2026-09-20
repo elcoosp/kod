@@ -260,6 +260,51 @@ mod tests {
     }
 
     #[test]
+    fn from_request_captures_model_and_tool_names() {
+        // The replay diff relies on the shape captured here. A
+        // regression that dropped a field (or failed to sort tool
+        // names) would mask a real prompt drift.
+        let tool_b = kod_types::ToolDefinition {
+            id: kod_types::ToolId::new(),
+            name: "b_tool".into(),
+            description: "b".into(),
+            category: kod_types::ToolCategory::System,
+            parameters_schema: serde_json::json!({}),
+            permissions: kod_types::ToolPermissions::default(),
+            trust_level: kod_types::trust::TrustLevel::default(),
+        };
+        let tool_a = kod_types::ToolDefinition {
+            id: kod_types::ToolId::new(),
+            name: "a_tool".into(),
+            description: "a".into(),
+            category: kod_types::ToolCategory::System,
+            parameters_schema: serde_json::json!({}),
+            permissions: kod_types::ToolPermissions::default(),
+            trust_level: kod_types::trust::TrustLevel::default(),
+        };
+        let req = kod_provider::CompletionRequest {
+            system: kod_provider::SystemPrompt::new()
+                .with("hello".to_string(), true),
+            messages: vec![kod_types::ChatMessage::text(
+                kod_types::MessageId::new(),
+                kod_types::MessageRole::User,
+                String::from("hi"),
+                time::OffsetDateTime::now_utc(),
+            )],
+            // Deliberately mis-ordered to prove the sort.
+            tools: vec![tool_b, tool_a],
+            options: kod_provider::GenerationOptions::default(),
+            model: kod_provider::ModelRef::new("ep", "m"),
+        };
+        let s = RequestSummary::from_request(&req);
+        assert_eq!(s.model, "m");
+        assert_eq!(s.endpoint, "ep");
+        assert_eq!(s.message_count, 1);
+        assert!(s.system_chars > 0);
+        assert_eq!(s.tool_names, vec!["a_tool", "b_tool"]);
+    }
+
+    #[test]
     fn summary_hash_is_stable() {
         let s = RequestSummary {
             system_chars: 42,
