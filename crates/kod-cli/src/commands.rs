@@ -413,6 +413,21 @@ impl Cli {
                 // launcher's startup path as small as possible.
                 run_sandbox_exec(profile.clone(), cmd.clone())
             }
+            Some(Command::Trace { action }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async {
+                    match action {
+                        TraceAction::List { limit, path } => {
+                            run_trace_list(*limit, path.clone()).await
+                        }
+                        TraceAction::Show { id, path } => {
+                            run_trace_show(*id, path.clone()).await
+                        }
+                        TraceAction::Json { path } => run_trace_json(path.clone()).await,
+                    }
+                })
+            }
             Some(Command::Fixture { action }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
@@ -938,6 +953,14 @@ pub enum Command {
         model: Option<String>,
     },
 
+    /// Inspect the structured turn traces written by `KodEngine`
+    /// (Tier 1.4). Reads `turns.jsonl` from the session directory;
+    /// `--path` overrides.
+    Trace {
+        #[command(subcommand)]
+        action: TraceAction,
+    },
+
     /// Save and replay deterministic fixtures (Tier 1.5). Fixtures
     /// capture one complete streaming session as an ordered list of
     /// rounds; replay drives the engine against the fixture to
@@ -984,6 +1007,34 @@ pub enum FixtureAction {
     },
     /// List available fixtures under `~/.kod/fixtures/`.
     List,
+}
+
+/// `kod trace` subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum TraceAction {
+    /// Print a table of the most recent turns.
+    List {
+        /// Cap on rows printed. Default 20, max 200.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Path to the `turns.jsonl` file. Defaults to
+        /// `~/.kod/sessions/turns.jsonl`.
+        #[arg(long)]
+        path: Option<std::path::PathBuf>,
+    },
+    /// Print one turn's full round-by-round tree.
+    Show {
+        /// Turn id, as printed by `kod trace list`.
+        id: u64,
+        /// Path to the `turns.jsonl` file.
+        #[arg(long)]
+        path: Option<std::path::PathBuf>,
+    },
+    /// Print a JSON summary of every turn. Useful in scripts.
+    Json {
+        #[arg(long)]
+        path: Option<std::path::PathBuf>,
+    },
 }
 
 /// `kod theme` subcommands.
@@ -7337,6 +7388,159 @@ mod coverage_cli_subactions {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Tier 1.4 — `kod trace`
+// ---------------------------------------------------------------------------
+
+/// Default `turns.jsonl` path under the user's home directory.
+fn default_trace_path() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|h| h.join(".kod").join("sessions").join("turns.jsonl"))
+}
+
+/// Resolve the path argument, falling back to the default, or error.
+fn resolve_trace_path(
+    arg: Option<std::path::PathBuf>,
+) -> Result<std::path::PathBuf> {
+    match arg {
+        Some(p) => Ok(p),
+        None => default_trace_path().ok_or_else(|| {
+            KodError::Config("no home directory to resolve the trace path".to_string())
+        }),
+    }
+}
+
+/// `kod trace list` — a compact table of recent turns.
+pub async fn run_trace_list(
+    limit: usize,
+    path: Option<std::path::PathBuf>,
+) -> Result<()> {
+    let path = resolve_trace_path(path)?;
+    if !path.exists() {
+        eprintln!("no trace file at {}", path.display());
+        eprintln!("  Set KOD_SESSION_LOG and run a session first.");
+        return Ok(());
+    }
+    let traces = kod_core::read_traces(&path)?;
+    if traces.is_empty() {
+        eprintln!("no turns recorded in {}", path.display());
+        return Ok(());
+    }
+    let cap = limit.min(200).min(traces.len());
+    println!("{:<6} {:<14} {:>9} {:>9} {:>10} {:>7}",
+        "id", "holder", "duration", "cost", "tokens", "tools");
+    // Newest first.
+    for t in traces.iter().rev().take(cap) {
+        let dur = format!("{:.2}s", t.duration_ms() as f64 / 1000.0);
+        let cost = format!("${:.4}", t.cost_usd);
+        let toks = format!("{}→{}", t.prompt_tokens, t.completion_tokens);
+        println!(
+            "{:<6} {:<14} {:>9} {:>9} {:>10} {:>7}",
+            t.id,
+            truncate_field(&t.holder, 14),
+            dur,
+            cost,
+            toks,
+            t.tool_call_count,
+        );
+    }
+    if traces.len() > cap {
+        println!();
+        println!("  … {} more (use --limit to see them)", traces.len() - cap);
+    }
+    Ok(())
+}
+
+/// `kod trace show <id>` — one turn's full tree.
+pub async fn run_trace_show(
+    id: u64,
+    path: Option<std::path::PathBuf>,
+) -> Result<()> {
+    let path = resolve_trace_path(path)?;
+    let traces = kod_core::read_traces(&path)?;
+    let Some(t) = traces.iter().find(|t| t.id == id) else {
+        eprintln!("no trace with id {id} in {}", path.display());
+        return Ok(());
+    };
+    println!(
+        "Turn #{} ({})   {:.2}s   ${:.4}   {} in → {} out",
+        t.id,
+        t.holder,
+        t.duration_ms() as f64 / 1000.0,
+        t.cost_usd,
+        t.prompt_tokens,
+        t.completion_tokens,
+    );
+    println!(
+        "  prompt: {} chars   reply: {} chars   tools: {}",
+        t.prompt_chars, t.reply_chars, t.tool_call_count,
+    );
+    println!(
+        "  jev: {} decisions ({} cached)",
+        t.jev_decisions, t.jev_cache_hits,
+    );
+    println!("  outcome: {:?}", t.outcome);
+    if let Some(r) = &t.reason {
+        println!("  reason: {r}");
+    }
+    if t.rounds.is_empty() {
+        return Ok(());
+    }
+    println!();
+    println!("Rounds");
+    for (i, r) in t.rounds.iter().enumerate() {
+        println!(
+            "  {:>2}  {:<12} {:<24} {:>6}ms  {} in → {} out",
+            i + 1,
+            format!("{:?}", r.kind).to_lowercase(),
+            format!("{}/{}", r.endpoint, r.model),
+            r.duration_ms,
+            r.input_tokens,
+            r.output_tokens,
+        );
+        for c in &r.tool_calls {
+            println!(
+                "       tool  {:<16} {}ms  {}  {} bytes",
+                c.name,
+                c.duration_ms,
+                match c.outcome {
+                    kod_core::ToolOutcomeKind::Success => "ok",
+                    kod_core::ToolOutcomeKind::Error => "err",
+                    kod_core::ToolOutcomeKind::Denied => "denied",
+                    kod_core::ToolOutcomeKind::RequiresConfirmation => "ask",
+                },
+                c.output_bytes,
+            );
+        }
+        for rr in &r.retries {
+            println!(
+                "       retry  {} → {}  ({})",
+                rr.from_endpoint, rr.to_endpoint, rr.reason,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `kod trace json` — every turn as a JSON array.
+pub async fn run_trace_json(path: Option<std::path::PathBuf>) -> Result<()> {
+    let path = resolve_trace_path(path)?;
+    let traces = kod_core::read_traces(&path)?;
+    let s = serde_json::to_string_pretty(&traces)
+        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    println!("{s}");
+    Ok(())
+}
+
+/// Truncate a display field to `max` chars, adding `…` on cut.
+fn truncate_field(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
 
 // ---------------------------------------------------------------------------
 // Tier 1.5 — fixture replay and diff
