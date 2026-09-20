@@ -6651,6 +6651,73 @@ mod coverage_cli_parsing {
     }
 
     #[test]
+    fn trace_list_parses() {
+        match parse_ok(&["kod", "trace", "list"]).command {
+            Some(Command::Trace {
+                action: TraceAction::List { limit, path },
+            }) => {
+                assert_eq!(limit, 20);
+                assert!(path.is_none());
+            }
+            _ => panic!("expected Trace::List"),
+        }
+    }
+
+    #[test]
+    fn trace_list_accepts_limit_and_path() {
+        match parse_ok(&[
+            "kod", "trace", "list",
+            "--limit", "50",
+            "--path", "/tmp/t.jsonl",
+        ])
+        .command
+        {
+            Some(Command::Trace {
+                action: TraceAction::List { limit, path },
+            }) => {
+                assert_eq!(limit, 50);
+                assert_eq!(path, Some(std::path::PathBuf::from("/tmp/t.jsonl")));
+            }
+            _ => panic!("expected Trace::List with flags"),
+        }
+    }
+
+    #[test]
+    fn trace_show_parses() {
+        match parse_ok(&["kod", "trace", "show", "42"]).command {
+            Some(Command::Trace {
+                action: TraceAction::Show { id, .. },
+            }) => assert_eq!(id, 42),
+            _ => panic!("expected Trace::Show"),
+        }
+    }
+
+    #[test]
+    fn trace_show_without_id_is_rejected() {
+        parse_err(&["kod", "trace", "show"]);
+    }
+
+    #[test]
+    fn trace_json_parses() {
+        match parse_ok(&["kod", "trace", "json"]).command {
+            Some(Command::Trace {
+                action: TraceAction::Json { .. },
+            }) => {}
+            _ => panic!("expected Trace::Json"),
+        }
+    }
+
+    #[test]
+    fn trace_without_subcommand_is_rejected() {
+        parse_err(&["kod", "trace"]);
+    }
+
+    #[test]
+    fn trace_unknown_subcommand_is_rejected() {
+        parse_err(&["kod", "trace", "frobnicate"]);
+    }
+
+    #[test]
     fn fixture_save_parses() {
         match parse_ok(&["kod", "fixture", "save", "auth"]).command {
             Some(Command::Fixture {
