@@ -583,6 +583,12 @@ impl SwarmRunner {
                     .engine
                     .set_transcript_write_globs(&key, Some(st.expected_writes.clone()))
                     .await;
+            // Tier 3.5 — subscribe this agent to the shared
+            // blackboard so its prompt includes what the team knows.
+            let _ = self
+                .engine
+                .set_blackboard_viewer(&key, true)
+                .await;
             }
 
             handles.push(AgentHandle {
@@ -928,6 +934,7 @@ impl SwarmRunner {
                     drop(tx);
                     let _ = pump.await;
                     engine.forget_transcript(&transcript_key).await;
+                    engine.set_blackboard_viewer(&transcript_key, false).await;
                     engine.clear_cancel_for(&transcript_key);
 
                     match outcome {

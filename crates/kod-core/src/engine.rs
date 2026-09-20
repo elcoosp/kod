@@ -1210,6 +1210,12 @@ pub struct KodEngine {
     /// top, and the note/read tools broadcast as this id.
     /// This engine's session identity. Generated once at
 
+    /// Transcripts whose prompt should include the shared blackboard
+    /// (Tier 3.5). Populated by the swarm runner before each agent
+    /// runs; the interactive session never appears here, so its
+    /// prompt stays as it was.
+    blackboard_viewers: RwLock<std::collections::HashSet<String>>,
+
     /// construction and stable for the engine's lifetime. Used to
 
     /// attribute auto-extracted episodic facts to the session
@@ -1549,6 +1555,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             next_question_id: std::sync::atomic::AtomicU64::new(1),
             swarm_hub: Arc::new(kod_swarm::AgentCommunicationHub::new()),
             blackboard: kod_swarm::Blackboard::new(),
+            blackboard_viewers: RwLock::new(std::collections::HashSet::new()),
             session_id: kod_types::SessionId::new(),
 
             swarm_coordinator_id: kod_types::AgentId::new(),
@@ -1964,6 +1971,18 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     async fn is_learned_allowed(&self, call: &ToolCall) -> bool {
         let key = LearnedAllow::from_call(call);
         self.learned_allows.read().await.contains(&key)
+    }
+
+    /// Enable or disable the shared blackboard in a transcript's
+    /// prompt (Tier 3.5). The swarm runner calls this before each
+    /// agent starts.
+    pub async fn set_blackboard_viewer(&self, key: &str, on: bool) {
+        let mut g = self.blackboard_viewers.write().await;
+        if on {
+            g.insert(key.to_string());
+        } else {
+            g.remove(key);
+        }
     }
 
     /// The swarm blackboard (Tier 3.5).
@@ -5823,7 +5842,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             let definitions = self
                 .filter_mcp_tools_with_jev(key, input, definitions)
                 .await;
-            let convo = self.ground_prompt(prompt.clone(), &definitions);
+            let convo = self.ground_prompt(key, prompt.clone(), &definitions);
 
             // Snapshot the grounded prompt before the loop mutates it
             // with tool results. This is what `/debug last-prompt` shows.
@@ -6283,7 +6302,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             let definitions = self
                 .filter_mcp_tools_with_jev(key, input, definitions)
                 .await;
-            let pending = self.ground_prompt(prompt.clone(), &definitions);
+            let pending = self.ground_prompt(key, prompt.clone(), &definitions);
 
             // Snapshot the grounded prompt for /debug last-prompt and
             // the per-section allocation for /debug tokens.
@@ -6639,7 +6658,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             let definitions = self
                 .filter_mcp_tools_with_jev(key, input, definitions)
                 .await;
-            let mut pending = self.ground_prompt(prompt.clone(), &definitions);
+            let mut pending = self.ground_prompt(key, prompt.clone(), &definitions);
             pending.push_str(&format!(
                 "\n## Goal\n\n{goal}\n\nWork turn by turn toward this goal using tools. Do not ask the user for confirmation — act. When the goal is fully reached, end your reply with a line containing exactly GOAL MET and summarize what was done. If a tool errors, work around it and keep going.\n"
             ));
@@ -6865,6 +6884,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             // `messages` field changes; the system prompt, tools,
             // options and model are constant for the turn.
             let req = self.build_grounded_request(
+                round.holder,
                 round.system_text,
                 messages.clone(),
                 round.definitions,
@@ -7227,6 +7247,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         // the right order. Both concrete providers in this workspace
         // override it with real SSE.
         let req = self.build_grounded_request(
+            holder,
             system_text,
             messages.to_vec(),
             definitions,
@@ -7361,6 +7382,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     /// choice rather than the one baked in at construction.
     fn build_grounded_request(
         &self,
+        key: &str,
         system_text: &str,
         messages: Vec<kod_types::ChatMessage>,
         definitions: &[ToolDefinition],
@@ -7398,7 +7420,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         // the working directory, so it is never cacheable. `ground_prompt`
         // appends a leading blank line + `## Environment` block, so
         // passing an empty tail still produces a valid segment.
-        let grounded_volatile = self.ground_prompt(volatile_tail, definitions);
+        let grounded_volatile = self.ground_prompt(key, volatile_tail, definitions);
 
         let mut system = SystemPrompt::new();
         if !cacheable.is_empty() {
@@ -7426,7 +7448,12 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             .map(|d| d.trust_level)
     }
 
-    fn ground_prompt(&self, mut prompt: String, definitions: &[ToolDefinition]) -> String {
+    fn ground_prompt(
+        &self,
+        key: &str,
+        mut prompt: String,
+        definitions: &[ToolDefinition],
+    ) -> String {
         prompt.push_str(&format!(
             "\n## Environment\n\n- Working directory: {}\n- OS: {}\n",
             self.working_dir.display(),
@@ -7440,7 +7467,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         // a `try_read`; a rare miss is fine (the plan appears on the
         // next round).
         if let Ok(g) = self.plans.try_read()
-            && let Some(plan) = g.get(DEFAULT_TRANSCRIPT_KEY)
+            && let Some(plan) = g.get(key)
         {
             prompt.push_str("\n\n");
             prompt.push_str(&plan.render_prompt_block());
@@ -7448,11 +7475,27 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         // Tier 3.4 — recent durable decisions. Bounded to 20 so the
         // block stays small even in a long session.
         if let Ok(g) = self.decision_logs.try_read()
-            && let Some(log) = g.get(DEFAULT_TRANSCRIPT_KEY)
+            && let Some(log) = g.get(key)
             && !log.entries.is_empty()
         {
             prompt.push_str("\n\n");
             prompt.push_str(&log.render_prompt_block(20));
+        }
+
+        // Tier 3.5 — shared blackboard, when this transcript is
+        // subscribed (i.e. an agent in a swarm). Bounded to 30
+        // entries and 3000 chars so a chatty swarm cannot crowd out
+        // the actual task.
+        if let Ok(g) = self.blackboard_viewers.try_read()
+            && g.contains(key)
+        {
+            let block = self
+                .blackboard
+                .render_prompt_block("team", 30, 3000);
+            if !block.is_empty() {
+                prompt.push_str("\n\n");
+                prompt.push_str(&block);
+            }
         }
 
         if !definitions.is_empty() {
@@ -9724,6 +9767,7 @@ mod tests {
 
         let system_text = "identity bits\n\n## Stable prefix (cacheable)\n\nrepo map bits\n\n## Volatile suffix (not cached)\n\nvolatile bits\n\n## Conversation so far\n\nUser: hi\n\n## User Request\n\nhi";
         let req = engine.build_grounded_request(
+            "session",
             system_text,
             Vec::new(),
             &[],
