@@ -21,6 +21,13 @@ use std::io::Stdout;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Process-wide lock for tests that touch `KOD_TEST_DB`. The
+/// environment is process-global; without this, two parallel tests
+/// that set and clear the same var race. Tests that mutate
+/// `KOD_TEST_DB` must acquire this lock for their whole body.
+#[cfg(test)]
+static ENV_VAR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Help text for the `/help` command.
 ///
 /// Kept in sync with `crate::app::SLASH_COMMANDS` by
@@ -6720,6 +6727,12 @@ mod coverage_slash_dispatch {
 
     #[tokio::test]
     async fn remember_without_engine_succeeds_via_direct_db_write() {
+        // Serialize with any other test that touches KOD_TEST_DB.
+        // The env is process-global; parallel mutation races and
+        // the failure is intermittent by definition.
+        let _env_lock = super::ENV_VAR_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // `/remember` does not need the engine: it loads the config,
         // resolves the memory DB path, opens a MemoryManager, and
         // writes the entry. KOD_TEST_DB keeps this test off the
