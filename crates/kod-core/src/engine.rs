@@ -7272,7 +7272,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     /// the P5.6 mid-stream switch. Returns the provider, its
     /// `ModelRef`, and the boxed stream so `stream_round` can swap
     /// the stream in place without breaking the round.
-    async fn fallback_stream_for_off_track(
+    pub(crate) async fn fallback_stream_for_off_track(
         &self,
         system_text: &str,
         messages: &[kod_types::ChatMessage],
@@ -12290,5 +12290,211 @@ mod coverage_at_references {
         std::fs::create_dir(tmp.path().join("my.dir")).unwrap();
         let out = expand_at_references("see @my.dir", tmp.path());
         assert!(!out.contains("<file"), "directory expanded: {out}");
+    }
+}
+
+#[cfg(test)]
+mod coverage_mid_stream_switch {
+    //! P5.6 — the mid-stream switch mechanism.
+    //!
+    //! `fallback_stream_for_off_track` opens a stream against a
+    //! fallback endpoint and hands back the provider, its
+    //! `ModelRef`, and a `'static` boxed stream. This pins:
+    //!
+    //! * a resolvable fallback produces a stream that yields the
+    //!   fallback provider's chunks;
+    //! * an unresolvable `ModelRef` returns `None` (no panic, no
+    //!   stream).
+    //!
+    //! The full path from an `OffTrack` verdict to the swap lives
+    //! inside `stream_round` and needs a scripted Jev response to
+    //! exercise. That test waits on a Jev test abstraction; the
+    //! mechanism test below covers the load-bearing half.
+    use super::*;
+    use futures::StreamExt;
+    use kod_provider::{
+        CompletionRequest, GenerationOptions, GenerationResponse, LlmProvider,
+        ProviderCapabilities, ProviderRegistry, StreamChunk, SystemPrompt,
+    };
+    use std::sync::Arc;
+
+    /// A provider that answers every streaming call with a fixed
+    /// one-chunk text reply.
+    struct FixedTextProvider {
+        text: String,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for FixedTextProvider {
+        fn name(&self) -> &str {
+            "fixed-text"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+            Ok(vec!["fixed".to_string()])
+        }
+        async fn generate(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            Ok(self.text.clone())
+        }
+        async fn generate_with_tools(
+            &self,
+            _p: &str,
+            _t: &[kod_types::ToolDefinition],
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::Text {
+                content: self.text.clone(),
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> std::pin::Pin<
+            Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>,
+        > {
+            let text = self.text.clone();
+            Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::Text(text)),
+                Ok(StreamChunk::Done),
+            ]))
+        }
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                tools: true,
+                streaming_tools: true,
+                ..ProviderCapabilities::conservative()
+            }
+        }
+        /// Override the default `stream_completion` so the test does
+        /// not go through the trait's collect-and-replay path — the
+        /// chunks come straight from `stream`.
+        fn stream_completion<'a>(
+            &'a self,
+            req: &'a CompletionRequest,
+        ) -> std::pin::Pin<
+            Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>,
+        > {
+            let _ = req;
+            self.stream("", &GenerationOptions::default())
+        }
+    }
+
+    async fn engine_with_fallback(
+        fallback_text: &str,
+    ) -> (KodEngine, tempfile::TempDir) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let engine = KodEngine::new(cfg, tmp.path().join("test.redb")).unwrap();
+        let mut reg = ProviderRegistry::new();
+        let provider: Arc<dyn LlmProvider> = Arc::new(FixedTextProvider {
+            text: fallback_text.to_string(),
+        });
+        reg.insert(
+            "fallback",
+            provider,
+            ProviderCapabilities {
+                tools: true,
+                streaming_tools: true,
+                ..ProviderCapabilities::conservative()
+            },
+            "m",
+        );
+        engine
+            .set_registry(
+                Arc::new(reg),
+                ModelRef::new("fallback", "m"),
+                None,
+            )
+            .await;
+        (engine, tmp)
+    }
+
+    #[tokio::test]
+    async fn resolvable_fallback_yields_its_stream() {
+        let (engine, _tmp) = engine_with_fallback("from the fallback").await;
+        let model = ModelRef::new("fallback", "m");
+        let system = SystemPrompt::new().render_text();
+        let mut result = engine
+            .fallback_stream_for_off_track(
+                &system,
+                &[],
+                &[],
+                &GenerationOptions::default(),
+                &model,
+            )
+            .await
+            .expect("fallback must resolve");
+
+        let (_provider, resolved_model, mut stream) = result;
+        result = (
+            _provider.clone(),
+            resolved_model.clone(),
+            Box::pin(futures::stream::empty()),
+        );
+        // Drain the real stream (we lost it above because tuple
+        // destructuring consumes; rebuild from the same source).
+        let mut text = String::new();
+        while let Some(item) = stream.next().await {
+            if let Ok(StreamChunk::Text(t)) = item {
+                text.push_str(&t);
+            }
+        }
+        // The empty stream we swapped in yields nothing, so use the
+        // captured provider to confirm the shape instead.
+        let _ = result;
+
+        // Redo the call, keeping the original stream this time.
+        let (_p, _m, mut s2) = engine
+            .fallback_stream_for_off_track(
+                &system,
+                &[],
+                &[],
+                &GenerationOptions::default(),
+                &model,
+            )
+            .await
+            .expect("fallback must resolve");
+        let mut text2 = String::new();
+        while let Some(item) = s2.next().await {
+            if let Ok(StreamChunk::Text(t)) = item {
+                text2.push_str(&t);
+            }
+        }
+        assert!(
+            text2.contains("from the fallback"),
+            "expected the fallback's text, got: {text2:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn unresolvable_fallback_returns_none() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let engine = KodEngine::new(cfg, tmp.path().join("test.redb")).unwrap();
+        // Registry is empty — no provider to resolve.
+        let model = ModelRef::new("nonexistent", "m");
+        let r = engine
+            .fallback_stream_for_off_track(
+                "",
+                &[],
+                &[],
+                &GenerationOptions::default(),
+                &model,
+            )
+            .await;
+        assert!(r.is_none(), "empty registry must yield None");
     }
 }
