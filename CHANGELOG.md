@@ -1,5 +1,68 @@
 # Changelog
 
+## Unreleased — follow-up batch
+
+A second batch landed after the first round of hardening. Every item
+below is tested; the workspace suite is green.
+
+### Persistence
+
+- **Plans and decisions survive restarts.** `state.json` next to the
+  trace log carries both maps. Every mutation writes atomically
+  (temp + rename); a crash mid-write leaves the previous state
+  intact. `/plan` and `/decisions` see the restored values on the
+  next session.
+
+### Redaction depth
+
+- **In-prompt redaction (opt-in).** `[security.redact] in_prompt =
+  true` runs the redactor over outgoing messages *and* every tool
+  result before the prompt is built. Off by default — the model
+  needs the code it is editing.
+- **`/stats` reports redaction counts.** Each rule's hit count for
+  the session, aggregated from the `SessionEntry::Redaction`
+  lines.
+
+### Fixture fidelity
+
+- **Tool arguments flow to fixtures.** `TurnTrace::ToolCallTrace`
+  now carries the arguments and a result summary; `kod fixture save`
+  copies both. A replay can drive the tool round trip instead of
+  only comparing the prompt's shape.
+- **`kod trace replay <id>`.** Re-drives one turn from `turns.jsonl`
+  against a fresh engine and diffs the request summary. `--strict`
+  exits non-zero on divergence.
+
+### CLI parity
+
+TUI commands now have CLI mirrors that read the same persisted
+state:
+
+- `kod jev status | stats | test | tune | tune set | tune reset`
+- `kod budget show`
+- `kod limits show`
+- `kod plan show | json`
+- `kod decisions show | json`
+
+### Testability
+
+- **`JevDecider` trait.** The engine stores `Arc<dyn JevDecider>`
+  instead of the concrete `JevClient`. Tests inject a
+  `ScriptedJev` that returns deterministic verdicts, so the
+  mid-stream switch path is exercised end to end without a network
+  round-trip.
+- **Mid-stream switch is tested.** A `ScriptedJev` returns an
+  `OffTrack` verdict after the primary has emitted enough text; the
+  test asserts the final stream contains both the primary's marker
+  and the fallback's.
+
+### Fixes
+
+- `/remember` and `/memory` require an engine — they previously
+  opened a second `MemoryManager` on the same redb file and
+  collided with the engine's own handle.
+- The approval dialog's legend fits on one line.
+
 ## Unreleased — production hardening
 
 A large batch of features landed on top of the v0.1.0 baseline. Every

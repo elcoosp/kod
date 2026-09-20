@@ -3265,6 +3265,37 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                         msg.push_str(&format!("  {:<20} {}\n", name, n));
                     }
                 }
+
+                // Tier 1.3 — redaction counts from the session log.
+                // Each `SessionEntry::Redaction` carries the rules
+                // that fired on one write; aggregate them.
+                if let Some(engine) = &self.engine
+                    && let Some(path) = engine.session_log_path()
+                    && let Ok(entries) = kod_core::session_log::read_session(&path)
+                {
+                    let mut by_rule: std::collections::BTreeMap<String, usize> =
+                        Default::default();
+                    for e in &entries {
+                        if let kod_core::session_log::SessionEntry::Redaction {
+                            rules,
+                            ..
+                        } = e
+                        {
+                            for r in rules {
+                                *by_rule.entry(r.rule.clone()).or_insert(0) += r.count;
+                            }
+                        }
+                    }
+                    if !by_rule.is_empty() {
+                        let total: usize = by_rule.values().sum();
+                        msg.push_str(&format!(
+                            "\nSecrets redacted this session: {total}\n",
+                        ));
+                        for (rule, n) in &by_rule {
+                            msg.push_str(&format!("  {:<24} {}\n", rule, n));
+                        }
+                    }
+                }
                 self.app.push_system_message(msg.trim_end());
             }
             "/git-status" => {
