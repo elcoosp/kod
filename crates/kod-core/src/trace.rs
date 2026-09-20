@@ -405,10 +405,12 @@ mod tests {
         b.add_tool_call(
             "read_file",
             "abc".into(),
+            serde_json::json!({"path": "src/main.rs"}),
             12,
             ToolOutcomeKind::Success,
             100,
             None,
+            Some("read_file ok".to_string()),
         );
         b.add_jev(false);
         b.add_jev(true);
@@ -507,10 +509,12 @@ mod tests {
         b.add_tool_call(
             "grep",
             "deadbeef".into(),
+            serde_json::json!({"pattern": "fn"}),
             5,
             ToolOutcomeKind::Error,
             50,
             Some(3),
+            Some("ERROR: no matches".to_string()),
         );
         b.add_jev(true);
         b.set_reply_chars(200);

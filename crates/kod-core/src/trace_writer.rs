@@ -88,7 +88,7 @@ mod tests {
         let mut b = TurnTraceBuilder::new(id, "session");
         b.begin_round("cloud", "claude");
         b.add_usage(100, 20, None, 0.001);
-        b.add_tool_call("read_file", "abc".into(), 5, ToolOutcomeKind::Success, 100, None);
+        b.add_tool_call("read_file", "abc".into(), serde_json::json!({}), 5, ToolOutcomeKind::Success, 100, None, None);
         b.finish()
     }
 
