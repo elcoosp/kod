@@ -6216,7 +6216,9 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         self.tool_counts.begin_turn();
         // Tier 1.4 — open a turn trace. Emitted when this call returns.
         let trace_id = self.next_turn_id();
-        let trace = std::sync::Mutex::new(crate::trace::TurnTraceBuilder::new(trace_id, key));
+        let mut trace_builder = crate::trace::TurnTraceBuilder::new(trace_id, key);
+        trace_builder.set_user_prompt(input);
+        let trace = std::sync::Mutex::new(trace_builder);
         let trace_ref: Option<&std::sync::Mutex<crate::trace::TurnTraceBuilder>> = Some(&trace);
         self.cost_tracker.begin_turn();
         // P3.3 — ask Jev whether the request is ambiguous; if so and

@@ -7591,10 +7591,9 @@ pub async fn run_fixture_save(name: &str, turns_path: &std::path::Path) -> Resul
         let hash = summary.hash();
         fixture.rounds.push(kod_core::RoundFixture {
             seq: i as u32,
-            // Best-effort: the turn trace does not carry the exact
-            // user input; replay leaves this empty and skips the
-            // round. A future trace-schema bump can populate it.
-            user_prompt: String::new(),
+            // Tier 1.5 — the trace carries the user prompt; copy
+            // it so replay can re-drive the turn.
+            user_prompt: t.user_prompt.clone(),
             request_hash: hash,
             request_summary: summary,
             response: kod_core::ResponseFixture {

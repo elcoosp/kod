@@ -99,6 +99,13 @@ pub struct TurnTrace {
     pub ended_at_ms: u64,
     #[serde(default)]
     pub rounds: Vec<RoundTrace>,
+    /// The user's input that opened this turn (Tier 1.5). Empty
+    /// when the trace came from a build that predates this field, or
+    /// from a call that was not user-initiated (a summary, a plan
+    /// generation). Fixture save uses this to rebuild the round on
+    /// replay; a round with an empty prompt is skipped.
+    #[serde(default)]
+    pub user_prompt: String,
     pub outcome: TurnOutcome,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -152,6 +159,7 @@ impl TurnTraceBuilder {
                 started_at_ms: now_ms,
                 ended_at_ms: now_ms,
                 rounds: Vec::new(),
+                user_prompt: String::new(),
                 outcome: TurnOutcome::Completed,
                 reason: None,
                 prompt_tokens: 0,
@@ -175,6 +183,11 @@ impl TurnTraceBuilder {
             round_jev_decisions: 0,
             round_jev_cache_hits: 0,
         }
+    }
+
+    /// Record the user input that triggered this turn (Tier 1.5).
+    pub fn set_user_prompt(&mut self, prompt: impl Into<String>) {
+        self.trace.user_prompt = prompt.into();
     }
 
     /// Mark this trace as belonging to a swarm subtask.
