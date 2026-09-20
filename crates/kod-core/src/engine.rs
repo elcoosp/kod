@@ -12314,7 +12314,7 @@ mod coverage_mid_stream_switch {
     use futures::StreamExt;
     use kod_provider::{
         CompletionRequest, GenerationOptions, GenerationResponse, LlmProvider,
-        ProviderCapabilities, ProviderRegistry, StreamChunk, SystemPrompt,
+        ProviderCapabilities, ProviderRegistry, StreamChunk,
     };
     use std::sync::Arc;
 
@@ -12422,10 +12422,9 @@ mod coverage_mid_stream_switch {
     async fn resolvable_fallback_yields_its_stream() {
         let (engine, _tmp) = engine_with_fallback("from the fallback").await;
         let model = ModelRef::new("fallback", "m");
-        let system = SystemPrompt::new().render_text();
-        let mut result = engine
+        let (_provider, resolved, mut stream) = engine
             .fallback_stream_for_off_track(
-                &system,
+                "",
                 &[],
                 &[],
                 &GenerationOptions::default(),
@@ -12433,45 +12432,16 @@ mod coverage_mid_stream_switch {
             )
             .await
             .expect("fallback must resolve");
-
-        let (_provider, resolved_model, mut stream) = result;
-        result = (
-            _provider.clone(),
-            resolved_model.clone(),
-            Box::pin(futures::stream::empty()),
-        );
-        // Drain the real stream (we lost it above because tuple
-        // destructuring consumes; rebuild from the same source).
+        assert_eq!(resolved.endpoint, "fallback");
         let mut text = String::new();
         while let Some(item) = stream.next().await {
             if let Ok(StreamChunk::Text(t)) = item {
                 text.push_str(&t);
             }
         }
-        // The empty stream we swapped in yields nothing, so use the
-        // captured provider to confirm the shape instead.
-        let _ = result;
-
-        // Redo the call, keeping the original stream this time.
-        let (_p, _m, mut s2) = engine
-            .fallback_stream_for_off_track(
-                &system,
-                &[],
-                &[],
-                &GenerationOptions::default(),
-                &model,
-            )
-            .await
-            .expect("fallback must resolve");
-        let mut text2 = String::new();
-        while let Some(item) = s2.next().await {
-            if let Ok(StreamChunk::Text(t)) = item {
-                text2.push_str(&t);
-            }
-        }
         assert!(
-            text2.contains("from the fallback"),
-            "expected the fallback's text, got: {text2:?}",
+            text.contains("from the fallback"),
+            "expected the fallback's text, got: {text:?}",
         );
     }
 
