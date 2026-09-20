@@ -239,13 +239,30 @@ const CAPPABLE_FIELDS: [&str; 3] = ["content", "stdout", "stderr"];
 /// a per-field marker), re-serializes, and only falls back to a byte
 /// cut if the reserialized form is somehow still over. Non-string
 /// fields (paths, line numbers, flags, error codes) always survive.
-pub(crate) fn cap_rendered_result(result: &ToolResult, cap: usize) -> String {
+/// Render a tool result for the prompt block, capped to `cap` chars.
+///
+/// When `redactor` is `Some`, the rendered JSON is passed through the
+/// secret redactor (Tier 1.3). This is where the highest-volume
+/// untrusted content lives — file contents, grep hits, shell output —
+/// so the tool-result path is the more important half of the
+/// in-prompt redaction story.
+pub(crate) fn cap_rendered_result(
+    result: &ToolResult,
+    cap: usize,
+    redactor: Option<&kod_types::redact::Redactor>,
+) -> String {
     let ToolResult::Success(v) = result else {
         // Callers route only Success through this helper; the fallback
         // is defensive.
         return format!("{result:?}");
     };
-    let raw = v.to_string();
+    let raw = match redactor {
+        Some(r) => {
+            let (sanitized, _events) = r.redact(&v.to_string());
+            sanitized
+        }
+        None => v.to_string(),
+    };
     if raw.len() <= cap {
         return raw;
     }
@@ -2167,6 +2184,19 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         }
         let (out, _events) = self.redactor.redact(&rendered);
         out
+    }
+
+    /// The engine's redactor, but only when the config has opted in
+    /// to prompt-path redaction (Tier 1.3). Returns `None` otherwise,
+    /// which callers thread into `cap_rendered_result` to skip the
+    /// pass.
+    fn prompt_redactor_if_enabled(&self) -> Option<&kod_types::redact::Redactor> {
+        let cfg = kod_config::KodConfig::load_default().ok()?;
+        if cfg.security.redact.in_prompt {
+            Some(&self.redactor)
+        } else {
+            None
+        }
     }
 
     pub fn cost_tracker(&self) -> &crate::cost::CostTracker {
@@ -8759,7 +8789,11 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                 // the serialized form mid-token, so the model always
                 // gets parseable JSON with every metadata field
                 // (path, line numbers, the `truncated` flag) intact.
-                ToolResult::Success(_) => cap_rendered_result(&result, RENDERED_RESULT_CAP),
+                ToolResult::Success(_) => cap_rendered_result(
+                    &result,
+                    RENDERED_RESULT_CAP,
+                    self.prompt_redactor_if_enabled(),
+                ),
                 ToolResult::Error(e) => format!("error: {e}"),
                 ToolResult::RequiresConfirmation { description, .. } => {
                     format!("requires confirmation (auto-skipped in TUI): {description}")
@@ -11074,7 +11108,7 @@ mod tests {
             "content": big_content,
             "truncated": false
         }));
-        let rendered = cap_rendered_result(&result, 8_000);
+        let rendered = cap_rendered_result(&result, 8_000, None);
         assert!(
             rendered.len() <= 8_000,
             "rendered {} bytes > cap 8000",
@@ -11104,7 +11138,7 @@ mod tests {
             ToolResult::Success(v) => v.to_string(),
             _ => unreachable!(),
         };
-        let rendered = cap_rendered_result(&result, 8_000);
+        let rendered = cap_rendered_result(&result, 8_000, None);
         assert_eq!(rendered, raw);
     }
 
@@ -11119,7 +11153,7 @@ mod tests {
             "stdout_truncated": false,
             "stderr_truncated": false
         }));
-        let rendered = cap_rendered_result(&result, 8_000);
+        let rendered = cap_rendered_result(&result, 8_000, None);
         assert!(rendered.len() <= 8_000);
         let parsed: serde_json::Value =
             serde_json::from_str(&rendered).expect("capped result must be valid JSON");
@@ -12960,5 +12994,44 @@ mod coverage_prompt_redaction {
             "token=sk-abcdef1234567890ABCDEFGH".to_string(),
         );
         assert!(s.contains("sk-abcdef"));
+    }
+}
+
+
+#[cfg(test)]
+mod coverage_tool_result_redaction {
+    //! Pins the tool-result half of the in-prompt redaction pass
+    //! (Tier 1.3). Unlike the message path, `cap_rendered_result`
+    //! takes the redactor as a parameter, so the test can drive it
+    //! without needing the config flag or the engine.
+    use super::*;
+
+    #[test]
+    fn cap_rendered_result_without_redactor_keeps_secrets() {
+        let result = ToolResult::Success(serde_json::json!({
+            "content": "API key: sk-abcdef1234567890ABCDEFGH",
+        }));
+        let out = cap_rendered_result(&result, 8_000, None);
+        assert!(
+            out.contains("sk-abcdef1234567890ABCDEFGH"),
+            "no redactor: content must pass through",
+        );
+    }
+
+    #[test]
+    fn cap_rendered_result_with_redactor_strips_secrets() {
+        let redactor = kod_types::redact::Redactor::default();
+        let result = ToolResult::Success(serde_json::json!({
+            "content": "API key: sk-abcdef1234567890ABCDEFGH",
+        }));
+        let out = cap_rendered_result(&result, 8_000, Some(&redactor));
+        assert!(
+            !out.contains("sk-abcdef1234567890ABCDEFGH"),
+            "redactor must remove the key; got: {out}",
+        );
+        assert!(
+            out.contains("[REDACTED:openai-key]"),
+            "redactor must leave the marker; got: {out}",
+        );
     }
 }
