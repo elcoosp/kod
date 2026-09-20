@@ -102,6 +102,24 @@ pub struct ResponseFixture {
     pub tool_calls: Vec<ToolCallFixture>,
     #[serde(default)]
     pub usage: Option<UsageFixture>,
+    /// Tool results that follow this round's tool calls (Tier 1.5).
+    /// Ordered the same as `tool_calls`; a caller that replays can
+    /// swap these in without re-running the tools. Empty for a
+    /// round that made no tool calls.
+    #[serde(default)]
+    pub tool_results: Vec<ToolResultFixture>,
+}
+
+/// One tool result captured from a trace round.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResultFixture {
+    /// The call this result answers; matches `ToolCallFixture.name`.
+    pub tool_name: String,
+    /// True when the result was an error.
+    pub is_error: bool,
+    /// The result payload, verbatim. A `Success` carries its
+    /// `serde_json::Value`; an `Error` carries the message string.
+    pub value: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

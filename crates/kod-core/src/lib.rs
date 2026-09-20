@@ -33,7 +33,7 @@ pub mod swarm_adapters;
 pub mod swarm_runner;
 pub mod worktree;
 
-pub use fixture::{diff_rounds, Fixture, RequestSummary, ResponseFixture, RoundFixture};
+pub use fixture::{diff_rounds, Fixture, RequestSummary, ResponseFixture, RoundFixture, ToolResultFixture};
 pub use retry_strategy::{choose_action, RetryAction, TurnFailure};
 pub use tool_quota::{check as check_quota, QuotaVerdict, ToolCounts};
 pub use plan::{Plan, PlanStatus, PlanStep, PlanUpdate};

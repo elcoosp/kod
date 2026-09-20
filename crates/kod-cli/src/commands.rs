@@ -7762,7 +7762,9 @@ pub async fn run_fixture_replay(
                         text: String::new(),
                         tool_calls: Vec::new(),
                         usage: None,
-                    },
+                    
+                    tool_results: Vec::new(),
+                },
                     at_ms: 0,
                 },
             );
@@ -7902,17 +7904,52 @@ pub async fn run_fixture_save(name: &str, turns_path: &std::path::Path) -> Resul
             endpoint: "unknown".to_string(),
         };
         let hash = summary.hash();
+        // Tier 1.5 — copy every tool call and result from the
+        // trace's rounds into the fixture. A single trace turn can
+        // produce many rounds; we flatten them into one
+        // `ResponseFixture` for that turn, which is what replay
+        // needs (the engine sees a turn as one round-trip).
+        let mut tool_calls = Vec::new();
+        let mut tool_results = Vec::new();
+        for r in &t.rounds {
+            for c in &r.tool_calls {
+                tool_calls.push(kod_core::fixture::ToolCallFixture {
+                    // The trace does not carry the call id; leave it
+                    // None and let replay generate one.
+                    id: None,
+                    name: c.name.clone(),
+                    // The trace stores the args hash, not the args.
+                    // A fixture replayed for shape detection can
+                    // tolerate this; a fixture replayed for exact
+                    // tool execution will need the args, which is a
+                    // future schema bump.
+                    arguments: serde_json::json!({
+                        "_args_hash": c.args_hash,
+                        "_output_bytes": c.output_bytes,
+                    }),
+                });
+                tool_results.push(kod_core::ToolResultFixture {
+                    tool_name: c.name.clone(),
+                    is_error: matches!(c.outcome, kod_core::trace::ToolOutcomeKind::Error),
+                    value: serde_json::json!({
+                        "duration_ms": c.duration_ms,
+                        "output_bytes": c.output_bytes,
+                        "elided_lines": c.elided_lines,
+                    }),
+                });
+            }
+        }
         fixture.rounds.push(kod_core::RoundFixture {
             seq: i as u32,
-            // Tier 1.5 — the trace carries the user prompt; copy
-            // it so replay can re-drive the turn.
             user_prompt: t.user_prompt.clone(),
             request_hash: hash,
             request_summary: summary,
             response: kod_core::ResponseFixture {
                 text: String::new(),
-                tool_calls: Vec::new(),
+                tool_calls,
                 usage: None,
+                tool_results,
+                
             },
             at_ms: t.ended_at_ms,
         });
