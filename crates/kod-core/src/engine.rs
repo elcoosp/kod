@@ -1100,7 +1100,8 @@ pub struct KodEngine {
     /// runs its pre-Jev heuristic with no network call. The
     /// CLI/TUI install one via `set_jev_client` when
     /// `JevConfig::enabled` is true.
-    jev_client: std::sync::RwLock<Option<crate::jev::JevClient>>,
+    jev_client:
+        std::sync::RwLock<Option<std::sync::Arc<dyn crate::jev::JevDecider>>>,
     /// Shell hooks around tool execution. `RwLock<Arc<...>>` so
     /// `set_hooks` works through `&self` — the engine is shared as
     /// `Arc<KodEngine>` by both the CLI and the TUI, so `&mut self`
@@ -2496,7 +2497,18 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     /// fall through to their heuristic when it is `None`.
     pub fn set_jev_client(&self, client: crate::jev::JevClient) {
         if let Ok(mut slot) = self.jev_client.write() {
-            *slot = Some(client);
+            *slot = Some(std::sync::Arc::new(client));
+        }
+    }
+
+    /// Install a scripted decider (P5.6 follow-up). Used by tests to
+    /// inject deterministic verdicts without a network round-trip.
+    pub fn set_jev_decider(
+        &self,
+        decider: std::sync::Arc<dyn crate::jev::JevDecider>,
+    ) {
+        if let Ok(mut slot) = self.jev_client.write() {
+            *slot = Some(decider);
         }
     }
 
@@ -2516,20 +2528,16 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                 "Jev is not enabled on this engine".to_string(),
             ));
         };
-        let mut cfg = client.config().clone();
-        if !cfg.thresholds.set(name, value) {
+        let mut th = client.thresholds().clone();
+        if !th.set(name, value) {
             return Err(KodError::InvalidParameters {
                 reason: format!("unknown threshold name: {name}"),
             });
         }
-        cfg.thresholds.clamp();
-        let new_client = crate::jev::JevClient::from_config(&cfg)
-            .map_err(|e| KodError::InvalidState(format!("rebuild JevClient: {e}")))?
-            .ok_or_else(|| {
-                KodError::InvalidState(
-                    "JevConfig disabled during threshold update".to_string(),
-                )
-            })?;
+        th.clamp();
+        let new_client = client
+            .with_thresholds(th)
+            .map_err(|e| KodError::InvalidState(format!("rebuild JevClient: {e}")))?;
         if let Ok(mut slot) = self.jev_client.write() {
             *slot = Some(new_client);
         }
@@ -2538,7 +2546,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
 
     /// The installed Jev client, if any. Cloned so the caller
     /// does not hold the lock across an await.
-    pub fn jev_client(&self) -> Option<crate::jev::JevClient> {
+    pub fn jev_client(&self) -> Option<std::sync::Arc<dyn crate::jev::JevDecider>> {
         self.jev_client.read().ok().and_then(|g| g.clone())
     }
 

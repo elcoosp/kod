@@ -144,6 +144,122 @@ pub struct JevClient {
     config: Arc<JevConfig>,
 }
 
+/// Abstraction over the Jev client for testing and dependency
+/// injection (P5.6 follow-up). `JevClient` implements it; a test can
+/// provide a scripted impl that returns deterministic verdicts.
+///
+/// Every method that existing call sites use is on the trait. The
+/// signatures match the inherent methods on `JevClient`, so a call
+/// site that reads `engine.jev_client()?` and calls `.evaluate_*`
+/// works unchanged whether the engine holds a real client or a
+/// test double.
+#[async_trait::async_trait]
+pub trait JevDecider: Send + Sync {
+    fn thresholds(&self) -> &kod_config::JevThresholds;
+    fn config(&self) -> &kod_config::JevConfig;
+    fn reasoning_timeout(&self) -> std::time::Duration;
+    fn clear_cache(&self);
+    fn cache_len(&self) -> usize;
+    fn cache_enabled(&self) -> bool;
+
+    async fn evaluate_yes_no(
+        &self,
+        state: &Value,
+        question: &str,
+    ) -> Result<Decision<bool>, JevError>;
+
+    async fn evaluate_yes_no_batch(
+        &self,
+        state: &Value,
+        questions: &[(String, String)],
+    ) -> Result<Vec<(String, f32)>, JevError>;
+
+    async fn evaluate_score(
+        &self,
+        state: &Value,
+        question: &str,
+        levels: &[&str],
+    ) -> Result<Decision<String>, JevError>;
+
+    async fn evaluate_choice(
+        &self,
+        state: &Value,
+        question: &str,
+        options: &[&str],
+    ) -> Result<Decision<String>, JevError>;
+
+    /// Rebuild this decider with a new threshold set. Used by
+    /// `/jev tune set` to hot-swap the effective thresholds without
+    /// restarting the engine.
+    fn with_thresholds(
+        &self,
+        new: kod_config::JevThresholds,
+    ) -> Result<std::sync::Arc<dyn JevDecider>, JevError>;
+}
+
+#[async_trait::async_trait]
+impl JevDecider for JevClient {
+    fn thresholds(&self) -> &kod_config::JevThresholds {
+        JevClient::thresholds(self)
+    }
+    fn config(&self) -> &kod_config::JevConfig {
+        JevClient::config(self)
+    }
+    fn reasoning_timeout(&self) -> std::time::Duration {
+        JevClient::reasoning_timeout(self)
+    }
+    fn clear_cache(&self) {
+        JevClient::clear_cache(self)
+    }
+    fn cache_len(&self) -> usize {
+        JevClient::cache_len(self)
+    }
+    fn cache_enabled(&self) -> bool {
+        JevClient::cache_enabled(self)
+    }
+    async fn evaluate_yes_no(
+        &self,
+        state: &Value,
+        question: &str,
+    ) -> Result<Decision<bool>, JevError> {
+        JevClient::evaluate_yes_no(self, state, question).await
+    }
+    async fn evaluate_yes_no_batch(
+        &self,
+        state: &Value,
+        questions: &[(String, String)],
+    ) -> Result<Vec<(String, f32)>, JevError> {
+        JevClient::evaluate_yes_no_batch(self, state, questions).await
+    }
+    async fn evaluate_score(
+        &self,
+        state: &Value,
+        question: &str,
+        levels: &[&str],
+    ) -> Result<Decision<String>, JevError> {
+        JevClient::evaluate_score(self, state, question, levels).await
+    }
+    async fn evaluate_choice(
+        &self,
+        state: &Value,
+        question: &str,
+        options: &[&str],
+    ) -> Result<Decision<String>, JevError> {
+        JevClient::evaluate_choice(self, state, question, options).await
+    }
+    fn with_thresholds(
+        &self,
+        new: kod_config::JevThresholds,
+    ) -> Result<std::sync::Arc<dyn JevDecider>, JevError> {
+        let mut cfg = JevClient::config(self).clone();
+        cfg.thresholds = new;
+        cfg.thresholds.clamp();
+        let client = JevClient::from_config(&cfg)?
+            .ok_or(JevError::Disabled)?;
+        Ok(std::sync::Arc::new(client))
+    }
+}
+
 impl JevClient {
     /// Build a client from config, or `None` when `enabled = false`.
     ///
