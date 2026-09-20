@@ -61,9 +61,7 @@ impl StateStore {
     /// Default location for a session: `state.json` next to the trace
     /// log, which sits in `~/.kod/sessions/`.
     pub fn default_path() -> Option<PathBuf> {
-        dirs::home_dir().map(|h| {
-            h.join(".kod").join("sessions").join("state.json")
-        })
+        dirs::home_dir().map(|h| h.join(".kod").join("sessions").join("state.json"))
     }
 
     /// Sibling of a `turns.jsonl` file: same directory, `state.json`.
@@ -102,9 +100,7 @@ impl StateStore {
                     EngineState::default()
                 }
             },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                EngineState::default()
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => EngineState::default(),
             Err(e) => {
                 tracing::warn!(
                     error = %e,
@@ -181,10 +177,7 @@ mod tests {
         assert_eq!(back.plans.len(), 1);
         assert!(back.plans.contains_key("session"));
         assert_eq!(back.decision_logs.len(), 1);
-        assert_eq!(
-            back.decision_logs["session"].entries[0].text,
-            "prefer tabs",
-        );
+        assert_eq!(back.decision_logs["session"].entries[0].text, "prefer tabs",);
     }
 
     #[test]

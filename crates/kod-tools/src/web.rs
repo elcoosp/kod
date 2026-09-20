@@ -842,7 +842,8 @@ mod coverage_html_conversion {
         let text = html_to_text(html);
         assert!(text.contains("visible"));
         assert!(!text.contains("var x"), "script body leaked: {text}");
-    }    #[test]
+    }
+    #[test]
     fn consecutive_tags_do_not_produce_multiple_spaces() {
         // `<b></b><i></i>text` must not produce "  text" (leading
         // spaces) or "  " between two text runs. The tag-boundary

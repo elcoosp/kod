@@ -31,7 +31,11 @@ impl Context {
                 .iter()
                 .map(|m| m.content.len())
                 .sum::<usize>()
-            + self.skills.iter().map(|s| s.instructions.len()).sum::<usize>();
+            + self
+                .skills
+                .iter()
+                .map(|s| s.instructions.len())
+                .sum::<usize>();
 
         // Rough: 1 token ≈ 4 characters
         total_chars / 4

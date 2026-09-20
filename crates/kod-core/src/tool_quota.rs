@@ -49,7 +49,9 @@ impl ToolCounts {
         *g.per_turn.entry(tool.to_string()).or_insert(0) += 1;
         *g.per_session.entry(tool.to_string()).or_insert(0) += 1;
         if let Some(c) = command {
-            *g.per_command.entry((tool.to_string(), c.to_string())).or_insert(0) += 1;
+            *g.per_command
+                .entry((tool.to_string(), c.to_string()))
+                .or_insert(0) += 1;
         }
     }
 
@@ -69,12 +71,7 @@ impl ToolCounts {
     }
 
     pub fn per_turn(&self, tool: &str) -> usize {
-        self.inner
-            .lock()
-            .per_turn
-            .get(tool)
-            .copied()
-            .unwrap_or(0)
+        self.inner.lock().per_turn.get(tool).copied().unwrap_or(0)
     }
 
     pub fn per_session(&self, tool: &str) -> usize {
@@ -177,10 +174,7 @@ pub fn check(
     }
     if q.per_turn > 0 && t * 100 >= q.per_turn * 80 {
         return QuotaVerdict::Soft {
-            reason: format!(
-                "`{tool}` has used {t}/{} of its per-turn quota",
-                q.per_turn,
-            ),
+            reason: format!("`{tool}` has used {t}/{} of its per-turn quota", q.per_turn,),
         };
     }
     QuotaVerdict::Ok
@@ -239,14 +233,24 @@ mod tests {
         // 80% of 10 = 8, so after 8 calls the verdict is Soft; after
         // 10 it is Hard.
         let c = ToolCounts::new();
-        let q = ToolQuota { per_turn: 10, per_session: 0, per_command: 0 };
+        let q = ToolQuota {
+            per_turn: 10,
+            per_session: 0,
+            per_command: 0,
+        };
         for _ in 0..8 {
             c.record("grep", None);
         }
-        assert!(matches!(check(&c, "grep", Some(&q), None), QuotaVerdict::Soft { .. }));
+        assert!(matches!(
+            check(&c, "grep", Some(&q), None),
+            QuotaVerdict::Soft { .. }
+        ));
         c.record("grep", None);
         c.record("grep", None);
-        assert!(matches!(check(&c, "grep", Some(&q), None), QuotaVerdict::Hard { .. }));
+        assert!(matches!(
+            check(&c, "grep", Some(&q), None),
+            QuotaVerdict::Hard { .. }
+        ));
     }
 
     #[test]
@@ -254,17 +258,28 @@ mod tests {
         // A cap of 2 has no reachable 80%..99% window: 1 is below
         // soft, 2 is hard.
         let c = ToolCounts::new();
-        let q = ToolQuota { per_turn: 2, per_session: 0, per_command: 0 };
+        let q = ToolQuota {
+            per_turn: 2,
+            per_session: 0,
+            per_command: 0,
+        };
         c.record("grep", None);
         assert_eq!(check(&c, "grep", Some(&q), None), QuotaVerdict::Ok);
         c.record("grep", None);
-        assert!(matches!(check(&c, "grep", Some(&q), None), QuotaVerdict::Hard { .. }));
+        assert!(matches!(
+            check(&c, "grep", Some(&q), None),
+            QuotaVerdict::Hard { .. }
+        ));
     }
 
     #[test]
     fn hard_cap_on_per_session_wins_over_per_turn() {
         let c = ToolCounts::new();
-        let q = ToolQuota { per_turn: 100, per_session: 1, per_command: 0 };
+        let q = ToolQuota {
+            per_turn: 100,
+            per_session: 1,
+            per_command: 0,
+        };
         c.record("grep", None);
         let v = check(&c, "grep", Some(&q), None);
         assert!(matches!(v, QuotaVerdict::Hard { .. }));
@@ -273,7 +288,11 @@ mod tests {
     #[test]
     fn per_command_cap() {
         let c = ToolCounts::new();
-        let q = ToolQuota { per_turn: 0, per_session: 0, per_command: 2 };
+        let q = ToolQuota {
+            per_turn: 0,
+            per_session: 0,
+            per_command: 2,
+        };
         c.record("execute_command", Some("ls"));
         c.record("execute_command", Some("ls"));
         let v = check(&c, "execute_command", Some(&q), Some("ls"));
@@ -286,17 +305,28 @@ mod tests {
     #[test]
     fn soft_fires_at_80_percent() {
         let c = ToolCounts::new();
-        let q = ToolQuota { per_turn: 10, per_session: 100, per_command: 0 };
+        let q = ToolQuota {
+            per_turn: 10,
+            per_session: 100,
+            per_command: 0,
+        };
         for _ in 0..8 {
             c.record("grep", None);
         }
-        assert!(matches!(check(&c, "grep", Some(&q), None), QuotaVerdict::Soft { .. }));
+        assert!(matches!(
+            check(&c, "grep", Some(&q), None),
+            QuotaVerdict::Soft { .. }
+        ));
     }
 
     #[test]
     fn disabled_quota_means_ok() {
         let c = ToolCounts::new();
-        let q = ToolQuota { per_turn: 0, per_session: 0, per_command: 0 };
+        let q = ToolQuota {
+            per_turn: 0,
+            per_session: 0,
+            per_command: 0,
+        };
         for _ in 0..100 {
             c.record("grep", None);
         }

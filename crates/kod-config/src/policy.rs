@@ -200,10 +200,7 @@ impl ReadProtection {
             return false;
         }
         let path_str = path.to_string_lossy();
-        let basename = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
+        let basename = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         for pat in &self.deny {
             // Same glob semantics as the policy engine's forbidden
             // paths: a pattern with a slash is matched against the
@@ -1024,7 +1021,11 @@ mod coverage_glob_matching {
         // `**` crosses segments. A regression that let `*` cross
         // would silently widen every pattern a user wrote.
         let wd = Path::new("/tmp/proj");
-        assert!(glob_matches("src/*.rs", Path::new("/tmp/proj/src/a.rs"), wd));
+        assert!(glob_matches(
+            "src/*.rs",
+            Path::new("/tmp/proj/src/a.rs"),
+            wd
+        ));
         assert!(!glob_matches(
             "src/*.rs",
             Path::new("/tmp/proj/src/sub/a.rs"),
@@ -1054,11 +1055,7 @@ mod coverage_glob_matching {
         // fire; the tool's permission gate then falls through to the
         // preset, which is the safe direction.
         let wd = Path::new("/tmp/proj");
-        assert!(!glob_matches(
-            "[unterminated",
-            Path::new("/tmp/proj/a"),
-            wd
-        ));
+        assert!(!glob_matches("[unterminated", Path::new("/tmp/proj/a"), wd));
     }
 }
 
@@ -1128,13 +1125,16 @@ mod coverage_policy_deny_rules {
         assert_ne!(a, b);
     }
 
-        #[test]
+    #[test]
     fn decision_variants_serialize_lowercase() {
         // The serde rename_all = "lowercase" is the on-disk
         // contract; a downstream viewer that reads a policy
         // decision from the session log depends on the exact
         // spelling.
-        assert_eq!(serde_json::to_string(&Decision::Allow).unwrap(), "\"allow\"");
+        assert_eq!(
+            serde_json::to_string(&Decision::Allow).unwrap(),
+            "\"allow\""
+        );
         assert_eq!(serde_json::to_string(&Decision::Deny).unwrap(), "\"deny\"");
         assert_eq!(serde_json::to_string(&Decision::Ask).unwrap(), "\"ask\"");
     }

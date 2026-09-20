@@ -123,10 +123,7 @@ mod coverage_swarm_config {
         // The runner's documented convention: 0 means "no cap". The
         // config must preserve that value verbatim, not substitute
         // the default.
-        let c: SwarmConfig = toml::from_str(
-            "agent_timeout_secs = 0\ntimeout_secs = 0",
-        )
-        .unwrap();
+        let c: SwarmConfig = toml::from_str("agent_timeout_secs = 0\ntimeout_secs = 0").unwrap();
         assert_eq!(c.agent_timeout_secs, 0);
         assert_eq!(c.timeout_secs, 0);
     }

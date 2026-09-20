@@ -645,25 +645,16 @@ mod coverage_llm_validate {
         c.endpoints[0].temperature = Some(9.0);
         c.endpoints[0].context_window = 100;
         c.validate();
-        let first_pass = (
-            c.endpoints[0].temperature,
-            c.endpoints[0].context_window,
-        );
+        let first_pass = (c.endpoints[0].temperature, c.endpoints[0].context_window);
         c.validate();
-        let second_pass = (
-            c.endpoints[0].temperature,
-            c.endpoints[0].context_window,
-        );
+        let second_pass = (c.endpoints[0].temperature, c.endpoints[0].context_window);
         assert_eq!(first_pass, second_pass);
     }
 
     #[test]
     fn validate_handles_multiple_endpoints_independently() {
         let mut c = LlmConfig {
-            endpoints: vec![
-                ep("a", "ma", "http://a"),
-                ep("b", "mb", "http://b"),
-            ],
+            endpoints: vec![ep("a", "ma", "http://a"), ep("b", "mb", "http://b")],
             ..LlmConfig::default()
         };
         c.endpoints[0].temperature = Some(9.0);
@@ -734,10 +725,7 @@ mod coverage_llm_validate {
         // logs a warning and keeps both. The registry later keeps
         // the last under the name, but validate must not fail.
         let mut c = LlmConfig {
-            endpoints: vec![
-                ep("same", "m1", "http://a"),
-                ep("same", "m2", "http://b"),
-            ],
+            endpoints: vec![ep("same", "m1", "http://a"), ep("same", "m2", "http://b")],
             ..LlmConfig::default()
         };
         c.validate();
@@ -791,8 +779,7 @@ mod coverage_provider_kind {
 
     #[test]
     fn canonical_wire_form_parses() {
-        let k: ProviderKind =
-            serde_json::from_str("\"openai-compatible\"").unwrap();
+        let k: ProviderKind = serde_json::from_str("\"openai-compatible\"").unwrap();
         assert_eq!(k, ProviderKind::OpenAICompatible);
         let k: ProviderKind = serde_json::from_str("\"anthropic\"").unwrap();
         assert_eq!(k, ProviderKind::Anthropic);
@@ -917,7 +904,10 @@ mod coverage_routing_shape {
         // sort alphabetically and change the retry order.
         let toml_str = r#"fallback = ["b", "a", "c"]"#;
         let r: RoutingConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(r.fallback, vec!["b".to_string(), "a".to_string(), "c".to_string()]);
+        assert_eq!(
+            r.fallback,
+            vec!["b".to_string(), "a".to_string(), "c".to_string()]
+        );
     }
 
     #[test]

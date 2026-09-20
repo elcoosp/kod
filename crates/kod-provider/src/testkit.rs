@@ -628,10 +628,7 @@ mod coverage_testkit {
     fn scripted_provider_rotates_and_repeats_the_last_entry() {
         let p = MockProvider::scripted(
             "rotate",
-            vec![
-                Script::Text("first".into()),
-                Script::Text("second".into()),
-            ],
+            vec![Script::Text("first".into()), Script::Text("second".into())],
         );
         // next_script is private; drive it through a public method.
         // `list_models` does not consume the script, so use the

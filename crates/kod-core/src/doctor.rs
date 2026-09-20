@@ -803,7 +803,11 @@ mod coverage_doctor {
         std::fs::create_dir(tmp.path().join("nested").join("deeper")).unwrap();
         std::fs::write(tmp.path().join("top.md"), "x").unwrap();
         std::fs::write(tmp.path().join("nested").join("mid.md"), "x").unwrap();
-        std::fs::write(tmp.path().join("nested").join("deeper").join("deep.md"), "x").unwrap();
+        std::fs::write(
+            tmp.path().join("nested").join("deeper").join("deep.md"),
+            "x",
+        )
+        .unwrap();
         let out = collect_md_files(tmp.path());
         assert_eq!(out.len(), 3, "must find all three, got: {out:?}");
     }

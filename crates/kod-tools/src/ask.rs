@@ -216,16 +216,16 @@ mod coverage_question_request {
         let tool = AskUserTool::new();
         let ctx = ToolContext::new("/tmp").with_permissions(ToolPermissions::default());
         let r = tool
-            .execute(
-                &serde_json::json!({"question": "hi"}),
-                &ctx,
-            )
+            .execute(&serde_json::json!({"question": "hi"}), &ctx)
             .await
             .unwrap();
         match r {
             kod_types::ToolResult::Error(msg) => {
                 assert!(msg.contains("interactive"), "got: {msg}");
-                assert!(msg.contains("kod tui") || msg.contains("kod chat"), "got: {msg}");
+                assert!(
+                    msg.contains("kod tui") || msg.contains("kod chat"),
+                    "got: {msg}"
+                );
             }
             other => panic!("expected ToolResult::Error, got {other:?}"),
         }

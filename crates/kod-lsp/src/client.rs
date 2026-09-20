@@ -848,15 +848,27 @@ mod coverage_lsp_parsers {
                 }]
             })
         };
-        assert_eq!(parse_diagnostics(&mk(1), "file:///x.rs")[0].severity, "error");
+        assert_eq!(
+            parse_diagnostics(&mk(1), "file:///x.rs")[0].severity,
+            "error"
+        );
         assert_eq!(
             parse_diagnostics(&mk(2), "file:///x.rs")[0].severity,
             "warning"
         );
-        assert_eq!(parse_diagnostics(&mk(3), "file:///x.rs")[0].severity, "info");
+        assert_eq!(
+            parse_diagnostics(&mk(3), "file:///x.rs")[0].severity,
+            "info"
+        );
         // 4 and any out-of-range value fall through to "hint".
-        assert_eq!(parse_diagnostics(&mk(4), "file:///x.rs")[0].severity, "hint");
-        assert_eq!(parse_diagnostics(&mk(99), "file:///x.rs")[0].severity, "hint");
+        assert_eq!(
+            parse_diagnostics(&mk(4), "file:///x.rs")[0].severity,
+            "hint"
+        );
+        assert_eq!(
+            parse_diagnostics(&mk(99), "file:///x.rs")[0].severity,
+            "hint"
+        );
     }
 
     #[test]

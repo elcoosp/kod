@@ -656,7 +656,10 @@ mod coverage_loader_api {
         assert_eq!(loader.count().await, 1);
 
         let removed = loader.remove_skill(&path).await;
-        assert!(removed.is_some(), "remove_skill must return the removed skill");
+        assert!(
+            removed.is_some(),
+            "remove_skill must return the removed skill"
+        );
         assert_eq!(removed.unwrap().metadata.name, "removable");
         assert_eq!(loader.count().await, 0);
     }

@@ -76,9 +76,10 @@ async fn test_watch_new_file() {
 
     std::fs::write(skills_dir.join("brand_new.md"), "content\n").unwrap();
 
-    let ev = wait_for(&mut rx, |e| {
-        matches!(e, WatchEvent::Created(p) if p.ends_with("brand_new.md"))
-    })
+    let ev = wait_for(
+        &mut rx,
+        |e| matches!(e, WatchEvent::Created(p) if p.ends_with("brand_new.md")),
+    )
     .await;
     assert!(
         ev.is_some(),
@@ -135,9 +136,10 @@ async fn test_watch_file_deletion() {
 
     std::fs::remove_file(&path).unwrap();
 
-    let ev = wait_for(&mut rx, |e| {
-        matches!(e, WatchEvent::Removed(p) if p.ends_with("to_delete.md"))
-    })
+    let ev = wait_for(
+        &mut rx,
+        |e| matches!(e, WatchEvent::Removed(p) if p.ends_with("to_delete.md")),
+    )
     .await;
     assert!(
         ev.is_some(),

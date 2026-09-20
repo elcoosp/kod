@@ -565,10 +565,7 @@ mod coverage_event_priority {
         // dump, a remote client) may use it. Pin the shape for
         // the variants that have no inner type requiring extra
         // imports.
-        for e in [
-            Event::Tick,
-            Event::Quit,
-        ] {
+        for e in [Event::Tick, Event::Quit] {
             let json = serde_json::to_string(&e).unwrap();
             let parsed: Event = serde_json::from_str(&json).unwrap();
             let re = serde_json::to_string(&parsed).unwrap();

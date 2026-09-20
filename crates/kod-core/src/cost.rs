@@ -74,15 +74,17 @@ impl CostTracker {
 
     /// Install caps and policy from config. Idempotent.
     pub fn install_config(&self, cfg: &kod_config::LimitsConfig) {
-        self.inner
-            .session_cap_micro
-            .store(usd_to_micro(cfg.max_cost_usd_per_session), Ordering::Relaxed);
+        self.inner.session_cap_micro.store(
+            usd_to_micro(cfg.max_cost_usd_per_session),
+            Ordering::Relaxed,
+        );
         self.inner
             .turn_cap_micro
             .store(usd_to_micro(cfg.max_cost_usd_per_turn), Ordering::Relaxed);
-        self.inner
-            .soft_warn_milli
-            .store((cfg.soft_warn_at * 1000.0).max(0.0) as u64, Ordering::Relaxed);
+        self.inner.soft_warn_milli.store(
+            (cfg.soft_warn_at * 1000.0).max(0.0) as u64,
+            Ordering::Relaxed,
+        );
         *self.inner.on_exhausted.write() = cfg.on_exhausted;
     }
 
@@ -175,7 +177,9 @@ impl CostTracker {
             return;
         }
         let delta = usd_to_micro(delta_usd);
-        self.inner.session_cap_micro.fetch_add(delta, Ordering::Relaxed);
+        self.inner
+            .session_cap_micro
+            .fetch_add(delta, Ordering::Relaxed);
         *self.inner.session_warned.write() = false;
     }
 }

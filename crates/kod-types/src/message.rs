@@ -428,7 +428,12 @@ mod coverage_agent_message_content {
         // The derive order is the on-the-wire order; a regression
         // that reshuffled the variants would silently invert every
         // "prioritise this" decision a coordinator makes.
-        let order = [Priority::Low, Priority::Medium, Priority::High, Priority::Critical];
+        let order = [
+            Priority::Low,
+            Priority::Medium,
+            Priority::High,
+            Priority::Critical,
+        ];
         for (i, a) in order.iter().enumerate() {
             for (j, b) in order.iter().enumerate() {
                 if i < j {

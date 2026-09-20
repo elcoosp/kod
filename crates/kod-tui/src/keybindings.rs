@@ -193,14 +193,14 @@ mod coverage_cheat_sheet {
             .collect::<Vec<_>>()
             .join("\n");
         for keyword in [
-            "Esc",       // cancel / mode escape
-            "Enter",     // submit
-            "Ctrl+J",    // newline
-            "scroll",    // scrolling
-            "quit",      // quit
-            "cancel",    // cancel a running prompt
-            "search",    // search
-            "help",      // help
+            "Esc",    // cancel / mode escape
+            "Enter",  // submit
+            "Ctrl+J", // newline
+            "scroll", // scrolling
+            "quit",   // quit
+            "cancel", // cancel a running prompt
+            "search", // search
+            "help",   // help
         ] {
             assert!(
                 text.contains(keyword),
@@ -216,8 +216,7 @@ mod coverage_cheat_sheet {
         // `default_bindings()` is dead: nothing the user types can
         // trigger it.
         let defaults = default_bindings();
-        let actions: std::collections::HashSet<KeyAction> =
-            defaults.values().copied().collect();
+        let actions: std::collections::HashSet<KeyAction> = defaults.values().copied().collect();
         for required in [
             KeyAction::Insert,
             KeyAction::Quit,

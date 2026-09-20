@@ -198,10 +198,7 @@ mod coverage_embedding_serde {
              embedding_api_key_env = \"MY_KEY\"",
         )
         .unwrap();
-        assert_eq!(
-            c.embedding_url.as_deref(),
-            Some("http://localhost:11434"),
-        );
+        assert_eq!(c.embedding_url.as_deref(), Some("http://localhost:11434"),);
         assert_eq!(c.embedding_api_key_env.as_deref(), Some("MY_KEY"));
     }
 
@@ -224,10 +221,8 @@ mod coverage_embedding_serde {
 
     #[test]
     fn extraction_fields_round_trip() {
-        let c: MemoryConfig = toml::from_str(
-            "extract_on_shutdown = true\nextract_max_entries = 25",
-        )
-        .unwrap();
+        let c: MemoryConfig =
+            toml::from_str("extract_on_shutdown = true\nextract_max_entries = 25").unwrap();
         assert!(c.extract_on_shutdown);
         assert_eq!(c.extract_max_entries, 25);
     }

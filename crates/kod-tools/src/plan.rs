@@ -9,9 +9,7 @@
 
 use crate::{Tool, ToolContext};
 use kod_error::Result;
-use kod_types::{
-    ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult,
-};
+use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use serde_json::Value;
 
 /// See the module docs.
@@ -72,8 +70,7 @@ impl Tool for PlanTool {
 
     async fn execute(&self, _params: &Value, _context: &ToolContext) -> Result<ToolResult> {
         Ok(ToolResult::Error(
-            "plan_update requires the engine; the engine intercepts this call"
-                .to_string(),
+            "plan_update requires the engine; the engine intercepts this call".to_string(),
         ))
     }
 }

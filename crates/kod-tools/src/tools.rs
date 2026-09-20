@@ -1257,13 +1257,8 @@ impl Tool for FileInfoTool {
     }
 }
 
-
 /// Tier 1.3 — sanitize a read_file payload.
-fn redact_read_content(
-    content: &str,
-    context: &ToolContext,
-    resolved: &std::path::Path,
-) -> String {
+fn redact_read_content(content: &str, context: &ToolContext, resolved: &std::path::Path) -> String {
     let Some(redactor) = context.redactor.as_ref() else {
         return content.to_string();
     };

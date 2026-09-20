@@ -8,44 +8,45 @@ pub mod budget;
 pub mod checkpoint;
 pub mod citations;
 pub mod config;
-pub mod cost;
 pub mod context;
+pub mod cost;
+pub mod decisions;
 pub mod doctor;
 pub mod engine;
-pub mod decisions;
-pub mod hooks;
 pub mod fixture;
+pub mod hooks;
 pub mod jev;
 pub mod lsp_tools;
 pub mod mcp_adapters;
 pub mod memory_tools;
-pub mod provider_setup;
 pub mod plan;
-pub mod retry_strategy;
+pub mod provider_setup;
 pub mod repomap;
+pub mod retry_strategy;
 pub mod router;
 pub mod serve;
-pub mod trace;
-pub mod tool_quota;
-pub mod trace_writer;
 pub mod session_log;
 pub mod state;
 pub mod swarm_adapters;
 pub mod swarm_runner;
+pub mod tool_quota;
+pub mod trace;
+pub mod trace_writer;
 pub mod worktree;
 
-pub use fixture::{diff_rounds, Fixture, RequestSummary, ResponseFixture, RoundFixture, ToolResultFixture};
-pub use retry_strategy::{choose_action, RetryAction, TurnFailure};
-pub use tool_quota::{check as check_quota, QuotaVerdict, ToolCounts};
-pub use plan::{Plan, PlanStatus, PlanStep, PlanUpdate};
-pub use decisions::{DecisionAuthor, DecisionKind, DecisionLog, DecisionRecord};
-pub use state::{EngineState, StateStore, STATE_SCHEMA_VERSION};
-pub use engine::KodEngine;
-pub use trace::{RoundKind, ToolOutcomeKind, TurnId, TurnOutcome, TurnTrace, TurnTraceBuilder,
-};
-pub use trace_writer::{read_traces, TraceWriter};
 pub use cost::{CostSnapshot, CostTracker, SoftWarningTrigger};
+pub use decisions::{DecisionAuthor, DecisionKind, DecisionLog, DecisionRecord};
+pub use engine::KodEngine;
+pub use fixture::{
+    Fixture, RequestSummary, ResponseFixture, RoundFixture, ToolResultFixture, diff_rounds,
+};
 pub use jev::{Decision, DecisionSource, JevClient, JevError};
+pub use plan::{Plan, PlanStatus, PlanStep, PlanUpdate};
+pub use retry_strategy::{RetryAction, TurnFailure, choose_action};
+pub use state::{EngineState, STATE_SCHEMA_VERSION, StateStore};
+pub use tool_quota::{QuotaVerdict, ToolCounts, check as check_quota};
+pub use trace::{RoundKind, ToolOutcomeKind, TurnId, TurnOutcome, TurnTrace, TurnTraceBuilder};
+pub use trace_writer::{TraceWriter, read_traces};
 
 /// Build a `JevClient` from config and install it on `engine`.
 ///

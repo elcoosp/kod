@@ -1061,11 +1061,7 @@ mod coverage_render_cache_corners {
         for i in 0..50 {
             let _ = c.get_or_render(&format!("content {i}"), 40, &t);
         }
-        assert!(
-            c.len() <= 3,
-            "cache grew past its capacity: {}",
-            c.len(),
-        );
+        assert!(c.len() <= 3, "cache grew past its capacity: {}", c.len(),);
     }
 
     #[test]
@@ -1140,12 +1136,22 @@ mod coverage_render_cache_corners {
         // And the content is stable, not just the pointer.
         let text_a: String = a
             .iter()
-            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let text_b: String = b
             .iter()
-            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
             .collect::<Vec<_>>()
             .join("\n");
         assert_eq!(text_a, text_b);

@@ -551,8 +551,10 @@ mod coverage_checkpoint_corners {
         let id = cp.snapshot_before(&target, "write_file").unwrap().unwrap();
         std::fs::write(&target, "written").unwrap();
         let restored = cp.restore(&id).unwrap();
-        assert_eq!(restored, std::fs::canonicalize(&tmp.path().join("new.txt"))
-            .unwrap_or(target));
+        assert_eq!(
+            restored,
+            std::fs::canonicalize(&tmp.path().join("new.txt")).unwrap_or(target)
+        );
         assert!(!tmp.path().join("new.txt").exists());
     }
 

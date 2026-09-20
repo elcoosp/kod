@@ -159,11 +159,7 @@ impl Redactor {
     /// elements are recursed; numbers, bools, nulls are unchanged.
     pub fn redact_json(&self, value: &mut serde_json::Value) -> Vec<Redaction> {
         let mut out = Vec::new();
-        fn walk(
-            r: &Redactor,
-            v: &mut serde_json::Value,
-            out: &mut Vec<Redaction>,
-        ) {
+        fn walk(r: &Redactor, v: &mut serde_json::Value, out: &mut Vec<Redaction>) {
             match v {
                 serde_json::Value::String(s) => {
                     let (redacted, events) = r.redact(s);
@@ -230,24 +226,9 @@ pub fn builtin_rules() -> Vec<RedactRule> {
             8,
         ),
         r("bearer-token", r"(?i)bearer\s+[A-Za-z0-9._\-]{20,}", 0, 0),
-        r(
-            "slack-token",
-            r"xox[aboprs]-[A-Za-z0-9-]{10,}",
-            0,
-            0,
-        ),
-        r(
-            "google-api-key",
-            r"AIza[0-9A-Za-z_\-]{35}",
-            4,
-            4,
-        ),
-        r(
-            "stripe-key",
-            r"sk_(?:live|test)_[A-Za-z0-9]{20,}",
-            0,
-            0,
-        ),
+        r("slack-token", r"xox[aboprs]-[A-Za-z0-9-]{10,}", 0, 0),
+        r("google-api-key", r"AIza[0-9A-Za-z_\-]{35}", 4, 4),
+        r("stripe-key", r"sk_(?:live|test)_[A-Za-z0-9]{20,}", 0, 0),
         r(
             "cohere-key",
             r"(?i)cohere[_\-]?api[_\-]?key\s*[=:]\s*[A-Za-z0-9]{30,}",
@@ -350,7 +331,8 @@ mod tests {
     #[test]
     fn anthropic_key_is_redacted() {
         let r = Redactor::default();
-        let (out, _) = r.redact("x-api-key: sk-ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let (out, _) =
+            r.redact("x-api-key: sk-ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         assert!(out.contains("[REDACTED:anthropic-key]"));
     }
 
@@ -366,7 +348,8 @@ mod tests {
     #[test]
     fn pem_private_key_is_redacted() {
         let r = Redactor::default();
-        let pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----";
+        let pem =
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----";
         let (out, events) = r.redact(pem);
         assert!(out.contains("[REDACTED:pem-private-key]"));
         assert_eq!(events[0].rule, "pem-private-key");
@@ -393,7 +376,8 @@ mod tests {
     #[test]
     fn multiple_rules_fire_on_a_mixed_payload() {
         let r = Redactor::default();
-        let s = "OPENAI=sk-abcdef1234567890ABCDEFGH GITHUB=ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let s =
+            "OPENAI=sk-abcdef1234567890ABCDEFGH GITHUB=ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let (_, events) = r.redact(s);
         let names: Vec<&str> = events.iter().map(|e| e.rule.as_str()).collect();
         assert!(names.contains(&"openai-key"));
@@ -460,8 +444,18 @@ mod tests {
             "flag": true,
         });
         let events = r.redact_json(&mut v);
-        assert!(v["outer"]["inner"].as_str().unwrap().contains("[REDACTED:openai-key]"));
-        assert!(v["outer"]["list"][1].as_str().unwrap().contains("[REDACTED:aws-access-key]"));
+        assert!(
+            v["outer"]["inner"]
+                .as_str()
+                .unwrap()
+                .contains("[REDACTED:openai-key]")
+        );
+        assert!(
+            v["outer"]["list"][1]
+                .as_str()
+                .unwrap()
+                .contains("[REDACTED:aws-access-key]")
+        );
         assert_eq!(v["count"], 42);
         assert_eq!(v["flag"], true);
         assert!(events.len() >= 2);

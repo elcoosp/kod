@@ -58,10 +58,7 @@ impl TrustLevel {
     /// id=call_7a2 trust=untrusted|>`.
     pub fn open_marker(self, source: &str, id: Option<&str>) -> String {
         match id {
-            Some(i) => format!(
-                "<|source={source} id={i} trust={}|>",
-                self.as_str()
-            ),
+            Some(i) => format!("<|source={source} id={i} trust={}|>", self.as_str()),
             None => format!("<|source={source} trust={}|>", self.as_str()),
         }
     }

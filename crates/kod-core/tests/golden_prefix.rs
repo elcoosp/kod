@@ -154,7 +154,6 @@ async fn stable_prefix_survives_a_history_only_change() {
     );
 }
 
-
 // ---------------------------------------------------------------------------
 // Tier 3.1 — prompt cache regression tests
 //
@@ -196,13 +195,7 @@ async fn cacheable_prefix_is_unaffected_by_memory_change() {
     let router = router_with_one_file(&tmp);
 
     let p1 = router
-        .build_prompt_with_budget(
-            "count the files",
-            &TaskType::Research,
-            "",
-            None,
-            None,
-        )
+        .build_prompt_with_budget("count the files", &TaskType::Research, "", None, None)
         .await
         .expect("prompt");
     let p2 = router

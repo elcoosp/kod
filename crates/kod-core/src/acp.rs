@@ -1025,10 +1025,7 @@ mod coverage_acp_frame_errors {
         let mut buf: Vec<u8> = Vec::new();
         write_frame(&mut buf, &json!({"a": 1})).await.unwrap();
         let s = String::from_utf8(buf.clone()).unwrap();
-        assert!(
-            s.starts_with("Content-Length: "),
-            "header line, got: {s:?}",
-        );
+        assert!(s.starts_with("Content-Length: "), "header line, got: {s:?}",);
         assert!(
             s.contains("\r\n\r\n"),
             "header must terminate with \\r\\n\\r\\n, got: {s:?}",

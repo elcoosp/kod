@@ -136,7 +136,9 @@ on_exhausted = "stop"
     #[test]
     fn on_exhausted_round_trips_every_variant() {
         #[derive(Serialize, Deserialize)]
-        struct W { v: OnExhausted }
+        struct W {
+            v: OnExhausted,
+        }
         for variant in [OnExhausted::Ask, OnExhausted::Stop, OnExhausted::Continue] {
             let w = W { v: variant };
             let s = toml::to_string(&w).unwrap();
@@ -167,11 +169,19 @@ on_exhausted = "stop"
         let mut c = LimitsConfig::default();
         c.tools.insert(
             "grep".to_string(),
-            ToolQuota { per_turn: 20, per_session: 200, per_command: 0 },
+            ToolQuota {
+                per_turn: 20,
+                per_session: 200,
+                per_command: 0,
+            },
         );
         c.tools.insert(
             "default".to_string(),
-            ToolQuota { per_turn: 50, per_session: 1000, per_command: 0 },
+            ToolQuota {
+                per_turn: 50,
+                per_session: 1000,
+                per_command: 0,
+            },
         );
         assert_eq!(c.quota_for("grep").unwrap().per_turn, 20);
         assert_eq!(c.quota_for("read_file").unwrap().per_turn, 50);
@@ -182,7 +192,11 @@ on_exhausted = "stop"
         let mut c = LimitsConfig::default();
         c.tools.insert(
             "noop".to_string(),
-            ToolQuota { per_turn: 0, per_session: 0, per_command: 0 },
+            ToolQuota {
+                per_turn: 0,
+                per_session: 0,
+                per_command: 0,
+            },
         );
         assert!(c.quota_for("noop").is_none());
     }

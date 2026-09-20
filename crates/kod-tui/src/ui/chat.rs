@@ -582,7 +582,10 @@ mod coverage_chat_widget {
     use kod_types::{MessageId, MessageRole};
 
     fn buffer_text(buf: &Buffer) -> String {
-        buf.content().iter().map(|c| c.symbol().to_string()).collect()
+        buf.content()
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect()
     }
 
     fn push_message(app: &mut KodApp, role: MessageRole, content: &str) {
@@ -679,7 +682,11 @@ mod coverage_chat_widget {
     #[test]
     fn render_with_an_agent_message_shows_the_agent_prefix() {
         let mut app = KodApp::new();
-        push_message(&mut app, MessageRole::Agent(kod_types::AgentId::new()), "agent reply");
+        push_message(
+            &mut app,
+            MessageRole::Agent(kod_types::AgentId::new()),
+            "agent reply",
+        );
         let text = render(&app, 80, 10);
         assert!(text.contains("agent reply"));
         assert!(text.contains("agent"));
@@ -755,11 +762,7 @@ mod coverage_chat_widget {
     #[test]
     fn render_tool_row_with_show_tools_off_hides_non_error_rows() {
         let mut app = KodApp::new();
-        push_message(
-            &mut app,
-            MessageRole::Tool,
-            "[run] a tool\nbody text",
-        );
+        push_message(&mut app, MessageRole::Tool, "[run] a tool\nbody text");
         // `toggle_show_tools` flips from true to false by default.
         app.toggle_show_tools();
         let text = render(&app, 100, 40);

@@ -70,10 +70,7 @@ impl ReplayProvider {
 
     /// A snapshot of every request the provider has seen.
     pub fn captured(&self) -> Vec<crate::request::CompletionRequest> {
-        self.captured
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default()
+        self.captured.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     /// Rewind the cursor. Useful for a fresh test.
@@ -94,11 +91,7 @@ impl LlmProvider for ReplayProvider {
         Ok(vec!["replay-fixture".to_string()])
     }
 
-    async fn generate(
-        &self,
-        _prompt: &str,
-        _options: &GenerationOptions,
-    ) -> Result<String> {
+    async fn generate(&self, _prompt: &str, _options: &GenerationOptions) -> Result<String> {
         match self.take() {
             Some(r) => Ok(r.text),
             None => Err(KodError::InvalidState(
@@ -159,8 +152,7 @@ impl LlmProvider for ReplayProvider {
                         id: call.id.clone(),
                         name: call.name.clone(),
                     }));
-                    let args_str =
-                        serde_json::to_string(&call.arguments).unwrap_or_default();
+                    let args_str = serde_json::to_string(&call.arguments).unwrap_or_default();
                     chunks.push(Ok(StreamChunk::ToolCallDelta {
                         index,
                         arguments: args_str,

@@ -340,7 +340,10 @@ mod coverage_todo_lifecycle {
             .await
             .unwrap();
         let r = tool
-            .execute(&serde_json::json!({"action": "add", "text": "three"}), &ctx())
+            .execute(
+                &serde_json::json!({"action": "add", "text": "three"}),
+                &ctx(),
+            )
             .await
             .unwrap();
         match r {
@@ -409,7 +412,10 @@ mod coverage_todo_lifecycle {
             .unwrap();
         match r {
             ToolResult::Error(msg) => {
-                assert!(msg.contains("in_progress"), "hyphen form not suggested: {msg}");
+                assert!(
+                    msg.contains("in_progress"),
+                    "hyphen form not suggested: {msg}"
+                );
             }
             other => panic!("expected error, got {other:?}"),
         }
@@ -488,9 +494,12 @@ mod coverage_todo_lifecycle {
         let list = new_list();
         let a = TodoTool::new(list.clone());
         let b = TodoTool::new(list.clone());
-        a.execute(&serde_json::json!({"action": "add", "text": "from a"}), &ctx())
-            .await
-            .unwrap();
+        a.execute(
+            &serde_json::json!({"action": "add", "text": "from a"}),
+            &ctx(),
+        )
+        .await
+        .unwrap();
         let r = b
             .execute(&serde_json::json!({"action": "list"}), &ctx())
             .await

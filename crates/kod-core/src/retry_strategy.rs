@@ -64,7 +64,9 @@ impl TurnFailure {
             return TurnFailure::ContextWindowExceeded { over_by: None };
         }
         if l.contains("rate limit") || l.contains("429") || l.contains("too many requests") {
-            return TurnFailure::TransportRateLimit { retry_after_secs: None };
+            return TurnFailure::TransportRateLimit {
+                retry_after_secs: None,
+            };
         }
         if l.contains("timed out") || l.contains("timeout") {
             return TurnFailure::TransportTimeout;
@@ -83,15 +85,13 @@ impl TurnFailure {
         if l.contains("connection") || l.contains("dns") || l.contains("tls") {
             return TurnFailure::TransportNetwork;
         }
-        if l.contains("content policy")
-            || l.contains("content_filter")
-            || l.contains("filtered")
-        {
+        if l.contains("content policy") || l.contains("content_filter") || l.contains("filtered") {
             return TurnFailure::ContentFiltered {
                 category: "unknown".to_string(),
             };
         }
-        if l.contains("i can't help") || l.contains("i cannot help") || l.contains("i'm unable to") {
+        if l.contains("i can't help") || l.contains("i cannot help") || l.contains("i'm unable to")
+        {
             return TurnFailure::ProviderRefused {
                 reason: raw.to_string(),
             };
@@ -142,12 +142,8 @@ impl TurnFailure {
                 None => "rate limited".to_string(),
             },
             TurnFailure::ProviderRefused { .. } => "provider refused".to_string(),
-            TurnFailure::ProviderAuthError { .. } => {
-                "provider auth error".to_string()
-            }
-            TurnFailure::ContextWindowExceeded { .. } => {
-                "context window exceeded".to_string()
-            }
+            TurnFailure::ProviderAuthError { .. } => "provider auth error".to_string(),
+            TurnFailure::ContextWindowExceeded { .. } => "context window exceeded".to_string(),
             TurnFailure::MalformedJson { .. } => "malformed JSON".to_string(),
             TurnFailure::HallucinatedTool { name } => {
                 format!("hallucinated tool: {name}")
@@ -221,9 +217,7 @@ mod tests {
 
     #[test]
     fn classify_context_window() {
-        let f = TurnFailure::classify(
-            "This model's maximum context length is 128000 tokens",
-        );
+        let f = TurnFailure::classify("This model's maximum context length is 128000 tokens");
         assert!(matches!(f, TurnFailure::ContextWindowExceeded { .. }));
     }
 
@@ -277,7 +271,12 @@ mod tests {
     fn recoverable_is_true_for_transient_failures() {
         assert!(TurnFailure::TransportTimeout.recoverable());
         assert!(TurnFailure::TransportNetwork.recoverable());
-        assert!(TurnFailure::TransportRateLimit { retry_after_secs: None }.recoverable());
+        assert!(
+            TurnFailure::TransportRateLimit {
+                retry_after_secs: None
+            }
+            .recoverable()
+        );
     }
 
     #[test]
@@ -305,13 +304,19 @@ mod tests {
         let variants = [
             TurnFailure::TransportTimeout,
             TurnFailure::TransportNetwork,
-            TurnFailure::TransportRateLimit { retry_after_secs: None },
+            TurnFailure::TransportRateLimit {
+                retry_after_secs: None,
+            },
             TurnFailure::ProviderRefused { reason: "x".into() },
             TurnFailure::ProviderAuthError { detail: "x".into() },
             TurnFailure::ContextWindowExceeded { over_by: None },
-            TurnFailure::MalformedJson { snippet: "x".into() },
+            TurnFailure::MalformedJson {
+                snippet: "x".into(),
+            },
             TurnFailure::HallucinatedTool { name: "x".into() },
-            TurnFailure::ContentFiltered { category: "x".into() },
+            TurnFailure::ContentFiltered {
+                category: "x".into(),
+            },
             TurnFailure::UserCancelled,
             TurnFailure::BudgetExhausted,
             TurnFailure::PolicyDenied { rule: "x".into() },
@@ -326,9 +331,13 @@ mod tests {
     fn round_trip_through_json() {
         let variants = [
             TurnFailure::TransportTimeout,
-            TurnFailure::TransportRateLimit { retry_after_secs: Some(30) },
+            TurnFailure::TransportRateLimit {
+                retry_after_secs: Some(30),
+            },
             TurnFailure::ProviderRefused { reason: "x".into() },
-            TurnFailure::ProviderAuthError { detail: "401".into() },
+            TurnFailure::ProviderAuthError {
+                detail: "401".into(),
+            },
             TurnFailure::Unknown { raw: "y".into() },
         ];
         for v in &variants {

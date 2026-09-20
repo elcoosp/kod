@@ -1117,8 +1117,7 @@ pub struct KodEngine {
     /// runs its pre-Jev heuristic with no network call. The
     /// CLI/TUI install one via `set_jev_client` when
     /// `JevConfig::enabled` is true.
-    jev_client:
-        std::sync::RwLock<Option<std::sync::Arc<dyn crate::jev::JevDecider>>>,
+    jev_client: std::sync::RwLock<Option<std::sync::Arc<dyn crate::jev::JevDecider>>>,
     /// Shell hooks around tool execution. `RwLock<Arc<...>>` so
     /// `set_hooks` works through `&self` — the engine is shared as
     /// `Arc<KodEngine>` by both the CLI and the TUI, so `&mut self`
@@ -1146,7 +1145,8 @@ pub struct KodEngine {
     tool_counts: std::sync::Arc<crate::tool_quota::ToolCounts>,
     /// The [limits.tools] configuration loaded at startup. `None`
     /// until `install_limits` runs.
-    tool_quotas: std::sync::RwLock<Option<std::collections::BTreeMap<String, kod_config::ToolQuota>>>,
+    tool_quotas:
+        std::sync::RwLock<Option<std::collections::BTreeMap<String, kod_config::ToolQuota>>>,
     /// Monotonic per-session turn id for the trace log (Tier 1.4).
     next_turn_id: std::sync::atomic::AtomicU64,
     /// Append-only writer for `turns.jsonl`, next to the session log.
@@ -1367,7 +1367,9 @@ pub enum ApprovalDecision {
     Approve,
     /// Run the call with these arguments substituted for the model's
     /// (Tier 2.3). The approval overlay's "edit" action sends this.
-    ApproveWith { arguments: serde_json::Value },
+    ApproveWith {
+        arguments: serde_json::Value,
+    },
     Deny,
     /// Same as `Deny` in this version; the variant exists so that
     /// adding a "remember my choice" set later does not change the
@@ -1449,36 +1451,31 @@ impl KodEngine {
     /// is not part of the production API any more; this helper keeps
     /// the in-crate tests readable without rebuilding a registry at
     /// every call site.
-    
-/// Extract a JSON array of step strings from a model reply that may
-/// carry prose around it (Tier 2.1). Tolerant: first `[` to last `]`,
-/// every element coerced to a string.
-fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
-    let start = text.find('[')?;
-    let end = text.rfind(']')?;
-    if end <= start {
-        return None;
-    }
-    let v: serde_json::Value =
-        serde_json::from_str(&text[start..=end]).ok()?;
-    let arr = v.as_array()?;
-    let steps: Vec<String> = arr
-        .iter()
-        .filter_map(|x| {
-            x.as_str()
-                .map(String::from)
-                .or_else(|| x.as_str().map(String::from))
-        })
-        .filter(|s| !s.trim().is_empty())
-        .collect();
-    if steps.is_empty() {
-        None
-    } else {
-        Some(steps)
-    }
-}
 
-#[cfg(test)]
+    /// Extract a JSON array of step strings from a model reply that may
+    /// carry prose around it (Tier 2.1). Tolerant: first `[` to last `]`,
+    /// every element coerced to a string.
+    fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
+        let start = text.find('[')?;
+        let end = text.rfind(']')?;
+        if end <= start {
+            return None;
+        }
+        let v: serde_json::Value = serde_json::from_str(&text[start..=end]).ok()?;
+        let arr = v.as_array()?;
+        let steps: Vec<String> = arr
+            .iter()
+            .filter_map(|x| {
+                x.as_str()
+                    .map(String::from)
+                    .or_else(|| x.as_str().map(String::from))
+            })
+            .filter(|s| !s.trim().is_empty())
+            .collect();
+        if steps.is_empty() { None } else { Some(steps) }
+    }
+
+    #[cfg(test)]
     pub(crate) async fn install_test_provider(&self, provider: Arc<dyn LlmProvider>) {
         let mut reg = kod_provider::ProviderRegistry::new();
         reg.insert(
@@ -1675,11 +1672,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         }
         matches!(
             call.tool_name.as_str(),
-            "execute_command"
-                | "write_file"
-                | "patch_file"
-                | "git_commit"
-                | "git_branch_create"
+            "execute_command" | "write_file" | "patch_file" | "git_commit" | "git_branch_create"
         )
     }
 
@@ -1767,12 +1760,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     /// Log one memory retrieval event (Tier 2.4). Called once per
     /// prompt that retrieves anything; a no-op when no recorder is
     /// installed or the retrieval was empty.
-    fn log_memory_retrieval(
-        &self,
-        turn_id: u64,
-        query: &str,
-        retrieved: &[(String, f32)],
-    ) {
+    fn log_memory_retrieval(&self, turn_id: u64, query: &str, retrieved: &[(String, f32)]) {
         if retrieved.is_empty() {
             return;
         }
@@ -1860,11 +1848,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             "other",
         ];
         let kind_decision = jev
-            .evaluate_score(
-                &state,
-                "What kind of durable decision is this?",
-                labels,
-            )
+            .evaluate_score(&state, "What kind of durable decision is this?", labels)
             .await
             .ok();
         let kind = match kind_decision.as_ref().map(|d| d.value.as_str()) {
@@ -1915,11 +1899,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     }
 
     /// Replace the entire decision log for a transcript.
-    pub async fn set_decision_log(
-        &self,
-        key: &str,
-        log: crate::decisions::DecisionLog,
-    ) {
+    pub async fn set_decision_log(&self, key: &str, log: crate::decisions::DecisionLog) {
         self.decision_logs
             .write()
             .await
@@ -1975,11 +1955,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     /// Apply a `PlanUpdate` to the transcript's plan, if one exists.
     /// Returns the human-readable description from `Plan::apply`, or
     /// a message saying no plan exists.
-    pub async fn apply_plan_update(
-        &self,
-        key: &str,
-        update: crate::plan::PlanUpdate,
-    ) -> String {
+    pub async fn apply_plan_update(&self, key: &str, update: crate::plan::PlanUpdate) -> String {
         let mut g = self.plans.write().await;
         match g.get_mut(key) {
             Some(p) => p.apply(update),
@@ -2032,12 +2008,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
 
     /// Publish a file discovery to the blackboard. Called after a
     /// successful `read_file` / `grep` / `search_files`.
-    pub fn note_file_seen(
-        &self,
-        agent: &str,
-        path: &str,
-        summary: &str,
-    ) {
+    pub fn note_file_seen(&self, agent: &str, path: &str, summary: &str) {
         self.blackboard.put(
             format!("file:{path}"),
             serde_json::json!({
@@ -2052,11 +2023,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
 
     /// Publish a write claim. Called by the swarm runner before an
     /// agent runs.
-    pub fn note_write_claim(
-        &self,
-        agent: &str,
-        glob: &str,
-    ) {
+    pub fn note_write_claim(&self, agent: &str, glob: &str) {
         self.blackboard.put(
             format!("claim:{agent}:{glob}"),
             serde_json::json!({ "glob": glob, "agent": agent }),
@@ -2068,12 +2035,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
 
     /// Publish a completed subtask. Called by the swarm runner when
     /// an agent finishes.
-    pub fn note_subtask_done(
-        &self,
-        agent: &str,
-        name: &str,
-        summary: &str,
-    ) {
+    pub fn note_subtask_done(&self, agent: &str, name: &str, summary: &str) {
         self.blackboard.put(
             format!("done:{name}"),
             serde_json::json!({
@@ -2145,10 +2107,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     /// that fired. Content is redacted in place; `tool_call_id`,
     /// `role`, and `id` are untouched so the transcript stays
     /// coherent.
-    pub fn redact_messages_for_prompt(
-        &self,
-        messages: &mut [kod_types::ChatMessage],
-    ) -> usize {
+    pub fn redact_messages_for_prompt(&self, messages: &mut [kod_types::ChatMessage]) -> usize {
         let cfg = match kod_config::KodConfig::load_default() {
             Ok(c) => c,
             Err(_) => return 0,
@@ -2171,10 +2130,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     /// Redact secrets from a single tool result's rendered payload.
     /// Called by `cap_rendered_result`'s caller path when in-prompt
     /// redaction is on.
-    pub fn redact_tool_result_for_prompt(
-        &self,
-        rendered: String,
-    ) -> String {
+    pub fn redact_tool_result_for_prompt(&self, rendered: String) -> String {
         let cfg = match kod_config::KodConfig::load_default() {
             Ok(c) => c,
             Err(_) => return rendered,
@@ -2567,10 +2523,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
 
     /// Install a turn-trace writer (Tier 1.4). One `TurnTrace` per
     /// `process_*` call is appended to the file the writer holds.
-    pub fn set_turn_trace_writer(
-        &self,
-        writer: std::sync::Arc<crate::trace_writer::TraceWriter>,
-    ) {
+    pub fn set_turn_trace_writer(&self, writer: std::sync::Arc<crate::trace_writer::TraceWriter>) {
         if let Ok(mut slot) = self.turn_trace_writer.write() {
             *slot = Some(writer);
         }
@@ -2648,10 +2601,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
 
     /// Install a scripted decider (P5.6 follow-up). Used by tests to
     /// inject deterministic verdicts without a network round-trip.
-    pub fn set_jev_decider(
-        &self,
-        decider: std::sync::Arc<dyn crate::jev::JevDecider>,
-    ) {
+    pub fn set_jev_decider(&self, decider: std::sync::Arc<dyn crate::jev::JevDecider>) {
         if let Ok(mut slot) = self.jev_client.write() {
             *slot = Some(decider);
         }
@@ -2663,11 +2613,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     /// Returns `Ok(())` on success. The caller decides whether to
     /// persist the new value to config — the engine only owns the
     /// in-process client.
-    pub async fn update_jev_threshold(
-        &self,
-        name: &str,
-        value: f32,
-    ) -> Result<()> {
+    pub async fn update_jev_threshold(&self, name: &str, value: f32) -> Result<()> {
         let Some(client) = self.jev_client() else {
             return Err(KodError::InvalidState(
                 "Jev is not enabled on this engine".to_string(),
@@ -2758,11 +2704,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     /// Returns `None` when Jev is disabled or errored — the caller
     /// then renders the chunk as normal prose, which is the
     /// pre-Jev behaviour.
-    pub async fn classify_chunk_with_jev(
-        &self,
-        holder: &str,
-        buffer_tail: &str,
-    ) -> Option<String> {
+    pub async fn classify_chunk_with_jev(&self, holder: &str, buffer_tail: &str) -> Option<String> {
         let jev = self.jev_client()?;
         let request = self.current_request(holder).await.unwrap_or_default();
         let state = crate::jev::build_state(
@@ -2775,11 +2717,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         let labels = &["prose_answer", "reasoning", "restatement", "code_block"];
         let started = std::time::Instant::now();
         let decision = jev
-            .evaluate_score(
-                &state,
-                "What kind of text is this streamed chunk?",
-                labels,
-            )
+            .evaluate_score(&state, "What kind of text is this streamed chunk?", labels)
             .await
             .ok()?;
         let elapsed_ms = started.elapsed().as_millis() as u64;
@@ -2988,7 +2926,9 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                     format!("hit_{i}"),
                     format!(
                         "Is this {} result relevant to the request? \"{}\" in {}: {}",
-                        call.tool_name, request, path,
+                        call.tool_name,
+                        request,
+                        path,
                         crate::jev::preview_chars(line, 200),
                     ),
                 )
@@ -3001,8 +2941,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         let elapsed_ms = started.elapsed().as_millis() as u64;
         let threshold = jev.thresholds().memory_filter_min;
 
-        let mut keep_idx: std::collections::HashSet<usize> =
-            std::collections::HashSet::new();
+        let mut keep_idx: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let mut answers = serde_json::Map::new();
         for (i, hit) in slice.iter().enumerate() {
             let p = rows
@@ -3044,10 +2983,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             .collect();
         let mut new_v = v.clone();
         if let Some(obj) = new_v.as_object_mut() {
-            obj.insert(
-                "results".to_string(),
-                serde_json::Value::Array(filtered),
-            );
+            obj.insert("results".to_string(), serde_json::Value::Array(filtered));
             obj.insert(
                 "ranked_by_jev".to_string(),
                 serde_json::json!({
@@ -3137,10 +3073,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             .collect();
         let state = crate::jev::build_state(&request, &[]);
         let started = std::time::Instant::now();
-        let rows = jev
-            .evaluate_yes_no_batch(&state, &questions)
-            .await
-            .ok()?;
+        let rows = jev.evaluate_yes_no_batch(&state, &questions).await.ok()?;
         let elapsed_ms = started.elapsed().as_millis() as u64;
         let threshold = jev.thresholds().memory_filter_min;
         let mut elided = 0_usize;
@@ -3198,10 +3131,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         // prompt block the model reads goes through here.
         let mut new_v = v.clone();
         if let Some(obj) = new_v.as_object_mut() {
-            obj.insert(
-                "diff".to_string(),
-                serde_json::Value::String(filtered),
-            );
+            obj.insert("diff".to_string(), serde_json::Value::String(filtered));
         }
         Some(ToolResult::Success(new_v))
     }
@@ -3234,9 +3164,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             return;
         };
         let result_text = match result {
-            ToolResult::Success(v) => {
-                serde_json::to_string(v).unwrap_or_default()
-            }
+            ToolResult::Success(v) => serde_json::to_string(v).unwrap_or_default(),
             ToolResult::Error(e) => format!("ERROR: {e}"),
             _ => String::new(),
         };
@@ -3253,7 +3181,11 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         let impact_labels = &["none", "minor", "significant", "critical"];
         let started = std::time::Instant::now();
         let outcome = jev
-            .evaluate_score(&state, "What was the outcome of this tool call?", outcome_labels)
+            .evaluate_score(
+                &state,
+                "What was the outcome of this tool call?",
+                outcome_labels,
+            )
             .await;
         let impact = jev
             .evaluate_score(
@@ -3272,7 +3204,11 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                 crate::jev::DecisionSource::Jev,
             ),
             _ => (
-                if failed { "failure".to_string() } else { "success".to_string() },
+                if failed {
+                    "failure".to_string()
+                } else {
+                    "success".to_string()
+                },
                 "minor".to_string(),
                 1.0,
                 crate::jev::DecisionSource::Heuristic,
@@ -3325,13 +3261,10 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             &format!("User request: {request}\n\nAssistant response: {response}"),
             &[],
         );
-        let pairs = [
-            (
-                "answers_the_question".to_string(),
-                "Does the assistant's response answer the user's request?"
-                    .to_string(),
-            ),
-        ];
+        let pairs = [(
+            "answers_the_question".to_string(),
+            "Does the assistant's response answer the user's request?".to_string(),
+        )];
         let started = std::time::Instant::now();
         let result = jev.evaluate_yes_no_batch(&state, &pairs).await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
@@ -3385,8 +3318,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         new_diags: &[&kod_tools::check::Diagnostic],
         baseline: &[kod_tools::check::Diagnostic],
     ) -> std::collections::HashSet<usize> {
-        let all: std::collections::HashSet<usize> =
-            (0..new_diags.len()).collect();
+        let all: std::collections::HashSet<usize> = (0..new_diags.len()).collect();
         let Some(jev) = self.jev_client() else {
             return all;
         };
@@ -3400,13 +3332,29 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         let baseline_preview: String = baseline
             .iter()
             .take(40)
-            .map(|d| format!("{}:{} [{}] {}", d.file, d.line, d.code.as_deref().unwrap_or("?"), d.message))
+            .map(|d| {
+                format!(
+                    "{}:{} [{}] {}",
+                    d.file,
+                    d.line,
+                    d.code.as_deref().unwrap_or("?"),
+                    d.message
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let current_preview: String = new_diags
             .iter()
             .enumerate()
-            .map(|(i, d)| format!("[{i}] {}:{} [{}] {}", d.file, d.line, d.code.as_deref().unwrap_or("?"), d.message))
+            .map(|(i, d)| {
+                format!(
+                    "[{i}] {}:{} [{}] {}",
+                    d.file,
+                    d.line,
+                    d.code.as_deref().unwrap_or("?"),
+                    d.message
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let state = crate::jev::build_state(
@@ -3671,20 +3619,13 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         let (otx, orx) = tokio::sync::oneshot::channel();
         self.pending_questions.write().await.insert(id, otx);
         let _ = tx.send(question_marker(id, &json)).await;
-        let answer = tokio::time::timeout(
-            std::time::Duration::from_secs(AWAIT_APPROVAL_SECS),
-            orx,
-        )
-        .await;
+        let answer =
+            tokio::time::timeout(std::time::Duration::from_secs(AWAIT_APPROVAL_SECS), orx).await;
         match answer {
             Ok(Ok(text))
-                if !text.is_empty()
-                    && text != "(cancelled)"
-                    && text != "(question cancelled)" =>
+                if !text.is_empty() && text != "(cancelled)" && text != "(question cancelled)" =>
             {
-                format!(
-                    "{input}\n\nAdditional clarification from user: {text}"
-                )
+                format!("{input}\n\nAdditional clarification from user: {text}")
             }
             _ => input.to_string(),
         }
@@ -3717,10 +3658,8 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         let Some(jev) = self.jev_client() else {
             return out;
         };
-        let state = crate::jev::build_state(
-            &format!("Pending approvals: {} items", calls.len()),
-            &[],
-        );
+        let state =
+            crate::jev::build_state(&format!("Pending approvals: {} items", calls.len()), &[]);
         let labels = &["change_a", "change_b", "change_c", "standalone"];
         for (i, call) in calls.iter().enumerate() {
             let question = format!(
@@ -3773,10 +3712,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     /// Bounded to `MAX_MESSAGES` messages. Returns an empty vec when
     /// Jev is disabled or errors, and the caller falls back to its
     /// current behaviour.
-    pub async fn extract_handoff_facts_with_jev(
-        &self,
-        transcript: &str,
-    ) -> Vec<String> {
+    pub async fn extract_handoff_facts_with_jev(&self, transcript: &str) -> Vec<String> {
         const MAX_MESSAGES: usize = 40;
         let Some(jev) = self.jev_client() else {
             return Vec::new();
@@ -3907,8 +3843,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         // One yes/no per MCP tool name. Bounded to avoid a
         // pathological request.
         const MAX_TOOL_NAMES: usize = 30;
-        let slice: Vec<ToolDefinition> =
-            mcp.iter().take(MAX_TOOL_NAMES).cloned().collect();
+        let slice: Vec<ToolDefinition> = mcp.iter().take(MAX_TOOL_NAMES).cloned().collect();
         let questions: Vec<(String, String)> = slice
             .iter()
             .enumerate()
@@ -3995,10 +3930,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     /// Returns `None` when Jev is disabled, the transcript is too
     /// short to judge, the phase is unchanged, or the confidence
     /// is below `[jev.thresholds].auto_approve_min`.
-    pub async fn detect_phase_change_with_jev(
-        &self,
-        holder: &str,
-    ) -> Option<(String, String)> {
+    pub async fn detect_phase_change_with_jev(&self, holder: &str) -> Option<(String, String)> {
         const PHASE_WINDOW: usize = 6;
         let jev = self.jev_client()?;
         // Pull the recent transcript. Bounded so a long session
@@ -4038,11 +3970,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         ];
         let started = std::time::Instant::now();
         let now = jev
-            .evaluate_score(
-                &state,
-                "What phase is the session currently in?",
-                labels,
-            )
+            .evaluate_score(&state, "What phase is the session currently in?", labels)
             .await
             .ok()?;
         let elapsed_ms = started.elapsed().as_millis() as u64;
@@ -4147,8 +4075,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         let elapsed_ms = started.elapsed().as_millis() as u64;
         let threshold = jev.thresholds().memory_filter_min;
 
-        let mut keep_idx: std::collections::HashSet<usize> =
-            std::collections::HashSet::new();
+        let mut keep_idx: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let mut answers = serde_json::Map::new();
         for (i, line) in slice.iter().enumerate() {
             let p = rows
@@ -4232,10 +4159,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         if names.len() < 2 {
             return None;
         }
-        let state = crate::jev::build_state(
-            &format!("Task type: {task_key}"),
-            &[],
-        );
+        let state = crate::jev::build_state(&format!("Task type: {task_key}"), &[]);
         let started = std::time::Instant::now();
         let labels: Vec<&str> = names.iter().map(String::as_str).collect();
         let decision = jev
@@ -4347,10 +4271,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     ///
     /// Public because `swarm_runner` is a different module and calls
     /// this through the `Arc<KodEngine>`.
-    pub async fn validate_subtask_capability(
-        &self,
-        description: &str,
-    ) -> Option<String> {
+    pub async fn validate_subtask_capability(&self, description: &str) -> Option<String> {
         let jev = self.jev_client()?;
         let state = crate::jev::build_state(description, &[]);
         let labels = &[
@@ -4492,10 +4413,8 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             get("needs_repomap"),
         ];
         let threshold = jev.thresholds().task_classify_min;
-        let total_share: u32 = base.history as u32
-            + base.skills as u32
-            + base.memory as u32
-            + base.repomap as u32;
+        let total_share: u32 =
+            base.history as u32 + base.skills as u32 + base.memory as u32 + base.repomap as u32;
         let mut yes_count = 0_u32;
         for w in &wants {
             if *w >= threshold {
@@ -4523,10 +4442,18 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             }
             *slot = add;
         };
-        if wants[0] >= threshold { give(&mut out.history); }
-        if wants[1] >= threshold { give(&mut out.skills); }
-        if wants[2] >= threshold { give(&mut out.memory); }
-        if wants[3] >= threshold { give(&mut out.repomap); }
+        if wants[0] >= threshold {
+            give(&mut out.history);
+        }
+        if wants[1] >= threshold {
+            give(&mut out.skills);
+        }
+        if wants[2] >= threshold {
+            give(&mut out.memory);
+        }
+        if wants[3] >= threshold {
+            give(&mut out.repomap);
+        }
 
         self.log_jev_decision(
             holder,
@@ -4594,7 +4521,8 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             pairs.push((format!("l:{}", e.id), e.content.clone()));
         }
         let kept = self.filter_memory_entries_with_jev(pairs).await;
-        let keep_set: std::collections::HashSet<String> = kept.into_iter().map(|(id, _)| id).collect();
+        let keep_set: std::collections::HashSet<String> =
+            kept.into_iter().map(|(id, _)| id).collect();
 
         ctx.working_memory
             .retain(|e| keep_set.contains(&format!("w:{}", e.id)));
@@ -4716,11 +4644,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     /// The caller uses the returned answer as the tool result
     /// instead of emitting a question marker, so the model proceeds
     /// without interrupting the user. Logged as a JevDecision.
-    async fn try_answer_question_from_context(
-        &self,
-        key: &str,
-        question: &str,
-    ) -> Option<String> {
+    async fn try_answer_question_from_context(&self, key: &str, question: &str) -> Option<String> {
         let jev = self.jev_client()?;
         let request = self.current_request(key).await?;
         // Recent history gives Jev enough state to answer "what file"
@@ -4741,13 +4665,10 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             ),
             &[],
         );
-        let pairs = [
-            (
-                "can_answer_from_context".to_string(),
-                "Can this question be answered from the available context?"
-                    .to_string(),
-            ),
-        ];
+        let pairs = [(
+            "can_answer_from_context".to_string(),
+            "Can this question be answered from the available context?".to_string(),
+        )];
         let started = std::time::Instant::now();
         let result = jev.evaluate_yes_no_batch(&state, &pairs).await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
@@ -4882,11 +4803,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
     ///
     /// Fail-open: disabled or errored Jev returns `false` and the
     /// stream continues to the model's natural terminator.
-    async fn should_early_terminate(
-        &self,
-        key: &str,
-        accumulated: &str,
-    ) -> EarlyTermination {
+    async fn should_early_terminate(&self, key: &str, accumulated: &str) -> EarlyTermination {
         let Some(jev) = self.jev_client() else {
             return EarlyTermination::None;
         };
@@ -4914,8 +4831,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         let pairs = [
             (
                 "is_complete".to_string(),
-                "Does the accumulated response fully answer the user's request?"
-                    .to_string(),
+                "Does the accumulated response fully answer the user's request?".to_string(),
             ),
             (
                 "is_off_track".to_string(),
@@ -5005,8 +4921,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         calls: &[ToolCall],
         ask_indices: &std::collections::HashSet<usize>,
     ) -> std::collections::HashSet<usize> {
-        let mut approved: std::collections::HashSet<usize> =
-            std::collections::HashSet::new();
+        let mut approved: std::collections::HashSet<usize> = std::collections::HashSet::new();
         if ask_indices.is_empty() {
             return approved;
         }
@@ -5033,12 +4948,10 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             // Ask both questions in one round-trip via the batch API
             // for yes/no; risk_level is a separate score call because
             // it has an ordered label set.
-            let pairs = [
-                (
-                    "likely_approved".to_string(),
-                    "Would the user almost certainly approve this tool call?".to_string(),
-                ),
-            ];
+            let pairs = [(
+                "likely_approved".to_string(),
+                "Would the user almost certainly approve this tool call?".to_string(),
+            )];
             let yes = jev.evaluate_yes_no_batch(&state, &pairs).await;
             let elapsed_ms = started.elapsed().as_millis() as u64;
 
@@ -5054,14 +4967,9 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             // already below the threshold — the risk question costs a
             // network round-trip and cannot flip a "no".
             let (risk_label, risk_source) = if p_yes >= threshold {
-                let risk_labels =
-                    &["read_only", "reversible", "destructive", "irreversible"];
+                let risk_labels = &["read_only", "reversible", "destructive", "irreversible"];
                 match jev
-                    .evaluate_score(
-                        &state,
-                        "How risky is this operation?",
-                        risk_labels,
-                    )
+                    .evaluate_score(&state, "How risky is this operation?", risk_labels)
                     .await
                 {
                     Ok(d) => (Some(d.value), crate::jev::DecisionSource::Jev),
@@ -5096,7 +5004,11 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             self.log_jev_decision(
                 key,
                 "auto_approve",
-                &format!("{} {}", call.tool_name, format_call_brief(&call.tool_name, &call.arguments)),
+                &format!(
+                    "{} {}",
+                    call.tool_name,
+                    format_call_brief(&call.tool_name, &call.arguments)
+                ),
                 "likely_approved,risk_level",
                 answers,
                 p_yes,
@@ -5227,10 +5139,8 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         let Some(jev) = self.jev_client() else {
             return heuristic;
         };
-        let state = crate::jev::build_state(
-            input,
-            &[("heuristic_task_type", heuristic.as_label())],
-        );
+        let state =
+            crate::jev::build_state(input, &[("heuristic_task_type", heuristic.as_label())]);
         let question = "Which task type best describes this request?";
         let labels = crate::router::TaskType::all_labels();
         let started = std::time::Instant::now();
@@ -5245,14 +5155,14 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                     Some(t) if d.confidence >= threshold => {
                         (t, d.confidence, crate::jev::DecisionSource::Jev)
                     }
-                    _ => (heuristic, d.confidence, crate::jev::DecisionSource::Heuristic),
+                    _ => (
+                        heuristic,
+                        d.confidence,
+                        crate::jev::DecisionSource::Heuristic,
+                    ),
                 }
             }
-            Err(_) => (
-                heuristic,
-                1.0,
-                crate::jev::DecisionSource::Heuristic,
-            ),
+            Err(_) => (heuristic, 1.0, crate::jev::DecisionSource::Heuristic),
         };
 
         let answers = serde_json::json!({
@@ -5978,8 +5888,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             // for a plan on the first turn. Bounded cost: one short
             // generation call.
             {
-                let options_for_plan =
-                    self.generation_defaults.read().await.to_options();
+                let options_for_plan = self.generation_defaults.read().await.to_options();
                 if let Ok(provider) = self
                     .resolve_provider_for_model_ref(&self.current_model.read().await.clone())
                     .await
@@ -6122,12 +6031,14 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                 // strategy adjusts the request (temperature, messages,
                 // or both) and reruns the same endpoint.
                 let mut same_endpoint_attempts: u8 = 0;
-                let mut result_opt: Option<Result<(
-                    String,
-                    Vec<ToolCall>,
-                    Vec<ToolResult>,
-                    Option<kod_provider::TokenUsage>,
-                )>> = None;
+                let mut result_opt: Option<
+                    Result<(
+                        String,
+                        Vec<ToolCall>,
+                        Vec<ToolResult>,
+                        Option<kod_provider::TokenUsage>,
+                    )>,
+                > = None;
                 let mut last_failure: Option<KodError> = None;
                 loop {
                     let mut attempt_options = options.clone();
@@ -6191,8 +6102,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                     Some(Ok(v)) => Ok(v),
                     _ => Err(last_failure.unwrap_or_else(Self::no_provider_error)),
                 };
-                match collected
-                {
+                match collected {
                     Ok(v) => {
                         // Save the pending buffer back: `run_collected_loop`
                         // mutated its own clone, and the summary path below
@@ -6216,9 +6126,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                         // immediately; recoverable ones decide whether
                         // to retry the same endpoint (with an
                         // adjustment) or fall through to the next.
-                        let failure = crate::retry_strategy::TurnFailure::classify(
-                            &e.to_string(),
-                        );
+                        let failure = crate::retry_strategy::TurnFailure::classify(&e.to_string());
                         let action = crate::retry_strategy::choose_action(&failure);
                         let has_next = i + 1 < chain.len();
                         let should_fall_through = failure.recoverable()
@@ -6321,10 +6229,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             // reply is delivered unchanged; only an advisory is
             // appended when Jev is confident the reply missed
             // the request.
-            let request_text = self
-                .current_request(key)
-                .await
-                .unwrap_or_default();
+            let request_text = self.current_request(key).await.unwrap_or_default();
             let final_text = match self
                 .check_response_quality_with_jev(key, &request_text, &final_text)
                 .await
@@ -6609,13 +6514,8 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                                 to = %next.display(),
                                 "Jev flagged the reply off-track; trying next endpoint"
                             );
-                            self.record_model_fallback(
-                                key,
-                                model_ref,
-                                next,
-                                "jev quality gate",
-                            )
-                            .await;
+                            self.record_model_fallback(key, model_ref, next, "jev quality gate")
+                                .await;
                             last_err = None;
                             continue;
                         }
@@ -6697,10 +6597,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             // reply is delivered unchanged; only an advisory is
             // appended when Jev is confident the reply missed
             // the request.
-            let request_text = self
-                .current_request(key)
-                .await
-                .unwrap_or_default();
+            let request_text = self.current_request(key).await.unwrap_or_default();
             let final_text = match self
                 .check_response_quality_with_jev(key, &request_text, &final_text)
                 .await
@@ -6725,18 +6622,20 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             // a simple `into_inner` on the tracked cell.
             let finished = match std::sync::Arc::try_unwrap(std::sync::Arc::new(trace)) {
                 Ok(m) => m.into_inner().unwrap_or_else(|e| e.into_inner()),
-                Err(_) => return Ok(TaskResponse {
-                    task_type: response.task_type,
-                    text: Some(final_text),
-                    tool_calls,
-                    tool_results,
-                    skills_used: refined_skills.clone(),
-                    memory_used: response.memory_used,
-                    execution_time_ms: response.execution_time_ms,
-                    usage,
-                    pricing,
-                    memory_context: response.memory_context,
-                }),
+                Err(_) => {
+                    return Ok(TaskResponse {
+                        task_type: response.task_type,
+                        text: Some(final_text),
+                        tool_calls,
+                        tool_results,
+                        skills_used: refined_skills.clone(),
+                        memory_used: response.memory_used,
+                        execution_time_ms: response.execution_time_ms,
+                        usage,
+                        pricing,
+                        memory_context: response.memory_context,
+                    });
+                }
             };
             self.emit_turn_trace(&finished.finish());
 
@@ -7326,13 +7225,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             // marker so the TUI drops what it displayed.
             if off_track && round_idx == 0 {
                 let _ = chunk_tx.send(stream_reset_marker()).await;
-                return Ok((
-                    String::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    None,
-                    true,
-                ));
+                return Ok((String::new(), Vec::new(), Vec::new(), None, true));
             }
             last_usage = usage.or(last_usage);
             append_round_text(&mut final_text, &text);
@@ -7454,10 +7347,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         ModelRef,
         futures::stream::BoxStream<'static, Result<kod_provider::StreamChunk>>,
     )> {
-        let provider = self
-            .resolve_provider_for_model_ref(fallback)
-            .await
-            .ok()?;
+        let provider = self.resolve_provider_for_model_ref(fallback).await.ok()?;
         let req = self.build_grounded_request(
             "",
             system_text,
@@ -7480,10 +7370,8 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             while let Some(item) = inner.next().await {
                 yield item;
             }
-        }) as futures::stream::BoxStream<
-            'static,
-            Result<kod_provider::StreamChunk>,
-        >;
+        })
+            as futures::stream::BoxStream<'static, Result<kod_provider::StreamChunk>>;
         Some((provider, fallback.clone(), stream))
     }
 
@@ -7541,10 +7429,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         // collects everything into a `'static` box we can swap
         // mid-round. The cost is one clone of the provider `Arc` and
         // the request per round — negligible next to the model call.
-        let mut stream: futures::stream::BoxStream<
-            'static,
-            Result<kod_provider::StreamChunk>,
-        > = {
+        let mut stream: futures::stream::BoxStream<'static, Result<kod_provider::StreamChunk>> = {
             let provider_owned = provider.clone();
             let req_owned = req.clone();
             Box::pin(async_stream::stream! {
@@ -7767,10 +7652,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
 
     /// Append the environment + tool inventory grounding to a router prompt.
     /// Look up the trust level of a tool by name (Tier 1.1).
-    async fn tool_trust_level(
-        &self,
-        name: &str,
-    ) -> Option<kod_types::trust::TrustLevel> {
+    async fn tool_trust_level(&self, name: &str) -> Option<kod_types::trust::TrustLevel> {
         let defs = self.tools.get_definitions().await;
         defs.into_iter()
             .find(|d| d.name == name)
@@ -7818,9 +7700,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         if let Ok(g) = self.blackboard_viewers.try_read()
             && g.contains(key)
         {
-            let block = self
-                .blackboard
-                .render_prompt_block("team", 30, 3000);
+            let block = self.blackboard.render_prompt_block("team", 30, 3000);
             if !block.is_empty() {
                 prompt.push_str("\n\n");
                 prompt.push_str(&block);
@@ -8649,9 +8529,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             if call.tool_name != "plan_update" {
                 continue;
             }
-            let update = serde_json::from_value::<crate::plan::PlanUpdate>(
-                call.arguments.clone(),
-            );
+            let update = serde_json::from_value::<crate::plan::PlanUpdate>(call.arguments.clone());
             let answer = match update {
                 Ok(u) => self.apply_plan_update(effective_holder, u).await,
                 Err(e) => format!("plan_update: invalid arguments: {e}"),
@@ -8745,31 +8623,29 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             // triage the diff's hunks before the prompt block is
             // built. `None` means "leave the diff alone" and the
             // original result flows through unchanged.
-            let result_for_prompt: ToolResult = if matches!(
-                call.tool_name.as_str(),
-                "write_file" | "patch_file"
-            ) {
-                self.filter_diff_hunks_with_jev(effective_holder, &result)
-                    .await
-                    .unwrap_or_else(|| result.clone())
-            } else if call.tool_name == "read_file" {
-                // P2.2 — compress large read_file results by
-                // dropping lines Jev judges irrelevant. `None`
-                // means leave the original untouched.
-                self.compress_tool_result_with_jev(effective_holder, call, &result)
-                    .await
-                    .unwrap_or_else(|| result.clone())
-            } else if matches!(call.tool_name.as_str(), "grep" | "search_files") {
-                // P2.3 — rank the search hits before the prompt
-                // block is built. `None` means the ranking did not
-                // run (disabled Jev, few hits, or Jev error); the
-                // original result flows through unchanged.
-                self.rank_search_results_with_jev(effective_holder, call, &result)
-                    .await
-                    .unwrap_or_else(|| result.clone())
-            } else {
-                result.clone()
-            };
+            let result_for_prompt: ToolResult =
+                if matches!(call.tool_name.as_str(), "write_file" | "patch_file") {
+                    self.filter_diff_hunks_with_jev(effective_holder, &result)
+                        .await
+                        .unwrap_or_else(|| result.clone())
+                } else if call.tool_name == "read_file" {
+                    // P2.2 — compress large read_file results by
+                    // dropping lines Jev judges irrelevant. `None`
+                    // means leave the original untouched.
+                    self.compress_tool_result_with_jev(effective_holder, call, &result)
+                        .await
+                        .unwrap_or_else(|| result.clone())
+                } else if matches!(call.tool_name.as_str(), "grep" | "search_files") {
+                    // P2.3 — rank the search hits before the prompt
+                    // block is built. `None` means the ranking did not
+                    // run (disabled Jev, few hits, or Jev error); the
+                    // original result flows through unchanged.
+                    self.rank_search_results_with_jev(effective_holder, call, &result)
+                        .await
+                        .unwrap_or_else(|| result.clone())
+                } else {
+                    result.clone()
+                };
             let result = result_for_prompt;
             let rendered = match &result {
                 // list_files raw JSON is one quoted path per entry; a repo
@@ -8819,10 +8695,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         // Tier 3.5 — publish every file the round touched to the
         // blackboard so sibling agents can see it.
         for call in calls.iter() {
-            let path = call
-                .arguments
-                .get("path")
-                .and_then(|v| v.as_str());
+            let path = call.arguments.get("path").and_then(|v| v.as_str());
             if let Some(p) = path {
                 self.note_file_seen(
                     effective_holder,
@@ -10486,9 +10359,9 @@ mod tests {
                 Box::pin(futures::stream::empty())
             }
             fn stream_completion<'a>(
-        &'a self,
-        _req: &'a CompletionRequest,
-    ) -> Pin<Box<dyn Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+                &'a self,
+                _req: &'a CompletionRequest,
+            ) -> Pin<Box<dyn Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
             {
                 let hold = self.hold_for;
                 let started = self.started.clone();
@@ -12225,11 +12098,8 @@ mod coverage_retry_adjustment {
         let mut o = empty_opts();
         o.temperature = Some(0.8);
         let mut m = empty_msgs();
-        let ok = KodEngine::apply_retry_adjustment(
-            RetryAction::SameEndpointLowerTemp,
-            &mut o,
-            &mut m,
-        );
+        let ok =
+            KodEngine::apply_retry_adjustment(RetryAction::SameEndpointLowerTemp, &mut o, &mut m);
         assert!(ok);
         assert!((o.temperature.unwrap() - 0.4).abs() < 1e-6);
         assert!(m.is_empty(), "no message change expected");
@@ -12241,11 +12111,8 @@ mod coverage_retry_adjustment {
         let mut o = empty_opts();
         o.temperature = None;
         let mut m = empty_msgs();
-        let ok = KodEngine::apply_retry_adjustment(
-            RetryAction::SameEndpointLowerTemp,
-            &mut o,
-            &mut m,
-        );
+        let ok =
+            KodEngine::apply_retry_adjustment(RetryAction::SameEndpointLowerTemp, &mut o, &mut m);
         assert!(ok);
         // Default 0.7 halved is 0.35.
         assert!((o.temperature.unwrap() - 0.35).abs() < 1e-6);
@@ -12256,11 +12123,7 @@ mod coverage_retry_adjustment {
         use crate::retry_strategy::RetryAction;
         let mut o = empty_opts();
         let mut m = empty_msgs();
-        let ok = KodEngine::apply_retry_adjustment(
-            RetryAction::ReinjectTools,
-            &mut o,
-            &mut m,
-        );
+        let ok = KodEngine::apply_retry_adjustment(RetryAction::ReinjectTools, &mut o, &mut m);
         assert!(ok);
         assert_eq!(m.len(), 1);
         assert!(matches!(m[0].role, kod_types::MessageRole::System));
@@ -12272,11 +12135,8 @@ mod coverage_retry_adjustment {
         use crate::retry_strategy::RetryAction;
         let mut o = empty_opts();
         let mut m = empty_msgs();
-        let ok = KodEngine::apply_retry_adjustment(
-            RetryAction::SameEndpointConstrained,
-            &mut o,
-            &mut m,
-        );
+        let ok =
+            KodEngine::apply_retry_adjustment(RetryAction::SameEndpointConstrained, &mut o, &mut m);
         assert!(ok);
         assert_eq!(m.len(), 1);
         assert!(m[0].content.to_lowercase().contains("json"));
@@ -12300,11 +12160,7 @@ mod coverage_retry_adjustment {
                 time::OffsetDateTime::now_utc(),
             ),
         ];
-        let ok = KodEngine::apply_retry_adjustment(
-            RetryAction::ShrinkHistory,
-            &mut o,
-            &mut m,
-        );
+        let ok = KodEngine::apply_retry_adjustment(RetryAction::ShrinkHistory, &mut o, &mut m);
         assert!(!ok, "less than 4 messages cannot be shrunk");
         assert_eq!(m.len(), 2, "messages unchanged on refusal");
     }
@@ -12323,11 +12179,7 @@ mod coverage_retry_adjustment {
                 )
             })
             .collect();
-        let ok = KodEngine::apply_retry_adjustment(
-            RetryAction::ShrinkHistory,
-            &mut o,
-            &mut m,
-        );
+        let ok = KodEngine::apply_retry_adjustment(RetryAction::ShrinkHistory, &mut o, &mut m);
         assert!(ok);
         assert_eq!(m.len(), 3, "kept the newer half");
         assert!(m[0].content.ends_with('3'));
@@ -12403,10 +12255,7 @@ mod coverage_at_references {
         // lives outside the working directory.
         let tmp = TempDir::new().unwrap();
         let out = expand_at_references("see @../etc/passwd", tmp.path());
-        assert!(
-            !out.contains("<file"),
-            "escape expanded: {out}",
-        );
+        assert!(!out.contains("<file"), "escape expanded: {out}",);
         assert!(out.contains("@../etc/passwd"), "token eaten: {out}");
     }
 
@@ -12451,7 +12300,10 @@ mod coverage_at_references {
         let tmp = TempDir::new().unwrap();
         std::fs::write(tmp.path().join("empty.txt"), "").unwrap();
         let out = expand_at_references("see @empty.txt", tmp.path());
-        assert!(out.contains("<file path="), "no block for empty file: {out}");
+        assert!(
+            out.contains("<file path="),
+            "no block for empty file: {out}"
+        );
     }
 
     #[test]
@@ -12506,11 +12358,7 @@ mod coverage_mid_stream_switch {
         async fn list_models(&self) -> kod_error::Result<Vec<String>> {
             Ok(vec!["fixed".to_string()])
         }
-        async fn generate(
-            &self,
-            _p: &str,
-            _o: &GenerationOptions,
-        ) -> kod_error::Result<String> {
+        async fn generate(&self, _p: &str, _o: &GenerationOptions) -> kod_error::Result<String> {
             Ok(self.text.clone())
         }
         async fn generate_with_tools(
@@ -12558,9 +12406,7 @@ mod coverage_mid_stream_switch {
         }
     }
 
-    async fn engine_with_fallback(
-        fallback_text: &str,
-    ) -> (KodEngine, tempfile::TempDir) {
+    async fn engine_with_fallback(fallback_text: &str) -> (KodEngine, tempfile::TempDir) {
         let tmp = tempfile::TempDir::new().unwrap();
         let cfg = RouterConfig {
             working_dir: tmp.path().to_path_buf(),
@@ -12583,11 +12429,7 @@ mod coverage_mid_stream_switch {
             "m",
         );
         engine
-            .set_registry(
-                Arc::new(reg),
-                ModelRef::new("fallback", "m"),
-                None,
-            )
+            .set_registry(Arc::new(reg), ModelRef::new("fallback", "m"), None)
             .await;
         (engine, tmp)
     }
@@ -12597,13 +12439,7 @@ mod coverage_mid_stream_switch {
         let (engine, _tmp) = engine_with_fallback("from the fallback").await;
         let model = ModelRef::new("fallback", "m");
         let (_provider, resolved, mut stream) = engine
-            .fallback_stream_for_off_track(
-                "",
-                &[],
-                &[],
-                &GenerationOptions::default(),
-                &model,
-            )
+            .fallback_stream_for_off_track("", &[], &[], &GenerationOptions::default(), &model)
             .await
             .expect("fallback must resolve");
         assert_eq!(resolved.endpoint, "fallback");
@@ -12631,18 +12467,11 @@ mod coverage_mid_stream_switch {
         // Registry is empty — no provider to resolve.
         let model = ModelRef::new("nonexistent", "m");
         let r = engine
-            .fallback_stream_for_off_track(
-                "",
-                &[],
-                &[],
-                &GenerationOptions::default(),
-                &model,
-            )
+            .fallback_stream_for_off_track("", &[], &[], &GenerationOptions::default(), &model)
             .await;
         assert!(r.is_none(), "empty registry must yield None");
     }
 }
-
 
 #[cfg(test)]
 mod coverage_offtrack_switch {
@@ -12663,8 +12492,8 @@ mod coverage_offtrack_switch {
     use async_trait::async_trait;
     use kod_config::JevThresholds;
     use kod_provider::{
-        GenerationOptions, GenerationResponse, LlmProvider, ProviderCapabilities,
-        ProviderRegistry, StreamChunk,
+        GenerationOptions, GenerationResponse, LlmProvider, ProviderCapabilities, ProviderRegistry,
+        StreamChunk,
     };
     use std::sync::Arc;
 
@@ -12684,11 +12513,7 @@ mod coverage_offtrack_switch {
         async fn list_models(&self) -> kod_error::Result<Vec<String>> {
             Ok(vec![])
         }
-        async fn generate(
-            &self,
-            _p: &str,
-            _o: &GenerationOptions,
-        ) -> kod_error::Result<String> {
+        async fn generate(&self, _p: &str, _o: &GenerationOptions) -> kod_error::Result<String> {
             Ok(self.chunks.join(""))
         }
         async fn generate_with_tools(
@@ -12857,8 +12682,7 @@ mod coverage_offtrack_switch {
         // character floor `EARLY_TERM_MIN_CHARS` enforces. The
         // every-5 check fires at chunk 5, 10, …, and passes once
         // the text is long enough.
-        let primary_chunks: Vec<String> =
-            (0..40).map(|i| format!("primary line {i}. ")).collect();
+        let primary_chunks: Vec<String> = (0..40).map(|i| format!("primary line {i}. ")).collect();
         let primary: Arc<dyn LlmProvider> = Arc::new(ChunkedProvider {
             name: "primary".to_string(),
             chunks: primary_chunks,
@@ -12893,14 +12717,12 @@ mod coverage_offtrack_switch {
         let mut routing = kod_config::RoutingConfig::default();
         // Route the classifier's verdict for "hello" (Simple) to
         // primary, with fallback second.
-        routing.by_task.insert("Simple".to_string(), "primary".to_string());
+        routing
+            .by_task
+            .insert("Simple".to_string(), "primary".to_string());
         routing.fallback.push("fallback".to_string());
         engine
-            .set_registry(
-                Arc::new(reg),
-                ModelRef::new("primary", "m"),
-                Some(routing),
-            )
+            .set_registry(Arc::new(reg), ModelRef::new("primary", "m"), Some(routing))
             .await;
 
         // Scripted Jev: off-track fires on the first check.
@@ -12928,9 +12750,7 @@ mod coverage_offtrack_switch {
             acc
         });
 
-        let _ = engine
-            .process_streaming_for("session", "hello", &tx)
-            .await;
+        let _ = engine.process_streaming_for("session", "hello", &tx).await;
         drop(tx);
         let streamed = drain.await.unwrap();
 
@@ -12952,7 +12772,6 @@ mod coverage_offtrack_switch {
         );
     }
 }
-
 
 #[cfg(test)]
 mod coverage_prompt_redaction {
@@ -12990,13 +12809,10 @@ mod coverage_prompt_redaction {
     #[tokio::test]
     async fn tool_result_redaction_is_a_noop_by_default() {
         let e = engine().await;
-        let s = e.redact_tool_result_for_prompt(
-            "token=sk-abcdef1234567890ABCDEFGH".to_string(),
-        );
+        let s = e.redact_tool_result_for_prompt("token=sk-abcdef1234567890ABCDEFGH".to_string());
         assert!(s.contains("sk-abcdef"));
     }
 }
-
 
 #[cfg(test)]
 mod coverage_tool_result_redaction {
@@ -13035,7 +12851,6 @@ mod coverage_tool_result_redaction {
         );
     }
 }
-
 
 #[cfg(test)]
 mod coverage_tool_inventory_cache {
@@ -13094,10 +12909,7 @@ mod coverage_tool_inventory_cache {
         // byte-identical.
         let h1 = head_of(&one);
         let h2 = head_of(&two);
-        assert_eq!(
-            h1, h2,
-            "tool inventory change shifted the cacheable prefix",
-        );
+        assert_eq!(h1, h2, "tool inventory change shifted the cacheable prefix",);
         // Sanity: the tail really does mention both tools.
         assert!(one.contains("alpha"), "alpha must be listed");
         assert!(two.contains("beta"), "beta must be listed");

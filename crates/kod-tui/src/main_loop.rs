@@ -372,8 +372,7 @@ impl TuiLoop {
         // Tier 1.4 — trace writer next to the session log, when one
         // is installed.
         if let Some(log_path) = engine.session_log_path()
-            && let Some(trace_path) =
-                kod_core::TraceWriter::default_for_session(&log_path)
+            && let Some(trace_path) = kod_core::TraceWriter::default_for_session(&log_path)
             && let Ok(w) = kod_core::TraceWriter::open(trace_path)
         {
             engine.set_turn_trace_writer(std::sync::Arc::new(w));
@@ -732,8 +731,7 @@ impl TuiLoop {
                         let x = size.x + size.width.saturating_sub(w) / 2;
                         let y = size.y + 2;
                         let area = ratatui::layout::Rect::new(x, y, w, h);
-                        crate::ui::PaletteWidget::new()
-                            .render(&self.app, area, f.buffer_mut());
+                        crate::ui::PaletteWidget::new().render(&self.app, area, f.buffer_mut());
                     }
                     if self.app.is_asking() {
                         QuestionWidget::new().render(&self.app, size, f.buffer_mut());
@@ -1347,8 +1345,7 @@ impl TuiLoop {
                                 .classify_chunk_with_jev("session", &accumulated)
                                 .await
                         {
-                            is_reasoning =
-                                matches!(kind.as_str(), "reasoning" | "restatement");
+                            is_reasoning = matches!(kind.as_str(), "reasoning" | "restatement");
                             if is_reasoning && reasoning_since.is_none() {
                                 reasoning_since = Some(std::time::Instant::now());
                             } else if !is_reasoning {
@@ -1369,9 +1366,7 @@ impl TuiLoop {
                             );
                             let flushed = std::mem::take(&mut accumulated);
                             if !flushed.is_empty() {
-                                let _ = event_tx_chunks
-                                    .send(Event::ResponseChunk(flushed))
-                                    .await;
+                                let _ = event_tx_chunks.send(Event::ResponseChunk(flushed)).await;
                             }
                             is_reasoning = false;
                             reasoning_since = None;
@@ -1688,7 +1683,7 @@ impl TuiLoop {
                     let found = details.iter().find(|(n, _)| n == name).cloned();
                     match found {
                         Some((n, d)) => {
-                                                        // Read the file for the full content.
+                            // Read the file for the full content.
                             let config = KodConfig::load_default().ok();
                             let mut body: Option<String> = None;
                             if let Some(cfg) = &config
@@ -1717,8 +1712,7 @@ impl TuiLoop {
                                             .and_then(|s| s.to_str())
                                             .unwrap_or("");
                                         if stem == n {
-                                            if let Ok(text) =
-                                                std::fs::read_to_string(entry.path())
+                                            if let Ok(text) = std::fs::read_to_string(entry.path())
                                             {
                                                 body = Some(text);
                                             }
@@ -1730,7 +1724,7 @@ impl TuiLoop {
                                     }
                                 }
                             }
-let text = body.unwrap_or_else(|| format!("(description) {}", d));
+                            let text = body.unwrap_or_else(|| format!("(description) {}", d));
                             self.app
                                 .push_system_message(&format!("Skill {}\n\n{}", n, text,));
                         }
@@ -2193,8 +2187,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                 // "database already open". Every memory operation
                 // routes through the engine.
                 if self.engine.is_none() {
-                    self.app
-                        .push_system_message("Engine not initialized.");
+                    self.app.push_system_message("Engine not initialized.");
                     return Ok(());
                 }
                 let config = match KodConfig::load_default() {
@@ -2361,8 +2354,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                 // subsystem, and a second redb handle fails with
                 // "database already open".
                 if self.engine.is_none() {
-                    self.app
-                        .push_system_message("Engine not initialized.");
+                    self.app.push_system_message("Engine not initialized.");
                     return Ok(());
                 }
                 let config = match KodConfig::load_default() {
@@ -2891,9 +2883,8 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                                     }
                                 }
                                 if total == 0 {
-                                    self.app.push_system_message(
-                                        "No memory retrievals logged yet.",
-                                    );
+                                    self.app
+                                        .push_system_message("No memory retrievals logged yet.");
                                     return Ok(());
                                 }
                                 let rate = if total > 0 {
@@ -3273,14 +3264,9 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                     && let Some(path) = engine.session_log_path()
                     && let Ok(entries) = kod_core::session_log::read_session(&path)
                 {
-                    let mut by_rule: std::collections::BTreeMap<String, usize> =
-                        Default::default();
+                    let mut by_rule: std::collections::BTreeMap<String, usize> = Default::default();
                     for e in &entries {
-                        if let kod_core::session_log::SessionEntry::Redaction {
-                            rules,
-                            ..
-                        } = e
-                        {
+                        if let kod_core::session_log::SessionEntry::Redaction { rules, .. } = e {
                             for r in rules {
                                 *by_rule.entry(r.rule.clone()).or_insert(0) += r.count;
                             }
@@ -3288,9 +3274,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                     }
                     if !by_rule.is_empty() {
                         let total: usize = by_rule.values().sum();
-                        msg.push_str(&format!(
-                            "\nSecrets redacted this session: {total}\n",
-                        ));
+                        msg.push_str(&format!("\nSecrets redacted this session: {total}\n",));
                         for (rule, n) in &by_rule {
                             msg.push_str(&format!("  {:<24} {}\n", rule, n));
                         }
@@ -3385,8 +3369,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                             );
                             return Ok(());
                         }
-                        let mut msg =
-                            format!("Blackboard ({} entries)\n", entries.len());
+                        let mut msg = format!("Blackboard ({} entries)\n", entries.len());
                         for e in entries.iter().take(40) {
                             msg.push_str(&format!(
                                 "  {:<40} {}\n",
@@ -3399,17 +3382,13 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                             ));
                         }
                         if entries.len() > 40 {
-                            msg.push_str(&format!(
-                                "  … and {} more\n",
-                                entries.len() - 40,
-                            ));
+                            msg.push_str(&format!("  … and {} more\n", entries.len() - 40,));
                         }
                         self.app.push_system_message(msg.trim_end());
                     }
                     Some("clear") => {
                         engine.blackboard().clear();
-                        self.app
-                            .push_system_message("Blackboard cleared.");
+                        self.app.push_system_message("Blackboard cleared.");
                     }
                     Some(other) => {
                         self.app.push_system_message(&format!(
@@ -3439,8 +3418,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                     }
                     Some("clear") => {
                         engine.clear_learned_allows().await;
-                        self.app
-                            .push_system_message("Learned allows cleared.");
+                        self.app.push_system_message("Learned allows cleared.");
                     }
                     Some(other) => {
                         self.app.push_system_message(&format!(
@@ -3465,10 +3443,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                             );
                             return Ok(());
                         }
-                        let mut msg = format!(
-                            "Decisions ({} entries)\n",
-                            log.entries.len(),
-                        );
+                        let mut msg = format!("Decisions ({} entries)\n", log.entries.len(),);
                         for d in log.entries.iter().rev().take(20) {
                             let tag = match d.kind {
                                 kod_core::DecisionKind::UserPreference => "pref",
@@ -3484,17 +3459,13 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                             ));
                         }
                         if log.entries.len() > 20 {
-                            msg.push_str(&format!(
-                                "  … and {} more\n",
-                                log.entries.len() - 20,
-                            ));
+                            msg.push_str(&format!("  … and {} more\n", log.entries.len() - 20,));
                         }
                         msg.push_str("\n  /decisions drop <id> | /decisions clear");
                         self.app.push_system_message(msg.trim_end());
                     }
                     Some("drop") => {
-                        let id: Option<u64> =
-                            parts.next().and_then(|s| s.parse().ok());
+                        let id: Option<u64> = parts.next().and_then(|s| s.parse().ok());
                         match id {
                             Some(id) => {
                                 if engine.drop_decision("session", id).await {
@@ -3506,9 +3477,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                                     ));
                                 }
                             }
-                            None => self.app.push_system_message(
-                                "Usage: /decisions drop <id>",
-                            ),
+                            None => self.app.push_system_message("Usage: /decisions drop <id>"),
                         }
                     }
                     Some("clear") => {
@@ -3516,8 +3485,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                         g.entries.clear();
                         // Replace the log with the empty one.
                         engine.set_decision_log("session", g).await;
-                        self.app
-                            .push_system_message("Decision log cleared.");
+                        self.app.push_system_message("Decision log cleared.");
                     }
                     Some(other) => {
                         self.app.push_system_message(&format!(
@@ -3532,50 +3500,44 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                     return Ok(());
                 };
                 match parts.next() {
-                    None | Some("show") => {
-                        match engine.plan_for("session").await {
-                            Some(plan) => {
-                                let mut msg = format!("Plan for: {}\n\n", plan.goal);
-                                for step in &plan.steps {
-                                    let marker = match step.status {
-                                        kod_core::PlanStatus::Done => "✓",
-                                        kod_core::PlanStatus::InProgress => "→",
-                                        kod_core::PlanStatus::Blocked => "!",
-                                        kod_core::PlanStatus::Skipped => "·",
-                                        kod_core::PlanStatus::Pending => " ",
-                                    };
-                                    msg.push_str(&format!(
-                                        "{} {}. {}\n",
-                                        marker,
-                                        step.id + 1,
-                                        step.text,
-                                    ));
-                                    if let Some(notes) = plan.notes.get(&step.id) {
-                                        for n in notes {
-                                            msg.push_str(&format!("   note: {n}\n"));
-                                        }
+                    None | Some("show") => match engine.plan_for("session").await {
+                        Some(plan) => {
+                            let mut msg = format!("Plan for: {}\n\n", plan.goal);
+                            for step in &plan.steps {
+                                let marker = match step.status {
+                                    kod_core::PlanStatus::Done => "✓",
+                                    kod_core::PlanStatus::InProgress => "→",
+                                    kod_core::PlanStatus::Blocked => "!",
+                                    kod_core::PlanStatus::Skipped => "·",
+                                    kod_core::PlanStatus::Pending => " ",
+                                };
+                                msg.push_str(&format!(
+                                    "{} {}. {}\n",
+                                    marker,
+                                    step.id + 1,
+                                    step.text,
+                                ));
+                                if let Some(notes) = plan.notes.get(&step.id) {
+                                    for n in notes {
+                                        msg.push_str(&format!("   note: {n}\n"));
                                     }
                                 }
-                                msg.push_str(&format!(
-                                    "\nProgress: {:.0}%\n",
-                                    plan.progress() * 100.0,
-                                ));
-                                self.app.push_system_message(msg.trim_end());
                             }
-                            None => {
-                                self.app.push_system_message(
-                                    "No plan for this session. Plans are created \
-                                     automatically on Complex or MultiStep tasks.",
-                                );
-                            }
+                            msg.push_str(
+                                &format!("\nProgress: {:.0}%\n", plan.progress() * 100.0,),
+                            );
+                            self.app.push_system_message(msg.trim_end());
                         }
-                    }
+                        None => {
+                            self.app.push_system_message(
+                                "No plan for this session. Plans are created \
+                                     automatically on Complex or MultiStep tasks.",
+                            );
+                        }
+                    },
                     Some("next") => {
                         let desc = engine
-                            .apply_plan_update(
-                                "session",
-                                kod_core::PlanUpdate::Advance,
-                            )
+                            .apply_plan_update("session", kod_core::PlanUpdate::Advance)
                             .await;
                         self.app.push_system_message(&desc);
                     }
@@ -3602,9 +3564,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                     Some("note") => {
                         let note: String = parts.collect::<Vec<_>>().join(" ");
                         if note.is_empty() {
-                            self.app.push_system_message(
-                                "Usage: /plan note <text>",
-                            );
+                            self.app.push_system_message("Usage: /plan note <text>");
                             return Ok(());
                         }
                         let Some(plan) = engine.plan_for("session").await else {
@@ -3644,26 +3604,20 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                     None | Some("show") => {
                         let snap = engine.tool_count_snapshot();
                         if snap.is_empty() {
-                            self.app.push_system_message(
-                                "No tool calls this session yet.",
-                            );
+                            self.app
+                                .push_system_message("No tool calls this session yet.");
                             return Ok(());
                         }
-                        let mut msg =
-                            String::from("Per-tool counts (this turn / this session)\n");
+                        let mut msg = String::from("Per-tool counts (this turn / this session)\n");
                         for (name, turn, session) in &snap {
-                            msg.push_str(&format!(
-                                "  {:<20} {:>6} / {}\n",
-                                name, turn, session,
-                            ));
+                            msg.push_str(&format!("  {:<20} {:>6} / {}\n", name, turn, session,));
                         }
                         self.app.push_system_message(msg.trim_end());
                     }
                     Some("reset") => {
                         engine.reset_tool_counts();
-                        self.app.push_system_message(
-                            "Per-session tool counters reset.",
-                        );
+                        self.app
+                            .push_system_message("Per-session tool counters reset.");
                     }
                     Some(other) => {
                         self.app.push_system_message(&format!(
@@ -3699,8 +3653,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                 match which {
                     None | Some("last") => {
                         let t = traces.last().unwrap();
-                        self.app
-                            .push_system_message(&format_turn_trace_verbose(t));
+                        self.app.push_system_message(&format_turn_trace_verbose(t));
                     }
                     Some("list") => {
                         let mut msg = String::from("Turn traces (newest first)\n");
@@ -3727,12 +3680,12 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                     Some(id_str) => {
                         if let Ok(id) = id_str.parse::<u64>() {
                             match traces.iter().find(|t| t.id == id) {
-                                Some(t) => self
+                                Some(t) => {
+                                    self.app.push_system_message(&format_turn_trace_verbose(t))
+                                }
+                                None => self
                                     .app
-                                    .push_system_message(&format_turn_trace_verbose(t)),
-                                None => self.app.push_system_message(&format!(
-                                    "No trace with id {id}.",
-                                )),
+                                    .push_system_message(&format!("No trace with id {id}.",)),
                             }
                         } else {
                             self.app.push_system_message(&format!(
@@ -3803,17 +3756,16 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                                 snap.turn_fraction * 100.0,
                             ));
                         } else {
-                            msg.push_str(&format!(
-                                "  turn:     ${:.4} (no cap)\n",
-                                snap.turn_usd,
-                            ));
+                            msg.push_str(&format!("  turn:     ${:.4} (no cap)\n", snap.turn_usd,));
                         }
                         msg.push_str(&format!(
                             "  policy:   {:?}\n",
                             engine.cost_tracker().on_exhausted(),
                         ));
                         if snap.exhausted {
-                            msg.push_str("\n⛔ A cap is exhausted. /budget raise <usd> to lift it.");
+                            msg.push_str(
+                                "\n⛔ A cap is exhausted. /budget raise <usd> to lift it.",
+                            );
                         } else if snap.session_warned || snap.turn_warned {
                             msg.push_str("\n⚠ Approaching a cap.");
                         }
@@ -3821,14 +3773,10 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                     }
                     Some("reset") => {
                         engine.cost_tracker().reset();
-                        self.app
-                            .push_system_message("Session cost counters reset.");
+                        self.app.push_system_message("Session cost counters reset.");
                     }
                     Some("raise") => {
-                        let amount: f64 = parts
-                            .next()
-                            .and_then(|s| s.parse().ok())
-                            .unwrap_or(0.0);
+                        let amount: f64 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
                         if amount <= 0.0 {
                             self.app.push_system_message(
                                 "Usage: /budget raise <usd> (e.g. /budget raise 5)",
@@ -3870,28 +3818,25 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                     return Ok(());
                 };
                 match sub {
-                    None | Some("status") => {
-                        match engine.jev_status() {
-                            Some(line) => {
-                                let mut msg =
-                                    format!("Jev status\n  {line}\n");
-                                if let Some(t) = engine.jev_thresholds_line() {
-                                    msg.push_str(&format!("  thresholds: {t}\n"));
-                                }
-                                msg.push_str(
+                    None | Some("status") => match engine.jev_status() {
+                        Some(line) => {
+                            let mut msg = format!("Jev status\n  {line}\n");
+                            if let Some(t) = engine.jev_thresholds_line() {
+                                msg.push_str(&format!("  thresholds: {t}\n"));
+                            }
+                            msg.push_str(
                                     "\nSub-commands: /jev stats | /jev cache clear | /jev test | /jev tune",
                                 );
-                                self.app.push_system_message(&msg);
-                            }
-                            None => {
-                                self.app.push_system_message(
-                                    "Jev is disabled. Enable it in ~/.kod/config.toml under \
+                            self.app.push_system_message(&msg);
+                        }
+                        None => {
+                            self.app.push_system_message(
+                                "Jev is disabled. Enable it in ~/.kod/config.toml under \
                                      [jev] enabled = true, and set TYPESAFE_API_KEY (or a key in \
                                      [jev] api_key). Restart kod after editing.",
-                                );
-                            }
+                            );
                         }
-                    }
+                    },
                     Some("stats") => {
                         let Some(path) = engine.session_log_path() else {
                             self.app.push_system_message(
@@ -3920,9 +3865,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                                     {
                                         total += 1;
                                         *by_source.entry(source.clone()).or_insert(0) += 1;
-                                        *by_purpose
-                                            .entry(purpose.clone())
-                                            .or_insert(0) += 1;
+                                        *by_purpose.entry(purpose.clone()).or_insert(0) += 1;
                                         total_latency_ms += latency_ms;
                                         if *c {
                                             cached += 1;
@@ -3935,15 +3878,10 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                                     );
                                     return Ok(());
                                 }
-                                let mut msg = format!(
-                                    "Jev decisions this session: {total}\n",
-                                );
+                                let mut msg = format!("Jev decisions this session: {total}\n",);
                                 for (src, n) in by_source.iter() {
                                     let pct = (*n as f64 / total as f64) * 100.0;
-                                    msg.push_str(&format!(
-                                        "  {:<10} {n:>4}  ({pct:.0}%)\n",
-                                        src,
-                                    ));
+                                    msg.push_str(&format!("  {:<10} {n:>4}  ({pct:.0}%)\n", src,));
                                 }
                                 msg.push_str(&format!(
                                     "\nCache hits:      {cached} ({}%)\n",
@@ -3958,8 +3896,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                                     total_latency_ms / total as u64,
                                 ));
                                 msg.push_str("\nBy purpose\n");
-                                let mut rows: Vec<(&String, &usize)> =
-                                    by_purpose.iter().collect();
+                                let mut rows: Vec<(&String, &usize)> = by_purpose.iter().collect();
                                 rows.sort_by(|a, b| b.1.cmp(a.1));
                                 for (p, n) in rows {
                                     msg.push_str(&format!("  {:<20} {n}\n", p));
@@ -3973,22 +3910,18 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                             }
                         }
                     }
-                    Some("cache") => {
-                        match parts.next() {
-                            Some("clear") => match engine.jev_clear_cache() {
-                                Some(n) => self.app.push_system_message(&format!(
-                                    "Cleared {n} cached Jev decision{}. ",
-                                    if n == 1 { "" } else { "s" },
-                                )),
-                                None => self.app.push_system_message(
-                                    "Jev is disabled — nothing to clear.",
-                                ),
-                            },
-                            _ => self.app.push_system_message(
-                                "Usage: /jev cache clear",
-                            ),
-                        }
-                    }
+                    Some("cache") => match parts.next() {
+                        Some("clear") => match engine.jev_clear_cache() {
+                            Some(n) => self.app.push_system_message(&format!(
+                                "Cleared {n} cached Jev decision{}. ",
+                                if n == 1 { "" } else { "s" },
+                            )),
+                            None => self
+                                .app
+                                .push_system_message("Jev is disabled — nothing to clear."),
+                        },
+                        _ => self.app.push_system_message("Usage: /jev cache clear"),
+                    },
                     Some("test") => {
                         let Some(client) = engine.jev_client() else {
                             self.app.push_system_message(
@@ -4003,10 +3936,8 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                         // a real question; the reply tells us both
                         // that auth works and that the model is
                         // answering.
-                        let state = kod_core::jev::build_state(
-                            "The sky is blue on a clear day.",
-                            &[],
-                        );
+                        let state =
+                            kod_core::jev::build_state("The sky is blue on a clear day.", &[]);
                         let started = std::time::Instant::now();
                         match client
                             .evaluate_yes_no(
@@ -4019,14 +3950,12 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                                 let ms = started.elapsed().as_millis();
                                 self.app.push_system_message(&format!(
                                     "✓ Jev responded in {ms}ms: value={} confidence={:.2}",
-                                    d.value,
-                                    d.confidence,
+                                    d.value, d.confidence,
                                 ));
                             }
                             Err(e) => {
-                                self.app.push_system_message(&format!(
-                                    "✗ Jev call failed: {e}",
-                                ));
+                                self.app
+                                    .push_system_message(&format!("✗ Jev call failed: {e}",));
                             }
                         }
                     }
@@ -4042,8 +3971,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                                     return Ok(());
                                 };
                                 let t = client.thresholds();
-                                let mut msg =
-                                    String::from("Jev thresholds (name = value)\n");
+                                let mut msg = String::from("Jev thresholds (name = value)\n");
                                 for name in kod_config::JevThresholds::NAMES {
                                     if let Some(v) = t.get(name) {
                                         msg.push_str(&format!("  {:<24} {:.2}\n", name, v));
@@ -4057,8 +3985,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                             }
                             Some("set") => {
                                 let name = parts.next().map(String::from);
-                                let value: Option<f32> =
-                                    parts.next().and_then(|s| s.parse().ok());
+                                let value: Option<f32> = parts.next().and_then(|s| s.parse().ok());
                                 match (name, value) {
                                     (Some(n), Some(v)) => {
                                         match engine.update_jev_threshold(&n, v).await {
@@ -4079,17 +4006,18 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                                                         .join("config.toml");
                                                     cfg.save_to(&path)?;
                                                     Ok(())
-                                                })();
+                                                })(
+                                                );
                                                 match persisted {
                                                     Ok(()) => self.app.push_system_message(
                                                         &format!("Set {n} = {v:.2} (persisted)."),
                                                     ),
-                                                    Err(e) => self.app.push_system_message(
-                                                        &format!(
+                                                    Err(e) => {
+                                                        self.app.push_system_message(&format!(
                                                             "Set {n} = {v:.2} in this session; \
                                                              could not persist: {e}",
-                                                        ),
-                                                    ),
+                                                        ))
+                                                    }
                                                 }
                                             }
                                             Err(e) => self.app.push_system_message(&format!(
@@ -4097,9 +4025,9 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                                             )),
                                         }
                                     }
-                                    _ => self.app.push_system_message(
-                                        "Usage: /jev tune set <name> <value>",
-                                    ),
+                                    _ => self
+                                        .app
+                                        .push_system_message("Usage: /jev tune set <name> <value>"),
                                 }
                             }
                             Some("reset") => {
@@ -4107,10 +4035,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                                 let mut all_ok = true;
                                 for name in kod_config::JevThresholds::NAMES {
                                     if let Some(v) = defaults.get(name)
-                                        && engine
-                                            .update_jev_threshold(name, v)
-                                            .await
-                                            .is_err()
+                                        && engine.update_jev_threshold(name, v).await.is_err()
                                     {
                                         all_ok = false;
                                     }
@@ -4685,9 +4610,8 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                             }
                         }
                     } else {
-                        self.app.push_system_message(
-                            "Select at least one hunk before committing.",
-                        );
+                        self.app
+                            .push_system_message("Select at least one hunk before committing.");
                     }
                     return Ok(());
                 }
@@ -4908,10 +4832,7 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                         engine.learn_allow(&call).await;
                     }
                     engine
-                        .respond_to_approval(
-                            id,
-                            kod_core::engine::ApprovalDecision::Approve,
-                        )
+                        .respond_to_approval(id, kod_core::engine::ApprovalDecision::Approve)
                         .await;
                 }
                 if done {
@@ -4926,9 +4847,8 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                 if self.app.begin_hunk_selection() {
                     return Ok(());
                 }
-                self.app.push_system_message(
-                    "Hunk selection is only available for patch_file calls.",
-                );
+                self.app
+                    .push_system_message("Hunk selection is only available for patch_file calls.");
                 return Ok(());
             }
 
@@ -5438,10 +5358,7 @@ fn format_turn_trace_verbose(t: &kod_core::TurnTrace) -> String {
         "  jev: {} decisions ({} cached)\n",
         t.jev_decisions, t.jev_cache_hits,
     ));
-    msg.push_str(&format!(
-        "  outcome: {:?}",
-        t.outcome,
-    ));
+    msg.push_str(&format!("  outcome: {:?}", t.outcome,));
     if let Some(r) = &t.reason {
         msg.push_str(&format!(" — {r}"));
     }
@@ -5539,12 +5456,10 @@ fn format_entry_one_line(entry: &kod_core::session_log::SessionEntry) -> String 
             cached,
             source,
             ..
-        } => format!(
-            "  {holder:>8}  jev    {purpose} src={source} conf={confidence:.2} ",
-        ) + &format!(
-            "({latency_ms}ms{}))",
-            if *cached { ", cached" } else { "" },
-        ),
+        } => {
+            format!("  {holder:>8}  jev    {purpose} src={source} conf={confidence:.2} ",)
+                + &format!("({latency_ms}ms{}))", if *cached { ", cached" } else { "" },)
+        }
         SessionEntry::ToolOutcome {
             holder,
             tool_name,
@@ -6745,10 +6660,7 @@ mod coverage_slash_dispatch {
         // On an empty chat the "nothing to regenerate" guard runs
         // before the engine check; both are honest non-silent
         // failures.
-        assert_last_contains_any(
-            &tui,
-            &["Nothing to regenerate", "Engine not initialized"],
-        );
+        assert_last_contains_any(&tui, &["Nothing to regenerate", "Engine not initialized"]);
     }
 
     #[tokio::test]
@@ -6757,10 +6669,7 @@ mod coverage_slash_dispatch {
         tui.handle_command("/refine make it shorter").await.unwrap();
         // Same guard order as `/regenerate`: on an empty chat the
         // "no assistant reply" check fires first.
-        assert_last_contains_any(
-            &tui,
-            &["Nothing to refine", "Engine not initialized"],
-        );
+        assert_last_contains_any(&tui, &["Nothing to refine", "Engine not initialized"]);
     }
 
     #[tokio::test]
@@ -6785,10 +6694,7 @@ mod coverage_slash_dispatch {
     async fn memory_without_engine_reports() {
         let mut tui = TuiLoop::new();
         tui.handle_command("/memory").await.unwrap();
-        assert_last_contains_any(
-            &tui,
-            &["Engine not initialized", "memory"],
-        );
+        assert_last_contains_any(&tui, &["Engine not initialized", "memory"]);
     }
 
     // ---- loose-string tests ------------------------------------------
@@ -6797,10 +6703,7 @@ mod coverage_slash_dispatch {
     async fn help_lists_the_command_verbs() {
         let mut tui = TuiLoop::new();
         tui.handle_command("/help").await.unwrap();
-        assert_last_contains_any(
-            &tui,
-            &["/help", "/clear", "/quit"],
-        );
+        assert_last_contains_any(&tui, &["/help", "/clear", "/quit"]);
     }
 
     #[tokio::test]
@@ -6817,10 +6720,7 @@ mod coverage_slash_dispatch {
     async fn raw_without_an_assistant_reply_reports() {
         let mut tui = TuiLoop::new();
         tui.handle_command("/raw").await.unwrap();
-        assert_last_contains_any(
-            &tui,
-            &["No assistant", "assistant reply", "nothing"],
-        );
+        assert_last_contains_any(&tui, &["No assistant", "assistant reply", "nothing"]);
     }
 
     #[tokio::test]
@@ -6859,10 +6759,7 @@ mod coverage_slash_dispatch {
     async fn skills_lists_or_reports_no_skills() {
         let mut tui = TuiLoop::new();
         tui.handle_command("/skills").await.unwrap();
-        assert_last_contains_any(
-            &tui,
-            &["skill", "loaded"],
-        );
+        assert_last_contains_any(&tui, &["skill", "loaded"]);
     }
 
     #[tokio::test]
@@ -6871,50 +6768,35 @@ mod coverage_slash_dispatch {
         tui.app_mut().push_system_message("one");
         tui.app_mut().push_system_message("two");
         tui.handle_command("/stats").await.unwrap();
-        assert_last_contains_any(
-            &tui,
-            &["stat", "message", "session"],
-        );
+        assert_last_contains_any(&tui, &["stat", "message", "session"]);
     }
 
     #[tokio::test]
     async fn whoami_produces_a_session_summary() {
         let mut tui = TuiLoop::new();
         tui.handle_command("/whoami").await.unwrap();
-        assert_last_contains_any(
-            &tui,
-            &["session", "model", "skills", "context"],
-        );
+        assert_last_contains_any(&tui, &["session", "model", "skills", "context"]);
     }
 
     #[tokio::test]
     async fn context_visualizes_usage() {
         let mut tui = TuiLoop::new();
         tui.handle_command("/context").await.unwrap();
-        assert_last_contains_any(
-            &tui,
-            &["context", "token", "session"],
-        );
+        assert_last_contains_any(&tui, &["context", "token", "session"]);
     }
 
     #[tokio::test]
     async fn init_produces_onboarding_output() {
         let mut tui = TuiLoop::new();
         tui.handle_command("/init").await.unwrap();
-        assert_last_contains_any(
-            &tui,
-            &["config", "model", "next", "kod"],
-        );
+        assert_last_contains_any(&tui, &["config", "model", "next", "kod"]);
     }
 
     #[tokio::test]
     async fn log_lists_or_reports_no_entries() {
         let mut tui = TuiLoop::new();
         tui.handle_command("/log").await.unwrap();
-        assert_last_contains_any(
-            &tui,
-            &["Engine not initialized", "log", "no "],
-        );
+        assert_last_contains_any(&tui, &["Engine not initialized", "log", "no "]);
     }
 
     #[tokio::test]
@@ -6923,10 +6805,7 @@ mod coverage_slash_dispatch {
         tui.handle_command("/checkpoints").await.unwrap();
         // `/checkpoints` consults the engine's checkpoint manager
         // first; without an engine it reports the missing engine.
-        assert_last_contains_any(
-            &tui,
-            &["Engine not initialized", "checkpoint", "no "],
-        );
+        assert_last_contains_any(&tui, &["Engine not initialized", "checkpoint", "no "]);
     }
 
     #[tokio::test]
@@ -6934,10 +6813,7 @@ mod coverage_slash_dispatch {
         let mut tui = TuiLoop::new();
         tui.app_mut().push_system_message("before branch");
         tui.handle_command("/branch test-label").await.unwrap();
-        assert_last_contains_any(
-            &tui,
-            &["branch", "marker"],
-        );
+        assert_last_contains_any(&tui, &["branch", "marker"]);
     }
 
     // ---- smoke tests: must not panic, must not silently no-op --------

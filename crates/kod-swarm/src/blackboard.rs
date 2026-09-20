@@ -88,7 +88,9 @@ impl Blackboard {
             history: Vec::new(),
         });
         if entry.value != value {
-            entry.history.insert(0, (entry.updated_at_ms, entry.value.clone()));
+            entry
+                .history
+                .insert(0, (entry.updated_at_ms, entry.value.clone()));
             entry.history.truncate(16);
             entry.value = value;
             entry.author = author;
@@ -218,8 +220,20 @@ mod tests {
     #[test]
     fn query_by_tag() {
         let b = Blackboard::new();
-        b.put("a", serde_json::json!(1), "x", AuthorKind::Engine, vec!["t".into()]);
-        b.put("b", serde_json::json!(2), "x", AuthorKind::Engine, vec!["u".into()]);
+        b.put(
+            "a",
+            serde_json::json!(1),
+            "x",
+            AuthorKind::Engine,
+            vec!["t".into()],
+        );
+        b.put(
+            "b",
+            serde_json::json!(2),
+            "x",
+            AuthorKind::Engine,
+            vec!["u".into()],
+        );
         assert_eq!(b.query_tag("t").len(), 1);
         assert_eq!(b.query_tag("u").len(), 1);
     }
@@ -227,9 +241,27 @@ mod tests {
     #[test]
     fn query_by_prefix() {
         let b = Blackboard::new();
-        b.put("claim:a:1", serde_json::json!(1), "a", AuthorKind::Agent, vec![]);
-        b.put("claim:b:2", serde_json::json!(2), "b", AuthorKind::Agent, vec![]);
-        b.put("other", serde_json::json!(3), "c", AuthorKind::Agent, vec![]);
+        b.put(
+            "claim:a:1",
+            serde_json::json!(1),
+            "a",
+            AuthorKind::Agent,
+            vec![],
+        );
+        b.put(
+            "claim:b:2",
+            serde_json::json!(2),
+            "b",
+            AuthorKind::Agent,
+            vec![],
+        );
+        b.put(
+            "other",
+            serde_json::json!(3),
+            "c",
+            AuthorKind::Agent,
+            vec![],
+        );
         assert_eq!(b.query_prefix("claim:").len(), 2);
     }
 

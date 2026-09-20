@@ -759,7 +759,7 @@ mod coverage_language_extractors {
         assert!(names.contains(&"Bar"));
     }
 
-        #[test]
+    #[test]
     fn extractor_respects_the_max_file_size_cap() {
         // The per-file size guard is `meta.len() > 2 MiB`. Write a
         // file that is comfortably over the cap and assert the map

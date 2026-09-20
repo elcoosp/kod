@@ -268,7 +268,9 @@ impl SessionRecorder {
         let mut cloned = entry.clone();
         let mut redactions: Vec<kod_types::redact::Redaction> = Vec::new();
         match &mut cloned {
-            SessionEntry::ToolCall { arguments, result, .. } => {
+            SessionEntry::ToolCall {
+                arguments, result, ..
+            } => {
                 redactions.extend(self.redactor.redact_json(arguments));
                 redactions.extend(self.redactor.redact_json(result));
             }
@@ -286,7 +288,11 @@ impl SessionRecorder {
                     redactions.extend(ev);
                 }
             }
-            SessionEntry::JevDecision { state_preview, answers, .. } => {
+            SessionEntry::JevDecision {
+                state_preview,
+                answers,
+                ..
+            } => {
                 let (r, ev) = self.redactor.redact(state_preview);
                 if !ev.is_empty() {
                     *state_preview = r;
@@ -296,8 +302,8 @@ impl SessionRecorder {
             }
             _ => {}
         }
-        let line = serde_json::to_string(&cloned)
-            .map_err(|e| KodError::Serialization(e.to_string()))?;
+        let line =
+            serde_json::to_string(&cloned).map_err(|e| KodError::Serialization(e.to_string()))?;
         {
             let mut w = self.writer.lock().unwrap();
             writeln!(w, "{}", line).map_err(KodError::Io)?;
@@ -570,7 +576,8 @@ mod coverage_entry_roundtrip {
                 timestamp_ms: 6,
                 holder: "s".into(),
                 tool_name: "write_file".into(),
-                decision: "approve".into(), edit: None,
+                decision: "approve".into(),
+                edit: None,
             },
             SessionEntry::Diagnostics {
                 timestamp_ms: 7,
@@ -653,7 +660,8 @@ mod coverage_entry_roundtrip {
                     timestamp_ms: 0,
                     holder: "h".into(),
                     tool_name: "t".into(),
-                    decision: "deny".into(), edit: None,
+                    decision: "deny".into(),
+                    edit: None,
                 },
                 "approval",
             ),
@@ -735,7 +743,8 @@ mod coverage_session_paths {
             timestamp_ms: 1,
             holder: "h".into(),
             tool_name: "write_file".into(),
-            decision: "approve".into(), edit: None,
+            decision: "approve".into(),
+            edit: None,
         };
         rec.record(&entry).unwrap();
         let read = read_session(&nested).unwrap();
@@ -775,7 +784,8 @@ mod coverage_session_paths {
             timestamp_ms: 1,
             holder: "a".into(),
             tool_name: "t".into(),
-            decision: "approve".into(), edit: None,
+            decision: "approve".into(),
+            edit: None,
         })
         .unwrap();
         let b = SessionRecorder::open(p.clone()).unwrap();
@@ -783,7 +793,8 @@ mod coverage_session_paths {
             timestamp_ms: 2,
             holder: "b".into(),
             tool_name: "t".into(),
-            decision: "deny".into(), edit: None,
+            decision: "deny".into(),
+            edit: None,
         })
         .unwrap();
         let read = read_session(&p).unwrap();

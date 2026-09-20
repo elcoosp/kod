@@ -418,8 +418,7 @@ mod coverage_hunk_parsing {
 
     #[test]
     fn header_with_explicit_counts_uses_them() {
-        let hunks =
-            parse_unified_diff("@@ -1,3 +2,4 @@\n a\n-b\n+c\n+d\n e\n").unwrap();
+        let hunks = parse_unified_diff("@@ -1,3 +2,4 @@\n a\n-b\n+c\n+d\n e\n").unwrap();
         assert_eq!(hunks[0].old_start, 1);
         assert_eq!(hunks[0].old_lines, 3);
         assert_eq!(hunks[0].new_start, 2);
@@ -558,7 +557,8 @@ mod coverage_render_unified {
         let d = render_unified_diff(old, new, "f");
         let applied = apply_unified_diff(old, &d).unwrap();
         assert_eq!(applied, new);
-    }    #[test]
+    }
+    #[test]
     fn two_adjacent_hunks_are_rendered_separately() {
         // A change at line 1 and a change at line 20 with no
         // overlap produce two hunks in one diff. Both must apply.

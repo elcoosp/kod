@@ -146,8 +146,7 @@ impl CommandPaletteState {
         }
         let q = self.query.to_lowercase();
         all.iter()
-            .filter(|e| e.label.to_lowercase().contains(&q)
-                || e.hint.to_lowercase().contains(&q))
+            .filter(|e| e.label.to_lowercase().contains(&q) || e.hint.to_lowercase().contains(&q))
             .cloned()
             .collect()
     }
@@ -1019,10 +1018,7 @@ impl KodApp {
         let filtered = sel.build_patch();
         let mut args = sel.original_arguments.clone();
         if let Some(obj) = args.as_object_mut() {
-            obj.insert(
-                "patch".to_string(),
-                serde_json::Value::String(filtered),
-            );
+            obj.insert("patch".to_string(), serde_json::Value::String(filtered));
         }
         // Apply to the pending item so the dialog reflects the change.
         if let Some(batch) = self.pending_batch.as_mut()
@@ -1050,8 +1046,8 @@ impl KodApp {
         let Some(item) = batch.current_item() else {
             return;
         };
-        let buffer = serde_json::to_string_pretty(&item.arguments)
-            .unwrap_or_else(|_| "{}".to_string());
+        let buffer =
+            serde_json::to_string_pretty(&item.arguments).unwrap_or_else(|_| "{}".to_string());
         self.pending_edit = Some(PendingEdit {
             approval_id: item.id,
             original: item.arguments.clone(),
@@ -5656,7 +5652,6 @@ mod coverage_app_state {
     }
 }
 
-
 #[cfg(test)]
 mod coverage_command_palette {
     //! Tests for the Ctrl+K command palette (Tier UX).
@@ -5810,7 +5805,6 @@ mod coverage_command_palette {
         assert_eq!(app.palette_selected(), 0);
     }
 }
-
 
 #[cfg(test)]
 mod coverage_split_hunks {

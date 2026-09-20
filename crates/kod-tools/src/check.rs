@@ -815,10 +815,7 @@ mod coverage_project_detection {
     #[test]
     fn cargo_takes_priority_over_every_other_marker() {
         let tmp = dir_with(&["Cargo.toml", "go.mod", "pyproject.toml", "package.json"]);
-        assert_eq!(
-            ProjectKind::detect(tmp.path()),
-            Some(ProjectKind::Cargo),
-        );
+        assert_eq!(ProjectKind::detect(tmp.path()), Some(ProjectKind::Cargo),);
     }
 
     #[test]

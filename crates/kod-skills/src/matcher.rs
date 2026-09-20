@@ -463,8 +463,7 @@ mod coverage_match_scoring {
         // library from polluting the prompt.
         let m = SkillMatcher::new();
         m.add_skill(skill("unrelated", "", &[], &[], &[])).await;
-        let results = m.find_relevant_skills("completely different subject")
-            .await;
+        let results = m.find_relevant_skills("completely different subject").await;
         assert!(results.is_empty());
     }
 
@@ -476,8 +475,7 @@ mod coverage_match_scoring {
             .await;
         m.add_skill(skill("second", "", &[], &["target"], &[]))
             .await;
-        m.add_skill(skill("third", "", &[], &[], &["target"]))
-            .await;
+        m.add_skill(skill("third", "", &[], &[], &["target"])).await;
         let results = m.find_relevant_skills("target").await;
         assert!(results.len() >= 2, "expected at least 2: {results:?}");
         for w in results.windows(2) {

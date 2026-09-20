@@ -80,8 +80,7 @@ async fn shutdown_request_terminates_the_daemon() {
     );
 
     // Connect and send a shutdown request.
-    let __connect_deadline = std::time::Instant::now()
-        + std::time::Duration::from_secs(5);
+    let __connect_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let stream = loop {
         match UnixStream::connect(&sock).await {
             Ok(s) => break s,

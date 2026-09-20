@@ -328,4 +328,5 @@ mod coverage_engine_context {
         assert_eq!(c.system_prompt.as_deref(), Some("sys"));
         assert_eq!(c.skills.len(), 1);
         assert_eq!(c.tools_available, vec!["t".to_string()]);
-    }}
+    }
+}

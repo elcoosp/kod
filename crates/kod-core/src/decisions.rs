@@ -140,8 +140,18 @@ mod tests {
     #[test]
     fn push_assigns_monotonic_ids() {
         let mut l = DecisionLog::new();
-        let a = l.push(1, DecisionKind::Approach, "x".into(), DecisionAuthor::Assistant);
-        let b = l.push(2, DecisionKind::Constraint, "y".into(), DecisionAuthor::User);
+        let a = l.push(
+            1,
+            DecisionKind::Approach,
+            "x".into(),
+            DecisionAuthor::Assistant,
+        );
+        let b = l.push(
+            2,
+            DecisionKind::Constraint,
+            "y".into(),
+            DecisionAuthor::User,
+        );
         assert_eq!(a, 0);
         assert_eq!(b, 1);
         assert_eq!(l.next_id, 2);
@@ -161,7 +171,12 @@ mod tests {
     fn recent_returns_newest_first() {
         let mut l = DecisionLog::new();
         for i in 0..5 {
-            l.push(1, DecisionKind::Other, format!("d{i}"), DecisionAuthor::User);
+            l.push(
+                1,
+                DecisionKind::Other,
+                format!("d{i}"),
+                DecisionAuthor::User,
+            );
         }
         let r = l.recent(3);
         assert_eq!(r[0].text, "d4");
@@ -177,8 +192,18 @@ mod tests {
     #[test]
     fn render_block_lists_recent_in_chronological_order() {
         let mut l = DecisionLog::new();
-        l.push(1, DecisionKind::Approach, "first".into(), DecisionAuthor::User);
-        l.push(2, DecisionKind::Approach, "second".into(), DecisionAuthor::User);
+        l.push(
+            1,
+            DecisionKind::Approach,
+            "first".into(),
+            DecisionAuthor::User,
+        );
+        l.push(
+            2,
+            DecisionKind::Approach,
+            "second".into(),
+            DecisionAuthor::User,
+        );
         let b = l.render_prompt_block(10);
         let first = b.find("first").unwrap();
         let second = b.find("second").unwrap();
@@ -190,7 +215,12 @@ mod tests {
     fn render_block_limits_to_n() {
         let mut l = DecisionLog::new();
         for i in 0..10 {
-            l.push(1, DecisionKind::Other, format!("d{i}"), DecisionAuthor::User);
+            l.push(
+                1,
+                DecisionKind::Other,
+                format!("d{i}"),
+                DecisionAuthor::User,
+            );
         }
         let b = l.render_prompt_block(3);
         assert!(b.contains("d9"));
@@ -200,7 +230,12 @@ mod tests {
     #[test]
     fn round_trip_through_json() {
         let mut l = DecisionLog::new();
-        l.push(1, DecisionKind::Constraint, "no new deps".into(), DecisionAuthor::User);
+        l.push(
+            1,
+            DecisionKind::Constraint,
+            "no new deps".into(),
+            DecisionAuthor::User,
+        );
         let s = serde_json::to_string(&l).unwrap();
         let back: DecisionLog = serde_json::from_str(&s).unwrap();
         assert_eq!(back.entries.len(), 1);

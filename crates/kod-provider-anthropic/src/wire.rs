@@ -789,23 +789,13 @@ mod coverage_wire_builders {
     }
 
     fn assistant_with_calls(text: &str, calls: Vec<ToolCall>) -> ChatMessage {
-        let mut m = ChatMessage::text(
-            MessageId::new(),
-            MessageRole::Assistant,
-            text,
-            ts(),
-        );
+        let mut m = ChatMessage::text(MessageId::new(), MessageRole::Assistant, text, ts());
         m.tool_calls = calls;
         m
     }
 
     fn tool_message(content: &str, id: Option<&str>) -> ChatMessage {
-        let mut m = ChatMessage::text(
-            MessageId::new(),
-            MessageRole::Tool,
-            content,
-            ts(),
-        );
+        let mut m = ChatMessage::text(MessageId::new(), MessageRole::Tool, content, ts());
         m.tool_call_id = id.map(String::from);
         m
     }
@@ -1016,10 +1006,7 @@ mod coverage_wire_builders {
         // `unwrap_or_default()` on the call id. A missing id is a
         // caller bug — the server will reject it — but the converter
         // must not panic.
-        let msgs = vec![assistant_with_calls(
-            "",
-            vec![a_tool_call(None, "grep")],
-        )];
+        let msgs = vec![assistant_with_calls("", vec![a_tool_call(None, "grep")])];
         let arr = messages_array(&msgs);
         let content = arr[0]["content"].as_array().unwrap();
         // Only the tool_use block (no empty text prefix since the
@@ -1130,8 +1117,14 @@ mod coverage_wire_builders {
         let blocks = system_blocks(&prompt);
         let arr = blocks.as_array().unwrap();
         assert_eq!(arr.len(), 3);
-        assert!(arr[0].get("cache_control").is_none(), "first must not be marked");
-        assert!(arr[1].get("cache_control").is_none(), "volatile must not be marked");
+        assert!(
+            arr[0].get("cache_control").is_none(),
+            "first must not be marked"
+        );
+        assert!(
+            arr[1].get("cache_control").is_none(),
+            "volatile must not be marked"
+        );
         assert_eq!(arr[2]["cache_control"]["type"], "ephemeral");
     }
 
@@ -1154,9 +1147,7 @@ mod coverage_wire_builders {
     fn system_blocks_preserves_segment_order_in_the_blocks_array() {
         // The array order is the prompt's cache-prefix order; a
         // reorder would put the breakpoint after the wrong text.
-        let prompt = SystemPrompt::new()
-            .with("first", true)
-            .with("second", true);
+        let prompt = SystemPrompt::new().with("first", true).with("second", true);
         let blocks = system_blocks(&prompt);
         assert_eq!(blocks[0]["text"], "first");
         assert_eq!(blocks[1]["text"], "second");

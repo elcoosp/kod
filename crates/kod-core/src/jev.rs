@@ -254,8 +254,7 @@ impl JevDecider for JevClient {
         let mut cfg = JevClient::config(self).clone();
         cfg.thresholds = new;
         cfg.thresholds.clamp();
-        let client = JevClient::from_config(&cfg)?
-            .ok_or(JevError::Disabled)?;
+        let client = JevClient::from_config(&cfg)?.ok_or(JevError::Disabled)?;
         Ok(std::sync::Arc::new(client))
     }
 }
@@ -371,10 +370,8 @@ impl JevClient {
             return Ok(Decision::jev(p_yes >= 0.5, (p_yes - 0.5).abs() * 2.0));
         }
 
-        let request = SystemOneRequest::new(
-            state.clone(),
-            [("q", Question::from(Noul::new(question)))],
-        );
+        let request =
+            SystemOneRequest::new(state.clone(), [("q", Question::from(Noul::new(question)))]);
         let response = self
             .inner
             .system_one(request)
@@ -524,10 +521,7 @@ impl JevClient {
             return Ok(Decision::jev(label, confidence));
         }
 
-        let labelled: Vec<(&str, Value)> = options
-            .iter()
-            .map(|o| (*o, Value::Null))
-            .collect();
+        let labelled: Vec<(&str, Value)> = options.iter().map(|o| (*o, Value::Null)).collect();
         let q = Choice::new(labelled).instructions(question);
         let request = SystemOneRequest::new(state.clone(), [("q", Question::from(q))]);
         let response = self

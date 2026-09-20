@@ -49,7 +49,7 @@ pub struct SecurityConfig {
 /// see; turning it off (the default) is the right choice for a normal
 /// code-editing session, where a redacted `read_file` result would
 /// prevent the model from proposing the change the user asked for.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RedactConfig {
     /// Redact secrets in the prompt before the model sees it.
@@ -63,15 +63,6 @@ pub struct RedactConfig {
     /// when a `write_file` is about to place a literal credential.
     #[serde(default)]
     pub redact_argument_paths: Vec<String>,
-}
-
-impl Default for RedactConfig {
-    fn default() -> Self {
-        Self {
-            in_prompt: false,
-            redact_argument_paths: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

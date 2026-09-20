@@ -579,10 +579,7 @@ mod coverage_embedding_parsing {
         // strips exactly one `/v1` suffix so the result is
         // predictable. Documenting this makes a future change
         // deliberate.
-        assert_eq!(
-            derive_ollama_root("http://host/v1/v1"),
-            "http://host/v1",
-        );
+        assert_eq!(derive_ollama_root("http://host/v1/v1"), "http://host/v1",);
     }
 
     #[test]

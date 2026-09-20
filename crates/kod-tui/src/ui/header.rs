@@ -188,5 +188,3 @@ mod tests {
         assert_eq!(format_cost(1234.5), "$1234.50");
     }
 }
-
-

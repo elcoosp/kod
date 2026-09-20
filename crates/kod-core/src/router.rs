@@ -1935,8 +1935,7 @@ mod coverage_classifier_edges {
 
     fn router() -> (TempDir, TaskRouter) {
         let tmp = TempDir::new().unwrap();
-        let r = TaskRouter::new(RouterConfig::default(), tmp.path().join("t.redb"))
-            .unwrap();
+        let r = TaskRouter::new(RouterConfig::default(), tmp.path().join("t.redb")).unwrap();
         (tmp, r)
     }
 
@@ -2049,7 +2048,9 @@ mod coverage_classifier_edges {
     async fn panic_keyword_routes_to_debugging() {
         let (_tmp, r) = router();
         assert_eq!(
-            r.classify_task("the program has a panic at startup").await.unwrap(),
+            r.classify_task("the program has a panic at startup")
+                .await
+                .unwrap(),
             TaskType::Debugging,
         );
     }

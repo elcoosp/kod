@@ -170,7 +170,10 @@ mod coverage_agent_panel {
         let area = ratatui::layout::Rect::new(0, 0, w, h);
         let mut buf = Buffer::empty(area);
         AgentPanelWidget::new().render(app, area, &mut buf);
-        buf.content().iter().map(|c| c.symbol().to_string()).collect()
+        buf.content()
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect()
     }
 
     // ---- truncate ------------------------------------------------------
@@ -221,7 +224,10 @@ mod coverage_agent_panel {
     fn panel_says_no_active_agents_on_a_fresh_app() {
         let app = KodApp::new();
         let text = render(&app, 40, 10);
-        assert!(text.contains("No active agents"), "empty state, got: {text}");
+        assert!(
+            text.contains("No active agents"),
+            "empty state, got: {text}"
+        );
         assert!(text.contains("/swarm"), "empty-state hint, got: {text}");
     }
 
@@ -238,10 +244,7 @@ mod coverage_agent_panel {
         );
         let text = render(&app, 60, 20);
         assert!(text.contains("architect"), "agent name, got: {text}");
-        assert!(
-            text.contains("design the schema"),
-            "subtask, got: {text}"
-        );
+        assert!(text.contains("design the schema"), "subtask, got: {text}");
         assert!(text.contains("local/qwen2.5"), "model, got: {text}");
     }
 
@@ -272,10 +275,7 @@ mod coverage_agent_panel {
         app.swarm_agent_failed(&id, "compile error in test.rs");
         let text = render(&app, 80, 20);
         assert!(text.contains("✗"), "failure marker, got: {text}");
-        assert!(
-            text.contains("compile error"),
-            "failure text, got: {text}"
-        );
+        assert!(text.contains("compile error"), "failure text, got: {text}");
     }
 
     #[test]

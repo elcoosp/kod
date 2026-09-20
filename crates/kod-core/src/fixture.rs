@@ -53,8 +53,7 @@ impl RequestSummary {
     pub fn from_request(req: &kod_provider::CompletionRequest) -> Self {
         let model = req.model.model.clone();
         let endpoint = req.model.endpoint.clone();
-        let mut tool_names: Vec<String> =
-            req.tools.iter().map(|t| t.name.clone()).collect();
+        let mut tool_names: Vec<String> = req.tools.iter().map(|t| t.name.clone()).collect();
         tool_names.sort();
         Self {
             // `system` renders to text; its length is the proxy for
@@ -174,8 +173,7 @@ impl Fixture {
     /// Load from `path`.
     pub fn load_from(path: &std::path::Path) -> std::io::Result<Self> {
         let s = std::fs::read_to_string(path)?;
-        Self::from_json(&s)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        Self::from_json(&s).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
     /// The default directory for user fixtures.
@@ -212,10 +210,7 @@ impl Fixture {
 }
 
 /// Diff a specific round between a fixture and a fresh replay.
-pub fn diff_rounds(
-    expected: &RoundFixture,
-    actual: &RoundFixture,
-) -> String {
+pub fn diff_rounds(expected: &RoundFixture, actual: &RoundFixture) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "Round {} request hash: expected {} got {}\n",
@@ -223,18 +218,15 @@ pub fn diff_rounds(
     ));
     out.push_str(&format!(
         "  system_chars:  {} → {}\n",
-        expected.request_summary.system_chars,
-        actual.request_summary.system_chars,
+        expected.request_summary.system_chars, actual.request_summary.system_chars,
     ));
     out.push_str(&format!(
         "  message_count: {} → {}\n",
-        expected.request_summary.message_count,
-        actual.request_summary.message_count,
+        expected.request_summary.message_count, actual.request_summary.message_count,
     ));
     out.push_str(&format!(
         "  model:         {} → {}\n",
-        expected.request_summary.model,
-        actual.request_summary.model,
+        expected.request_summary.model, actual.request_summary.model,
     ));
     if expected.request_summary.tool_names != actual.request_summary.tool_names {
         out.push_str(&format!(
@@ -302,8 +294,7 @@ mod tests {
             trust_level: kod_types::trust::TrustLevel::default(),
         };
         let req = kod_provider::CompletionRequest {
-            system: kod_provider::SystemPrompt::new()
-                .with("hello".to_string(), true),
+            system: kod_provider::SystemPrompt::new().with("hello".to_string(), true),
             messages: vec![kod_types::ChatMessage::text(
                 kod_types::MessageId::new(),
                 kod_types::MessageRole::User,
@@ -431,6 +422,14 @@ mod tests {
         let s = f.to_json();
         let back = Fixture::from_json(&s).unwrap();
         assert_eq!(back.rounds[0].response.tool_calls.len(), 1);
-        assert_eq!(back.rounds[0].response.usage.as_ref().unwrap().prompt_tokens, 10);
+        assert_eq!(
+            back.rounds[0]
+                .response
+                .usage
+                .as_ref()
+                .unwrap()
+                .prompt_tokens,
+            10
+        );
     }
 }

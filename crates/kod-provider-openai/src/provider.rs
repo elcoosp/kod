@@ -436,11 +436,18 @@ impl LlmProvider for OpenAICompatProvider {
         let request = self.request_from_completion(req);
         let (text, calls, usage) = self.collect(request, false).await?;
         if calls.is_empty() {
-            Ok(GenerationResponse::Text { content: text, usage })
+            Ok(GenerationResponse::Text {
+                content: text,
+                usage,
+            })
         } else if text.is_empty() {
             Ok(GenerationResponse::ToolCalls { calls, usage })
         } else {
-            Ok(GenerationResponse::Mixed { content: text, calls, usage })
+            Ok(GenerationResponse::Mixed {
+                content: text,
+                calls,
+                usage,
+            })
         }
     }
 
@@ -801,12 +808,8 @@ mod coverage_openai_provider {
 
     #[test]
     fn with_api_key_keeps_an_existing_v1_suffix() {
-        let p = OpenAICompatProvider::with_api_key(
-            "https://api.openai.com/v1",
-            "gpt-5",
-            "sk-test",
-        )
-        .unwrap();
+        let p = OpenAICompatProvider::with_api_key("https://api.openai.com/v1", "gpt-5", "sk-test")
+            .unwrap();
         assert_eq!(p.base_url(), "https://api.openai.com/v1");
     }
 
@@ -845,12 +848,8 @@ mod coverage_openai_provider {
         // Three back-to-back switches must all succeed and land on
         // the last model. This is the shape of a user cycling
         // models in the TUI.
-        let p = OpenAICompatProvider::with_api_key(
-            "http://localhost:11434",
-            "m1",
-            "not-needed",
-        )
-        .unwrap();
+        let p = OpenAICompatProvider::with_api_key("http://localhost:11434", "m1", "not-needed")
+            .unwrap();
         let p = p.with_model("m2").unwrap();
         let p = p.with_model("m3").unwrap();
         assert_eq!(p.default_model(), "m3");
@@ -880,12 +879,8 @@ mod coverage_openai_provider {
 
     #[test]
     fn with_api_key_defaults_the_timeout_to_300() {
-        let p = OpenAICompatProvider::with_api_key(
-            "http://localhost:11434",
-            "m",
-            "not-needed",
-        )
-        .unwrap();
+        let p = OpenAICompatProvider::with_api_key("http://localhost:11434", "m", "not-needed")
+            .unwrap();
         assert_eq!(p.timeout_secs, 300);
     }
 
@@ -945,12 +940,8 @@ mod coverage_openai_provider {
     fn provider_name_is_stable() {
         // The name is displayed in the TUI's header and used by the
         // registry; changing it is a visible change.
-        let p = OpenAICompatProvider::with_api_key(
-            "http://localhost:11434",
-            "m",
-            "not-needed",
-        )
-        .unwrap();
+        let p = OpenAICompatProvider::with_api_key("http://localhost:11434", "m", "not-needed")
+            .unwrap();
         assert_eq!(p.name(), "openai-compatible");
     }
 }

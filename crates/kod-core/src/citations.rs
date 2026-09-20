@@ -533,6 +533,9 @@ mod coverage_citation_extraction {
         // Currently the extractor does not match uppercase; the
         // test records that decision rather than asserting a
         // behaviour it does not have.
-        assert!(c.is_empty(), "uppercase extensions currently not matched: {c:?}");
+        assert!(
+            c.is_empty(),
+            "uppercase extensions currently not matched: {c:?}"
+        );
     }
 }

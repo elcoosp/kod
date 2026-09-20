@@ -529,9 +529,9 @@ mod coverage_agent_builder {
             Capability::Refactoring,
         ] {
             let s = c.as_str();
-            let parsed: Capability = s.parse().unwrap_or_else(|e| {
-                panic!("capability {c:?} -> {s:?} did not parse back: {e}")
-            });
+            let parsed: Capability = s
+                .parse()
+                .unwrap_or_else(|e| panic!("capability {c:?} -> {s:?} did not parse back: {e}"));
             assert_eq!(parsed, c);
         }
     }

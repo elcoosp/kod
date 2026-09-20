@@ -275,7 +275,12 @@ mod coverage_error_classification {
     #[test]
     fn is_retryable_covers_timeout_and_network_variants() {
         assert!(KodError::ProviderTimeout { timeout_ms: 100 }.is_retryable());
-        assert!(KodError::RateLimited { retry_after_secs: 5 }.is_retryable());
+        assert!(
+            KodError::RateLimited {
+                retry_after_secs: 5
+            }
+            .is_retryable()
+        );
         assert!(KodError::Network("connection refused".into()).is_retryable());
         assert!(KodError::Provider("timed out".into()).is_retryable());
         assert!(KodError::Provider("connection reset".into()).is_retryable());
@@ -333,14 +338,23 @@ mod coverage_error_classification {
         let body = "x".repeat(1000);
         let err = KodError::provider_status(500, &body);
         let msg = err.to_string();
-        assert!(msg.len() < 500, "message not truncated: {} chars", msg.len());
+        assert!(
+            msg.len() < 500,
+            "message not truncated: {} chars",
+            msg.len()
+        );
         assert!(msg.contains("server error 500"));
     }
 
     #[test]
     fn is_recoverable_is_a_strict_subset_of_the_typed_variants() {
         assert!(KodError::ProviderTimeout { timeout_ms: 1 }.is_recoverable());
-        assert!(KodError::RateLimited { retry_after_secs: 1 }.is_recoverable());
+        assert!(
+            KodError::RateLimited {
+                retry_after_secs: 1
+            }
+            .is_recoverable()
+        );
         assert!(KodError::Network("x".into()).is_recoverable());
         assert!(KodError::LockTimeout { path: "p".into() }.is_recoverable());
         // A Provider error whose text happens to look retryable is
@@ -378,8 +392,18 @@ mod coverage_error_classification {
     #[test]
     fn rate_limited_uses_retry_after_or_default() {
         let e = KodError::rate_limited(Some(std::time::Duration::from_secs(7)), 429, "");
-        assert!(matches!(e, KodError::RateLimited { retry_after_secs: 7 }));
+        assert!(matches!(
+            e,
+            KodError::RateLimited {
+                retry_after_secs: 7
+            }
+        ));
         let e = KodError::rate_limited(None, 429, "");
-        assert!(matches!(e, KodError::RateLimited { retry_after_secs: 30 }));
+        assert!(matches!(
+            e,
+            KodError::RateLimited {
+                retry_after_secs: 30
+            }
+        ));
     }
 }

@@ -417,8 +417,7 @@ fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
         // `/private/var/folders/...`. Building the rule from the
         // canonical workspace makes both halves of the same subtree
         // share one spelling.
-        let git_canon = std::fs::canonicalize(wd.join(".git"))
-            .unwrap_or_else(|_| wd.join(".git"));
+        let git_canon = std::fs::canonicalize(wd.join(".git")).unwrap_or_else(|_| wd.join(".git"));
         profile.push_str(&format!(
             "(deny file-write* (subpath \"{git}\"))\n",
             git = git_canon.to_string_lossy(),

@@ -403,7 +403,8 @@ mod coverage_front_matter {
 
     #[test]
     fn multiple_examples_are_captured_in_order() {
-        let body = "<example input=\"first\">one</example>\n<example input=\"second\">two</example>";
+        let body =
+            "<example input=\"first\">one</example>\n<example input=\"second\">two</example>";
         let content = minimal("name: a\ndescription: d", body);
         let skill = SkillParser::new().parse_content(&content, "t.md").unwrap();
         assert_eq!(skill.examples.len(), 2);

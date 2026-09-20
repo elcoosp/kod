@@ -194,8 +194,14 @@ mod coverage_watch_event {
     #[test]
     fn events_with_different_variants_are_not_equal() {
         let p = PathBuf::from("/a/b");
-        assert_ne!(WatchEvent::Created(p.clone()), WatchEvent::Modified(p.clone()));
-        assert_ne!(WatchEvent::Created(p.clone()), WatchEvent::Removed(p.clone()));
+        assert_ne!(
+            WatchEvent::Created(p.clone()),
+            WatchEvent::Modified(p.clone())
+        );
+        assert_ne!(
+            WatchEvent::Created(p.clone()),
+            WatchEvent::Removed(p.clone())
+        );
         assert_ne!(WatchEvent::Modified(p.clone()), WatchEvent::Removed(p));
     }
 

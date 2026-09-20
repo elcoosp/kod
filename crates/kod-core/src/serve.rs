@@ -938,10 +938,7 @@ mod coverage_serve_handlers {
         let v = parse_line(&line);
         assert_eq!(v["id"], "r3");
         assert_eq!(v["type"], "done");
-        assert!(
-            v.get("data").is_none(),
-            "ack must omit `data`, got: {line}"
-        );
+        assert!(v.get("data").is_none(), "ack must omit `data`, got: {line}");
     }
 
     // ---- write_ok -------------------------------------------------------

@@ -333,11 +333,7 @@ mod coverage_search_files_tool {
         // for 500 must be clamped, not honored. Otherwise a single
         // call can drag an entire file into the prompt.
         let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::write(
-            tmp.path().join("a.txt"),
-            "1\n2\n3\nneedle\n5\n6\n7\n",
-        )
-        .unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "1\n2\n3\nneedle\n5\n6\n7\n").unwrap();
         let tool = SearchFilesTool::new();
         let r = tool
             .execute(

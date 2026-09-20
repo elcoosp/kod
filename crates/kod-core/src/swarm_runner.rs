@@ -583,12 +583,9 @@ impl SwarmRunner {
                     .engine
                     .set_transcript_write_globs(&key, Some(st.expected_writes.clone()))
                     .await;
-            // Tier 3.5 — subscribe this agent to the shared
-            // blackboard so its prompt includes what the team knows.
-            let _ = self
-                .engine
-                .set_blackboard_viewer(&key, true)
-                .await;
+                // Tier 3.5 — subscribe this agent to the shared
+                // blackboard so its prompt includes what the team knows.
+                let _ = self.engine.set_blackboard_viewer(&key, true).await;
             }
 
             handles.push(AgentHandle {
@@ -1817,8 +1814,10 @@ impl SwarmRunner {
         for st in subtasks.iter_mut() {
             // Capability: Jev's classification wins over the
             // heuristic when it has an answer.
-            if let Some(label) =
-                self.engine.validate_subtask_capability(&st.description).await
+            if let Some(label) = self
+                .engine
+                .validate_subtask_capability(&st.description)
+                .await
                 && let Ok(c) = label.parse::<kod_swarm::Capability>()
             {
                 st.capability = c;

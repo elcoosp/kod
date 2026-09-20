@@ -506,7 +506,11 @@ mod coverage_mcp_errors {
     #[tokio::test]
     async fn ensure_started_rejects_an_unknown_server() {
         let host = host_with(&[]);
-        let err = host.ensure_started("nope").await.err().expect("ensure_started must fail");
+        let err = host
+            .ensure_started("nope")
+            .await
+            .err()
+            .expect("ensure_started must fail");
         let msg = format!("{err}");
         assert!(msg.contains("unknown"), "got: {msg}");
     }
@@ -514,7 +518,11 @@ mod coverage_mcp_errors {
     #[tokio::test]
     async fn ensure_started_rejects_a_disabled_server() {
         let host = host_with(&[disabled("off")]);
-        let err = host.ensure_started("off").await.err().expect("ensure_started must fail");
+        let err = host
+            .ensure_started("off")
+            .await
+            .err()
+            .expect("ensure_started must fail");
         let msg = format!("{err}");
         assert!(msg.contains("not spawnable"), "got: {msg}");
     }
@@ -522,7 +530,11 @@ mod coverage_mcp_errors {
     #[tokio::test]
     async fn ensure_started_rejects_a_server_with_no_command() {
         let host = host_with(&[commandless("nocmd")]);
-        let err = host.ensure_started("nocmd").await.err().expect("ensure_started must fail");
+        let err = host
+            .ensure_started("nocmd")
+            .await
+            .err()
+            .expect("ensure_started must fail");
         let msg = format!("{err}");
         assert!(msg.contains("not spawnable"), "got: {msg}");
     }
@@ -534,7 +546,11 @@ mod coverage_mcp_errors {
         // as a configuration problem. Pin the variant so a refactor
         // cannot silently change the classification.
         let host = host_with(&[]);
-        let err = host.ensure_started("nope").await.err().expect("ensure_started must fail");
+        let err = host
+            .ensure_started("nope")
+            .await
+            .err()
+            .expect("ensure_started must fail");
         assert!(
             matches!(err, KodError::InvalidState(_)),
             "expected InvalidState, got {err:?}"
@@ -549,11 +565,7 @@ mod coverage_mcp_errors {
 
     #[test]
     fn server_names_excludes_disabled_and_commandless_servers() {
-        let host = host_with(&[
-            spawnable("real"),
-            disabled("off"),
-            commandless("empty"),
-        ]);
+        let host = host_with(&[spawnable("real"), disabled("off"), commandless("empty")]);
         assert_eq!(host.server_names(), vec!["real".to_string()]);
     }
 }

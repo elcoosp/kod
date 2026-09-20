@@ -38,9 +38,7 @@ impl TraceWriter {
     /// Default trace path next to a session log path: same directory,
     /// `turns.jsonl` instead of the session filename.
     pub fn default_for_session(session_path: &Path) -> Option<PathBuf> {
-        session_path
-            .parent()
-            .map(|p| p.join("turns.jsonl"))
+        session_path.parent().map(|p| p.join("turns.jsonl"))
     }
 
     /// Append one trace.
@@ -88,7 +86,16 @@ mod tests {
         let mut b = TurnTraceBuilder::new(id, "session");
         b.begin_round("cloud", "claude");
         b.add_usage(100, 20, None, 0.001);
-        b.add_tool_call("read_file", "abc".into(), serde_json::json!({}), 5, ToolOutcomeKind::Success, 100, None, None);
+        b.add_tool_call(
+            "read_file",
+            "abc".into(),
+            serde_json::json!({}),
+            5,
+            ToolOutcomeKind::Success,
+            100,
+            None,
+            None,
+        );
         b.finish()
     }
 
@@ -140,7 +147,10 @@ mod tests {
     fn default_for_session_uses_sibling_file() {
         let p = std::path::PathBuf::from("/home/u/.kod/sessions/2026.jsonl");
         let default = TraceWriter::default_for_session(&p).unwrap();
-        assert_eq!(default, std::path::PathBuf::from("/home/u/.kod/sessions/turns.jsonl"));
+        assert_eq!(
+            default,
+            std::path::PathBuf::from("/home/u/.kod/sessions/turns.jsonl")
+        );
     }
 
     #[test]

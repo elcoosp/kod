@@ -634,7 +634,10 @@ mod widget_overlays {
         assert!(text.contains("write_file"), "tool name, got: {text}");
         assert!(text.contains("src/main.rs"), "summary, got: {text}");
         assert!(text.contains("+ new line"), "added diff line, got: {text}");
-        assert!(text.contains("- old line"), "removed diff line, got: {text}");
+        assert!(
+            text.contains("- old line"),
+            "removed diff line, got: {text}"
+        );
         assert!(
             text.contains("never (session)"),
             "single-item legend, got: {text}"
@@ -669,10 +672,7 @@ mod widget_overlays {
             text.contains("execute_command"),
             "item 3 listed, got: {text}"
         );
-        assert!(
-            text.contains("deny all"),
-            "batch legend, got: {text}"
-        );
+        assert!(text.contains("deny all"), "batch legend, got: {text}");
     }
 
     #[test]
@@ -715,7 +715,10 @@ mod widget_overlays {
         let big = HelpWidget::centered(area, 200, 200);
         assert_eq!((big.x, big.y, big.width, big.height), (0, 0, 40, 20));
         let small = HelpWidget::centered(area, 10, 6);
-        assert_eq!((small.x, small.y, small.width, small.height), (15, 7, 10, 6));
+        assert_eq!(
+            (small.x, small.y, small.width, small.height),
+            (15, 7, 10, 6)
+        );
     }
 
     // --- QuestionWidget -----------------------------------------------------
@@ -880,7 +883,10 @@ mod header_and_status {
         let app = KodApp::new();
         assert!(!app.network_access_enabled(), "network is off by default");
         let text = render_header(&app, 160);
-        assert!(!text.contains("net:on"), "no net badge by default, got: {text}");
+        assert!(
+            !text.contains("net:on"),
+            "no net badge by default, got: {text}"
+        );
     }
 
     #[test]
@@ -1011,10 +1017,7 @@ mod header_and_status {
             text.contains("thinking") || text.contains("connecting"),
             "phase label, got: {text}"
         );
-        assert!(
-            text.contains("Esc cancels"),
-            "cancel hint, got: {text}"
-        );
+        assert!(text.contains("Esc cancels"), "cancel hint, got: {text}");
     }
 
     #[test]

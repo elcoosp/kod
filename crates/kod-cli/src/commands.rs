@@ -422,9 +422,7 @@ impl Cli {
                         JevAction::Stats { log } => run_jev_stats(log.clone()).await,
                         JevAction::Test => run_jev_test().await,
                         JevAction::Tune => run_jev_tune_show().await,
-                        JevAction::TuneSet { name, value } => {
-                            run_jev_tune_set(name, *value).await
-                        }
+                        JevAction::TuneSet { name, value } => run_jev_tune_set(name, *value).await,
                         JevAction::TuneReset => run_jev_tune_reset().await,
                     }
                 })
@@ -465,9 +463,7 @@ impl Cli {
                         DecisionsAction::Show { state, limit } => {
                             run_decisions_show(state.clone(), *limit).await
                         }
-                        DecisionsAction::Json { state } => {
-                            run_decisions_json(state.clone()).await
-                        }
+                        DecisionsAction::Json { state } => run_decisions_json(state.clone()).await,
                     }
                 })
             }
@@ -479,9 +475,7 @@ impl Cli {
                         TraceAction::List { limit, path } => {
                             run_trace_list(*limit, path.clone()).await
                         }
-                        TraceAction::Show { id, path } => {
-                            run_trace_show(*id, path.clone()).await
-                        }
+                        TraceAction::Show { id, path } => run_trace_show(*id, path.clone()).await,
                         TraceAction::Json { path } => run_trace_json(path.clone()).await,
                         TraceAction::Replay { id, path, strict } => {
                             run_trace_replay(*id, path.clone(), *strict).await
@@ -497,9 +491,12 @@ impl Cli {
                         FixtureAction::Save { name, turns, force } => {
                             run_fixture_save_v2(name, turns.clone(), *force).await
                         }
-                        FixtureAction::Replay { name, strict, first_round_only } => {
-                            let _ = run_fixture_replay(name, *strict, *first_round_only)
-                                .await?;
+                        FixtureAction::Replay {
+                            name,
+                            strict,
+                            first_round_only,
+                        } => {
+                            let _ = run_fixture_replay(name, *strict, *first_round_only).await?;
                             Ok(())
                         }
                         FixtureAction::List => run_fixture_list().await,
@@ -1227,7 +1224,6 @@ pub enum DecisionsAction {
     },
 }
 
-
 /// `kod theme` subcommands.
 #[derive(Subcommand, Debug, Clone)]
 pub enum ThemeAction {
@@ -1721,8 +1717,7 @@ pub async fn run_chat(
 
     // Tier 1.4 — open a turn-trace writer next to the session log.
     if let Some(log_path) = engine.session_log_path()
-        && let Some(trace_path) =
-            kod_core::TraceWriter::default_for_session(&log_path)
+        && let Some(trace_path) = kod_core::TraceWriter::default_for_session(&log_path)
         && let Ok(w) = kod_core::TraceWriter::open(trace_path)
     {
         engine.set_turn_trace_writer(std::sync::Arc::new(w));
@@ -3694,8 +3689,9 @@ pub async fn run_acp(cli_preset: Option<String>) -> Result<()> {
     let db_path = match std::env::var("KOD_TEST_DB") {
         Ok(p) => std::path::PathBuf::from(p),
         Err(_) => {
-            let home = dirs::home_dir()
-                .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
+            let home = dirs::home_dir().ok_or_else(|| {
+                KodError::Config("Could not determine home directory".to_string())
+            })?;
             home.join(".kod").join("data").join("kod.redb")
         }
     };
@@ -6314,9 +6310,8 @@ mod coverage_cli_parsing {
     use super::*;
 
     fn parse_ok(args: &[&str]) -> Cli {
-        Cli::try_parse_from(args).unwrap_or_else(|e| {
-            panic!("expected `{}` to parse, got error: {e}", args.join(" "))
-        })
+        Cli::try_parse_from(args)
+            .unwrap_or_else(|e| panic!("expected `{}` to parse, got error: {e}", args.join(" ")))
     }
 
     fn parse_err(args: &[&str]) {
@@ -6361,13 +6356,18 @@ mod coverage_cli_parsing {
     #[test]
     fn chat_parses_every_documented_flag() {
         let cli = parse_ok(&[
-            "kod", "chat",
-            "--model", "claude-sonnet-4-5",
-            "--system-prompt", "be terse",
+            "kod",
+            "chat",
+            "--model",
+            "claude-sonnet-4-5",
+            "--system-prompt",
+            "be terse",
             "--sandbox",
-            "--preset", "yolo",
+            "--preset",
+            "yolo",
             "--remote",
-            "--socket", "/tmp/kod.sock",
+            "--socket",
+            "/tmp/kod.sock",
         ]);
         match cli.command {
             Some(Command::Chat {
@@ -6408,7 +6408,10 @@ mod coverage_cli_parsing {
     fn skills_with_no_action_parses() {
         assert!(matches!(
             parse_ok(&["kod", "skills"]).command,
-            Some(Command::Skills { action: None, json: false })
+            Some(Command::Skills {
+                action: None,
+                json: false
+            })
         ));
     }
 
@@ -6419,14 +6422,20 @@ mod coverage_cli_parsing {
         // independently of subcommand ordering.
         assert!(matches!(
             parse_ok(&["kod", "skills", "--json"]).command,
-            Some(Command::Skills { action: None, json: true })
+            Some(Command::Skills {
+                action: None,
+                json: true
+            })
         ));
     }
 
     #[test]
     fn skills_list_subcommand_parses() {
         match parse_ok(&["kod", "skills", "list"]).command {
-            Some(Command::Skills { action: Some(SkillsAction::List), json }) => {
+            Some(Command::Skills {
+                action: Some(SkillsAction::List),
+                json,
+            }) => {
                 assert!(!json);
             }
             _ => panic!("expected Skills::List"),
@@ -6436,7 +6445,10 @@ mod coverage_cli_parsing {
     #[test]
     fn skills_new_takes_a_positional_name() {
         match parse_ok(&["kod", "skills", "new", "my-skill"]).command {
-            Some(Command::Skills { action: Some(SkillsAction::New { name }), .. }) => {
+            Some(Command::Skills {
+                action: Some(SkillsAction::New { name }),
+                ..
+            }) => {
                 assert_eq!(name, "my-skill");
             }
             _ => panic!("expected Skills::New"),
@@ -6494,7 +6506,10 @@ mod coverage_cli_parsing {
         }
         assert!(matches!(
             parse_ok(&["kod", "skills", "copy", "a", "b"]).command,
-            Some(Command::Skills { action: Some(SkillsAction::Copy { .. }), .. })
+            Some(Command::Skills {
+                action: Some(SkillsAction::Copy { .. }),
+                ..
+            })
         ));
     }
 
@@ -6652,13 +6667,22 @@ mod coverage_cli_parsing {
     #[test]
     fn prompt_accepts_no_log_remote_and_socket() {
         match parse_ok(&[
-            "kod", "prompt", "hi",
-            "--no-log", "--remote",
-            "--socket", "/tmp/k.sock",
+            "kod",
+            "prompt",
+            "hi",
+            "--no-log",
+            "--remote",
+            "--socket",
+            "/tmp/k.sock",
         ])
         .command
         {
-            Some(Command::Prompt { no_log, remote, socket, .. }) => {
+            Some(Command::Prompt {
+                no_log,
+                remote,
+                socket,
+                ..
+            }) => {
                 assert!(no_log);
                 assert!(remote);
                 assert_eq!(socket.as_deref(), Some(std::path::Path::new("/tmp/k.sock")));
@@ -6680,15 +6704,20 @@ mod coverage_cli_parsing {
     fn tui_parses_no_flags_and_all_flags() {
         assert!(Cli::try_parse_from(["kod", "tui"]).is_ok());
         match parse_ok(&[
-            "kod", "tui",
-            "--model", "x",
+            "kod",
+            "tui",
+            "--model",
+            "x",
             "--no-resume",
             "--sandbox",
-            "--preset", "read-only",
+            "--preset",
+            "read-only",
         ])
         .command
         {
-            Some(Command::Tui { no_resume, sandbox, .. }) => {
+            Some(Command::Tui {
+                no_resume, sandbox, ..
+            }) => {
                 assert!(no_resume);
                 assert!(sandbox);
             }
@@ -6700,7 +6729,10 @@ mod coverage_cli_parsing {
     fn doctor_json_and_fix_are_independent_flags() {
         assert!(matches!(
             parse_ok(&["kod", "doctor"]).command,
-            Some(Command::Doctor { json: false, fix: false })
+            Some(Command::Doctor {
+                json: false,
+                fix: false
+            })
         ));
         assert!(matches!(
             parse_ok(&["kod", "doctor", "--json"]).command,
@@ -6783,7 +6815,10 @@ mod coverage_cli_parsing {
     fn serve_stop_is_a_flag_and_socket_overrides_the_default() {
         assert!(matches!(
             parse_ok(&["kod", "serve"]).command,
-            Some(Command::Serve { stop: false, socket: None })
+            Some(Command::Serve {
+                stop: false,
+                socket: None
+            })
         ));
         match parse_ok(&["kod", "serve", "--stop", "--socket", "/tmp/k.sock"]).command {
             Some(Command::Serve { stop, socket }) => {
@@ -6813,8 +6848,12 @@ mod coverage_cli_parsing {
         // Hidden from `--help` but reachable as `kod __sandbox-exec`.
         // The command after `--` is captured verbatim.
         match parse_ok(&[
-            "kod", "__sandbox-exec", "/tmp/profile.json",
-            "--", "echo", "hi",
+            "kod",
+            "__sandbox-exec",
+            "/tmp/profile.json",
+            "--",
+            "echo",
+            "hi",
         ])
         .command
         {
@@ -6864,9 +6903,13 @@ mod coverage_cli_parsing {
     #[test]
     fn trace_list_accepts_limit_and_path() {
         match parse_ok(&[
-            "kod", "trace", "list",
-            "--limit", "50",
-            "--path", "/tmp/t.jsonl",
+            "kod",
+            "trace",
+            "list",
+            "--limit",
+            "50",
+            "--path",
+            "/tmp/t.jsonl",
         ])
         .command
         {
@@ -6927,8 +6970,12 @@ mod coverage_cli_parsing {
     #[test]
     fn trace_replay_accepts_flags() {
         match parse_ok(&[
-            "kod", "trace", "replay", "42",
-            "--path", "/tmp/t.jsonl",
+            "kod",
+            "trace",
+            "replay",
+            "42",
+            "--path",
+            "/tmp/t.jsonl",
             "--strict",
         ])
         .command
@@ -6981,8 +7028,12 @@ mod coverage_cli_parsing {
     #[test]
     fn fixture_save_accepts_turns_path_and_force() {
         match parse_ok(&[
-            "kod", "fixture", "save", "auth",
-            "--turns", "/tmp/turns.jsonl",
+            "kod",
+            "fixture",
+            "save",
+            "auth",
+            "--turns",
+            "/tmp/turns.jsonl",
             "--force",
         ])
         .command
@@ -6991,10 +7042,7 @@ mod coverage_cli_parsing {
                 action: FixtureAction::Save { name, turns, force },
             }) => {
                 assert_eq!(name, "auth");
-                assert_eq!(
-                    turns,
-                    Some(std::path::PathBuf::from("/tmp/turns.jsonl"))
-                );
+                assert_eq!(turns, Some(std::path::PathBuf::from("/tmp/turns.jsonl")));
                 assert!(force);
             }
             _ => panic!("expected Fixture::Save with flags"),
@@ -7005,11 +7053,12 @@ mod coverage_cli_parsing {
     fn fixture_replay_parses() {
         match parse_ok(&["kod", "fixture", "replay", "auth"]).command {
             Some(Command::Fixture {
-                action: FixtureAction::Replay {
-                    name,
-                    strict,
-                    first_round_only,
-                },
+                action:
+                    FixtureAction::Replay {
+                        name,
+                        strict,
+                        first_round_only,
+                    },
             }) => {
                 assert_eq!(name, "auth");
                 assert!(!strict);
@@ -7031,13 +7080,12 @@ mod coverage_cli_parsing {
 
     #[test]
     fn fixture_replay_first_round_only_flag() {
-        match parse_ok(&[
-            "kod", "fixture", "replay", "auth", "--first-round-only",
-        ])
-        .command
-        {
+        match parse_ok(&["kod", "fixture", "replay", "auth", "--first-round-only"]).command {
             Some(Command::Fixture {
-                action: FixtureAction::Replay { first_round_only, .. },
+                action:
+                    FixtureAction::Replay {
+                        first_round_only, ..
+                    },
             }) => assert!(first_round_only),
             _ => panic!("expected Fixture::Replay with --first-round-only"),
         }
@@ -7155,10 +7203,7 @@ mod coverage_cli_render {
 
     #[test]
     fn render_session_markdown_agent_section_uses_the_id_and_is_unfenced() {
-        let out = render_session_markdown(&[msg(
-            MessageRole::Agent(AgentId::new()),
-            "planning",
-        )]);
+        let out = render_session_markdown(&[msg(MessageRole::Agent(AgentId::new()), "planning")]);
         // Assert on the prefix rather than the full id form so a
         // future change to AgentId's Display does not silently break
         // the assertion here.
@@ -7249,9 +7294,8 @@ mod coverage_cli_subactions {
     use super::*;
 
     fn parse_ok(args: &[&str]) -> Cli {
-        Cli::try_parse_from(args).unwrap_or_else(|e| {
-            panic!("expected `{}` to parse, got error: {e}", args.join(" "))
-        })
+        Cli::try_parse_from(args)
+            .unwrap_or_else(|e| panic!("expected `{}` to parse, got error: {e}", args.join(" ")))
     }
 
     fn parse_err(args: &[&str]) {
@@ -7418,7 +7462,10 @@ mod coverage_cli_subactions {
             _ => panic!("expected Policy::Explain"),
         }
         match parse_ok(&[
-            "kod", "policy", "explain", "execute_command",
+            "kod",
+            "policy",
+            "explain",
+            "execute_command",
             "command=cargo test",
             "env=dev",
         ])
@@ -7440,8 +7487,12 @@ mod coverage_cli_subactions {
         // write `kod policy explain web_fetch url=https://...` and
         // also pass a bare `-x` without clap treating it as a flag.
         match parse_ok(&[
-            "kod", "policy", "explain", "execute_command",
-            "command=ls", "-la",
+            "kod",
+            "policy",
+            "explain",
+            "execute_command",
+            "command=ls",
+            "-la",
         ])
         .command
         {
@@ -7473,7 +7524,12 @@ mod coverage_cli_subactions {
             _ => panic!("expected Memory::Add"),
         }
         match parse_ok(&[
-            "kod", "memory", "add", "remember", "--tags", "preference,rust",
+            "kod",
+            "memory",
+            "add",
+            "remember",
+            "--tags",
+            "preference,rust",
         ])
         .command
         {
@@ -7663,11 +7719,7 @@ mod coverage_cli_subactions {
 
     #[test]
     fn sessions_export_accepts_path_and_format() {
-        match parse_ok(&[
-            "kod", "sessions", "export", "/tmp/s.json", "-f", "json",
-        ])
-        .command
-        {
+        match parse_ok(&["kod", "sessions", "export", "/tmp/s.json", "-f", "json"]).command {
             Some(Command::Sessions {
                 action: SessionsAction::Export { path, format },
             }) => {
@@ -7701,7 +7753,6 @@ mod coverage_cli_subactions {
         parse_err(&["kod", "sessions"]);
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Tier 3.4 / P0.1 — CLI mirrors for TUI commands
@@ -7836,10 +7887,7 @@ pub async fn run_jev_test() -> Result<()> {
         .ok_or_else(|| {
             KodError::Config("Jev is disabled in config; enable [jev] first".to_string())
         })?;
-    let state = kod_core::jev::build_state(
-        "The sky is blue on a clear day.",
-        &[],
-    );
+    let state = kod_core::jev::build_state("The sky is blue on a clear day.", &[]);
     let started = std::time::Instant::now();
     match client
         .evaluate_yes_no(
@@ -7850,7 +7898,10 @@ pub async fn run_jev_test() -> Result<()> {
     {
         Ok(d) => {
             let ms = started.elapsed().as_millis();
-            println!("✓ Jev responded in {ms}ms: value={} confidence={:.2}", d.value, d.confidence);
+            println!(
+                "✓ Jev responded in {ms}ms: value={} confidence={:.2}",
+                d.value, d.confidence
+            );
             Ok(())
         }
         Err(e) => {
@@ -7922,9 +7973,7 @@ pub async fn run_budget_show(log: Option<std::path::PathBuf>) -> Result<()> {
         } = e
         {
             total_cost += *cost_usd;
-            let slot = per_endpoint
-                .entry(endpoint.clone())
-                .or_insert((0, 0, 0.0));
+            let slot = per_endpoint.entry(endpoint.clone()).or_insert((0, 0, 0.0));
             slot.0 += prompt_tokens;
             slot.1 += completion_tokens;
             slot.2 += cost_usd;
@@ -7954,10 +8003,19 @@ pub async fn run_limits_show() -> Result<()> {
     let cfg = KodConfig::load_default()?;
     let l = &cfg.limits;
     println!("Limits");
-    println!("  max_cost_usd_per_session:   {}", l.max_cost_usd_per_session);
+    println!(
+        "  max_cost_usd_per_session:   {}",
+        l.max_cost_usd_per_session
+    );
     println!("  max_cost_usd_per_turn:      {}", l.max_cost_usd_per_turn);
-    println!("  max_input_tokens_per_turn:  {}", l.max_input_tokens_per_turn);
-    println!("  max_output_tokens_per_turn: {}", l.max_output_tokens_per_turn);
+    println!(
+        "  max_input_tokens_per_turn:  {}",
+        l.max_input_tokens_per_turn
+    );
+    println!(
+        "  max_output_tokens_per_turn: {}",
+        l.max_output_tokens_per_turn
+    );
     println!("  on_exhausted:               {:?}", l.on_exhausted);
     println!("  soft_warn_at:               {}", l.soft_warn_at);
     if !l.tools.is_empty() {
@@ -7978,9 +8036,8 @@ pub async fn run_limits_show() -> Result<()> {
 pub async fn run_plan_show(state: Option<std::path::PathBuf>) -> Result<()> {
     let path = match state {
         Some(p) => p,
-        None => kod_core::StateStore::default_path().ok_or_else(|| {
-            KodError::Config("no home directory for state.json".to_string())
-        })?,
+        None => kod_core::StateStore::default_path()
+            .ok_or_else(|| KodError::Config("no home directory for state.json".to_string()))?,
     };
     let store = kod_core::StateStore::open(path.clone());
     let loaded = store.load();
@@ -8009,29 +8066,24 @@ pub async fn run_plan_show(state: Option<std::path::PathBuf>) -> Result<()> {
 pub async fn run_plan_json(state: Option<std::path::PathBuf>) -> Result<()> {
     let path = match state {
         Some(p) => p,
-        None => kod_core::StateStore::default_path().ok_or_else(|| {
-            KodError::Config("no home directory for state.json".to_string())
-        })?,
+        None => kod_core::StateStore::default_path()
+            .ok_or_else(|| KodError::Config("no home directory for state.json".to_string()))?,
     };
     let store = kod_core::StateStore::open(path);
     let loaded = store.load();
     let plan = loaded.plans.get("session");
-    let s = serde_json::to_string_pretty(&plan)
-        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    let s =
+        serde_json::to_string_pretty(&plan).map_err(|e| KodError::Serialization(e.to_string()))?;
     println!("{s}");
     Ok(())
 }
 
 /// `kod decisions show` — decisions from state.json.
-pub async fn run_decisions_show(
-    state: Option<std::path::PathBuf>,
-    limit: usize,
-) -> Result<()> {
+pub async fn run_decisions_show(state: Option<std::path::PathBuf>, limit: usize) -> Result<()> {
     let path = match state {
         Some(p) => p,
-        None => kod_core::StateStore::default_path().ok_or_else(|| {
-            KodError::Config("no home directory for state.json".to_string())
-        })?,
+        None => kod_core::StateStore::default_path()
+            .ok_or_else(|| KodError::Config("no home directory for state.json".to_string()))?,
     };
     let store = kod_core::StateStore::open(path.clone());
     let loaded = store.load();
@@ -8058,15 +8110,14 @@ pub async fn run_decisions_show(
 pub async fn run_decisions_json(state: Option<std::path::PathBuf>) -> Result<()> {
     let path = match state {
         Some(p) => p,
-        None => kod_core::StateStore::default_path().ok_or_else(|| {
-            KodError::Config("no home directory for state.json".to_string())
-        })?,
+        None => kod_core::StateStore::default_path()
+            .ok_or_else(|| KodError::Config("no home directory for state.json".to_string()))?,
     };
     let store = kod_core::StateStore::open(path);
     let loaded = store.load();
     let log = loaded.decision_logs.get("session");
-    let s = serde_json::to_string_pretty(&log)
-        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    let s =
+        serde_json::to_string_pretty(&log).map_err(|e| KodError::Serialization(e.to_string()))?;
     println!("{s}");
     Ok(())
 }
@@ -8081,9 +8132,7 @@ fn default_trace_path() -> Option<std::path::PathBuf> {
 }
 
 /// Resolve the path argument, falling back to the default, or error.
-fn resolve_trace_path(
-    arg: Option<std::path::PathBuf>,
-) -> Result<std::path::PathBuf> {
+fn resolve_trace_path(arg: Option<std::path::PathBuf>) -> Result<std::path::PathBuf> {
     match arg {
         Some(p) => Ok(p),
         None => default_trace_path().ok_or_else(|| {
@@ -8093,10 +8142,7 @@ fn resolve_trace_path(
 }
 
 /// `kod trace list` — a compact table of recent turns.
-pub async fn run_trace_list(
-    limit: usize,
-    path: Option<std::path::PathBuf>,
-) -> Result<()> {
+pub async fn run_trace_list(limit: usize, path: Option<std::path::PathBuf>) -> Result<()> {
     let path = resolve_trace_path(path)?;
     if !path.exists() {
         eprintln!("no trace file at {}", path.display());
@@ -8109,8 +8155,10 @@ pub async fn run_trace_list(
         return Ok(());
     }
     let cap = limit.min(200).min(traces.len());
-    println!("{:<6} {:<14} {:>9} {:>9} {:>10} {:>7}",
-        "id", "holder", "duration", "cost", "tokens", "tools");
+    println!(
+        "{:<6} {:<14} {:>9} {:>9} {:>10} {:>7}",
+        "id", "holder", "duration", "cost", "tokens", "tools"
+    );
     // Newest first.
     for t in traces.iter().rev().take(cap) {
         let dur = format!("{:.2}s", t.duration_ms() as f64 / 1000.0);
@@ -8134,10 +8182,7 @@ pub async fn run_trace_list(
 }
 
 /// `kod trace show <id>` — one turn's full tree.
-pub async fn run_trace_show(
-    id: u64,
-    path: Option<std::path::PathBuf>,
-) -> Result<()> {
+pub async fn run_trace_show(id: u64, path: Option<std::path::PathBuf>) -> Result<()> {
     let path = resolve_trace_path(path)?;
     let traces = kod_core::read_traces(&path)?;
     let Some(t) = traces.iter().find(|t| t.id == id) else {
@@ -8248,8 +8293,7 @@ pub async fn run_trace_replay(
 
     // Drive a fresh engine through the same prompt, capture the
     // request the engine actually sent, and compare.
-    let (captured, engine_error) =
-        drive_prompt_through_fresh_engine(&t.user_prompt).await;
+    let (captured, engine_error) = drive_prompt_through_fresh_engine(&t.user_prompt).await;
     if let Some(e) = engine_error {
         eprintln!("engine error during replay: {e}");
         if strict {
@@ -8264,10 +8308,7 @@ pub async fn run_trace_replay(
     };
     let got = kod_core::RequestSummary::from_request(&captured_first);
     if want.hash() == got.hash() {
-        println!(
-            "✓ turn {id} replay matches (hash {})",
-            &want.hash()[..8],
-        );
+        println!("✓ turn {id} replay matches (hash {})", &want.hash()[..8],);
         return Ok(());
     }
     eprintln!(
@@ -8275,11 +8316,19 @@ pub async fn run_trace_replay(
         &want.hash()[..8],
         &got.hash()[..8],
     );
-    eprintln!("  system_chars:  {} → {}", want.system_chars, got.system_chars);
-    eprintln!("  message_count: {} → {}", want.message_count, got.message_count);
+    eprintln!(
+        "  system_chars:  {} → {}",
+        want.system_chars, got.system_chars
+    );
+    eprintln!(
+        "  message_count: {} → {}",
+        want.message_count, got.message_count
+    );
     eprintln!("  model:         {} → {}", want.model, got.model);
     if strict {
-        return Err(KodError::InvalidState(format!("replay diverged on turn {id}")));
+        return Err(KodError::InvalidState(format!(
+            "replay diverged on turn {id}"
+        )));
     }
     Ok(())
 }
@@ -8289,10 +8338,7 @@ pub async fn run_trace_replay(
 /// engine to build the request, not to answer it.
 async fn drive_prompt_through_fresh_engine(
     prompt: &str,
-) -> (
-    Vec<kod_provider::CompletionRequest>,
-    Option<String>,
-) {
+) -> (Vec<kod_provider::CompletionRequest>, Option<String>) {
     use kod_provider::replay::{ReplayProvider, ReplayRound};
 
     // A provider that answers with a single empty text round. The
@@ -8390,19 +8436,13 @@ fn truncate_field(s: &str, max: usize) -> String {
 /// Replay a saved fixture against the current engine, printing any
 /// divergence in the request shape (Tier 1.5). Returns the number of
 /// divergent rounds; zero means a clean replay.
-pub async fn run_fixture_replay(
-    name: &str,
-    strict: bool,
-    first_round_only: bool,
-) -> Result<i32> {
+pub async fn run_fixture_replay(name: &str, strict: bool, first_round_only: bool) -> Result<i32> {
     use kod_provider::replay::{ReplayProvider, ReplayRound, ReplayToolCall};
 
-    let path = kod_core::Fixture::default_path(name).ok_or_else(|| {
-        KodError::Config("could not determine fixtures directory".to_string())
-    })?;
-    let fixture = kod_core::Fixture::load_from(&path).map_err(|e| {
-        KodError::Config(format!("could not load fixture {}: {e}", path.display()))
-    })?;
+    let path = kod_core::Fixture::default_path(name)
+        .ok_or_else(|| KodError::Config("could not determine fixtures directory".to_string()))?;
+    let fixture = kod_core::Fixture::load_from(&path)
+        .map_err(|e| KodError::Config(format!("could not load fixture {}: {e}", path.display())))?;
     eprintln!(
         "Replaying fixture {} ({} rounds, created at {})",
         fixture.name,
@@ -8536,9 +8576,9 @@ pub async fn run_fixture_replay(
                         text: String::new(),
                         tool_calls: Vec::new(),
                         usage: None,
-                    
-                    tool_results: Vec::new(),
-                },
+
+                        tool_results: Vec::new(),
+                    },
                     at_ms: 0,
                 },
             );
@@ -8564,10 +8604,7 @@ pub async fn run_fixture_replay(
     }
 
     if divergent == 0 {
-        eprintln!(
-            "✓ replay clean: {} round(s) matched",
-            cmp_len,
-        );
+        eprintln!("✓ replay clean: {} round(s) matched", cmp_len,);
         Ok(0)
     } else {
         eprintln!("✗ replay diverged on {} round(s)", divergent);
@@ -8600,9 +8637,8 @@ pub async fn run_fixture_save_v2(
             turns_path.display(),
         )));
     }
-    let dest = kod_core::Fixture::default_path(name).ok_or_else(|| {
-        KodError::Config("could not determine fixtures directory".to_string())
-    })?;
+    let dest = kod_core::Fixture::default_path(name)
+        .ok_or_else(|| KodError::Config("could not determine fixtures directory".to_string()))?;
     if dest.exists() && !force {
         return Err(KodError::Config(format!(
             "fixture {} already exists; pass --force to overwrite",
@@ -8660,9 +8696,8 @@ pub async fn run_fixture_list() -> Result<()> {
 
 /// Save the current session's turns as a fixture.
 pub async fn run_fixture_save(name: &str, turns_path: &std::path::Path) -> Result<()> {
-    let traces = kod_core::read_traces(turns_path).map_err(|e| {
-        KodError::Config(format!("could not read turn traces: {e}"))
-    })?;
+    let traces = kod_core::read_traces(turns_path)
+        .map_err(|e| KodError::Config(format!("could not read turn traces: {e}")))?;
     if traces.is_empty() {
         return Err(KodError::Config(
             "no turn traces recorded; set KOD_SESSION_LOG and run a session first".to_string(),
@@ -8717,15 +8752,17 @@ pub async fn run_fixture_save(name: &str, turns_path: &std::path::Path) -> Resul
                 tool_calls,
                 usage: None,
                 tool_results,
-                
             },
             at_ms: t.ended_at_ms,
         });
     }
-    let path = kod_core::Fixture::default_path(name).ok_or_else(|| {
-        KodError::Config("could not determine fixtures directory".to_string())
-    })?;
+    let path = kod_core::Fixture::default_path(name)
+        .ok_or_else(|| KodError::Config("could not determine fixtures directory".to_string()))?;
     fixture.save_to(&path).map_err(KodError::Io)?;
-    eprintln!("Wrote fixture {} ({} rounds)", path.display(), fixture.rounds.len());
+    eprintln!(
+        "Wrote fixture {} ({} rounds)",
+        path.display(),
+        fixture.rounds.len()
+    );
     Ok(())
 }

@@ -140,11 +140,7 @@ mod coverage_profile_fields {
                 "profile {:?} with empty description",
                 p.name,
             );
-            assert!(
-                !p.model.is_empty(),
-                "profile {:?} with empty model",
-                p.name,
-            );
+            assert!(!p.model.is_empty(), "profile {:?} with empty model", p.name,);
             assert!(
                 !p.base_url.is_empty(),
                 "profile {:?} with empty base_url",
@@ -174,11 +170,7 @@ mod coverage_profile_fields {
         // context window — a max_tokens above the window is
         // nonsense the provider silently clamps.
         for p in PRESETS {
-            assert!(
-                p.max_tokens > 0,
-                "profile {:?} has zero max_tokens",
-                p.name,
-            );
+            assert!(p.max_tokens > 0, "profile {:?} has zero max_tokens", p.name,);
             assert!(
                 p.max_tokens <= p.context_window,
                 "profile {:?} max_tokens {} exceeds context_window {}",

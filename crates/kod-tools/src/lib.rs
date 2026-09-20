@@ -39,11 +39,11 @@ pub mod context;
 pub mod git;
 pub mod patch;
 pub mod path_lock;
+pub mod plan;
 pub mod registry;
 pub mod sandbox;
 pub mod search;
 pub mod todo;
-pub mod plan;
 pub mod tools;
 pub mod web;
 pub use ask::{AskUserTool, QUESTION_MARKER, QuestionRequest, parse_question, question_marker};
@@ -58,8 +58,8 @@ pub use tools::{
 pub use web::WebFetchTool;
 
 pub use context::ToolContext;
-pub use plan::PlanTool;
 pub use path_lock::{LockError, PathLockGuard, PathLockTable};
+pub use plan::PlanTool;
 pub use registry::ToolRegistry;
 
 // Re-export tool trait and result for convenience
