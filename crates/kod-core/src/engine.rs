@@ -966,6 +966,12 @@ struct RoundContext<'a> {
     /// Turn trace builder (Tier 1.4). `None` when no trace writer is
     /// installed — every trace call is a no-op in that case.
     trace: Option<&'a std::sync::Mutex<crate::trace::TurnTraceBuilder>>,
+    /// Next endpoint in the chain after this one (P5.6). The
+    /// streaming loop uses it for mid-stream switching: when Jev
+    /// flags the reply off-track, `stream_round` swaps to this
+    /// endpoint's stream in place. `None` for the collected path,
+    /// the goal loop, and the last endpoint in a chain.
+    fallback: Option<&'a ModelRef>,
 }
 
 /// Outcome of one tool-execution round: results for the response plus a
@@ -5979,6 +5985,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                         options: &attempt_options,
                         holder: key,
                         trace: None,
+                        fallback: None,
                     };
                     let result = self
                         .run_collected_loop(
@@ -6412,6 +6419,11 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                 };
                 let mut attempt_pending = pending.clone();
                 let mut attempt_messages = initial_messages.clone();
+                // P5.6 — the next endpoint in the chain, if any, is
+                // the mid-stream switch target for `stream_round`.
+                // `None` on the last chain entry, which preserves the
+                // pre-P5.6 behaviour there.
+                let fallback_ref = chain.get(i + 1);
                 let round = RoundContext {
                     system_text: &system_text,
                     model_ref,
@@ -6419,6 +6431,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                     options: &options,
                     holder: key,
                     trace: trace_ref,
+                    fallback: fallback_ref,
                 };
                 match self
                     .run_streaming_loop(
@@ -6817,6 +6830,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                         options: &options,
                         holder: key,
                         trace: None,
+                        fallback: None,
                     };
                     match self
                         .run_streaming_loop(
@@ -7122,6 +7136,10 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                 options: round.options,
                 holder: round.holder,
                 trace: None,
+                // P5.6 — carry the outer round's fallback through to
+                // the inner `stream_round` call so mid-stream
+                // switching has a target.
+                fallback: round.fallback,
             };
             let (text, calls, usage, off_track) = self
                 .stream_round(
@@ -7134,6 +7152,11 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                     chunk_tx,
                     round_for_this.holder,
                     round_for_this.trace,
+                    // P5.6 — the next chain endpoint for mid-stream
+                    // switching. `None` when this is the last entry,
+                    // which preserves the pre-P5.6 behaviour
+                    // (retry_suggested -> outer chain loop).
+                    round_for_this.fallback,
                 )
                 .await?;
             // P5.6 — on the very first round, an off-track verdict
@@ -7245,6 +7268,55 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         Ok((final_text, tool_calls, tool_results, last_usage, false))
     }
 
+    /// Open a streaming completion against a fallback endpoint for
+    /// the P5.6 mid-stream switch. Returns the provider, its
+    /// `ModelRef`, and the boxed stream so `stream_round` can swap
+    /// the stream in place without breaking the round.
+    async fn fallback_stream_for_off_track(
+        &self,
+        system_text: &str,
+        messages: &[kod_types::ChatMessage],
+        definitions: &[ToolDefinition],
+        options: &GenerationOptions,
+        fallback: &ModelRef,
+    ) -> Option<(
+        Arc<dyn LlmProvider>,
+        ModelRef,
+        futures::stream::BoxStream<'static, Result<kod_provider::StreamChunk>>,
+    )> {
+        let provider = self
+            .resolve_provider_for_model_ref(fallback)
+            .await
+            .ok()?;
+        let req = self.build_grounded_request(
+            "",
+            system_text,
+            messages.to_vec(),
+            definitions,
+            options,
+            fallback,
+        );
+        // Box the stream so it can be returned across the await
+        // boundary. The request must be owned by the stream's
+        // closure because `stream_completion` borrows it.
+        let provider_clone = provider.clone();
+        let req_owned = req.clone();
+        // Same trick as the primary stream: `async_stream` owns its
+        // captures, so the boxed stream is `'static`.
+        let stream = Box::pin(async_stream::stream! {
+            let inner = provider_clone.stream_completion(&req_owned);
+            let mut inner = inner;
+            use futures::StreamExt;
+            while let Some(item) = inner.next().await {
+                yield item;
+            }
+        }) as futures::stream::BoxStream<
+            'static,
+            Result<kod_provider::StreamChunk>,
+        >;
+        Some((provider, fallback.clone(), stream))
+    }
+
     /// One streaming round: forward text live, assemble tool calls from
     /// Round outcome: text, tool calls, usage, and — new for P5.6 —
     /// a `retry_suggested` flag. `true` means Jev judged the round
@@ -7262,6 +7334,7 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
         holder: &str,
         round_trace: Option<&std::sync::Mutex<crate::trace::TurnTraceBuilder>>,
+        fallback: Option<&ModelRef>,
     ) -> Result<(
         String,
         Vec<ToolCall>,
@@ -7292,7 +7365,27 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
             options,
             model_ref,
         );
-        let mut stream = provider.stream_completion(&req);
+        // P5.6 — wrap the concrete stream in an `async_stream` that
+        // owns its provider and request. `stream_completion` borrows
+        // both, so its return type carries a lifetime; the wrapper
+        // collects everything into a `'static` box we can swap
+        // mid-round. The cost is one clone of the provider `Arc` and
+        // the request per round — negligible next to the model call.
+        let mut stream: futures::stream::BoxStream<
+            'static,
+            Result<kod_provider::StreamChunk>,
+        > = {
+            let provider_owned = provider.clone();
+            let req_owned = req.clone();
+            Box::pin(async_stream::stream! {
+                let inner = provider_owned.stream_completion(&req_owned);
+                let mut inner = inner;
+                use futures::StreamExt;
+                while let Some(item) = inner.next().await {
+                    yield item;
+                }
+            })
+        };
         let mut text = String::new();
         let mut partials: BTreeMap<usize, Partial> = BTreeMap::new();
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
@@ -7315,6 +7408,34 @@ fn parse_plan_steps(text: &str) -> Option<Vec<String>> {
                         match self.should_early_terminate(holder, &text).await {
                             EarlyTermination::Complete => break,
                             EarlyTermination::OffTrack => {
+                                // P5.6 — try a mid-stream switch to
+                                // the fallback endpoint. If one is
+                                // available, keep the accumulated
+                                // text and continue reading from the
+                                // new stream; the consumer sees one
+                                // uninterrupted reply.
+                                if let Some(fb) = fallback
+                                    && let Some((_prov, _m, new_stream)) = self
+                                        .fallback_stream_for_off_track(
+                                            system_text,
+                                            messages,
+                                            definitions,
+                                            options,
+                                            fb,
+                                        )
+                                        .await
+                                {
+                                    stream = new_stream;
+                                    // Reset the counter so the new
+                                    // stream gets a fresh window
+                                    // before the next check.
+                                    chunk_count = 0;
+                                    continue;
+                                }
+                                // No fallback available: signal the
+                                // outer chain loop to retry against
+                                // the next endpoint. Pre-P5.6
+                                // behaviour.
                                 retry_suggested = true;
                                 break;
                             }
