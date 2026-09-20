@@ -478,6 +478,9 @@ pub struct KodApp {
     palette: Option<CommandPaletteState>,
     /// Approval-edit modal (Tier 2.3). `None` when not editing.
     pending_edit: Option<PendingEdit>,
+    /// Partial-hunk approval mode (Tier 2.3). `None` when not
+    /// selecting hunks.
+    pending_hunk_selection: Option<PendingHunkSelection>,
     input_mode: InputMode,
     input: String,
     cursor_position: usize,
@@ -689,6 +692,97 @@ pub struct PendingEdit {
     pub buffer: String,
 }
 
+/// Tier 2.3 — an in-progress partial-hunk approval. The user has
+/// pressed `h` in the approval dialog for a `patch_file` call; the
+/// dialog now shows each hunk as a toggle. Enter commits a filtered
+/// patch and sends `ApproveWith`.
+#[derive(Debug, Clone)]
+pub struct PendingHunkSelection {
+    /// Approval id whose patch is being edited.
+    pub approval_id: u64,
+    /// The call's arguments, with `patch` still the original.
+    pub original_arguments: serde_json::Value,
+    /// Everything in the patch before the first `@@` header.
+    pub header: String,
+    /// The hunks, each starting at `@@`.
+    pub hunks: Vec<String>,
+    /// One flag per hunk.
+    pub selected: Vec<bool>,
+    /// Index of the highlighted hunk.
+    pub cursor: usize,
+}
+
+impl PendingHunkSelection {
+    /// The currently highlighted index, clamped to the hunk range.
+    pub fn current(&self) -> Option<usize> {
+        if self.hunks.is_empty() {
+            None
+        } else {
+            Some(self.cursor.min(self.hunks.len() - 1))
+        }
+    }
+
+    /// Toggle the current hunk's selection.
+    pub fn toggle_current(&mut self) {
+        if let Some(i) = self.current() {
+            self.selected[i] = !self.selected[i];
+        }
+    }
+
+    pub fn advance(&mut self) {
+        if !self.hunks.is_empty() {
+            self.cursor = (self.cursor + 1) % self.hunks.len();
+        }
+    }
+
+    pub fn retreat(&mut self) {
+        if !self.hunks.is_empty() {
+            self.cursor = (self.cursor + self.hunks.len() - 1) % self.hunks.len();
+        }
+    }
+
+    /// Build the filtered patch string from the selected hunks.
+    pub fn build_patch(&self) -> String {
+        let mut out = self.header.clone();
+        for (i, h) in self.hunks.iter().enumerate() {
+            if self.selected.get(i).copied().unwrap_or(false) {
+                out.push_str(h);
+            }
+        }
+        out
+    }
+
+    /// Number of selected hunks.
+    pub fn selected_count(&self) -> usize {
+        self.selected.iter().filter(|b| **b).count()
+    }
+}
+
+/// Split a unified diff into `(header, hunks)`. A hunk begins at a
+/// line starting with `@@`; everything before the first `@@` is the
+/// header. An empty diff yields `("", [])`.
+pub fn split_hunks(diff: &str) -> (String, Vec<String>) {
+    let mut header = String::new();
+    let mut hunks: Vec<String> = Vec::new();
+    let mut current: Option<String> = None;
+    for line in diff.split_inclusive('\n') {
+        if line.starts_with("@@") {
+            if let Some(h) = current.take() {
+                hunks.push(h);
+            }
+            current = Some(line.to_string());
+        } else if let Some(h) = current.as_mut() {
+            h.push_str(line);
+        } else {
+            header.push_str(line);
+        }
+    }
+    if let Some(h) = current {
+        hunks.push(h);
+    }
+    (header, hunks)
+}
+
 /// An approval request currently waiting for a yes/no answer in the
 /// TUI. The `id` matches the engine's request id; the decision is
 /// sent back via `KodEngine::respond_to_approval`.
@@ -764,6 +858,7 @@ impl KodApp {
             mode: AppMode::Normal,
             palette: None,
             pending_edit: None,
+            pending_hunk_selection: None,
             input_mode: InputMode::Normal,
             input: String::new(),
             cursor_position: 0,
@@ -844,6 +939,99 @@ impl KodApp {
     }
 
     // --- Command palette (Tier UX) --------------------------------------
+
+    // --- Partial-hunk approval (Tier 2.3) -------------------------------
+
+    pub fn is_selecting_hunks(&self) -> bool {
+        self.pending_hunk_selection.is_some()
+    }
+
+    pub fn hunk_selection(&self) -> Option<&PendingHunkSelection> {
+        self.pending_hunk_selection.as_ref()
+    }
+
+    /// Begin hunk selection for the current approval item. No-op when
+    /// there is no current item, or the item is not a `patch_file`
+    /// call with a non-empty `patch` argument.
+    pub fn begin_hunk_selection(&mut self) -> bool {
+        let Some(batch) = self.pending_batch.as_ref() else {
+            return false;
+        };
+        let Some(item) = batch.current_item() else {
+            return false;
+        };
+        if item.tool_name != "patch_file" {
+            return false;
+        }
+        let Some(patch) = item.arguments.get("patch").and_then(|v| v.as_str()) else {
+            return false;
+        };
+        let (header, hunks) = split_hunks(patch);
+        if hunks.is_empty() {
+            return false;
+        }
+        let selected = vec![true; hunks.len()];
+        self.pending_hunk_selection = Some(PendingHunkSelection {
+            approval_id: item.id,
+            original_arguments: item.arguments.clone(),
+            header,
+            hunks,
+            selected,
+            cursor: 0,
+        });
+        true
+    }
+
+    pub fn cancel_hunk_selection(&mut self) {
+        self.pending_hunk_selection = None;
+    }
+
+    pub fn hunk_toggle(&mut self) {
+        if let Some(h) = self.pending_hunk_selection.as_mut() {
+            h.toggle_current();
+        }
+    }
+
+    pub fn hunk_next(&mut self) {
+        if let Some(h) = self.pending_hunk_selection.as_mut() {
+            h.advance();
+        }
+    }
+
+    pub fn hunk_prev(&mut self) {
+        if let Some(h) = self.pending_hunk_selection.as_mut() {
+            h.retreat();
+        }
+    }
+
+    /// Finish hunk selection: apply the filtered patch to the item's
+    /// `arguments.patch`, and return `(id, arguments)` for the caller
+    /// to send as an `ApproveWith`. `None` when the selection was
+    /// cancelled or the state was inconsistent.
+    pub fn hunk_commit(&mut self) -> Option<(u64, serde_json::Value)> {
+        let sel = self.pending_hunk_selection.take()?;
+        if sel.selected_count() == 0 {
+            // Nothing to apply — refuse. The caller sees None and
+            // keeps the dialog up.
+            self.pending_hunk_selection = Some(sel);
+            return None;
+        }
+        let filtered = sel.build_patch();
+        let mut args = sel.original_arguments.clone();
+        if let Some(obj) = args.as_object_mut() {
+            obj.insert(
+                "patch".to_string(),
+                serde_json::Value::String(filtered),
+            );
+        }
+        // Apply to the pending item so the dialog reflects the change.
+        if let Some(batch) = self.pending_batch.as_mut()
+            && let Some(item) = batch.items.iter_mut().find(|i| i.id == sel.approval_id)
+        {
+            item.arguments = args.clone();
+        }
+        Some((sel.approval_id, args))
+    }
 
     // --- Approval edit modal (Tier 2.3) --------------------------------
 
@@ -5620,5 +5808,132 @@ mod coverage_command_palette {
         assert!(app.palette_selected() >= 2);
         app.palette_push_char('x');
         assert_eq!(app.palette_selected(), 0);
+    }
+}
+
+
+#[cfg(test)]
+mod coverage_split_hunks {
+    //! `split_hunks` is what backs partial-hunk approval. A
+    //! regression either loses a hunk (silent data loss in the
+    //! approved patch) or misattributes the header. Both are
+    //! worth pinning.
+    use super::*;
+
+    #[test]
+    fn empty_diff_yields_nothing() {
+        let (h, hunks) = split_hunks("");
+        assert!(h.is_empty());
+        assert!(hunks.is_empty());
+    }
+
+    #[test]
+    fn header_only_diff_has_no_hunks() {
+        let (h, hunks) = split_hunks("--- a/x\n+++ b/x\n");
+        assert_eq!(h, "--- a/x\n+++ b/x\n");
+        assert!(hunks.is_empty());
+    }
+
+    #[test]
+    fn single_hunk_splits_header_from_body() {
+        let diff = "--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n-old\n+new\n";
+        let (h, hunks) = split_hunks(diff);
+        assert_eq!(h, "--- a/x\n+++ b/x\n");
+        assert_eq!(hunks.len(), 1);
+        assert!(hunks[0].starts_with("@@"));
+        assert!(hunks[0].contains("-old"));
+        assert!(hunks[0].contains("+new"));
+    }
+
+    #[test]
+    fn multiple_hunks_are_ordered() {
+        let diff = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+A\n@@ -5 +5 @@\n-b\n+B\n";
+        let (_, hunks) = split_hunks(diff);
+        assert_eq!(hunks.len(), 2);
+        assert!(hunks[0].contains("+A"));
+        assert!(hunks[1].contains("+B"));
+    }
+
+    #[test]
+    fn build_patch_includes_only_selected_hunks() {
+        let diff = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+A\n@@ -5 +5 @@\n-b\n+B\n";
+        let (header, hunks) = split_hunks(diff);
+        let mut sel = PendingHunkSelection {
+            approval_id: 1,
+            original_arguments: serde_json::json!({}),
+            header,
+            hunks,
+            selected: vec![true, false],
+            cursor: 0,
+        };
+        let p = sel.build_patch();
+        assert!(p.contains("+A"));
+        assert!(!p.contains("+B"));
+        sel.selected[0] = false;
+        sel.selected[1] = true;
+        let p2 = sel.build_patch();
+        assert!(!p2.contains("+A"));
+        assert!(p2.contains("+B"));
+    }
+
+    #[test]
+    fn current_clamps_to_hunk_range() {
+        let mut sel = PendingHunkSelection {
+            approval_id: 1,
+            original_arguments: serde_json::json!({}),
+            header: String::new(),
+            hunks: vec!["@@ a".into(), "@@ b".into()],
+            selected: vec![true, true],
+            cursor: 99,
+        };
+        assert_eq!(sel.current(), Some(1));
+        sel.cursor = 0;
+        assert_eq!(sel.current(), Some(0));
+    }
+
+    #[test]
+    fn advance_wraps() {
+        let mut sel = PendingHunkSelection {
+            approval_id: 1,
+            original_arguments: serde_json::json!({}),
+            header: String::new(),
+            hunks: vec!["@@ a".into(), "@@ b".into()],
+            selected: vec![true, true],
+            cursor: 0,
+        };
+        sel.advance();
+        assert_eq!(sel.cursor, 1);
+        sel.advance();
+        assert_eq!(sel.cursor, 0);
+        sel.retreat();
+        assert_eq!(sel.cursor, 1);
+    }
+
+    #[test]
+    fn selected_count_reflects_toggles() {
+        let mut sel = PendingHunkSelection {
+            approval_id: 1,
+            original_arguments: serde_json::json!({}),
+            header: String::new(),
+            hunks: vec!["@@ a".into(), "@@ b".into(), "@@ c".into()],
+            selected: vec![true, false, true],
+            cursor: 0,
+        };
+        assert_eq!(sel.selected_count(), 2);
+        sel.toggle_current();
+        assert_eq!(sel.selected_count(), 1);
+    }
+
+    #[test]
+    fn empty_hunks_current_is_none() {
+        let sel = PendingHunkSelection {
+            approval_id: 1,
+            original_arguments: serde_json::json!({}),
+            header: "hdr".into(),
+            hunks: vec![],
+            selected: vec![],
+            cursor: 0,
+        };
+        assert!(sel.current().is_none());
     }
 }

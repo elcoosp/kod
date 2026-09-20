@@ -4485,6 +4485,56 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
 
     /// Handle key events
     async fn handle_key(&mut self, key: KeyCode) -> Result<()> {
+        // Partial-hunk approval (Tier 2.3). While open: ↑/↓ move,
+        // Space toggles the current hunk, Enter commits and sends
+        // `ApproveWith`, Esc cancels back to the dialog.
+        if self.app.is_selecting_hunks() {
+            match key {
+                KeyCode::Escape | KeyCode::CtrlC => {
+                    self.app.cancel_hunk_selection();
+                    return Ok(());
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.app.hunk_prev();
+                    return Ok(());
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.app.hunk_next();
+                    return Ok(());
+                }
+                KeyCode::Char(' ') | KeyCode::Char('x') => {
+                    self.app.hunk_toggle();
+                    return Ok(());
+                }
+                KeyCode::Enter => {
+                    if let Some((id, args)) = self.app.hunk_commit() {
+                        if let Some(engine) = &self.engine {
+                            engine
+                                .respond_to_approval(
+                                    id,
+                                    kod_core::engine::ApprovalDecision::ApproveWith {
+                                        arguments: args,
+                                    },
+                                )
+                                .await;
+                            if let Some(batch) = self.app.pending_batch_mut() {
+                                batch.advance();
+                                if batch.current_item().is_none() {
+                                    self.app.clear_pending_approval();
+                                }
+                            }
+                        }
+                    } else {
+                        self.app.push_system_message(
+                            "Select at least one hunk before committing.",
+                        );
+                    }
+                    return Ok(());
+                }
+                _ => return Ok(()),
+            }
+        }
+
         // Approval-edit modal (Tier 2.3). While open, the input box
         // edits the call's JSON arguments. Enter commits; Esc cancels.
         if self.app.is_editing_approval() {
@@ -4707,6 +4757,18 @@ let text = body.unwrap_or_else(|| format!("(description) {}", d));
                 if done {
                     self.app.clear_pending_approval();
                 }
+                return Ok(());
+            }
+
+            // Tier 2.3 — "h" enters partial-hunk selection for a
+            // `patch_file` call.
+            if matches!(key, KeyCode::Char('h') | KeyCode::Char('H')) {
+                if self.app.begin_hunk_selection() {
+                    return Ok(());
+                }
+                self.app.push_system_message(
+                    "Hunk selection is only available for patch_file calls.",
+                );
                 return Ok(());
             }
 
