@@ -2976,39 +2976,33 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool, yes: bool) -> R
         return Ok(());
     }
 
-    // H-S1: re-running a log is destructive. A log written by another
-    // session (or tampered with on disk) is effectively a script of
-    // tool calls; without an explicit acknowledgement, a user piping
-    // `kod replay --execute <file>` is one keystroke from running a
-    // stranger's `execute_command` entries. Require `--yes` and print
-    // the destructive subset before any of them run.
+    // H-S1: re-running a log is destructive *iff* it contains a call
+    // that can change the filesystem or spawn a process. A log made
+    // only of read-only tools (`read_file`, `grep`, `list_files`,
+    // `file_info`) has no side effects to gate — the earlier shape of
+    // this check refused every replay without `--yes`, which was
+    // both stricter than the threat model needs and inconsistent
+    // with its own printed message. Destructive logs still require
+    // an explicit acknowledgement.
     let destructive_names = ["execute_command", "write_file", "patch_file"];
     let destructive: Vec<_> = tool_calls
         .iter()
         .enumerate()
         .filter(|(_, (name, _, _, _, _))| destructive_names.contains(&name.as_str()))
         .collect();
-    if !yes {
-        if destructive.is_empty() {
-            println!(
-                "{} tool call(s) in {} are read-only; re-run with --execute --yes to proceed.\n",
-                tool_calls.len(),
-                path.display(),
-            );
-        } else {
-            println!(
-                "Refusing to execute: {} destructive call(s) in {}.\n",
-                destructive.len(),
-                path.display(),
-            );
-            for (i, (name, args, _, _, _)) in &destructive {
-                println!("  {}. {} ({})", i + 1, name, args);
-            }
-            println!("\nRe-run with --execute --yes to acknowledge and proceed.",);
+    if !yes && !destructive.is_empty() {
+        println!(
+            "Refusing to execute: {} destructive call(s) in {}.\n",
+            destructive.len(),
+            path.display(),
+        );
+        for (i, (name, args, _, _, _)) in &destructive {
+            println!("  {}. {} ({})", i + 1, name, args);
         }
+        println!("\nRe-run with --execute --yes to acknowledge and proceed.",);
         return Err(KodError::PermissionDenied {
             action: "replay --execute".to_string(),
-            reason: "the --yes flag is required to re-run recorded tool calls".to_string(),
+            reason: "the --yes flag is required to re-run destructive tool calls".to_string(),
         });
     }
 
