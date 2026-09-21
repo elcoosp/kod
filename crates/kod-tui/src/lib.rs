@@ -19,3 +19,4 @@ pub use app::{
 };
 pub use event::{Event, EventHandler, EventPriority, KeyCode};
 pub use main_loop::TuiLoop;
+pub mod render_cache;

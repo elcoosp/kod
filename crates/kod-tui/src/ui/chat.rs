@@ -315,12 +315,40 @@ impl ChatWidget {
         }
     }
 
+    /// Cached visual row count + tail-blank flag for one message.
+    ///
+    /// On a hit this skips both the `message_lines()` call and the
+    /// ratatui wrap pass — the two costs the probe and the real pass
+    /// used to pay in full on every frame.
+    fn message_measurement_cached(app: &KodApp, m: &Message, width: usize) -> (usize, bool) {
+        let content_hash = crate::render_cache::hash_content(&m.content);
+        let width_u16 = width.min(u16::MAX as usize) as u16;
+        if let Some(hit) =
+            crate::render_cache::with_cache(|c| c.lookup(&m.id, content_hash, width_u16))
+        {
+            return hit;
+        }
+        let lines = Self::message_lines(app, m, width);
+        let tail_blank = lines.last().map(|l| l.width() == 0).unwrap_or(false);
+        #[allow(unstable_name_collisions)]
+        let rows = Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .line_count(width_u16) as usize;
+        crate::render_cache::with_cache(|c| {
+            c.insert(m.id.clone(), content_hash, width_u16, rows, tail_blank);
+        });
+        (rows, tail_blank)
+    }
+
     pub fn render(&self, app: &KodApp, area: Rect, buf: &mut Buffer) {
         // Strict insertion order via monotonic sequence — never by
         // wall-clock timestamp (which can collide or go backwards after
         // a restore). Stable sort preserves file order for equal seq.
         let mut ordered: Vec<&Message> = app.messages().iter().collect();
         ordered.sort_by_key(|m| m.sequence);
+
+        // Begin a fresh render-cache frame. See render_cache.rs.
+        crate::render_cache::with_cache(|c| c.begin_frame());
 
         // First pass at the narrowed width decides whether the scrollbar
         // column is needed; the second pass wraps to the real text width
@@ -343,7 +371,17 @@ impl ChatWidget {
                     }
                 }
             }
-            let mut est_lines: Vec<Line> = Vec::new();
+            // Row-count-only probe: sum cached per-message visual
+            // row counts instead of building the full line vector
+            // and asking `Paragraph::line_count`. On a cache hit
+            // both the `message_lines()` call and the ratatui wrap
+            // pass are skipped. The streaming body is not a
+            // `Message` and is measured directly each frame — the
+            // only uncached cost here, and it is bounded by the
+            // size of the in-progress reply.
+            let mut probe_rows: usize = 0;
+            let mut prev_tail_blank = false;
+            let mut probe_rendered = false;
             for (i, m) in ordered.iter().enumerate() {
                 if app.search_query().is_none() && !app.show_tools() && m.role == MessageRole::Tool
                 {
@@ -352,39 +390,36 @@ impl ChatWidget {
                         continue;
                     }
                 }
-                if i > 0 && est_lines.last().map(|l: &Line| l.width()).unwrap_or(1) > 0 {
-                    est_lines.push(Line::from(vec![Span::styled(
-                        "─".repeat(narrow_width.min(120)),
-                        Style::default().fg(app.theme().dim),
-                    )]));
+                if i > 0 && !prev_tail_blank {
+                    probe_rows += 1;
                 }
-                est_lines.extend(Self::message_lines(app, m, narrow_width));
+                let (rows, tail_blank) = Self::message_measurement_cached(app, m, narrow_width);
+                probe_rows += rows;
+                prev_tail_blank = tail_blank;
+                probe_rendered = true;
             }
             if hidden > 0 {
-                est_lines.push(Line::from(vec![Span::styled(
-                    format!("⋯ {hidden} tool output(s) hidden — t to show"),
-                    Style::default().fg(app.theme().dim),
-                )]));
+                probe_rows += 1;
             }
-            // stream body must outlive est_lines lines (assistant_block borrows it)
             let stream_probe = crate::app::KodApp::trim_blank_lines(app.current_response());
             if app.is_streaming() && !stream_probe.is_empty() {
-                est_lines.extend(Self::assistant_block(
+                let block = Self::assistant_block(
                     &stream_probe,
                     narrow_width,
                     Style::default().fg(app.theme().assistant),
                     app,
-                ));
+                );
+                #[allow(unstable_name_collisions)]
+                let rows = Paragraph::new(Text::from(block))
+                    .wrap(Wrap { trim: false })
+                    .line_count(narrow_width as u16) as usize;
+                probe_rows += rows;
+                probe_rendered = true;
             }
-            if est_lines.is_empty() {
-                est_lines.push(Line::from(""));
+            if !probe_rendered && probe_rows == 0 {
+                probe_rows = 1;
             }
-            let text = Text::from(est_lines);
-            #[allow(unstable_name_collisions)]
-            let visual = Paragraph::new(text)
-                .wrap(Wrap { trim: false })
-                .line_count(narrow_width as u16);
-            visual > height
+            probe_rows > height
         };
         let text_width = if show_bar { narrow_width } else { full_width };
         let theme = app.theme();
@@ -518,6 +553,7 @@ impl ChatWidget {
             .wrap(Wrap { trim: false })
             .scroll((skip_rows, 0));
         paragraph.render(text_area, buf);
+        crate::render_cache::with_cache(|c| c.end_frame());
 
         if show_bar {
             // Thumb position tracks the viewport: offset 0 (live bottom)
