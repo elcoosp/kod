@@ -306,7 +306,16 @@ impl SessionRecorder {
             serde_json::to_string(&cloned).map_err(|e| KodError::Serialization(e.to_string()))?;
         {
             let mut w = self.writer.lock().unwrap();
-            writeln!(w, "{}", line).map_err(KodError::Io)?;
+            // H-D10: one `write_all` of the full line + newline, not
+            // `writeln!`. `writeln!` on a raw File issues two
+            // `write` syscalls (payload, newline); O_APPEND atomicity
+            // is per-syscall, so two recorders on the same path could
+            // interleave fragments and corrupt a line. Building the
+            // buffer once and issuing a single write closes that.
+            let mut buf = Vec::with_capacity(line.len() + 1);
+            buf.extend_from_slice(line.as_bytes());
+            buf.push(b'\n');
+            w.write_all(&buf).map_err(KodError::Io)?;
             if !redactions.is_empty() {
                 // Aggregate by rule for a compact line.
                 use std::collections::BTreeMap;
@@ -327,7 +336,10 @@ impl SessionRecorder {
                 };
                 let line = serde_json::to_string(&entry)
                     .map_err(|e| KodError::Serialization(e.to_string()))?;
-                writeln!(w, "{}", line).map_err(KodError::Io)?;
+                let mut buf = Vec::with_capacity(line.len() + 1);
+                buf.extend_from_slice(line.as_bytes());
+                buf.push(b'\n');
+                w.write_all(&buf).map_err(KodError::Io)?;
             }
             w.flush().map_err(KodError::Io)?;
         }
@@ -357,29 +369,35 @@ impl SessionRecorder {
 pub fn read_session(path: &Path) -> Result<Vec<SessionEntry>> {
     let raw = std::fs::read_to_string(path).map_err(KodError::Io)?;
     let mut out = Vec::new();
-    for (i, line) in raw.lines().enumerate() {
+    // H-D10: a crash-truncated final line (no trailing newline) is the
+    // exact case per-line flushing exists to survive. Treat it as
+    // "the last write was interrupted, the log up to the previous
+    // newline is intact" — drop the partial line with a warning
+    // rather than failing the whole read.
+    let ends_with_newline = raw.ends_with('\n');
+    let lines: Vec<&str> = raw.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
         if line.trim().is_empty() {
             continue;
         }
+        let is_last = i + 1 == lines.len();
+        let last_is_partial = is_last && !ends_with_newline;
         match serde_json::from_str::<SessionEntry>(line) {
             Ok(e) => out.push(e),
             Err(e) => {
-                // Distinguish "a well-formed JSON line whose `kind`
-                // this build does not know" from "a corrupt line".
-                //
-                // The session format is extensible (AD-15): a newer
-                // build can add variants and an older build reading
-                // the file must not refuse to open it. A line that
-                // parses as JSON but fails to deserialize as
-                // `SessionEntry` is a forward-compat case, skipped
-                // with a warning. A line that is not JSON at all is
-                // a corrupt log — a hard error, because skipping
-                // it would hide a real truncation.
                 if serde_json::from_str::<serde_json::Value>(line).is_ok() {
                     tracing::warn!(
                         line = i + 1,
                         "session log line has an unknown kind; \
                          skipping (forward-compat)"
+                    );
+                    continue;
+                }
+                if last_is_partial {
+                    tracing::warn!(
+                        line = i + 1,
+                        "session log tail is a partial line (no trailing \
+                         newline); dropping it and keeping the rest",
                     );
                     continue;
                 }
@@ -799,5 +817,61 @@ mod coverage_session_paths {
         .unwrap();
         let read = read_session(&p).unwrap();
         assert_eq!(read.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod coverage_truncated_tail {
+    //! H-D10 regression. A session log whose last write was
+    //! interrupted (SIGKILL mid-`write_all`, disk full, power loss)
+    //! ends without a trailing newline. Reading it must succeed and
+    //! return every complete line, not refuse the whole file.
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn truncated_tail_is_dropped_not_fatal() {
+        let tmp = TempDir::new().unwrap();
+        let p = tmp.path().join("s.jsonl");
+        // One full, valid line followed by a partial one.
+        let full = "{\"kind\":\"approval\",\"timestamp_ms\":1,\"holder\":\"h\",\"tool_name\":\"t\",\"decision\":\"approve\",\"edit\":null}\n";
+        let partial = "{\"kind\":\"approval\",\"timestamp_ms\":2,\"holder\":\"h\",\"tool";
+        std::fs::write(&p, format!("{full}{partial}")).unwrap();
+        let entries = read_session(&p).expect("partial tail must not fail the read");
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn a_corrupt_middle_line_is_still_fatal() {
+        // The tolerance is only for the *last* line. A malformed
+        // line in the middle is still a corruption.
+        let tmp = TempDir::new().unwrap();
+        let p = tmp.path().join("s.jsonl");
+        std::fs::write(&p, "not json\n{\"kind\":\"x\"}\n").unwrap();
+        assert!(read_session(&p).is_err());
+    }
+
+    #[test]
+    fn a_complete_file_round_trips_unchanged() {
+        let tmp = TempDir::new().unwrap();
+        let p = tmp.path().join("s.jsonl");
+        let rec = SessionRecorder::open(p.clone()).unwrap();
+        rec.record(&SessionEntry::Approval {
+            timestamp_ms: 1,
+            holder: "h".into(),
+            tool_name: "t".into(),
+            decision: "approve".into(),
+            edit: None,
+        })
+        .unwrap();
+        rec.record(&SessionEntry::Approval {
+            timestamp_ms: 2,
+            holder: "h".into(),
+            tool_name: "t".into(),
+            decision: "deny".into(),
+            edit: None,
+        })
+        .unwrap();
+        assert_eq!(read_session(&p).unwrap().len(), 2);
     }
 }
