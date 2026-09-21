@@ -3,6 +3,8 @@
 //! Coordinates the task router, LLM providers, skills, and memory
 //! to process user requests end-to-end.
 
+mod jev_advisor;
+
 use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
 use kod_provider::request::{CompletionRequest, SystemPrompt};
