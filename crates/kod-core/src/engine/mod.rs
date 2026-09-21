@@ -1487,6 +1487,116 @@ impl ApprovalDecision {
     }
 }
 
+/// Bundle of values the three `process_*` entry points need after
+/// classification, prompt build, and system-text construction.
+///
+/// S10 phase 1: the classification / memory-filter / prompt-build /
+/// system-text pipeline used to be duplicated (plus one deliberate
+/// plan-creation difference) across the three entry points. It now
+/// lives in [`KodEngine::prepare_turn`]. Fields match the local
+/// variables the callers used to introduce inline, so this is a
+/// rename, not a rewrite.
+pub(crate) struct TurnPreparation {
+    pub response: crate::router::TaskResponse,
+    pub task_type: crate::router::TaskType,
+    pub refined_skills: Vec<String>,
+    pub alloc: std::result::Result<crate::budget::Allocation, crate::budget::BudgetError>,
+    pub definitions: Vec<kod_types::ToolDefinition>,
+    pub pending: String,
+    pub system_text: String,
+    pub initial_messages: Vec<kod_types::ChatMessage>,
+}
+
+impl KodEngine {
+    /// Shared classification + prompt-build pipeline used by every
+    /// `process_*` entry point.
+    ///
+    /// `retrieval_log_turn_id` is threaded through to
+    /// [`KodEngine::classify_and_filter`]; `None` skips the retrieval
+    /// log write (the goal path's choice), `Some(0)` is the collected
+    /// path's placeholder, `Some(real_id)` is the streaming path.
+    ///
+    /// `create_plan` controls the Tier 2.1 model-authored plan. Only
+    /// the collected path asks the model to plan on the first turn of
+    /// a Complex/MultiStep task; the streaming paths rely on the model
+    /// to reach for tools itself. See `process_for` for rationale.
+    ///
+    /// Ordering matters: the plan (if created) must be written to
+    /// `self.plans` *before* `build_prompt_plan` renders `system_text`,
+    /// otherwise the plan never reaches the model.
+    pub(crate) async fn prepare_turn(
+        &self,
+        key: &str,
+        input: &str,
+        retrieval_log_turn_id: Option<u64>,
+        create_plan: bool,
+    ) -> Result<TurnPreparation> {
+        let response = self
+            .classify_and_filter(key, input, retrieval_log_turn_id)
+            .await?;
+        let (task_type, refined_skills) =
+            self.refine_classification(key, input, &response).await;
+        if create_plan {
+            let options_for_plan = self.generation_defaults.read().await.to_options();
+            if let Ok(provider) = self
+                .resolve_provider_for_model_ref(&self.current_model.read().await.clone())
+                .await
+            {
+                self.maybe_create_plan(key, input, task_type, &provider, &options_for_plan)
+                    .await;
+            }
+        }
+        let history = self.render_history_for(key).await;
+        self.remember_turn_for(key, true, input).await;
+        let (alloc, definitions, pending) = self
+            .build_budgeted_prompt(
+                key,
+                input,
+                task_type,
+                &history,
+                response.memory_context.clone(),
+            )
+            .await?;
+        {
+            let trace = crate::budget::PromptTrace {
+                text: pending.clone(),
+                alloc: alloc.as_ref().ok().copied(),
+            };
+            self.last_prompt
+                .write()
+                .await
+                .insert(key.to_string(), trace);
+        }
+        let system_text = {
+            let plan = self
+                .router
+                .build_prompt_plan(
+                    input,
+                    &task_type,
+                    &history,
+                    response.memory_context.clone(),
+                    alloc.as_ref().ok(),
+                )
+                .await?;
+            plan.render_text()
+        };
+        let initial_messages: Vec<kod_types::ChatMessage> = {
+            let guard = self.history.read().await;
+            guard.get(key).cloned().unwrap_or_default()
+        };
+        Ok(TurnPreparation {
+            response,
+            task_type,
+            refined_skills,
+            alloc,
+            definitions,
+            pending,
+            system_text,
+            initial_messages,
+        })
+    }
+}
+
 impl KodEngine {
     /// Tier 3.3 — apply a same-endpoint retry strategy to a fresh
     /// request. Returns `true` when the adjustment succeeded; `false`
@@ -4439,86 +4549,25 @@ impl KodEngine {
         // the read lock is held for microseconds.
         let _provider_probe = self.registry.read().await.clone();
         if _provider_probe.is_some() {
-            // S10: shared classification + memory-filter block.
-            let response = self.classify_and_filter(key, input, Some(0)).await?;
-            // Build the full prompt using the router's context builder
-            let (task_type, _refined_skills) =
-                self.refine_classification(key, input, &response).await;
-            // Tier 2.1 — on Complex/MultiStep tasks, ask the model
-            // for a plan on the first turn. Bounded cost: one short
-            // generation call.
-            {
-                let options_for_plan = self.generation_defaults.read().await.to_options();
-                if let Ok(provider) = self
-                    .resolve_provider_for_model_ref(&self.current_model.read().await.clone())
-                    .await
-                {
-                    self.maybe_create_plan(key, input, task_type, &provider, &options_for_plan)
-                        .await;
-                }
-            }
-            // P4.2 — augment the router's lexical skill match with
-            // Jev's semantic scoring. The union keeps every lexical
-            // match and adds semantic ones the substring matcher
-            // would have missed. `None` leaves the router's list.
-            let refined_skills = self
-                .rank_skills_with_jev(key, input, &response.skills_used)
-                .await
-                .unwrap_or_else(|| response.skills_used.clone());
-            let history = self.render_history_for(key).await;
-            self.remember_turn_for(key, true, input).await;
-            // S10: shared prompt-build block.
-            let (alloc, definitions, convo) = self
-                .build_budgeted_prompt(
-                    key,
-                    input,
-                    task_type,
-                    &history,
-                    response.memory_context.clone(),
-                )
-                .await?;
-
-            // Snapshot the grounded prompt before the loop mutates it
-            // with tool results. This is what `/debug last-prompt` shows.
-            {
-                let trace = crate::budget::PromptTrace {
-                    text: convo.clone(),
-                    alloc: alloc.as_ref().ok().copied(),
-                };
-                self.last_prompt
-                    .write()
-                    .await
-                    .insert(key.to_string(), trace);
-            }
-
-            // The structured system prompt the provider will see: the
-            // router's plan rendered to text, with the environment
-            // grounding appended. The `prompt` variable above remains
-            // the un-grounded text used for `/debug` and the initial
-            // `pending` string in the loop; the two are byte-compatible
-            // up to the grounding block.
-            let system_text = {
-                let plan = self
-                    .router
-                    .build_prompt_plan(
-                        input,
-                        &task_type,
-                        &history,
-                        response.memory_context.clone(),
-                        alloc.as_ref().ok(),
-                    )
-                    .await?;
-                plan.render_text()
-            };
-
-            // The transcript the provider will see. `remember_turn_for`
-            // above recorded the user's turn, so this already ends with
-            // the current user message.
-            let initial_messages: Vec<kod_types::ChatMessage> = {
-                let guard = self.history.read().await;
-                guard.get(key).cloned().unwrap_or_default()
-            };
-
+            // S10 phase 1: the shared classification + prompt-build
+            // pipeline lives in `prepare_turn`. The collected path is
+            // the only one that asks the model to plan on the first
+            // turn of a Complex/MultiStep task, hence `create_plan =
+            // true`. `refined_skills` is consumed once — the old code
+            // called `rank_skills_with_jev` twice (once inside
+            // `refine_classification`, once inline) with the same
+            // inputs, discarding the first result.
+            let prep = self.prepare_turn(key, input, Some(0), true).await?;
+            let TurnPreparation {
+                response,
+                task_type,
+                refined_skills,
+                alloc,
+                definitions,
+                pending: convo,
+                system_text,
+                initial_messages,
+            } = prep;
             // Agentic loop: generate (with tools) -> execute -> feed back.
             // Wrapped in a fallback chain (A6): the primary endpoint is
             // tried first, then each `routing.fallback` endpoint, on
