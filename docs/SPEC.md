@@ -20,7 +20,7 @@
 KOD is a terminal-native, high-performance AI coding agent harness built in Rust. It combines:
 
 - **jcode-inspired performance** — minimal RAM footprint, zero-copy parsing, aggressive caching
-- **oh-my-pi coding capabilities** — LSP integration, debugger support, hash-anchored edits
+- **oh-my-pi coding capabilities** — LSP integration, debugger support, <!-- SUPERSEDED: not implemented (no blake3 dependency) -->
 - **Markdown-based skills system** — reusable knowledge assets in `~/.kod/skills/`
 - **Autonomous agent swarms** — coordinated agents with direct messaging, shared branch collaboration, optional worktree isolation
 - **Local LLM execution** — Ollama-first architecture with multi-provider fallback
@@ -404,7 +404,7 @@ You are an expert Rust refactoring assistant. When activated:
 1. **Analyze the code structure** using LSP tools
 2. **Identify refactoring opportunities** based on Rust idioms
 3. **Propose changes** with explanations
-4. **Apply changes** using hash-anchored edits
+4. **Apply changes** using <!-- SUPERSEDED: not implemented (no blake3 dependency) -->
 5. **Verify changes** don't break references
 
 ## Code Style Guidelines
