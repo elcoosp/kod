@@ -6,9 +6,18 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+# H-C6: cancel a superseded run when the same branch is pushed again.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
+  # H-C6: RUSTFLAGS is scoped to the lint job below. Setting it
+  # workflow-wide broke CI on a warning emitted by any *dependency*
+  # (a nightly change in a transitive crate is out of our control)
+  # and forced a from-scratch rebuild of every `cargo install`ed
+  # tool (audit, deny, tarpaulin, bloat).
 
 jobs:
   test:
@@ -43,13 +52,15 @@ jobs:
       run: cargo fmt --all -- --check
 
     - name: Run clippy
-      run: cargo clippy --workspace --all-targets -- -D warnings
+      env:
+        RUSTFLAGS: "-D warnings"
+      run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
     - name: Run tests
-      run: cargo test --workspace
+      run: cargo test --workspace --locked
 
     - name: Run doc tests
-      run: cargo test --doc --workspace
+      run: cargo test --doc --workspace --locked
 
   # Fast, deterministic, offline — the two suites that guard the two
   # invariants a refactor is most likely to break silently:
@@ -307,8 +318,14 @@ jobs:
   live-anthropic:
     name: Live Anthropic (skippable)
     runs-on: ubuntu-latest
-    # Only run when the secret exists and this is not a fork PR.
-    if: ${{ secrets.ANTHROPIC_API_KEY != '' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    # H-C5: `secrets` is not available in a job-level `if:`. The
+    # pre-fix condition always evaluated false and the job never ran.
+    # Gate on the *event* here (push and same-repo PRs only) and let
+    # the test itself re-check `ANTHROPIC_API_KEY` — every test in
+    # `crates/kod-provider-anthropic/tests/live.rs` already does this,
+    # so the skip is enforced twice and the job is safe to leave
+    # enabled on a repo without the secret.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
 
     steps:
     - uses: actions/checkout@v4
