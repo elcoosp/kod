@@ -207,4 +207,58 @@ impl KodApp {
             }
         }
     }
+
+    /// Move the cursor one word left (Ctrl+Left).
+    pub fn move_cursor_word_left(&mut self) {
+        if self.cursor_position == 0 {
+            return;
+        }
+        let bytes = self.input.as_bytes();
+        let mut pos = self.cursor_position;
+        while pos > 0 && bytes[pos - 1] == b' ' {
+            pos -= 1;
+        }
+        while pos > 0 && bytes[pos - 1] != b' ' && bytes[pos - 1] != b'\n' {
+            pos -= 1;
+        }
+        while pos > 0 && !self.input.is_char_boundary(pos) {
+            pos -= 1;
+        }
+        self.cursor_position = pos;
+    }
+
+    /// Move the cursor one word right (Ctrl+Right).
+    pub fn move_cursor_word_right(&mut self) {
+        let len = self.input.len();
+        if self.cursor_position >= len {
+            return;
+        }
+        let bytes = self.input.as_bytes();
+        let mut pos = self.cursor_position;
+        while pos < len && bytes[pos] != b' ' && bytes[pos] != b'\n' {
+            pos += 1;
+        }
+        while pos < len && bytes[pos] == b' ' {
+            pos += 1;
+        }
+        while pos < len && !self.input.is_char_boundary(pos) {
+            pos += 1;
+        }
+        self.cursor_position = pos;
+    }
+
+    /// Delete from the cursor to the end of its line (Ctrl+K).
+    pub fn cut_to_end(&mut self) {
+        let end = self.input[self.cursor_position..]
+            .find('\n')
+            .map(|i| self.cursor_position + i)
+            .unwrap_or(self.input.len());
+        self.input.drain(self.cursor_position..end);
+    }
+
+    /// Delete the whole input line(s) (Ctrl+U clears to start; this clears
+    /// everything — used when the box holds a failed one-liner).
+    pub fn clear_line(&mut self) {
+        self.clear_input();
+    }
 }

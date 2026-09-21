@@ -179,4 +179,52 @@ impl KodApp {
             None
         }
     }
+
+    /// Add a call's USD cost to the session total. Negative and NaN
+    /// values are rejected — a broken pricing block should not
+    /// corrupt the accumulator.
+    pub fn note_session_cost(&mut self, cost_usd: f64) {
+        if cost_usd.is_finite() && cost_usd >= 0.0 {
+            self.session_cost_usd += cost_usd;
+        }
+    }
+
+    /// Total tokens moved through the model this session.
+    pub fn session_total_tokens(&self) -> usize {
+        self.session_input_tokens
+            .saturating_add(self.session_output_tokens)
+    }
+
+    /// Wall-clock time since the session started.
+    pub fn elapsed_session(&self) -> std::time::Duration {
+        self.session_started_at.elapsed()
+    }
+
+    /// One-line accounting label for the header: `↑1.2k ↓340 · 5m30s`.
+    /// The arrow convention is input/output; the trailing figure is
+    /// wall-clock elapsed since the first prompt.
+    pub fn accounting_label(&self) -> String {
+        let secs = self.elapsed_session().as_secs();
+        let time = if secs < 60 {
+            format!("{secs}s")
+        } else if secs < 3600 {
+            format!("{}m{:02}s", secs / 60, secs % 60)
+        } else {
+            format!("{}h{:02}m", secs / 3600, (secs % 3600) / 60)
+        };
+        format!(
+            "↑{} ↓{} · {}",
+            Self::format_k(self.session_input_tokens),
+            Self::format_k(self.session_output_tokens),
+            time,
+        )
+    }
+
+    /// Record session-wide token usage from a per-call breakdown.
+    /// Separate from `note_real_usage` (window snapshot for the context
+    /// meter): this counter only grows.
+    pub fn note_session_usage(&mut self, prompt_tokens: usize, completion_tokens: usize) {
+        self.session_input_tokens = self.session_input_tokens.saturating_add(prompt_tokens);
+        self.session_output_tokens = self.session_output_tokens.saturating_add(completion_tokens);
+    }
 }

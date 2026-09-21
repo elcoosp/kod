@@ -687,4 +687,54 @@ impl KodApp {
 
         cleared
     }
+
+    /// Context-aware hint line for the status bar.
+    pub fn hint_line(&self) -> String {
+        if matches!(self.input_mode, InputMode::Insert) {
+            "Enter send · Ctrl+J newline · Up history · Tab complete · Esc done".to_string()
+        } else if self.generating {
+            "Esc cancel · /steer redirect · ? help".to_string()
+        } else {
+            // `/ search` used to sit here, but the search key is `f`
+            // (SearchPrefix); `/` opens the command slot. Name the
+            // actual key so the hint is not a small lie.
+            "i type · / command · j/k scroll · t tools · f search · ? help · q quit".to_string()
+        }
+    }
+
+    /// Newest running tool for the status bar: (total, done, label).
+    /// Tool rows don't carry step counts, so total/done are 0/0 unless a
+    /// progress display was pushed via `update_tool_status`.
+    pub fn active_tool(&self) -> Option<(usize, usize, String)> {
+        let name = self.current_tool.clone()?;
+        Some((0, 0, name))
+    }
+
+    /// Last assistant reply text (for `y` / `/copy`).
+    pub fn last_assistant_text(&self) -> Option<&str> {
+        self.messages
+            .iter()
+            .rev()
+            .find(|m| m.role == MessageRole::Assistant)
+            .map(|m| m.content.as_str())
+    }
+
+    /// Expand the newest collapsed tool message in place (key `o`).
+    /// Returns false when there is nothing expandable.
+    pub fn expand_newest_tool(&mut self) -> bool {
+        let id = self
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == MessageRole::Tool && !self.expanded_tools.contains(&m.id))
+            .map(|m| m.id.clone());
+        match id {
+            Some(id) => {
+                self.expanded_tools.insert(id);
+                self.scroll_to_bottom();
+                true
+            }
+            None => false,
+        }
+    }
 }

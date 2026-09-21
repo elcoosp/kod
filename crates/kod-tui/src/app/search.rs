@@ -137,4 +137,86 @@ impl KodApp {
             self.jump_to_search_match(self.search_index);
         }
     }
+
+    /// True while a search query is active (status bar + highlighting).
+    pub fn is_searching(&self) -> bool {
+        self.search_query.as_deref().is_some_and(|q| !q.is_empty())
+    }
+
+    /// Active search text (empty when no search).
+    pub fn search_query_text(&self) -> &str {
+        self.search_query.as_deref().unwrap_or("")
+    }
+
+    /// What to say about the current search in the status bar.
+    ///
+    /// The old `search_position() -> (usize, usize)` collapsed three
+    /// distinct states into two indistinguishable pairs:
+    ///
+    ///   * search not active            -> (0, 0)
+    ///   * search active, no matches    -> (0, 0)
+    ///   * search active, match 1 of 1  -> (1, 1)
+    ///
+    /// A caller reading `(0, 0)` could not tell whether to say "no
+    /// search" or "no matches" — and the widget that renders the search
+    /// status guessed "no matches", so a session that had never been
+    /// searched still showed "no matches" the moment a search state
+    /// existed. The enum below names the states; the widget matches on
+    /// it and the label is derived here, once.
+    pub fn search_status(&self) -> SearchStatus {
+        match self.search_query.as_deref() {
+            None => SearchStatus::Inactive,
+            Some("") => SearchStatus::Editing,
+            Some(_) => {
+                let total = self.search_matches().len();
+                if total == 0 {
+                    SearchStatus::NoMatches
+                } else {
+                    SearchStatus::At {
+                        position: (self.search_index % total) + 1,
+                        total,
+                    }
+                }
+            }
+        }
+    }
+
+    /// The message id currently targeted by the active search, if
+    /// any. Returns `None` when no search query is set, when the
+    /// query is empty (editing), or when it found no matches.
+    ///
+    /// Used by the chat widget to scroll the targeted message into
+    /// view. The underlying `search_index` is private so the widget
+    /// cannot reach it directly; this exposes exactly what the widget
+    /// needs (the id of the match to center) without exposing the
+    /// index arithmetic.
+    pub fn search_target_message_id(&self) -> Option<&kod_types::MessageId> {
+        let matches = self.search_matches();
+        if matches.is_empty() {
+            return None;
+        }
+        let pos = self.search_index % matches.len();
+        let msg_idx = *matches.get(pos)?;
+        self.messages().get(msg_idx).map(|m| &m.id)
+    }
+
+    /// Display string for the status bar. Built here so the widget does
+    /// not re-implement the match on `SearchStatus` and drift.
+    pub fn search_status_label(&self) -> String {
+        match self.search_status() {
+            SearchStatus::Inactive => String::new(),
+            SearchStatus::Editing => {
+                format!(" /{} — typing… (Esc exits)", self.search_query_text())
+            }
+            SearchStatus::NoMatches => {
+                format!(" /{} — no matches (Esc exits)", self.search_query_text())
+            }
+            SearchStatus::At { position, total } => format!(
+                " /{} — {}/{} (n next · N prev · Esc exits)",
+                self.search_query_text(),
+                position,
+                total
+            ),
+        }
+    }
 }
