@@ -246,9 +246,32 @@ impl Event {
     }
 }
 
+
+/// A cheap clonable handle for pushing events onto the priority queue
+/// from tasks that cannot hold `&EventHandler`. See `start_input_loop`
+/// (H-T3): keys must not queue behind stream chunks on the shared
+/// bounded mpsc.
+#[derive(Clone)]
+pub struct PrioritySender {
+    queue: std::sync::Arc<StdMutex<VecDeque<(EventPriority, Event)>>>,
+}
+
+impl PrioritySender {
+    /// Push an event at the given priority. The priority queue is
+    /// unbounded, so this never blocks.
+    pub fn send_priority(&self, event: Event, priority: EventPriority) {
+        let mut queue = self.queue.lock().unwrap();
+        let insert_pos = queue
+            .iter()
+            .position(|(p, _)| *p < priority)
+            .unwrap_or(queue.len());
+        queue.insert(insert_pos, (priority, event));
+    }
+}
+
 /// Event handler that manages the event loop
 pub struct EventHandler {
-    event_queue: StdMutex<VecDeque<(EventPriority, Event)>>,
+    event_queue: std::sync::Arc<StdMutex<VecDeque<(EventPriority, Event)>>>,
     event_rx: TokioMutex<mpsc::Receiver<Event>>,
     event_tx: mpsc::Sender<Event>,
     tick_rate: Duration,
@@ -262,7 +285,7 @@ impl EventHandler {
     pub fn new(tick_rate: Duration) -> Self {
         let (tx, rx) = mpsc::channel(100);
         Self {
-            event_queue: StdMutex::new(VecDeque::new()),
+            event_queue: std::sync::Arc::new(StdMutex::new(VecDeque::new())),
             event_rx: TokioMutex::new(rx),
             event_tx: tx,
             tick_rate,
@@ -357,6 +380,14 @@ impl EventHandler {
         None
     }
 
+    /// Push an event at an explicit priority without going through the
+    /// bounded channel. Used for input (H-T3): key events must not
+    /// queue behind a flood of `ResponseChunk`s on the shared mpsc,
+    /// and the priority queue is unbounded so `send` cannot block.
+    pub fn send_priority(&self, event: Event, priority: EventPriority) {
+        self.push_priority_event(event, priority);
+    }
+
     /// Send an event (from external sources)
     pub async fn send_event(&self, event: Event) -> Result<()> {
         self.push_event(event);
@@ -372,8 +403,12 @@ impl EventHandler {
     pub async fn start_input_loop(&self) {
         let tx = self.event_tx.clone();
         let is_running = self.is_running.clone();
+        let priority_tx = PrioritySender {
+            queue: self.event_queue.clone(),
+        };
 
         tokio::spawn(async move {
+            let priority_tx = priority_tx;
             let mut reader = EventStream::new();
 
             while is_running.load(std::sync::atomic::Ordering::SeqCst) {
@@ -396,7 +431,7 @@ impl EventHandler {
                                         _ => None,
                                     };
                                     if let Some(code) = mapped {
-                                        let _ = tx.send(Event::Key(code)).await;
+                                        priority_tx.send_priority(Event::Key(code), EventPriority::High);
                                         continue;
                                     }
                                 }
@@ -404,7 +439,7 @@ impl EventHandler {
                                 if key.modifiers.contains(KeyModifiers::SHIFT)
                                     && matches!(key.code, CrosstermKeyCode::Enter)
                                 {
-                                    let _ = tx.send(Event::Key(KeyCode::ShiftEnter)).await;
+                                    priority_tx.send_priority(Event::Key(KeyCode::ShiftEnter), EventPriority::High);
                                     continue;
                                 }
                                 // Shift+↑/↓ scrolls (laptop keyboards often
@@ -413,18 +448,18 @@ impl EventHandler {
                                 if key.modifiers.contains(KeyModifiers::SHIFT) {
                                     match key.code {
                                         CrosstermKeyCode::Up => {
-                                            let _ = tx.send(Event::Key(KeyCode::PageUp)).await;
+                                            priority_tx.send_priority(Event::Key(KeyCode::PageUp), EventPriority::High);
                                             continue;
                                         }
                                         CrosstermKeyCode::Down => {
-                                            let _ = tx.send(Event::Key(KeyCode::PageDown)).await;
+                                            priority_tx.send_priority(Event::Key(KeyCode::PageDown), EventPriority::High);
                                             continue;
                                         }
                                         _ => {}
                                     }
                                 }
                                 let key_code: KeyCode = key.code.into();
-                                let _ = tx.send(Event::Key(key_code)).await;
+                                priority_tx.send_priority(Event::Key(key_code), EventPriority::High);
                             }
                         }
                         CrosstermEvent::Paste(text) => {
