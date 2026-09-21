@@ -4562,7 +4562,10 @@ impl KodEngine {
                 response,
                 task_type,
                 refined_skills,
-                alloc,
+                // `alloc` is only consumed inside `prepare_turn` now
+                // (for the `PromptTrace` and `build_prompt_plan`), so
+                // the caller ignores it.
+                alloc: _,
                 definitions,
                 pending: convo,
                 system_text,
@@ -4918,59 +4921,26 @@ impl KodEngine {
         // See process(): clone out of the lock before any long await.
         let _provider_probe = self.registry.read().await.clone();
         if _provider_probe.is_some() {
-            // S10: shared classification + memory-filter block. The
+            // S10 phase 2: same pipeline as `process_for`, but the
             // streaming path uses the real trace id for the retrieval
-            // log so `/memory eval` can correlate entries with the
-            // reply that used them.
-            let response = self.classify_and_filter(key, input, Some(trace_id)).await?;
-            let (task_type, refined_skills) =
-                self.refine_classification(key, input, &response).await;
-            let history = self.render_history_for(key).await;
-            self.remember_turn_for(key, true, input).await;
-            // S10: shared prompt-build block.
-            let (alloc, definitions, pending) = self
-                .build_budgeted_prompt(
-                    key,
-                    input,
-                    task_type,
-                    &history,
-                    response.memory_context.clone(),
-                )
+            // log (so `/memory eval` correlates entries with the reply
+            // that used them) and does not ask the model to plan on
+            // the first turn — the streaming loop relies on the model
+            // reaching for tools itself. The goal path is the third
+            // caller and the last to migrate.
+            let prep = self
+                .prepare_turn(key, input, Some(trace_id), false)
                 .await?;
-
-            // Snapshot the grounded prompt for /debug last-prompt and
-            // the per-section allocation for /debug tokens.
-            {
-                let trace = crate::budget::PromptTrace {
-                    text: pending.clone(),
-                    alloc: alloc.as_ref().ok().copied(),
-                };
-                self.last_prompt
-                    .write()
-                    .await
-                    .insert(key.to_string(), trace);
-            }
-
-            // Structured system prompt and initial messages: same
-            // shape as the collected path (see `process_for`).
-            let system_text = {
-                let plan = self
-                    .router
-                    .build_prompt_plan(
-                        input,
-                        &task_type,
-                        &history,
-                        response.memory_context.clone(),
-                        alloc.as_ref().ok(),
-                    )
-                    .await?;
-                plan.render_text()
-            };
-            let initial_messages: Vec<kod_types::ChatMessage> = {
-                let guard = self.history.read().await;
-                guard.get(key).cloned().unwrap_or_default()
-            };
-
+            let TurnPreparation {
+                response,
+                task_type,
+                refined_skills,
+                alloc: _,
+                definitions,
+                pending,
+                system_text,
+                initial_messages,
+            } = prep;
             let options = self.generation_defaults.read().await.to_options();
             // Fallback chain (A6). Streaming retries reuse the same
             // chunk_tx, so a successful fallback continues the visible
