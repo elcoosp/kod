@@ -217,16 +217,17 @@ impl LlmProvider for AnthropicProvider {
     }
 
     async fn list_models(&self) -> Result<Vec<String>> {
-        // `AnthropicClient::list_models` exists (see adk-model's
-        // src/anthropic/models.rs) but its return type is a Vec of
-        // `ModelInfo`, not a plain Vec<String>, and the exact field
-        // name for the id (`.id` vs `.name`) is not pinned here. The
-        // conservative behaviour is to return an empty list — the
-        // CLI/TUI treat that as "no server-side listing available".
-        // A follow-up can wire the real call once the shape is
-        // confirmed; today the model is chosen from config, never
-        // from a runtime listing.
-        Ok(Vec::new())
+        // Harness review section 9: Anthropic has no public
+        // `GET /v1/models` at time of writing, so an empty vec was
+        // returned. A curated list of the model families kod knows
+        // is more useful: `/model` offers something to pick from.
+        Ok(vec![
+            "claude-opus-4".to_string(),
+            "claude-sonnet-4".to_string(),
+            "claude-haiku-4".to_string(),
+            "claude-3-5-sonnet-latest".to_string(),
+            "claude-3-5-haiku-latest".to_string(),
+        ])
     }
 
     /// Native Messages API call (design §4 D1.2, A5b). Uses the wire

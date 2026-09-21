@@ -485,6 +485,18 @@ impl LlmProvider for OpenAICompatProvider {
     /// with ids, tool results with `tool_call_id`) rather than a
     /// rendered text prompt. The `LlmRequest` is owned by the returned
     /// stream, so the caller's borrow on `req` ends at the call.
+    /// Override the conservative default with the matrix this
+    /// provider actually implements (harness review section 9):
+    /// OpenAI-compatible servers prefix-cache server-side with no
+    /// client hint, and this stream path emits live text during a
+    /// tool call. The conservative default claimed neither.
+    fn capabilities(&self) -> kod_provider::ProviderCapabilities {
+        let mut caps = kod_provider::ProviderCapabilities::conservative();
+        caps.prompt_cache = kod_provider::PromptCacheKind::Automatic;
+        caps.streaming_tools = true;
+        caps
+    }
+
     fn stream_completion<'a>(
         &'a self,
         req: &'a CompletionRequest,
