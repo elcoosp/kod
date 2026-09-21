@@ -85,16 +85,22 @@ async fn test_tui_mode_switching() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_slash_help_posts_message() {
+async fn test_slash_help_opens_the_overlay() {
     let mut tui = TuiLoop::new();
 
+    assert!(!tui.app().show_help(), "overlay starts closed");
     tui.handle_event(Event::UserInput("/help".to_string()))
         .await
         .unwrap();
 
-    // user echo + help text
-    assert_eq!(tui.app().messages().len(), 2);
-    assert!(tui.app().messages()[1].content.contains("/clear"));
+    // The overlay widget advertises `/help` as an entry point (it
+    // renders `? this help (also /help, F1)`); the command must open
+    // it. It used to push `SLASH_HELP` as a system message, leaving
+    // the overlay reachable only from `?` and F1.
+    assert!(
+        tui.app().show_help(),
+        "`/help` must open the overlay, not push text"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -204,6 +210,12 @@ async fn test_enter_submits_slash_command() {
     }
     assert!(tui.app().show_completions());
     tui.handle_event(Event::Key(KeyCode::Enter)).await.unwrap();
-    // User echo + help output means the command actually dispatched.
-    assert!(tui.app().messages().len() >= 2);
+    // The dispatch reached `/help`, which opens the overlay — that
+    // is the observable proof the command ran. The pre-fix count
+    // check (`messages().len() >= 2`) no longer applies: the
+    // command does not push a message.
+    assert!(
+        tui.app().show_help(),
+        "Enter with the completion popup open must dispatch `/help`"
+    );
 }

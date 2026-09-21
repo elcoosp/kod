@@ -21,78 +21,6 @@ use std::io::Stdout;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Help text for the `/help` command.
-///
-/// Kept in sync with `crate::app::SLASH_COMMANDS` by
-/// `test_slash_help_lists_every_command` — adding a command to
-/// `SLASH_COMMANDS` without updating this string fails the test, so
-/// the help output and the `/` autocomplete cannot drift apart.
-const SLASH_HELP: &str = "Commands:\n\
-/help — show available commands\n\
-/clear — clear chat history\n\
-/model — switch model: /model <name>\n\
-/skills — list loaded skills\n\
-/goal — set a goal the agent works toward: /goal <text> | /goal clear\n\
-/steer — redirect the running prompt: /steer <instruction>\n\
-/cancel — stop the running prompt\n\
-/compact — compact session history now\n\
-/swarm — run N agents on a goal: /swarm <goal>\n\
-/quit — quit kod\n\
-/undo — restore chat cleared with /clear\n\
-/edit — edit your last message again\n\
-/search — search chat: /search <text> (n/N jumps)\n\
-/theme — switch theme: /theme [dark|light]\n\
-/tools — toggle tool output details\n\
-/retry — reconnect + resend the last prompt\n\
-/copy — copy the last assistant reply\n\
-/debug — diagnostics: /debug last-prompt dumps the last prompt\n\
-/rollback — restore a file from a checkpoint: /rollback [id]\n\
-/checkpoints — list file checkpoints for this project\n\
-/doctor — print a diagnostics report (same as `kod doctor`)\n\
-/init — onboarding info: config path, model profiles, next steps\n\
-/regenerate — regenerate the last assistant reply\n\
-/delete — remove the last user+assistant exchange\n\
-/export — export session as markdown: /export [path]\n\
-/export-html — export session as a self-contained HTML file: /export-html [path]\n\
-/memory — long-term memory: /memory [search <q> | delete <id> | clear]\n\
-/remember — store a durable fact in long-term memory: /remember <text>\n\
-/policy — tool policy: /policy [show | forget <n>]\n\
-/map — print the repository map (top-level symbols per file)\n\
-/context — visualize context window usage and session totals\n\
-/last-prompt — shortcut for /debug last-prompt\n\
-/diff — show the most recent file diff (from checkpoints)\n\
-/attach — attach a file to the next prompt: /attach <path>\n\
-/refine — refine the last assistant reply: /refine <instruction>\n\
-/raw — print the last assistant reply raw (no decoration)\n\
-/save — save session to a file: /save <path>\n\
-/load — load session from a JSON file: /load <path>\n\
-/branch — drop a branch-point marker: /branch [label]\n\
-/system — override the system prompt: /system <text> | /system clear\n\
-/grep — regex search the chat history: /grep <regex>\n\
-/summarize — LLM-summarize the session so far\n\
-/whoami — session summary: model, skills, context, paths\n\
-/clearall — clear chat + memory + checkpoints (asks for confirmation)\n\
-/stats — per-session statistics: roles, tools, tokens, elapsed\n\
-/git-status — git status --porcelain=v2 in the current directory\n\
-/reset — reset transient state: input, search, expansions, attachments\n\
-/fork — save the current chat as a restorable fork: /fork [label]\n\
-/check — run the project compiler/linter (Cargo, tsc, ruff, go vet)\n\
-/log — show recent session log entries: /log [N]\n\
-/trace — structured turn traces: /trace [last | list | <id>]\n\
-/trust — show or clear the round's taint: /trust [show | clear]\n\
-/blackboard — swarm blackboard: /blackboard [show | clear]\n\
-/learned — list or clear session-scoped learned approvals: /learned [clear]\n\
-/decisions — durable decisions: /decisions [drop <id> | clear]\n\
-/plan — show plan: /plan [next | skip | note <text> | clear]\n\
-/limits — per-tool quotas: /limits [show | reset]\n\
-/budget — session cost and limits: /budget | /budget raise <usd> | /budget reset\n\
-/jev — TypeSafe AI integration: /jev [status | stats | cache clear | test]\n\
-/pin — pin a message so it survives history compaction: /pin <n>\n\
-/unpin — remove a pin: /unpin <n>\n\
-/handoff — write a handoff document and start a fresh session with it as context\n\
-\n\
-While a prompt runs, typing + Enter steers it (same as /steer).\n\
-Keys: i insert · j/k or wheel scrolls · q quit · PgUp/PgDn/Home/End · g/G top/bottom · t toggle tools · o expand · y copy · r retry · u undo · f search · ? help · Esc cancel — hold Option/Shift to select text";
 
 /// Main TUI application loop
 pub struct TuiLoop {
@@ -6050,36 +5978,7 @@ mod tests {
     /// adding a command to the autocomplete without documenting it
     /// fails this test. The previous SLASH_HELP was missing `/debug`
     /// for several commits — this pins the invariant.
-    #[test]
-    fn test_slash_help_lists_every_command() {
-        use crate::app::SLASH_COMMANDS;
-        let help = SLASH_HELP;
-        for cmd in SLASH_COMMANDS {
-            assert!(
-                help.contains(cmd.name),
-                "SLASH_COMMANDS entry {:?} is not mentioned in SLASH_HELP",
-                cmd.name
-            );
-        }
-        // Every `/`-leading token inside SLASH_HELP should also be a
-        // known command, so a typo'd name does not linger. Split on
-        // whitespace, keep tokens starting with '/', strip trailing
-        // punctuation from each. Compare against the SLASH_COMMANDS set.
-        let known: std::collections::HashSet<&'static str> =
-            SLASH_COMMANDS.iter().map(|c| c.name).collect();
-        for token in help.split_whitespace() {
-            let trimmed = token
-                .trim_end_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/' && c != '-');
-            if trimmed.starts_with('/') && trimmed.len() > 1 {
-                assert!(
-                    known.contains(trimmed),
-                    "SLASH_HELP mentions {:?} which is not in SLASH_COMMANDS",
-                    trimmed
-                );
-            }
-        }
-    }
-
+    
     /// The idle hint line must name `f` as the search key, matching the
     /// default keybinding, and must not claim `/` starts a search.
     #[tokio::test]
@@ -6830,10 +6729,20 @@ mod coverage_slash_dispatch {
     // ---- loose-string tests ------------------------------------------
 
     #[tokio::test]
-    async fn help_lists_the_command_verbs() {
+    async fn help_opens_the_overlay() {
+        // `/help` toggles the full-screen overlay, matching the `?`
+        // key and F1. It used to push `SLASH_HELP` as a system
+        // message; the overlay widget advertises `/help` as an entry
+        // point, so the command now honours that promise.
         let mut tui = TuiLoop::new();
+        assert!(!tui.app().show_help(), "overlay starts closed");
         tui.handle_command("/help").await.unwrap();
-        assert_last_contains_any(&tui, &["/help", "/clear", "/quit"]);
+        assert!(tui.app().show_help(), "`/help` must open the overlay");
+
+        // A second invocation closes it, symmetric with the toggle
+        // behaviour of `?` and F1.
+        tui.handle_command("/help").await.unwrap();
+        assert!(!tui.app().show_help(), "`/help` toggles");
     }
 
     #[tokio::test]
