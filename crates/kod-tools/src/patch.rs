@@ -43,7 +43,17 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
             reason: "patch contains no hunks".to_string(),
         });
     }
-    let mut lines: Vec<String> = original.split('\n').map(|s| s.to_string()).collect();
+    // H-R14: detect a CRLF file and strip the `\r` from every line
+    // before comparison. The pre-fix code split on `\n` and compared
+    // context lines byte-for-byte against patch lines, so a patch
+    // authored on Unix applied to a CRLF file failed on every context
+    // line — Windows checkouts and `core.autocrlf` hit this on the
+    // first edit.
+    let uses_crlf = original.contains("\r\n");
+    let mut lines: Vec<String> = original
+        .split('\n')
+        .map(|s| s.strip_suffix('\r').unwrap_or(s).to_string())
+        .collect();
     let had_trailing_newline = original.ends_with('\n');
     if had_trailing_newline && lines.last().map(|s| s.is_empty()).unwrap_or(false) {
         lines.pop();
@@ -51,7 +61,12 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
 
     let mut offset: isize = 0;
     for hunk in &hunks {
-        let target = (hunk.old_start as isize - 1 + offset) as usize;
+        // H-R14: a `@@ -0,0 +1,N @@` (new file) header gives
+        // old_start == 0. `0 - 1 = -1` as usize wraps to a huge
+        // number. Clamp at 0; a hunk that inserts into a new file
+        // is a splice at position 0.
+        let raw_target = hunk.old_start as isize - 1 + offset;
+        let target = raw_target.max(0) as usize;
         if target > lines.len() {
             return Err(KodError::InvalidParameters {
                 reason: format!(
@@ -131,9 +146,12 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
         offset += hunk.new_lines as isize - hunk.old_lines as isize;
     }
 
-    let mut out = lines.join("\n");
+    // H-R14: re-emit with the file's dominant EOL. A CRLF file stays
+    // CRLF after a patch; a Unix file stays LF.
+    let sep = if uses_crlf { "\r\n" } else { "\n" };
+    let mut out = lines.join(sep);
     if had_trailing_newline {
-        out.push('\n');
+        out.push_str(sep);
     }
     Ok(out)
 }
@@ -142,8 +160,14 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
 pub fn parse_unified_diff(patch: &str) -> Result<Vec<Hunk>> {
     let mut hunks = Vec::new();
     let mut current: Option<Hunk> = None;
+    // H-R14: the `--- ` / `+++ ` headers are only meaningful *before*
+    // the first hunk. The pre-fix skip was unconditional, so a file
+    // line that happened to begin with `--- ` (a Markdown horizontal
+    // rule, a YAML separator) vanished from the patch and shifted
+    // every subsequent splice. Track whether we have entered a hunk.
+    let mut in_hunk = false;
     for line in patch.lines() {
-        if line.starts_with("--- ") || line.starts_with("+++ ") {
+        if !in_hunk && (line.starts_with("--- ") || line.starts_with("+++ ")) {
             continue;
         }
         if line.starts_with("@@") {
@@ -151,6 +175,7 @@ pub fn parse_unified_diff(patch: &str) -> Result<Vec<Hunk>> {
                 hunks.push(h);
             }
             current = Some(parse_hunk_header(line)?);
+            in_hunk = true;
             continue;
         }
         let Some(h) = current.as_mut() else {
