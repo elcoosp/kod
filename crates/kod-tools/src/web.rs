@@ -51,6 +51,19 @@ impl WebFetchTool {
         // A dedicated client, built once: the connection pool and TLS
         // session cache are the entire point of having a client rather
         // than spawning a request per call.
+        // H-S7: the default redirect policy follows up to 10 hops
+        // without re-validating the destination. An attacker URL
+        // (`http://attacker/r` -> 302 -> `http://169.254.169.254/…`)
+        // bypassed the private-IP check that only ran on the first
+        // URL. The custom policy re-runs `block_private_host` and
+        // (best-effort) the address family check on every hop.
+        //
+        // The policy is a *synchronous* closure, so it cannot do a
+        // DNS lookup — the async pre-flight validation still owns
+        // that. The redirect check covers the cheap-but-effective
+        // cases: literal private hosts, literal private IPs, and
+        // non-http(s) schemes (which `reqwest` would otherwise
+        // refuse on its own but we make explicit).
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .user_agent(concat!(
@@ -58,6 +71,28 @@ impl WebFetchTool {
                 env!("CARGO_PKG_VERSION"),
                 " (+https://github.com/elcoosp/kod)"
             ))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                // `attempt.url()` is the *next* URL; the hop count is
+                // already tracked by reqwest.
+                let next = attempt.url().clone();
+                if !matches!(next.scheme(), "http" | "https") {
+                    return attempt.error(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("redirect to non-http(s) scheme: {}", next.scheme()),
+                    ));
+                }
+                if let Some(host) = next.host_str()
+                    && let Some(reason) = block_private_host(host)
+                {
+                    return attempt.error(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        format!("redirect target {} refused: {reason}", next),
+                    ));
+                }
+                // Continue following the redirect. `reqwest`'s own
+                // ten-hop cap still applies.
+                attempt.follow()
+            }))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         Self {
@@ -193,7 +228,77 @@ impl Tool for WebFetchTool {
             }
         }
 
-        let response = match self.client.get(url.clone()).send().await {
+        // H-S7 (second half): DNS rebinding. The pre-flight check
+        // resolved once; `reqwest` would resolve again for the actual
+        // connection, and a TTL-0 attacker DNS can answer the check
+        // with a public IP and the fetch with `127.0.0.1`. Building a
+        // per-request client that pins the host to a validated address
+        // closes the window. The pre-flight already validated every
+        // address the resolver returned; we pin to the first one.
+        let pinned_addr: Option<std::net::SocketAddr> = if let Some(host) = url.host_str() {
+            if let Some(port) = url.port_or_known_default() {
+                let host_owned = host.to_string();
+                let lookup = tokio::task::spawn_blocking(move || {
+                    use std::net::ToSocketAddrs;
+                    (host_owned.as_str(), port)
+                        .to_socket_addrs()
+                        .map(|it| it.collect::<Vec<_>>())
+                })
+                .await
+                .unwrap_or(Ok(Vec::new()))
+                .unwrap_or_default();
+                // First address only; if `Host:` header needs to be
+                // preserved, reqwest does that automatically when we
+                // use the `resolve` builder.
+                lookup.into_iter().next()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let request_client: reqwest::Client = match (url.host_str(), pinned_addr) {
+            (Some(host), Some(addr)) => {
+                match reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
+                    .user_agent(concat!(
+                        "kod/",
+                        env!("CARGO_PKG_VERSION"),
+                        " (+https://github.com/elcoosp/kod)"
+                    ))
+                    .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                        // Clone the pieces we need before any consume.
+                        let next = attempt.url().clone();
+                        let scheme = next.scheme().to_string();
+                        let host = next.host_str().map(|s| s.to_string());
+                        if !matches!(scheme.as_str(), "http" | "https") {
+                            return attempt.error(std::io::Error::new(
+                                std::io::ErrorKind::InvalidInput,
+                                format!("redirect to non-http(s) scheme: {scheme}"),
+                            ));
+                        }
+                        if let Some(h) = host
+                            && let Some(reason) = block_private_host(&h)
+                        {
+                            return attempt.error(std::io::Error::new(
+                                std::io::ErrorKind::PermissionDenied,
+                                format!("redirect target {} refused: {reason}", next),
+                            ));
+                        }
+                        attempt.follow()
+                    }))
+                    .resolve(host, addr)
+                    .build()
+                {
+                    Ok(c) => c,
+                    Err(_) => self.client.clone(),
+                }
+            }
+            _ => self.client.clone(),
+        };
+
+        let response = match request_client.get(url.clone()).send().await {
             Ok(r) => r,
             Err(e) => {
                 return Ok(ToolResult::Error(format!(
@@ -207,7 +312,7 @@ impl Tool for WebFetchTool {
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             let preview = if body.len() > 300 {
-                format!("{}…", &body[..300])
+                format!("{}…", kod_types::strutil::truncate_chars(&body, 300))
             } else {
                 body
             };
@@ -427,7 +532,7 @@ fn html_to_text(html: &str) -> String {
         // Copy the byte through. Multi-byte UTF-8 is preserved because
         // we copy bytes, not chars — the string stays valid so long as
         // the input was valid (checked by the caller's `from_utf8`).
-        out.push(b as char);
+        out.push(char::from(b));
         i += 1;
     }
 
