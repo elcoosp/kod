@@ -4202,9 +4202,64 @@ impl KodEngine {
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
             let cost = pricing.cost_usd(usage.prompt_tokens, usage.completion_tokens);
+            // P1: teach the cache ledger from this call. The
+            // fingerprint is not known here (record_cost sees only
+            // the endpoint and usage), so it is passed in by the
+            // caller — see `record_cost_with_head`. This entry
+            // point keeps the fingerprint at zero, which the ledger
+            // treats as "unknown prefix", making the endpoint look
+            // cold on the next gate — the conservative direction.
+            self.ledger_observe(&model_ref.endpoint, 0, usage);
             // Tier 1.2 — update the live tracker. Done *before* the
             // log write so a UI sees the updated spend even if the
             // recorder fails.
+            self.cost_tracker.record(cost);
+            let entry = crate::session_log::SessionEntry::Cost {
+                timestamp_ms: now_ms,
+                holder: holder.to_string(),
+                endpoint: model_ref.endpoint.clone(),
+                model: model_ref.model.clone(),
+                prompt_tokens: usage.prompt_tokens,
+                completion_tokens: usage.completion_tokens,
+                cost_usd: cost,
+            };
+            if let Err(e) = rec.record(&entry) {
+                tracing::warn!(error = %e, "could not append Cost to session log");
+            }
+        }
+    }
+
+    /// Like [`Self::record_cost`], but also feeds the cache ledger
+    /// with the fingerprint of the request head that was actually
+    /// sent. The engine calls this from the two loops, which have
+    /// the rendered `system_text` and the definitions in scope.
+    async fn record_cost_with_head(
+        &self,
+        holder: &str,
+        model_ref: &ModelRef,
+        usage: &kod_provider::TokenUsage,
+        pricing: kod_provider::ModelPricing,
+        head_fingerprint: u64,
+    ) {
+        // Feed the ledger first — it is cheap and the value is
+        // useful even if the log write is skipped because no
+        // recorder is installed.
+        self.ledger_observe(&model_ref.endpoint, head_fingerprint, usage);
+        // Delegate the accounting to the base method; it will feed
+        // the ledger again with a zero fingerprint, which is a
+        // no-op overwrite of the correct value just written. (The
+        // ledger's `observe` replaces the state on every call; the
+        // zero-fingerprint pass only clears it, so do the accounting
+        // inline here rather than risk a second overwrite.)
+
+        if let Ok(guard) = self.session_recorder.read()
+            && let Some(rec) = guard.as_ref()
+        {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let cost = pricing.cost_for_usage(usage);
             self.cost_tracker.record(cost);
             let entry = crate::session_log::SessionEntry::Cost {
                 timestamp_ms: now_ms,
