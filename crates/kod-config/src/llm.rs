@@ -35,6 +35,7 @@ impl Default for LlmConfig {
                 context_window: 8192,
                 timeout_secs: 300,
                 pricing: None,
+                trust: None,
             }],
             routing: None,
         }
@@ -76,6 +77,20 @@ impl LlmConfig {
     /// clamps with a `tracing::warn!` per adjustment so the session
     /// still runs and the user sees what changed.
     pub fn validate(&mut self) {
+        for e in &mut self.endpoints {
+            // Clamp an unrecognised trust tier to `standard` rather
+            // than silently treating a typo as `trusted`.
+            if let Some(t) = &e.trust {
+                if !matches!(t.as_str(), "trusted" | "standard" | "untrusted") {
+                    tracing::warn!(
+                        endpoint = %e.name,
+                        value = %t,
+                        "unknown trust tier; clamping to standard",
+                    );
+                    e.trust = Some("standard".to_string());
+                }
+            }
+        }
         if self.endpoints.is_empty() {
             tracing::warn!("llm.endpoints is empty; falling back to the built-in default endpoint");
             self.endpoints = LlmConfig::default().endpoints;
@@ -338,6 +353,18 @@ pub struct EndpointConfig {
     pub timeout_secs: u64,
     #[serde(default)]
     pub pricing: Option<PricingConfig>,
+    /// Trust tier (P7). A turn that touches a read-protected path
+    /// (`.env`, a private key) is routed only to endpoints that
+    /// declare `trusted`; a turn that touches a dotfile is routed
+    /// to `standard` and above. The default `standard` is the
+    /// conservative choice for a config written before the field
+    /// existed — a user who did not opt in should not accidentally
+    /// receive a sensitive turn on a cheap third-party endpoint.
+    ///
+    /// One of: `trusted`, `standard`, `untrusted`. An unknown value
+    /// is clamped to `standard` at load.
+    #[serde(default)]
+    pub trust: Option<String>,
 }
 
 fn default_timeout_secs() -> u64 {

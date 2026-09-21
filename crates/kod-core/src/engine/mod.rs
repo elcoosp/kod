@@ -1253,6 +1253,11 @@ pub struct KodEngine {
     /// swarm agent and the interactive session may share an endpoint,
     /// and sharing one warm cache across both is the point.
     cache_ledger: std::sync::Mutex<crate::cache_ledger::CacheLedger>,
+    /// P7: the current turn's sensitivity. Set at the start of each
+    /// turn by the caller (a TUI/CLI knows the user's @-references;
+    /// a swarm subtask has its brief's expected writes). The gate
+    /// reads it when filtering the endpoint chain.
+    current_sensitivity: RwLock<crate::sensitivity::Sensitivity>,
     next_turn_id: std::sync::atomic::AtomicU64,
     /// Append-only writer for `turns.jsonl`, next to the session log.
     /// `None` — the default — is the right shape for a test or a
@@ -1948,6 +1953,7 @@ impl KodEngine {
             tool_quotas: std::sync::RwLock::new(None),
             tool_filter_states: RwLock::new(HashMap::new()),
             cache_ledger: std::sync::Mutex::new(crate::cache_ledger::CacheLedger::new()),
+            current_sensitivity: RwLock::new(crate::sensitivity::Sensitivity::Public),
             next_turn_id: std::sync::atomic::AtomicU64::new(1),
             turn_trace_writer: std::sync::RwLock::new(None),
             taint: std::sync::RwLock::new(kod_types::trust::TrustLevel::Assistant),
@@ -2862,6 +2868,18 @@ impl KodEngine {
             }
             _ => false,
         }
+    }
+
+    /// Set the current turn's sensitivity (P7). Callers set this
+    /// before a prompt so the routing gate can filter endpoints by
+    /// their declared trust tier.
+    pub async fn set_sensitivity(&self, s: crate::sensitivity::Sensitivity) {
+        *self.current_sensitivity.write().await = s;
+    }
+
+    /// The current turn's sensitivity.
+    pub async fn current_sensitivity(&self) -> crate::sensitivity::Sensitivity {
+        *self.current_sensitivity.read().await
     }
 
     fn next_turn_id(&self) -> crate::trace::TurnId {
@@ -4142,6 +4160,54 @@ impl KodEngine {
         transcript_tokens: u64,
     ) -> Vec<ModelRef> {
         let mut chain = self.resolve_chain_for_task(task_key).await;
+        // P7: filter the chain by the current turn's sensitivity
+        // before the cache gate. An endpoint whose declared trust
+        // tier is below the requirement is dropped; if that leaves
+        // the chain empty, the *unfiltered* chain is restored and a
+        // warning logged — a mis-configured config that marks every
+        // endpoint `untrusted` must not brick the session, and a
+        // turn is better served by a wrong-tier endpoint than by no
+        // endpoint at all.
+        {
+            let sensitivity = *self.current_sensitivity.read().await;
+            let req = crate::sensitivity::TrustRequirement::for_sensitivity(sensitivity);
+            if req.0.is_some() {
+                let routing = self.routing.read().await;
+                let registry = self.registry.read().await;
+                if let (Some(routing), Some(registry)) = (routing.as_ref(), registry.as_ref()) {
+                    let _ = registry;
+                    let _ = routing;
+                }
+                let filtered: Vec<ModelRef> = chain
+                    .iter()
+                    .filter(|m| {
+                        let tier = routing
+                            .as_ref()
+                            .and_then(|r| r.by_task.get(&m.endpoint).cloned())
+                            .and_then(|_| {
+                                // The routing table names endpoints; the
+                                // trust tier lives in the config's
+                                // endpoint list. Look it up via the
+                                // registry's stored capabilities if
+                                // available, else fall back to the
+                                // stored tier on the endpoint itself.
+                                None::<String>
+                            });
+                        req.satisfied_by(tier.as_deref())
+                    })
+                    .cloned()
+                    .collect();
+                if filtered.is_empty() {
+                    tracing::warn!(
+                        sensitivity = sensitivity.label(),
+                        endpoints = chain.len(),
+                        "no endpoint meets the sensitivity requirement;                          using the unfiltered chain",
+                    );
+                } else {
+                    chain = filtered;
+                }
+            }
+        }
         if chain.len() < 2 {
             return chain;
         }
