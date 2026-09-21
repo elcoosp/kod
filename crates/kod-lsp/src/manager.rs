@@ -111,10 +111,23 @@ impl LspManager {
     /// rust-analyzer index that takes 3 s would hold up a Python
     /// server that takes 100 ms.
     async fn client_for(&self, binary: &str) -> Result<Arc<Mutex<LspClient>>, LspError> {
+        // H-R9: check for a live cached client. A dead client
+        // (crashed server, EOF) is evicted so the caller re-spawns
+        // rather than writing to a closed pipe. `is_alive` needs
+        // `&mut`, hence the two-step lock; the fast path (live
+        // client) is the overwhelmingly common case.
         {
-            let guard = self.servers.lock().await;
+            let mut guard = self.servers.lock().await;
             if let Some(c) = guard.get(binary) {
-                return Ok(Arc::clone(c));
+                let alive = {
+                    let mut client = c.lock().await;
+                    client.is_alive()
+                };
+                if alive {
+                    return Ok(Arc::clone(c));
+                }
+                tracing::warn!(binary, "LSP server is dead; evicting and respawning",);
+                guard.remove(binary);
             }
         }
 
