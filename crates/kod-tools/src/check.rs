@@ -405,6 +405,9 @@ impl CheckTool {
         })?;
         let (program, args) = kind.command();
         let mut cmd = tokio::process::Command::new(program);
+        // H-R12: kill_on_drop for the same reason as `git.rs` — a
+        // timed-out `cargo check` must not keep running (and holding
+        // the target-dir lock) after the tool returned.
         cmd.args(&args)
             .current_dir(workdir)
             .stdin(std::process::Stdio::null())
