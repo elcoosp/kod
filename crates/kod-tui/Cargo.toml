@@ -36,3 +36,6 @@ async-stream = { workspace = true }
 futures = { workspace = true }
 rstest = { workspace = true }
 tempfile = "3.8"
+
+[lints]
+workspace = true
