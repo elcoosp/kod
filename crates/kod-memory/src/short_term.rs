@@ -7,11 +7,22 @@ use kod_types::{MemoryEntry, MemoryId};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 
+/// H-D6: single lock guarding entries + index. The pre-fix shape
+/// had two `RwLock`s and `store` took `entries→index` while `remove`
+/// took `index→entries` — a classic lock-order inversion. Today
+/// `remove` is unreachable in production, but the deadlock is latent
+/// and the shape bought nothing (both maps are always updated
+/// together).
+#[derive(Debug, Default)]
+struct ShortTermState {
+    entries: Vec<MemoryEntry>,
+    index: HashMap<MemoryId, usize>,
+}
+
 /// In-memory short-term storage with FIFO eviction
 #[derive(Debug)]
 pub struct ShortTermMemory {
-    entries: RwLock<Vec<MemoryEntry>>,
-    index: RwLock<HashMap<MemoryId, usize>>,
+    state: RwLock<ShortTermState>,
     capacity: usize,
 }
 
@@ -19,59 +30,69 @@ impl ShortTermMemory {
     /// Create a new short-term memory with the given capacity
     pub fn new(capacity: usize) -> Self {
         Self {
-            entries: RwLock::new(Vec::with_capacity(capacity)),
-            index: RwLock::new(HashMap::with_capacity(capacity)),
+            state: RwLock::new(ShortTermState {
+                entries: Vec::with_capacity(capacity),
+                index: HashMap::with_capacity(capacity),
+            }),
             capacity,
         }
     }
 
-    /// Store an entry (evicts oldest if at capacity)
+    /// Store an entry. H-D6: an entry whose id is already present is
+    /// *replaced in place* rather than appended. The pre-fix `store`
+    /// pushed a second copy unconditionally, corrupting the index
+    /// (which kept only one position) and leaving a stale twin that
+    /// `remove` could not reach.
     pub fn store(&self, entry: MemoryEntry) {
-        let mut entries = self.entries.write();
+        let mut st = self.state.write();
 
-        // Check capacity and evict if necessary
-        if entries.len() >= self.capacity {
-            self.evict_oldest(&mut entries);
+        if let Some(&pos) = st.index.get(&entry.id) {
+            st.entries[pos] = entry;
+            return;
         }
 
-        // Store entry
-        let position = entries.len();
-        entries.push(entry.clone());
+        if st.entries.len() >= self.capacity {
+            // Evict oldest.
+            let ShortTermState { entries, index } = &mut *st;
+            if let Some(oldest) = entries.first() {
+                let old_id = oldest.id.clone();
+                entries.remove(0);
+                index.remove(&old_id);
+                for e in entries.iter() {
+                    if let Some(p) = index.get_mut(&e.id) {
+                        *p = p.saturating_sub(1);
+                    }
+                }
+            }
+        }
 
-        // Update index
-        self.index.write().insert(entry.id, position);
+        let position = st.entries.len();
+        st.index.insert(entry.id.clone(), position);
+        st.entries.push(entry);
     }
 
     /// Get an entry by ID
     pub fn get(&self, id: &MemoryId) -> Option<MemoryEntry> {
-        let index = self.index.read();
-        let position = index.get(id)?;
-
-        let entries = self.entries.read();
-        entries.get(*position).cloned()
+        let st = self.state.read();
+        let &position = st.index.get(id)?;
+        st.entries.get(position).cloned()
     }
 
     /// Remove an entry by ID
     pub fn remove(&self, id: &MemoryId) -> Option<MemoryEntry> {
-        let mut index = self.index.write();
+        let mut st = self.state.write();
+        let ShortTermState { entries, index } = &mut *st;
         let position = index.remove(id)?;
-
-        let mut entries = self.entries.write();
-
-        if position < entries.len() {
-            let removed = entries.remove(position);
-
-            // Update index positions for entries after the removed one
-            for entry in entries.iter().skip(position) {
-                if let Some(pos) = index.get_mut(&entry.id) {
-                    *pos -= 1;
-                }
-            }
-
-            Some(removed)
-        } else {
-            None
+        if position >= entries.len() {
+            return None;
         }
+        let removed = entries.remove(position);
+        for entry in entries.iter().skip(position) {
+            if let Some(pos) = index.get_mut(&entry.id) {
+                *pos = pos.saturating_sub(1);
+            }
+        }
+        Some(removed)
     }
 
     /// Keep only the most recent `target` entries, dropping older
@@ -88,17 +109,13 @@ impl ShortTermMemory {
     /// hard-capped at `capacity`.
     pub fn retain_recent(&self, target: usize) -> usize {
         let target = target.min(self.capacity);
-        let mut entries = self.entries.write();
+        let mut st = self.state.write();
+        let ShortTermState { entries, index } = &mut *st;
         if entries.len() <= target {
             return 0;
         }
         let drop = entries.len() - target;
         entries.drain(..drop);
-        // Rebuild the index rather than patch positions in place:
-        // correct even when the dropped range is most of the vec, and
-        // not slower — the vec is already in hand and the map is one
-        // insert per retained entry.
-        let mut index = self.index.write();
         index.clear();
         for (i, entry) in entries.iter().enumerate() {
             index.insert(entry.id.clone(), i);
@@ -108,26 +125,25 @@ impl ShortTermMemory {
 
     /// Get the N most recent entries
     pub fn get_recent(&self, count: usize) -> Vec<MemoryEntry> {
-        let entries = self.entries.read();
-
-        if entries.len() <= count {
-            entries.iter().cloned().collect()
+        let st = self.state.read();
+        if st.entries.len() <= count {
+            st.entries.clone()
         } else {
-            entries[entries.len() - count..].to_vec()
+            st.entries[st.entries.len() - count..].to_vec()
         }
     }
 
     /// Get all entries
     pub fn get_all(&self) -> Vec<MemoryEntry> {
-        self.entries.read().iter().cloned().collect()
+        self.state.read().entries.clone()
     }
 
     /// Search entries by content (case-insensitive substring match)
     pub fn search(&self, query: &str) -> Vec<MemoryEntry> {
         let query_lower = query.to_lowercase();
-        let entries = self.entries.read();
-
-        entries
+        self.state
+            .read()
+            .entries
             .iter()
             .filter(|e| e.content.to_lowercase().contains(&query_lower))
             .cloned()
@@ -136,39 +152,24 @@ impl ShortTermMemory {
 
     /// Clear all entries
     pub fn clear(&self) {
-        self.entries.write().clear();
-        self.index.write().clear();
+        let mut st = self.state.write();
+        st.entries.clear();
+        st.index.clear();
     }
 
     /// Get current number of entries
     pub fn len(&self) -> usize {
-        self.entries.read().len()
+        self.state.read().entries.len()
     }
 
     /// Check if memory is empty
     pub fn is_empty(&self) -> bool {
-        self.entries.read().is_empty()
+        self.state.read().entries.is_empty()
     }
 
     /// Get capacity
     pub fn capacity(&self) -> usize {
         self.capacity
-    }
-
-    /// Evict the oldest entry (FIFO)
-    fn evict_oldest(&self, entries: &mut Vec<MemoryEntry>) {
-        if let Some(oldest) = entries.first() {
-            self.index.write().remove(&oldest.id);
-            entries.remove(0);
-
-            // Update positions in index
-            let mut index = self.index.write();
-            for entry in entries.iter() {
-                if let Some(pos) = index.get_mut(&entry.id) {
-                    *pos = pos.saturating_sub(1);
-                }
-            }
-        }
     }
 }
 
