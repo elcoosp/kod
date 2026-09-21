@@ -32,7 +32,13 @@ ignore = { workspace = true }
 globset = { workspace = true }
 toml = { workspace = true }
 [dev-dependencies]
-tokio = { workspace = true }
+# E2E TUI testing through a PTY (terminal-testlib is the renamed
+# successor of ratatui-testlib; the rename landed on `main` but has
+# not yet been published to crates.io, so a git dep is required).
+terminal-testlib = { git = "https://github.com/raibid-labs/ratatui-testlib", branch = "main" }
+# Mock LLM server for the E2E tests — serves an OpenAI-compatible
+# /v1/chat/completions SSE stream from a loopback port.
+axum = "0.8"
 tempfile = "3.8"
 kod-config = { path = "../kod-config" }
 toml = { workspace = true }
