@@ -92,7 +92,7 @@ impl Default for MemoryConfig {
             short_term_capacity: 100,
             long_term_db_path: None,
             enable_semantic_search: true,
-            embedding_model: "all-MiniLM-L6-v2".to_string(),
+            embedding_model: "nomic-embed-text".to_string(),
             context_window: 4096,
             compaction_interval_secs: 3600,
             scope: MemoryScope::Global,
