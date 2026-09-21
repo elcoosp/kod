@@ -1258,6 +1258,13 @@ pub struct KodEngine {
     /// a swarm subtask has its brief's expected writes). The gate
     /// reads it when filtering the endpoint chain.
     current_sensitivity: RwLock<crate::sensitivity::Sensitivity>,
+    /// Cached `(context_window, max_tokens)` for the current
+    /// endpoint (harness review section 9 hygiene). Populated by
+    /// `set_registry`, which every entry point calls before the
+    /// first prompt. The pre-fix `prompt_allocation` re-read and
+    /// re-parsed `~/.kod/config.toml` on every turn for two numbers
+    /// that do not change within a session.
+    budget_hint: std::sync::RwLock<(usize, usize)>,
     next_turn_id: std::sync::atomic::AtomicU64,
     /// Append-only writer for `turns.jsonl`, next to the session log.
     /// `None` — the default — is the right shape for a test or a
@@ -1954,6 +1961,11 @@ impl KodEngine {
             tool_filter_states: RwLock::new(HashMap::new()),
             cache_ledger: std::sync::Mutex::new(crate::cache_ledger::CacheLedger::new()),
             current_sensitivity: RwLock::new(crate::sensitivity::Sensitivity::Public),
+            budget_hint: std::sync::RwLock::new({
+                let d = kod_config::LlmConfig::default();
+                let ep = d.default_endpoint();
+                (ep.context_window, ep.max_tokens.unwrap_or(2048))
+            }),
             next_turn_id: std::sync::atomic::AtomicU64::new(1),
             turn_trace_writer: std::sync::RwLock::new(None),
             taint: std::sync::RwLock::new(kod_types::trust::TrustLevel::Assistant),
@@ -3999,6 +4011,21 @@ impl KodEngine {
         routing: Option<kod_config::RoutingConfig>,
     ) {
         *self.registry.write().await = Some(registry);
+        // Hygiene: cache the effective endpoint's (window, max_out)
+        // before the move into `current_model`. The config file is
+        // read once here rather than on every prompt.
+        if let Ok(cfg) = kod_config::KodConfig::load_default() {
+            let ep = cfg
+                .llm
+                .endpoints
+                .iter()
+                .find(|e| e.name == default_model.endpoint)
+                .unwrap_or_else(|| cfg.llm.default_endpoint());
+            let hint = (ep.context_window, ep.max_tokens.unwrap_or(2048));
+            if let Ok(mut g) = self.budget_hint.write() {
+                *g = hint;
+            }
+        }
         *self.current_model.write().await = default_model;
         *self.routing.write().await = routing;
     }
@@ -4040,19 +4067,13 @@ impl KodEngine {
         input: &str,
         _history: &str,
     ) -> std::result::Result<crate::budget::Allocation, crate::budget::BudgetError> {
-        let (window, max_out) = match kod_config::KodConfig::load_default() {
-            Ok(cfg) => {
-                let ep = cfg.llm.default_endpoint();
-                (ep.context_window, ep.max_tokens.unwrap_or(2048))
-            }
-            Err(_) => {
-                // Fall back to the built-in default so the engine
-                // still works on a machine whose config is unreadable.
-                let d = kod_config::LlmConfig::default();
-                let ep = d.default_endpoint();
-                (ep.context_window, ep.max_tokens.unwrap_or(2048))
-            }
-        };
+        // Hygiene: read the cached (window, max_out). `set_registry`
+        // populates it from the effective endpoint; a caller that
+        // never installed a registry sees the built-in default.
+        let (window, max_out) = *self
+            .budget_hint
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         let budget = crate::budget::PromptBudget::from_tokens(window, max_out);
         // H-E3: subtract the parts the engine appends outside the four
         // budgeted sections — the environment/tool-use trailer, the
