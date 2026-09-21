@@ -1638,6 +1638,12 @@ impl KodEngine {
             let mut states = self.tool_filter_states.write().await;
             if let Some(state) = states.get_mut(key) {
                 state.commit(task_sig, cats);
+                // A change to the tool set changes the cached prefix.
+                // Arm the one-shot gate so the next request drops the
+                // transcript cache breakpoint rather than paying a
+                // 1.25x write premium for a prefix that may change
+                // again next turn.
+                state.suppress_marker_once = changed;
             }
         }
         (filtered, changed)

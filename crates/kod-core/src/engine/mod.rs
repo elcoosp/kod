@@ -1521,6 +1521,13 @@ pub(crate) struct ToolFilterState {
     /// turn flips the set), five is too slow (a real task change
     /// waits half a minute on a chatty session).
     pub min_stable_turns: u64,
+    /// One-shot gate: set when a commit changed the enabled set.
+    /// The next `build_grounded_request` for this key consumes it and
+    /// clears the transcript cache breakpoint for that single
+    /// request. The round that first sees a changed prefix should not
+    /// pay Anthropic's 1.25x cache-write premium for a prefix that
+    /// may not survive the next round either.
+    pub suppress_marker_once: bool,
 }
 
 impl ToolFilterState {
@@ -1532,6 +1539,7 @@ impl ToolFilterState {
             committed_signature: String::new(),
             turns_since_change: 0,
             min_stable_turns: 3,
+            suppress_marker_once: false,
         }
     }
 
@@ -2764,6 +2772,27 @@ impl KodEngine {
     }
 
     /// Allocate the next turn id. Monotonic; scoped to the session.
+    /// Consume the one-shot marker-suppression flag for `key`.
+    ///
+    /// Returns `true` exactly once after a tool-filter commit that
+    /// changed the enabled set, `false` otherwise. `build_grounded_request`
+    /// calls this to decide whether to set
+    /// `CompletionRequest::cache_transcript`.
+    ///
+    /// Consuming (rather than reading) the flag means a turn with
+    /// many rounds suppresses the marker only on the first — the
+    /// prefix is stable from round 2 onward within the same turn.
+    async fn consume_marker_suppression(&self, key: &str) -> bool {
+        let mut states = self.tool_filter_states.write().await;
+        match states.get_mut(key) {
+            Some(state) if state.suppress_marker_once => {
+                state.suppress_marker_once = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn next_turn_id(&self) -> crate::trace::TurnId {
         self.next_turn_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -5556,7 +5585,7 @@ impl KodEngine {
                 round.definitions,
                 round.options,
                 round.model_ref,
-            );
+            ).await;
             match provider.complete(&req).await? {
                 GenerationResponse::Text { content, usage } => {
                     last_usage = match (last_usage, usage) {
@@ -5925,7 +5954,7 @@ impl KodEngine {
             definitions,
             options,
             fallback,
-        );
+        ).await;
         // Box the stream so it can be returned across the await
         // boundary. The request must be owned by the stream's
         // closure because `stream_completion` borrows it.
@@ -5992,7 +6021,7 @@ impl KodEngine {
             definitions,
             options,
             model_ref,
-        );
+        ).await;
         // P5.6 — wrap the concrete stream in an `async_stream` that
         // owns its provider and request. `stream_completion` borrows
         // both, so its return type carries a lifetime; the wrapper
@@ -6214,7 +6243,15 @@ impl KodEngine {
     /// The `model` field carries the resolved endpoint, so a provider
     /// that is asked to switch mid-stream can honour the request's
     /// choice rather than the one baked in at construction.
-    fn build_grounded_request(
+    /// # P0 marker gate
+    ///
+    /// This function is `async` because it consults the tool-filter
+    /// state for a pending marker suppression. The suppression is
+    /// armed by `filter_tool_definitions_with_hysteresis` when a
+    /// commit changed the enabled tool set, and consumed here on
+    /// the next call so exactly one request per prefix change skips
+    /// the transcript cache breakpoint.
+    async fn build_grounded_request(
         &self,
         key: &str,
         system_text: &str,
@@ -6267,11 +6304,14 @@ impl KodEngine {
             tools: definitions.to_vec(),
             options: options.clone(),
             model: model.clone(),
-            // P0 cache control: a fresh request always wants the
-            // transcript breakpoint. The engine clears it for the
-            // single round after a prefix-changing event once
-            // hysteresis lands.
-            cache_transcript: true,
+            // P0 cache control: normally the transcript carries a
+            // cache breakpoint so a long session reads its context
+            // back at the cache rate. When the tool filter just
+            // changed the enabled set, the prefix is about to churn,
+            // so this one request skips the marker and avoids paying
+            // Anthropic's 1.25x cache-write premium for a prefix that
+            // will not survive the next round.
+            cache_transcript: !self.consume_marker_suppression(key).await,
         }
     }
 
@@ -8688,7 +8728,7 @@ mod tests {
             &[],
             &GenerationOptions::default(),
             &ModelRef::new("test", "test-model"),
-        );
+        ).await;
         assert_eq!(
             req.system.segments.len(),
             2,

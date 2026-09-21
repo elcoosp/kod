@@ -390,6 +390,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+- **Cache marker gate (P0).** The transcript cache breakpoint is now
+  suppressed for the single request that follows a tool-filter
+  change. `ToolFilterState` carries a one-shot flag, armed on a
+  commit that changed the enabled set and consumed by
+  `build_grounded_request`; that request skips Anthropic's 1.25x
+  cache-write premium for a prefix that is about to churn. All other
+  requests carry the marker.
 ### Added
 ### Fixed
 - **`deny.toml` now carries a real policy** (design §5.3 B4):
