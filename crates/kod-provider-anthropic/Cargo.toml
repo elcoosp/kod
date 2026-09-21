@@ -11,7 +11,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["stream"] }
 futures = { workspace = true }
 async-stream = { workspace = true }
 adk-core = "2.2"
@@ -26,3 +26,6 @@ kod-provider = { path = "../kod-provider", features = ["testkit"] }
 time = { workspace = true }
 httpmock = "0.7"
 tempfile = "3.8"
+
+[lints]
+workspace = true
