@@ -158,15 +158,44 @@ pub fn messages_array(messages: &[ChatMessage]) -> Value {
             && last["role"] == json!(role)
         {
             if let Some(arr) = last["content"].as_array_mut() {
-                // Existing entry's content is always an array by the
-                // time we get here (the initializer for the user
-                // branch is a single object, so normalise).
+                // H-P9: Anthropic requires `tool_result` blocks at
+                // the *start* of a user turn's content array. The
+                // pre-fix shape simply appended, so a merged
+                // `[text, tool_result]` (the note / steering flows
+                // produce this) was rejected by the API. Normalize
+                // the array so every `tool_result` precedes every
+                // `text` block.
+                let mut new_blocks: Vec<Value> = Vec::new();
                 if block_content.is_array() {
                     for b in block_content.as_array().unwrap() {
-                        arr.push(b.clone());
+                        new_blocks.push(b.clone());
                     }
                 } else {
-                    arr.push(block_content);
+                    new_blocks.push(block_content);
+                }
+                // Split the existing content and the new blocks into
+                // tool_result-first, then text-last.
+                let mut tool_results: Vec<Value> = Vec::new();
+                let mut others: Vec<Value> = Vec::new();
+                for existing in arr.drain(..) {
+                    if existing.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
+                        tool_results.push(existing);
+                    } else {
+                        others.push(existing);
+                    }
+                }
+                for b in new_blocks {
+                    if b.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
+                        tool_results.push(b);
+                    } else {
+                        others.push(b);
+                    }
+                }
+                for b in tool_results {
+                    arr.push(b);
+                }
+                for b in others {
+                    arr.push(b);
                 }
             }
             continue;
@@ -363,19 +392,34 @@ pub fn parse_sse_line(
             // Anthropic reports the final output token count here; the
             // input count came from `message_start`. Emit a combined
             // Usage once, when the delta is seen.
+            //
+            // H-P6: `delta.stop_reason` ("max_tokens", "refusal",
+            // "pause_turn", "tool_use", "end_turn") is surfaced as a
+            // `StopReason` chunk. Without it, a response truncated
+            // mid tool-JSON was indistinguishable from a complete
+            // one — the engine could only see the stream end.
+            let mut chunks = Vec::new();
+            if let Some(reason) = v
+                .get("delta")
+                .and_then(|d| d.get("stop_reason"))
+                .and_then(|s| s.as_str())
+                && !reason.is_empty()
+            {
+                chunks.push(StreamChunk::StopReason(reason.to_string()));
+            }
             let out = v
                 .get("usage")
                 .and_then(|u| u.get("output_tokens"))
                 .and_then(|n| n.as_u64())
                 .unwrap_or(0) as usize;
-            if out == 0 && state.input_tokens == 0 {
-                return Vec::new();
+            if out > 0 || state.input_tokens > 0 {
+                chunks.push(StreamChunk::Usage(kod_provider::TokenUsage {
+                    prompt_tokens: state.input_tokens,
+                    completion_tokens: out,
+                    total_tokens: state.input_tokens + out,
+                }));
             }
-            vec![StreamChunk::Usage(kod_provider::TokenUsage {
-                prompt_tokens: state.input_tokens,
-                completion_tokens: out,
-                total_tokens: state.input_tokens + out,
-            })]
+            chunks
         }
         Some("message_stop") => {
             state.finished = true;
@@ -496,15 +540,18 @@ mod tests {
         let _ = super::parse_sse_line(&mut st, start);
         let line = "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":4}}";
         let chunks = super::parse_sse_line(&mut st, line);
-        assert_eq!(chunks.len(), 1);
-        match &chunks[0] {
-            kod_provider::StreamChunk::Usage(u) => {
-                assert_eq!(u.prompt_tokens, 10);
-                assert_eq!(u.completion_tokens, 4);
-                assert_eq!(u.total_tokens, 14);
-            }
-            other => panic!("expected Usage, got {other:?}"),
-        }
+        // H-P6: the delta now yields a StopReason chunk *and* a Usage
+        // chunk. Find the Usage; ignore the reason.
+        let usage = chunks
+            .iter()
+            .find_map(|c| match c {
+                kod_provider::StreamChunk::Usage(u) => Some(u),
+                _ => None,
+            })
+            .expect("Usage must be emitted");
+        assert_eq!(usage.prompt_tokens, 10);
+        assert_eq!(usage.completion_tokens, 4);
+        assert_eq!(usage.total_tokens, 14);
     }
 
     #[test]
@@ -571,6 +618,7 @@ mod tests {
                     kod_provider::StreamChunk::ToolCallStart { .. } => starts += 1,
                     kod_provider::StreamChunk::ToolCallDelta { .. } => deltas += 1,
                     kod_provider::StreamChunk::Usage(u) => usage = Some(u),
+                    kod_provider::StreamChunk::StopReason(_) => {}
                     kod_provider::StreamChunk::Done => done = true,
                 }
             }
@@ -705,8 +753,10 @@ mod tests {
         assert_eq!(v[0]["role"], "user");
         let content = v[0]["content"].as_array().unwrap();
         assert_eq!(content.len(), 2);
-        assert_eq!(content[0]["type"], "text");
-        assert_eq!(content[1]["type"], "tool_result");
+        // H-P9: `tool_result` blocks come first. The API rejects
+        // `[text, tool_result]`.
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[1]["type"], "text");
     }
 
     #[test]
@@ -1172,5 +1222,56 @@ mod coverage_wire_builders {
         let t = a_tool_def("custom_tool");
         let arr = tools_array(&[t]);
         assert_eq!(arr[0]["description"], "does custom_tool");
+    }
+
+    #[test]
+    fn sse_message_delta_yields_stop_reason() {
+        // H-P6: the stop_reason field on message_delta must surface as
+        // a StopReason chunk, not be silently dropped.
+        let mut state = AnthropicStreamState::default();
+        let line = r#"data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":4}}"#;
+        let chunks = parse_sse_line(&mut state, line);
+        assert!(
+            chunks.iter().any(
+                |c| matches!(c, kod_provider::StreamChunk::StopReason(r) if r == "max_tokens")
+            ),
+            "expected StopReason, got: {chunks:?}",
+        );
+    }
+
+    #[test]
+    fn sse_message_delta_without_stop_reason_yields_no_stop_chunk() {
+        let mut state = AnthropicStreamState::default();
+        let line = r#"data: {"type":"message_delta","delta":{},"usage":{"output_tokens":4}}"#;
+        let chunks = parse_sse_line(&mut state, line);
+        assert!(
+            !chunks
+                .iter()
+                .any(|c| matches!(c, kod_provider::StreamChunk::StopReason(_))),
+        );
+    }
+
+    #[test]
+    fn merged_user_turn_puts_tool_result_first() {
+        // H-P9: a user text message followed by a tool result must
+        // serialize with the tool_result block first. The API
+        // rejects `[text, tool_result]`.
+        use kod_types::{ChatMessage, MessageId, MessageRole};
+        use time::OffsetDateTime;
+        let now = OffsetDateTime::now_utc();
+        let user = ChatMessage::text(MessageId::new(), MessageRole::User, "here is a note", now);
+        let mut tool = ChatMessage::text(MessageId::new(), MessageRole::Tool, "tool output", now);
+        tool.tool_call_id = Some("call_1".to_string());
+        let msgs = vec![user, tool];
+        let arr = messages_array(&msgs);
+        // One merged user turn.
+        assert_eq!(arr.as_array().unwrap().len(), 1);
+        let blocks = arr[0]["content"].as_array().unwrap();
+        assert!(blocks.len() >= 2, "expected merged blocks, got {blocks:?}",);
+        assert_eq!(
+            blocks[0].get("type").and_then(|t| t.as_str()),
+            Some("tool_result"),
+            "tool_result must come first: {blocks:?}",
+        );
     }
 }
