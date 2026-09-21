@@ -1749,66 +1749,18 @@ pub async fn run_chat(
     // Load configuration
     let config = KodConfig::load_default()?;
 
-    // Override model if specified
-    let model_name = model.unwrap_or_else(|| config.llm.default_endpoint().model.clone());
-
-    // Create the database path
-    let home = dirs::home_dir()
-        .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
-    let db_path = home.join(".kod").join("data").join("kod.redb");
-
-    // Create engine. Derive the history budget from the model's window
-    // (≈3 chars/token) so a small-model user is safe and a large-model
-    // user gets useful recall; the engine clamps below its floor.
-    // RouterConfig carries the token window itself so the memory manager
-    // sizes its own budget from the same source.
-    // Design D2.1: build the embedder the memory subsystem will use
-    // for semantic retrieval. `None` (the config default) leaves the
-    // keyword+recency fallback in place; no retrieval path is broken
-    // by an absent embedder.
-    let embedder = kod_memory::embedding::from_config(
-        &config.memory,
-        Some(&config.llm.default_endpoint().base_url),
-    );
-    let router_config = RouterConfig {
-        skill_threshold: config.skills.match_threshold,
-        context_window: config.llm.default_endpoint().context_window,
-        short_term_capacity: config.memory.short_term_capacity,
-        embedder,
-        ..RouterConfig::default()
-    };
-    // Arc because the approval forwarder task (spawned below) needs to
-    // call `respond_to_approval` while `process_streaming` runs on the
-    // same engine.
-    let engine = Arc::new(KodEngine::new(router_config, db_path)?);
-    engine.set_history_budget(
-        config
-            .llm
-            .default_endpoint()
-            .context_window
-            .saturating_mul(3),
-    );
-
-    // Set up OpenAI-compatible provider (Ollama /v1, LM Studio, MLX, ...)
-    let (registry, default_model, routing) =
-        kod_core::build_registry(&config.llm, Some(&model_name))?;
-    engine.set_registry(registry, default_model, routing).await;
-    engine.set_hooks(config.hooks.clone());
-    engine.set_network_access(config.llm.network_access);
-    engine.set_auto_check(config.tools.auto_check);
-    engine.set_auto_lsp(config.tools.auto_lsp);
-    engine.set_generation_defaults(
-        Some(config.llm.default_endpoint().temperature.unwrap_or(0.7)),
-        Some(config.llm.default_endpoint().max_tokens.unwrap_or(2048)),
-    );
-    install_policy_async(&engine, &config, cli_preset.as_deref()).await?;
-    // Tier 1.3 — install read-protection from the effective policy.
-    if let Some(policy) = engine.policy().await {
-        engine.set_read_protection(policy.read_protection().clone());
-    }
-    // Tier 1.2 — install the session cost caps.
-    engine.install_limits(&config.limits);
-    kod_core::mcp_adapters::install_from_config(&engine, &config).await;
+    // S10: shared bootstrap. `Arc` because the approval forwarder
+    // below needs the same handle `process_streaming` runs on.
+    let engine = engine_from_config(
+        &config,
+        EngineBootstrapOptions {
+            model_override: model.as_deref(),
+            cli_preset: cli_preset.as_deref(),
+            require_sandbox: sandbox,
+            install_mcp: true,
+        },
+    )
+    .await?;
 
     // Start the engine
     engine.start().await?;
@@ -2368,7 +2320,7 @@ pub async fn run_swarm(
         }
     }
 
-    let engine = Arc::new(engine);
+    // (engine is already an Arc from `engine_from_config`.)
     // Design §D4.3: the runner reads per-run budget and retry knobs
     // from `[swarm]`. `from_config` centralises the mapping so this
     // site and the TUI's `/swarm` cannot drift.
