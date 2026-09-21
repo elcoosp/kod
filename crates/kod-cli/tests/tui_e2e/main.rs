@@ -177,30 +177,49 @@ fn char_by_char_streaming_reassembles() {
 #[test]
 fn slash_help_opens_the_overlay() {
     let env = TestEnv::new();
-    let session = env.spawn(80, 24);
+    // Deliberately taller than the default 24 rows: the overlay
+    // renders its sections top-down and clips whatever exceeds the
+    // viewport. A 24-row terminal shows Modes and Typing but cuts
+    // off before the first slash command, so the assertions below
+    // about the command listing would fail for a viewport reason
+    // rather than a content reason. The help content genuinely is
+    // longer than a 24-row terminal — that is a UX concern the
+    // widget may want to address (scrolling, abbreviation), not a
+    // regression this test should paper over.
+    let session = env.spawn(100, 60);
     harness::wait_for_ready(&session);
 
     session.send_key(KeyCode::Char('i'));
     session.send_text("/help");
     session.send_key(KeyCode::Enter);
 
-    // The overlay's border title is the marker for "the widget
-    // rendered". Matching a body line instead could pass on a
-    // half-drawn frame.
+    // The overlay's border title proves the widget rendered its
+    // frame; a body line alone could appear on a half-drawn frame.
     let screen = session.wait_for_text("help — Esc closes", WAIT);
     assert!(
         screen.contains("help — Esc closes"),
         "help overlay did not open from /help:\n{screen}"
     );
-    // One body line from each section — the key listing and the
-    // slash-command listing.
+    // One body line from each of the four sections the widget
+    // renders (Modes / Typing / Chat / Session). The overlay is a
+    // curated subset of key bindings — it does not list every slash
+    // command the CLI accepts, so the assertion is against lines the
+    // widget actually contains, not against `SLASH_COMMANDS`.
     assert!(
         screen.contains("this help (also /help, F1)"),
-        "help overlay is missing the keys section:\n{screen}"
+        "help overlay is missing the Modes section:\n{screen}"
     );
     assert!(
-        screen.contains("/blackboard"),
-        "help overlay is missing the slash-command section:\n{screen}"
+        screen.contains("Ctrl+J / Shift+Enter newline"),
+        "help overlay is missing the Typing section:\n{screen}"
+    );
+    assert!(
+        screen.contains("toggle tool outputs"),
+        "help overlay is missing the Chat section:\n{screen}"
+    );
+    assert!(
+        screen.contains("/retry"),
+        "help overlay is missing the Session section:\n{screen}"
     );
 }
 
