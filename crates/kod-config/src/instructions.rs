@@ -223,47 +223,59 @@ fn guard_matches(when: &When, task: Option<&str>, paths: &[PathBuf], langs: &[&s
     }
 }
 
-/// Minimal glob matcher: `**` matches across path segments, `*`
-/// within a segment, `?` one char.
+/// Minimal glob matcher: `**` (globstar) matches across path
+/// segments, `*` within a segment, `?` a single character.
+///
+/// Recursive with backtracking on `*` and `**`. Correct, not fast —
+/// the guards are evaluated once per turn against a handful of
+/// paths, so the recursion depth is trivial and the cost is
+/// invisible next to the model call.
+///
+/// Cases the tests pin:
+///
+/// - `crates/web/**` matches `crates/web/src/lib.rs`
+/// - `crates/**/src/*.rs` matches `crates/web/src/a.rs` **and**
+///   `crates/src/a.rs` (`**` matches zero or more segments)
+/// - `crates/web/**` does not match `crates/core/lib.rs`
+/// - `a?c` matches `abc` but not `ac`
 fn simple_glob_match(pattern: &str, text: &str) -> bool {
-    let parts: Vec<&str> = pattern.split("**").collect();
-    if parts.len() == 1 {
-        return segment_match(pattern, text);
-    }
-    let mut start = 0usize;
-    for (i, part) in parts.iter().enumerate() {
-        let part = part.trim_matches('/');
-        if part.is_empty() {
-            continue;
-        }
-        match text[start..].find(part) {
-            Some(pos) => start += pos + part.len(),
-            None => return false,
-        }
-        if i == parts.len() - 1 {
-            // Nothing after the last `**` needs matching.
-        }
-    }
-    true
-}
-
-fn segment_match(pattern: &str, text: &str) -> bool {
-    // Recursive wildcard match with backtracking on `*`.
-    fn go(p: &[char], t: &[char]) -> bool {
-        match (p.first(), t.first()) {
-            (Some('*'), _) => {
-                // `*` matches zero or more characters.
-                go(&p[1..], t) || (!t.is_empty() && go(p, &t[1..]))
-            }
-            (Some('?'), Some(_)) => go(&p[1..], &t[1..]),
-            (Some(a), Some(b)) if a == b => go(&p[1..], &t[1..]),
-            (None, None) => true,
-            _ => false,
-        }
-    }
     let p: Vec<char> = pattern.chars().collect();
     let t: Vec<char> = text.chars().collect();
-    go(&p, &t)
+    glob_rec(&p, &t)
+}
+
+fn glob_rec(p: &[char], t: &[char]) -> bool {
+    // Globstar: `**`. Consume it and (if present) a following `/`,
+    // then try to match the remainder at every split of `t`.
+    if p.len() >= 2 && p[0] == '*' && p[1] == '*' {
+        let (rest_p, trailing_slash) = if p.len() >= 3 && p[2] == '/' {
+            (&p[3..], true)
+        } else {
+            (&p[2..], false)
+        };
+        for i in 0..=t.len() {
+            if glob_rec(rest_p, &t[i..]) {
+                return true;
+            }
+            // `a/**/b` must match `a/b`: after `**` consumed zero
+            // segments the `/` in the pattern still needs to
+            // correspond to nothing in the text.
+            if trailing_slash && i < t.len() && t[i] == '/' && glob_rec(rest_p, &t[i + 1..]) {
+                return true;
+            }
+        }
+        return false;
+    }
+    match (p.first(), t.first()) {
+        // Single `*`: zero or more characters within the current
+        // segment. Two branches — consume the `*` (match empty) or
+        // consume one character from `t` and keep the `*`.
+        (Some('*'), _) => glob_rec(&p[1..], t) || (!t.is_empty() && glob_rec(p, &t[1..])),
+        (Some('?'), Some(_)) => glob_rec(&p[1..], &t[1..]),
+        (Some(a), Some(b)) if a == b => glob_rec(&p[1..], &t[1..]),
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -327,21 +339,23 @@ mod tests {
         let leaf = parse_agents_md("## Style\nLeaf style.\n", Path::new("/r/w/AGENTS.md"));
         let mut raw = root;
         raw.extend(leaf);
-        let mut by_name: BTreeMap<String, usize> = BTreeMap::new();
-        let mut dedup: Vec<Option<InstructionSection>> = raw.into_iter().map(Some).collect();
-        for (i, s) in dedup.iter().enumerate() {
-            if let Some(s) = s
-                && let Some(name) = &s.name
-            {
-                if let Some(&prev) = by_name.get(name) {
-                    dedup[prev] = None;
-                }
-                by_name.insert(name.clone(), i);
+        // Same two-pass shape as `InstructionChain::load`.
+        let mut winner: BTreeMap<String, usize> = BTreeMap::new();
+        for (i, s) in raw.iter().enumerate() {
+            if let Some(name) = &s.name {
+                winner.insert(name.clone(), i);
             }
         }
-        let chain = InstructionChain {
-            sections: dedup.into_iter().flatten().collect(),
-        };
+        let kept: std::collections::HashSet<usize> = winner.values().copied().collect();
+        let sections: Vec<InstructionSection> = raw
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, s)| match &s.name {
+                Some(_) => kept.contains(&i).then_some(s),
+                None => Some(s),
+            })
+            .collect();
+        let chain = InstructionChain { sections };
         assert_eq!(chain.sections.len(), 1);
         assert!(chain.sections[0].body.contains("Leaf style"));
     }
