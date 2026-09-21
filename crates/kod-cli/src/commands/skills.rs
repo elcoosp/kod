@@ -374,3 +374,296 @@ pub(super) fn to_title_case(s: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+pub async fn run_skills_export(name: &str, dest: std::path::PathBuf, force: bool) -> Result<()> {
+    let src = match find_skill_path(name).await? {
+        Some(p) => p,
+        None => {
+            eprintln!(
+                "No skill named {:?} in any configured skills directory.",
+                name
+            );
+            std::process::exit(1);
+        }
+    };
+    let content = std::fs::read_to_string(&src).map_err(KodError::Io)?;
+
+    if dest.as_os_str() == "-" {
+        print!("{}", content);
+        if !content.ends_with('\n') {
+            println!();
+        }
+        return Ok(());
+    }
+
+    // If dest is an existing directory, or has no extension and looks
+    // like one, write inside it under the skill's file name.
+    let target = if dest.is_dir() {
+        dest.join(
+            src.file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("skill.md")),
+        )
+    } else {
+        dest
+    };
+
+    if target.exists() && !force {
+        eprintln!(
+            "Refusing to overwrite {} — pass --force to replace it.",
+            target.display()
+        );
+        std::process::exit(1);
+    }
+
+    if let Some(parent) = target.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(KodError::Io)?;
+    }
+    std::fs::write(&target, content.as_bytes()).map_err(KodError::Io)?;
+    println!("Exported {} to {}", src.display(), target.display());
+    Ok(())
+}
+
+pub async fn run_skills_search(query: &str) -> Result<()> {
+    let config = KodConfig::load_default()?;
+    let dirs = config.skills_dirs()?;
+    let q = query.to_lowercase();
+    if q.is_empty() {
+        eprintln!("Usage: kod skills search <query>");
+        std::process::exit(1);
+    }
+
+    let parser = kod_skills::SkillParser::new();
+    let mut hits: Vec<(i32, kod_types::Skill)> = Vec::new();
+
+    for dir in &dirs {
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if entry.path().extension().and_then(|s| s.to_str()) != Some("md") {
+                continue;
+            }
+            let skill = match parser.parse_file(entry.path()) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let mut score = 0i32;
+            if skill.metadata.name.to_lowercase().contains(&q) {
+                score += 100;
+            }
+            for tag in &skill.metadata.tags {
+                if tag.to_lowercase().contains(&q) {
+                    score += 30;
+                }
+            }
+            for cap in &skill.metadata.capabilities {
+                if cap.to_lowercase().contains(&q) {
+                    score += 20;
+                }
+            }
+            if skill.metadata.description.to_lowercase().contains(&q) {
+                score += 10;
+            }
+            for trig in &skill.metadata.triggers {
+                if trig.to_lowercase().contains(&q) {
+                    score += 25;
+                }
+            }
+            if score > 0 {
+                hits.push((score, skill));
+            }
+        }
+    }
+
+    if hits.is_empty() {
+        println!("No skills match {:?}.", query);
+        return Ok(());
+    }
+
+    hits.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.metadata.name.cmp(&b.1.metadata.name))
+    });
+    println!("{} skill(s) match {:?}:", hits.len(), query);
+    for (_, skill) in &hits {
+        println!(
+            "  - {}: {}",
+            skill.metadata.name, skill.metadata.description
+        );
+    }
+    Ok(())
+}
+
+pub async fn run_skills_validate_strict() -> Result<()> {
+    let config = KodConfig::load_default()?;
+    let skills_dirs = config.skills_dirs()?;
+    let parser = kod_skills::SkillParser::new().strict();
+
+    let mut total = 0usize;
+    let mut ok = 0usize;
+    let mut failed: Vec<(std::path::PathBuf, String)> = Vec::new();
+
+    for dir in &skills_dirs {
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if entry.path().extension().and_then(|s| s.to_str()) != Some("md") {
+                continue;
+            }
+            total += 1;
+            match parser.parse_file(entry.path()) {
+                Ok(skill) => {
+                    ok += 1;
+                    println!("✓ {} ({})", skill.metadata.name, entry.path().display());
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    failed.push((entry.path().to_path_buf(), msg.clone()));
+                    println!("✗ {} — {}", entry.path().display(), msg);
+                }
+            }
+        }
+    }
+
+    if total == 0 {
+        println!("No skill files found.");
+        return Ok(());
+    }
+
+    println!();
+    println!(
+        "strict: {} checked, {} ok, {} failed.",
+        total,
+        ok,
+        failed.len()
+    );
+    if !failed.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
+    // Validate the new name.
+    if !new_name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        || new_name.is_empty()
+    {
+        return Err(KodError::Config(format!(
+            "invalid new name {:?}: lowercase letters, digits, and hyphens only",
+            new_name
+        )));
+    }
+
+    let src = match find_skill_path(name).await? {
+        Some(p) => p,
+        None => {
+            eprintln!(
+                "No skill named {:?} in any configured skills directory.",
+                name
+            );
+            std::process::exit(1);
+        }
+    };
+    let parent = src
+        .parent()
+        .ok_or_else(|| KodError::Internal("source skill has no parent".to_string()))?;
+    let dest = parent.join(format!("{new_name}.md"));
+    if dest.exists() {
+        eprintln!(
+            "Destination {} already exists — refusing to overwrite.",
+            dest.display()
+        );
+        std::process::exit(1);
+    }
+
+    // Rewrite the `name:` field. A simple line scan that preserves the
+    // rest of the file exactly.
+    let content = std::fs::read_to_string(&src).map_err(KodError::Io)?;
+    let mut out = String::with_capacity(content.len());
+    let mut rewrote = false;
+    for line in content.lines() {
+        if !rewrote && line.trim_start().starts_with("name:") {
+            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+            out.push_str(&format!("{}name: {}\n", indent, new_name));
+            rewrote = true;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !rewrote {
+        return Err(KodError::Config(format!(
+            "source skill {} has no `name:` field — cannot copy cleanly",
+            src.display()
+        )));
+    }
+
+    std::fs::write(&dest, out.as_bytes()).map_err(KodError::Io)?;
+    println!("Copied {} to {}", src.display(), dest.display());
+    println!("Run `kod skills show {}` to inspect.", new_name);
+    Ok(())
+}
+
+pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
+    let src = match find_skill_path(name).await? {
+        Some(p) => p,
+        None => {
+            eprintln!("No skill named {:?}.", name);
+            std::process::exit(1);
+        }
+    };
+    let parent = src
+        .parent()
+        .ok_or_else(|| KodError::Internal("source skill has no parent".to_string()))?;
+    let dest = parent.join(format!("{new_name}.md"));
+    if dest.exists() {
+        eprintln!(
+            "Destination {} already exists — refusing to overwrite.",
+            dest.display()
+        );
+        std::process::exit(1);
+    }
+
+    // Reuse the copy path so the `name:` rewrite logic lives in one
+    // place.
+    run_skills_copy(name, new_name).await?;
+    std::fs::remove_file(&src).map_err(KodError::Io)?;
+    println!(
+        "Renamed {} -> {} (removed {})",
+        name,
+        new_name,
+        src.display()
+    );
+    Ok(())
+}
+
+pub async fn run_skills_source(name: &str) -> Result<()> {
+    match find_skill_path(name).await? {
+        Some(p) => {
+            println!("{}", p.display());
+            Ok(())
+        }
+        None => {
+            eprintln!("No skill named {:?}.", name);
+            std::process::exit(1);
+        }
+    }
+}

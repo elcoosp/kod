@@ -715,3 +715,398 @@ pub fn run_sandbox_exec(profile_path: std::path::PathBuf, cmd: Vec<String>) -> R
         )))
     }
 }
+pub async fn run_sandbox_check() -> Result<()> {
+    use kod_tools::context::{SandboxMode, sandbox_invocation};
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    println!("Sandbox check");
+    println!();
+    println!("Platform: {}", std::env::consts::OS);
+
+    match sandbox_invocation(SandboxMode::Require, &cwd) {
+        Ok(Some(inv)) => {
+            println!("Status:   available");
+            println!("Program:  {}", inv.program);
+            println!("Args:     {:?}", inv.args);
+            println!();
+            println!("To run a session with the sandbox enforced:");
+            println!("  kod chat --sandbox");
+        }
+        Ok(None) => {
+            // Only returned for Disabled, which we do not ask for here.
+            println!("Status:   disabled (unexpected)");
+            std::process::exit(1);
+        }
+        Err(e) => {
+            println!("Status:   unavailable");
+            println!();
+            println!("{}", e);
+            println!();
+            #[cfg(target_os = "linux")]
+            {
+                println!("Install bubblewrap:");
+                println!("  apt install bubblewrap    # Debian/Ubuntu");
+                println!("  dnf install bubblewrap    # Fedora/RHEL");
+                println!("  pacman -S bubblewrap      # Arch");
+                println!("  apk add bubblewrap        # Alpine");
+            }
+            #[cfg(target_os = "macos")]
+            {
+                println!("`sandbox-exec` normally ships with macOS. If it is missing,");
+                println!("reinstall the Command Line Tools:");
+                println!("  xcode-select --install");
+            }
+            std::process::exit(1);
+        }
+    }
+    Ok(())
+}
+
+pub async fn run_doctor_fix(json: bool) -> Result<()> {
+    use kod_core::doctor::run_diagnostics;
+
+    let config = KodConfig::load_default()?;
+
+    // Directories the standard install reads/writes.
+    let mut created: Vec<String> = Vec::new();
+    let mut failed: Vec<(String, String)> = Vec::new();
+
+    // Config directory.
+    if let Ok(dir) = KodConfig::config_dir()
+        && !dir.exists()
+        && let Err(e) = std::fs::create_dir_all(&dir)
+    {
+        failed.push((dir.display().to_string(), e.to_string()));
+    }
+
+    // Every skills directory.
+    if let Ok(dirs) = config.skills_dirs() {
+        for d in &dirs {
+            if !d.exists()
+                && let Err(e) = std::fs::create_dir_all(d)
+            {
+                failed.push((d.display().to_string(), e.to_string()));
+            } else if d.exists() {
+                created.push(d.display().to_string());
+            }
+        }
+    }
+
+    // Memory db parent directory.
+    if let Ok(p) = config.memory_db_path()
+        && let Some(parent) = p.parent()
+        && !parent.exists()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        failed.push((parent.display().to_string(), e.to_string()));
+    }
+
+    // Checkpoints dir for cwd.
+    if let Ok(cwd) = std::env::current_dir()
+        && let Some(cp) = kod_core::checkpoint::CheckpointManager::for_working_dir(&cwd)
+    {
+        let dir = cp.dir();
+        if !dir.exists()
+            && let Err(e) = std::fs::create_dir_all(dir)
+        {
+            failed.push((dir.display().to_string(), e.to_string()));
+        }
+    }
+
+    // Re-run diagnostics for the report.
+    let report = run_diagnostics(&config);
+
+    if json {
+        let value = serde_json::json!({
+            "fixed": {
+                "created_directories": created,
+                "failures": failed
+                    .iter()
+                    .map(|(p, e)| serde_json::json!({"path": p, "error": e}))
+                    .collect::<Vec<_>>(),
+            },
+            "report": report.to_json(),
+        });
+        let s = serde_json::to_string_pretty(&value)
+            .map_err(|e| KodError::Serialization(e.to_string()))?;
+        println!("{}", s);
+    } else {
+        if !created.is_empty() {
+            println!("Created:");
+            for p in &created {
+                println!("  ✓ {}", p);
+            }
+        }
+        if !failed.is_empty() {
+            println!("Failures:");
+            for (p, e) in &failed {
+                println!("  ✗ {} — {}", p, e);
+            }
+        }
+        if created.is_empty() && failed.is_empty() {
+            println!("Nothing to fix — all directories already exist.");
+        }
+    }
+
+    if report.has_failures() || !failed.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
+    use kod_tools::ToolRegistry;
+
+    // `kod tools` is a read-only listing of what the engine registers
+    // when it starts. Every tool KodEngine::start constructs without
+    // needing engine state — file, git, shell, search, todo, the
+    // user-facing ask — is registered here so its definition can be
+    // read.
+    //
+    // The tools that need engine state (an LSP client slot, a memory
+    // router, a swarm hub) cannot be constructed in a bare CLI
+    // process. They are listed as static entries in `CORE_ONLY` below
+    // so the listing names them truthfully without inventing engine
+    // state. If a name in that list drifts from what the engine
+    // registers, the engine's own tests catch it — not this command.
+    let registry = ToolRegistry::new();
+    registry
+        .register(Box::new(kod_tools::ReadFileTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::WriteFileTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::PatchFileTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::ListFilesTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::GrepTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::FileInfoTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::ExecuteCommandTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::GitStatusTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::GitDiffTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::GitCommitTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::GitBranchTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::WebFetchTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::SearchFilesTool::new()))
+        .await;
+    let todo_list = kod_tools::new_todo_list();
+    registry
+        .register(Box::new(kod_tools::TodoTool::new(todo_list)))
+        .await;
+    registry
+        .register(Box::new(kod_tools::AskUserTool::new()))
+        .await;
+    registry
+        .register(Box::new(kod_tools::CheckTool::new()))
+        .await;
+
+    // Engine-scoped tools, listed but not constructed. Each needs a
+    // handle the CLI does not have without an engine: an LSP client
+    // slot, a memory router, or the swarm communication hub.
+    const CORE_ONLY: &[(&str, &str)] = &[
+        (
+            "lsp_diagnostics",
+            "LSP diagnostics for one file (engine-scoped, D5.3)",
+        ),
+        (
+            "lsp_definition",
+            "LSP go-to-definition (engine-scoped, D5.3)",
+        ),
+        (
+            "lsp_references",
+            "LSP find-references (engine-scoped, D5.3)",
+        ),
+        ("lsp_hover", "LSP hover summary (engine-scoped, D5.3)"),
+        (
+            "memory_save",
+            "store a fact in long-term memory (engine-scoped, D2.4)",
+        ),
+        (
+            "memory_search",
+            "search long-term memory (engine-scoped, D2.4)",
+        ),
+        (
+            "swarm_note",
+            "broadcast a fact to the other swarm agents (engine-scoped, D4.3)",
+        ),
+        (
+            "swarm_read",
+            "read facts broadcast by the other swarm agents (engine-scoped, D4.3)",
+        ),
+        (
+            "mcp:<server>.<tool>",
+            "one tool per MCP server tool, added at engine start (D6.1)",
+        ),
+    ];
+
+    match action {
+        None | Some(ToolsAction::List) => {
+            let defs = registry.get_definitions().await;
+            println!(
+                "Registered tools ({} registerable + {} engine-scoped):",
+                defs.len(),
+                CORE_ONLY.len()
+            );
+            for d in &defs {
+                println!("  {:<16} {}", d.name, d.description);
+            }
+            for (name, desc) in CORE_ONLY {
+                println!("  {:<16} {}", name, desc);
+            }
+            Ok(())
+        }
+        Some(ToolsAction::Show { name }) => {
+            // A name that appears only in the engine-scoped list has
+            // no full definition available here — no schema, no
+            // permissions. Report it as engine-scoped rather than
+            // claiming it does not exist.
+            if let Some((n, desc)) = CORE_ONLY.iter().find(|(n, _)| *n == name) {
+                println!(
+                    "{}: {}\n\nengine-scoped: registered by KodEngine::start, not by `kod tools`.\nRun `kod tools list` to see the full inventory.",
+                    n, desc
+                );
+                return Ok(());
+            }
+            let defs = registry.get_definitions().await;
+            match defs.iter().find(|d| d.name == name) {
+                Some(d) => {
+                    let json = serde_json::json!({
+                        "name": d.name,
+                        "description": d.description,
+                        "category": format!("{:?}", d.category),
+                        "parameters_schema": d.parameters_schema,
+                        "permissions": {
+                            "read_files": d.permissions.read_files,
+                            "write_files": d.permissions.write_files,
+                            "execute_commands": d.permissions.execute_commands,
+                            "network_access": d.permissions.network_access,
+                            "git_operations": d.permissions.git_access,
+                            "allowed_paths": d.permissions.allowed_paths,
+                            "forbidden_paths": d.permissions.forbidden_paths,
+                        }
+                    });
+                    let s = serde_json::to_string_pretty(&json)
+                        .map_err(|e| KodError::Serialization(e.to_string()))?;
+                    println!("{}", s);
+                    Ok(())
+                }
+                None => {
+                    eprintln!("No tool named {:?}. Try `kod tools`.", name);
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+}
+
+pub async fn run_jev_status() -> Result<()> {
+    let cfg = KodConfig::load_default()?;
+    let jev = &cfg.jev;
+    if !jev.enabled {
+        eprintln!("Jev is disabled. Set [jev] enabled = true and restart.");
+        return Ok(());
+    }
+    println!("Jev (TypeSafe AI)");
+    println!(
+        "  model:            {}",
+        jev.model.as_deref().unwrap_or("jev-latest"),
+    );
+    if let Some(u) = &jev.base_url {
+        println!("  base_url:         {u}");
+    }
+    println!("  cache_ttl_secs:   {}", jev.cache_ttl_secs);
+    println!("  timeout_ms:       {}", jev.timeout_ms);
+    println!("  fail_open:        {}", jev.fail_open);
+    println!("  redact_paths:     {}", jev.redact_paths);
+    println!("  reasoning_timeout: {}s", jev.reasoning_timeout_secs);
+    println!();
+    println!("Thresholds");
+    for name in kod_config::JevThresholds::NAMES {
+        if let Some(v) = jev.thresholds.get(name) {
+            println!("  {name:<24} {v:.2}");
+        }
+    }
+    if !jev.round_routing.is_empty() {
+        println!();
+        println!("Round routing");
+        let mut keys: Vec<&String> = jev.round_routing.keys().collect();
+        keys.sort();
+        for k in keys {
+            println!("  {k:<24} {}", jev.round_routing[k]);
+        }
+    }
+    Ok(())
+}
+
+pub async fn run_jev_stats(log: Option<std::path::PathBuf>) -> Result<()> {
+    let path = match log {
+        Some(p) => p,
+        None => newest_session_log()?.ok_or_else(|| {
+            KodError::Config("no session log found under ~/.kod/sessions/".to_string())
+        })?,
+    };
+    let entries = kod_core::session_log::read_session(&path)?;
+    let mut total = 0_usize;
+    let mut cached = 0_usize;
+    let mut total_latency_ms: u64 = 0;
+    let mut by_source: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut by_purpose: std::collections::BTreeMap<String, usize> = Default::default();
+    for e in &entries {
+        if let kod_core::session_log::SessionEntry::JevDecision {
+            purpose,
+            latency_ms,
+            cached: c,
+            source,
+            ..
+        } = e
+        {
+            total += 1;
+            total_latency_ms += *latency_ms;
+            if *c {
+                cached += 1;
+            }
+            *by_source.entry(source.clone()).or_insert(0) += 1;
+            *by_purpose.entry(purpose.clone()).or_insert(0) += 1;
+        }
+    }
+    if total == 0 {
+        eprintln!("No Jev decisions recorded in {}", path.display());
+        return Ok(());
+    }
+    println!("Jev decisions in {}", path.display());
+    println!("  total:      {total}");
+    for (src, n) in &by_source {
+        let pct = *n as f64 / total as f64 * 100.0;
+        println!("  {src:<10} {n:>5}  ({pct:.0}%)");
+    }
+    println!("  cached:     {cached} ({}%)", cached * 100 / total);
+    println!("  avg latency: {}ms", total_latency_ms / total as u64);
+    println!();
+    println!("By purpose");
+    let mut rows: Vec<(&String, &usize)> = by_purpose.iter().collect();
+    rows.sort_by(|a, b| b.1.cmp(a.1));
+    for (p, n) in rows {
+        println!("  {p:<24} {n}");
+    }
+    Ok(())
+}

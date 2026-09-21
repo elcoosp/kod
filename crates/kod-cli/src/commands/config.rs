@@ -292,3 +292,100 @@ pub async fn run_config_validate() -> Result<()> {
 pub(super) fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
+pub async fn run_config_init_from(name: &str) -> Result<()> {
+    let profile = kod_config::profiles::by_name(name).ok_or_else(|| {
+        KodError::Config(format!(
+            "Unknown profile {:?}. Known profiles: {}",
+            name,
+            kod_config::profiles::names_csv()
+        ))
+    })?;
+
+    let dir = KodConfig::config_dir()?;
+    std::fs::create_dir_all(&dir).map_err(KodError::Io)?;
+    let path = dir.join("config.toml");
+
+    // Backup if a config already exists.
+    if path.exists() {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let backup = dir.join(format!("config.toml.bak-{ts}"));
+        std::fs::copy(&path, &backup).map_err(KodError::Io)?;
+        println!("Backed up {} -> {}", path.display(), backup.display());
+    }
+
+    // Build from defaults, then apply the profile.
+    let mut config = KodConfig::default();
+    config.llm.default_endpoint_mut().model = profile.model.to_string();
+    config.llm.default_endpoint_mut().base_url = profile.base_url.to_string();
+    config.llm.default_endpoint_mut().context_window = profile.context_window;
+    config.llm.default_endpoint_mut().max_tokens = Some(profile.max_tokens);
+    config.save_to(&path)?;
+
+    println!(
+        "Wrote new config from profile {:?} to {}",
+        name,
+        path.display()
+    );
+    if let Some(cmd) = profile.install_command {
+        println!();
+        println!("Next step (if not already installed):");
+        println!("  {}", cmd);
+    }
+    Ok(())
+}
+
+pub async fn run_config_show_raw() -> Result<()> {
+    let dir = KodConfig::config_dir()?;
+    let path = dir.join("config.toml");
+    if !path.exists() {
+        eprintln!("No config file at {}.", path.display());
+        std::process::exit(1);
+    }
+    let content = std::fs::read_to_string(&path).map_err(KodError::Io)?;
+    print!("{}", content);
+    if !content.ends_with('\n') {
+        println!();
+    }
+    Ok(())
+}
+
+pub async fn run_config_show_merged() -> Result<()> {
+    let config = KodConfig::load_default()?;
+    let s = toml::to_string_pretty(&config).map_err(|e| KodError::Serialization(e.to_string()))?;
+    print!("{}", s);
+    if !s.ends_with('\n') {
+        println!();
+    }
+    Ok(())
+}
+
+pub async fn run_config_export(dest: std::path::PathBuf, force: bool) -> Result<()> {
+    let config = KodConfig::load_default()?;
+    let s = toml::to_string_pretty(&config).map_err(|e| KodError::Serialization(e.to_string()))?;
+    if dest.as_os_str() == "-" {
+        print!("{}", s);
+        if !s.ends_with('\n') {
+            println!();
+        }
+        return Ok(());
+    }
+    if dest.exists() && !force {
+        eprintln!("Refusing to overwrite {} — pass --force.", dest.display());
+        std::process::exit(1);
+    }
+    if let Some(parent) = dest.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(KodError::Io)?;
+    }
+    std::fs::write(&dest, s.as_bytes()).map_err(KodError::Io)?;
+    println!(
+        "Wrote effective config ({} bytes) to {}",
+        s.len(),
+        dest.display()
+    );
+    Ok(())
+}
