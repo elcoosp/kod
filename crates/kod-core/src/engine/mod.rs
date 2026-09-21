@@ -1249,6 +1249,10 @@ pub struct KodEngine {
     /// (P0 Fix 3). Keyed by transcript key so a swarm agent's filter
     /// state does not leak into the main session's.
     tool_filter_states: RwLock<HashMap<String, ToolFilterState>>,
+    /// P1 cache ledger. One per engine (not per transcript): a
+    /// swarm agent and the interactive session may share an endpoint,
+    /// and sharing one warm cache across both is the point.
+    cache_ledger: std::sync::Mutex<crate::cache_ledger::CacheLedger>,
     next_turn_id: std::sync::atomic::AtomicU64,
     /// Append-only writer for `turns.jsonl`, next to the session log.
     /// `None` — the default — is the right shape for a test or a
@@ -1710,6 +1714,72 @@ impl KodEngine {
     /// * `Reinject` / `Constrained` prepend a system nudge to the
     ///   attempt's messages so the model sees what went wrong.
     /// * `ShrinkHistory` drops the oldest half of the messages.
+    /// FNV-1a hash of the bytes that determine whether a provider's
+    /// cache is still valid for a request.
+    ///
+    /// The "cacheable head" is the rendered cacheable system prefix
+    /// plus the sorted tool schema bytes — everything the provider
+    /// caches up to the marker. A change to any of it invalidates
+    /// every endpoint's cache; the fingerprint captures that.
+    ///
+    /// Deterministic across runs: same prefix + same tools ⇒ same
+    /// hash. The tools are sorted by name here even though the
+    /// registry already sorts them, because the ledger must be
+    /// robust to a caller that hands it an unsorted list.
+    fn cache_head_fingerprint(
+        system_text: &str,
+        definitions: &[kod_types::ToolDefinition],
+    ) -> u64 {
+        const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+        let mut h = FNV_OFFSET;
+        let mut mix = |bytes: &[u8]| {
+            for b in bytes {
+                h ^= *b as u64;
+                h = h.wrapping_mul(FNV_PRIME);
+            }
+        };
+        // Hash the whole system string. A change to *any* part of it,
+        // volatile or cacheable, produces a new fingerprint; the
+        // ledger then declares every endpoint cold, which is the
+        // conservative direction. Splitting at the volatile marker
+        // would be more precise but no more correct.
+        mix(system_text.as_bytes());
+        mix(&[0]);
+        // Tool schemas: sort by name so a re-registration that changes
+        // iteration order does not spuriously invalidate.
+        let mut defs: Vec<&kod_types::ToolDefinition> = definitions.iter().collect();
+        defs.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        for def in defs {
+            mix(def.name.as_bytes());
+            mix(&[0]);
+            mix(def.parameters_schema.to_string().as_bytes());
+            mix(&[0]);
+        }
+        h
+    }
+
+    /// Feed a completed call into the cache ledger. Called from
+    /// `record_cost`, the one place the engine already knows the
+    /// winning endpoint, the turn, and the request head.
+    fn ledger_observe(
+        &self,
+        endpoint: &str,
+        head_fingerprint: u64,
+        usage: &kod_provider::TokenUsage,
+    ) {
+        if let Ok(mut l) = self.cache_ledger.lock() {
+            // Use a coarse "turn" derived from the process's monotonic
+            // clock; the ledger only compares recency, never compares
+            // across processes.
+            let turn = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            l.observe(turn, endpoint, head_fingerprint, usage);
+        }
+    }
+
     fn apply_retry_adjustment(
         action: crate::retry_strategy::RetryAction,
         options: &mut GenerationOptions,
@@ -1877,6 +1947,7 @@ impl KodEngine {
             tool_counts: std::sync::Arc::new(crate::tool_quota::ToolCounts::new()),
             tool_quotas: std::sync::RwLock::new(None),
             tool_filter_states: RwLock::new(HashMap::new()),
+            cache_ledger: std::sync::Mutex::new(crate::cache_ledger::CacheLedger::new()),
             next_turn_id: std::sync::atomic::AtomicU64::new(1),
             turn_trace_writer: std::sync::RwLock::new(None),
             taint: std::sync::RwLock::new(kod_types::trust::TrustLevel::Assistant),
