@@ -1008,6 +1008,18 @@ struct RoundContext<'a> {
 /// Outcome of one tool-execution round: results for the response plus a
 /// prompt block feeding them back to the model. `elapsed_ms` parallels
 /// `results` — per-call wall time for the live done-markers.
+/// S10: the return value of `KodEngine::gate_tool_calls`. Carries
+/// every piece of state the caller needs to proceed: the per-call
+/// decisions, the deny set, the ask set, and the two locks the gate
+/// acquired (so the caller's later code can reuse them without
+/// re-acquiring).
+struct PolicyGateResult {
+    denied: std::collections::HashMap<usize, String>,
+    need_approval: std::collections::HashSet<usize>,
+    decisions: Vec<(usize, kod_config::PolicyDecision)>,
+    policy: Option<std::sync::Arc<kod_config::PolicyEngine>>,
+}
+
 struct ToolRound {
     results: Vec<ToolResult>,
     prompt_block: String,
@@ -5963,6 +5975,127 @@ impl KodEngine {
     /// transcript (and last-prompt slot) this call reads and writes.
     /// The swarm runner passes `swarm:<agent-id>` per agent, so three
     /// concurrent agents do not interleave their turns.
+    /// S10: build the model-facing prompt from the classified
+    /// response. Steps (all identical across the three process_*
+    /// entry points):
+    ///
+    /// 1. Compute the per-section budget and modulate its split with
+    ///    Jev's per-round read.
+    /// 2. Build the prompt against the router's context builder.
+    /// 3. Filter the tool definitions through Jev (category filter),
+    ///    then trim the MCP half.
+    /// 4. Ground the prompt (system preamble + tool inventory).
+    ///
+    /// Returns the allocation (for the caller's prompt trace), the
+    /// tool definitions the model will see, and the grounded prompt
+    /// text. The goal path appends its goal block to the returned
+    /// string.
+    async fn build_budgeted_prompt(
+        &self,
+        key: &str,
+        input: &str,
+        task_type: crate::router::TaskType,
+        history: &str,
+        memory_context: Option<kod_types::MemoryContext>,
+    ) -> Result<(
+        std::result::Result<crate::budget::Allocation, crate::budget::BudgetError>,
+        Vec<kod_types::ToolDefinition>,
+        String,
+    )> {
+        let base_alloc = self.prompt_allocation(input, history).await;
+        // P2.1 — modulate the fixed 50/20/20/10 shares with Jev's
+        // per-round read. The total is preserved; only the split
+        // changes.
+        let alloc = match &base_alloc {
+            Ok(a) => Ok(self.reallocate_with_jev(key, input, a).await),
+            Err(e) => Err(*e),
+        };
+        let prompt = match &alloc {
+            Ok(a) => {
+                self.router
+                    .build_prompt_with_budget(input, &task_type, history, memory_context, Some(a))
+                    .await?
+            }
+            Err(e) => {
+                return Err(kod_error::KodError::InvalidParameters {
+                    reason: e.to_string(),
+                });
+            }
+        };
+
+        // Ground the model: where it runs and what it can touch.
+        let definitions = self
+            .filter_tool_definitions_with_jev(key, input, self.tools.get_definitions().await)
+            .await;
+        // P5.1 — trim the MCP half of the tool list. Independent of
+        // the category filter above; both feed the same `definitions`
+        // the LLM sees.
+        let definitions = self
+            .filter_mcp_tools_with_jev(key, input, definitions)
+            .await;
+        let grounded = self.ground_prompt(key, prompt, &definitions);
+        Ok((alloc, definitions, grounded))
+    }
+
+    /// S10: the router classification + Jev memory-filter step that
+    /// every `process_*` entry point runs. Extracted so the three
+    /// paths cannot drift on this block again.
+    ///
+    /// `retrieval_log_turn_id` is `Some(id)` when the caller wants
+    /// the turn's memory retrieval recorded for `/memory eval`
+    /// (`id = 0` from the collected path, `id = trace_id` from the
+    /// streaming paths); `None` skips the log entirely (the goal
+    /// path's pre-fix behaviour, preserved here).
+    async fn classify_and_filter(
+        &self,
+        key: &str,
+        input: &str,
+        retrieval_log_turn_id: Option<u64>,
+    ) -> Result<crate::router::TaskResponse> {
+        let mut response = self.router.process_input(input).await?;
+        // P2.5 — drop memory entries Jev judges irrelevant before
+        // the prompt budget sees them.
+        response.memory_context = self
+            .filter_memory_context_with_jev(key, response.memory_context)
+            .await;
+        // Tier 2.4 — record this turn's retrieval.
+        if let Some(turn_id) = retrieval_log_turn_id
+            && let Some(ctx) = response.memory_context.as_ref()
+        {
+            let entries: Vec<(String, f32)> = ctx
+                .working_memory
+                .iter()
+                .chain(ctx.long_term.iter())
+                .map(|e| (e.id.to_string(), e.relevance))
+                .collect();
+            self.log_memory_retrieval(turn_id, input, &entries);
+        }
+        Ok(response)
+    }
+
+    /// S10: refine the router's task type and skills with Jev's
+    /// semantic scoring. Pure data transformation (no I/O except the
+    /// Jev calls themselves); the two are always called together.
+    async fn refine_classification(
+        &self,
+        key: &str,
+        input: &str,
+        response: &crate::router::TaskResponse,
+    ) -> (crate::router::TaskType, Vec<String>) {
+        let task_type = self
+            .refine_task_type_with_jev(key, input, response.task_type)
+            .await;
+        // P4.2 — augment the router's lexical skill match with
+        // Jev's semantic scoring. The union keeps every lexical
+        // match and adds semantic ones the substring matcher would
+        // have missed. `None` leaves the router's list.
+        let refined_skills = self
+            .rank_skills_with_jev(key, input, &response.skills_used)
+            .await
+            .unwrap_or_else(|| response.skills_used.clone());
+        (task_type, refined_skills)
+    }
+
     pub async fn process_for(&self, key: &str, input: &str) -> Result<TaskResponse> {
         // H-E5: the non-streaming path never set `current_request`,
         // so the request-keyed Jev helpers (task classification,
@@ -5996,32 +6129,11 @@ impl KodEngine {
         // the read lock is held for microseconds.
         let _provider_probe = self.registry.read().await.clone();
         if _provider_probe.is_some() {
-            // Process through router for task classification and context
-            let mut response = self.router.process_input(input).await?;
-            // P2.5 — drop memory entries Jev judges irrelevant
-            // before the prompt budget sees them.
-            response.memory_context = self
-                .filter_memory_context_with_jev(key, response.memory_context)
-                .await;
-            // Tier 2.4 — record this turn's retrieval so `/memory
-            // eval` can score the retrieval hit rate later.
-            if let Some(ctx) = response.memory_context.as_ref() {
-                let entries: Vec<(String, f32)> = ctx
-                    .working_memory
-                    .iter()
-                    .chain(ctx.long_term.iter())
-                    .map(|e| (e.id.to_string(), e.relevance))
-                    .collect();
-                // No turn id in the collected path; use 0 to mean
-                // "collected-path turn". The streaming path uses the
-                // real trace id.
-                self.log_memory_retrieval(0, input, &entries);
-            }
-
+            // S10: shared classification + memory-filter block.
+            let response = self.classify_and_filter(key, input, Some(0)).await?;
             // Build the full prompt using the router's context builder
-            let task_type = self
-                .refine_task_type_with_jev(key, input, response.task_type)
-                .await;
+            let (task_type, _refined_skills) =
+                self.refine_classification(key, input, &response).await;
             // Tier 2.1 — on Complex/MultiStep tasks, ask the model
             // for a plan on the first turn. Bounded cost: one short
             // generation call.
@@ -6045,46 +6157,16 @@ impl KodEngine {
                 .unwrap_or_else(|| response.skills_used.clone());
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
-            let base_alloc = self.prompt_allocation(input, &history).await;
-            // P2.1 — modulate the fixed 50/20/20/10 shares with
-            // Jev's per-round read. The total is preserved; only
-            // the split changes.
-            let alloc = match &base_alloc {
-                Ok(a) => Ok(self.reallocate_with_jev(key, input, a).await),
-                Err(e) => Err(*e),
-            };
-            let prompt = match &alloc {
-                Ok(a) => {
-                    self.router
-                        .build_prompt_with_budget(
-                            input,
-                            &task_type,
-                            &history,
-                            response.memory_context.clone(),
-                            Some(a),
-                        )
-                        .await?
-                }
-                Err(e) => {
-                    return Err(kod_error::KodError::InvalidParameters {
-                        reason: e.to_string(),
-                    });
-                }
-            };
-
-            // Ground the model: where it runs and what it can touch.
-            // Without this it claims "no filesystem access" even though
-            // tools are wired below.
-            let definitions = self
-                .filter_tool_definitions_with_jev(key, input, self.tools.get_definitions().await)
-                .await;
-            // P5.1 — trim the MCP half of the tool list. Independent
-            // of the category filter above; both feed the same
-            // `definitions` value the LLM sees.
-            let definitions = self
-                .filter_mcp_tools_with_jev(key, input, definitions)
-                .await;
-            let convo = self.ground_prompt(key, prompt.clone(), &definitions);
+            // S10: shared prompt-build block.
+            let (alloc, definitions, convo) = self
+                .build_budgeted_prompt(
+                    key,
+                    input,
+                    task_type,
+                    &history,
+                    response.memory_context.clone(),
+                )
+                .await?;
 
             // Snapshot the grounded prompt before the loop mutates it
             // with tool results. This is what `/debug last-prompt` shows.
@@ -6477,73 +6559,25 @@ impl KodEngine {
         // See process(): clone out of the lock before any long await.
         let _provider_probe = self.registry.read().await.clone();
         if _provider_probe.is_some() {
-            let mut response = self.router.process_input(input).await?;
-            // P2.5 — drop memory entries Jev judges irrelevant
-            // before the prompt budget sees them.
-            response.memory_context = self
-                .filter_memory_context_with_jev(key, response.memory_context)
-                .await;
-            // Tier 2.4 — log this turn's retrieval with the real
-            // trace id so `/memory eval` can correlate entries with
-            // the reply that used them.
-            if let Some(ctx) = response.memory_context.as_ref() {
-                let entries: Vec<(String, f32)> = ctx
-                    .working_memory
-                    .iter()
-                    .chain(ctx.long_term.iter())
-                    .map(|e| (e.id.to_string(), e.relevance))
-                    .collect();
-                self.log_memory_retrieval(trace_id, input, &entries);
-            }
-            let task_type = self
-                .refine_task_type_with_jev(key, input, response.task_type)
-                .await;
-            // P4.2 — augment the router's lexical skill match with
-            // Jev's semantic scoring. The union keeps every lexical
-            // match and adds semantic ones the substring matcher
-            // would have missed. `None` leaves the router's list.
-            let refined_skills = self
-                .rank_skills_with_jev(key, input, &response.skills_used)
-                .await
-                .unwrap_or_else(|| response.skills_used.clone());
+            // S10: shared classification + memory-filter block. The
+            // streaming path uses the real trace id for the retrieval
+            // log so `/memory eval` can correlate entries with the
+            // reply that used them.
+            let response = self.classify_and_filter(key, input, Some(trace_id)).await?;
+            let (task_type, refined_skills) =
+                self.refine_classification(key, input, &response).await;
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
-            let base_alloc = self.prompt_allocation(input, &history).await;
-            // P2.1 — modulate the fixed 50/20/20/10 shares with
-            // Jev's per-round read. The total is preserved; only
-            // the split changes.
-            let alloc = match &base_alloc {
-                Ok(a) => Ok(self.reallocate_with_jev(key, input, a).await),
-                Err(e) => Err(*e),
-            };
-            let prompt = match &alloc {
-                Ok(a) => {
-                    self.router
-                        .build_prompt_with_budget(
-                            input,
-                            &task_type,
-                            &history,
-                            response.memory_context.clone(),
-                            Some(a),
-                        )
-                        .await?
-                }
-                Err(e) => {
-                    return Err(kod_error::KodError::InvalidParameters {
-                        reason: e.to_string(),
-                    });
-                }
-            };
-            let definitions = self
-                .filter_tool_definitions_with_jev(key, input, self.tools.get_definitions().await)
-                .await;
-            // P5.1 — trim the MCP half of the tool list. Independent
-            // of the category filter above; both feed the same
-            // `definitions` value the LLM sees.
-            let definitions = self
-                .filter_mcp_tools_with_jev(key, input, definitions)
-                .await;
-            let pending = self.ground_prompt(key, prompt.clone(), &definitions);
+            // S10: shared prompt-build block.
+            let (alloc, definitions, pending) = self
+                .build_budgeted_prompt(
+                    key,
+                    input,
+                    task_type,
+                    &history,
+                    response.memory_context.clone(),
+                )
+                .await?;
 
             // Snapshot the grounded prompt for /debug last-prompt and
             // the per-section allocation for /debug tokens.
@@ -6845,61 +6879,25 @@ impl KodEngine {
         // See process(): clone out of the lock before any long await.
         let _provider_probe = self.registry.read().await.clone();
         if _provider_probe.is_some() {
-            let mut response = self.router.process_input(input).await?;
-            // P2.5 — drop memory entries Jev judges irrelevant
-            // before the prompt budget sees them.
-            response.memory_context = self
-                .filter_memory_context_with_jev(key, response.memory_context)
-                .await;
-            let task_type = self
-                .refine_task_type_with_jev(key, input, response.task_type)
-                .await;
-            // P4.2 — augment the router's lexical skill match with
-            // Jev's semantic scoring. The union keeps every lexical
-            // match and adds semantic ones the substring matcher
-            // would have missed. `None` leaves the router's list.
-            let refined_skills = self
-                .rank_skills_with_jev(key, input, &response.skills_used)
-                .await
-                .unwrap_or_else(|| response.skills_used.clone());
+            // S10: shared classification + memory-filter block. The
+            // goal path preserves its pre-fix behaviour of skipping
+            // the retrieval-log write (`None`).
+            let response = self.classify_and_filter(key, input, None).await?;
+            let (task_type, refined_skills) =
+                self.refine_classification(key, input, &response).await;
             let history = self.render_history_for(key).await;
             self.remember_turn_for(key, true, input).await;
-            let base_alloc = self.prompt_allocation(input, &history).await;
-            // P2.1 — modulate the fixed 50/20/20/10 shares with
-            // Jev's per-round read. The total is preserved; only
-            // the split changes.
-            let alloc = match &base_alloc {
-                Ok(a) => Ok(self.reallocate_with_jev(key, input, a).await),
-                Err(e) => Err(*e),
-            };
-            let prompt = match &alloc {
-                Ok(a) => {
-                    self.router
-                        .build_prompt_with_budget(
-                            input,
-                            &task_type,
-                            &history,
-                            response.memory_context.clone(),
-                            Some(a),
-                        )
-                        .await?
-                }
-                Err(e) => {
-                    return Err(kod_error::KodError::InvalidParameters {
-                        reason: e.to_string(),
-                    });
-                }
-            };
-            let definitions = self
-                .filter_tool_definitions_with_jev(key, input, self.tools.get_definitions().await)
-                .await;
-            // P5.1 — trim the MCP half of the tool list. Independent
-            // of the category filter above; both feed the same
-            // `definitions` value the LLM sees.
-            let definitions = self
-                .filter_mcp_tools_with_jev(key, input, definitions)
-                .await;
-            let mut pending = self.ground_prompt(key, prompt.clone(), &definitions);
+            // S10: shared prompt-build block. The goal path appends
+            // its goal block to `pending` below.
+            let (alloc, definitions, mut pending) = self
+                .build_budgeted_prompt(
+                    key,
+                    input,
+                    task_type,
+                    &history,
+                    response.memory_context.clone(),
+                )
+                .await?;
             pending.push_str(&format!(
                 "\n## Goal\n\n{goal}\n\nWork turn by turn toward this goal using tools. Do not ask the user for confirmation — act. When the goal is fully reached, end your reply with a line containing exactly GOAL MET and summarize what was done. If a tool errors, work around it and keep going.\n"
             ));
@@ -7947,21 +7945,616 @@ impl KodEngine {
     /// the read is guaranteed to observe the write. All-read-only rounds
     /// still run concurrently — their results cannot depend on each other
     /// or on external state they did not observe themselves.
+    /// S10 phase 1: run the post-tool hooks for every non-denied call.
+    /// Extracted from `run_tool_calls` so the sequence (deny → execute
+    /// → post-hook → session-log) is a chain of named phases, not a
+    /// 1,400-line block.
+    ///
+    /// Post-hooks are best-effort: a failure inside `run_post` is
+    /// logged by that method and never propagated, so a formatting
+    /// failure after a successful write cannot turn the write into a
+    /// failed tool call.
+    async fn run_post_hooks(
+        &self,
+        calls: &[ToolCall],
+        hook_runner: Option<&std::sync::Arc<crate::hooks::HookRunner>>,
+        hook_denied: &std::collections::HashMap<usize, String>,
+    ) {
+        let Some(runner) = hook_runner else { return };
+        if !runner.is_enabled() {
+            return;
+        }
+        for (i, call) in calls.iter().enumerate() {
+            if hook_denied.contains_key(&i) {
+                continue;
+            }
+            runner.run_post(call).await;
+        }
+    }
+
+    /// S10 phase 2: append one JSONL entry per tool call. Best-effort —
+    /// a write failure is logged and the run continues.
+    fn record_session_tool_calls(
+        &self,
+        calls: &[ToolCall],
+        raw_results: &[(Result<ToolResult>, u64)],
+        holder: &str,
+    ) {
+        let Ok(guard) = self.session_recorder.read() else {
+            return;
+        };
+        let Some(recorder) = guard.as_ref() else {
+            return;
+        };
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        for (i, call) in calls.iter().enumerate() {
+            let Some((result, ms)) = raw_results.get(i) else {
+                continue;
+            };
+            let result_json = match result {
+                Ok(ToolResult::Success(v)) => serde_json::json!({ "success": v }),
+                Ok(ToolResult::Error(e)) => serde_json::json!({ "error": e }),
+                Ok(ToolResult::RequiresConfirmation { description, .. }) => {
+                    serde_json::json!({ "requires_confirmation": description })
+                }
+                Err(e) => serde_json::json!({ "error": e.to_string() }),
+            };
+            let entry = crate::session_log::SessionEntry::ToolCall {
+                timestamp_ms: now_ms,
+                holder: holder.to_string(),
+                tool_name: call.tool_name.clone(),
+                arguments: call.arguments.clone(),
+                duration_ms: *ms,
+                result: result_json,
+            };
+            if let Err(e) = recorder.record(&entry) {
+                tracing::warn!(
+                    error = %e,
+                    path = %recorder.path().display(),
+                    "could not append session log entry"
+                );
+            }
+        }
+    }
+
+    /// S10 phase 3: attach a unified diff to every successful
+    /// `write_file` / `patch_file` result that had a pre-call
+    /// snapshot. Failures are silent skips — a missing snapshot, an
+    /// unreadable file, or a binary diff just means "no diff on this
+    /// row", not a broken round.
+    fn attach_write_diffs(
+        &self,
+        calls: &[ToolCall],
+        snapshot_ids: &[Option<String>],
+        raw_results: &mut [(Result<ToolResult>, u64)],
+    ) {
+        let Some(cp) = self.checkpoints.as_ref() else {
+            return;
+        };
+        for (i, call) in calls.iter().enumerate() {
+            if !matches!(call.tool_name.as_str(), "write_file" | "patch_file") {
+                continue;
+            }
+            let Some(sid) = snapshot_ids.get(i).and_then(|o| o.as_ref()) else {
+                continue;
+            };
+            let Some(snap) = cp.find(sid).ok().flatten() else {
+                continue;
+            };
+            let Ok(new_content) = std::fs::read_to_string(&snap.path) else {
+                continue;
+            };
+            let diff = kod_tools::patch::render_unified_diff(
+                &snap.content,
+                &new_content,
+                &snap.path.display().to_string(),
+            );
+            if let Some(entry) = raw_results.get_mut(i)
+                && let Ok(ToolResult::Success(v)) = &mut entry.0
+                && let Some(obj) = v.as_object_mut()
+            {
+                obj.insert("diff".to_string(), serde_json::Value::String(diff));
+            }
+        }
+    }
+
+    /// S10 phase 4: build the structured `Role::Assistant` +
+    /// `Role::Tool` messages the provider sees for this round. Pure
+    /// function of `calls` and `results` — no I/O, no logging.
+    ///
+    /// Ids are preserved when the provider emitted them; a provider
+    /// that did not (some local servers omit them) gets a synthesized
+    /// `call_N` so the transcript is well-formed on every wire.
+    ///
+    /// H-E2 caps each tool result before it goes on the wire so a
+    /// 256 KB `read_file` repeated over 40 rounds cannot grow the
+    /// transcript past the endpoint's window.
+    fn build_round_messages(
+        calls: &[ToolCall],
+        results: &[ToolResult],
+    ) -> Vec<kod_types::ChatMessage> {
+        const STRUCTURED_TOOL_MSG_CAP: usize = 16 * 1024;
+        let mut messages: Vec<kod_types::ChatMessage> = Vec::new();
+        let mut assistant_msg = kod_types::ChatMessage::text(
+            kod_types::MessageId::new(),
+            kod_types::MessageRole::Assistant,
+            String::new(),
+            time::OffsetDateTime::now_utc(),
+        );
+        for (i, call) in calls.iter().enumerate() {
+            let id = call.id.clone().unwrap_or_else(|| format!("call_{i}"));
+            assistant_msg.tool_calls.push(kod_types::ToolCall {
+                id: Some(id),
+                tool_name: call.tool_name.clone(),
+                arguments: call.arguments.clone(),
+            });
+        }
+        // Only push the assistant message when there was at least one
+        // call — an empty assistant turn is not a legal wire shape.
+        if !assistant_msg.tool_calls.is_empty() {
+            messages.push(assistant_msg);
+        }
+        for (i, call) in calls.iter().enumerate() {
+            let id = call.id.clone().unwrap_or_else(|| format!("call_{i}"));
+            let rendered = match results.get(i) {
+                Some(kod_types::ToolResult::Success(v)) => {
+                    let raw = v.to_string();
+                    if raw.len() > STRUCTURED_TOOL_MSG_CAP {
+                        format!(
+                            "{}…[truncated: {} of {} bytes]",
+                            truncate_chars(&raw, STRUCTURED_TOOL_MSG_CAP),
+                            STRUCTURED_TOOL_MSG_CAP,
+                            raw.len(),
+                        )
+                    } else {
+                        raw
+                    }
+                }
+                Some(kod_types::ToolResult::Error(e)) => format!("error: {e}"),
+                Some(kod_types::ToolResult::RequiresConfirmation { description, .. }) => {
+                    format!("requires confirmation: {description}")
+                }
+                None => String::new(),
+            };
+            let mut tool_msg = kod_types::ChatMessage::text(
+                kod_types::MessageId::new(),
+                kod_types::MessageRole::Tool,
+                rendered,
+                time::OffsetDateTime::now_utc(),
+            );
+            tool_msg.tool_call_id = Some(id);
+            messages.push(tool_msg);
+        }
+        messages
+    }
+
+    /// S10 phase 5: the policy gate. Decides every tool call before
+    /// any of them runs; returns the denied set, the "needs an
+    /// interactive approval" set, and the full decision log.
+    ///
+    /// The precedence is: learned allow > taint escalation > policy
+    /// engine > "no policy installed" default. Only `Deny` and `Ask`
+    /// decisions have side effects here — an `Allow` is just recorded.
+    async fn gate_tool_calls(
+        &self,
+        calls: &[ToolCall],
+        working_dir: &std::path::Path,
+    ) -> PolicyGateResult {
+        let policy = self.policy.read().await.clone();
+        let deny_rules: std::collections::HashSet<kod_config::SessionDeny> =
+            self.deny_rules.read().await.clone();
+        let mut denied: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+        let mut need_approval: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut decisions: Vec<(usize, kod_config::PolicyDecision)> = Vec::new();
+
+        for (i, call) in calls.iter().enumerate() {
+            // Tier 2.3 — a learned allow short-circuits every gate.
+            if self.is_learned_allowed(call).await {
+                decisions.push((
+                    i,
+                    kod_config::PolicyDecision {
+                        outcome: kod_config::Decision::Allow,
+                        rule: "session learned allow (Tier 2.3)".to_string(),
+                        source: kod_config::PolicySource::Preset,
+                    },
+                ));
+                continue;
+            }
+            // Tier 1.1 — a tainted round forces `Ask` regardless.
+            if self.requires_approval_for_taint(call) {
+                let decision = kod_config::PolicyDecision {
+                    outcome: kod_config::Decision::Ask,
+                    rule: format!(
+                        "taint escalation: {} under {:?}",
+                        call.tool_name,
+                        self.taint_level(),
+                    ),
+                    source: kod_config::PolicySource::SessionDeny,
+                };
+                need_approval.insert(i);
+                decisions.push((i, decision));
+                continue;
+            }
+            let decision = match &policy {
+                Some(p) => p.decide(&call.tool_name, &call.arguments, working_dir, &deny_rules),
+                None => kod_config::PolicyDecision {
+                    outcome: kod_config::Decision::Allow,
+                    rule: "no policy installed".to_string(),
+                    source: kod_config::PolicySource::Preset,
+                },
+            };
+            match decision.outcome {
+                kod_config::Decision::Allow => {}
+                kod_config::Decision::Deny => {
+                    denied.insert(i, decision.rule.clone());
+                }
+                kod_config::Decision::Ask => {
+                    need_approval.insert(i);
+                }
+            }
+            decisions.push((i, decision));
+        }
+
+        PolicyGateResult {
+            denied,
+            need_approval,
+            decisions,
+            policy,
+        }
+    }
+
+    /// S10 phase 5 (cont.): write one `SessionEntry::PolicyDecision`
+    /// per gate result so the JSONL carries the audit trail even if
+    /// the run is interrupted mid-way.
+    fn log_policy_decisions(
+        &self,
+        calls: &[ToolCall],
+        holder: &str,
+        decisions: &[(usize, kod_config::PolicyDecision)],
+    ) {
+        let Ok(guard) = self.session_recorder.read() else {
+            return;
+        };
+        let Some(rec) = guard.as_ref() else {
+            return;
+        };
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        for (i, d) in decisions {
+            let Some(call) = calls.get(*i) else { continue };
+            let outcome = match d.outcome {
+                kod_config::Decision::Allow => "allow",
+                kod_config::Decision::Deny => "deny",
+                kod_config::Decision::Ask => "ask",
+            };
+            let entry = crate::session_log::SessionEntry::PolicyDecision {
+                timestamp_ms: now_ms,
+                holder: holder.to_string(),
+                tool_name: call.tool_name.clone(),
+                outcome: outcome.to_string(),
+                rule: d.rule.clone(),
+                source: format!("{:?}", d.source).to_lowercase(),
+            };
+            let _ = rec.record(&entry);
+        }
+    }
+
+    /// S10 phase 6: the `ask_user` interception. The tool itself
+    /// cannot reach the chunk channel (its `execute` signature does
+    /// not carry one), so the engine does the marker + await and
+    /// hands the answer back as the tool result. A call with no
+    /// `chunk_tx` (non-streaming `process`) becomes a placeholder
+    /// answer the model can act on.
+    async fn answer_ask_user_calls(
+        &self,
+        calls: &[ToolCall],
+        holder: &str,
+        chunk_tx: Option<&tokio::sync::mpsc::Sender<String>>,
+    ) -> std::collections::HashMap<usize, String> {
+        let mut answers: std::collections::HashMap<usize, String> =
+            std::collections::HashMap::new();
+        for (i, call) in calls.iter().enumerate() {
+            if call.tool_name != "ask_user" {
+                continue;
+            }
+            // P3.5 — try to answer from context first.
+            let question_text = call
+                .arguments
+                .get("question")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(no question)")
+                .to_string();
+            if let Some(auto_answer) = self
+                .try_answer_question_from_context(holder, &question_text)
+                .await
+            {
+                answers.insert(i, auto_answer);
+                continue;
+            }
+            let Some(tx) = chunk_tx else {
+                answers.insert(
+                    i,
+                    "(ask_user requires an interactive consumer; use kod tui or kod chat)"
+                        .to_string(),
+                );
+                continue;
+            };
+            let placeholder = call
+                .arguments
+                .get("placeholder")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let req = kod_tools::ask::QuestionRequest {
+                question: question_text,
+                placeholder,
+            };
+            let json = serde_json::to_string(&req).unwrap_or_else(|_| "{}".to_string());
+            let id = self
+                .next_question_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let (otx, orx) = tokio::sync::oneshot::channel();
+            self.pending_questions.write().await.insert(id, otx);
+            let _ = tx.send(question_marker(id, &json)).await;
+            let answer =
+                tokio::time::timeout(std::time::Duration::from_secs(AWAIT_APPROVAL_SECS), orx)
+                    .await;
+            match answer {
+                Ok(Ok(text)) => {
+                    answers.insert(i, text);
+                }
+                Ok(Err(_)) => {
+                    answers.insert(i, "(question cancelled)".to_string());
+                }
+                Err(_) => {
+                    answers.insert(
+                        i,
+                        format!(
+                            "(no answer within {}s — the user is away)",
+                            AWAIT_APPROVAL_SECS
+                        ),
+                    );
+                }
+            }
+        }
+        answers
+    }
+
+    /// S10 phase 7: the approval flow — auto-approval via Jev, then
+    /// the batched interactive dialog. Mutates three sets of state
+    /// the caller needs back:
+    ///
+    /// * `denied` gains a reason for every call the user (or the
+    ///   approval timeout) refused.
+    /// * `need_approval` loses every call Jev auto-approved.
+    /// * `edited_args` gains the arguments for every
+    ///   `ApproveWith { arguments }` decision.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_approval_flow(
+        &self,
+        calls: &[ToolCall],
+        holder: &str,
+        chunk_tx: Option<&tokio::sync::mpsc::Sender<String>>,
+        snapshot_ids: &[Option<String>],
+        mut need_approval: std::collections::HashSet<usize>,
+        mut denied: std::collections::HashMap<usize, String>,
+        edited_args: &mut std::collections::HashMap<usize, serde_json::Value>,
+    ) -> (
+        std::collections::HashSet<usize>,
+        std::collections::HashMap<usize, String>,
+    ) {
+        // Jev-gated auto-approval (P3.1). Before emitting a dialog,
+        // ask Jev whether the user would almost certainly approve
+        // each `Ask` call. Calls that clear both the
+        // `likely_approved` threshold and the risk gate are removed
+        // from `need_approval` and logged as auto-approved
+        // `SessionEntry::Approval` entries, so the audit trail is
+        // identical to a user approving them by hand.
+        if !need_approval.is_empty() {
+            let auto = self
+                .auto_approve_with_jev(holder, calls, &need_approval)
+                .await;
+            if !auto.is_empty() {
+                for i in &auto {
+                    if let Some(call) = calls.get(*i)
+                        && let Ok(guard) = self.session_recorder.read()
+                        && let Some(rec) = guard.as_ref()
+                    {
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        let entry = crate::session_log::SessionEntry::Approval {
+                            timestamp_ms: now_ms,
+                            holder: holder.to_string(),
+                            tool_name: call.tool_name.clone(),
+                            decision: "auto-approve".to_string(),
+                            edit: None,
+                        };
+                        let _ = rec.record(&entry);
+                    }
+                }
+                for i in &auto {
+                    need_approval.remove(i);
+                }
+            }
+        }
+
+        if need_approval.is_empty() {
+            return (need_approval, denied);
+        }
+
+        // P3.2 — ask Jev to group the pending approvals by logical
+        // change. Result logged for `/jev stats`.
+        {
+            let pending_calls: Vec<ToolCall> = need_approval
+                .iter()
+                .filter_map(|i| calls.get(*i).cloned())
+                .collect();
+            let _groups = self.group_approvals_with_jev(holder, &pending_calls).await;
+        }
+
+        let Some(tx) = chunk_tx else {
+            for i in &need_approval {
+                denied.insert(
+                    *i,
+                    "policy requires approval but this execution \
+                     path has no interactive consumer. Use the TUI, \
+                     or install a permissive policy."
+                        .to_string(),
+                );
+            }
+            return (need_approval, denied);
+        };
+
+        // Phase 1 — build every request and register every oneshot
+        // up-front so out-of-order answers are buffered.
+        let mut items: Vec<ApprovalRequest> = Vec::new();
+        let mut awaiting: Vec<(usize, tokio::sync::oneshot::Receiver<ApprovalDecision>)> =
+            Vec::new();
+        for i in &need_approval {
+            let Some(call) = calls.get(*i) else { continue };
+            let summary = format_call_brief(&call.tool_name, &call.arguments);
+            let diff = snapshot_ids
+                .get(*i)
+                .and_then(|o| o.as_ref())
+                .and_then(|id| {
+                    self.checkpoints
+                        .as_ref()
+                        .and_then(|cp| cp.find(id).ok().flatten())
+                })
+                .map(|snap| match call.tool_name.as_str() {
+                    "write_file" => {
+                        let new_content = call
+                            .arguments
+                            .get("content")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        kod_tools::patch::render_unified_diff(
+                            &snap.content,
+                            new_content,
+                            &snap.path.display().to_string(),
+                        )
+                    }
+                    "patch_file" => call
+                        .arguments
+                        .get("patch")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    _ => String::new(),
+                });
+            let id = self
+                .next_approval_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let (otx, orx) = tokio::sync::oneshot::channel();
+            self.pending_approvals.write().await.insert(id, otx);
+            items.push(ApprovalRequest {
+                tool_name: call.tool_name.clone(),
+                arguments: call.arguments.clone(),
+                diff,
+                summary,
+                id: Some(id),
+            });
+            awaiting.push((*i, orx));
+        }
+
+        // Phase 2 — emit ONE batch marker.
+        let batch = ApprovalBatch { items };
+        let json = serde_json::to_string(&batch).unwrap_or_else(|_| "{\"items\":[]}".to_string());
+        let batch_id = self
+            .next_approval_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _ = tx.send(tool_approval_batch_marker(batch_id, &json)).await;
+
+        // Phase 3 — await each in order.
+        for (i, orx) in awaiting {
+            let decision =
+                tokio::time::timeout(std::time::Duration::from_secs(AWAIT_APPROVAL_SECS), orx)
+                    .await;
+            let tool_name = calls
+                .get(i)
+                .map(|c| c.tool_name.clone())
+                .unwrap_or_default();
+            let (log_decision, allow) = match decision {
+                Ok(Ok(ApprovalDecision::Approve)) => ("approve", true),
+                Ok(Ok(ApprovalDecision::ApproveWith { arguments })) => {
+                    edited_args.insert(i, arguments);
+                    ("approve-edited", true)
+                }
+                Ok(Ok(ApprovalDecision::Deny)) => ("deny", false),
+                Ok(Ok(ApprovalDecision::DenyAlways)) => ("deny-always", false),
+                Ok(Err(_)) => ("cancelled", false),
+                Err(_) => ("timeout", false),
+            };
+            if let Ok(guard) = self.session_recorder.read()
+                && let Some(rec) = guard.as_ref()
+            {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let edit_snapshot = edited_args.get(&i).cloned();
+                let entry = crate::session_log::SessionEntry::Approval {
+                    timestamp_ms: now_ms,
+                    holder: holder.to_string(),
+                    tool_name: tool_name.clone(),
+                    decision: log_decision.to_string(),
+                    edit: edit_snapshot,
+                };
+                let _ = rec.record(&entry);
+            }
+            if !allow {
+                if log_decision == "deny-always"
+                    && let Some(call) = calls.get(i)
+                {
+                    let path_pattern = call
+                        .arguments
+                        .get("path")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let rule = kod_config::SessionDeny {
+                        tool: call.tool_name.clone(),
+                        path_pattern,
+                    };
+                    self.add_deny_rule(rule).await;
+                }
+                let reason = match log_decision {
+                    "deny" | "deny-always" => "denied by user",
+                    "cancelled" => "approval cancelled",
+                    "timeout" => "no approval answer within timeout — denied",
+                    other => other,
+                };
+                denied.insert(i, reason.to_string());
+            }
+        }
+        (need_approval, denied)
+    }
+
+    /// Execute one round of model-requested tool calls.
+    ///
+    /// Failures become `ToolResult::Error` text so the model sees
+    /// denials instead of stalling the loop.
+    ///
+    /// A round containing any mutating tool (`write_files` or
+    /// `execute_commands` in its declared permissions) runs serially in
+    /// caller order, so `[write_file(a), read_file(a)]` cannot race and
+    /// the read is guaranteed to observe the write. All-read-only rounds
+    /// still run concurrently — their results cannot depend on each other
+    /// or on external state they did not observe themselves.
     async fn run_tool_calls(
         &self,
         calls: &[ToolCall],
         holder: &str,
         chunk_tx: Option<&tokio::sync::mpsc::Sender<String>>,
     ) -> ToolRound {
-        // Derive a per-call context so the write lock records the
-        // right holder. `holder` is the transcript key for the caller
-        // — `swarm:<agent-id>` for a swarm agent, `session` for the
-        // interactive session — converted to a stable label here.
+        // The tool context is scoped per transcript — a swarm agent
+        // gets its own working dir and write-globs.
         let effective_holder: &str = if holder.is_empty() { "session" } else { holder };
-        // D4-D1: a transcript may point at its own working directory
-        // (a swarm agent's worktree). Resolve it here and override the
-        // engine-wide working_dir on the cloned context so every tool
-        // in this round runs rooted at the right place.
         let per_transcript_wd = self.working_dir_for(effective_holder).await;
         let mut tool_context = self
             .tool_context
@@ -7977,31 +8570,14 @@ impl KodEngine {
         if per_transcript_wd != self.working_dir {
             tool_context.working_dir = per_transcript_wd;
         }
-        // Per-transcript write set (D4.2). A swarm agent that
-        // declared `src/parser/**` gets that restriction applied to
-        // every tool call it makes, in this round and the next,
-        // until the runner clears it.
+        // Per-transcript write set (D4.2).
         if let Some(globs) = self.write_globs_for(effective_holder).await {
             tool_context.allowed_write_globs = Some(globs);
         }
-        // The engine-level network flag overrides whatever the
-        // construction-time context held. This is what makes
-        // `set_network_access` meaningful through an `Arc<KodEngine>`
-        // (no `&mut self` available): the flag is read here, per call,
-        // and applied to the context the tool sees.
         tool_context.permissions.network_access = self.network_access_setting();
 
-        // Domain allow-list (D3-C5) from the effective policy, if any.
-        // The policy's `[tools.web_fetch].domains` is the source of
-        // truth; a policy that sets it but the user keeps network
-        // access globally on still gets its domain restriction.
-        if let Some(policy) = self.policy.read().await.as_ref()
-            && let Some(tp) = policy.effective().tools.get("web_fetch")
-            && let Some(domains) = &tp.domains
-        {
-            tool_context.allowed_domains = domains.clone();
-        }
-
+        // Any mutating tool in the round forces the serial path so
+        // `[write_file(a), read_file(a)]` cannot race.
         let mut any_mutating = false;
         for call in calls {
             if let Some(perms) = self.tools.get_permissions(&call.tool_name).await
@@ -8012,11 +8588,7 @@ impl KodEngine {
             }
         }
 
-        // Pre-tool hooks. A failing hook denies only its own call —
-        // sibling calls still complete. When any pre-hook is configured,
-        // the round is forced serial: the hook itself is I/O, so
-        // parallelism buys nothing, and a serial loop keeps the
-        // denial bookkeeping honest.
+        // Pre-tool hooks. A failing hook denies only its own call.
         let hook_runner = self.hooks.read().ok().map(|g| g.clone());
         let mut hook_denied: std::collections::HashMap<usize, String> =
             std::collections::HashMap::new();
@@ -8031,21 +8603,9 @@ impl KodEngine {
         }
         let any_mutating = any_mutating || !hook_denied.is_empty();
 
-        // Snapshot the target file of every mutating call BEFORE any of
-        // them runs. Only `write_file` and `patch_file` are snapshotted
-        // — `execute_command` has no declared write set to snapshot (see
-        // the module doc for the reasoning). Snapshot failures are
-        // logged, never propagated: a session that cannot write a
-        // checkpoint must still be able to run tools.
-        //
-        // The snapshot ids are captured so that after the tool runs, a
-        // unified diff (old content vs new content) can be attached to
-        // the result. That is what makes the TUI's tool row useful: the
-        // user sees what changed, not just "written N bytes".
-        //
-        // The snapshot content is also what the approval dialog shows,
-        // so the diff the user reviews and the diff attached to the
-        // result are computed against the same "before" state.
+        // Snapshot every mutating call's target BEFORE any of them
+        // run. The snapshot ids feed the diff-augmentation phase and
+        // the approval dialog.
         let mut snapshot_ids: Vec<Option<String>> = vec![None; calls.len()];
         if any_mutating && let Some(cp) = self.checkpoints.as_ref() {
             for (i, call) in calls.iter().enumerate() {
@@ -8069,445 +8629,33 @@ impl KodEngine {
             }
         }
 
-        // Approval gate. When `confirm_writes` is on, every
-        // write_file / patch_file call pauses on a oneshot until the
-        // streaming consumer answers. The consumer is the caller's
-        // `chunk_tx` — the same channel the tool markers travel on.
-        //
-        // Three cases:
-        //
-        // 1. confirm_writes is off (the default): no gate, no cost.
-        // 2. confirm_writes on, chunk_tx is Some: emit an approval
-        //    marker carrying `{id, request}` JSON, register a oneshot,
-        //    await the answer. Timeout, drop, or explicit deny all map
-        //    to a denial; only an explicit `Approve` lets the call run.
-        // 3. confirm_writes on, chunk_tx is None: the caller is
-        //    `process` (non-streaming). Approval needs an interactive
-        //    consumer; rather than hang for AWAIT_APPROVAL_SECS and
-        //    then deny, refuse immediately with a message the user
-        //    can act on.
-        // Policy layer (D3-C1). Every tool call is decided before it
-        // runs. The session deny rules are checked first (highest
-        // priority), then the policy engine if one is installed, then
-        // the legacy `confirm_writes` gate as a backward-compatible
-        // fallback.
-        //
-        // Three outcomes:
-        //   Allow -> nothing inserted, call proceeds.
-        //   Deny  -> reason stored in `denied[i]`, call skipped.
-        //   Ask   -> approval marker emitted; the same oneshot
-        //            machinery the pre-D3 confirm_writes used.
-        let policy = self.policy.read().await.clone();
-        let deny_rules: std::collections::HashSet<kod_config::SessionDeny> =
-            self.deny_rules.read().await.clone();
-        let mut denied: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
-        let mut need_approval: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        // Tier 2.3 — argument substitutions captured by the approval
-        // loop, keyed by the call's index in `calls`. Empty when no
-        // edit was submitted this round.
+        // Policy gate (S10 phase 5).
+        let gate = self.gate_tool_calls(calls, &tool_context.working_dir).await;
+        self.log_policy_decisions(calls, effective_holder, &gate.decisions);
+        let denied = gate.denied;
+        let need_approval = gate.need_approval;
+        let policy = gate.policy;
         let mut edited_args: std::collections::HashMap<usize, serde_json::Value> =
             std::collections::HashMap::new();
-        let mut decisions: Vec<(usize, kod_config::PolicyDecision)> = Vec::new();
 
-        for (i, call) in calls.iter().enumerate() {
-            // Tier 2.3 — a learned allow short-circuits every gate.
-            // The user explicitly approved this exact call earlier in
-            // the session; re-prompting would be noise.
-            if self.is_learned_allowed(call).await {
-                let decision = kod_config::PolicyDecision {
-                    outcome: kod_config::Decision::Allow,
-                    rule: "session learned allow (Tier 2.3)".to_string(),
-                    source: kod_config::PolicySource::Preset,
-                };
-                decisions.push((i, decision));
-                continue;
-            }
-            // Tier 1.1 — a high-impact tool call under a tainted round
-            // forces an `Ask` regardless of what policy says. The
-            // taint is the stricter signal.
-            if self.requires_approval_for_taint(call) {
-                let decision = kod_config::PolicyDecision {
-                    outcome: kod_config::Decision::Ask,
-                    rule: format!(
-                        "taint escalation: {} under {:?}",
-                        call.tool_name,
-                        self.taint_level(),
-                    ),
-                    source: kod_config::PolicySource::SessionDeny,
-                };
-                decisions.push((i, decision.clone()));
-                match decision.outcome {
-                    kod_config::Decision::Allow => {}
-                    kod_config::Decision::Deny => {
-                        denied.insert(i, decision.rule.clone());
-                    }
-                    kod_config::Decision::Ask => {
-                        need_approval.insert(i);
-                    }
-                }
-                continue;
-            }
-            let decision = match &policy {
-                Some(p) => p.decide(
-                    &call.tool_name,
-                    &call.arguments,
-                    &tool_context.working_dir,
-                    &deny_rules,
-                ),
-                None => {
-                    // No policy installed: allow every call. The
-                    // CLI and TUI always install a PolicyEngine at
-                    // startup via install_policy_async; the fallback
-                    // exists for tests and embedders that build the
-                    // engine directly.
-                    kod_config::PolicyDecision {
-                        outcome: kod_config::Decision::Allow,
-                        rule: "no policy installed".to_string(),
-                        source: kod_config::PolicySource::Preset,
-                    }
-                }
-            };
+        // Approval flow (S10 phase 7). Auto-approval via Jev, then
+        // the batched interactive dialog.
+        let (_need_approval, mut denied) = self
+            .run_approval_flow(
+                calls,
+                effective_holder,
+                chunk_tx,
+                &snapshot_ids,
+                need_approval,
+                denied,
+                &mut edited_args,
+            )
+            .await;
 
-            match decision.outcome {
-                kod_config::Decision::Allow => {}
-                kod_config::Decision::Deny => {
-                    denied.insert(i, decision.rule.clone());
-                }
-                kod_config::Decision::Ask => {
-                    need_approval.insert(i);
-                }
-            }
-            decisions.push((i, decision));
-        }
-
-        // Log every decision before executing (or refusing) so the
-        // JSONL carries the full audit trail even if the run is
-        // interrupted mid-way.
-        if let Ok(guard) = self.session_recorder.read()
-            && let Some(rec) = guard.as_ref()
-        {
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            for (i, d) in &decisions {
-                let Some(call) = calls.get(*i) else { continue };
-                let outcome = match d.outcome {
-                    kod_config::Decision::Allow => "allow",
-                    kod_config::Decision::Deny => "deny",
-                    kod_config::Decision::Ask => "ask",
-                };
-                let entry = crate::session_log::SessionEntry::PolicyDecision {
-                    timestamp_ms: now_ms,
-                    holder: effective_holder.to_string(),
-                    tool_name: call.tool_name.clone(),
-                    outcome: outcome.to_string(),
-                    rule: d.rule.clone(),
-                    source: format!("{:?}", d.source).to_lowercase(),
-                };
-                let _ = rec.record(&entry);
-            }
-        }
-
-        // Jev-gated auto-approval (P3.1). Before emitting a
-        // dialog, ask Jev whether the user would almost
-        // certainly approve each `Ask` call. Calls that clear
-        // both the `likely_approved` threshold and the risk
-        // gate are removed from `need_approval` and logged as
-        // auto-approved `SessionEntry::Approval` entries, so the
-        // audit trail is identical to a user approving them by
-        // hand.
-        if !need_approval.is_empty() {
-            let auto = self
-                .auto_approve_with_jev(effective_holder, calls, &need_approval)
-                .await;
-            if !auto.is_empty() {
-                for i in &auto {
-                    if let Some(call) = calls.get(*i)
-                        && let Ok(guard) = self.session_recorder.read()
-                        && let Some(rec) = guard.as_ref()
-                    {
-                        let now_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as u64)
-                            .unwrap_or(0);
-                        let entry = crate::session_log::SessionEntry::Approval {
-                            timestamp_ms: now_ms,
-                            holder: effective_holder.to_string(),
-                            tool_name: call.tool_name.clone(),
-                            decision: "auto-approve".to_string(),
-                            edit: None,
-                        };
-                        let _ = rec.record(&entry);
-                    }
-                }
-                for i in &auto {
-                    need_approval.remove(i);
-                }
-            }
-        }
-
-        // Approval flow for every `Ask` call. The round's asks are
-        // batched: one marker carries every item, the consumer walks
-        // them, and the engine awaits each oneshot in order. A batch
-        // of one is protocol-identical to the pre-batch single-item
-        // marker from the consumer's perspective — the dialog just
-        // shows one row.
-        if !need_approval.is_empty() {
-            // P3.2 — ask Jev to group the pending approvals by
-            // logical change. The result is logged for `/jev stats`
-            // and is available to a future UI that renders grouped
-            // dialogs. A no-op (empty map) when Jev is disabled or
-            // the batch has fewer than 2 items.
-            {
-                let pending_calls: Vec<ToolCall> = need_approval
-                    .iter()
-                    .filter_map(|i| calls.get(*i).cloned())
-                    .collect();
-                let _groups = self
-                    .group_approvals_with_jev(effective_holder, &pending_calls)
-                    .await;
-            }
-            match chunk_tx {
-                Some(tx) => {
-                    // Phase 1 — build every request and register every
-                    // oneshot. Doing all the registration up-front means
-                    // the consumer can answer items out of order without
-                    // a race: a decision sent before the engine reaches
-                    // that item's `orx.await` is buffered by the
-                    // oneshot, not dropped.
-                    let mut items: Vec<ApprovalRequest> = Vec::new();
-                    let mut awaiting: Vec<(
-                        usize,
-                        tokio::sync::oneshot::Receiver<ApprovalDecision>,
-                    )> = Vec::new();
-                    for i in &need_approval {
-                        let Some(call) = calls.get(*i) else { continue };
-                        let summary = format_call_brief(&call.tool_name, &call.arguments);
-                        let diff = snapshot_ids
-                            .get(*i)
-                            .and_then(|o| o.as_ref())
-                            .and_then(|id| {
-                                self.checkpoints
-                                    .as_ref()
-                                    .and_then(|cp| cp.find(id).ok().flatten())
-                            })
-                            .map(|snap| match call.tool_name.as_str() {
-                                "write_file" => {
-                                    let new_content = call
-                                        .arguments
-                                        .get("content")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("");
-                                    kod_tools::patch::render_unified_diff(
-                                        &snap.content,
-                                        new_content,
-                                        &snap.path.display().to_string(),
-                                    )
-                                }
-                                "patch_file" => call
-                                    .arguments
-                                    .get("patch")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                _ => String::new(),
-                            });
-
-                        let id = self
-                            .next_approval_id
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let (otx, orx) = tokio::sync::oneshot::channel();
-                        self.pending_approvals.write().await.insert(id, otx);
-                        items.push(ApprovalRequest {
-                            tool_name: call.tool_name.clone(),
-                            arguments: call.arguments.clone(),
-                            diff,
-                            summary,
-                            id: Some(id),
-                        });
-                        awaiting.push((*i, orx));
-                    }
-
-                    // Phase 2 — emit ONE batch marker.
-                    let batch = ApprovalBatch { items };
-                    let json = serde_json::to_string(&batch)
-                        .unwrap_or_else(|_| "{\"items\":[]}".to_string());
-                    let batch_id = self
-                        .next_approval_id
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let _ = tx.send(tool_approval_batch_marker(batch_id, &json)).await;
-
-                    // Phase 3 — await each in order. Each resolution
-                    // emits one `SessionEntry::Approval` so the JSONL
-                    // carries the audit trail: who decided, on which
-                    // tool, and what they decided.
-                    for (i, orx) in awaiting {
-                        let decision = tokio::time::timeout(
-                            std::time::Duration::from_secs(AWAIT_APPROVAL_SECS),
-                            orx,
-                        )
-                        .await;
-                        let tool_name = calls
-                            .get(i)
-                            .map(|c| c.tool_name.clone())
-                            .unwrap_or_default();
-                        let (log_decision, allow) = match decision {
-                            Ok(Ok(ApprovalDecision::Approve)) => ("approve", true),
-                            Ok(Ok(ApprovalDecision::ApproveWith { arguments })) => {
-                                edited_args.insert(i, arguments);
-                                ("approve-edited", true)
-                            }
-                            Ok(Ok(ApprovalDecision::Deny)) => ("deny", false),
-                            Ok(Ok(ApprovalDecision::DenyAlways)) => ("deny-always", false),
-                            Ok(Err(_)) => ("cancelled", false),
-                            Err(_) => ("timeout", false),
-                        };
-                        if let Ok(guard) = self.session_recorder.read()
-                            && let Some(rec) = guard.as_ref()
-                        {
-                            let now_ms = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_millis() as u64)
-                                .unwrap_or(0);
-                            let edit_snapshot = edited_args.get(&i).cloned();
-                            let entry = crate::session_log::SessionEntry::Approval {
-                                timestamp_ms: now_ms,
-                                holder: effective_holder.to_string(),
-                                tool_name: tool_name.clone(),
-                                decision: log_decision.to_string(),
-                                edit: edit_snapshot,
-                            };
-                            let _ = rec.record(&entry);
-                        }
-                        if !allow {
-                            if log_decision == "deny-always"
-                                && let Some(call) = calls.get(i)
-                            {
-                                let path_pattern = call
-                                    .arguments
-                                    .get("path")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-                                let rule = kod_config::SessionDeny {
-                                    tool: call.tool_name.clone(),
-                                    path_pattern,
-                                };
-                                self.add_deny_rule(rule).await;
-                            }
-                            let reason = match log_decision {
-                                "deny" | "deny-always" => "denied by user",
-                                "cancelled" => "approval cancelled",
-                                "timeout" => {
-                                    // The format! below needs the
-                                    // AWAIT_APPROVAL_SECS bound.
-                                    // We build it here to keep the
-                                    // existing message shape.
-                                    // (Uses the same value as before.)
-                                    "no approval answer within timeout — denied"
-                                }
-                                other => other,
-                            };
-                            denied.insert(i, reason.to_string());
-                        }
-                    }
-                }
-                None => {
-                    for i in &need_approval {
-                        denied.insert(
-                            *i,
-                            "policy requires approval but this execution \
-                             path has no interactive consumer. Use the TUI, \
-                             or install a permissive policy."
-                                .to_string(),
-                        );
-                    }
-                }
-            }
-        }
-
-        // ask_user interception. The tool itself cannot reach the
-        // chunk channel (its `execute` signature does not carry one), so
-        // the engine does the marker + await, and hands the answer back
-        // as the tool result. A call with no chunk_tx (non-streaming
-        // `process`) becomes a denial with a message the model can act
-        // on, matching the confirm_writes fallback.
-        let mut answers: std::collections::HashMap<usize, String> =
-            std::collections::HashMap::new();
-        for (i, call) in calls.iter().enumerate() {
-            if call.tool_name != "ask_user" {
-                continue;
-            }
-            // P3.5 — before emitting the question, ask Jev whether
-            // the request already contains the answer. A confident
-            // "yes" skips the interruption entirely; the model sees
-            // the request text as the tool's result and carries on.
-            let question_text = call
-                .arguments
-                .get("question")
-                .and_then(|v| v.as_str())
-                .unwrap_or("(no question)")
-                .to_string();
-            if let Some(auto_answer) = self
-                .try_answer_question_from_context(effective_holder, &question_text)
-                .await
-            {
-                answers.insert(i, auto_answer);
-                continue;
-            }
-            match chunk_tx {
-                Some(tx) => {
-                    let question = question_text;
-                    let placeholder = call
-                        .arguments
-                        .get("placeholder")
-                        .and_then(|v| v.as_str())
-                        .map(String::from);
-                    let req = kod_tools::ask::QuestionRequest {
-                        question,
-                        placeholder,
-                    };
-                    let json = serde_json::to_string(&req).unwrap_or_else(|_| "{}".to_string());
-                    let id = self
-                        .next_question_id
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let (otx, orx) = tokio::sync::oneshot::channel();
-                    self.pending_questions.write().await.insert(id, otx);
-                    let _ = tx.send(question_marker(id, &json)).await;
-                    // Generous timeout — a user reading the question and
-                    // typing a real answer needs more than a click.
-                    let answer = tokio::time::timeout(
-                        std::time::Duration::from_secs(AWAIT_APPROVAL_SECS),
-                        orx,
-                    )
-                    .await;
-                    match answer {
-                        Ok(Ok(text)) => {
-                            answers.insert(i, text);
-                        }
-                        Ok(Err(_)) => {
-                            answers.insert(i, "(question cancelled)".to_string());
-                        }
-                        Err(_) => {
-                            answers.insert(
-                                i,
-                                format!(
-                                    "(no answer within {}s — the user is away)",
-                                    AWAIT_APPROVAL_SECS
-                                ),
-                            );
-                        }
-                    }
-                }
-                None => {
-                    answers.insert(
-                        i,
-                        "(ask_user requires an interactive consumer; use kod tui or kod chat)"
-                            .to_string(),
-                    );
-                }
-            }
-        }
+        // ask_user interception (S10 phase 6).
+        let mut answers = self
+            .answer_ask_user_calls(calls, effective_holder, chunk_tx)
+            .await;
 
         // Tier 2.3 — apply any argument edits captured by the
         // approval loop. Empty map means "dispatch as proposed".
@@ -8709,60 +8857,12 @@ impl KodEngine {
                 .collect()
         };
 
-        // Post-tool hooks. Run for every non-denied call, before the
-        // result reaches the model. Failures are logged by `run_post`,
-        // never propagated — a formatting failure after a successful
-        // write must not turn the write into a failed tool call.
-        if let Some(runner) = hook_runner.as_ref()
-            && runner.is_enabled()
-        {
-            for (i, call) in calls.iter().enumerate() {
-                if hook_denied.contains_key(&i) {
-                    continue;
-                }
-                runner.run_post(call).await;
-            }
-        }
+        // Post-tool hooks (S10 phase 1).
+        self.run_post_hooks(calls, hook_runner.as_ref(), &hook_denied)
+            .await;
 
-        // Session log: every tool call and its result as one JSONL
-        // line. Best-effort — a write failure logs and the run
-        // continues.
-        if let Ok(guard) = self.session_recorder.read()
-            && let Some(recorder) = guard.as_ref()
-        {
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            for (i, call) in calls.iter().enumerate() {
-                let Some((result, ms)) = raw_results.get(i) else {
-                    continue;
-                };
-                let result_json = match result {
-                    Ok(ToolResult::Success(v)) => serde_json::json!({ "success": v }),
-                    Ok(ToolResult::Error(e)) => serde_json::json!({ "error": e }),
-                    Ok(ToolResult::RequiresConfirmation { description, .. }) => {
-                        serde_json::json!({ "requires_confirmation": description })
-                    }
-                    Err(e) => serde_json::json!({ "error": e.to_string() }),
-                };
-                let entry = crate::session_log::SessionEntry::ToolCall {
-                    timestamp_ms: now_ms,
-                    holder: effective_holder.to_string(),
-                    tool_name: call.tool_name.clone(),
-                    arguments: call.arguments.clone(),
-                    duration_ms: *ms,
-                    result: result_json,
-                };
-                if let Err(e) = recorder.record(&entry) {
-                    tracing::warn!(
-                        error = %e,
-                        path = %recorder.path().display(),
-                        "could not append session log entry"
-                    );
-                }
-            }
-        }
+        // Session log (S10 phase 2).
+        self.record_session_tool_calls(calls, &raw_results, effective_holder);
 
         // Tier 1.1 — every tool that ran escalates the round's
         // taint to the worse of the current level and the tool's
@@ -8806,47 +8906,8 @@ impl KodEngine {
                 .await;
         }
 
-        // Diff augmentation: for every successful write_file / patch_file
-        // that had a pre-call snapshot, compute a unified diff (old vs
-        // new) and attach it to the result payload as `"diff"`. The TUI
-        // summarizer renders that field in the tool row; the model sees
-        // it too, so a "did that edit land where I intended?" question
-        // is answerable without re-reading the file.
-        //
-        // Failures here are silent skips: a missing snapshot (a
-        // session without a checkpoint directory), an unreadable file
-        // (the tool itself already reported the error), or a
-        // byte-diff mismatch (the file is binary) each just mean "no
-        // diff on this row".
-        if let Some(cp) = self.checkpoints.as_ref() {
-            for (i, call) in calls.iter().enumerate() {
-                if !matches!(call.tool_name.as_str(), "write_file" | "patch_file") {
-                    continue;
-                }
-                let Some(sid) = snapshot_ids.get(i).and_then(|o| o.as_ref()) else {
-                    continue;
-                };
-                let Some(snap) = cp.find(sid).ok().flatten() else {
-                    continue;
-                };
-                let new_content = match std::fs::read_to_string(&snap.path) {
-                    Ok(s) => s,
-                    Err(_) => continue,
-                };
-                let old_content = snap.content.clone();
-                let diff = kod_tools::patch::render_unified_diff(
-                    &old_content,
-                    &new_content,
-                    &snap.path.display().to_string(),
-                );
-                if let Some(entry) = raw_results.get_mut(i)
-                    && let Ok(ToolResult::Success(v)) = &mut entry.0
-                    && let Some(obj) = v.as_object_mut()
-                {
-                    obj.insert("diff".to_string(), serde_json::Value::String(diff));
-                }
-            }
-        }
+        // Diff augmentation (S10 phase 3).
+        self.attach_write_diffs(calls, &snapshot_ids, &mut raw_results);
 
         let mut results = Vec::with_capacity(calls.len());
         let mut elapsed_ms = Vec::with_capacity(calls.len());
@@ -8955,73 +9016,8 @@ impl KodEngine {
                 );
             }
         }
-        // Structured transcript slice (AD-02). One assistant message
-        // carrying the calls, then one tool message per result linked
-        // by `tool_call_id`. Ids are preserved when the provider
-        // emitted them; a provider that did not (some local servers
-        // omit them) gets a synthesized `call_N` so the transcript is
-        // well-formed on every wire.
-        let mut messages: Vec<kod_types::ChatMessage> = Vec::new();
-        let mut assistant_msg = kod_types::ChatMessage::text(
-            kod_types::MessageId::new(),
-            kod_types::MessageRole::Assistant,
-            String::new(),
-            time::OffsetDateTime::now_utc(),
-        );
-        for (i, call) in calls.iter().enumerate() {
-            let id = call.id.clone().unwrap_or_else(|| format!("call_{i}"));
-            assistant_msg.tool_calls.push(kod_types::ToolCall {
-                id: Some(id.clone()),
-                tool_name: call.tool_name.clone(),
-                arguments: call.arguments.clone(),
-            });
-        }
-        // Only push the assistant message when there was at least one
-        // call — an empty assistant turn is not a legal wire shape.
-        if !assistant_msg.tool_calls.is_empty() {
-            messages.push(assistant_msg);
-        }
-        // H-E2: cap each tool result before it goes on the wire. The
-        // text prompt already runs `cap_rendered_result`, but the
-        // structured `Role::Tool` message was the raw JSON — a
-        // read_file up to 256 KB, repeated over 40 rounds, produced
-        // an unbounded transcript whose eventual provider "context
-        // length exceeded" error was non-retryable. Cap at a larger
-        // budget than the display cap so the model still sees more
-        // than the user; the cap is `truncate_chars` on the rendered
-        // string.
-        const STRUCTURED_TOOL_MSG_CAP: usize = 16 * 1024;
-        for (i, call) in calls.iter().enumerate() {
-            let id = call.id.clone().unwrap_or_else(|| format!("call_{i}"));
-            let rendered = match results.get(i) {
-                Some(kod_types::ToolResult::Success(v)) => {
-                    let raw = v.to_string();
-                    if raw.len() > STRUCTURED_TOOL_MSG_CAP {
-                        format!(
-                            "{}…[truncated: {} of {} bytes]",
-                            truncate_chars(&raw, STRUCTURED_TOOL_MSG_CAP),
-                            STRUCTURED_TOOL_MSG_CAP,
-                            raw.len(),
-                        )
-                    } else {
-                        raw
-                    }
-                }
-                Some(kod_types::ToolResult::Error(e)) => format!("error: {e}"),
-                Some(kod_types::ToolResult::RequiresConfirmation { description, .. }) => {
-                    format!("requires confirmation: {description}")
-                }
-                None => String::new(),
-            };
-            let mut tool_msg = kod_types::ChatMessage::text(
-                kod_types::MessageId::new(),
-                kod_types::MessageRole::Tool,
-                rendered,
-                time::OffsetDateTime::now_utc(),
-            );
-            tool_msg.tool_call_id = Some(id);
-            messages.push(tool_msg);
-        }
+        // Structured transcript slice (S10 phase 4).
+        let messages = Self::build_round_messages(calls, &results);
 
         // Auto-check: when enabled, and at least one of the calls was
         // a successful write_file / patch_file, run the project's

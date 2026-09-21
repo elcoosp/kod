@@ -139,6 +139,20 @@ below is covered by a test; the targeted suites are green.
   `--locked` is set on every CI cargo invocation.
 - **MSRV is declared (1.85).**
 
+### Structural
+
+- **`engine_from_config`.** The seven CLI commands that built a
+  `KodEngine` (chat, swarm, agent, prompt, streaming-prompt, acp,
+  serve) each carried an 80-line hand-rolled bootstrap. `run_agent`
+  never set `network_access`, `run_swarm` never set hooks or limits,
+  and the P0-1 missing-policy bug existed because three of the seven
+  forgot the policy install. All seven now route through one helper
+  with an explicit `EngineBootstrapOptions`; the shared shape is the
+  only shape.
+- **`install_session_recorder` / `install_jev`.** The two remaining
+  per-command installs that were safe to factor — both were
+  duplicated verbatim between chat, prompt, agent, and swarm.
+
 ### Documentation
 
 - CONTRIBUTING.md MSRV corrected.

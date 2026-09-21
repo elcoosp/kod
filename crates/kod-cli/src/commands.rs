@@ -59,6 +59,18 @@ struct EngineBootstrapOptions<'a> {
     /// When true, MCP servers from the config are installed. `kod replay`
     /// turns this off — it wants the replay to be hermetic.
     install_mcp: bool,
+    /// Optional explicit DB path. When `None`, the default
+    /// `~/.kod/data/kod.redb` is used. ACP uses `KOD_TEST_DB` for tests;
+    /// serve uses `config.memory_db_path()`.
+    db_path: Option<std::path::PathBuf>,
+    /// When false, no embedding client is built (the engine keeps
+    /// keyword+recency retrieval). ACP and the daemon historically
+    /// did not build one; they now default to false to keep behaviour.
+    install_embedder: bool,
+    /// When false, the helper does not install a PolicyEngine. The
+    /// daemon sets its own (against its own cwd); tests that drive
+    /// the engine directly also skip it.
+    install_policy: bool,
 }
 
 async fn engine_from_config(
@@ -72,16 +84,28 @@ async fn engine_from_config(
         .map(String::from)
         .unwrap_or_else(|| config.llm.default_endpoint().model.clone());
 
-    // DB path.
-    let home = dirs::home_dir()
-        .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
-    let db_path = home.join(".kod").join("data").join("kod.redb");
+    // DB path: caller override first, then the default under home.
+    let db_path = match opts.db_path {
+        Some(p) => p,
+        None => {
+            let home = dirs::home_dir().ok_or_else(|| {
+                KodError::Config("Could not determine home directory".to_string())
+            })?;
+            home.join(".kod").join("data").join("kod.redb")
+        }
+    };
+    // Parent dir must exist before `KodEngine::new` opens the db.
+    let _ = std::fs::create_dir_all(db_path.parent().unwrap_or(std::path::Path::new(".")));
 
-    // Embedder (D2.1).
-    let embedder = kod_memory::embedding::from_config(
-        &config.memory,
-        Some(&config.llm.default_endpoint().base_url),
-    );
+    // Embedder (D2.1), when the caller asked for one.
+    let embedder = if opts.install_embedder {
+        kod_memory::embedding::from_config(
+            &config.memory,
+            Some(&config.llm.default_endpoint().base_url),
+        )
+    } else {
+        None
+    };
     let router_config = RouterConfig {
         skill_threshold: config.skills.match_threshold,
         context_window: config.llm.default_endpoint().context_window,
@@ -118,10 +142,13 @@ async fn engine_from_config(
         engine.set_sandbox_mode(kod_tools::context::SandboxMode::Require);
     }
 
-    // Policy + read protection (P0-1).
-    install_policy_async(&engine, config, opts.cli_preset).await?;
-    if let Some(policy) = engine.policy().await {
-        engine.set_read_protection(policy.read_protection().clone());
+    // Policy + read protection (P0-1). Skipped when the caller manages
+    // its own (the daemon installs against its own cwd).
+    if opts.install_policy {
+        install_policy_async(&engine, config, opts.cli_preset).await?;
+        if let Some(policy) = engine.policy().await {
+            engine.set_read_protection(policy.read_protection().clone());
+        }
     }
 
     // Cost caps.
@@ -156,7 +183,6 @@ fn install_jev(engine: &KodEngine, config: &KodConfig) {
         eprintln!("Jev configuration error (continuing without): {e}");
     }
 }
-
 
 /// `kod skills` subcommands.
 #[derive(Subcommand, Debug, Clone)]
@@ -1758,6 +1784,9 @@ pub async fn run_chat(
             cli_preset: cli_preset.as_deref(),
             require_sandbox: sandbox,
             install_mcp: true,
+            db_path: None,
+            install_embedder: true,
+            install_policy: true,
         },
     )
     .await?;
@@ -1837,6 +1866,11 @@ pub async fn run_chat(
         }
     }
 
+    // The model name shown in the greeting. Prefer the caller's
+    // `--model` override; otherwise the config's default endpoint.
+    let model_name = model
+        .clone()
+        .unwrap_or_else(|| config.llm.default_endpoint().model.clone());
     println!(
         "KOD Chat (model: {}) - Type 'quit' or Ctrl+C to exit",
         model_name
@@ -2292,6 +2326,9 @@ pub async fn run_swarm(
             cli_preset: None,
             require_sandbox: false,
             install_mcp: true,
+            db_path: None,
+            install_embedder: true,
+            install_policy: true,
         },
     )
     .await?;
@@ -2586,6 +2623,9 @@ pub async fn run_agent(
             // sandbox would fail every command with no UI to relax it.
             require_sandbox: false,
             install_mcp: true,
+            db_path: None,
+            install_embedder: true,
+            install_policy: true,
         },
     )
     .await?;
@@ -3813,36 +3853,24 @@ pub async fn run_acp(cli_preset: Option<String>) -> Result<()> {
     // the ACP subprocess opens the shared `~/.kod/data/kod.redb`,
     // which a concurrent test process may hold a lock on — the
     // process then dies before writing the initialize response.
-    let db_path = match std::env::var("KOD_TEST_DB") {
-        Ok(p) => std::path::PathBuf::from(p),
-        Err(_) => {
-            let home = dirs::home_dir().ok_or_else(|| {
-                KodError::Config("Could not determine home directory".to_string())
-            })?;
-            home.join(".kod").join("data").join("kod.redb")
-        }
-    };
-    let _ = std::fs::create_dir_all(db_path.parent().unwrap_or(std::path::Path::new(".")));
-
-    let router_config = RouterConfig {
-        skill_threshold: config.skills.match_threshold,
-        context_window: config.llm.default_endpoint().context_window,
-        short_term_capacity: config.memory.short_term_capacity,
-        ..RouterConfig::default()
-    };
-    let engine = Arc::new(KodEngine::new(router_config, db_path)?);
-    engine.set_history_budget(
-        config
-            .llm
-            .default_endpoint()
-            .context_window
-            .saturating_mul(3),
-    );
-
-    let (registry, default_model, routing) = kod_core::build_registry(&config.llm, None)?;
-    engine.set_registry(registry, default_model, routing).await;
-    engine.set_hooks(config.hooks.clone());
-    engine.set_network_access(config.llm.network_access);
+    // S10: shared bootstrap. ACP keeps its `KOD_TEST_DB` env override
+    // and its historical no-embedder default.
+    let db_path_override = std::env::var("KOD_TEST_DB")
+        .ok()
+        .map(std::path::PathBuf::from);
+    let engine = engine_from_config(
+        &config,
+        EngineBootstrapOptions {
+            model_override: None,
+            cli_preset: cli_preset.as_deref(),
+            require_sandbox: false,
+            install_mcp: true,
+            db_path: db_path_override,
+            install_embedder: false,
+            install_policy: true,
+        },
+    )
+    .await?;
     engine.set_auto_check(config.tools.auto_check);
     engine.set_auto_lsp(config.tools.auto_lsp);
     install_policy_async(&engine, &config, cli_preset.as_deref()).await?;
@@ -3914,51 +3942,36 @@ pub async fn run_serve(stop: bool, socket: Option<std::path::PathBuf>) -> Result
     }
 
     let config = KodConfig::load_default()?;
+
+    // S10: shared bootstrap. `kod serve` uses `config.memory_db_path()`
+    // (which respects `memory.scope`) rather than the default under
+    // home, and it installs the policy itself so the daemon's
+    // per-connection cwd can be threaded through.
     let db_path = config.memory_db_path()?;
-    if let Some(parent) = db_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    // Design D2.1: build the embedder the memory subsystem will use
-    // for semantic retrieval. `None` (the config default) leaves the
-    // keyword+recency fallback in place; no retrieval path is broken
-    // by an absent embedder.
-    let embedder = kod_memory::embedding::from_config(
-        &config.memory,
-        Some(&config.llm.default_endpoint().base_url),
-    );
-    let router_config = RouterConfig {
-        context_window: config.llm.default_endpoint().context_window,
-        short_term_capacity: config.memory.short_term_capacity,
-        skill_threshold: config.skills.match_threshold,
-        embedder,
-        ..RouterConfig::default()
-    };
-    let engine = KodEngine::new(router_config, db_path)?;
-    engine.set_history_budget(
-        config
-            .llm
-            .default_endpoint()
-            .context_window
-            .saturating_mul(3),
-    );
+    let engine = engine_from_config(
+        &config,
+        EngineBootstrapOptions {
+            model_override: None,
+            // The daemon sets its own policy below.
+            cli_preset: None,
+            require_sandbox: false,
+            install_mcp: true,
+            db_path: Some(db_path),
+            install_embedder: true,
+            install_policy: true,
+        },
+    )
+    .await?;
 
-    let (registry, default_model, routing) = kod_core::build_registry(&config.llm, None)?;
-    engine.set_registry(registry, default_model, routing).await;
-    engine.set_hooks(config.hooks.clone());
-    engine.set_network_access(config.llm.network_access);
-    engine.set_auto_check(config.tools.auto_check);
-    engine.set_auto_lsp(config.tools.auto_lsp);
-
-    // Policy: a daemon has no CLI preset.
+    // Policy: a daemon has no CLI preset, and the policy is loaded
+    // against the *current* cwd — the shared bootstrap uses `None`
+    // for `cli_preset` so this remains the source of truth.
     let cwd = std::env::current_dir()
         .map_err(|e| KodError::Config(format!("could not determine cwd: {e}")))?;
     let policy = kod_config::PolicyEngine::load(&config, Some(&cwd), None)?;
     engine.set_policy(std::sync::Arc::new(policy)).await;
-    kod_core::mcp_adapters::install_from_config(&engine, &config).await;
 
     engine.start().await?;
-
-    let engine = std::sync::Arc::new(engine);
     println!(
         "Starting daemon at {} (Ctrl+C to stop).",
         socket_path.display()
@@ -5355,6 +5368,9 @@ pub async fn run_prompt(
             cli_preset: None,
             require_sandbox: sandbox,
             install_mcp: true,
+            db_path: None,
+            install_embedder: true,
+            install_policy: true,
         },
     )
     .await?;
@@ -6082,46 +6098,22 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
     }
 
     let config = KodConfig::load_default()?;
-    let model_name = model.unwrap_or_else(|| config.llm.default_endpoint().model.clone());
-    let home = dirs::home_dir()
-        .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
-    let db_path = home.join(".kod").join("data").join("kod.redb");
 
-    // Design D2.1: build the embedder the memory subsystem will use
-    // for semantic retrieval. `None` (the config default) leaves the
-    // keyword+recency fallback in place; no retrieval path is broken
-    // by an absent embedder.
-    let embedder = kod_memory::embedding::from_config(
-        &config.memory,
-        Some(&config.llm.default_endpoint().base_url),
-    );
-    let router_config = RouterConfig {
-        skill_threshold: config.skills.match_threshold,
-        context_window: config.llm.default_endpoint().context_window,
-        short_term_capacity: config.memory.short_term_capacity,
-        embedder,
-        ..RouterConfig::default()
-    };
-    let engine = KodEngine::new(router_config, db_path)?;
-    // P0-1: install the PolicyEngine so the standard preset's
-    // write-approval and deny rules actually gate tool calls.
-    install_policy_async(&engine, &config, None).await?;
+    // S10: shared bootstrap.
+    let engine = engine_from_config(
+        &config,
+        EngineBootstrapOptions {
+            model_override: model.as_deref(),
+            cli_preset: None,
+            require_sandbox: false,
+            install_mcp: true,
+            db_path: None,
+            install_embedder: true,
+            install_policy: true,
+        },
+    )
+    .await?;
 
-    engine.set_history_budget(
-        config
-            .llm
-            .default_endpoint()
-            .context_window
-            .saturating_mul(3),
-    );
-    let (registry, default_model, routing) =
-        kod_core::build_registry(&config.llm, Some(&model_name))?;
-    engine.set_registry(registry, default_model, routing).await;
-    engine.set_hooks(config.hooks.clone());
-    engine.set_network_access(config.llm.network_access);
-    engine.set_auto_check(config.tools.auto_check);
-    engine.set_auto_lsp(config.tools.auto_lsp);
-    kod_core::mcp_adapters::install_from_config(&engine, &config).await;
     engine.start().await?;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);

@@ -5726,6 +5726,16 @@ mod tests {
         // the current directory and prints one line per file. The test
         // asserts the output is the map, not the "no recognized source
         // files" fallback.
+        //
+        // S10 follow-up: the `/export-html` tests mutate the process
+        // cwd under the shared `CWD_LOCK`; a parallel run of this
+        // test without the lock saw the tmp dir those tests chdir'd
+        // into. Take the same lock.
+        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        let _guard = CWD_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let mut tui = TuiLoop::new();
         tui.handle_command("/map").await.unwrap();
         let last = tui.app().messages().last().unwrap();
@@ -5747,6 +5757,13 @@ mod tests {
         // A tiny budget must truncate. The renderer appends a
         // `(map truncated)` marker when it hits the cap; the assertion
         // proves the argument reaches the renderer.
+        //
+        // S10 follow-up: same CWD_LOCK reason as `test_map_command_produces_output`.
+        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        let _guard = CWD_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let mut tui = TuiLoop::new();
         tui.handle_command("/map 1").await.unwrap();
         let last = tui.app().messages().last().unwrap();
