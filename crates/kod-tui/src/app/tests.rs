@@ -1109,7 +1109,7 @@ mod coverage_approval_batch {
     //! user approves the wrong call) or gets stuck on one (the
     //! batch never completes and the engine's awaiting tasks time
     //! out to deny). Both are worth pinning.
-    use super::{PendingApproval, PendingApprovalBatch};
+    use crate::app::{PendingApproval, PendingApprovalBatch};
 
     fn item(id: u64) -> PendingApproval {
         PendingApproval {
