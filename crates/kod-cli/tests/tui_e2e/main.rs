@@ -124,18 +124,25 @@ fn mock_reply_streams_into_the_transcript() {
     );
 }
 
-/// A reply streamed one byte per SSE event reassembles correctly.
+/// A reply streamed one *character* per SSE event reassembles into
+/// one message.
 ///
-/// Exercises the provider's UTF-8 boundary handling. The Anthropic
-/// provider had a bug (H-P2) where a multi-byte character split
-/// across TCP chunks became U+FFFD; the OpenAI path uses a different
-/// decoder, and this test pins that it reassembles cleanly.
+/// Exercises the engine's chunk accumulator across many small
+/// events: each `data:` line carries one codepoint, and the
+/// resulting transcript must read as the original reply.
+///
+/// **Not** covered here: mid-codepoint splits across TCP segments.
+/// An SSE `data:` line is UTF-8 text, so a frame that carried half a
+/// codepoint would be invalid SSE — testing that path needs a raw
+/// socket, not an SSE server. The Anthropic decoder's H-P2 bug lived
+/// at that lower level; this test pins the layer above it.
+///
+/// The reply includes multi-byte characters (`é`, `ö`) so a naive
+/// accumulator that split on byte boundaries would show mojibake.
 #[test]
-fn byte_by_byte_streaming_reassembles() {
-    // A reply with a multi-byte character to catch mid-codepoint
-    // splits: "héllo wörld" has two 2-byte sequences.
+fn char_by_char_streaming_reassembles() {
     const REPLY: &str = "héllo wörld";
-    let env = TestEnv::new_byte_by_byte(REPLY);
+    let env = TestEnv::new_char_by_char(REPLY);
     let session = env.spawn(80, 24);
     harness::wait_for_ready(&session);
 
@@ -146,7 +153,14 @@ fn byte_by_byte_streaming_reassembles() {
     let screen = session.wait_for_text(REPLY, WAIT);
     assert!(
         screen.contains(REPLY),
-        "byte-by-byte stream did not reassemble to {REPLY:?}:\n{screen}"
+        "char-by-char stream did not reassemble to {REPLY:?}:\n{screen}"
+    );
+    // Guard against the accumulator dropping the reply's tail. The
+    // pre-fix bug produced the correct prefix but a truncated body
+    // because the last event raced the done-marker.
+    assert!(
+        screen.contains("wörld"),
+        "streamed reply lost its tail:\n{screen}"
     );
 }
 
@@ -161,13 +175,26 @@ fn slash_help_opens_the_overlay() {
     session.send_text("/help");
     session.send_key(KeyCode::Enter);
 
-    // The help overlay renders a header — pin a stable substring
-    // from the widget rather than the whole overlay so a reflow does
-    // not break the test.
-    let screen = session.wait_for_text("Keyboard shortcuts", WAIT);
+    // The overlay's border title is the marker. Matching it (rather
+    // than, say, one of the body lines) confirms the widget rendered
+    // its frame, not just that a body string happened to appear in
+    // the transcript. A reflow that changes the body leaves the
+    // title alone.
+    let screen = session.wait_for_text("help — Esc closes", WAIT);
     assert!(
-        screen.contains("Keyboard shortcuts"),
+        screen.contains("help — Esc closes"),
         "help overlay did not open:\n{screen}"
+    );
+
+    // Two body markers: the keys section and a slash command. Either
+    // appearing without the title would be a partial render.
+    assert!(
+        screen.contains("this help (also /help, F1)"),
+        "help overlay body missing the keys section:\n{screen}"
+    );
+    assert!(
+        screen.contains("/blackboard"),
+        "help overlay body missing slash commands:\n{screen}"
     );
 }
 

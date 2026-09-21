@@ -63,14 +63,16 @@ impl MockServer {
         Self::start_with(reply, false)
     }
 
-    /// Like [`start`], but streams the reply **one byte per SSE
-    /// event**.
+    /// Like [`start`], but streams the reply **one character per
+    /// SSE event**.
     ///
-    /// Exercises the provider's UTF-8 boundary handling. A reply with
-    /// a multi-byte character split across events will reconstruct
-    /// exactly if the provider reassembles at the character level, or
-    /// lose the second half if it decodes per chunk.
-    pub fn start_byte_by_byte(reply: &str) -> Self {
+    /// Exercises the engine's chunk accumulator across many small
+    /// events. Note: this does *not* split multi-byte characters
+    /// across events — an SSE `data:` line is UTF-8 text, and half
+    /// a codepoint in one would be an invalid frame, not a valid
+    /// reassembly case. The Anthropic decoder's mid-codepoint bug
+    /// (H-P2) lives at the TCP layer and needs a raw-socket test.
+    pub fn start_char_by_char(reply: &str) -> Self {
         Self::start_with(reply, true)
     }
 
@@ -188,9 +190,14 @@ fn sse_events(reply: &str, byte_by_byte: bool) -> Vec<Event> {
     events.push(Event::default().data(chunk_json(Some("assistant"), None, None)));
 
     if byte_by_byte {
-        // One byte per event, split on UTF-8 *bytes*.
-        for b in reply.as_bytes() {
-            let s = String::from_utf8_lossy(&[*b]).into_owned();
+        // One *character* per event. `chars()` yields whole
+        // codepoints, so a multi-byte character arrives in a single
+        // `data:` line and the frame stays valid UTF-8. Splitting
+        // by byte would emit lone continuation bytes; `from_utf8_
+        // lossy` would turn them into U+FFFD, and the resulting
+        // mojibake would be the mock's bug, not the provider's.
+        for c in reply.chars() {
+            let s = c.to_string();
             events.push(Event::default().data(chunk_json(None, Some(&s), None)));
         }
     } else {

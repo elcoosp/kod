@@ -84,7 +84,7 @@ impl TestEnv {
         Self::new_full(reply, false)
     }
 
-    pub fn new_byte_by_byte(reply: &str) -> Self {
+    pub fn new_char_by_char(reply: &str) -> Self {
         Self::new_full(reply, true)
     }
 
@@ -108,7 +108,7 @@ impl TestEnv {
         .expect("seed workspace file");
 
         let mock = if byte_by_byte {
-            MockServer::start_byte_by_byte(reply)
+            MockServer::start_char_by_char(reply)
         } else {
             MockServer::start(reply)
         };
