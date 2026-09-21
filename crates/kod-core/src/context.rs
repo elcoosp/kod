@@ -305,7 +305,7 @@ mod coverage_engine_context {
     #[test]
     fn estimated_tokens_scales_with_content_length() {
         let small = EngineContext::new("a");
-        let big = EngineContext::new(&"x".repeat(4000));
+        let big = EngineContext::new("x".repeat(4000));
         assert!(big.estimated_tokens() > small.estimated_tokens());
         // The 4-chars-per-token rule of thumb: 4000 chars ≈ 1000
         // tokens. The estimate is approximate by design; assert
