@@ -108,16 +108,32 @@ jobs:
     # under `docs/minisign.pub`, and puts the private key in the
     # repository secret. The release continues to work for a fork
     # that has not configured a key.
+    # H-C5: the workflow-level `env` context cannot see `secrets`,
+    # so the pre-fix `if: env.MINISIGN_SECRET_KEY != ''` step
+    # condition was always false — every release shipped unsigned.
+    # Hoist the secret to a step output and gate on that instead,
+    # and use a heredoc to feed minisign the password (the pre-fix
+    # `< "$MINISIGN_PASSWORD"` was redirecting from a *file name*).
+    - name: Detect signing key
+      id: sign
+      shell: bash
+      env:
+        MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+      run: |
+        if [ -n "${MINISIGN_SECRET_KEY:-}" ]; then
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Sign artifacts (minisign)
-      if: env.MINISIGN_SECRET_KEY != ''
+      if: steps.sign.outputs.enabled == 'true'
       shell: bash
       env:
         MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
         MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
       run: |
         set -euo pipefail
-        # Install minisign. The apt package exists on Ubuntu 22.04+;
-        # macOS ships a formula; Windows uses a prebuilt binary.
         case "${{ runner.os }}" in
           Linux)
             sudo apt-get update
@@ -127,30 +143,24 @@ jobs:
             brew install minisign
             ;;
           Windows)
-            # Skip the Windows signing step on this runner: minisign
-            # has no first-class Windows install path in the
-            # Actions image, and users who want to verify the
-            # Windows artifact can compare it against the Linux
-            # signature after downloading. A follow-up can add a
-            # prebuilt binary download here.
             echo "skipping minisign on Windows (no package in the image)"
             exit 0
             ;;
         esac
-        # The secret is the *contents* of the secret key file, not a
-        # path. Write it to a temp file with restrictive permissions
-        # so minisign can read it.
         KEY_FILE="$RUNNER_TEMP/minisign.key"
         umask 077
         printf '%s' "$MINISIGN_SECRET_KEY" > "$KEY_FILE"
         cd target/${{ matrix.target }}/release
         shopt -s nullglob
         for f in kod-*.tar.gz kod-*.zip; do
-          # `-S` signs, `-s` names the secret key file, `-t` sets the
-          # comment minisign embeds. Password comes from
-          # `MINISIGN_PASSWORD`, or is empty for an unencrypted key.
-          minisign -Sm "$f" -s "$KEY_FILE" -t "kod release ${{ github.ref_name }}" \
-            < "${MINISIGN_PASSWORD:-/dev/null}" || {
+          # H-C5: pipe the password in, or feed an empty string when
+          # the key is unencrypted. The pre-fix form
+          # `< "${MINISIGN_PASSWORD:-/dev/null}"` treated the
+          # password as a file name and broke password-protected
+          # keys entirely.
+          printf '%s' "${MINISIGN_PASSWORD:-}" | \
+            minisign -Sm "$f" -s "$KEY_FILE" \
+              -t "kod release ${{ github.ref_name }}" || {
               echo "minisign failed for $f" >&2
               exit 1
             }
