@@ -66,7 +66,7 @@ pub enum McpError {
 /// A running MCP server.
 pub struct McpClient {
     child: Mutex<Child>,
-    stdin: Mutex<ChildStdin>,
+    stdin: std::sync::Arc<tokio::sync::Mutex<ChildStdin>>,
     next_id: AtomicI64,
     pending: PendingMap,
     server_info: OnceCell<ServerInfo>,
@@ -111,14 +111,21 @@ impl McpClient {
 
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
         let pending_reader = pending.clone();
+        // H-R8 (cont.): the reader must be able to write replies to
+        // server-initiated requests. Share the same stdin handle the
+        // client uses for outgoing requests; a Mutex serializes the
+        // writes so a reply cannot interleave with a request frame.
+        let stdin_shared: std::sync::Arc<tokio::sync::Mutex<ChildStdin>> =
+            std::sync::Arc::new(Mutex::new(stdin));
+        let stdin_reader = stdin_shared.clone();
 
         tokio::spawn(async move {
-            read_loop(stdout, pending_reader).await;
+            read_loop(stdout, pending_reader, stdin_reader).await;
         });
 
         Ok(Self {
             child: Mutex::new(child),
-            stdin: Mutex::new(stdin),
+            stdin: stdin_shared,
             next_id: AtomicI64::new(1),
             pending,
             server_info: OnceCell::new(),
@@ -178,27 +185,51 @@ impl McpClient {
 
     /// List the tools the server advertises.
     pub async fn list_tools(&self) -> Result<Vec<McpToolDef>, McpError> {
-        let result = self
-            .request(
-                "tools/list",
-                serde_json::json!({}),
-                Duration::from_secs(DEFAULT_CALL_TIMEOUT_SECS),
-            )
-            .await?;
-        let tools = result
-            .get("tools")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let mut out = Vec::with_capacity(tools.len());
-        for t in tools {
-            match serde_json::from_value::<McpToolDef>(t) {
-                Ok(tool) => out.push(tool),
-                Err(e) => tracing::warn!(
-                    program = %self.program,
-                    error = %e,
-                    "MCP: skipping malformed tool definition"
-                ),
+        // H-R8: paginate `tools/list`. The MCP protocol returns a
+        // `nextCursor` when a server has more tools than fit in one
+        // page; the pre-fix code sent one request and ignored the
+        // cursor, so a server with 100+ tools silently registered
+        // only the first page. Capped at 16 pages to bound a
+        // pathological server.
+        const MAX_PAGES: usize = 16;
+        let mut out: Vec<McpToolDef> = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _page in 0..MAX_PAGES {
+            let params = match &cursor {
+                Some(c) => serde_json::json!({ "cursor": c }),
+                None => serde_json::json!({}),
+            };
+            let result = self
+                .request(
+                    "tools/list",
+                    params,
+                    Duration::from_secs(DEFAULT_CALL_TIMEOUT_SECS),
+                )
+                .await?;
+            let tools = result
+                .get("tools")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            for t in tools {
+                match serde_json::from_value::<McpToolDef>(t) {
+                    Ok(tool) => out.push(tool),
+                    Err(e) => tracing::warn!(
+                        program = %self.program,
+                        error = %e,
+                        "MCP: skipping malformed tool definition"
+                    ),
+                }
+            }
+            // A `nextCursor` of `null`, missing, or empty ends the
+            // pagination.
+            cursor = result
+                .get("nextCursor")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            if cursor.is_none() {
+                break;
             }
         }
         Ok(out)
@@ -296,7 +327,11 @@ impl McpClient {
 }
 
 /// Background reader: parse one JSON object per line, dispatch by id.
-async fn read_loop(stdout: ChildStdout, pending: PendingMap) {
+async fn read_loop(
+    stdout: ChildStdout,
+    pending: PendingMap,
+    stdin: std::sync::Arc<tokio::sync::Mutex<ChildStdin>>,
+) {
     let mut reader = BufReader::new(stdout).lines();
     loop {
         match reader.next_line().await {
@@ -338,10 +373,38 @@ async fn read_loop(stdout: ChildStdout, pending: PendingMap) {
                         tracing::debug!(id, "MCP: response for an unknown or timed-out request");
                     }
                 } else if let Some(method) = msg.get("method").and_then(|v| v.as_str()) {
-                    // A notification (or a server-initiated request we
-                    // do not implement). Logged and dropped — the MCP
-                    // client is a client, not a server.
-                    tracing::debug!(method, "MCP: server notification");
+                    // H-R8: server-initiated *requests* (id + method)
+                    // get a JSON-RPC reply, even if only "-32601 not
+                    // implemented". Notifications (no id) are logged
+                    // only. The reply is written to the same stdin the
+                    // client uses for outgoing requests, serialized by
+                    // the shared Mutex.
+                    if let Some(id_val) = msg.get("id") {
+                        let reply = serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": id_val,
+                            "error": {
+                                "code": -32601,
+                                "message": format!(
+                                    "method not implemented by the KOD MCP client: {method}",
+                                ),
+                            },
+                        });
+                        let mut line =
+                            serde_json::to_string(&reply).unwrap_or_else(|_| "{}".to_string());
+                        line.push('\n');
+                        let mut guard = stdin.lock().await;
+                        if let Err(e) =
+                            tokio::io::AsyncWriteExt::write_all(&mut *guard, line.as_bytes()).await
+                        {
+                            tracing::warn!(error = %e, method, "MCP: reply write failed");
+                        }
+                        if let Err(e) = tokio::io::AsyncWriteExt::flush(&mut *guard).await {
+                            tracing::warn!(error = %e, method, "MCP: reply flush failed");
+                        }
+                    } else {
+                        tracing::debug!(method, "MCP: server notification");
+                    }
                 }
             }
             Ok(None) => {
