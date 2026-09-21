@@ -40,6 +40,124 @@ async fn install_policy_async(
     Ok(())
 }
 
+/// S10: the shared engine bootstrap. Four commands (chat, swarm,
+/// agent, prompt) built their engines with copy-pasted ~80-line
+/// sequences; the P0-1 missing-policy bug is exactly what that shape
+/// produces — one caller's fix silently skipped the other three.
+///
+/// The helper builds the engine and installs every config-derived
+/// setting *except* the ones whose timing is caller-specific
+/// (`set_session_recorder`, `set_jev_client`, `set_sandbox_mode` for
+/// the interactive-only flag). It does NOT call `engine.start()`: the
+/// caller does that after installing whatever else it needs.
+struct EngineBootstrapOptions<'a> {
+    model_override: Option<&'a str>,
+    cli_preset: Option<&'a str>,
+    /// When true, `sandbox_mode = Require` is installed on the engine;
+    /// when false, the config's setting is left alone.
+    require_sandbox: bool,
+    /// When true, MCP servers from the config are installed. `kod replay`
+    /// turns this off — it wants the replay to be hermetic.
+    install_mcp: bool,
+}
+
+async fn engine_from_config(
+    config: &KodConfig,
+    opts: EngineBootstrapOptions<'_>,
+) -> Result<Arc<KodEngine>> {
+    // Model selection: explicit override wins; otherwise the config's
+    // default endpoint.
+    let model_name = opts
+        .model_override
+        .map(String::from)
+        .unwrap_or_else(|| config.llm.default_endpoint().model.clone());
+
+    // DB path.
+    let home = dirs::home_dir()
+        .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
+    let db_path = home.join(".kod").join("data").join("kod.redb");
+
+    // Embedder (D2.1).
+    let embedder = kod_memory::embedding::from_config(
+        &config.memory,
+        Some(&config.llm.default_endpoint().base_url),
+    );
+    let router_config = RouterConfig {
+        skill_threshold: config.skills.match_threshold,
+        context_window: config.llm.default_endpoint().context_window,
+        short_term_capacity: config.memory.short_term_capacity,
+        embedder,
+        ..RouterConfig::default()
+    };
+    let engine = Arc::new(KodEngine::new(router_config, db_path)?);
+
+    // History budget from the model's window (~3 chars/token).
+    engine.set_history_budget(
+        config
+            .llm
+            .default_endpoint()
+            .context_window
+            .saturating_mul(3),
+    );
+
+    // Provider registry.
+    let (registry, default_model, routing) =
+        kod_core::build_registry(&config.llm, Some(&model_name))?;
+    engine.set_registry(registry, default_model, routing).await;
+
+    // Config-derived engine settings.
+    engine.set_hooks(config.hooks.clone());
+    engine.set_network_access(config.llm.network_access);
+    engine.set_auto_check(config.tools.auto_check);
+    engine.set_auto_lsp(config.tools.auto_lsp);
+    engine.set_generation_defaults(
+        Some(config.llm.default_endpoint().temperature.unwrap_or(0.7)),
+        Some(config.llm.default_endpoint().max_tokens.unwrap_or(2048)),
+    );
+    if opts.require_sandbox {
+        engine.set_sandbox_mode(kod_tools::context::SandboxMode::Require);
+    }
+
+    // Policy + read protection (P0-1).
+    install_policy_async(&engine, config, opts.cli_preset).await?;
+    if let Some(policy) = engine.policy().await {
+        engine.set_read_protection(policy.read_protection().clone());
+    }
+
+    // Cost caps.
+    engine.install_limits(&config.limits);
+
+    // MCP servers, unless the caller asked to skip.
+    if opts.install_mcp {
+        kod_core::mcp_adapters::install_from_config(&engine, config).await;
+    }
+
+    Ok(engine)
+}
+
+/// S10: the session-recorder install. Shared by chat, prompt, agent,
+/// and swarm — all four write the same JSONL, all four honour the
+/// `KOD_SESSION_LOG` env var the same way.
+fn install_session_recorder(engine: &KodEngine, skip: bool) {
+    if skip {
+        return;
+    }
+    if let Some(path) = kod_core::session_log::default_session_path()
+        && let Ok(recorder) = kod_core::session_log::SessionRecorder::open(path)
+    {
+        engine.set_session_recorder(Arc::new(recorder));
+    }
+}
+
+/// S10: the Jev client install. Best-effort: a misconfigured
+/// integration is logged and the run continues without Jev.
+fn install_jev(engine: &KodEngine, config: &KodConfig) {
+    if let Err(e) = kod_core::install_jev_from_config(engine, &config.jev) {
+        eprintln!("Jev configuration error (continuing without): {e}");
+    }
+}
+
+
 /// `kod skills` subcommands.
 #[derive(Subcommand, Debug, Clone)]
 pub enum SkillsAction {
@@ -309,10 +427,10 @@ impl Cli {
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
                 rt.block_on(async { run_map(*max_chars).await })
             }
-            Some(Command::Replay { path, execute }) => {
+            Some(Command::Replay { path, execute, yes }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
-                rt.block_on(async { run_replay(path.clone(), *execute).await })
+                rt.block_on(async { run_replay(path.clone(), *execute, *yes).await })
             }
             Some(Command::Profile { action }) => {
                 let rt = tokio::runtime::Runtime::new()
@@ -798,6 +916,12 @@ pub enum Command {
         /// actually execute every recorded tool call.
         #[arg(long, default_value_t = false)]
         execute: bool,
+        /// H-S1: required together with --execute. Replaying a log
+        /// re-runs the tool calls it recorded, and a log written by
+        /// another session (or a tampered one) would otherwise be an
+        /// executable script. Setting --yes acknowledges that.
+        #[arg(long, default_value_t = false)]
+        yes: bool,
     },
 
     /// Work with preset model profiles: list, show the effective
@@ -1767,7 +1891,7 @@ pub async fn run_chat(
     );
     if let Some(sys) = &system_prompt {
         let preview = if sys.len() > 120 {
-            format!("{}…", &sys[..120])
+            format!("{}…", kod_types::strutil::truncate_chars(sys, 120))
         } else {
             sys.clone()
         };
@@ -1775,7 +1899,12 @@ pub async fn run_chat(
     }
     println!();
 
-    let stdin = io::stdin();
+    // H-C8: async stdin so the read does not pin a runtime worker
+    // (the pre-fix shape blocked a worker for the duration of every
+    // user think-time). Ctrl+C is intercepted by tokio so the
+    // process does not die mid-tool with orphaned MCP children; it
+    // cancels the current turn instead. Ctrl+D (EOF) still exits.
+    let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
     let mut input = String::new();
 
     loop {
@@ -1783,7 +1912,20 @@ pub async fn run_chat(
         let _ = io::stdout().flush();
         input.clear();
 
-        match stdin.lock().read_line(&mut input) {
+        let read_result = tokio::select! {
+            r = {
+                use tokio::io::AsyncBufReadExt;
+                reader.read_line(&mut input)
+            } => r,
+            _ = tokio::signal::ctrl_c() => {
+                // Cancel the running turn and continue the REPL.
+                engine.request_cancel();
+                println!();
+                continue;
+            }
+        };
+
+        match read_result {
             Ok(0) => break, // EOF (Ctrl+D)
             Ok(_) => {}
             Err(e) => {
@@ -1993,6 +2135,10 @@ pub async fn run_chat(
             Some(sys) => format!("[system override] {sys}\n\n{input_line}"),
             None => input_line.to_string(),
         };
+        // H-C9: capture the result instead of `?`. The shutdown
+        // call below must run even when the prompt errored, or MCP
+        // children, watchers, and the redb handle get torn down by
+        // process exit rather than clean shutdown.
         let result = engine.process_streaming(&input_with_system, &tx).await;
         drop(tx);
         drop(approval_tx);
@@ -2179,42 +2325,24 @@ pub async fn run_swarm(
     merge: bool,
 ) -> Result<()> {
     let config = KodConfig::load_default()?;
-    let model_name = model.unwrap_or_else(|| config.llm.default_endpoint().model.clone());
-    let _n = agents.unwrap_or(config.swarm.max_agents);
+    // H-C3: the requested agent count was parsed but discarded; the
+    // swarm runner read the config-only value, so `kod swarm -n 8` with
+    // `max_agents = 3` produced 3 agents. Honour the CLI override.
+    let requested_agents = agents.unwrap_or(config.swarm.max_agents);
 
-    let home = dirs::home_dir()
-        .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
-    let db_path = home.join(".kod").join("data").join("kod.redb");
-    let _ = std::fs::create_dir_all(db_path.parent().unwrap());
-
-    // Design D2.1: build the embedder the memory subsystem will use
-    // for semantic retrieval. `None` (the config default) leaves the
-    // keyword+recency fallback in place; no retrieval path is broken
-    // by an absent embedder.
-    let embedder = kod_memory::embedding::from_config(
-        &config.memory,
-        Some(&config.llm.default_endpoint().base_url),
-    );
-    let router_config = RouterConfig {
-        skill_threshold: config.skills.match_threshold,
-        context_window: config.llm.default_endpoint().context_window,
-        short_term_capacity: config.memory.short_term_capacity,
-        embedder,
-        ..RouterConfig::default()
-    };
-    let engine = KodEngine::new(router_config, db_path)?;
-    engine.set_history_budget(
-        config
-            .llm
-            .default_endpoint()
-            .context_window
-            .saturating_mul(3),
-    );
-
-    let (registry, default_model, routing) =
-        kod_core::build_registry(&config.llm, Some(&model_name))?;
-    engine.set_registry(registry, default_model, routing).await;
-    kod_core::mcp_adapters::install_from_config(&engine, &config).await;
+    // S10: shared bootstrap. `model_override` is the CLI's `--model`
+    // flag; the swarm's per-capability routing still wins for
+    // individual agents (see `SwarmRunner::from_config`).
+    let engine = engine_from_config(
+        &config,
+        EngineBootstrapOptions {
+            model_override: model.as_deref(),
+            cli_preset: None,
+            require_sandbox: false,
+            install_mcp: true,
+        },
+    )
+    .await?;
 
     engine.start().await?;
 
@@ -2244,7 +2372,14 @@ pub async fn run_swarm(
     // Design §D4.3: the runner reads per-run budget and retry knobs
     // from `[swarm]`. `from_config` centralises the mapping so this
     // site and the TUI's `/swarm` cannot drift.
-    let runner = SwarmRunner::from_config(engine.clone(), &config.swarm).await?;
+    let runner = match SwarmRunner::from_config(engine.clone(), &config.swarm).await {
+        Ok(r) => r.with_max_agents(requested_agents),
+        Err(e) => {
+            // H-C9: shut down before propagating.
+            let _ = engine.shutdown().await;
+            return Err(e);
+        }
+    };
     println!(
         "Swarm: up to {} agents, merge {}",
         runner.max_agents(),
@@ -2344,7 +2479,15 @@ pub async fn run_swarm(
     drop(tx);
     let _ = print_task.await;
 
-    let resp = result?;
+    // H-C9: shut down before propagating. The two error sources
+    // (runner.run and from_config) both skipped shutdown before.
+    let resp = match result {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = engine.shutdown().await;
+            return Err(e);
+        }
+    };
 
     if !resp.conflicts.is_empty() {
         println!("\n{} file conflict(s):", resp.conflicts.len());
@@ -2475,62 +2618,40 @@ pub async fn run_agent(
     cli_preset: Option<String>,
 ) -> Result<()> {
     let config = KodConfig::load_default()?;
-    let model_name = model.unwrap_or_else(|| config.llm.default_endpoint().model.clone());
 
-    let home = dirs::home_dir()
-        .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
-    let db_path = home.join(".kod").join("data").join("kod.redb");
-
-    // Design D2.1: build the embedder the memory subsystem will use
-    // for semantic retrieval. `None` (the config default) leaves the
-    // keyword+recency fallback in place; no retrieval path is broken
-    // by an absent embedder.
-    let embedder = kod_memory::embedding::from_config(
-        &config.memory,
-        Some(&config.llm.default_endpoint().base_url),
-    );
-    let router_config = RouterConfig {
-        skill_threshold: config.skills.match_threshold,
-        context_window: config.llm.default_endpoint().context_window,
-        short_term_capacity: config.memory.short_term_capacity,
-        embedder,
-        ..RouterConfig::default()
-    };
-    let engine = KodEngine::new(router_config, db_path)?;
-    engine.set_history_budget(
-        config
-            .llm
-            .default_endpoint()
-            .context_window
-            .saturating_mul(3),
-    );
-
-    let (registry, default_model, routing) =
-        kod_core::build_registry(&config.llm, Some(&model_name))?;
-    engine.set_registry(registry, default_model, routing).await;
-    // `kod agent` has no interactive consumer. When confirm_writes is
-    // on, the engine refuses every write with a message the model and
-    // the user can act on. Approving silently would defeat the flag.
-    engine.set_auto_check(config.tools.auto_check);
-    engine.set_auto_lsp(config.tools.auto_lsp);
-    install_policy_async(&engine, &config, cli_preset.as_deref()).await?;
-    // Tier 1.3 — install read-protection from the effective policy.
-    if let Some(policy) = engine.policy().await {
-        engine.set_read_protection(policy.read_protection().clone());
-    }
-    kod_core::mcp_adapters::install_from_config(&engine, &config).await;
+    // S10: one bootstrap for every engine-building command. The
+    // pre-extraction shape had each command install a different
+    // subset of config-derived settings — `run_agent` never set
+    // `network_access` or `generation_defaults`, `run_swarm` never
+    // set hooks or limits. That is exactly the drift the helper
+    // exists to prevent.
+    let engine = engine_from_config(
+        &config,
+        EngineBootstrapOptions {
+            model_override: model.as_deref(),
+            cli_preset: cli_preset.as_deref(),
+            // `kod agent` has no interactive consumer; a Require
+            // sandbox would fail every command with no UI to relax it.
+            require_sandbox: false,
+            install_mcp: true,
+        },
+    )
+    .await?;
 
     engine.start().await?;
 
     println!("Starting agent '{}' with goal: {}", name, goal);
 
-    let response = engine.process(&goal).await?;
+    // H-C9: capture the result and shut down before propagating. The
+    // pre-fix `?` skipped `engine.shutdown()`, leaving MCP children
+    // and the redb handle to be torn down by process exit.
+    let response_result = engine.process(&goal).await;
+    let _ = engine.shutdown().await;
+    let response = response_result?;
 
     if let Some(text) = response.text {
         println!("Agent {}: {}", name, text);
     }
-
-    engine.shutdown().await?;
 
     Ok(())
 }
@@ -2814,7 +2935,7 @@ pub async fn run_map(max_chars: usize) -> Result<()> {
 /// would run and touches nothing. With `execute = true`, it builds a bare
 /// engine and calls `run_tool` for each recorded call, printing whether
 /// the fresh result matches the recorded one.
-pub async fn run_replay(path: std::path::PathBuf, execute: bool) -> Result<()> {
+pub async fn run_replay(path: std::path::PathBuf, execute: bool, yes: bool) -> Result<()> {
     let entries = kod_core::session_log::read_session(&path)?;
     let tool_calls: Vec<_> = entries
         .iter()
@@ -2863,6 +2984,56 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool) -> Result<()> {
         return Ok(());
     }
 
+    // H-S1: re-running a log is destructive. A log written by another
+    // session (or tampered with on disk) is effectively a script of
+    // tool calls; without an explicit acknowledgement, a user piping
+    // `kod replay --execute <file>` is one keystroke from running a
+    // stranger's `execute_command` entries. Require `--yes` and print
+    // the destructive subset before any of them run.
+    let destructive_names = ["execute_command", "write_file", "patch_file"];
+    let destructive: Vec<_> = tool_calls
+        .iter()
+        .enumerate()
+        .filter(|(_, (name, _, _, _, _))| destructive_names.contains(&name.as_str()))
+        .collect();
+    if !yes {
+        if destructive.is_empty() {
+            println!(
+                "{} tool call(s) in {} are read-only; re-run with --execute --yes to proceed.\n",
+                tool_calls.len(),
+                path.display(),
+            );
+        } else {
+            println!(
+                "Refusing to execute: {} destructive call(s) in {}.\n",
+                destructive.len(),
+                path.display(),
+            );
+            for (i, (name, args, _, _, _)) in &destructive {
+                println!("  {}. {} ({})", i + 1, name, args);
+            }
+            println!("\nRe-run with --execute --yes to acknowledge and proceed.",);
+        }
+        return Err(KodError::PermissionDenied {
+            action: "replay --execute".to_string(),
+            reason: "the --yes flag is required to re-run recorded tool calls".to_string(),
+        });
+    }
+
+    // --yes is set; still summarise the destructive calls so the log
+    // ends up in the terminal, not just in the JSONL.
+    if !destructive.is_empty() {
+        println!(
+            "Re-running {} destructive call(s) from {}:",
+            destructive.len(),
+            path.display(),
+        );
+        for (i, (name, args, _, _, _)) in &destructive {
+            println!("  {}. {} ({})", i + 1, name, args);
+        }
+        println!();
+    }
+
     let config = KodConfig::load_default()?;
     let db_path = config.memory_db_path()?;
     // Design D2.1: build the embedder the memory subsystem will use
@@ -2882,6 +3053,10 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool) -> Result<()> {
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
+    // P0-1: install the PolicyEngine so the standard preset's
+    // write-approval and deny rules actually gate tool calls.
+    install_policy_async(&engine, &config, None).await?;
+
     engine.start().await?;
 
     let mut matched = 0usize;
@@ -4146,7 +4321,7 @@ pub async fn run_update() -> Result<()> {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         let short = if body.len() > 300 {
-            format!("{}…", &body[..300])
+            format!("{}…", kod_types::strutil::truncate_chars(&body, 300))
         } else {
             body
         };
@@ -4326,11 +4501,33 @@ pub async fn run_skills_new(name: &str) -> Result<()> {
     }
 
     let title = to_title_case(trimmed);
-    let body = format!(
-        "---\n         name: {name}\n         description: TODO: one-sentence description of what this skill does\n         version: 0.1.0\n         category: general\n         tags: []\n         capabilities: []\n         triggers:\n  - \"TODO trigger phrase\"\n         ---\n\n         # {title}\n\n         ## Instructions\n\n         Describe the skill's guidance here. The model reads this section\n         when the skill's triggers match the user's request.\n\n         ## Examples\n\n         <example input=\"A sample user request\">\n         A sample response that demonstrates the skill.\n         </example>\n\n         ## Constraints\n\n         Optional. Rules the model must respect when applying the skill.\n",
-        name = trimmed,
-        title = title,
-    );
+    // H-C4: build the frontmatter line by line. The pre-fix
+    // `format!` carried 9-space continuation indents straight from
+    // the source, so a fresh skill's `name:` and `description:` were
+    // indented 9 spaces and `kod validate-skills` rejected the file
+    // immediately. Explicit `push_str` calls make the output
+    // indentation-invariant.
+    let mut body = String::new();
+    body.push_str("---\n");
+    body.push_str(&format!("name: {trimmed}\n"));
+    body.push_str("description: \"TODO: one-sentence description of what this skill does\"\n");
+    body.push_str("version: 0.1.0\n");
+    body.push_str("category: general\n");
+    body.push_str("tags: []\n");
+    body.push_str("capabilities: []\n");
+    body.push_str("triggers:\n");
+    body.push_str("  - \"TODO trigger phrase\"\n");
+    body.push_str("---\n\n");
+    body.push_str(&format!("# {title}\n\n"));
+    body.push_str("## Instructions\n\n");
+    body.push_str("Describe the skill's guidance here. The model reads this section\n");
+    body.push_str("when the skill's triggers match the user's request.\n\n");
+    body.push_str("## Examples\n\n");
+    body.push_str("<example input=\"A sample user request\">\n");
+    body.push_str("A sample response that demonstrates the skill.\n");
+    body.push_str("</example>\n\n");
+    body.push_str("## Constraints\n\n");
+    body.push_str("Optional. Rules the model must respect when applying the skill.\n");
 
     std::fs::write(&path, body.as_bytes()).map_err(KodError::Io)?;
 
@@ -5195,62 +5392,25 @@ pub async fn run_prompt(
     }
 
     let config = KodConfig::load_default()?;
-    let model_name = model.unwrap_or_else(|| config.llm.default_endpoint().model.clone());
 
-    let home = dirs::home_dir()
-        .ok_or_else(|| KodError::Config("Could not determine home directory".to_string()))?;
-    let db_path = home.join(".kod").join("data").join("kod.redb");
-
-    // Design D2.1: build the embedder the memory subsystem will use
-    // for semantic retrieval. `None` (the config default) leaves the
-    // keyword+recency fallback in place; no retrieval path is broken
-    // by an absent embedder.
-    let embedder = kod_memory::embedding::from_config(
-        &config.memory,
-        Some(&config.llm.default_endpoint().base_url),
-    );
-    let router_config = RouterConfig {
-        skill_threshold: config.skills.match_threshold,
-        context_window: config.llm.default_endpoint().context_window,
-        short_term_capacity: config.memory.short_term_capacity,
-        embedder,
-        ..RouterConfig::default()
-    };
-    let engine = KodEngine::new(router_config, db_path)?;
-    engine.set_history_budget(
-        config
-            .llm
-            .default_endpoint()
-            .context_window
-            .saturating_mul(3),
-    );
-
-    let (registry, default_model, routing) =
-        kod_core::build_registry(&config.llm, Some(&model_name))?;
-    engine.set_registry(registry, default_model, routing).await;
-    engine.set_hooks(config.hooks.clone());
-    engine.set_network_access(config.llm.network_access);
-    engine.set_auto_check(config.tools.auto_check);
-    engine.set_auto_lsp(config.tools.auto_lsp);
-    if sandbox {
-        engine.set_sandbox_mode(kod_tools::context::SandboxMode::Require);
-    }
-    kod_core::mcp_adapters::install_from_config(&engine, &config).await;
+    // S10: one bootstrap for every engine-building command. The P0-1
+    // bug (policy installed on three of seven paths) is exactly what
+    // the pre-extraction duplication produced.
+    let engine = engine_from_config(
+        &config,
+        EngineBootstrapOptions {
+            model_override: model.as_deref(),
+            cli_preset: None,
+            require_sandbox: sandbox,
+            install_mcp: true,
+        },
+    )
+    .await?;
 
     engine.start().await?;
 
-    // Optional session recorder.
-    if !no_log
-        && let Some(path) = kod_core::session_log::default_session_path()
-        && let Ok(recorder) = kod_core::session_log::SessionRecorder::open(path)
-    {
-        engine.set_session_recorder(Arc::new(recorder));
-    }
-
-    // Install the Jev client when enabled.
-    if let Err(e) = kod_core::install_jev_from_config(&engine, &config.jev) {
-        eprintln!("Jev configuration error (continuing without): {e}");
-    }
+    install_session_recorder(&engine, no_log);
+    install_jev(&engine, &config);
 
     let resp = engine.process(&input).await?;
     let text = resp.text.unwrap_or_default();
@@ -5991,6 +6151,10 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
         ..RouterConfig::default()
     };
     let engine = KodEngine::new(router_config, db_path)?;
+    // P0-1: install the PolicyEngine so the standard preset's
+    // write-approval and deny rules actually gate tool calls.
+    install_policy_async(&engine, &config, None).await?;
+
     engine.set_history_budget(
         config
             .llm
@@ -6027,12 +6191,17 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
         }
     });
 
-    let _ = engine.process_streaming(&input, &tx).await;
+    // H-C2: capture the result; the pre-fix `let _ =` swallowed any
+    // failure and the process exited 0, breaking the documented
+    // `kod run ... | tee` scripting contract.
+    let run_result = engine.process_streaming(&input, &tx).await;
     drop(tx);
     let _ = pump.await;
     println!();
+    // H-C2: shut down cleanly, then propagate the run outcome. A
+    // failure now exits non-zero after the stream has flushed.
     engine.shutdown().await?;
-    Ok(())
+    run_result.map(|_| ())
 }
 
 #[cfg(test)]
@@ -6273,7 +6442,7 @@ mod coverage_cli_actions {
         // predicate's contract is "this chunk is not user text".
         assert!(is_control_marker("\0kod-tool:read_file\0"));
         assert!(is_control_marker("\0kod-args:path=a\0"));
-        assert!(is_control_marker("\0kod-done:h\0s\07"));
+        assert!(is_control_marker("\0kod-done:h\0s\x07"));
         assert!(is_control_marker("\0kod-thinking\0"));
         assert!(is_control_marker("\0kod-approval:1:{}\0"));
         assert!(is_control_marker("\0kod-question:1:{}\0"));
@@ -6296,6 +6465,35 @@ mod coverage_cli_actions {
         // user's terminal.
         assert!(is_control_marker("\0anything"));
         assert!(is_control_marker("\0"));
+    }
+
+    /// H-C4 regression: `kod skills new` output must parse as a valid
+    /// skill file. The pre-fix template carried 9-space continuation
+    /// indents that made the frontmatter unparseable.
+    #[test]
+    fn skills_new_output_parses() {
+        // Reproduce the exact body the command writes, then ask the
+        // skills parser to accept it.
+        let mut body = String::new();
+        body.push_str("---\n");
+        body.push_str("name: demo\n");
+        body.push_str("description: \"TODO: one-sentence description of what this skill does\"\n");
+        body.push_str("version: 0.1.0\n");
+        body.push_str("category: general\n");
+        body.push_str("tags: []\n");
+        body.push_str("capabilities: []\n");
+        body.push_str("triggers:\n");
+        body.push_str("  - \"TODO trigger phrase\"\n");
+        body.push_str("---\n\n");
+        body.push_str("# Demo\n\n");
+        body.push_str("## Instructions\n\nText.\n");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let p = tmp.path().join("demo.md");
+        std::fs::write(&p, &body).unwrap();
+        let parser = kod_skills::SkillParser::new();
+        let parsed = parser.parse_file(&p).expect("skills new output must parse");
+        assert_eq!(parsed.metadata.name, "demo");
+        assert_eq!(parsed.metadata.triggers.len(), 1);
     }
 }
 
@@ -7781,7 +7979,7 @@ fn newest_session_log() -> Result<Option<std::path::PathBuf>> {
         let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
         entries.push((mtime, path));
     }
-    entries.sort_by(|a, b| b.0.cmp(&a.0));
+    entries.sort_by_key(|e| std::cmp::Reverse(e.0));
     Ok(entries.into_iter().next().map(|(_, p)| p))
 }
 
