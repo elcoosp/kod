@@ -440,7 +440,7 @@ mod coverage_match_scoring {
         // The query contains the exact trigger phrase; both skills
         // have some signal, but the exact-trigger match must lead.
         let results = m.find_relevant_skills("use special phrase here").await;
-        assert!(results.len() >= 1, "expected a match");
+        assert!(!results.is_empty(), "expected a match");
         assert_eq!(results[0].skill.metadata.name, "by-trigger");
     }
 
