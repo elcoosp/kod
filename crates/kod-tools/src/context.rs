@@ -247,14 +247,56 @@ fn landlock_invocation(wd: &Path, opts: SandboxOpts) -> Result<SandboxInvocation
         }
     }
 
-    let profile_path =
-        std::env::temp_dir().join(format!("kod-sandbox-{}.json", std::process::id(),));
-    std::fs::write(&profile_path, profile.to_json()).map_err(|e| {
-        KodError::SandboxViolation(format!(
-            "could not write sandbox profile to {}: {e}",
-            profile_path.display()
-        ))
-    })?;
+    // H-S14: a guessable `/tmp/kod-sandbox-<pid>.json` at 0644 is a
+    // classic insecure-tempfile. Another same-UID process can
+    // pre-create the path as a symlink to a target it wants
+    // overwritten, or read the profile (which contains the working
+    // directory). We use `O_EXCL` on a random name; if the file
+    // exists, `create_new` fails rather than following the symlink.
+    // Mode 0600 by default on Unix.
+    let profile_path = {
+        use std::io::Write;
+        let mut last_err = None;
+        let mut chosen: Option<std::path::PathBuf> = None;
+        for _ in 0..16 {
+            // Mix pid + nanos + a counter for a name that is
+            // unpredictable within a process and across restarts.
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let pid = std::process::id();
+            let candidate = std::env::temp_dir().join(format!("kod-sandbox-{pid}-{nanos:x}.json"));
+            match std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&candidate)
+            {
+                Ok(mut f) => {
+                    if let Err(e) = f.write_all(profile.to_json().as_bytes()) {
+                        last_err = Some(e);
+                        let _ = std::fs::remove_file(&candidate);
+                        continue;
+                    }
+                    chosen = Some(candidate);
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => {
+                    last_err = Some(e);
+                    break;
+                }
+            }
+        }
+        chosen.ok_or_else(|| {
+            KodError::SandboxViolation(format!(
+                "could not create a secure sandbox profile tempfile: {}",
+                last_err
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "no candidate name was free".to_string()),
+            ))
+        })?
+    };
 
     Ok(SandboxInvocation {
         program: kod.to_string_lossy().to_string(),
@@ -664,7 +706,11 @@ impl ToolContext {
     /// Check if path is allowed by permissions
     pub fn is_path_allowed(&self, path: &Path) -> Result<bool> {
         for forbidden in &self.permissions.forbidden_paths {
-            if Self::matches_pattern(path, forbidden) {
+            // H-R16: forbidden list fails closed — an invalid pattern
+            // in a forbidden list is a policy typo, and the safe
+            // reading of "this glob was supposed to forbid something"
+            // is "matches everything until fixed".
+            if Self::matches_pattern_inner(path, forbidden, true) {
                 return Ok(false);
             }
         }
@@ -718,6 +764,32 @@ impl ToolContext {
             return Err(KodError::PermissionDenied {
                 action: "write".to_string(),
                 reason: "File writing not permitted".to_string(),
+            });
+        }
+        // H-S15: `.git/` is hard-denied for `write_file` and
+        // `patch_file`. The design's "git mutations go through the git
+        // tool, which requires an explicit GitAccess::Write" contract
+        // only covered the shell path — a `write_file` on
+        // `.git/config` or `.git/hooks/pre-commit` bypassed it and
+        // let the agent replace hooks, reconfig the remote, or
+        // rewrite a ref. The git tools are the approved mutation
+        // path; a raw file write into the metadata directory is not.
+        //
+        // The check is on the path components, so a symlink that
+        // points *into* `.git` is caught after `resolve_path` too
+        // (which canonicalizes the link target).
+        if path
+            .components()
+            .any(|c| c.as_os_str() == std::ffi::OsStr::new(".git"))
+        {
+            return Err(KodError::PermissionDenied {
+                action: "write".to_string(),
+                reason: format!(
+                    "the .git directory is not writable through this tool: {}. \
+                     Use the git tool (git_commit / git_branch) which goes \
+                     through the explicit GitAccess::Write permission.",
+                    path.display()
+                ),
             });
         }
         if !self.is_path_allowed(path)? {
@@ -804,21 +876,49 @@ impl ToolContext {
     }
 
     /// Does `path` fall under `pattern`?
+    /// Match `path` against `pattern`. `fail_closed` controls the
+    /// answer when the pattern is invalid: a **forbidden** list must
+    /// fail closed (an invalid pattern is a policy typo, and the
+    /// conservative reading of "this pattern was supposed to forbid
+    /// something" is to forbid) — the pre-fix code returned `false`
+    /// unconditionally, silently disabling every protection a
+    /// user had configured. An **allow** list may fail open (the
+    /// caller's default of "no match" is the same answer).
     fn matches_pattern(path: &Path, pattern: &str) -> bool {
+        Self::matches_pattern_inner(path, pattern, false)
+    }
+
+    fn matches_pattern_inner(path: &Path, pattern: &str, fail_closed: bool) -> bool {
         let has_wildcard = pattern.contains('*') || pattern.contains('?') || pattern.contains('[');
         let mut builder = globset::GlobSetBuilder::new();
         match globset::Glob::new(pattern) {
             Ok(g) => {
                 builder.add(g);
             }
-            Err(_) => return false,
+            Err(e) => {
+                tracing::warn!(
+                    pattern,
+                    error = %e,
+                    "invalid glob pattern; failing {}",
+                    if fail_closed { "closed (deny)" } else { "open (allow)" },
+                );
+                return fail_closed;
+            }
         }
         if !has_wildcard && let Ok(g) = globset::Glob::new(&format!("{}/**", pattern)) {
             builder.add(g);
         }
         match builder.build() {
             Ok(set) => set.is_match(path),
-            Err(_) => false,
+            Err(e) => {
+                tracing::warn!(
+                    pattern,
+                    error = %e,
+                    "could not build glob set; failing {}",
+                    if fail_closed { "closed (deny)" } else { "open (allow)" },
+                );
+                fail_closed
+            }
         }
     }
 }
@@ -1218,5 +1318,79 @@ mod coverage_resolve_path {
         c.allowed_write_globs = Some(vec!["src/allowed.rs".to_string()]);
         assert!(c.can_write(&root.join("src/allowed.rs")).is_ok());
         assert!(c.can_write(&root.join("src/forbidden.rs")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod coverage_git_write_deny {
+    //! H-S15 regression suite. `write_file` / `patch_file` on a path
+    //! inside `.git/` must be refused: that directory is the git
+    //! tool's mutation surface, gated behind `GitAccess::Write`,
+    //! and a raw file write into it bypasses the permission system.
+    use super::*;
+    use kod_types::{GitAccess, ToolPermissions};
+
+    fn ctx_with_write(root: &std::path::Path) -> ToolContext {
+        let perms = ToolPermissions {
+            read_files: true,
+            write_files: true,
+            execute_commands: false,
+            network_access: false,
+            git_access: GitAccess::None,
+            allowed_paths: Vec::new(),
+            forbidden_paths: Vec::new(),
+        };
+        ToolContext::new(root).with_permissions(perms)
+    }
+
+    #[test]
+    fn git_directory_cannot_be_written() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = ctx_with_write(tmp.path());
+        for p in [
+            ".git/config",
+            ".git/hooks/pre-commit",
+            ".git/refs/heads/main",
+            ".git",
+        ] {
+            let abs = tmp.path().join(p);
+            let err = ctx.can_write(&abs).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains(".git") || msg.contains("git"),
+                "wrong rejection message for {p}: {msg}",
+            );
+        }
+    }
+
+    #[test]
+    fn git_directory_in_a_subpath_is_also_denied() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = ctx_with_write(tmp.path());
+        let nested = tmp.path().join("crates").join("foo").join(".git");
+        std::fs::create_dir_all(&nested).unwrap();
+        let err = ctx.can_write(&nested.join("config")).unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("git"));
+    }
+
+    #[test]
+    fn ordinary_files_are_still_writable() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = ctx_with_write(tmp.path());
+        ctx.can_write(&tmp.path().join("src").join("main.rs"))
+            .expect("normal write should be allowed");
+    }
+
+    #[test]
+    fn a_file_named_git_somewhere_else_is_not_denied() {
+        // The deny is on the `.git` *component*, not on the substring
+        // "git". A file called `gitignore` or a directory called
+        // `git-tools` is fine.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = ctx_with_write(tmp.path());
+        ctx.can_write(&tmp.path().join(".gitignore"))
+            .expect(".gitignore must be writable");
+        ctx.can_write(&tmp.path().join("git-tools").join("x.rs"))
+            .expect("git-tools/ must be writable");
     }
 }
