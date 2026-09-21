@@ -1,3 +1,4 @@
+pub mod instructions;
 pub mod config;
 pub mod jev;
 pub mod limits;
