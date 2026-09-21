@@ -33,3 +33,6 @@ time = { workspace = true }
 # rest pay only for the code being present, not for it being used.
 default = ["testkit"]
 testkit = []
+
+[lints]
+workspace = true
