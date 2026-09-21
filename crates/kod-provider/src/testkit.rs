@@ -174,6 +174,7 @@ impl LlmProvider for MockProvider {
                     prompt_tokens: 10,
                     completion_tokens: 5,
                     total_tokens: 15,
+                    ..Default::default()
                 }),
             }),
             Script::Calls(c) => Ok(GenerationResponse::ToolCalls {

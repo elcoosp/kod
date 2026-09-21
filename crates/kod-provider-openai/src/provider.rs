@@ -329,6 +329,7 @@ impl OpenAICompatProvider {
                     prompt_tokens: usage.prompt_token_count.max(0) as usize,
                     completion_tokens: usage.candidates_token_count.max(0) as usize,
                     total_tokens: usage.total_token_count.max(0) as usize,
+                    ..Default::default()
                 });
             }
             if let Some(content) = response.content {
@@ -513,6 +514,7 @@ impl OpenAICompatProvider {
                                         prompt_tokens: usage.prompt_token_count.max(0) as usize,
                                         completion_tokens: usage.candidates_token_count.max(0) as usize,
                                         total_tokens: usage.total_token_count.max(0) as usize,
+                                        ..Default::default()
                                     });
                                 }
                                 if let Some(content) = response.content {
@@ -904,6 +906,7 @@ mod coverage_openai_provider {
             system: SystemPrompt::default(),
             tools: vec![],
             options: Default::default(),
+            cache_transcript: true,
         };
 
         let llm = p.request_from_completion(&req);

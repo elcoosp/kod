@@ -209,6 +209,7 @@ mod tests {
                     prompt_tokens: 10,
                     completion_tokens: 2,
                     total_tokens: 12,
+                    ..Default::default()
                 }),
             },
             ReplayRound {

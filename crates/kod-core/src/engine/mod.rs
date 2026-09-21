@@ -6175,6 +6175,11 @@ impl KodEngine {
             tools: definitions.to_vec(),
             options: options.clone(),
             model: model.clone(),
+            // P0 cache control: a fresh request always wants the
+            // transcript breakpoint. The engine clears it for the
+            // single round after a prefix-changing event once
+            // hysteresis lands.
+            cache_transcript: true,
         }
     }
 

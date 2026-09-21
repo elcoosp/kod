@@ -116,6 +116,16 @@ pub struct CompletionRequest {
     pub tools: Vec<ToolDefinition>,
     pub options: GenerationOptions,
     pub model: ModelRef,
+    /// P0 cache control: when `true` (the default), a provider with
+    /// explicit caching (Anthropic) places a cache breakpoint at the
+    /// end of the transcript in addition to the one at the last
+    /// cacheable system segment. The engine clears this for the one
+    /// round after a prefix-changing event (a tool-filter change, a
+    /// steered turn), so the provider does not pay a cache-write
+    /// premium for a prefix that is about to become stale anyway.
+    ///
+    /// Providers without explicit caching ignore it.
+    pub cache_transcript: bool,
 }
 
 impl CompletionRequest {
@@ -129,6 +139,7 @@ impl CompletionRequest {
             tools: Vec::new(),
             options: GenerationOptions::default(),
             model,
+            cache_transcript: true,
         }
     }
 
@@ -213,20 +224,98 @@ pub enum PromptCacheKind {
 pub struct ModelPricing {
     pub input_per_mtok_usd: f64,
     pub output_per_mtok_usd: f64,
+    /// USD per million tokens read from the provider's KV cache.
+    ///
+    /// `#[serde(default)]` plus a constructor default of
+    /// `input_per_mtok_usd * DEFAULT_CACHE_READ_RATIO` means a config
+    /// written before this field existed loads with the provider's
+    /// published ratio (Anthropic: 0.1x). A caller that sets the
+    /// field explicitly keeps its value.
+    #[serde(default = "default_cache_read_rate")]
+    pub cache_read_per_mtok_usd: f64,
+    /// USD per million tokens written to the provider's KV cache.
+    /// Default ratio is 1.25x input (Anthropic's cache-write premium).
+    #[serde(default = "default_cache_write_rate")]
+    pub cache_write_per_mtok_usd: f64,
+}
+
+/// Default cache-read rate as a fraction of the full input rate.
+/// Anthropic's published ratio; OpenAI's automatic caching is 0.5x,
+/// but a caller with a `[pricing]` block on an OpenAI endpoint can
+/// set the field explicitly.
+const DEFAULT_CACHE_READ_RATIO: f64 = 0.1;
+/// Default cache-write rate as a fraction of the full input rate.
+/// Anthropic charges 1.25x input to write a cache entry.
+const DEFAULT_CACHE_WRITE_RATIO: f64 = 1.25;
+
+// Serde default helpers cannot read sibling fields, so they return
+// the ratios applied to a *nominal* $1.00/M input rate. This is
+// correct only when the caller set `input_per_mtok_usd` explicitly
+// and did not override the cache rates; `ModelPricing::new` below
+// is the authoritative path for the common case, and every kod
+// config goes through it.
+fn default_cache_read_rate() -> f64 {
+    DEFAULT_CACHE_READ_RATIO
+}
+fn default_cache_write_rate() -> f64 {
+    DEFAULT_CACHE_WRITE_RATIO
 }
 
 impl ModelPricing {
+    /// Build pricing from the two rates a config file has always
+    /// carried, deriving the cache tiers from the published ratios.
     pub fn new(input_per_mtok_usd: f64, output_per_mtok_usd: f64) -> Self {
         Self {
             input_per_mtok_usd,
             output_per_mtok_usd,
+            cache_read_per_mtok_usd: input_per_mtok_usd * DEFAULT_CACHE_READ_RATIO,
+            cache_write_per_mtok_usd: input_per_mtok_usd * DEFAULT_CACHE_WRITE_RATIO,
+        }
+    }
+
+    /// Build pricing with explicit cache rates, for a caller whose
+    /// endpoint charges a non-default ratio.
+    pub fn with_cache_rates(
+        input_per_mtok_usd: f64,
+        output_per_mtok_usd: f64,
+        cache_read_per_mtok_usd: f64,
+        cache_write_per_mtok_usd: f64,
+    ) -> Self {
+        Self {
+            input_per_mtok_usd,
+            output_per_mtok_usd,
+            cache_read_per_mtok_usd,
+            cache_write_per_mtok_usd,
         }
     }
 
     /// Cost for a call with the given token counts, in USD.
+    ///
+    /// Kept for callers that only have the two-token-count shape;
+    /// delegates to [`Self::cost_for_usage`] with zero cache tokens
+    /// so both paths agree on the arithmetic.
     pub fn cost_usd(&self, prompt_tokens: usize, completion_tokens: usize) -> f64 {
-        (prompt_tokens as f64 / 1_000_000.0) * self.input_per_mtok_usd
-            + (completion_tokens as f64 / 1_000_000.0) * self.output_per_mtok_usd
+        self.cost_for_usage(&crate::TokenUsage {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens: prompt_tokens.saturating_add(completion_tokens),
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+        })
+    }
+
+    /// Cost for a full usage report, separating full-price input,
+    /// cache reads, cache writes, and output.
+    ///
+    /// `uncached_input_tokens` is derived, not passed: a caller that
+    /// has a `TokenUsage` should never have to recompute the split,
+    /// and every kod call site has one.
+    pub fn cost_for_usage(&self, usage: &crate::TokenUsage) -> f64 {
+        let m = 1_000_000.0;
+        (usage.uncached_input_tokens() as f64 / m) * self.input_per_mtok_usd
+            + (usage.cache_read_tokens as f64 / m) * self.cache_read_per_mtok_usd
+            + (usage.cache_creation_tokens as f64 / m) * self.cache_write_per_mtok_usd
+            + (usage.completion_tokens as f64 / m) * self.output_per_mtok_usd
     }
 }
 

@@ -40,6 +40,13 @@ pub async fn run_fixture_replay(name: &str, strict: bool, first_round_only: bool
                 prompt_tokens: u.prompt_tokens,
                 completion_tokens: u.completion_tokens,
                 total_tokens: u.prompt_tokens + u.completion_tokens,
+                // The fixture format predates cache accounting; the
+                // fields default to zero here, which matches what a
+                // captured replay would have recorded from an OpenAI-
+                // compatible endpoint. A future fixture format bump
+                // can add them.
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
             }),
         })
         .collect();

@@ -177,6 +177,7 @@ impl AnthropicProvider {
                     prompt_tokens: usage.prompt_token_count.max(0) as usize,
                     completion_tokens: usage.candidates_token_count.max(0) as usize,
                     total_tokens: usage.total_token_count.max(0) as usize,
+                    ..Default::default()
                 });
             }
             if let Some(content) = response.content {
@@ -452,6 +453,7 @@ impl AnthropicProvider {
                                         prompt_tokens: usage.prompt_token_count.max(0) as usize,
                                         completion_tokens: usage.candidates_token_count.max(0) as usize,
                                         total_tokens: usage.total_token_count.max(0) as usize,
+                                        ..Default::default()
                                     });
                                 }
                                 if let Some(content) = response.content {
@@ -616,12 +618,29 @@ fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
         }
     }
 
-    let usage = v.get("usage").map(|u| kod_provider::TokenUsage {
-        prompt_tokens: u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as usize,
-        completion_tokens: u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as usize,
-        total_tokens: (u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0)
-            + u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0))
-            as usize,
+    // Anthropic's `input_tokens` is the *uncached* portion; the two
+    // cache fields are separate keys in the same usage object and are
+    // billed at different rates. kod folds all three into
+    // `prompt_tokens` so a single field carries the full input window,
+    // and keeps the split in the cache fields for the cost math.
+    let usage = v.get("usage").map(|u| {
+        let input = u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
+        let output = u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
+        let cache_read = u
+            .get("cache_read_input_tokens")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0) as usize;
+        let cache_creation = u
+            .get("cache_creation_input_tokens")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0) as usize;
+        kod_provider::TokenUsage {
+            prompt_tokens: input + cache_read + cache_creation,
+            completion_tokens: output,
+            total_tokens: input + cache_read + cache_creation + output,
+            cache_read_tokens: cache_read,
+            cache_creation_tokens: cache_creation,
+        }
     });
 
     if calls.is_empty() {

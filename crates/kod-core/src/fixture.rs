@@ -305,6 +305,7 @@ mod tests {
             tools: vec![tool_b, tool_a],
             options: kod_provider::GenerationOptions::default(),
             model: kod_provider::ModelRef::new("ep", "m"),
+            cache_transcript: false,
         };
         let s = RequestSummary::from_request(&req);
         assert_eq!(s.model, "m");

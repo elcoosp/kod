@@ -46,7 +46,7 @@ pub fn build_messages_body(req: &CompletionRequest) -> Value {
         "model": req.model.model,
         "max_tokens": req.options.max_tokens.unwrap_or(4096),
         "system": system_blocks(&req.system),
-        "messages": messages_array(&req.messages),
+        "messages": messages_array_with_cache(&req.messages, req.cache_transcript),
     });
 
     if let Some(t) = req.options.temperature {
@@ -106,6 +106,61 @@ pub fn system_blocks(prompt: &SystemPrompt) -> Value {
 /// contains them (they are display-only in the TUI), and mapping them
 /// to assistant is the least wrong default if one ever leaks in.
 pub fn messages_array(messages: &[ChatMessage]) -> Value {
+    // Backwards-compatible wrapper. All real callers go through
+    // `messages_array_with_cache`; this exists so the existing test
+    // suite (which does not care about caching) keeps compiling, and
+    // so a future test can exercise the "no transcript breakpoint"
+    // path without restructuring.
+    messages_array_with_cache(messages, false)
+}
+
+/// Like [`messages_array`], but optionally appends an ephemeral cache
+/// breakpoint to the *last* message in the transcript.
+///
+/// Anthropic caches everything up to and including the block that
+/// carries the marker. The system-side breakpoint (see
+/// [`system_blocks`]) covers the identity, tool schemas and repo map
+/// head — the invariant prefix. It does *not* cover the transcript,
+/// which is the part that actually grows turn over turn; without a
+/// second marker the entire conversation is re-billed at full input
+/// price on every call.
+///
+/// The marker goes on the **last** block of the **last** message. A
+/// caller that sets `cache_transcript = false` (the engine, for the
+/// round after a prefix-changing event) gets the pre-P0 shape: no
+/// transcript breakpoint, full-price transcript, no cache-write
+/// premium paid for a prefix that will not survive the next turn.
+///
+/// Two breakpoints total per request (system + last message), well
+/// inside Anthropic's limit of four.
+pub fn messages_array_with_cache(messages: &[ChatMessage], cache_transcript: bool) -> Value {
+    let mut out = messages_array_impl(messages);
+    if !cache_transcript {
+        return out;
+    }
+    let Some(arr) = out.as_array_mut() else {
+        return out;
+    };
+    // Find the last entry that has a non-empty content array. The
+    // API rejects an empty content array; the merge logic never
+    // produces one, but a defensive walk keeps this honest.
+    let Some(last) = arr
+        .iter_mut()
+        .rev()
+        .find(|m| m.get("content").and_then(Value::as_array).is_some_and(|a| !a.is_empty()))
+    else {
+        return out;
+    };
+    let Some(blocks) = last.get_mut("content").and_then(Value::as_array_mut) else {
+        return out;
+    };
+    if let Some(block) = blocks.last_mut() {
+        block["cache_control"] = json!({"type": "ephemeral"});
+    }
+    out
+}
+
+fn messages_array_impl(messages: &[ChatMessage]) -> Value {
     let mut out: Vec<Value> = Vec::new();
     for m in messages {
         let (role, block) = match &m.role {
@@ -268,8 +323,16 @@ pub struct AnthropicStreamState {
     /// emits a final `StreamChunk::Done` when this is set and the byte
     /// stream ends, even if no further lines arrive.
     pub finished: bool,
-    /// Accumulated input tokens from `message_start`.
+    /// Accumulated input tokens from `message_start`. Includes the
+    /// cache fields; the two separate fields below carry the split.
     pub input_tokens: usize,
+    /// Tokens served from Anthropic's KV cache
+    /// (`cache_read_input_tokens` from `message_start`). Billed at
+    /// ~0.1x input.
+    pub cache_read_input_tokens: usize,
+    /// Tokens written to Anthropic's KV cache this call
+    /// (`cache_creation_input_tokens`). Billed at ~1.25x input.
+    pub cache_creation_input_tokens: usize,
     /// Blocks observed so far. Used to correlate `content_block_delta`
     /// events (which carry only an index) with the tool name/id
     /// recorded at `content_block_start`.
@@ -315,13 +378,24 @@ pub fn parse_sse_line(
 
     match v.get("type").and_then(|t| t.as_str()) {
         Some("message_start") => {
-            if let Some(n) = v
-                .get("message")
-                .and_then(|m| m.get("usage"))
-                .and_then(|u| u.get("input_tokens"))
-                .and_then(|n| n.as_u64())
-            {
-                state.input_tokens = n as usize;
+            // The usage object carries three input-side fields:
+            // `input_tokens` (billed at full rate) plus
+            // `cache_read_input_tokens` and
+            // `cache_creation_input_tokens` (billed at their own
+            // rates). kod folds all three into `state.input_tokens`
+            // so downstream `TokenUsage.prompt_tokens` is the total
+            // input window; the split is retained in the two cache
+            // fields for cost math.
+            if let Some(u) = v.get("message").and_then(|m| m.get("usage")) {
+                let get = |k: &str| -> usize {
+                    u.get(k).and_then(|n| n.as_u64()).unwrap_or(0) as usize
+                };
+                let base = get("input_tokens");
+                let cache_read = get("cache_read_input_tokens");
+                let cache_creation = get("cache_creation_input_tokens");
+                state.cache_read_input_tokens = cache_read;
+                state.cache_creation_input_tokens = cache_creation;
+                state.input_tokens = base + cache_read + cache_creation;
             }
             Vec::new()
         }
@@ -414,9 +488,14 @@ pub fn parse_sse_line(
                 .unwrap_or(0) as usize;
             if out > 0 || state.input_tokens > 0 {
                 chunks.push(StreamChunk::Usage(kod_provider::TokenUsage {
+                    // `state.input_tokens` already includes the cache
+                    // fields: `message_start` folds them in. See the
+                    // `message_start` handler above.
                     prompt_tokens: state.input_tokens,
                     completion_tokens: out,
                     total_tokens: state.input_tokens + out,
+                    cache_read_tokens: state.cache_read_input_tokens,
+                    cache_creation_tokens: state.cache_creation_input_tokens,
                 }));
             }
             chunks
@@ -819,6 +898,136 @@ mod tests {
             v[0].get("parameters").is_none(),
             "Anthropic uses input_schema, not parameters"
         );
+    }
+
+    // ---- P0 Fix 2: transcript cache breakpoint --------------------------
+
+    #[test]
+    fn transcript_breakpoint_is_off_by_default_in_the_legacy_wrapper() {
+        // `messages_array` is the pre-P0 shape: system-side breakpoint
+        // only, no transcript marker. A future refactor that routed it
+        // through the cached path would silently start paying a
+        // cache-write premium on every request.
+        let arr = messages_array(&[user("hi"), assistant("hello")]);
+        for m in arr.as_array().unwrap() {
+            if let Some(blocks) = m.get("content").and_then(Value::as_array) {
+                for b in blocks {
+                    assert!(
+                        b.get("cache_control").is_none(),
+                        "messages_array must not place a transcript marker: {b}",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn transcript_breakpoint_lands_on_the_last_block_of_the_last_message() {
+        let arr = messages_array_with_cache(&[user("hi"), assistant("hello")], true);
+        let entries = arr.as_array().unwrap();
+        // Every message but the last: no marker.
+        for m in &entries[..entries.len() - 1] {
+            if let Some(blocks) = m.get("content").and_then(Value::as_array) {
+                for b in blocks {
+                    assert!(b.get("cache_control").is_none());
+                }
+            }
+        }
+        // The last message's last block: marked.
+        let last = entries.last().unwrap();
+        let blocks = last["content"].as_array().unwrap();
+        let last_block = blocks.last().unwrap();
+        assert_eq!(last_block["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn transcript_breakpoint_marks_only_one_block() {
+        // A single marker per request — earlier markers would fragment
+        // the cache entry pool and Anthropic only allows four.
+        let arr = messages_array_with_cache(&[user("a"), assistant("b"), user("c")], true);
+        let mut markers = 0;
+        for m in arr.as_array().unwrap() {
+            if let Some(blocks) = m.get("content").and_then(Value::as_array) {
+                for b in blocks {
+                    if b.get("cache_control").is_some() {
+                        markers += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(markers, 1, "expected exactly one transcript marker");
+    }
+
+    #[test]
+    fn transcript_breakpoint_lands_on_the_final_block_regardless_of_type() {
+        // A tool result at the end is a user-role turn whose content
+        // array is `[tool_result, text]` — H-P9 requires the
+        // tool_result block *first*, so the last block is the user's
+        // text. The marker must land on the final block whichever
+        // type it is; Anthropic caches everything up to and including
+        // the marked block, so "final" is what matters, not "what
+        // kind".
+        let tool_msg = kod_types::ChatMessage {
+            id: kod_types::MessageId::new(),
+            role: kod_types::MessageRole::Tool,
+            content: "output".to_string(),
+            timestamp: time::OffsetDateTime::now_utc(),
+            metadata: Default::default(),
+            tool_calls: Vec::new(),
+            tool_call_id: Some("call-1".to_string()),
+        };
+        // A user turn followed by a tool result: the merge produces
+        // one user-role message with [tool_result, text].
+        let arr = messages_array_with_cache(&[user("hi"), tool_msg], true);
+        let entries = arr.as_array().unwrap();
+        let last = entries.last().unwrap();
+        let blocks = last["content"].as_array().unwrap();
+        // The tool_result is present and precedes the text — that is
+        // the H-P9 invariant and this test would fail if it broke.
+        assert_eq!(blocks[0]["type"], "tool_result");
+        assert_eq!(blocks[1]["type"], "text");
+        // And the marker is on the *last* block, not the tool_result.
+        let last_block = blocks.last().unwrap();
+        assert_eq!(last_block["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn transcript_breakpoint_suppressed_when_flag_is_false() {
+        // The engine clears `cache_transcript` for the round after a
+        // prefix-changing event, so no write premium is paid for a
+        // prefix that will not survive the next turn.
+        let arr = messages_array_with_cache(&[user("hi"), assistant("hello")], false);
+        for m in arr.as_array().unwrap() {
+            if let Some(blocks) = m.get("content").and_then(Value::as_array) {
+                for b in blocks {
+                    assert!(
+                        b.get("cache_control").is_none(),
+                        "cache_transcript = false must suppress the marker",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn transcript_breakpoint_on_empty_messages_is_a_noop() {
+        // No messages → nothing to mark. Must not panic.
+        let arr = messages_array_with_cache(&[], true);
+        assert!(arr.as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn build_messages_body_carries_the_transcript_marker() {
+        // End-to-end: a request with `cache_transcript = true` (the
+        // default) produces a body whose last message's last block
+        // carries the marker. This is what the engine actually sends.
+        let mut req = CompletionRequest::new(kod_provider::ModelRef::new("ep", "m"));
+        req.messages = vec![user("hi"), assistant("hello")];
+        let body = build_messages_body(&req);
+        let msgs = body["messages"].as_array().unwrap();
+        let last = msgs.last().unwrap();
+        let last_block = last["content"].as_array().unwrap().last().unwrap();
+        assert_eq!(last_block["cache_control"]["type"], "ephemeral");
     }
 }
 
