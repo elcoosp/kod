@@ -1,5 +1,152 @@
 # Changelog
 
+## Unreleased — production readiness pass
+
+Fixes from a full-workspace production-readiness review. Every item
+below is covered by a test; the targeted suites are green.
+
+### Security
+
+- **PolicyEngine installed on every command that builds an engine.**
+  `kod prompt`, `kod run`, `kod swarm`, and `kod replay --execute`
+  were building engines *without* installing a policy; the engine
+  fallback is allow-all, so the `standard` preset's write-approval
+  and deny rules silently did nothing on those paths.
+- **Parallel read-only rounds honour denials.** A `Deny` decision
+  (policy or hook) was checked only in the serial mutating branch;
+  a read-only round mapped every call straight to `execute_tool`,
+  so a denied `read_file` / `grep` / `web_fetch` still ran.
+- **`kod replay --execute` requires `--yes`.** A recorded session
+  log is effectively an executable script of tool calls; without
+  the explicit flag the command now refuses, with a summary of the
+  destructive calls it would have run.
+- **Project `.kod/policy.toml` can only narrow.** A repo shipping
+  `preset = "yolo"` or `[tools.write_file] mode = "allow"` could
+  escalate past the user's global policy with no consent gate; the
+  effective preset is now `min(global, project)` and per-tool mode
+  is `max(global, project)`.
+- **Path resolution normalizes `..` before glob matching.**
+  `src/../secrets/x` matched a `src/**` allowlist lexically while
+  the tool wrote `<wd>/secrets/x`.
+- **Hooks no longer splice model arguments into `sh -c`.** The
+  template references `$KOD_PATH`-style env vars, and the runner
+  caps output at 8 KiB and enforces a 30 s timeout.
+- **`.git/` is denied for `write_file` / `patch_file`.** The "git
+  mutations go through the git tool" contract was previously only
+  enforced on the shell path.
+- **Sandbox profile tempfile is `O_EXCL` + 0600.** The pre-fix
+  `/tmp/kod-sandbox-<pid>.json` was guessable and world-readable.
+- **`execute_command` runs in the context working directory and
+  with secret-shaped env vars stripped.** The child no longer
+  inherits `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / tokens.
+
+### Data integrity
+
+- **Semantic memory works.** The embedder's dimension cache was
+  only warmed inside `embed()`, and every `embed()` call was gated
+  on `dims() > 0` — a circular gate that made semantic scoring
+  permanently dead. `store_with_metadata` now embeds at write time;
+  `rebuild_index` embeds missing entries and persists.
+- **Checkpoint ids survive >10 000 snapshots.** The zero-padded
+  counter rendered 5 digits past 9 999 and sorted before 9999, so
+  retention started deleting the newest snapshots.
+- **Checkpoint restore snapshots the current file first.** A
+  mistaken restore no longer permanently destroys the working
+  version. Size checks now go through `metadata()`, not a full read.
+- **Swarm dispatch keys are per-subtask.** Two subtasks on the same
+  pool agent shared one transcript key; one agent's failure path
+  cancelled and wiped its peer's history mid-flight.
+- **Swarm cleanup preserves unmerged branches.** `Drop` used to
+  `git branch -D` unmerged agent commits after a conflict.
+- **Session log writes are atomic single `write_all` calls, and a
+  truncated final line is tolerated** rather than failing the read.
+- **Memory store caps content at 4 KiB and dedups by content hash;
+  retrieval write-back re-reads each entry by id** so it no longer
+  resurrects entries consolidation just deleted.
+- **Short-term memory uses a single lock** (the pre-fix two-lock
+  shape had an inversion that could deadlock) and `store` replaces
+  in place when the id already exists.
+- **History cap is pinned-aware.** A user-pinned turn is no longer
+  silently destroyed by tool-round persistence.
+
+### Provider wire layer
+
+- **Anthropic SSE decoder is byte-safe.** Multi-byte characters
+  split across TCP chunks were previously decoded per-chunk with
+  `from_utf8_lossy`, corrupting streamed text and tool arguments.
+- **Both providers use the shared `RetryPolicy`.** The retry module
+  in `kod-provider` was dead code; the OpenAI path used a substring
+  classifier and Anthropic had no retry at all.
+- **`StopReason` is a `StreamChunk` variant** so a truncated
+  response is distinguishable from a clean finish.
+- **Legacy `stream` terminates on `Err`** instead of emitting
+  `Err` followed by `Usage` + `Done`.
+
+### Tools
+
+- **`patch_file` holds its path lock across read + diff + write.**
+  Two concurrent patches previously diffed against the same
+  original; the second silently reverted the first.
+- **`git` and `check` children are `kill_on_drop`** so a timed-out
+  tool no longer leaves a zombie process holding the target-dir
+  lock.
+- **Writes are atomic** (temp + fsync + rename).
+- **The diff parser honors file headers only before the first hunk**
+  (so a `--- ` line inside a hunk survives), strips/re-emits CRLF,
+  and clamps the `@@ -0,0` new-file header.
+- **Invalid globs in a forbidden list fail closed**, not open.
+
+### Engine
+
+- **Auto-check paths carry the round's structured transcript** —
+  the model now learns the write outcome under the default flags.
+- **Structured tool-result messages are capped** (16 KiB) so a
+  256 KB `read_file` repeated over 40 rounds cannot grow the
+  transcript past the endpoint's window.
+- **Token usage accumulates** across rounds; the pre-fix shape
+  kept only the last round's report.
+- **Provider stream has an idle-chunk deadline** (120 s) and
+  preserves partials on error.
+- **`cancels` is a `parking_lot::RwLock`**, no `block_on` on the
+  async hot path.
+- **Jev memory filter keeps the original on over-filter** (the doc
+  comment said it did; the code returned `Vec::new()`).
+- **Diagnostic triage fails open** when Jev answers only some of a
+  batch instead of hiding the unanswered ones.
+
+### TUI
+
+- **Esc with completions open keeps the typed draft.**
+- **Phase-change check is async** instead of
+  `block_in_place(block_on(...))` in the event handler.
+- **`/regenerate` and `/delete` rewind the engine transcript**, not
+  only the display.
+- **Bracketed paste is enabled**, so a code block paste no longer
+  submits its first line as a prompt.
+
+### CLI / CI
+
+- **`kod run` returns the engine outcome** (the pre-fix `let _ =`
+  made every failure exit 0).
+- **`kod swarm -n N` honors the requested agent count.**
+- **`kod skills new` generates parseable frontmatter** (the
+  template carried 9-space continuation indents from source).
+- **Release signing is gated on a step output**, not on a
+  workflow-level `env` that could not see `secrets`.
+- **`live-anthropic` runs when the secret is present** — the
+  pre-fix job-level `if:` on `secrets.*` always evaluated false.
+- **`RUSTFLAGS: -D warnings` is scoped to the lint job**, and
+  `--locked` is set on every CI cargo invocation.
+- **MSRV is declared (1.85).**
+
+### Documentation
+
+- CONTRIBUTING.md MSRV corrected.
+- Function docs that promised behaviour the code did not have
+  (the ACP approval-batch fallback, the LSP `ensure_open`
+  content, the swarm hub teardown, the memory filter's
+  fail-open) now match the code.
+
 ## Unreleased — follow-up batch
 
 A second batch landed after the first round of hardening. Every item
