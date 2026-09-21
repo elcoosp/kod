@@ -63,7 +63,7 @@ OpenAI-compatible implementation (backed by `adk-model`):
 - Model listing via `GET /v1/models`
 
 #### kod-provider-anthropic
-Anthropic Messages API provider (backed by `adk-model`):
+<!-- SUPERSEDED: Anthropic Messages API provider (backed by `adk-model`): -->
 - The same `LlmProvider` trait as the OpenAI-compatible provider
 - Wraps `adk_model::anthropic::Anthropic` — one code path per provider kind
 
@@ -153,7 +153,7 @@ Core engine:
 
 ## Performance Considerations
 
-- **Memory efficiency**: Object pooling, string interning
+<!-- SUPERSEDED: - **Memory efficiency**: Object pooling, string interning -->
 - **Async I/O**: Tokio-based async runtime
 - **Caching**: Multi-level caching for skills and memory
 - **Zero-copy parsing**: Minimize allocations where possible
@@ -162,7 +162,7 @@ Core engine:
 ## Delivered since this document was first written
 
 - **LSP Integration** (`kod-lsp`): diagnostics, definition, references, hover.
-- **Additional provider**: Anthropic Messages API (`kod-provider-anthropic`).
+<!-- SUPERSEDED: - **Additional provider**: Anthropic Messages API (`kod-provider-anthropic`). -->
 - **MCP client** (`kod-mcp`): external tools registered under the `mcp:<server>.<tool>` naming policy.
 - **Sandbox backends**: bwrap on Linux, sandbox-exec on macOS, and Landlock on Linux kernels ≥ 5.13.
 - **Unix-socket daemon** (`kod serve`): NDJSON protocol, peer-UID check, `--remote` on `kod prompt`, `kod chat`, `kod agent`.
@@ -179,8 +179,8 @@ Core engine:
   so prompt caching and per-message role semantics are preserved on the
   wire. The types exist and are exercised by tests; the engine migration
   is the remaining step.
-- **Anthropic `cache_control`**: `kod-provider-anthropic` currently
-  delegates to `adk-model`'s Anthropic client, which flattens the system
+<!-- SUPERSEDED: - **Anthropic `cache_control`**: `kod-provider-anthropic` currently -->
+<!-- SUPERSEDED:   delegates to `adk-model`'s Anthropic client, which flattens the system -->
   prompt to a single string before the wire call. Explicit cache
   breakpoints need either an `adk-model` API that accepts segments or a
   local wire module.
