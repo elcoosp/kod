@@ -570,6 +570,14 @@ fn html_to_text(html: &str) -> String {
     collapsed.trim().to_string()
 }
 
+/// Fuzz-only wrapper: expose the private HTML parser for external
+/// fuzz targets without widening the crate's public surface.
+#[doc(hidden)]
+pub fn html_to_text_for_fuzz(html: &str) -> String {
+    html_to_text(html)
+}
+
+
 /// If an open tag for a skipped element starts at byte offset `i` in
 /// the lowercased HTML, return the offset just past its matching close
 /// tag (or the end of the document when unmatched). The set of skipped

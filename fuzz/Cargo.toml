@@ -1,7 +1,7 @@
 [package]
 name = "kod-fuzz"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 
 [package.metadata]
@@ -17,7 +17,45 @@ kod-lsp     = { path = "../crates/kod-lsp" }
 kod-mcp     = { path = "../crates/kod-mcp" }
 kod-memory  = { path = "../crates/kod-memory" }
 kod-provider-anthropic = { path = "../crates/kod-provider-anthropic" }
+serde_json = "1.0"
 
-# Prevent this crate from being built as part of the workspace
-# `cargo build`; cargo-fuzz drives its own build.
+# Each target is a fuzz binary. `cargo fuzz run <name>` selects by name;
+# `cargo check --manifest-path fuzz/Cargo.toml` compiles all of them.
+[[bin]]
+name = "patch"
+path = "fuzz_targets/patch.rs"
+test = false
+bench = false
+doc = false
+
+[[bin]]
+name = "html"
+path = "fuzz_targets/html.rs"
+test = false
+bench = false
+doc = false
+
+[[bin]]
+name = "sse"
+path = "fuzz_targets/sse.rs"
+test = false
+bench = false
+doc = false
+
+[[bin]]
+name = "policy"
+path = "fuzz_targets/policy.rs"
+test = false
+bench = false
+doc = false
+
+[[bin]]
+name = "embedding"
+path = "fuzz_targets/embedding.rs"
+test = false
+bench = false
+doc = false
+
+# Prevent cargo from treating fuzz/ as a workspace member of the
+# parent — the parent excludes it; this table mirrors that.
 [workspace]
