@@ -88,6 +88,11 @@ pub enum EventPriority {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
     Key(KeyCode),
+    /// H-T9: a bracketed paste payload. Every character arrives in
+    /// one event, including newlines, so a multi-line code block can
+    /// be inserted verbatim instead of being dispatched line by line
+    /// (which is what pasting did before bracketed paste was enabled).
+    Paste(String),
     UserInput(String),
     Tick,
     System(EventPriority, String),
@@ -383,6 +388,9 @@ impl EventHandler {
                                 let key_code: KeyCode = key.code.into();
                                 let _ = tx.send(Event::Key(key_code)).await;
                             }
+                        }
+                        CrosstermEvent::Paste(text) => {
+                            let _ = tx.send(Event::Paste(text)).await;
                         }
                         CrosstermEvent::Resize(w, h) => {
                             let _ = tx.send(Event::Resize(w, h)).await;
