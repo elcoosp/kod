@@ -697,19 +697,31 @@ fn wrap_spans(spans: Vec<Span<'static>>, width: usize) -> Vec<Line<'static>> {
     }
 
     // Collapse runs of the same style into spans, per line.
+    //
+    // H-T2: the previous shape cloned the accumulated `Cow` and rebuilt
+    // the `Span` on every appended character. On a 5k-char paragraph
+    // with a single style that is ~12M char-copies per render. Build a
+    // `String` per run and only materialise the span when the style
+    // changes — linear in the number of characters.
     lines
         .into_iter()
         .map(|line_chars| {
             let mut spans: Vec<Span<'static>> = Vec::new();
+            let mut run = String::new();
+            let mut run_style: Option<Style> = None;
             for (c, style) in line_chars {
-                match spans.last_mut() {
-                    Some(last) if last.style == style => {
-                        let mut s = last.content.clone().into_owned();
-                        s.push(c);
-                        *last = Span::styled(s, style);
+                if Some(style) == run_style {
+                    run.push(c);
+                } else {
+                    if let Some(s) = run_style.take() {
+                        spans.push(Span::styled(std::mem::take(&mut run), s));
                     }
-                    _ => spans.push(Span::styled(c.to_string(), style)),
+                    run.push(c);
+                    run_style = Some(style);
                 }
+            }
+            if let Some(s) = run_style {
+                spans.push(Span::styled(run, s));
             }
             Line::from(spans)
         })
