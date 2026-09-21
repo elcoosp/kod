@@ -29,6 +29,12 @@ pub struct AnthropicProvider {
     /// A single client per provider keeps the connection pool warm
     /// across calls.
     client: reqwest::Client,
+    /// H-P7: per-request timeout in seconds, carried so a
+    /// `with_model` switch keeps the same setting. Retained for
+    /// API parity with the OpenAI provider; the client itself is
+    /// built with connect-only + a per-request wrapper, so a long
+    /// stream is not killed mid-flight.
+    timeout_secs: u64,
 }
 
 impl AnthropicProvider {
@@ -38,12 +44,31 @@ impl AnthropicProvider {
         model: impl Into<String>,
         api_key: impl Into<String>,
     ) -> Result<Self> {
+        Self::with_api_key_and_timeout(base_url, model, api_key, 300)
+    }
+
+    /// Like `with_api_key` but with a configurable request timeout.
+    /// H-P7: parity with the OpenAI provider, and the field the
+    /// `[llm.endpoints].timeout_secs` config flows into.
+    ///
+    /// Note: the client below carries only a *connect* timeout. A
+    /// total timeout on the reqwest client would abort any stream
+    /// longer than the bound — the pre-fix 300 s total made long
+    /// generations fail mid-flight. The engine's per-chunk idle
+    /// timeout (H-E11) is the streaming bound; `timeout_secs` is
+    /// honoured for non-streaming `complete()` calls via the
+    /// request-level wrapper in `collect`.
+    pub fn with_api_key_and_timeout(
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+        api_key: impl Into<String>,
+        timeout_secs: u64,
+    ) -> Result<Self> {
         let base_url = normalize_base_url(&base_url.into());
         let api_key = api_key.into();
         let model = model.into();
         let inner = build_client(&api_key, &model, &base_url)?;
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
             .connect_timeout(std::time::Duration::from_secs(10))
             .build()
             .map_err(|e| {
@@ -55,6 +80,7 @@ impl AnthropicProvider {
             base_url,
             api_key,
             client,
+            timeout_secs,
         })
     }
 
@@ -71,6 +97,7 @@ impl AnthropicProvider {
             // the existing one keeps the connection pool and TLS
             // session cache warm across `/model` switches.
             client: self.client,
+            timeout_secs: self.timeout_secs,
         })
     }
 
@@ -108,11 +135,38 @@ impl AnthropicProvider {
         request: LlmRequest,
         stream: bool,
     ) -> Result<(String, Vec<ToolCall>, Option<kod_provider::TokenUsage>)> {
-        let mut responses = self
-            .inner
-            .generate_content(request, stream)
+        // H-P7: bound the non-streaming collect by `timeout_secs`. The
+        // pre-fix reqwest client carried a hard 300 s total timeout,
+        // which (a) killed long generations and (b) was not
+        // configurable. We moved the timeout here, where it bounds
+        // exactly the shapes that should be bounded — a non-streaming
+        // `complete()` call, and the pre-first-chunk wait of a
+        // streaming one. The streaming loop has its own idle deadline
+        // in the engine.
+        let timeout = std::time::Duration::from_secs(self.timeout_secs.max(1));
+        tokio::time::timeout(timeout, self.collect_inner(request, stream))
             .await
-            .map_err(adk_err)?;
+            .map_err(|_| KodError::ProviderTimeout {
+                timeout_ms: timeout.as_millis() as u64,
+            })?
+    }
+
+    async fn collect_inner(
+        &self,
+        request: LlmRequest,
+        stream: bool,
+    ) -> Result<(String, Vec<ToolCall>, Option<kod_provider::TokenUsage>)> {
+        let mut responses =
+            kod_provider::retry::with_retry(&kod_provider::retry::RetryPolicy::default(), || {
+                let req = request.clone();
+                async move {
+                    self.inner
+                        .generate_content(req, stream)
+                        .await
+                        .map_err(adk_err)
+                }
+            })
+            .await?;
         let mut text = String::new();
         let mut calls = Vec::new();
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
@@ -197,7 +251,7 @@ impl LlmProvider for AnthropicProvider {
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
             let snippet = if text.len() > 400 {
-                format!("{}…", &text[..text.floor_char_boundary(400)])
+                format!("{}…", kod_types::strutil::truncate_chars(&text, 400))
             } else {
                 text
             };
@@ -302,22 +356,37 @@ impl LlmProvider for AnthropicProvider {
                 return;
             }
 
-            use futures::StreamExt;
             let mut stream = resp.bytes_stream();
-            let mut buf = String::new();
+            // H-P2: work in bytes, not `String`. `bytes_stream`
+            // yields TCP chunks, and a multi-byte UTF-8 character can
+            // straddle the boundary between two of them. The pre-fix
+            // code did `buf.push_str(&String::from_utf8_lossy(&bytes))`
+            // per chunk: half a CJK character becomes U+FFFD, and the
+            // other half is lost on the next decode — visible as
+            // mojibake in streamed text and *corrupted tool
+            // arguments*. Accumulate bytes here, find line breaks on
+            // bytes, and decode each complete line once (itself, not
+            // the partial tail).
+            let mut buf: Vec<u8> = Vec::new();
             let mut state = crate::wire::AnthropicStreamState::default();
             let mut done_sent = false;
 
             while let Some(chunk) = stream.next().await {
                 match chunk {
                     Ok(bytes) => {
-                        buf.push_str(&String::from_utf8_lossy(&bytes));
+                        buf.extend_from_slice(&bytes);
                         // SSE frames are separated by a blank line.
-                        // Process complete lines; a partial line stays
-                        // in `buf` until the next byte chunk arrives.
-                        while let Some(nl) = buf.find('\n') {
-                            let line = buf[..nl].trim_end_matches('\r').to_string();
-                            buf.drain(..=nl);
+                        // Find `\n` on bytes; `String::from_utf8`
+                        // on a complete line cannot split a char.
+                        while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
+                            let mut line_bytes: Vec<u8> = buf.drain(..=nl).collect();
+                            // Drop the trailing newline (and a CR
+                            // before it, the SSE convention).
+                            line_bytes.pop();
+                            if line_bytes.last() == Some(&b'\r') {
+                                line_bytes.pop();
+                            }
+                            let line = String::from_utf8_lossy(&line_bytes).into_owned();
                             for chunk in crate::wire::parse_sse_line(&mut state, &line) {
                                 if matches!(chunk, StreamChunk::Done) {
                                     done_sent = true;
@@ -332,6 +401,21 @@ impl LlmProvider for AnthropicProvider {
                         )));
                         return;
                     }
+                }
+            }
+            // H-P2 (tail): an unterminated final line — the last
+            // frame arrives without a trailing newline — was dropped
+            // by the pre-fix loop, and it is frequently the final
+            // `message_delta` (usage) or `message_stop`. Flush it
+            // here.
+            if !buf.is_empty() {
+                let line = String::from_utf8_lossy(&buf).into_owned();
+                buf.clear();
+                for chunk in crate::wire::parse_sse_line(&mut state, &line) {
+                    if matches!(chunk, StreamChunk::Done) {
+                        done_sent = true;
+                    }
+                    yield Ok(chunk);
                 }
             }
 
@@ -393,8 +477,15 @@ impl AnthropicProvider {
                                 }
                             }
                             Err(e) => {
+                                // H-P10: `return` after the error. The
+                                // stream contract (traits.rs) says an
+                                // Err means the turn is over. The pre-fix
+                                // `break` fell through to the trailing
+                                // `Usage` + `Done`, so a consumer that
+                                // saw `Err` then `Done` could not tell a
+                                // hard failure from a clean stop.
                                 yield Err(adk_err(e));
-                                break;
+                                return;
                             }
                         }
                     }
@@ -404,7 +495,9 @@ impl AnthropicProvider {
                     yield Ok(StreamChunk::Done);
                 }
                 Err(e) => {
+                    // H-P10: return rather than fall through to `Done`.
                     yield Err(adk_err(e));
+                    return;
                 }
             }
         })
