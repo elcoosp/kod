@@ -34,6 +34,7 @@
 //! ```
 
 pub mod ask;
+pub mod relevance;
 pub mod check;
 pub mod context;
 pub mod git;
