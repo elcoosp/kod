@@ -1245,6 +1245,10 @@ pub struct KodEngine {
     tool_quotas:
         std::sync::RwLock<Option<std::collections::BTreeMap<String, kod_config::ToolQuota>>>,
     /// Monotonic per-session turn id for the trace log (Tier 1.4).
+    /// Hysteresis state for the per-turn Jev tool-category filter
+    /// (P0 Fix 3). Keyed by transcript key so a swarm agent's filter
+    /// state does not leak into the main session's.
+    tool_filter_states: RwLock<HashMap<String, ToolFilterState>>,
     next_turn_id: std::sync::atomic::AtomicU64,
     /// Append-only writer for `turns.jsonl`, next to the session log.
     /// `None` — the default — is the right shape for a test or a
@@ -1484,6 +1488,82 @@ impl ApprovalDecision {
             self,
             ApprovalDecision::Approve | ApprovalDecision::ApproveWith { .. },
         )
+    }
+}
+
+/// Hysteresis state for the per-turn Jev tool-category filter (P0).
+///
+/// The tool list sits in the cached prefix (Anthropic caches the
+/// ordered request stream up to the system marker, and tools precede
+/// system on the wire), so every time Jev flips a category the whole
+/// cached prefix — tools, system, repo map — goes cold. The
+/// registry's own tools-by-name sort exists to keep the prefix
+/// byte-stable; the per-turn filter was working against that.
+///
+/// This state records the last committed category set and the
+/// classification that produced it. A refilter is allowed only when
+/// the classified task signature differs from the committed one *and*
+/// the committed set has survived `min_stable_turns` — enough turns
+/// to have paid back the cache write it cost.
+#[derive(Debug, Clone)]
+pub(crate) struct ToolFilterState {
+    /// Categories the committed filter kept. A refilter replaces this.
+    pub enabled_categories: std::collections::HashSet<kod_types::ToolCategory>,
+    /// The task signature the committed filter was computed for.
+    pub committed_signature: String,
+    /// Turns elapsed since the last commit. Incremented on every
+    /// `filter_tool_definitions_with_hysteresis` call; reset to zero
+    /// on commit.
+    pub turns_since_change: u64,
+    /// How many consecutive turns the committed set must survive
+    /// before a different signature is allowed to replace it. Three
+    /// is a design choice: two is too eager (a single mis-classified
+    /// turn flips the set), five is too slow (a real task change
+    /// waits half a minute on a chatty session).
+    pub min_stable_turns: u64,
+}
+
+impl ToolFilterState {
+    /// A fresh state with no committed signature: the first call
+    /// always refilters, since there is nothing to be stable against.
+    fn fresh() -> Self {
+        Self {
+            enabled_categories: std::collections::HashSet::new(),
+            committed_signature: String::new(),
+            turns_since_change: 0,
+            min_stable_turns: 3,
+        }
+    }
+
+    /// Whether a refilter is allowed for `task_sig`.
+    ///
+    /// Returns `false` when the signature is unchanged (the committed
+    /// set is still correct) or when it changed but the committed
+    /// set has not yet seasoned.
+    fn should_refilter(&self, task_sig: &str) -> bool {
+        if task_sig == self.committed_signature {
+            return false;
+        }
+        self.turns_since_change >= self.min_stable_turns
+    }
+
+    /// Record that this turn passed. Called on every filter attempt,
+    /// so `turns_since_change` tracks wall-clock turns rather than
+    /// filter attempts.
+    fn tick(&mut self) {
+        self.turns_since_change = self.turns_since_change.saturating_add(1);
+    }
+
+    /// Commit a new signature and category set. Resets the stable
+    /// counter so the *next* change must season again.
+    fn commit(
+        &mut self,
+        task_sig: String,
+        cats: std::collections::HashSet<kod_types::ToolCategory>,
+    ) {
+        self.committed_signature = task_sig;
+        self.enabled_categories = cats;
+        self.turns_since_change = 0;
     }
 }
 
@@ -1788,6 +1868,7 @@ impl KodEngine {
             state_store: std::sync::RwLock::new(None),
             tool_counts: std::sync::Arc::new(crate::tool_quota::ToolCounts::new()),
             tool_quotas: std::sync::RwLock::new(None),
+            tool_filter_states: RwLock::new(HashMap::new()),
             next_turn_id: std::sync::atomic::AtomicU64::new(1),
             turn_trace_writer: std::sync::RwLock::new(None),
             taint: std::sync::RwLock::new(kod_types::trust::TrustLevel::Assistant),
@@ -4458,8 +4539,19 @@ impl KodEngine {
         };
 
         // Ground the model: where it runs and what it can touch.
-        let definitions = self
-            .filter_tool_definitions_with_jev(key, input, self.tools.get_definitions().await)
+        //
+        // P0 Fix 3: the category filter runs only when the classified
+        // task signature changed and the committed set has seasoned.
+        // Tools sit in the cached prefix, so a per-turn flip here
+        // invalidates the whole prefix; the hysteresis keeps that
+        // cost from being paid on every mis-classified turn.
+        let (definitions, _filter_changed) = self
+            .filter_tool_definitions_with_hysteresis(
+                key,
+                input,
+                task_type,
+                self.tools.get_definitions().await,
+            )
             .await;
         // P5.1 — trim the MCP half of the tool list. Independent of
         // the category filter above; both feed the same `definitions`

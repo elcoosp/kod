@@ -8,6 +8,7 @@
 //! visibility changes are required on the parent.
 
 use super::KodEngine;
+use super::ToolFilterState;
 use super::{format_call_brief, question_marker, AWAIT_APPROVAL_SECS, DEFAULT_TRANSCRIPT_KEY};
 use kod_provider::ModelRef;
 use kod_types::{ToolCall, ToolDefinition, ToolResult};
@@ -1567,6 +1568,79 @@ impl KodEngine {
         }
 
         approved
+    }
+
+    /// P0 Fix 3: hysteresis-aware wrapper around the Jev category
+    /// filter.
+    ///
+    /// Returns `(filtered_definitions, changed)`:
+    ///
+    /// - `filtered_definitions` is the tool list to hand the model.
+    ///   When the filter is skipped the previously-committed category
+    ///   set is applied locally, so the result is byte-stable across
+    ///   turns for a fixed task signature.
+    /// - `changed` is `true` on the turn the filter actually ran. The
+    ///   caller suppresses the transcript cache breakpoint for that
+    ///   one round, since the newly-changed prefix would pay a
+    ///   cache-write premium that may not survive the next turn.
+    pub(crate) async fn filter_tool_definitions_with_hysteresis(
+        &self,
+        key: &str,
+        input: &str,
+        task_type: crate::router::TaskType,
+        definitions: Vec<ToolDefinition>,
+    ) -> (Vec<ToolDefinition>, bool) {
+        let task_sig = task_type.as_label().to_string();
+
+        // Read the state under a short lock; do not hold it across the
+        // Jev call.
+        let (should_refilter, cached_cats) = {
+            let mut states = self.tool_filter_states.write().await;
+            let state = states
+                .entry(key.to_string())
+                .or_insert_with(ToolFilterState::fresh);
+            let should = state.should_refilter(&task_sig);
+            let cats = state.enabled_categories.clone();
+            state.tick();
+            (should, cats)
+        };
+
+        if !should_refilter {
+            // No Jev call. Apply the cached category set locally. If
+            // the cache is empty (first call ever with a matching
+            // signature — impossible in practice, but defensive), the
+            // full list passes through.
+            if cached_cats.is_empty() {
+                return (definitions, false);
+            }
+            let filtered: Vec<ToolDefinition> = definitions
+                .iter()
+                .filter(|d| cached_cats.contains(&d.category))
+                .cloned()
+                .collect();
+            if filtered.is_empty() {
+                return (definitions, false);
+            }
+            return (filtered, false);
+        }
+
+        // Refilter: Jev call plus a commit on the state.
+        let before = definitions.len();
+        let filtered =
+            self.filter_tool_definitions_with_jev(key, input, definitions.clone()).await;
+        let changed = filtered.len() != before
+            || filtered.iter().map(|d| &d.name).ne(definitions.iter().map(|d| &d.name));
+
+        // Rebuild the category set from the filtered list and commit.
+        let cats: std::collections::HashSet<kod_types::ToolCategory> =
+            filtered.iter().map(|d| d.category).collect();
+        {
+            let mut states = self.tool_filter_states.write().await;
+            if let Some(state) = states.get_mut(key) {
+                state.commit(task_sig, cats);
+            }
+        }
+        (filtered, changed)
     }
 
     pub(crate) async fn filter_tool_definitions_with_jev(
