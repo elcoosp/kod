@@ -369,7 +369,7 @@ fn summarize_result(result: &kod_types::ToolResult) -> String {
         kod_types::ToolResult::Success(v) => {
             let s = v.to_string();
             if s.len() > 240 {
-                format!("{}…", &s[..240])
+                format!("{}…", kod_types::strutil::truncate_chars(&s, 240))
             } else {
                 s
             }
