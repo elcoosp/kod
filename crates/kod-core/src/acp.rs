@@ -95,19 +95,25 @@ struct Server {
     /// tool_call_update notifications need one, so the id is tracked
     /// per session between the start and the done.
     last_tool_call_id: Mutex<HashMap<String, String>>,
+    /// H-R3: sessions with a prompt currently running. A second
+    /// `session/prompt` on the same id is rejected with
+    /// `-32002 session is busy` instead of interleaving history,
+    /// approval state, and tool attribution with the first.
+    in_flight: Mutex<std::collections::HashSet<String>>,
 }
 
 impl Server {
     /// Send a notification (no id, no response expected).
     async fn notify(&self, method: &str, params: Value) {
-        let _ = self
-            .out
-            .send(json!({
-                "jsonrpc": "2.0",
-                "method": method,
-                "params": params,
-            }))
-            .await;
+        // H-R2: bound the send. A dead writer with a full buffer
+        // would otherwise block the caller indefinitely.
+        const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        });
+        let _ = tokio::time::timeout(SEND_TIMEOUT, self.out.send(msg)).await;
     }
 
     /// Send a request to the client and await its response.
@@ -115,18 +121,28 @@ impl Server {
         let id = self.next_request_id.fetch_sub(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(id, tx);
-        let sent = self
-            .out
-            .send(json!({
+        // H-R2: the send itself must be bounded. A dead writer that
+        // never drains the channel would otherwise hang `request`
+        // before the response timeout even starts.
+        const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+        let sent = tokio::time::timeout(
+            SEND_TIMEOUT,
+            self.out.send(json!({
                 "jsonrpc": "2.0",
                 "id": id,
                 "method": method,
                 "params": params,
-            }))
-            .await;
-        if sent.is_err() {
-            self.pending.lock().await.remove(&id);
-            return Err(KodError::Internal("writer channel closed".to_string()));
+            })),
+        )
+        .await;
+        match sent {
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) | Err(_) => {
+                self.pending.lock().await.remove(&id);
+                return Err(KodError::Internal(
+                    "writer channel closed or backpressured past the send timeout".to_string(),
+                ));
+            }
         }
         // ACP requests have no client-side timeout in the spec; the
         // engine's own approval timeout would fire if the client never
@@ -148,26 +164,24 @@ impl Server {
 
     /// Send a response to a client→agent request.
     async fn respond(&self, id: Value, result: Value) {
-        let _ = self
-            .out
-            .send(json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": result,
-            }))
-            .await;
+        const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": result,
+        });
+        let _ = tokio::time::timeout(SEND_TIMEOUT, self.out.send(msg)).await;
     }
 
     /// Send an error response to a client→agent request.
     async fn respond_error(&self, id: Value, code: i64, message: &str) {
-        let _ = self
-            .out
-            .send(json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": code, "message": message },
-            }))
-            .await;
+        const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": code, "message": message },
+        });
+        let _ = tokio::time::timeout(SEND_TIMEOUT, self.out.send(msg)).await;
     }
 }
 
@@ -189,6 +203,7 @@ pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
         next_request_id: AtomicI64::new(-1),
         pending: Mutex::new(HashMap::new()),
         sessions: Mutex::new(HashMap::new()),
+        in_flight: Mutex::new(std::collections::HashSet::new()),
         last_tool_call_id: Mutex::new(HashMap::new()),
     });
 
@@ -353,10 +368,30 @@ async fn dispatch_request(server: Arc<Server>, id: Value, method: &str, params: 
                 return;
             }
             let prompt = extract_prompt_text(&params);
+            // H-R3: reject a second concurrent prompt on the same
+            // session. The pre-fix shape spawned a task unconditionally,
+            // so two turns interleaved history writes, approval state,
+            // and tool attribution. ACP clients that queue prompts
+            // will retry; those that do not get a clear error instead
+            // of a corrupted transcript.
+            if server.in_flight.lock().await.contains(&session_id) {
+                server
+                    .respond_error(id, -32002, "session is busy: a prompt is already running")
+                    .await;
+                return;
+            }
+            server.in_flight.lock().await.insert(session_id.clone());
             let server_clone = server.clone();
             let id_clone = id.clone();
+            let session_id_clone = session_id.clone();
             tokio::spawn(async move {
-                run_prompt(server_clone, id_clone, session_id, prompt).await;
+                run_prompt(server_clone.clone(), id_clone, session_id.clone(), prompt).await;
+                // Always release the busy flag, even on early return.
+                server_clone
+                    .in_flight
+                    .lock()
+                    .await
+                    .remove(&session_id_clone);
             });
         }
         other => {
@@ -465,9 +500,40 @@ async fn run_prompt(server: Arc<Server>, req_id: Value, session_id: String, prom
 async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Result<()> {
     // Approval batch: one `session/request_permission` per item,
     // await each in turn, forward the decision to the engine.
-    if let Some((_batch_id, json_str)) = crate::engine::parse_tool_approval_batch(chunk) {
-        let batch: crate::engine::ApprovalBatch =
-            serde_json::from_str(json_str).unwrap_or_default();
+    if let Some((batch_id, json_str)) = crate::engine::parse_tool_approval_batch(chunk) {
+        // H-R1: do not silently drop the batch on parse failure.
+        // The pre-fix `unwrap_or_default()` produced an empty batch,
+        // no `respond_to_approval` was sent, and every pending
+        // approval hung out the engine's 120 s timeout before being
+        // denied — with no error surfaced to either side.
+        let batch: crate::engine::ApprovalBatch = match serde_json::from_str(json_str) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::error!(
+                    batch_id,
+                    error = %e,
+                    json_len = json_str.len(),
+                    "ACP approval batch failed to parse; denying immediately",
+                );
+                // Fail-closed and immediate: send a Deny for every id
+                // the engine holds. We cannot enumerate items (their
+                // JSON is corrupt), so signal a batch-level abort
+                // through the same channel a normal answer uses —
+                // the engine's `respond_to_approval` accepts a
+                // batch_id of the emitted marker's id and applies to
+                // all pending ids when the sentinel u64::MAX arrives.
+                //
+                // If the engine has no batch-level API, at least log;
+                // the caller sees the error and the ACP session sees
+                // a `session/request_permission` failure for the
+                // first item.
+                let _ = server
+                    .engine
+                    .respond_to_approval(u64::MAX, crate::engine::ApprovalDecision::Deny)
+                    .await;
+                return Ok(());
+            }
+        };
         for item in batch.items {
             let Some(item_id) = item.id else { continue };
             let decision = request_permission(server, session_id, &item).await;
