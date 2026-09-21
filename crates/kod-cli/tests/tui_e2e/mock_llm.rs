@@ -52,6 +52,7 @@ impl MockServer {
 
     /// Like [`start`], but optionally streams the reply **one byte
     /// per SSE event**.
+    #[allow(dead_code)]
     ///
     /// This exists to exercise the provider's UTF-8 boundary handling
     /// — the Anthropic split-UTF8 bug (H-P2) lived in a decoder that
@@ -121,8 +122,11 @@ impl Drop for MockServer {
 fn build_router(reply: String, byte_by_byte: bool) -> Router {
     Router::new()
         .route("/v1/chat/completions", post(move || {
-            let reply = reply.clone();
-            async move { sse_reply(&reply, byte_by_byte) }
+            // Eagerly build the event list on the request thread so
+            // the returned stream owns its data outright; no borrowed
+            // `&reply` crosses the async boundary.
+            let events = sse_events(&reply, byte_by_byte);
+            async move { sse_from_events(events) }
         }))
         // The provider may probe `GET /v1/models` at registry build
         // time. Answer with a single-entry list so a startup probe
@@ -136,10 +140,13 @@ fn build_router(reply: String, byte_by_byte: bool) -> Router {
         }))
 }
 
-fn sse_reply(
-    reply: &str,
-    byte_by_byte: bool,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+/// Build the full SSE event list for `reply`.
+///
+/// Returning the events as an owned `Vec<String>` (rather than a
+/// `Sse<impl Stream>`) means the caller never has to name a lifetime
+/// for data borrowed from the request handler. `String` payloads move
+/// into the stream; the handler owns them for the duration.
+fn sse_events(reply: &str, byte_by_byte: bool) -> Vec<String> {
     let mut events: Vec<String> = Vec::new();
 
     // Opening chunk: role only. The OpenAI spec includes `role` in
@@ -170,10 +177,16 @@ fn sse_reply(
     // `[DONE]` sentinel, per the OpenAI streaming spec.
     events.push("[DONE]".to_string());
 
+    events
+}
+
+/// Turn an owned `Vec<String>` into the SSE stream axum serves.
+fn sse_from_events(
+    events: Vec<String>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let stream = stream::iter(events.into_iter().map(|payload| {
         Ok::<_, Infallible>(Event::default().data(payload))
     }));
-
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
