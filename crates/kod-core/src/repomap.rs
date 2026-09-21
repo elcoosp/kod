@@ -615,6 +615,10 @@ impl Engine {
     #[test]
     fn test_rank_favors_hubs() {
         let tmp = TempDir::new().unwrap();
+        // `looks_like_a_repo` requires a project marker; without
+        // one the walk is skipped by design. A `.git` directory
+        // is the cheapest way to opt the fixture into the walk.
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
         // Create a "hub" and three "spokes" that import it.
         std::fs::write(tmp.path().join("hub.rs"), "pub fn shared() {}\n").unwrap();
         std::fs::write(
@@ -670,6 +674,10 @@ impl Engine {
     #[test]
     fn test_render_budget_goes_to_hubs() {
         let tmp = TempDir::new().unwrap();
+        // `looks_like_a_repo` requires a project marker; without
+        // one the walk is skipped by design. A `.git` directory
+        // is the cheapest way to opt the fixture into the walk.
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
         // Hub imported by many spokes; each file is one line, so a
         // small cap fits only the first few lines.
         std::fs::write(tmp.path().join("hub.rs"), "pub fn shared() {}\n").unwrap();
@@ -717,6 +725,10 @@ impl Engine {
     #[test]
     fn build_repo_map_walks_a_tempdir() {
         let tmp = TempDir::new().unwrap();
+        // `looks_like_a_repo` requires a project marker; without
+        // one the walk is skipped by design. A `.git` directory
+        // is the cheapest way to opt the fixture into the walk.
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
         std::fs::write(tmp.path().join("main.rs"), "fn main() {}\nstruct Foo;\n").unwrap();
         std::fs::create_dir_all(tmp.path().join("sub")).unwrap();
         std::fs::write(tmp.path().join("sub/lib.rs"), "pub fn helper() {}\n").unwrap();
