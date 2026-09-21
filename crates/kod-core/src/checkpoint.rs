@@ -133,39 +133,70 @@ impl CheckpointManager {
 
         let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
 
-        let (existed, content) = match std::fs::read_to_string(&canonical) {
-            Ok(s) => (true, s),
+        // H-D8: check the file size via metadata *before* opening it.
+        // The previous shape read the whole file to string (fully
+        // buffered, fully UTF-8 validated) and only then compared the
+        // length to the cap — a multi-GB log was read to be rejected.
+        //
+        // The metadata lookup also lets us handle the directory and
+        // symlink cases without a read attempt.
+        let (existed, content) = match std::fs::metadata(&canonical) {
+            Ok(meta) if meta.is_dir() => {
+                // A directory is recorded as "did not exist"; a
+                // restore then removes the file at that path if one
+                // was created (a well-formed no-op against a
+                // directory).
+                (false, String::new())
+            }
+            Ok(meta) => {
+                if meta.len() as usize > MAX_SNAPSHOT_BYTES {
+                    tracing::warn!(
+                        path = %canonical.display(),
+                        bytes = meta.len(),
+                        cap = MAX_SNAPSHOT_BYTES,
+                        "file too large to snapshot; skipping"
+                    );
+                    return Ok(None);
+                }
+                match std::fs::read_to_string(&canonical) {
+                    Ok(s) => (true, s),
+                    Err(e) => {
+                        // Binary file (InvalidData), permission denied,
+                        // or any other read error. Nothing actionable
+                        // to save; the tool will report the failure.
+                        tracing::debug!(
+                            path = %canonical.display(),
+                            error = %e,
+                            "cannot snapshot; skipping"
+                        );
+                        return Ok(None);
+                    }
+                }
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (false, String::new()),
-            Err(e) if e.kind() == std::io::ErrorKind::IsADirectory => (false, String::new()),
             Err(e) => {
-                // Binary file (InvalidData), permission denied, or any
-                // other read error. Nothing actionable to save; the tool
-                // itself will report the failure if it matters.
                 tracing::debug!(
                     path = %canonical.display(),
                     error = %e,
-                    "cannot snapshot; skipping"
+                    "cannot snapshot; metadata failed"
                 );
                 return Ok(None);
             }
         };
-
-        if content.len() > MAX_SNAPSHOT_BYTES {
-            tracing::warn!(
-                path = %canonical.display(),
-                bytes = content.len(),
-                cap = MAX_SNAPSHOT_BYTES,
-                "file too large to snapshot; skipping"
-            );
-            return Ok(None);
-        }
 
         let ts_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
         let n = self.counter.fetch_add(1, Ordering::Relaxed);
-        let id = format!("{ts_ms:013}-{n:04}");
+        // H-D7: the counter was zero-padded to 4 digits; after
+        // 10 000 snapshots in a long-lived process it rendered 5,
+        // and 10000 sorts *before* 9999 lexicographically — `list`
+        // ("newest first") inverts and `enforce_retention` (drop the
+        // lexicographically smallest) starts deleting the newest
+        // snapshots. 10 digits is 10^10 snapshots per millisecond,
+        // which no process will reach.
+        let id = format!("{ts_ms:013}-{n:010}");
 
         let snapshot = Snapshot {
             id: id.clone(),
@@ -221,7 +252,19 @@ impl CheckpointManager {
     }
 
     /// Look up a snapshot by id.
+    ///
+    /// H-D7: the id is validated against the documented shape
+    /// (`<13-digit-ts>-<10-digit-counter>`) before it is used in a
+    /// path. A caller that passed `../../etc/passwd` as an id
+    /// previously joined it into the checkpoint directory and read
+    /// (or on restore, wrote) outside it.
     pub fn find(&self, id: &str) -> Result<Option<Snapshot>> {
+        if !is_valid_id(id) {
+            // H-D7: an invalid id cannot name any checkpoint; returning
+            // `None` keeps the caller's "no such checkpoint" path
+            // alive without ever building a path from the string.
+            return Ok(None);
+        }
         let path = self.dir.join(format!("{id}.json"));
         if !path.exists() {
             return Ok(None);
@@ -239,6 +282,14 @@ impl CheckpointManager {
         let s = self.find(id)?.ok_or_else(|| KodError::InvalidParameters {
             reason: format!("no checkpoint with id {id:?}"),
         })?;
+        // H-D8: restore used to overwrite without first snapshotting
+        // the current file. A mistaken restore (ids are opaque
+        // timestamps) destroyed the working version permanently.
+        // Snapshot it first — a new id is minted, so the user can
+        // undo the restore by restoring that id in turn.
+        if s.path.exists() {
+            let _ = self.snapshot_before(&s.path, "restore");
+        }
         if s.existed {
             if let Some(parent) = s.path.parent()
                 && !parent.as_os_str().is_empty()
@@ -309,6 +360,19 @@ impl CheckpointManager {
         }
         Ok(())
     }
+}
+
+/// True iff `id` has the shape `<13-digit-ts>-<10-digit-counter>`.
+/// A strict allow-list — the checkpoint directory name is a path
+/// component, and a caller-supplied id must not be able to escape it.
+fn is_valid_id(id: &str) -> bool {
+    let Some((ts, n)) = id.split_once('-') else {
+        return false;
+    };
+    if ts.len() != 13 || n.len() != 10 {
+        return false;
+    }
+    ts.bytes().all(|b| b.is_ascii_digit()) && n.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// FNV-1a 64-bit, rendered as 16 hex chars. Deterministic across runs
@@ -553,7 +617,7 @@ mod coverage_checkpoint_corners {
         let restored = cp.restore(&id).unwrap();
         assert_eq!(
             restored,
-            std::fs::canonicalize(&tmp.path().join("new.txt")).unwrap_or(target)
+            std::fs::canonicalize(tmp.path().join("new.txt")).unwrap_or(target)
         );
         assert!(!tmp.path().join("new.txt").exists());
     }
