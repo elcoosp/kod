@@ -391,8 +391,9 @@ pub fn expand_at_references(input: &str, working_dir: &std::path::Path) -> Strin
         }
         // Copy the byte through unchanged. Multi-byte UTF-8 preserves
         // because we copy byte-by-byte and the input was valid UTF-8.
-        out.push(bytes[i] as char);
-        i += 1;
+        let ch = input[i..].chars().next().unwrap_or('\0');
+        out.push(ch);
+        i += ch.len_utf8();
     }
     // Re-decode as UTF-8 — the byte-copy above yields a valid string
     // because we only skipped whole bytes when expanding.
@@ -491,16 +492,8 @@ fn strip_conversation_tail(system_text: &str) -> String {
 /// (a file containing "café", an error message with an em-dash, any
 /// emoji in a directory listing).
 pub(crate) fn truncate_chars(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        return s;
-    }
-    let mut end = max;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
+    kod_types::strutil::truncate_chars(s, max)
 }
-
 /// Append a round's text to the accumulated final text, inserting a
 /// blank-line separator when this is not the first non-empty round.
 ///
@@ -918,6 +911,27 @@ fn cap_lines(text: &str, max: usize) -> String {
 /// capped so history can never blow the context window on its own.
 const MAX_HISTORY_TURNS: usize = 40;
 
+/// H-E7: pinned-aware turn cap. Drop the oldest unpinned turns until
+/// the vector has at most `max` entries. A `turns.drain(..excess)` on
+/// the same vector ignores `metadata.pinned`, so a user who pinned a
+/// turn could silently lose it as soon as the round loop persisted a
+/// few tool messages. Three near-identical call sites used to do this
+/// three different ways; one helper is the fix.
+fn cap_transcript(turns: &mut Vec<kod_types::ChatMessage>, max: usize) {
+    if turns.len() <= max {
+        return;
+    }
+    let mut to_drop = turns.len() - max;
+    turns.retain(|t| {
+        if to_drop > 0 && !t.metadata.pinned {
+            to_drop -= 1;
+            false
+        } else {
+            true
+        }
+    });
+}
+
 /// Per-turn cap. A single turn can hold a code snippet, an error trace,
 /// or a tool-result excerpt without being chopped. Was 1500, which was
 /// smaller than a typical `read_file` output — every turn past the first
@@ -1016,6 +1030,75 @@ struct ToolRound {
 const DEFAULT_TRANSCRIPT_KEY: &str = "";
 
 /// Main engine for KOD
+/// H-S13: a conservative static allowlist for the Jev-driven sandbox
+/// downgrade. A command that fails any of these tests keeps its
+/// sandbox regardless of what Jev said, because Jev classified
+/// model-authored text and a prompt injection can flip its own
+/// verdict.
+///
+/// The check is structural, not textual:
+///   - no redirection or pipe characters
+///   - no shell chaining operators
+///   - no command substitution
+///   - the first token must be one of a small set of common
+///     dev / query binaries
+///   - no arguments that look like script injection (`eval`, `exec`,
+///     `source`, `.`, `:`)
+fn command_is_sandbox_downgrade_safe(command: &str) -> bool {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Structural: any of these means we cannot cheaply reason about
+    // what the command does.
+    const UNSAFE_TOKENS: &[&str] = &[";", "&&", "||", "|", ">", "<", "`", "$(", "${", "\n", "\r"];
+    if UNSAFE_TOKENS.iter().any(|t| trimmed.contains(t)) {
+        return false;
+    }
+    // First whitespace-separated token, allowing a full path.
+    let first = trimmed
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .rsplit('/')
+        .next()
+        .unwrap_or("");
+    // A curated list of binaries that are read-only or trivially
+    // auditable. `git` is on the list only with a read-only
+    // subcommand (checked below).
+    const ALLOW: &[&str] = &[
+        "ls", "cat", "head", "tail", "grep", "find", "pwd", "which", "echo", "true", "false", "wc",
+        "sort", "uniq", "diff", "file", "stat", "tree", "du", "df", "date", "env", "printenv",
+        "id", "whoami", "cargo", "rustc", "rustup", "go", "gofmt", "python", "python3", "node",
+        "npm", "npx", "tsc", "ruff", "pytest", "make", "cmake",
+    ];
+    if !ALLOW.iter().any(|b| b == &first) {
+        // `git` needs the subcommand check.
+        if first != "git" {
+            return false;
+        }
+        let sub = trimmed
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or("")
+            .rsplit('/')
+            .next()
+            .unwrap_or("");
+        return matches!(
+            sub,
+            "status" | "diff" | "log" | "show" | "branch" | "remote" | "blame"
+        );
+    }
+    // Reject a couple of argument shapes that are still unsafe even
+    // when the first token is allowlisted.
+    for tok in ["eval", "exec", "source"] {
+        if trimmed.split_whitespace().any(|w| w == tok) {
+            return false;
+        }
+    }
+    true
+}
+
 pub struct KodEngine {
     router: Arc<TaskRouter>,
     /// Named-endpoint map (A4b). When `Some`, `resolve_provider` reads
@@ -1048,7 +1131,7 @@ pub struct KodEngine {
     /// rounds. Keyed by transcript (D4-D4): a cancel for
     /// `swarm:{agent-id}` stops only that agent, not the whole swarm.
     /// The default key `""` is the interactive session.
-    cancels: RwLock<std::collections::HashSet<String>>,
+    cancels: parking_lot::RwLock<std::collections::HashSet<String>>,
     /// Transcripts, one per key. `DEFAULT_TRANSCRIPT_KEY` is the
     /// interactive session; a swarm agent uses `swarm:<agent-id>` so
     /// concurrent agents do not interleave their turns.
@@ -1227,7 +1310,10 @@ pub struct KodEngine {
     /// (D4.3). Owned by the engine so the note/read tools (which
     /// live at this composition root) have a single hub to talk to,
     /// and so the swarm runner has one to spawn its `AgentSwarm`
-    /// with. Replaced per-run by the runner calling `clear_all()`.
+    /// with. H-R5: the runner calls `swarm.shutdown()` +
+    /// `hub.clear_all()` at the end of `run()` — the pre-fix
+    /// comment promised this, but neither call existed and every
+    /// run leaked its agents.
     swarm_hub: Arc<kod_swarm::AgentCommunicationHub>,
     /// Shared blackboard for the current swarm run (Tier 3.5).
     /// Auto-populated with write claims, discovered files, and
@@ -1538,7 +1624,7 @@ impl KodEngine {
             lock_table,
             working_dir: working_dir.clone(),
             steers: RwLock::new(HashMap::new()),
-            cancels: RwLock::new(std::collections::HashSet::new()),
+            cancels: parking_lot::RwLock::new(std::collections::HashSet::new()),
             history: RwLock::new(HashMap::new()),
             transcript_working_dirs: RwLock::new(HashMap::new()),
             plans: RwLock::new(HashMap::new()),
@@ -2363,6 +2449,12 @@ impl KodEngine {
     /// that is the correct behavior for a session that never had a
     /// chance to establish a baseline.
     pub async fn refresh_check_baseline(&self) {
+        // H-E13: run the check against the transcript's working
+        // directory, not the engine's. A swarm agent
+        // writing in its worktree was getting
+        // diagnostics (and baseline overwrites) from
+        // the main repo — the model saw errors it did
+        // not introduce.
         match kod_tools::CheckTool::run_check(&self.working_dir, 60).await {
             Ok(outcome) => {
                 let n = outcome.diagnostics.len();
@@ -2772,10 +2864,25 @@ impl KodEngine {
             Ok(d) => (d.value, crate::jev::DecisionSource::Jev),
             Err(_) => (String::new(), crate::jev::DecisionSource::Heuristic),
         };
+        // H-S13: never downgrade the sandbox on the basis of Jev's
+        // verdict alone. Jev classifies *model-authored* text; a
+        // prompt-injected command can steer its own classification.
+        // The verdict is a necessary condition, not sufficient: the
+        // command must ALSO match a conservative static allowlist of
+        // read-only / non-destructive shapes. Anything else stays
+        // sandboxed regardless of what Jev says.
+        let static_ok = command_is_sandbox_downgrade_safe(command);
         let result = match level.as_str() {
-            "safe" | "network_risk" => SandboxMode::Disabled,
+            "safe" | "network_risk" if static_ok => SandboxMode::Disabled,
             _ => SandboxMode::Auto,
         };
+        if !static_ok && matches!(level.as_str(), "safe" | "network_risk") {
+            tracing::warn!(
+                command_preview = %crate::jev::preview_chars(command, 120),
+                "Jev said safe, but the command fails the static allowlist; \
+                 keeping the sandbox on",
+            );
+        }
         self.log_jev_decision(
             holder,
             "sandbox_decision",
@@ -3390,19 +3497,23 @@ impl KodEngine {
             Err(_) => (Vec::new(), crate::jev::DecisionSource::Heuristic),
         };
         let threshold = jev.thresholds().task_classify_min;
-        let mut truly_new: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        // H-E12: seed `truly_new` with every index, then *remove*
+        // the ones Jev explicitly scored below threshold. The pre-fix
+        // code built it from the returned rows only, so a batch that
+        // answered 1 of 10 hid 9 genuinely-new compiler errors — a
+        // fail-closed default where the module doc promised
+        // fail-open. Any id Jev did not answer stays "new".
+        let mut truly_new: std::collections::HashSet<usize> = all.clone();
         let mut answers = serde_json::Map::new();
         for (id, p) in &rows {
             answers.insert(id.clone(), serde_json::json!(p));
             if let Some(rest) = id.strip_prefix("diag_")
                 && let Ok(idx) = rest.parse::<usize>()
-                && *p >= threshold
+                && *p < threshold
             {
-                truly_new.insert(idx);
+                truly_new.remove(&idx);
             }
         }
-        // Fail-open: if Jev answered nothing, keep the syntactic
-        // verdict (every entry is "new").
         if rows.is_empty() {
             return all;
         }
@@ -4624,14 +4735,18 @@ impl KodEngine {
             source,
         );
 
+        // H-E12: keep the original entries when the filter dropped
+        // everything. The doc comment said exactly this and the code
+        // did the opposite — an over-eager Jev (or a threshold set
+        // too high) emptied the prompt's memory block entirely.
+        // Snapshot the original before consuming it.
+        let original = entries.clone();
         let filtered: Vec<(String, String)> = entries
             .into_iter()
             .filter(|(id, _)| keep_ids.contains(id))
             .collect();
         if filtered.is_empty() {
-            // An over-eager filter that drops everything starves the
-            // prompt. Keep the original if nothing survived.
-            return Vec::new();
+            return original;
         }
         filtered
     }
@@ -5067,10 +5182,10 @@ impl KodEngine {
                 let mut min_conf = 1.0_f32;
                 for (label, p) in &pairs {
                     map.insert(label.clone(), serde_json::json!(p));
-                    if *p >= threshold {
-                        if let Some(c) = kod_types::ToolCategory::from_label(label) {
-                            cats.push(c);
-                        }
+                    if *p >= threshold
+                        && let Some(c) = kod_types::ToolCategory::from_label(label)
+                    {
+                        cats.push(c);
                     }
                     min_conf = min_conf.min((*p - 0.5).abs() * 2.0);
                 }
@@ -5202,25 +5317,25 @@ impl KodEngine {
         cached: bool,
         source: crate::jev::DecisionSource,
     ) {
-        if let Ok(guard) = self.session_recorder.read() {
-            if let Some(rec) = guard.as_ref() {
-                let entry = crate::session_log::SessionEntry::JevDecision {
-                    timestamp_ms: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as u64)
-                        .unwrap_or(0),
-                    holder: holder.to_string(),
-                    purpose: purpose.to_string(),
-                    state_preview: crate::jev::preview_chars(state_preview, 200),
-                    questions_summary: questions_summary.to_string(),
-                    answers,
-                    confidence,
-                    latency_ms,
-                    cached,
-                    source: source.as_str().to_string(),
-                };
-                let _ = rec.record(&entry);
-            }
+        if let Ok(guard) = self.session_recorder.read()
+            && let Some(rec) = guard.as_ref()
+        {
+            let entry = crate::session_log::SessionEntry::JevDecision {
+                timestamp_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0),
+                holder: holder.to_string(),
+                purpose: purpose.to_string(),
+                state_preview: crate::jev::preview_chars(state_preview, 200),
+                questions_summary: questions_summary.to_string(),
+                answers,
+                confidence,
+                latency_ms,
+                cached,
+                source: source.as_str().to_string(),
+            };
+            let _ = rec.record(&entry);
         }
     }
 
@@ -5294,7 +5409,22 @@ impl KodEngine {
             }
         };
         let budget = crate::budget::PromptBudget::from_tokens(window, max_out);
-        budget.allocate(input.len())
+        // H-E3: subtract the parts the engine appends outside the four
+        // budgeted sections — the environment/tool-use trailer, the
+        // structured system prompt, and the tool JSON schemas. The
+        // tool schemas are the bulk; measure them once.
+        let overhead = {
+            let defs = self.tools.get_definitions().await;
+            let schemas = defs
+                .iter()
+                .map(|d| d.parameters_schema.to_string().len() + d.name.len() + d.description.len())
+                .sum::<usize>();
+            // Trailer (~512 chars) + a conservative system-prompt
+            // estimate (~2048) so a prompt with no schema still
+            // reserves some room for the mandatory trailer.
+            512 + 2048 + schemas
+        };
+        budget.allocate_with_overhead(input.len(), overhead)
     }
 
     /// The ordered `ModelRef` chain for a task type. The first element
@@ -5381,10 +5511,10 @@ impl KodEngine {
         // P5.2 — Jev's dynamic routing decision, when available,
         // goes first. The static table's entry, if any, still
         // appears in the chain as a fallback.
-        if let Some(primary) = self.pick_endpoint_with_jev(task_key).await {
-            if seen.insert(primary.endpoint.clone()) {
-                chain.push(primary);
-            }
+        if let Some(primary) = self.pick_endpoint_with_jev(task_key).await
+            && seen.insert(primary.endpoint.clone())
+        {
+            chain.push(primary);
         }
 
         if let Some(r) = &routing
@@ -5834,6 +5964,14 @@ impl KodEngine {
     /// The swarm runner passes `swarm:<agent-id>` per agent, so three
     /// concurrent agents do not interleave their turns.
     pub async fn process_for(&self, key: &str, input: &str) -> Result<TaskResponse> {
+        // H-E5: the non-streaming path never set `current_request`,
+        // so the request-keyed Jev helpers (task classification,
+        // quality gate) ran against an empty or stale request. The
+        // two streaming entry points already do this; the parity
+        // matters because the quality gate reads `current_request`
+        // *after* `clear_current_request`, which is a separate bug
+        // fixed below.
+        self.set_current_request(key, input).await;
         // Check if engine is running
         {
             let running = self.is_running.read().await;
@@ -6827,7 +6965,12 @@ impl KodEngine {
             let mut tool_results: Vec<ToolResult> = Vec::new();
             let mut last_usage: Option<kod_provider::TokenUsage> = None;
             for turn in 1..=MAX_GOAL_TURNS {
-                if self.is_cancelled() {
+                // H-E8: cancel on the transcript's own key, not the
+                // default. A swarm agent's `request_cancel_for`
+                // ("swarm:<id>") was never observed here; only the
+                // default transcript's cancel flag was checked, so a
+                // swarm cancel left the goal loop running.
+                if self.is_cancelled_for(key) {
                     return Err(KodError::InvalidState("cancelled by user".to_string()));
                 }
                 if turn > 1 {
@@ -6921,7 +7064,12 @@ impl KodEngine {
                 }
                 let (final_text, calls, results, usage, _retry) =
                     turn_outcome.ok_or_else(|| turn_err.unwrap_or_else(Self::no_provider_error))?;
-                last_usage = usage.or(last_usage);
+                last_usage = match (last_usage, usage) {
+                    (Some(prev), Some(next)) => Some(prev.merge(&next)),
+                    (Some(prev), None) => Some(prev),
+                    (None, Some(next)) => Some(next),
+                    (None, None) => None,
+                };
                 if !all_text.is_empty() && !final_text.trim().is_empty() {
                     all_text.push_str("\n\n");
                 }
@@ -7000,12 +7148,22 @@ impl KodEngine {
             );
             match provider.complete(&req).await? {
                 GenerationResponse::Text { content, usage } => {
-                    last_usage = usage.or(last_usage);
+                    last_usage = match (last_usage, usage) {
+                        (Some(prev), Some(next)) => Some(prev.merge(&next)),
+                        (Some(prev), None) => Some(prev),
+                        (None, Some(next)) => Some(next),
+                        (None, None) => None,
+                    };
                     append_round_text(&mut final_text, &content);
                     break;
                 }
                 GenerationResponse::ToolCalls { calls, usage } => {
-                    last_usage = usage.or(last_usage);
+                    last_usage = match (last_usage, usage) {
+                        (Some(prev), Some(next)) => Some(prev.merge(&next)),
+                        (Some(prev), None) => Some(prev),
+                        (None, Some(next)) => Some(next),
+                        (None, None) => None,
+                    };
                     if calls.is_empty() {
                         break;
                     }
@@ -7027,10 +7185,7 @@ impl KodEngine {
                         let mut hist = self.history.write().await;
                         let turns = hist.entry(round.holder.to_string()).or_default();
                         turns.extend(section.messages.iter().cloned());
-                        let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
-                        if excess > 0 {
-                            turns.drain(..excess);
-                        }
+                        cap_transcript(&mut *turns, MAX_HISTORY_TURNS);
                     }
                     self.apply_steers(pending, messages, round.holder).await;
                 }
@@ -7039,7 +7194,12 @@ impl KodEngine {
                     calls,
                     usage,
                 } => {
-                    last_usage = usage.or(last_usage);
+                    last_usage = match (last_usage, usage) {
+                        (Some(prev), Some(next)) => Some(prev.merge(&next)),
+                        (Some(prev), None) => Some(prev),
+                        (None, Some(next)) => Some(next),
+                        (None, None) => None,
+                    };
                     append_round_text(&mut final_text, &content);
                     if calls.is_empty() {
                         break;
@@ -7058,10 +7218,7 @@ impl KodEngine {
                         let mut hist = self.history.write().await;
                         let turns = hist.entry(round.holder.to_string()).or_default();
                         turns.extend(section.messages.iter().cloned());
-                        let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
-                        if excess > 0 {
-                            turns.drain(..excess);
-                        }
+                        cap_transcript(&mut *turns, MAX_HISTORY_TURNS);
                     }
                     self.apply_steers(pending, messages, round.holder).await;
                 }
@@ -7227,7 +7384,12 @@ impl KodEngine {
                 let _ = chunk_tx.send(stream_reset_marker()).await;
                 return Ok((String::new(), Vec::new(), Vec::new(), None, true));
             }
-            last_usage = usage.or(last_usage);
+            last_usage = match (last_usage, usage) {
+                (Some(prev), Some(next)) => Some(prev.merge(&next)),
+                (Some(prev), None) => Some(prev),
+                (None, Some(next)) => Some(next),
+                (None, None) => None,
+            };
             append_round_text(&mut final_text, &text);
             if calls.is_empty() {
                 break;
@@ -7286,10 +7448,7 @@ impl KodEngine {
                 let mut hist = self.history.write().await;
                 let turns = hist.entry(round.holder.to_string()).or_default();
                 turns.extend(section.messages.iter().cloned());
-                let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
-                if excess > 0 {
-                    turns.drain(..excess);
-                }
+                cap_transcript(&mut *turns, MAX_HISTORY_TURNS);
             }
             self.apply_steers(pending, messages, round.holder).await;
             // If we have already produced text this turn, emit a
@@ -7446,8 +7605,39 @@ impl KodEngine {
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
         let mut chunk_count: usize = 0;
         let mut retry_suggested = false;
-        while let Some(item) = stream.next().await {
-            match item? {
+        // H-E11: an idle-chunk deadline. The pre-fix loop
+        // (`while let Some(item) = stream.next().await`) had no
+        // bound at all: a wedged SSE connection hung the whole turn
+        // (and, since it is per-transcript-key, every subsequent
+        // prompt on that key). The timeout is per-chunk, not
+        // per-stream — a slow-but-alive connection that sends
+        // something every few seconds never trips it.
+        const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+        let mut stream_error: Option<kod_error::KodError> = None;
+        loop {
+            let next = match tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()).await {
+                Ok(Some(item)) => item,
+                Ok(None) => break,
+                Err(_) => {
+                    stream_error = Some(kod_error::KodError::ProviderTimeout {
+                        timeout_ms: STREAM_IDLE_TIMEOUT.as_millis() as u64,
+                    });
+                    break;
+                }
+            };
+            let item = match next {
+                Ok(v) => v,
+                Err(e) => {
+                    // H-E11: preserve what was assembled. The pre-fix
+                    // `item?` discarded every partial and the
+                    // streamed text on the first hard error, so the
+                    // transcript showed a user turn with no
+                    // assistant turn after a hard failure.
+                    stream_error = Some(e);
+                    break;
+                }
+            };
+            match item {
                 StreamChunk::Text(t) => {
                     text.push_str(&t);
                     let _ = chunk_tx.send(t).await;
@@ -7457,7 +7647,7 @@ impl KodEngine {
                     // requirement are enforced inside the helper;
                     // the chunk counter here just gates the call
                     // rate.
-                    if chunk_count % EARLY_TERM_CHECK_EVERY_CHUNKS == 0
+                    if chunk_count.is_multiple_of(EARLY_TERM_CHECK_EVERY_CHUNKS)
                         && text.len() >= EARLY_TERM_MIN_CHARS
                     {
                         match self.should_early_terminate(holder, &text).await {
@@ -7514,6 +7704,13 @@ impl KodEngine {
                 StreamChunk::Usage(usage) => {
                     last_usage = Some(usage);
                 }
+                StreamChunk::StopReason(reason) => {
+                    // H-P6: captured for the caller; the engine has no
+                    // policy on truncation yet (that is a follow-up).
+                    // Log it at debug so a developer reading a trace
+                    // can see the shape of the finish.
+                    tracing::debug!(reason = %reason, "provider stop_reason");
+                }
                 StreamChunk::Done => break,
             }
         }
@@ -7539,6 +7736,18 @@ impl KodEngine {
                 tool_name: name,
                 arguments,
             });
+        }
+        // H-E11: a mid-stream error or an idle timeout still returns
+        // everything the loop managed to assemble — the caller sees
+        // partial text and any complete tool calls, and the
+        // `Result` carries the error so the caller can decide
+        // whether to surface it.
+        if let Some(err) = stream_error {
+            // If partial calls exist, hand them back alongside the
+            // partial text. The caller can execute them and treat the
+            // error as a follow-on; otherwise the error is the
+            // terminal answer.
+            return Err(err);
         }
         Ok((text, calls, last_usage, retry_suggested))
     }
@@ -8328,7 +8537,7 @@ impl KodEngine {
         if !edited_args.is_empty() {
             let deny_rules_snapshot: std::collections::HashSet<kod_config::SessionDeny> =
                 self.deny_rules.read().await.clone();
-            for (i, _) in edited_args.iter() {
+            for i in edited_args.keys() {
                 let Some(call) = calls_for_dispatch.get(*i) else {
                     continue;
                 };
@@ -8441,9 +8650,35 @@ impl KodEngine {
             for call in calls.iter() {
                 self.tool_counts.record(&call.tool_name, None);
             }
-            let futs: Vec<_> = calls_for_dispatch
+            // P0-2: honour policy / hook denials in the parallel
+            // read-only branch too. Pre-fix mapped every call
+            // straight to a future and never consulted `denied` /
+            // `hook_denied`, so a denied read_file / grep /
+            // web_fetch still ran whenever the round contained no
+            // mutating calls.
+            let n = calls_for_dispatch.len();
+            let mut slots: Vec<Option<(Result<ToolResult>, u64)>> = (0..n).map(|_| None).collect();
+            let mut run_indices: Vec<usize> = Vec::with_capacity(n);
+            for i in 0..n {
+                if let Some(reason) = hook_denied.get(&i) {
+                    slots[i] = Some((
+                        Ok(ToolResult::Error(format!(
+                            "pre_tool_use hook denied this call: {reason}"
+                        ))),
+                        0,
+                    ));
+                    continue;
+                }
+                if let Some(reason) = denied.get(&i) {
+                    slots[i] = Some((Ok(ToolResult::Error(format!("denied: {reason}"))), 0));
+                    continue;
+                }
+                run_indices.push(i);
+            }
+            let futs: Vec<_> = run_indices
                 .iter()
-                .map(|call| {
+                .map(|&i| {
+                    let call = &calls_for_dispatch[i];
                     let start = std::time::Instant::now();
                     let ctx = tool_context.clone();
                     async move {
@@ -8455,7 +8690,23 @@ impl KodEngine {
                     }
                 })
                 .collect();
-            futures::future::join_all(futs).await
+            let done = futures::future::join_all(futs).await;
+            for (slot_i, result) in run_indices.iter().zip(done) {
+                slots[*slot_i] = Some(result);
+            }
+            slots
+                .into_iter()
+                .map(|s| {
+                    s.unwrap_or_else(|| {
+                        (
+                            Ok(ToolResult::Error(
+                                "internal: parallel branch left a slot unset".to_string(),
+                            )),
+                            0,
+                        )
+                    })
+                })
+                .collect()
         };
 
         // Post-tool hooks. Run for every non-denied call, before the
@@ -8704,6 +8955,74 @@ impl KodEngine {
                 );
             }
         }
+        // Structured transcript slice (AD-02). One assistant message
+        // carrying the calls, then one tool message per result linked
+        // by `tool_call_id`. Ids are preserved when the provider
+        // emitted them; a provider that did not (some local servers
+        // omit them) gets a synthesized `call_N` so the transcript is
+        // well-formed on every wire.
+        let mut messages: Vec<kod_types::ChatMessage> = Vec::new();
+        let mut assistant_msg = kod_types::ChatMessage::text(
+            kod_types::MessageId::new(),
+            kod_types::MessageRole::Assistant,
+            String::new(),
+            time::OffsetDateTime::now_utc(),
+        );
+        for (i, call) in calls.iter().enumerate() {
+            let id = call.id.clone().unwrap_or_else(|| format!("call_{i}"));
+            assistant_msg.tool_calls.push(kod_types::ToolCall {
+                id: Some(id.clone()),
+                tool_name: call.tool_name.clone(),
+                arguments: call.arguments.clone(),
+            });
+        }
+        // Only push the assistant message when there was at least one
+        // call — an empty assistant turn is not a legal wire shape.
+        if !assistant_msg.tool_calls.is_empty() {
+            messages.push(assistant_msg);
+        }
+        // H-E2: cap each tool result before it goes on the wire. The
+        // text prompt already runs `cap_rendered_result`, but the
+        // structured `Role::Tool` message was the raw JSON — a
+        // read_file up to 256 KB, repeated over 40 rounds, produced
+        // an unbounded transcript whose eventual provider "context
+        // length exceeded" error was non-retryable. Cap at a larger
+        // budget than the display cap so the model still sees more
+        // than the user; the cap is `truncate_chars` on the rendered
+        // string.
+        const STRUCTURED_TOOL_MSG_CAP: usize = 16 * 1024;
+        for (i, call) in calls.iter().enumerate() {
+            let id = call.id.clone().unwrap_or_else(|| format!("call_{i}"));
+            let rendered = match results.get(i) {
+                Some(kod_types::ToolResult::Success(v)) => {
+                    let raw = v.to_string();
+                    if raw.len() > STRUCTURED_TOOL_MSG_CAP {
+                        format!(
+                            "{}…[truncated: {} of {} bytes]",
+                            truncate_chars(&raw, STRUCTURED_TOOL_MSG_CAP),
+                            STRUCTURED_TOOL_MSG_CAP,
+                            raw.len(),
+                        )
+                    } else {
+                        raw
+                    }
+                }
+                Some(kod_types::ToolResult::Error(e)) => format!("error: {e}"),
+                Some(kod_types::ToolResult::RequiresConfirmation { description, .. }) => {
+                    format!("requires confirmation: {description}")
+                }
+                None => String::new(),
+            };
+            let mut tool_msg = kod_types::ChatMessage::text(
+                kod_types::MessageId::new(),
+                kod_types::MessageRole::Tool,
+                rendered,
+                time::OffsetDateTime::now_utc(),
+            );
+            tool_msg.tool_call_id = Some(id);
+            messages.push(tool_msg);
+        }
+
         // Auto-check: when enabled, and at least one of the calls was
         // a successful write_file / patch_file, run the project's
         // compiler/linter and append its diagnostics to the prompt
@@ -8809,7 +9128,13 @@ impl KodEngine {
                         // Empty LSP answer: could mean "clean" or
                         // "unreachable". Fall through to the
                         // compiler, which disambiguates.
-                        match kod_tools::CheckTool::run_check(&self.working_dir, 60).await {
+                        // H-E13: run the check against the transcript's working
+                        // directory, not the engine's. A swarm agent
+                        // writing in its worktree was getting
+                        // diagnostics (and baseline overwrites) from
+                        // the main repo — the model saw errors it did
+                        // not introduce.
+                        match kod_tools::CheckTool::run_check(&tool_context.working_dir, 60).await {
                             Ok(outcome) => {
                                 source = outcome.command.clone();
                                 diags = outcome.diagnostics;
@@ -8824,7 +9149,7 @@ impl KodEngine {
                                     results,
                                     prompt_block: block,
                                     elapsed_ms,
-                                    messages: Vec::new(),
+                                    messages: messages.clone(),
                                 };
                             }
                         }
@@ -8839,11 +9164,17 @@ impl KodEngine {
                             prompt_block: block,
                             elapsed_ms,
                             // Auto-check error path: no structured transcript slice.
-                            messages: Vec::new(),
+                            messages: messages.clone(),
                         };
                     }
                 } else if compiler_wanted {
-                    match kod_tools::CheckTool::run_check(&self.working_dir, 60).await {
+                    // H-E13: run the check against the transcript's working
+                    // directory, not the engine's. A swarm agent
+                    // writing in its worktree was getting
+                    // diagnostics (and baseline overwrites) from
+                    // the main repo — the model saw errors it did
+                    // not introduce.
+                    match kod_tools::CheckTool::run_check(&tool_context.working_dir, 60).await {
                         Ok(outcome) => {
                             source = outcome.command.clone();
                             diags = outcome.diagnostics;
@@ -8859,7 +9190,7 @@ impl KodEngine {
                                 prompt_block: block,
                                 elapsed_ms,
                                 // Auto-check error path: no structured transcript slice.
-                                messages: Vec::new(),
+                                messages: messages.clone(),
                             };
                         }
                     }
@@ -8873,7 +9204,7 @@ impl KodEngine {
                         prompt_block: block,
                         elapsed_ms,
                         // Auto-check error path: no structured transcript slice.
-                        messages: Vec::new(),
+                        messages: messages.clone(),
                     };
                 }
 
@@ -9033,52 +9364,6 @@ impl KodEngine {
                     *self.check_baseline.write().await = Some(diags);
                 }
             }
-        }
-
-        // Structured transcript slice (AD-02). One assistant message
-        // carrying the calls, then one tool message per result linked
-        // by `tool_call_id`. Ids are preserved when the provider
-        // emitted them; a provider that did not (some local servers
-        // omit them) gets a synthesized `call_N` so the transcript is
-        // well-formed on every wire.
-        let mut messages: Vec<kod_types::ChatMessage> = Vec::new();
-        let mut assistant_msg = kod_types::ChatMessage::text(
-            kod_types::MessageId::new(),
-            kod_types::MessageRole::Assistant,
-            String::new(),
-            time::OffsetDateTime::now_utc(),
-        );
-        for (i, call) in calls.iter().enumerate() {
-            let id = call.id.clone().unwrap_or_else(|| format!("call_{i}"));
-            assistant_msg.tool_calls.push(kod_types::ToolCall {
-                id: Some(id.clone()),
-                tool_name: call.tool_name.clone(),
-                arguments: call.arguments.clone(),
-            });
-        }
-        // Only push the assistant message when there was at least one
-        // call — an empty assistant turn is not a legal wire shape.
-        if !assistant_msg.tool_calls.is_empty() {
-            messages.push(assistant_msg);
-        }
-        for (i, call) in calls.iter().enumerate() {
-            let id = call.id.clone().unwrap_or_else(|| format!("call_{i}"));
-            let rendered = match results.get(i) {
-                Some(kod_types::ToolResult::Success(v)) => v.to_string(),
-                Some(kod_types::ToolResult::Error(e)) => format!("error: {e}"),
-                Some(kod_types::ToolResult::RequiresConfirmation { description, .. }) => {
-                    format!("requires confirmation: {description}")
-                }
-                None => String::new(),
-            };
-            let mut tool_msg = kod_types::ChatMessage::text(
-                kod_types::MessageId::new(),
-                kod_types::MessageRole::Tool,
-                rendered,
-                time::OffsetDateTime::now_utc(),
-            );
-            tool_msg.tool_call_id = Some(id);
-            messages.push(tool_msg);
         }
 
         // MemoryWrite audit for the tool channel (AD-15). Every
@@ -9418,14 +9703,9 @@ impl KodEngine {
     /// swarm runner's per-agent cancel (D4-D4) so cancelling one agent
     /// does not stop the whole team.
     pub fn request_cancel_for(&self, key: &str) {
-        if let Ok(mut guard) = self.cancels.try_write() {
-            guard.insert(key.to_string());
-        } else {
-            // A write already in flight; the cancel is a single flag,
-            // blocking on it is fine.
-            let mut guard = futures::executor::block_on(self.cancels.write());
-            guard.insert(key.to_string());
-        }
+        // H-E10: `cancels` is a parking_lot RwLock — synchronous, no
+        // block_on on the async hot path.
+        self.cancels.write().insert(key.to_string());
     }
 
     /// Clear a previous cancel for the default transcript (called when
@@ -9436,12 +9716,7 @@ impl KodEngine {
 
     /// Clear a specific transcript's cancel flag.
     pub fn clear_cancel_for(&self, key: &str) {
-        if let Ok(mut guard) = self.cancels.try_write() {
-            guard.remove(key);
-        } else {
-            let mut guard = futures::executor::block_on(self.cancels.write());
-            guard.remove(key);
-        }
+        self.cancels.write().remove(key);
     }
 
     /// True if a cancel was requested for the default transcript.
@@ -9451,12 +9726,7 @@ impl KodEngine {
 
     /// True if a cancel was requested for `key`.
     pub fn is_cancelled_for(&self, key: &str) -> bool {
-        if let Ok(guard) = self.cancels.try_read() {
-            guard.contains(key)
-        } else {
-            let guard = futures::executor::block_on(self.cancels.read());
-            guard.contains(key)
-        }
+        self.cancels.read().contains(key)
     }
 
     /// Queue a steering note on the default transcript.
@@ -9543,18 +9813,7 @@ impl KodEngine {
         let mut history = self.history.write().await;
         let turns = history.entry(key.to_string()).or_default();
         turns.push(message);
-        let excess = turns.len().saturating_sub(MAX_HISTORY_TURNS);
-        if excess > 0 {
-            let mut to_drop = excess;
-            turns.retain(|t| {
-                if to_drop > 0 && !t.metadata.pinned {
-                    to_drop -= 1;
-                    false
-                } else {
-                    true
-                }
-            });
-        }
+        cap_transcript(turns, MAX_HISTORY_TURNS);
         // Char-budget trim: D1 moved the transcript from a rendered
         // text section to a structured `messages` field the provider
         // sees verbatim; without a cap here the budget was ignored.
@@ -9866,6 +10125,26 @@ impl KodEngine {
     /// Drop both the transcript and its stored last-prompt for `key`.
     /// Used by the swarm runner at the end of a run so transcripts do
     /// not accumulate.
+    /// H-T8: drop the last `count` turns from the transcript for
+    /// `key`. Used by the TUI's `/regenerate` and `/delete`, which
+    /// pre-fix rewound only the *display* (`KodApp::drop_last_exchange`)
+    /// and left the engine transcript untouched — the next prompt
+    /// went to the model with the "deleted" exchange still present,
+    /// and `/regenerate` generated on top of the old answer.
+    ///
+    /// `count` is clamped to the current length. Dropping from an
+    /// empty transcript is a no-op.
+    pub async fn forget_last_turns_for(&self, key: &str, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let mut hist = self.history.write().await;
+        if let Some(turns) = hist.get_mut(key) {
+            let drop = count.min(turns.len());
+            turns.truncate(turns.len() - drop);
+        }
+    }
+
     pub async fn forget_transcript(&self, key: &str) {
         self.history.write().await.remove(key);
         self.last_prompt.write().await.remove(key);
@@ -9934,6 +10213,12 @@ struct BaselineRefresher {
 
 impl BaselineRefresher {
     async fn refresh_check_baseline(&self) {
+        // H-E13: run the check against the transcript's working
+        // directory, not the engine's. A swarm agent
+        // writing in its worktree was getting
+        // diagnostics (and baseline overwrites) from
+        // the main repo — the model saw errors it did
+        // not introduce.
         match kod_tools::CheckTool::run_check(&self.working_dir, 60).await {
             Ok(outcome) => {
                 let n = outcome.diagnostics.len();
@@ -11501,7 +11786,7 @@ mod prop_tests {
             }
         }
 
-        /// truncate_chars(s, max) is always a char-boundary prefix of s
+        /// truncate_chars(&s, max) is always a char-boundary prefix of s
         /// no longer than max bytes. The whole reason the helper exists
         /// is that &s[..max] panics on multibyte input.
         #[test]
