@@ -1265,6 +1265,10 @@ pub struct KodEngine {
     /// re-parsed `~/.kod/config.toml` on every turn for two numbers
     /// that do not change within a session.
     budget_hint: std::sync::RwLock<(usize, usize)>,
+    /// Circuit breaker for endpoint health (hygiene 3.2). A
+    /// chronically failing endpoint is skipped in the chain for a
+    /// cooldown instead of being retried as primary every turn.
+    endpoint_health: std::sync::Mutex<crate::endpoint_health::EndpointHealth>,
     next_turn_id: std::sync::atomic::AtomicU64,
     /// Append-only writer for `turns.jsonl`, next to the session log.
     /// `None` — the default — is the right shape for a test or a
@@ -1961,6 +1965,7 @@ impl KodEngine {
             tool_filter_states: RwLock::new(HashMap::new()),
             cache_ledger: std::sync::Mutex::new(crate::cache_ledger::CacheLedger::new()),
             current_sensitivity: RwLock::new(crate::sensitivity::Sensitivity::Public),
+            endpoint_health: std::sync::Mutex::new(crate::endpoint_health::EndpointHealth::default()),
             budget_hint: std::sync::RwLock::new({
                 let d = kod_config::LlmConfig::default();
                 let ep = d.default_endpoint();
@@ -2880,6 +2885,43 @@ impl KodEngine {
             }
             _ => false,
         }
+    }
+
+    /// Derive the turn's sensitivity from its input's @-references
+    /// (P7). A turn that mentions `.env`, a private key, or a path
+    /// the policy engine read-protects is Sensitive; a turn that
+    /// mentions only dotfiles is Internal; otherwise Public.
+    ///
+    /// Callers with richer knowledge (a TUI's file picker, a swarm
+    /// subtask's brief) can call `set_sensitivity` directly after
+    /// this to override.
+    async fn update_sensitivity_from_input(&self, input: &str) {
+        // Extract @-prefixed path tokens.
+        let mut paths: Vec<std::path::PathBuf> = Vec::new();
+        for tok in input.split_whitespace() {
+            if let Some(rest) = tok.strip_prefix('@') {
+                let p = rest.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-');
+                if !p.is_empty() {
+                    paths.push(std::path::PathBuf::from(p));
+                }
+            }
+        }
+        // Read-protection globs come from the policy engine. None
+        // installed means no protections, which the classifier
+        // treats as "everything Public".
+        // A path the policy engine read-protects (a `.env`, a
+        // private key) is Sensitive. The `denied` closure is the
+        // same predicate: kod has one read-protection mechanism, and
+        // a path under it is the strongest signal available here.
+        // A future "denied" list with different semantics would
+        // thread a second closure through without changing the
+        // classifier.
+        let protected = match self.policy().await {
+            Some(p) => p.read_protection().clone(),
+            None => kod_config::ReadProtection::default(),
+        };
+        let s = crate::sensitivity::classify(&paths, |p| protected.matches(p), |p| protected.matches(p));
+        *self.current_sensitivity.write().await = s;
     }
 
     /// Set the current turn's sensitivity (P7). Callers set this
@@ -4229,6 +4271,12 @@ impl KodEngine {
                 }
             }
         }
+        // Hygiene 3.2: drop endpoints whose circuit breaker is open.
+        // Runs before the cache gate — an endpoint that is being
+        // skipped for health should not be considered for warmth.
+        if let Ok(mut h) = self.endpoint_health.lock() {
+            chain = h.filter_chain(&chain, |m| m.endpoint.as_str());
+        }
         if chain.len() < 2 {
             return chain;
         }
@@ -4970,6 +5018,9 @@ impl KodEngine {
         // *after* `clear_current_request`, which is a separate bug
         // fixed below.
         self.set_current_request(key, input).await;
+        // P7: classify the input by its @-references (paths the
+        // user mentioned). A turn that mentions .env is sensitive.
+        self.update_sensitivity_from_input(input).await;
         // Check if engine is running
         {
             let running = self.is_running.read().await;
@@ -5196,6 +5247,16 @@ impl KodEngine {
                                 &format!("{} ({})", e, failure.summary()),
                             )
                             .await;
+                            // Hygiene 3.2: record the failure against
+                            // the endpoint that produced it.
+                            if let Ok(mut h) = self.endpoint_health.lock()
+                                && h.record_failure(&model_ref.endpoint, e.to_string())
+                            {
+                                tracing::warn!(
+                                    endpoint = %model_ref.endpoint,
+                                    "circuit breaker tripped; skipping for cooldown",
+                                );
+                            }
                             last_err = Some(e);
                             continue;
                         }
@@ -5223,6 +5284,10 @@ impl KodEngine {
                 // endpoint is warm for which prefix.
                 let head_fp = Self::cache_head_fingerprint(&system_text, &definitions);
                 self.record_cost_with_head(key, m, u, p, head_fp).await;
+                // Hygiene 3.2: a successful call clears the breaker.
+                if let Ok(mut h) = self.endpoint_health.lock() {
+                    h.record_success(&m.endpoint);
+                }
             }
             // Model only called tools and never wrote back: ask for a summary.
             let final_text = if final_text.trim().is_empty() && !tool_calls.is_empty() {
@@ -5497,6 +5562,15 @@ impl KodEngine {
                         );
                         self.record_model_fallback(key, model_ref, next, &e.to_string())
                             .await;
+                        // Hygiene 3.2: record the endpoint failure.
+                        if let Ok(mut h) = self.endpoint_health.lock()
+                            && h.record_failure(&model_ref.endpoint, e.to_string())
+                        {
+                            tracing::warn!(
+                                endpoint = %model_ref.endpoint,
+                                "circuit breaker tripped; skipping for cooldown",
+                            );
+                        }
                         last_err = Some(e);
                         continue;
                     }
@@ -5523,6 +5597,10 @@ impl KodEngine {
                 // endpoint is warm for which prefix.
                 let head_fp = Self::cache_head_fingerprint(&system_text, &definitions);
                 self.record_cost_with_head(key, m, u, p, head_fp).await;
+                // Hygiene 3.2: a successful call clears the breaker.
+                if let Ok(mut h) = self.endpoint_health.lock() {
+                    h.record_success(&m.endpoint);
+                }
             }
             let final_text = if final_text.trim().is_empty() && !tool_calls.is_empty() {
                 let mut summary_prompt = pending.clone();
