@@ -193,9 +193,18 @@ fn slash_help_opens_the_overlay() {
     session.send_text("/help");
     session.send_key(KeyCode::Enter);
 
+    // Wait for a marker in the *last* section, not the first. The
+    // overlay paints incrementally; `wait_for_text` returns as soon
+    // as its needle appears, and the border title lands several
+    // frames before the body is fully drawn. Waiting on the title
+    // gave a partial frame, so the subsequent asserts raced the
+    // render. Waiting on the bottom section's content means every
+    // earlier line has been painted too — the same ordering
+    // guarantee `wait_for_ready` relies on.
+    let screen = session.wait_for_text("/retry", WAIT);
+
     // The overlay's border title proves the widget rendered its
     // frame; a body line alone could appear on a half-drawn frame.
-    let screen = session.wait_for_text("help — Esc closes", WAIT);
     assert!(
         screen.contains("help — Esc closes"),
         "help overlay did not open from /help:\n{screen}"
