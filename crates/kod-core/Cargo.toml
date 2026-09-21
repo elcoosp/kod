@@ -49,3 +49,6 @@ async-trait = "0.1"
 serde_json = { workspace = true }
 kod-provider = { path = "../kod-provider" }
 kod-types = { path = "../kod-types" }
+
+[lints]
+workspace = true
