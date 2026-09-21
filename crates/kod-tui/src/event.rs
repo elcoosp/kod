@@ -233,6 +233,19 @@ pub struct ApprovalItem {
     pub arguments: serde_json::Value,
 }
 
+impl Event {
+    /// Whether the main loop should force a re-render after handling
+    /// this event.
+    ///
+    /// `ResponseChunk` arrives at token rate during streaming; the next
+    /// `Tick` (≤100 ms) will pick up the visible state, so a chunk does
+    /// not itself force a frame. Every other event (keys, paste,
+    /// resize, completion, errors) is worth a fresh frame.
+    pub fn requires_render(&self) -> bool {
+        !matches!(self, Event::ResponseChunk(_))
+    }
+}
+
 /// Event handler that manages the event loop
 pub struct EventHandler {
     event_queue: StdMutex<VecDeque<(EventPriority, Event)>>,
@@ -317,6 +330,31 @@ impl EventHandler {
         }
 
         Event::Tick
+    }
+
+    /// Non-blocking variant of [`next_event`](Self::next_event).
+    /// Returns `Some` if an event is already available — priority queue
+    /// first, then the channel — and `None` otherwise. Never awaits.
+    ///
+    /// Used by the main loop to coalesce queued events into a single
+    /// frame instead of rendering once per event (see `TuiLoop::
+    /// main_loop`). A fast stream can produce hundreds of
+    /// `ResponseChunk` events per second; batching them keeps the
+    /// render rate bounded by `MAX_EVENTS_PER_FRAME` rather than by
+    /// token rate.
+    pub fn try_next_event(&self) -> Option<Event> {
+        {
+            let mut queue = self.event_queue.lock().unwrap();
+            if let Some((_, event)) = queue.pop_front() {
+                return Some(event);
+            }
+        }
+        if let Ok(mut rx) = self.event_rx.try_lock() {
+            if let Ok(event) = rx.try_recv() {
+                return Some(event);
+            }
+        }
+        None
     }
 
     /// Send an event (from external sources)
@@ -423,6 +461,29 @@ impl EventHandler {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn try_next_event_returns_none_when_empty() {
+        let h = EventHandler::new(Duration::from_millis(10));
+        assert!(h.try_next_event().is_none());
+    }
+
+    #[test]
+    fn try_next_event_pops_priority_queue_first() {
+        let h = EventHandler::new(Duration::from_millis(10));
+        h.push_priority_event(Event::Tick, EventPriority::Low);
+        let got = h.try_next_event();
+        assert!(matches!(got, Some(Event::Tick)));
+        assert!(h.try_next_event().is_none());
+    }
+
+    #[test]
+    fn requires_render_skips_response_chunks_only() {
+        assert!(!Event::ResponseChunk("x".into()).requires_render());
+        assert!(Event::Tick.requires_render());
+        assert!(Event::Quit.requires_render());
+    }
+
     use super::*;
 
     #[tokio::test]

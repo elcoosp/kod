@@ -649,13 +649,48 @@ impl TuiLoop {
         result
     }
 
-    /// Internal main loop
+    /// Internal main loop.
+    ///
+    /// Rendering is *batched*: one frame per group of events, not one
+    /// frame per event. `Event::ResponseChunk` arrives at token rate
+    /// during streaming — a naive `render(); next_event()` loop paints
+    /// a full frame per token, which is why long sessions stutter
+    /// under load. Two changes fix that:
+    ///
+    /// 1. `try_next_event` drains whatever else is already queued
+    ///    before rendering (bounded by `MAX_EVENTS_PER_FRAME` so a
+    ///    permanently-saturated queue can still render).
+    /// 2. `requires_render` returns `false` for `ResponseChunk`, so a
+    ///    batch of chunks updates app state but does not itself force
+    ///    a frame — the next `Tick` (≤100 ms) paints what accumulated.
+    ///
+    /// Keys, paste, resize, completion, errors, and the initial frame
+    /// still render immediately.
     async fn main_loop(&mut self) -> Result<()> {
-        while !self.app.should_quit() {
-            self.render().await?;
+        // Render once before blocking so the initial screen is visible
+        // without waiting for the first tick.
+        self.render().await?;
 
+        while !self.app.should_quit() {
             let event = self.event_handler.next_event().await;
+            let mut render_now = event.requires_render();
             self.handle_event(event).await?;
+
+            const MAX_EVENTS_PER_FRAME: usize = 256;
+            for _ in 0..MAX_EVENTS_PER_FRAME {
+                let Some(next) = self.event_handler.try_next_event() else {
+                    break;
+                };
+                render_now |= next.requires_render();
+                self.handle_event(next).await?;
+                if self.app.should_quit() {
+                    break;
+                }
+            }
+
+            if render_now && !self.app.should_quit() {
+                self.render().await?;
+            }
         }
 
         Ok(())
