@@ -25,3 +25,6 @@ kod-provider = { path = "../kod-provider" }
 rstest = { workspace = true }
 tempfile = "3.8"
 futures = { workspace = true }
+
+[lints]
+workspace = true
