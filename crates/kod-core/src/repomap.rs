@@ -88,10 +88,92 @@ impl RepoMap {
 
 /// Walk `root` honoring .gitignore and skipping the usual build trees,
 /// extracting top-level symbols per recognized source file.
+/// Hard ceiling on files the repomap will process in one build.
+///
+/// A cap exists because the walk is bounded by the workspace, and a
+/// workspace is bounded by nothing in particular — a monorepo with a
+/// checked-in `vendor/` tree, an ML repo with a dataset directory, a
+/// user who ran `kod` from `$HOME`: all of these would otherwise
+/// scan until the disk is exhausted. 100k source files is far more
+/// than any project that benefits from a symbol map needs; past it
+/// the map is noise the model cannot use anyway.
+///
+/// Hitting the cap is not an error — the map is still built from the
+/// files that fit, and the truncation is logged so a user who is
+/// surprised by a thin map can see why.
+pub const MAX_REPO_FILES: usize = 100_000;
+
+/// Whether `root` looks like the root of a code workspace.
+///
+/// The repomap walk reads every source file under `root`. Running it
+/// on a directory that is not a project — a user's home, `/tmp`, a
+/// scratch dir with a stray script — produces a map of whatever
+/// happened to be lying around, at the cost of walking everything.
+/// On a real home directory that is millions of files and multiple
+/// seconds per prompt, with no way for the user to tell what is
+/// taking the time.
+///
+/// The check is a single `read_dir` of the top level, which is cheap
+/// even in `$HOME` (a few dozen entries). A directory is a candidate
+/// if it contains a version-control directory **or** a project
+/// manifest. Both are strong signals that the user meant to work in
+/// that directory rather than merely having a shell there.
+///
+/// Scratch directories with neither marker get an empty map. The
+/// repomap is a hint to the model, not a correctness requirement —
+/// an empty map costs nothing, while a surprise walk costs a stalled
+/// prompt.
+pub fn looks_like_a_repo(root: &Path) -> bool {
+    const MARKERS: &[&str] = &[
+        // Version control. A working directory containing any of
+        // these is a checkout of something, by definition.
+        ".git",
+        ".hg",
+        ".svn",
+        ".jj",
+        // Project manifests. Presence of one is the directory's own
+        // declaration that it is a project root.
+        "Cargo.toml",
+        "package.json",
+        "pyproject.toml",
+        "setup.py",
+        "go.mod",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "Gemfile",
+        "composer.json",
+        "CMakeLists.txt",
+        "Makefile",
+    ];
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        if let Some(name) = entry.file_name().to_str()
+            && MARKERS.contains(&name)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn build_repo_map(root: &Path) -> RepoMap {
     let mut entries: BTreeMap<PathBuf, Vec<Symbol>> = BTreeMap::new();
     let mut raw_imports: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
     let mut all_files: BTreeMap<PathBuf, PathBuf> = BTreeMap::new(); // rel -> abs
+
+    // Refuse to walk a directory that is not a workspace. See
+    // `looks_like_a_repo` for why: a shell in `$HOME` is not a
+    // reason to read every file under it.
+    if !looks_like_a_repo(root) {
+        return RepoMap {
+            entries,
+            imports: BTreeMap::new(),
+            rank: BTreeMap::new(),
+        };
+    }
 
     let mut builder = ignore::WalkBuilder::new(root);
     builder
@@ -105,7 +187,12 @@ pub fn build_repo_map(root: &Path) -> RepoMap {
             let name = e.file_name().to_str().unwrap_or("");
             name != ".git" && name != "target" && name != "node_modules"
         });
-    for entry in builder.build().filter_map(|e| e.ok()) {
+    let mut truncated_at: Option<usize> = None;
+    for (i, entry) in builder.build().filter_map(|e| e.ok()).enumerate() {
+        if i >= MAX_REPO_FILES {
+            truncated_at = Some(i);
+            break;
+        }
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -119,6 +206,16 @@ pub fn build_repo_map(root: &Path) -> RepoMap {
         if !imports.is_empty() {
             raw_imports.insert(rel, imports);
         }
+    }
+    if let Some(n) = truncated_at {
+        tracing::warn!(
+            root = %root.display(),
+            cap = MAX_REPO_FILES,
+            processed = n,
+            "repomap hit the file cap; the map is built from the first {MAX_REPO_FILES} entries. \
+             If this workspace is larger, the map will be incomplete — \
+             consider narrowing the walk (e.g. `ignore` rules).",
+        );
     }
 
     // Resolve import tokens ("crate::foo::bar", "./sibling", "foo.h")
@@ -655,6 +752,88 @@ impl Engine {
         assert!(
             rendered.contains("truncated") || rendered.lines().count() < 20,
             "expected truncation marker or short output: {rendered}"
+        );
+    }
+
+    // ---- looks_like_a_repo ------------------------------------------
+
+    #[test]
+    fn a_dir_with_git_is_a_repo() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+        assert!(looks_like_a_repo(tmp.path()));
+    }
+
+    #[test]
+    fn a_dir_with_cargo_toml_is_a_repo() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        assert!(looks_like_a_repo(tmp.path()));
+    }
+
+    #[test]
+    fn a_dir_with_package_json_is_a_repo() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("package.json"), "{}").unwrap();
+        assert!(looks_like_a_repo(tmp.path()));
+    }
+
+    #[test]
+    fn an_empty_dir_is_not_a_repo() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        assert!(!looks_like_a_repo(tmp.path()));
+    }
+
+    #[test]
+    fn a_dir_with_only_a_stray_source_file_is_not_a_repo() {
+        // The key case: `$HOME` may contain a `foo.py` left over
+        // from a decade ago. That alone is not a reason to walk
+        // every file in the directory tree.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("scratch.py"), "print('hi')\n").unwrap();
+        assert!(!looks_like_a_repo(tmp.path()));
+    }
+
+    #[test]
+    fn a_nonexistent_dir_is_not_a_repo() {
+        assert!(!looks_like_a_repo(Path::new("/this/path/does/not/exist/nor/should/it")));
+    }
+
+    #[test]
+    fn build_repo_map_returns_empty_for_a_non_repo() {
+        // The load-bearing test: a directory with source files but
+        // no project marker must not be walked. The pre-fix code
+        // walked it and everything under it — which is the bug that
+        // made `kod tui` from `$HOME` stall on startup.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("main.rs"), "fn main() {}\n").unwrap();
+        let sub = tmp.path().join("src");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("lib.rs"), "pub fn f() {}\n").unwrap();
+
+        let map = build_repo_map(tmp.path());
+        assert!(
+            map.entries.is_empty(),
+            "a directory with no project marker must produce an empty map; got {} entries",
+            map.entries.len(),
+        );
+    }
+
+    #[test]
+    fn build_repo_map_walks_a_real_repo() {
+        // Control: the same layout plus a `.git` marker *does* get
+        // walked, so the guard above is not accidentally too broad.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+        std::fs::write(tmp.path().join("main.rs"), "fn main() {}\n").unwrap();
+        let sub = tmp.path().join("src");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("lib.rs"), "pub fn f() {}\n").unwrap();
+
+        let map = build_repo_map(tmp.path());
+        assert!(
+            !map.entries.is_empty(),
+            "a repo-marked directory must produce a non-empty map",
         );
     }
 }

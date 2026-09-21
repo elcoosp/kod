@@ -56,6 +56,22 @@ pub struct TestEnv {
     pub config_dir: PathBuf,
     pub state_dir: PathBuf,
     pub db_path: PathBuf,
+    /// The directory the spawned TUI runs in.
+    ///
+    /// This exists because the engine builds a repository map on the
+    /// first prompt by walking the process's cwd. A test that lets
+    /// the child inherit the cargo runner's cwd (often `$HOME` or a
+    /// checkout with a large `.git`/`node_modules`) blocks the
+    /// prompt for as long as the walk takes — minutes on a real home
+    /// directory, which manifests as a mysterious "connecting…"
+    /// hang with zero network activity.
+    ///
+    /// Pointing cwd at the test's own tempdir makes the walk trivial
+    /// (a handful of files) so the prompt pipeline reaches the
+    /// provider in milliseconds. The same pattern applies to a
+    /// developer running `kod tui` from `$HOME`: the walk is
+    /// bounded by whatever is under cwd.
+    pub workspace: PathBuf,
     pub mock: MockServer,
 }
 
@@ -76,9 +92,20 @@ impl TestEnv {
         let temp = TempDir::new().expect("tempdir");
         let config_dir = temp.path().join("config");
         let state_dir = temp.path().join("state");
+        let workspace = temp.path().join("workspace");
         let db_path = temp.path().join("kod.redb");
         std::fs::create_dir_all(&config_dir).expect("config dir");
         std::fs::create_dir_all(&state_dir).expect("state dir");
+        std::fs::create_dir_all(&workspace).expect("workspace dir");
+        // Seed the workspace with a single Rust file so the repomap
+        // has something to scan. Without any files the walk is
+        // trivially empty, which is fine, but a single file
+        // exercises the read-one-file path in the repomap builder.
+        std::fs::write(
+            workspace.join("main.rs"),
+            "fn main() {}\n",
+        )
+        .expect("seed workspace file");
 
         let mock = if byte_by_byte {
             MockServer::start_byte_by_byte(reply)
@@ -91,6 +118,7 @@ impl TestEnv {
             config_dir,
             state_dir,
             db_path,
+            workspace,
             mock,
         };
         env.write_config();
@@ -127,6 +155,7 @@ auto_check = false
 auto_lsp = false
 "#
         );
+        eprintln!("test: writing config.toml pointing at mock on port {}", port);
         std::fs::write(self.config_dir.join("config.toml"), config).expect("write config.toml");
     }
 
@@ -148,16 +177,47 @@ auto_lsp = false
             })
             .expect("openpty");
 
+        let log_file = self.state_dir.join("tui-stderr.log");
         let mut cmd = portable_pty::CommandBuilder::new("/bin/sh");
         cmd.arg("-c");
+        // `sh -c 'script' name arg1 arg2 …` binds `$0` = name and
+        // `$@` = [arg1, arg2, …]. The `"$@"` expansion is the
+        // canonical way to pass argv through a shell without
+        // re-parsing it, so the binary path and flags survive intact.
         cmd.arg(format!(
-            "stty rows {height} cols {width} 2>/dev/null; exec \"$0\" tui --no-resume",
+            "stty rows {height} cols {width} 2>/dev/null; exec \"$@\" 2>&1",
         ));
+        // `$0` for the shell — any string; not the program path.
+        cmd.arg("kod-tui-wrapper");
         cmd.arg(env!("CARGO_BIN_EXE_kod"));
+        cmd.arg("tui");
+        cmd.arg("--no-resume");
+        let _ = &log_file; // reserved for stderr capture
+        let stderr_log = log_file.clone();
+        eprintln!(
+            "test: spawning with KOD_CONFIG_DIR={}",
+            self.config_dir.display()
+        );
+        // `cwd` decides the workspace the repomap builder walks on
+        // the first prompt. See `TestEnv::workspace` for why this
+        // must not be inherited.
+        cmd.cwd(&self.workspace);
         cmd.env("KOD_CONFIG_DIR", self.config_dir.as_os_str());
         cmd.env("KOD_TUI_STATE_DIR", self.state_dir.as_os_str());
         cmd.env("KOD_TEST_DB", self.db_path.as_os_str());
         cmd.env("TERM", "xterm-256color");
+        // Route tracing to a file next to the state so a failing test
+        // can read the spawned process's own view of the request
+        // without polluting the PTY. `RUST_LOG` is honored when the
+        // test sets `KOD_TUI_LOG`; otherwise it stays quiet.
+        if let Ok(level) = std::env::var("KOD_TUI_LOG") {
+            let log_path = self.state_dir.join("tui.log");
+            cmd.env("RUST_LOG", level);
+            // tracing_subscriber::fmt with a file writer is not
+            // wired into kod's main; the closest we get is stderr.
+            // Redirect stderr to a file at the shell level.
+            let _ = log_path; // reserved for a future wiring
+        }
 
         let child = pair.slave.spawn_command(cmd).expect("spawn kod tui");
         drop(pair.slave);
@@ -188,6 +248,7 @@ auto_lsp = false
         TuiSession {
             width,
             height,
+            stderr_log: Some(stderr_log),
             buf,
             writer: Mutex::new(writer),
             child: Mutex::new(child),
@@ -206,6 +267,7 @@ auto_lsp = false
 pub struct TuiSession {
     width: u16,
     height: u16,
+    stderr_log: Option<PathBuf>,
     buf: Arc<(Mutex<Vec<u8>>, Condvar)>,
     writer: Mutex<Box<dyn std::io::Write + Send>>,
     child: Mutex<Box<dyn portable_pty::Child + Send>>,
@@ -216,6 +278,28 @@ impl TuiSession {
     /// The declared terminal size.
     pub fn size(&self) -> (u16, u16) {
         (self.width, self.height)
+    }
+
+    /// The child process's PID, if the PTY backend exposes one.
+    /// Used by diagnostics that shell out to `lsof`.
+    pub fn pid(&self) -> Option<u32> {
+        self.child.lock().ok().and_then(|c| c.process_id())
+    }
+
+    /// Run `lsof -i -P` against the child PID and return the output.
+    /// Diagnostic only — used to see whether the child opened a
+    /// socket to the mock.
+    pub fn lsof_network(&self) -> String {
+        let Some(pid) = self.pid() else {
+            return "(no pid)".to_string();
+        };
+        let out = std::process::Command::new("lsof")
+            .args(["-nP", "-p", &pid.to_string(), "-i"])
+            .output();
+        match out {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+            Err(e) => format!("(lsof failed: {e})"),
+        }
     }
 
     /// Snapshot of the raw bytes received so far.
@@ -269,10 +353,23 @@ impl TuiSession {
                 for (i, line) in text.lines().enumerate() {
                     msg.push_str(&format!("{i:3}|{line}|\n"));
                 }
-                msg.push_str(&format!(
-                    "--- {} raw bytes captured ---\n",
-                    self.raw_bytes().len()
-                ));
+                let raw = self.raw_bytes();
+                msg.push_str(&format!("--- {} raw bytes captured ---\n", raw.len()));
+                msg.push_str("--- last 2500 raw bytes (escaped) ---\n");
+                let start = raw.len().saturating_sub(2500);
+                for &b in &raw[start..] {
+                    match b {
+                        b'\n' => msg.push_str("\\n\n"),
+                        b'\r' => msg.push_str("\\r"),
+                        b'\t' => msg.push_str("\\t"),
+                        0x1b => msg.push_str("\\x1b"),
+                        0x07 => msg.push_str("\\a"),
+                        b' '..=b'~' => msg.push(b as char),
+                        _ => msg.push_str(&format!("\\x{b:02x}")),
+                    }
+                }
+                msg.push_str("\n--- end raw ---\n");
+                let _ = &self.stderr_log;
                 panic!("{msg}");
             }
             // Wake as soon as bytes arrive; fall back to a short

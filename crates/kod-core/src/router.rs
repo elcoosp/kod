@@ -1412,6 +1412,17 @@ fn fingerprint_of(root: &std::path::Path) -> u64 {
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
     let mut h = FNV_OFFSET;
 
+    // A directory that is not a workspace has no map to invalidate.
+    // Hashing a sentinel means the fingerprint is stable across
+    // prompts (no spurious rebuild) and distinct from any real walk
+    // (the first prompt that lands in an actual project rebuilds
+    // once). The alternative — walking `$HOME` on every prompt to
+    // decide whether an empty map is stale — is exactly the bug this
+    // guard exists to prevent.
+    if !crate::repomap::looks_like_a_repo(root) {
+        return 0;
+    }
+
     // H-R15: walk the same tree the repomap walk does. The pre-fix
     // `max_depth(Some(3))` only hashed files at the top three levels,
     // so an edit to `crates/kod-core/src/engine.rs` — four levels
@@ -1437,7 +1448,14 @@ fn fingerprint_of(root: &std::path::Path) -> u64 {
     // second produced the same fingerprint, and the second write's
     // effect on the map was invisible.
     let mut entries: Vec<(std::path::PathBuf, i128, u64)> = Vec::new();
-    for entry in builder.build().filter_map(|e| e.ok()) {
+    // Same cap as `repomap::MAX_REPO_FILES`: the fingerprint has to
+    // walk the same set the map walked, or a change below the cap
+    // would not invalidate. Stopping at the same limit keeps the two
+    // walks consistent and bounds this one too.
+    for (i, entry) in builder.build().filter_map(|e| e.ok()).enumerate() {
+        if i >= crate::repomap::MAX_REPO_FILES {
+            break;
+        }
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -1982,6 +2000,45 @@ mod tests {
             names.contains(&"second".to_string()),
             "new skill not picked up within 2s: {names:?}"
         );
+    }
+
+    #[test]
+    fn fingerprint_of_non_repo_is_a_stable_sentinel() {
+        // A directory with no project marker must produce the same
+        // fingerprint every call, regardless of what is in it —
+        // that is what makes the cached empty map stable across
+        // prompts instead of rebuilding every turn. The pre-fix
+        // code walked the whole tree on every prompt to compute
+        // this value, which is the stall this test guards against.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a.rs"), "fn a() {}\n").unwrap();
+        std::fs::write(tmp.path().join("b.rs"), "fn b() {}\n").unwrap();
+
+        let first = fingerprint_of(tmp.path());
+        assert_eq!(first, 0, "non-repo fingerprint must be the sentinel");
+
+        // Add a file — the sentinel must not change for a non-repo,
+        // because the map is empty either way.
+        std::fs::write(tmp.path().join("c.rs"), "fn c() {}\n").unwrap();
+        let second = fingerprint_of(tmp.path());
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn fingerprint_of_repo_changes_when_a_file_changes() {
+        // Control: with a `.git` marker the walk runs, and adding a
+        // file must change the fingerprint so the cached map is
+        // invalidated.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+        std::fs::write(tmp.path().join("a.rs"), "fn a() {}\n").unwrap();
+
+        let first = fingerprint_of(tmp.path());
+        assert_ne!(first, 0, "repo fingerprint must not be the sentinel");
+
+        std::fs::write(tmp.path().join("b.rs"), "fn b() {}\n").unwrap();
+        let second = fingerprint_of(tmp.path());
+        assert_ne!(first, second, "adding a file must change the fingerprint");
     }
 }
 
