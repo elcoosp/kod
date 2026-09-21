@@ -355,7 +355,7 @@ fn derive_ollama_root(base_url: &str) -> String {
 /// Parse a JSON array of numbers into `Vec<f32>`. Rejects non-array
 /// shapes and entries that are not numbers; truncates absurdly long
 /// arrays (defensive — a server returning 10⁶ floats is a bug).
-fn parse_float_array(v: &serde_json::Value) -> Result<Vec<f32>> {
+pub fn parse_float_array(v: &serde_json::Value) -> Result<Vec<f32>> {
     const MAX_DIMS: usize = 8192;
     let arr = v
         .as_array()
@@ -374,6 +374,13 @@ fn parse_float_array(v: &serde_json::Value) -> Result<Vec<f32>> {
         out.push(f as f32);
     }
     Ok(out)
+}
+
+/// Test-only: expose the parser for external fuzz targets. Not part
+/// of the public API; the crate keeps its real name unchanged.
+#[doc(hidden)]
+pub fn parse_float_array_for_fuzz(v: &serde_json::Value) -> Result<Vec<f32>> {
+    parse_float_array(v)
 }
 
 #[cfg(test)]

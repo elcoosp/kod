@@ -1,0 +1,23 @@
+[package]
+name = "kod-fuzz"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+kod-types   = { path = "../crates/kod-types" }
+kod-error   = { path = "../crates/kod-error" }
+kod-config  = { path = "../crates/kod-config" }
+kod-tools   = { path = "../crates/kod-tools" }
+kod-lsp     = { path = "../crates/kod-lsp" }
+kod-mcp     = { path = "../crates/kod-mcp" }
+kod-memory  = { path = "../crates/kod-memory" }
+kod-provider-anthropic = { path = "../crates/kod-provider-anthropic" }
+
+# Prevent this crate from being built as part of the workspace
+# `cargo build`; cargo-fuzz drives its own build.
+[workspace]
