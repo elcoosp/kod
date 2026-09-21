@@ -135,19 +135,69 @@ impl MemoryManager {
             *self.vector_index.write() = None;
             return Ok(());
         };
-        let dim = embedder.dims();
+        let all = self.long_term.get_all().await?;
+        if all.is_empty() {
+            *self.vector_index.write() = None;
+            return Ok(());
+        }
+
+        // P0-3: an entry whose `metadata.embedding` is absent gets one
+        // here. Without this, the index was always empty — no code
+        // path in the workspace ever wrote that field.
+        let mut updated = all;
+        let need_embed: Vec<usize> = updated
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.metadata.embedding.is_none())
+            .map(|(i, _)| i)
+            .collect();
+        if !need_embed.is_empty() {
+            let texts: Vec<String> = need_embed
+                .iter()
+                .map(|&i| updated[i].content.clone())
+                .collect();
+            match embedder.embed(&texts).await {
+                Ok(vectors) if vectors.len() == need_embed.len() => {
+                    for (idx, vec) in need_embed.iter().zip(vectors) {
+                        updated[*idx].metadata.embedding = Some(vec);
+                    }
+                    // Persist so the next rebuild is a no-op for these
+                    // entries. Best-effort: a failed persist still lets
+                    // this call's index be built from the in-memory
+                    // values.
+                    let to_store: Vec<_> = need_embed.iter().map(|&i| updated[i].clone()).collect();
+                    if let Err(e) = self.long_term.store_batch(to_store).await {
+                        tracing::warn!(error = %e, "failed to persist embeddings");
+                    }
+                }
+                Ok(vectors) => {
+                    tracing::warn!(
+                        got = vectors.len(),
+                        want = need_embed.len(),
+                        "embedder returned wrong count; index incomplete this call"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "embedding pass failed; keyword+recency only");
+                }
+            }
+        }
+
+        // Learn dim from the first embedding actually present.
+        let dim = updated
+            .iter()
+            .find_map(|e| e.metadata.embedding.as_ref().map(|v| v.len()))
+            .unwrap_or(0);
         if dim == 0 {
             *self.vector_index.write() = None;
             return Ok(());
         }
-        let all = self.long_term.get_all().await?;
+
         let mut idx = crate::vector_index::VectorIndex::new(dim);
-        for entry in &all {
+        for entry in &updated {
             if let Some(v) = &entry.metadata.embedding
                 && v.len() == dim
             {
-                // Ignore insert errors: a malformed embedding is
-                // skipped rather than aborting the rebuild.
                 let _ = idx.insert(entry.id.clone(), v.clone());
             }
         }
@@ -168,9 +218,70 @@ impl MemoryManager {
         &self,
         memory_type: MemoryType,
         content: &str,
-        metadata: kod_types::MemoryMetadata,
+        mut metadata: kod_types::MemoryMetadata,
     ) -> Result<MemoryId> {
+        // H-D4: cap content length. `memory_save` is model-invocable
+        // with no dedup, no rate limit, and no size limit; a runaway
+        // agent can mint a fresh 100 KB entry per call and grow the
+        // global DB without bound. 4 KiB is larger than any fact the
+        // extraction pass produces.
+        const MAX_CONTENT_BYTES: usize = 4 * 1024;
+        let content = if content.len() > MAX_CONTENT_BYTES {
+            kod_types::strutil::truncate_chars(content, MAX_CONTENT_BYTES)
+        } else {
+            content
+        };
+        if content.trim().is_empty() {
+            return Err(KodError::InvalidParameters {
+                reason: "memory content must not be empty".to_string(),
+            });
+        }
+
+        // H-D4: content-hash dedup on the long-term paths. A store
+        // whose exact content is already present is a no-op (returns
+        // the existing id). Cheap: one pass over the long-term store,
+        // which is the same scan the retrieval path already does per
+        // prompt.
+        if !matches!(memory_type, MemoryType::ShortTerm) {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut h = DefaultHasher::new();
+            content.hash(&mut h);
+            let content_hash = h.finish();
+            let existing = self.long_term.get_all().await?;
+            for e in existing {
+                let mut eh = DefaultHasher::new();
+                e.content.hash(&mut eh);
+                if eh.finish() == content_hash && e.memory_type == memory_type {
+                    return Ok(e.id);
+                }
+            }
+        }
+
         let id = MemoryId::new();
+
+        // P0-3: attach the embedding at write time. Without this, the
+        // vector index had nothing to hold and semantic retrieval
+        // never fired even with an embedder configured. Best-effort:
+        // a failed embed leaves the field unset and the entry is
+        // embedded lazily on the next rebuild.
+        if metadata.embedding.is_none()
+            && let Some(e) = self.embedder.as_ref()
+        {
+            match e.embed(std::slice::from_ref(&content.to_string())).await {
+                Ok(mut v) if !v.is_empty() => {
+                    let vec = v.remove(0);
+                    if let Some(idx) = self.vector_index.write().as_mut() {
+                        let _ = idx.insert(id.clone(), vec.clone());
+                    }
+                    metadata.embedding = Some(vec);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::debug!(error = %e, "embedding at store time failed");
+                }
+            }
+        }
 
         match memory_type {
             MemoryType::ShortTerm => {
@@ -319,13 +430,14 @@ impl MemoryManager {
         }
         let query_terms = crate::retrieval::QueryTerms::build(query, &all);
 
-        // Ensure the vector index is populated when an embedder is
-        // installed. `None` means "no semantic component".
-        let semantic_available = self
-            .embedder
-            .as_ref()
-            .map(|e| e.dims() > 0)
-            .unwrap_or(false);
+        // P0-3: semantic availability is "an embedder is installed",
+        // not "the embedder's dim cache is warmed". The previous gate
+        // was circular — `dims()` only transitioned 0 -> N inside a
+        // successful `embed()`, and every embed was gated on
+        // `dims() > 0`, so the cache could never warm. A configured
+        // embedder now gets one probe attempt; success or failure is
+        // discovered from the call itself.
+        let semantic_available = self.embedder.is_some();
         if semantic_available && self.vector_index.read().is_none() {
             // Best-effort rebuild: a failure here just means the
             // hybrid falls back to keyword+recency for this call.
@@ -397,11 +509,25 @@ impl MemoryManager {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
+            // H-D5: re-read each entry inside the write step so we
+            // write back the *current* value, not a stale snapshot.
+            // The pre-fix code captured `top` from `get_all()` and
+            // then re-inserted the whole entry, resurrecting
+            // anything the concurrent consolidation task had just
+            // archived or fused in the meantime. Fetching each by id
+            // and skipping a vanished one turns "write whole stale
+            // entry" into "touch the timestamp if still present".
             let mut updated: Vec<MemoryEntry> = Vec::with_capacity(top.len());
             for e in &top {
-                let mut e = e.clone();
-                e.metadata.last_retrieved_at_ms = Some(now_ms);
-                updated.push(e);
+                // Re-read inside the write step. A `get` that returns
+                // `None` means the consolidation task archived or
+                // fused the entry between our snapshot and now; we
+                // skip it instead of resurrecting the stale copy.
+                let Some(mut fresh) = self.long_term.get(&e.id).await? else {
+                    continue;
+                };
+                fresh.metadata.last_retrieved_at_ms = Some(now_ms);
+                updated.push(fresh);
             }
             if let Err(err) = self.long_term.store_batch(updated).await {
                 tracing::debug!(
