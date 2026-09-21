@@ -5231,11 +5231,15 @@ impl KodEngine {
             let prep = self.prepare_turn(key, input, None, false).await?;
             let TurnPreparation {
                 response,
-                task_type,
+                // The goal path does not re-consult the task type
+                // after `prepare_turn` returns — the goal block is the
+                // steering signal. `refined_skills` is still consumed
+                // in the final `TaskResponse`, so it stays bound.
+                task_type: _,
                 refined_skills,
                 alloc,
                 definitions,
-                pending: mut pending,
+                mut pending,
                 system_text,
                 initial_messages: _,
             } = prep;
