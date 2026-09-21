@@ -1524,6 +1524,30 @@ impl KodEngine {
     /// Ordering matters: the plan (if created) must be written to
     /// `self.plans` *before* `build_prompt_plan` renders `system_text`,
     /// otherwise the plan never reaches the model.
+    /// Write the per-turn `PromptTrace` that powers `/debug last-prompt`
+    /// and `/debug tokens`.
+    ///
+    /// Kept separate from `prepare_turn` because the goal path augments
+    /// the prompt with a `## Goal` block *after* the pipeline runs — the
+    /// snapshot must reflect what the model actually sees on turn 1, not
+    /// what it saw before the goal was prepended. Callers pass their own
+    /// final `pending` text and the allocation the pipeline produced.
+    pub(crate) async fn snapshot_prompt(
+        &self,
+        key: &str,
+        pending: &str,
+        alloc: &std::result::Result<crate::budget::Allocation, crate::budget::BudgetError>,
+    ) {
+        let trace = crate::budget::PromptTrace {
+            text: pending.to_string(),
+            alloc: alloc.as_ref().ok().copied(),
+        };
+        self.last_prompt
+            .write()
+            .await
+            .insert(key.to_string(), trace);
+    }
+
     pub(crate) async fn prepare_turn(
         &self,
         key: &str,
@@ -1557,16 +1581,6 @@ impl KodEngine {
                 response.memory_context.clone(),
             )
             .await?;
-        {
-            let trace = crate::budget::PromptTrace {
-                text: pending.clone(),
-                alloc: alloc.as_ref().ok().copied(),
-            };
-            self.last_prompt
-                .write()
-                .await
-                .insert(key.to_string(), trace);
-        }
         let system_text = {
             let plan = self
                 .router
@@ -4562,15 +4576,13 @@ impl KodEngine {
                 response,
                 task_type,
                 refined_skills,
-                // `alloc` is only consumed inside `prepare_turn` now
-                // (for the `PromptTrace` and `build_prompt_plan`), so
-                // the caller ignores it.
-                alloc: _,
+                alloc,
                 definitions,
                 pending: convo,
                 system_text,
                 initial_messages,
             } = prep;
+            self.snapshot_prompt(key, &convo, &alloc).await;
             // Agentic loop: generate (with tools) -> execute -> feed back.
             // Wrapped in a fallback chain (A6): the primary endpoint is
             // tried first, then each `routing.fallback` endpoint, on
@@ -4935,12 +4947,13 @@ impl KodEngine {
                 response,
                 task_type,
                 refined_skills,
-                alloc: _,
+                alloc,
                 definitions,
                 pending,
                 system_text,
                 initial_messages,
             } = prep;
+            self.snapshot_prompt(key, &pending, &alloc).await;
             let options = self.generation_defaults.read().await.to_options();
             // Fallback chain (A6). Streaming retries reuse the same
             // chunk_tx, so a successful fallback continues the visible
@@ -5208,62 +5221,37 @@ impl KodEngine {
         // See process(): clone out of the lock before any long await.
         let _provider_probe = self.registry.read().await.clone();
         if _provider_probe.is_some() {
-            // S10: shared classification + memory-filter block. The
-            // goal path preserves its pre-fix behaviour of skipping
-            // the retrieval-log write (`None`).
-            let response = self.classify_and_filter(key, input, None).await?;
-            let (task_type, refined_skills) =
-                self.refine_classification(key, input, &response).await;
-            let history = self.render_history_for(key).await;
-            self.remember_turn_for(key, true, input).await;
-            // S10: shared prompt-build block. The goal path appends
-            // its goal block to `pending` below.
-            let (alloc, definitions, mut pending) = self
-                .build_budgeted_prompt(
-                    key,
-                    input,
-                    task_type,
-                    &history,
-                    response.memory_context.clone(),
-                )
-                .await?;
-            pending.push_str(&format!(
+            // S10 phase 3: same shared pipeline as the other two entry
+            // points. The goal path is the one caller that does *not*
+            // write a retrieval-log entry (`None`), and the one that
+            // augments both `pending` and `system_text` with a `## Goal`
+            // block *after* the shared pipeline returns. `snapshot_prompt`
+            // therefore runs *after* the augmentation, so `/debug
+            // last-prompt` shows the goal the model actually saw.
+            let prep = self.prepare_turn(key, input, None, false).await?;
+            let TurnPreparation {
+                response,
+                task_type,
+                refined_skills,
+                alloc,
+                definitions,
+                pending: mut pending,
+                system_text,
+                initial_messages: _,
+            } = prep;
+            let goal_block = format!(
                 "\n## Goal\n\n{goal}\n\nWork turn by turn toward this goal using tools. Do not ask the user for confirmation — act. When the goal is fully reached, end your reply with a line containing exactly GOAL MET and summarize what was done. If a tool errors, work around it and keep going.\n"
-            ));
-
-            // Snapshot includes the goal block — that is what the model
-            // sees on turn 1, which is what users want to inspect when a
-            // goal run misbehaves.
-            {
-                let trace = crate::budget::PromptTrace {
-                    text: pending.clone(),
-                    alloc: alloc.as_ref().ok().copied(),
-                };
-                self.last_prompt
-                    .write()
-                    .await
-                    .insert(key.to_string(), trace);
-            }
-
+            );
+            pending.push_str(&goal_block);
+            self.snapshot_prompt(key, &pending, &alloc).await;
             // Structured inputs for the streaming loop. The goal text
             // is part of the system prompt, not a message, so a fresh
             // turn of the goal loop does not create a duplicate user
             // message every iteration.
             let system_text = {
-                let plan = self
-                    .router
-                    .build_prompt_plan(
-                        input,
-                        &task_type,
-                        &history,
-                        response.memory_context.clone(),
-                        alloc.as_ref().ok(),
-                    )
-                    .await?;
-                let base = plan.render_text();
-                format!(
-                    "{base}\n\n## Goal\n\n{goal}\n\nWork turn by turn toward this goal using tools. Do not ask the user for confirmation — act. When the goal is fully reached, end your reply with a line containing exactly GOAL MET and summarize what was done. If a tool errors, work around it and keep going.\n"
-                )
+                let mut s = system_text;
+                s.push_str(&goal_block);
+                s
             };
             // The user message for the initial turn. The goal loop
             // re-uses the same structured base across iterations; the
