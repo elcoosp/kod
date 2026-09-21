@@ -4121,6 +4121,103 @@ impl KodEngine {
             .map(|model| ModelRef::new(endpoint.clone(), model))
     }
 
+    /// Resolve the endpoint chain, with a cache-awareness gate when
+    /// the ledger knows a warm endpoint (P1).
+    ///
+    /// The `by_task` order is preserved — the ledger does not
+    /// reorder or re-rank. What it does is insert the warm endpoint
+    /// at position 0 when the classification's first choice would
+    /// be cold and the hop is not worth its switch penalty. The rest
+    /// of the chain is untouched, so a fallback failure still walks
+    /// the same endpoints in the same order.
+    ///
+    /// The gate needs the head fingerprint and the transcript size,
+    /// both of which are computed per turn; this method reads them
+    /// from the current request state. A caller that resolves the
+    /// chain before the request is prepared sees the pre-P1 shape.
+    async fn resolve_chain_for_task_gated(
+        &self,
+        task_key: &str,
+        head_fingerprint: u64,
+        transcript_tokens: u64,
+    ) -> Vec<ModelRef> {
+        let mut chain = self.resolve_chain_for_task(task_key).await;
+        if chain.len() < 2 {
+            return chain;
+        }
+        let preferred = chain[0].clone();
+        // The endpoint the ledger believes is warm, if it is also in
+        // the chain. Anything else is not a candidate for the gate —
+        // the ledger will not route to an endpoint the
+        // classification did not choose.
+        let sticky = self
+            .cache_ledger
+            .lock()
+            .ok()
+            .and_then(|l| l.sticky().map(str::to_string));
+        let Some(sticky) = sticky else {
+            return chain;
+        };
+        if sticky == preferred.endpoint {
+            return chain;
+        }
+        let sticky_idx = match chain.iter().position(|m| m.endpoint == sticky) {
+            Some(i) => i,
+            None => return chain,
+        };
+        // Projected penalty of using `preferred` on this turn's
+        // prefix (cold → re-process the whole transcript).
+        let preferred_pricing = self.pricing_for(&preferred).await;
+        let penalty = match preferred_pricing {
+            Some(p) => self
+                .cache_ledger
+                .lock()
+                .ok()
+                .map(|l| l.switch_penalty_usd(
+                    &preferred.endpoint,
+                    head_fingerprint,
+                    &p,
+                    transcript_tokens,
+                ))
+                .unwrap_or(0.0),
+            // No pricing → cannot estimate; treat as zero penalty so
+            // the classification's choice is honoured (local
+            // endpoints have no cost, and the switch is free).
+            None => 0.0,
+        };
+        // The per-turn saving the hop would win is the difference in
+        // input-price rates applied to the transcript. This is a
+        // lower bound: it ignores output-price differences and
+        // cache-read differences. A caller that wants a richer
+        // estimate should pass one in; the ledger's job is to gate,
+        // not to model.
+        let per_turn_saving = match (
+            self.pricing_for(&preferred).await,
+            self.pricing_for(&chain[sticky_idx]).await,
+        ) {
+            (Some(a), Some(b)) => {
+                let m = 1_000_000.0;
+                let diff = b.input_per_mtok_usd - a.input_per_mtok_usd;
+                (transcript_tokens as f64 / m) * diff.max(0.0)
+            }
+            _ => 0.0,
+        };
+        let chosen = self
+            .cache_ledger
+            .lock()
+            .ok()
+            .map(|l| l.gate(&preferred.endpoint, &sticky, per_turn_saving, penalty).to_string())
+            .unwrap_or_else(|| preferred.endpoint.clone());
+        if chosen == sticky {
+            // Hop declined; move the warm endpoint to the front of
+            // the chain. The preferred endpoint stays as a fallback
+            // at its original position.
+            let warm = chain.remove(sticky_idx);
+            chain.insert(0, warm);
+        }
+        chain
+    }
+
     async fn resolve_chain_for_task(&self, task_key: &str) -> Vec<ModelRef> {
         // Legacy path: no registry.
         if self.registry.read().await.is_none() {
@@ -4836,7 +4933,21 @@ impl KodEngine {
             // errors that `is_retryable()` classifies as transient.
             let options = self.generation_defaults.read().await.to_options();
             let task_key = format!("{:?}", response.task_type);
-            let chain = self.resolve_chain_for_task(&task_key).await;
+            // P1: the cache-aware gate needs the fingerprint of the
+            // request head and a size estimate for the transcript.
+            // Both are cheap: the fingerprint walks the already-
+            // rendered system text plus the sorted tool names; the
+            // token estimate is a byte-length division, which is
+            // what `TokenUsage` uses everywhere it lacks a real
+            // tokenizer.
+            let head_fingerprint = Self::cache_head_fingerprint(&system_text, &definitions);
+            let transcript_tokens: u64 = initial_messages
+                .iter()
+                .map(|m| (m.content.len() as u64) / 4)
+                .sum();
+            let chain = self
+                .resolve_chain_for_task_gated(&task_key, head_fingerprint, transcript_tokens)
+                .await;
             if chain.is_empty() {
                 return Err(Self::no_provider_error());
             }
