@@ -1,5 +1,7 @@
 # Testing Guide
 
+> **Note:** The counts below are regenerated from the source tree at the current commit (15 crates, 2105 test attributes). If you see drift, run     2105.
+
 This guide covers how to test KOD, from running the automated test suite to manual verification of features.
 
 ## Quick Start
@@ -26,7 +28,7 @@ cargo test --workspace --tests
 
 ## Test Counts
 
-The workspace currently contains roughly 500 test attributes
+The workspace currently contains roughly 2105 test attributes
 (`#[test]`, `#[tokio::test]`, `#[rstest]`) across 15 crates. The
 numbers are illustrative, not canonical — `#[rstest]` cases expand
 into multiple tests at runtime, and ordinary development adds tests
