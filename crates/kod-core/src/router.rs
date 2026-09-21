@@ -328,6 +328,12 @@ pub struct TaskRouter {
     /// because the router is behind an `Arc` and enabling happens
     /// through `&self`.
     skill_watchers: std::sync::Mutex<Vec<kod_skills::SkillWatcher>>,
+    /// H-S10: every directory hot-reload is enabled for. A reload
+    /// event from any one directory rebuilds the matcher from the
+    /// full list — the pre-fix code rebuilt from the *single* watched
+    /// dir, so an edit in `~/.kod/skills` silently dropped every
+    /// project-local skill (and vice versa).
+    watched_dirs: std::sync::Mutex<Vec<std::path::PathBuf>>,
     /// Repository map cache with mtime-based invalidation. Stores the
     /// structured `RepoMap` (not the pre-rendered string) so future
     /// consumers — PageRank in D5, a `/map` command that wants counts —
@@ -379,6 +385,7 @@ impl TaskRouter {
             memory_manager,
             skill_matcher,
             skill_watchers: std::sync::Mutex::new(Vec::new()),
+            watched_dirs: std::sync::Mutex::new(Vec::new()),
             repo_map_cache: crate::router::RepoMapCache::new(),
         })
     }
@@ -606,50 +613,78 @@ impl TaskRouter {
         if !skills_dir.is_dir() {
             return Ok(());
         }
-        // Already watching? One watcher per directory is enough.
-        {
-            let Ok(guard) = self.skill_watchers.lock() else {
-                // A poisoned lock means a watcher setup panicked
-                // earlier; leave hot reload off rather than risk a
-                // second panic.
-                return Ok(());
-            };
-            if !guard.is_empty() {
-                return Ok(());
-            }
-        }
-
         let Some(matcher) = self.skill_matcher.clone() else {
-            // No matcher means no lookup path to update.
             return Ok(());
         };
+
+        // H-S10: the previous shape short-circuited on
+        // `!guard.is_empty()` — so only the *first* directory was ever
+        // watched. Here, each directory gets its own watcher and its
+        // own reload task; every task rebuilds the matcher from the
+        // *full* list of watched directories.
+        //
+        // Idempotence is per-directory: a second call for the same
+        // dir is a no-op.
+        let already = {
+            let Ok(guard) = self.watched_dirs.lock() else {
+                return Ok(());
+            };
+            guard.iter().any(|d| d == skills_dir)
+        };
+        if already {
+            return Ok(());
+        }
+        {
+            let Ok(mut guard) = self.watched_dirs.lock() else {
+                return Ok(());
+            };
+            guard.push(skills_dir.to_path_buf());
+        }
 
         let (watcher, mut event_rx) = kod_skills::SkillWatcher::new(skills_dir)?;
         watcher.start()?;
 
-        let dir = skills_dir.to_path_buf();
+        let dirs_snapshot: std::sync::Arc<std::sync::Mutex<Vec<std::path::PathBuf>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        // Prime the snapshot from the current watched list.
+        {
+            let all = self
+                .watched_dirs
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default();
+            if let Ok(mut s) = dirs_snapshot.lock() {
+                *s = all;
+            }
+        }
+        let dirs_shared = dirs_snapshot.clone();
         let weak_matcher = Arc::downgrade(&matcher);
+        let event_dir = skills_dir.to_path_buf();
         tokio::spawn(async move {
             while let Some(_event) = event_rx.recv().await {
-                // The matcher being gone means the router was
-                // dropped; exit rather than leak this task.
                 let Some(matcher) = weak_matcher.upgrade() else {
                     break;
                 };
-                let mut loader = kod_skills::loader::SkillLoader::new(&dir);
-                match loader.load_all().await {
+                // Rebuild from the union of every watched dir. This is
+                // the same entry point as initial load
+                // (`load_from_dirs`), so shadowing rules are
+                // identical: later dirs override earlier ones.
+                let dirs: Vec<std::path::PathBuf> =
+                    dirs_shared.lock().map(|g| g.clone()).unwrap_or_default();
+                match kod_skills::load_from_dirs(&dirs).await {
                     Ok(skills) => {
                         let n = skills.len();
                         matcher.replace_all(skills).await;
                         tracing::info!(
-                            dir = %dir.display(),
+                            trigger = %event_dir.display(),
+                            dirs = dirs.len(),
                             count = n,
-                            "hot-reloaded skills"
+                            "hot-reloaded skills",
                         );
                     }
                     Err(e) => {
                         tracing::warn!(
-                            dir = %dir.display(),
+                            dir = %event_dir.display(),
                             error = %e,
                             "skill hot-reload failed"
                         );
@@ -1319,6 +1354,14 @@ impl RepoMapCache {
     /// `None` when the working directory yields an empty map (no source
     /// files recognized).
     fn get_or_rebuild(&self, working_dir: &std::path::Path) -> Option<std::sync::Arc<String>> {
+        // H-R15 / S3: the fingerprint and (below) the map build are
+        // synchronous filesystem walks. The pre-fix shape ran both on
+        // the async runtime's worker thread — a large tree's first
+        // prompt stalled every other task. The router is sync here
+        // because it is called from within a `build_prompt*` that
+        // does not itself await; callers that need the async variant
+        // (`fingerprint_of_async`, `get_or_rebuild_async`) exist
+        // below and route through `spawn_blocking`.
         let fp = fingerprint_of(working_dir);
         // Fast path: cached and unchanged.
         if let Ok(guard) = self.inner.read()
@@ -1352,11 +1395,29 @@ impl RepoMapCache {
 /// in a shallow walk. Uses `ignore::WalkBuilder` for the same
 /// .gitignore / .ignore honoring the map itself uses — a repo with a
 /// `target/` dir sees only the sources, not the build artifacts.
+/// H-R15: async fingerprint. `spawn_blocking` so the walk runs on
+/// the blocking pool rather than a worker thread.
+pub async fn fingerprint_of_async(root: std::path::PathBuf) -> u64 {
+    match tokio::task::spawn_blocking(move || fingerprint_of(&root)).await {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::warn!(error = %e, "fingerprint_of_async: task failed");
+            0
+        }
+    }
+}
+
 fn fingerprint_of(root: &std::path::Path) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
     let mut h = FNV_OFFSET;
 
+    // H-R15: walk the same tree the repomap walk does. The pre-fix
+    // `max_depth(Some(3))` only hashed files at the top three levels,
+    // so an edit to `crates/kod-core/src/engine.rs` — four levels
+    // deep — never invalidated the cached map. The map stayed stale
+    // for the rest of the session, and every prompt saw a repomap
+    // that described the code before the write.
     let mut builder = ignore::WalkBuilder::new(root);
     builder
         .hidden(false)
@@ -1368,12 +1429,14 @@ fn fingerprint_of(root: &std::path::Path) -> u64 {
         .filter_entry(|e| {
             let name = e.file_name().to_str().unwrap_or("");
             name != ".git" && name != "target" && name != "node_modules"
-        })
-        .max_depth(Some(3));
+        });
 
-    // Collect (path, mtime_secs, size) into a Vec, then sort before
-    // hashing so the fingerprint does not depend on walk order.
-    let mut entries: Vec<(std::path::PathBuf, u64, u64)> = Vec::new();
+    // H-R15: use nanosecond mtime (the `time` crate's `mtime` gives
+    // full resolution on every platform) and hash `(path, mtime_ns,
+    // size)`. Second-granularity mtime meant two writes in the same
+    // second produced the same fingerprint, and the second write's
+    // effect on the map was invisible.
+    let mut entries: Vec<(std::path::PathBuf, i128, u64)> = Vec::new();
     for entry in builder.build().filter_map(|e| e.ok()) {
         let path = entry.path();
         if !path.is_file() {
@@ -1387,7 +1450,7 @@ fn fingerprint_of(root: &std::path::Path) -> u64 {
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
+            .map(|d| d.as_nanos() as i128)
             .unwrap_or(0);
         let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
         entries.push((rel, mtime, meta.len()));
