@@ -164,7 +164,16 @@ fn char_by_char_streaming_reassembles() {
     );
 }
 
-/// `/help` opens the help overlay.
+/// `/help` opens the full-screen help overlay.
+///
+/// The overlay advertises itself as reachable from three entry
+/// points — the `?` key, F1, and the `/help` command — and its own
+/// key list renders `? this help (also /help, F1)`. Until this test
+/// existed, only `?` and F1 actually opened it: the slash command
+/// pushed a text block into the transcript instead. The assertion
+/// pins the border title (which proves the widget rendered its
+/// frame) plus one body line from each section (which proves the
+/// frame is not blank).
 #[test]
 fn slash_help_opens_the_overlay() {
     let env = TestEnv::new();
@@ -175,26 +184,23 @@ fn slash_help_opens_the_overlay() {
     session.send_text("/help");
     session.send_key(KeyCode::Enter);
 
-    // The overlay's border title is the marker. Matching it (rather
-    // than, say, one of the body lines) confirms the widget rendered
-    // its frame, not just that a body string happened to appear in
-    // the transcript. A reflow that changes the body leaves the
-    // title alone.
+    // The overlay's border title is the marker for "the widget
+    // rendered". Matching a body line instead could pass on a
+    // half-drawn frame.
     let screen = session.wait_for_text("help — Esc closes", WAIT);
     assert!(
         screen.contains("help — Esc closes"),
-        "help overlay did not open:\n{screen}"
+        "help overlay did not open from /help:\n{screen}"
     );
-
-    // Two body markers: the keys section and a slash command. Either
-    // appearing without the title would be a partial render.
+    // One body line from each section — the key listing and the
+    // slash-command listing.
     assert!(
         screen.contains("this help (also /help, F1)"),
-        "help overlay body missing the keys section:\n{screen}"
+        "help overlay is missing the keys section:\n{screen}"
     );
     assert!(
         screen.contains("/blackboard"),
-        "help overlay body missing slash commands:\n{screen}"
+        "help overlay is missing the slash-command section:\n{screen}"
     );
 }
 

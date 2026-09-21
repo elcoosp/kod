@@ -1736,7 +1736,15 @@ impl TuiLoop {
         let cmd = parts.next().unwrap_or("");
         match cmd {
             "/help" => {
-                self.app.push_system_message(SLASH_HELP);
+                // Open the full-screen help overlay. This is what the
+                // overlay's own key list promises — it renders
+                // `? this help (also /help, F1)` — but the command
+                // used to push `SLASH_HELP` as a system message
+                // instead, leaving the overlay unreachable from the
+                // command the widget advertises. The `?` key and F1
+                // both route through `toggle_help`; this does too,
+                // so the three entry points behave identically.
+                self.app.toggle_help();
             }
             "/clear" => {
                 if self.app.is_generating() {
