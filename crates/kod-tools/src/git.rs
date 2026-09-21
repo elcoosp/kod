@@ -35,7 +35,12 @@ async fn run_git(args: &[&str], wd: &std::path::Path, timeout_secs: u64) -> Resu
         .current_dir(wd)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stderr(std::process::Stdio::piped())
+        // H-R12: an outer timeout that drops the future must not leave
+        // a `git` child running. The pre-fix shape abandoned the child
+        // (no kill-on-drop), so a `git fetch` that outlived the
+        // timeout kept consuming bandwidth and holding the index lock.
+        .kill_on_drop(true);
     // `GIT_PAGER` and `PAGER` off: the pager would consume the pipe and
     // the tool would see nothing. `git` also honors `-c core.pager=` but
     // the env var is what a user's shell sets.
