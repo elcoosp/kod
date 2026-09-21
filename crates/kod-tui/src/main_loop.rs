@@ -548,6 +548,10 @@ impl TuiLoop {
             std::io::stdout(),
             crossterm::terminal::EnterAlternateScreen,
             crossterm::event::EnableMouseCapture,
+            // H-T9: bracketed paste. Without it, a paste of a code
+            // block delivers literal Enter keystrokes and the first
+            // line is submitted as a prompt.
+            crossterm::event::EnableBracketedPaste,
         )
         .map_err(|e| KodError::Internal(format!("Failed to enter alternate screen: {e}")))?;
 
@@ -581,6 +585,7 @@ impl TuiLoop {
 
         crossterm::execute!(
             std::io::stdout(),
+            crossterm::event::DisableBracketedPaste,
             crossterm::event::DisableMouseCapture,
             crossterm::terminal::LeaveAlternateScreen,
         )
@@ -747,6 +752,22 @@ impl TuiLoop {
     pub async fn handle_event(&mut self, event: Event) -> Result<()> {
         match event {
             Event::Key(key_code) => self.handle_key(key_code).await?,
+            Event::Paste(text) => {
+                // H-T9: insert the pasted block into the input verbatim,
+                // newlines and all. `add_char` per char would be
+                // equivalent, but this also preserves a multi-line
+                // paste as one undo unit conceptually. The user can
+                // still edit before pressing Enter to submit.
+                for ch in text.chars() {
+                    if ch == '\n' {
+                        self.app.insert_newline();
+                    } else if ch == '\r' {
+                        // CRLF pastes arrive with both; skip CR.
+                    } else {
+                        self.app.add_char(ch);
+                    }
+                }
+            }
             Event::UserInput(input) => {
                 self.app.set_input(input);
                 self.dispatch_prompt().await?;
@@ -812,20 +833,28 @@ impl TuiLoop {
                 // change suggests /handoff so the user can reset the
                 // transcript cleanly. The engine returns `None` for
                 // every case where a hint would be noise.
+                // H-T6: the phase-change check is a Jev network
+                // round-trip. The pre-fix code ran it via
+                // `block_in_place(block_on(...))` — a synchronous
+                // network call inside the event handler that froze
+                // the UI after every completed turn. Spawn it and
+                // deliver the result through the same event channel
+                // the streaming updates use; the hint appears
+                // asynchronously when the answer arrives.
                 if let Some(engine) = self.engine.clone() {
-                    let holder = "session".to_string();
-                    // Cheap synchronous check; the engine handles
-                    // the network call. The hint is non-blocking —
-                    // a busy session just does not show it.
-                    let phase_change = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current()
-                            .block_on(engine.detect_phase_change_with_jev(&holder))
+                    let tx = self.event_handler.sender();
+                    tokio::spawn(async move {
+                        let holder = "session".to_string();
+                        let phase_change = engine.detect_phase_change_with_jev(&holder).await;
+                        if let Some((old, new)) = phase_change {
+                            let msg = format!(
+                                "(phase changed: {old} → {new}. Consider /handoff to start fresh with a clean context.)"
+                            );
+                            let _ = tx
+                                .send(Event::System(crate::event::EventPriority::Normal, msg))
+                                .await;
+                        }
                     });
-                    if let Some((old, new)) = phase_change {
-                        self.app.push_system_message(&format!(
-                            "(phase changed: {old} → {new}. Consider /handoff to start fresh with a clean context.)"
-                        ));
-                    }
                 }
             }
             Event::TokenUsage(total) => {
@@ -1276,10 +1305,34 @@ impl TuiLoop {
                     } else if let Some((batch_id, json)) =
                         kod_core::engine::parse_tool_approval_batch(&chunk)
                     {
-                        let batch: kod_core::engine::ApprovalBatch = serde_json::from_str(json)
-                            .unwrap_or_else(|_| kod_core::engine::ApprovalBatch {
-                                items: Vec::new(),
-                            });
+                        // H-R1: a corrupt batch must not be silently
+                        // dropped — the pre-fix `unwrap_or_else` left
+                        // every pending approval to time out (120 s)
+                        // and then deny, with no user-visible signal.
+                        let batch: kod_core::engine::ApprovalBatch =
+                            match serde_json::from_str(json) {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    tracing::error!(
+                                        batch_id,
+                                        error = %e,
+                                        "TUI approval batch failed to parse; \
+                                         emitting a system message",
+                                    );
+                                    let _ = event_tx_chunks
+                                        .send(Event::System(
+                                            crate::event::EventPriority::High,
+                                            format!(
+                                                "Approval request could not be \
+                                                 parsed ({e}); it will be denied \
+                                                 by the engine after the \
+                                                 timeout."
+                                            ),
+                                        ))
+                                        .await;
+                                    return;
+                                }
+                            };
                         let items: Vec<crate::event::ApprovalItem> = batch
                             .items
                             .into_iter()
@@ -1339,7 +1392,7 @@ impl TuiLoop {
                         accumulated.push_str(&chunk);
                         chunk_count += 1;
                         if !disabled_for_turn
-                            && chunk_count % 5 == 0
+                            && chunk_count.is_multiple_of(5)
                             && accumulated.len() > 200
                             && let Some(kind) = engine_for_pump
                                 .classify_chunk_with_jev("session", &accumulated)
@@ -1758,7 +1811,7 @@ impl TuiLoop {
                                 format!("- {n}")
                             } else {
                                 let short = if d.len() > 100 {
-                                    format!("{}…", &d[..100])
+                                    format!("{}…", kod_types::strutil::truncate_chars(d, 100))
                                 } else {
                                     d.to_string()
                                 };
@@ -2159,6 +2212,12 @@ impl TuiLoop {
                 }
                 match self.app.drop_last_exchange() {
                     Some(prompt) => {
+                        // H-T8: mirror the display rewind on the
+                        // engine transcript. Drop one user + one
+                        // assistant turn (2 messages).
+                        if let Some(engine) = self.engine.clone() {
+                            engine.forget_last_turns_for("session", 2).await;
+                        }
                         self.app.set_input(prompt);
                         self.app.push_system_message(
                             "Last exchange removed — resending the same prompt.",
@@ -2176,7 +2235,13 @@ impl TuiLoop {
                     return Ok(());
                 }
                 match self.app.drop_last_exchange() {
-                    Some(_) => self.app.push_system_message("Last exchange removed."),
+                    Some(_) => {
+                        // H-T8: mirror on the engine transcript.
+                        if let Some(engine) = self.engine.clone() {
+                            engine.forget_last_turns_for("session", 2).await;
+                        }
+                        self.app.push_system_message("Last exchange removed.");
+                    }
                     None => self.app.push_system_message("Nothing to delete."),
                 }
             }
@@ -3062,7 +3127,7 @@ impl TuiLoop {
                     match self.app.session_system_prompt() {
                         Some(s) => {
                             let shown = if s.len() > 300 {
-                                format!("{}…", &s[..300])
+                                format!("{}…", kod_types::strutil::truncate_chars(s, 300))
                             } else {
                                 s.to_string()
                             };
@@ -3078,7 +3143,7 @@ impl TuiLoop {
                 } else {
                     self.app.set_session_system_prompt(rest.to_string());
                     let shown = if rest.len() > 80 {
-                        format!("{}…", &rest[..80])
+                        format!("{}…", kod_types::strutil::truncate_chars(rest, 80))
                     } else {
                         rest.to_string()
                     };
@@ -3455,7 +3520,7 @@ impl TuiLoop {
                             msg.push_str(&format!(
                                 "  [{}] {}\n",
                                 tag,
-                                &d.text.chars().take(120).collect::<String>(),
+                                d.text.chars().take(120).collect::<String>(),
                             ));
                         }
                         if log.entries.len() > 20 {
@@ -5204,8 +5269,13 @@ impl TuiLoop {
                     return Ok(());
                 }
                 KeyCode::Escape => {
+                    // H-T4: Esc closes the popup; it does NOT clear the
+                    // typed draft. The pre-fix `set_input(String::new())`
+                    // destroyed everything the user had typed,
+                    // contradicting the sibling arm's own comment
+                    // ("Esc in insert ALWAYS just drops to normal —
+                    // never cancels").
                     self.app.reset_completion();
-                    self.app.set_input(String::new());
                     return Ok(());
                 }
                 _ => {}
