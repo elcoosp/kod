@@ -226,6 +226,63 @@ impl KodConfig {
     /// `KodConfig::load_from` stays strict (used by tests and by
     /// `load_default` itself when the file exists); only the top-level
     /// entry point is forgiving.
+    /// H-D9: parse `path` as a `toml::Table` and deserialize each
+    /// known top-level section independently. A section that fails
+    /// to parse falls back to `Self::default()`'s value for that
+    /// section; the others are preserved.
+    ///
+    /// Returns `Ok(None)` when even the TOML syntax is broken
+    /// (recovery cannot salvage anything), `Ok(Some(cfg))` when the
+    /// file is valid TOML but at least one section failed.
+    fn recover_sections(path: &std::path::Path) -> Result<Option<Self>> {
+        let raw = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => return Ok(None),
+        };
+        let table: toml::Table = match raw.parse::<toml::Table>() {
+            Ok(t) => t,
+            Err(_) => return Ok(None),
+        };
+
+        // Start from the default and override each section we can
+        // deserialize. Unknown keys are ignored (a warning is the
+        // job of a later `kod config validate` pass).
+        let mut cfg = Self::default();
+        cfg.config_version = table
+            .get("config_version")
+            .and_then(|v| v.as_integer())
+            .map(|n| n as u32)
+            .unwrap_or(cfg.config_version);
+
+        macro_rules! recover {
+            ($field:ident, $ty:ty) => {
+                if let Some(section) = table.get(stringify!($field)) {
+                    match section.clone().try_into::<$ty>() {
+                        Ok(v) => cfg.$field = v,
+                        Err(e) => {
+                            tracing::error!(
+                                section = stringify!($field),
+                                error = %e,
+                                "config section failed to parse; using default",
+                            );
+                        }
+                    }
+                }
+            };
+        }
+        recover!(llm, crate::llm::LlmConfig);
+        recover!(tools, ToolsConfig);
+        recover!(hooks, HooksConfig);
+        recover!(lsp, LspConfig);
+        recover!(memory, crate::memory::MemoryConfig);
+        recover!(skills, crate::skills::SkillsConfig);
+        recover!(swarm, crate::swarm::SwarmConfig);
+        recover!(jev, crate::jev::JevConfig);
+        recover!(security, SecurityConfig);
+
+        Ok(Some(cfg))
+    }
+
     pub fn load_default() -> Result<Self> {
         let config_dir = match Self::config_dir() {
             Ok(d) => d,
@@ -243,22 +300,57 @@ impl KodConfig {
             match Self::load_from(&config_path) {
                 Ok(mut cfg) => {
                     // Soft-validate the loaded config: clamp out-of-range
-                    // values to safe bounds, logging each change. A user
-                    // with `temperature = 2.5` or `context_window = 0`
-                    // gets a working session and a warning, not a silent
-                    // failure three prompts later.
+                    // values to safe bounds, logging each change.
                     cfg.llm.validate();
+                    cfg.skills.validate();
                     cfg.limits.clamp();
                     Ok(cfg)
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        path = %config_path.display(),
-                        error = %e,
-                        "Config file present but unreadable; using built-in defaults. \
-                         Fix or delete the file to silence this warning."
-                    );
-                    Ok(Self::default())
+                Err(whole_file_err) => {
+                    // H-D9: try per-section recovery. The pre-fix
+                    // fallback discarded the *entire* user config on
+                    // any single-field parse error — a typo in one
+                    // endpoint's `context_window` replaced every
+                    // endpoint, hook, policy preset, and memory
+                    // setting with the built-in default. Here we
+                    // parse the file into a `toml::Table`, deserialize
+                    // each known section independently, and keep the
+                    // ones that work.
+                    match Self::recover_sections(&config_path) {
+                        Ok(Some(mut cfg)) => {
+                            tracing::error!(
+                                path = %config_path.display(),
+                                error = %whole_file_err,
+                                "Config file could not be parsed as a whole; \
+                                 recovered the sections that parse cleanly. \
+                                 Broken fields use their built-in defaults.",
+                            );
+                            cfg.llm.validate();
+                            cfg.skills.validate();
+                            cfg.limits.clamp();
+                            // Preserve the broken file for inspection.
+                            let backup = config_path.with_extension("toml.broken");
+                            let _ = std::fs::rename(&config_path, &backup);
+                            eprintln!(
+                                "kod: config parse error in {}: {}. The \
+                                 recoverable sections were kept; the broken \
+                                 file is saved as {}.",
+                                config_path.display(),
+                                whole_file_err,
+                                backup.display(),
+                            );
+                            Ok(cfg)
+                        }
+                        _ => {
+                            tracing::warn!(
+                                path = %config_path.display(),
+                                error = %whole_file_err,
+                                "Config file present but unreadable; using built-in defaults. \
+                                 Fix or delete the file to silence this warning."
+                            );
+                            Ok(Self::default())
+                        }
+                    }
                 }
             }
         } else {
