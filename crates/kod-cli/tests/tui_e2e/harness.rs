@@ -183,16 +183,26 @@ auto_lsp = false
         // `sh -c 'script' name arg1 arg2 …` binds `$0` = name and
         // `$@` = [arg1, arg2, …]. The `"$@"` expansion is the
         // canonical way to pass argv through a shell without
-        // re-parsing it, so the binary path and flags survive intact.
+        // re-parsing it.
+        //
+        // stderr goes to a file, not the PTY. The TUI paints the
+        // alternate screen with cursor-positioned output; a
+        // `tracing::warn!` on fd 2 — which is the same PTY slave —
+        // writes its text at whatever cursor position the frame is
+        // mid-way through and corrupts the render. The pre-`main.rs`
+        // bug that the tracing init fixed also hid this: with no
+        // subscriber installed, nothing was written to fd 2. The
+        // file redirect keeps the log for the failure dump without
+        // letting it touch the screen.
         cmd.arg(format!(
-            "stty rows {height} cols {width} 2>/dev/null; exec \"$@\" 2>&1",
+            "stty rows {height} cols {width} 2>/dev/null; exec \"$@\" 2>{}",
+            log_file.display(),
         ));
         // `$0` for the shell — any string; not the program path.
         cmd.arg("kod-tui-wrapper");
         cmd.arg(env!("CARGO_BIN_EXE_kod"));
         cmd.arg("tui");
         cmd.arg("--no-resume");
-        let _ = &log_file; // reserved for stderr capture
         let stderr_log = log_file.clone();
         eprintln!(
             "test: spawning with KOD_CONFIG_DIR={}",

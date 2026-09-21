@@ -100,6 +100,10 @@ fn seed_sources(tmp: &Path) {
 #[tokio::test]
 async fn snapshot_simple_fresh_session() {
     let tmp = TempDir::new().unwrap();
+    // The repomap walk requires a project marker; without one
+    // the fixture produces an empty map and the snapshot does not
+    // exercise the repomap code path at all.
+    std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
     let router = make_router(tmp.path());
     let prompt = router
         .build_prompt_with_context(
@@ -116,6 +120,10 @@ async fn snapshot_simple_fresh_session() {
 #[tokio::test]
 async fn snapshot_simple_with_history() {
     let tmp = TempDir::new().unwrap();
+    // The repomap walk requires a project marker; without one
+    // the fixture produces an empty map and the snapshot does not
+    // exercise the repomap code path at all.
+    std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
     let router = make_router(tmp.path());
     let history = "User: what is rust?\nAssistant: Rust is a systems \
                    programming language focused on memory safety.\n";
@@ -134,6 +142,10 @@ async fn snapshot_simple_with_history() {
 #[tokio::test]
 async fn snapshot_code_modification_with_repo_map() {
     let tmp = TempDir::new().unwrap();
+    // The repomap walk requires a project marker; without one
+    // the fixture produces an empty map and the snapshot does not
+    // exercise the repomap code path at all.
+    std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
     seed_sources(tmp.path());
     let router = make_router(tmp.path());
     let prompt = router
@@ -154,6 +166,10 @@ async fn snapshot_code_modification_with_repo_map() {
 #[tokio::test]
 async fn snapshot_debugging_task_with_history() {
     let tmp = TempDir::new().unwrap();
+    // The repomap walk requires a project marker; without one
+    // the fixture produces an empty map and the snapshot does not
+    // exercise the repomap code path at all.
+    std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
     seed_sources(tmp.path());
     let router = make_router(tmp.path());
     let history = "User: run the tests\nAssistant: cargo test failed with \
@@ -171,6 +187,10 @@ async fn snapshot_debugging_task_with_history() {
 #[tokio::test]
 async fn snapshot_research_task_no_context() {
     let tmp = TempDir::new().unwrap();
+    // The repomap walk requires a project marker; without one
+    // the fixture produces an empty map and the snapshot does not
+    // exercise the repomap code path at all.
+    std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
     let router = make_router(tmp.path());
     let prompt = router
         .build_prompt_with_context(
@@ -190,6 +210,10 @@ async fn snapshot_research_task_no_context() {
 #[tokio::test]
 async fn cacheable_prefix_does_not_drift_between_turns() {
     let tmp = TempDir::new().unwrap();
+    // The repomap walk requires a project marker; without one
+    // the fixture produces an empty map and the snapshot does not
+    // exercise the repomap code path at all.
+    std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
     seed_sources(tmp.path());
     let router = make_router(tmp.path());
     const MARKER: &str = "## Volatile suffix (not cached)";
@@ -220,6 +244,10 @@ async fn cacheable_prefix_does_not_drift_between_turns() {
 #[tokio::test]
 async fn prompt_is_deterministic_within_a_router() {
     let tmp = TempDir::new().unwrap();
+    // The repomap walk requires a project marker; without one
+    // the fixture produces an empty map and the snapshot does not
+    // exercise the repomap code path at all.
+    std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
     seed_sources(tmp.path());
     let router = make_router(tmp.path());
     let a = router
@@ -237,6 +265,10 @@ async fn prompt_is_deterministic_within_a_router() {
 #[tokio::test]
 async fn prompt_is_deterministic_across_routers() {
     let tmp = TempDir::new().unwrap();
+    // The repomap walk requires a project marker; without one
+    // the fixture produces an empty map and the snapshot does not
+    // exercise the repomap code path at all.
+    std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
     seed_sources(tmp.path());
     let make = |name: &str| {
         let cfg = RouterConfig {
