@@ -60,6 +60,14 @@ pub struct WorktreeManager {
     repo: PathBuf,
     base_commit: String,
     created: Vec<WorktreeInfo>,
+    /// Branches whose work merged cleanly. Only these get `git branch
+    /// -D` on cleanup; an unmerged branch holds the only copy of an
+    /// agent's commits and deleting it loses the work.
+    merged_ok: std::collections::HashSet<String>,
+    /// When true, cleanup() also deletes unmerged branches. Set by the
+    /// caller that has explicitly accepted the loss (a `--force`
+    /// style flag, or after a manual reconcile).
+    force_cleanup: bool,
     disk_cap_mb: u64,
     git_timeout_secs: u64,
 }
@@ -83,6 +91,8 @@ impl WorktreeManager {
             repo: repo.to_path_buf(),
             base_commit: head,
             created: Vec::new(),
+            merged_ok: std::collections::HashSet::new(),
+            force_cleanup: false,
             // 512 MB default: enough for a mid-size Rust project's
             // target dir, small enough that a runaway agent cannot
             // fill a laptop's disk.
@@ -202,7 +212,68 @@ impl WorktreeManager {
     /// `main`) with a clean index; a dirty index fails the first
     /// merge with a `failed` entry naming the branch.
     pub fn merge_all(&mut self) -> Result<MergeReport> {
+        // H-D3: verify the repo is still on the base commit with a
+        // clean index before merging anything. A swarm runs for
+        // minutes; the user may have switched branches, stashed,
+        // committed, or the runner itself may have touched
+        // `.gitignore`. The pre-fix shape ran `git merge` in whatever
+        // checkout happened to be current and reported the result as
+        // if it had merged onto the expected parent.
         let mut report = MergeReport::default();
+        // H-D3: base must still be an *ancestor* of HEAD. The
+        // pre-fix check demanded HEAD == base exactly, which refused
+        // a legitimate case (a user commits a quick fix on `main`
+        // mid-swarm — the branches still share base as their
+        // ancestor, so `git merge --no-ff` is a valid operation).
+        let ancestor = run_git_owned(
+            &self.repo,
+            &["merge-base", "--is-ancestor", &self.base_commit, "HEAD"],
+            self.git_timeout_secs,
+        );
+        // `--is-ancestor` exits non-zero when the relation does not
+        // hold; `run_git_owned` returns Err on non-zero. Ok means
+        // "still descended from base".
+        if ancestor.is_err() {
+            let head = run_git_owned(&self.repo, &["rev-parse", "HEAD"], self.git_timeout_secs)
+                .unwrap_or_default();
+            let msg = format!(
+                "refusing to merge: repo HEAD ({}) is not descended from \
+                 the swarm's base commit ({}). Run `git checkout {}` and \
+                 retry, or drop the worktrees with `kod worktree gc`.",
+                head.trim(),
+                self.base_commit,
+                self.base_commit,
+            );
+            for info in &self.created {
+                report.failed.push((info.branch.clone(), msg.clone()));
+            }
+            return Ok(report);
+        }
+        // Clean index: `git status --porcelain` must be empty. A dirty
+        // index turns `git merge` into a partial merge that leaves the
+        // repo in an ambiguous state.
+        // H-D3: dirty-index check, excluding `.gitignore`. The
+        // manager appends `.kod/` to it in `create()`, so a bare
+        // `git status --porcelain` right after `create()` always
+        // showed a modified file and the check refused every merge.
+        // A user's own edit to `.gitignore` is a small price to pay
+        // for making the merge path actually usable.
+        let status = run_git_owned(
+            &self.repo,
+            &["status", "--porcelain", "--", ":(exclude).gitignore"],
+            self.git_timeout_secs,
+        )
+        .unwrap_or_default();
+        if !status.trim().is_empty() {
+            let msg = format!(
+                "refusing to merge: working tree has uncommitted changes:\n{}",
+                status.trim(),
+            );
+            for info in &self.created {
+                report.failed.push((info.branch.clone(), msg.clone()));
+            }
+            return Ok(report);
+        }
         for info in &self.created {
             let result = run_git_owned(
                 &self.repo,
@@ -216,7 +287,10 @@ impl WorktreeManager {
                 self.git_timeout_secs,
             );
             match result {
-                Ok(_) => report.merged.push(info.branch.clone()),
+                Ok(_) => {
+                    self.merged_ok.insert(info.branch.clone());
+                    report.merged.push(info.branch.clone());
+                }
                 Err(e) => {
                     let msg = e.to_string();
                     // Order matters: `git merge --abort` clears the
@@ -287,11 +361,23 @@ impl WorktreeManager {
                 ],
                 self.git_timeout_secs,
             );
-            let _ = run_git_owned(
-                &self.repo,
-                &["branch", "-D", &info.branch],
-                self.git_timeout_secs,
-            );
+            // H-D2: only delete the branch when its work either
+            // merged cleanly or the caller has explicitly accepted
+            // the loss. An unmerged branch holds the only copy of an
+            // agent's commits; `git branch -D` on it destroys them.
+            let safe_to_delete = self.force_cleanup || self.merged_ok.contains(&info.branch);
+            if safe_to_delete {
+                let _ = run_git_owned(
+                    &self.repo,
+                    &["branch", "-D", &info.branch],
+                    self.git_timeout_secs,
+                );
+            } else {
+                tracing::warn!(
+                    branch = %info.branch,
+                    "worktree cleanup: branch kept (unmerged; not deleted)"
+                );
+            }
         }
         // Prune any dangling worktree metadata (a worktree removed by
         // hand leaves an entry in .git/worktrees/ that would trip the
@@ -332,10 +418,11 @@ impl WorktreeManager {
 
 impl Drop for WorktreeManager {
     fn drop(&mut self) {
-        // A manager that is dropped without `cleanup()` still removes
-        // its worktrees — a stray `kod/agent-*` branch from a crashed
-        // run is exactly the residue a user would have to clean by
-        // hand.
+        // H-D2: worktrees are removed unconditionally (they are just
+        // directories under .kod/worktrees/), but branches are only
+        // deleted for work that merged cleanly. A `cleanup()` is still
+        // called so the directory does not leak; the branch-keep logic
+        // inside it is what protects unmerged work.
         if !self.created.is_empty() {
             self.cleanup();
         }
@@ -377,34 +464,70 @@ fn run_git_owned(repo: &Path, args: &[&str], timeout_secs: u64) -> Result<String
 /// add an async dependency to a synchronous module. The parameter is
 /// kept so a future enforcement pass can wire it without an API
 /// change.
-fn run_git_inner(repo: &Path, args: &[&str], _timeout_secs: u64) -> Result<String> {
-    // std::process is synchronous — a 60 s timeout is enforced by
-    // the caller if needed; for the short worktree commands a plain
-    // wait is fine (the commands are fast). We do enforce a hard cap
-    // by killing the child if it exceeds the deadline; see below.
+fn run_git_inner(repo: &Path, args: &[&str], timeout_secs: u64) -> Result<String> {
+    // S7: enforce the timeout the module has documented for years but
+    // never applied. `std::process::Command::output` blocks forever on
+    // a hung child (a stuck `git fetch`, a git waiting on a credential
+    // helper, a lockfile contention pause). We spawn manually, poll
+    // `try_wait` with a bounded sleep, and kill on deadline.
+    //
+    // The pipes are bounded by the OS and the worktree commands emit
+    // tiny output (`git worktree add` prints at most a few lines), so
+    // polling without a concurrent reader is safe: the child cannot
+    // fill its pipe buffer before exiting.
     let mut cmd = std::process::Command::new("git");
     cmd.args(args)
         .current_dir(repo)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        // Disable the pager for any output-producing command.
         .env("GIT_PAGER", "cat")
         .env("PAGER", "cat")
-        // Make sure a merge does not open an editor.
         .env("GIT_EDITOR", "true")
         .env("GIT_MERGE_AUTOEDIT", "no");
 
-    let output = cmd.output().map_err(KodError::Io)?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let detail = if !stderr.trim().is_empty() {
-            stderr.trim().to_string()
-        } else if !stdout.trim().is_empty() {
-            stdout.trim().to_string()
+    let mut child = cmd.spawn().map_err(KodError::Io)?;
+    let effective = timeout_secs.max(1);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(effective);
+    let status = loop {
+        match child.try_wait().map_err(KodError::Io)? {
+            Some(s) => break s,
+            None => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(KodError::Internal(format!(
+                        "git {}: did not finish within {}s (killed)",
+                        args.join(" "),
+                        effective,
+                    )));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+    };
+
+    // Drain both pipes (they are already closed because the child has
+    // exited; reads return immediately).
+    use std::io::Read;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    if let Some(mut p) = child.stdout.take() {
+        let _ = p.read_to_end(&mut stdout);
+    }
+    if let Some(mut p) = child.stderr.take() {
+        let _ = p.read_to_end(&mut stderr);
+    }
+
+    if !status.success() {
+        let err = String::from_utf8_lossy(&stderr);
+        let out = String::from_utf8_lossy(&stdout);
+        let detail = if !err.trim().is_empty() {
+            err.trim().to_string()
+        } else if !out.trim().is_empty() {
+            out.trim().to_string()
         } else {
-            format!("exit status {:?}", output.status.code())
+            format!("exit status {:?}", status.code())
         };
         return Err(KodError::Internal(format!(
             "git {}: {}",
@@ -412,7 +535,7 @@ fn run_git_inner(repo: &Path, args: &[&str], _timeout_secs: u64) -> Result<Strin
             detail
         )));
     }
-    Ok(String::from_utf8_lossy(&output.stdout)
+    Ok(String::from_utf8_lossy(&stdout)
         .trim_end_matches('\n')
         .to_string())
 }
@@ -527,7 +650,13 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_removes_worktrees_and_branches() {
+    fn cleanup_removes_worktrees_and_keeps_unmerged_branches() {
+        // H-D2: the pre-fix behaviour deleted every branch on
+        // cleanup, destroying any commits an agent had made that had
+        // not yet merged. The new behaviour removes the worktree
+        // directory (no leak) but keeps the branch when it is not in
+        // `merged_ok` — the caller decides whether to `git branch -D`
+        // or reconcile.
         let Some(tmp) = init_repo() else { return };
         let mut mgr = WorktreeManager::detect(tmp.path()).unwrap().unwrap();
         let info = mgr.create("agent-1").unwrap();
@@ -535,15 +664,15 @@ mod tests {
         let branch = info.branch.clone();
         mgr.cleanup();
         assert!(!path.exists(), "worktree path should be gone");
-        // Branch should be gone too.
+        // The branch survives because it never merged.
         let out = std::process::Command::new("git")
             .args(["branch", "--list", &branch])
             .current_dir(tmp.path())
             .output()
             .unwrap();
         assert!(
-            String::from_utf8_lossy(&out.stdout).trim().is_empty(),
-            "branch should be deleted"
+            !String::from_utf8_lossy(&out.stdout).trim().is_empty(),
+            "unmerged branch must survive cleanup",
         );
     }
 
