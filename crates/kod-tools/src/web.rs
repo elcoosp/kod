@@ -583,7 +583,14 @@ pub fn html_to_text_for_fuzz(html: &str) -> String {
 /// elements is fixed and small.
 fn skip_element_at(lower: &str, i: usize) -> Option<usize> {
     const SKIP: &[&str] = &["script", "style", "head", "noscript", "svg", "template"];
-    let rest = &lower[i..];
+    // Fuzz finding: `html_to_text` walks `html.as_bytes()` but indexes
+    // `lower` (a `String` produced by `to_lowercase`, which can change
+    // byte lengths). A byte offset that is a valid position in `html`
+    // is therefore not guaranteed to be a char boundary in `lower`;
+    // the pre-fix `&lower[i..]` panicked on inputs like `-ĉ`. Use
+    // `get` so a non-boundary is a non-match (the byte at that offset
+    // cannot be the start of a `<tag`, which is always ASCII).
+    let rest = lower.get(i..)?;
     for name in SKIP {
         let open = format!("<{name}");
         if rest.starts_with(&open) {
@@ -592,11 +599,12 @@ fn skip_element_at(lower: &str, i: usize) -> Option<usize> {
             let after = rest.as_bytes().get(open.len()).copied().unwrap_or(b'>');
             if !after.is_ascii_alphanumeric() {
                 let close = format!("</{name}");
-                return Some(match lower[i..].find(&close) {
+                return Some(match rest.find(&close) {
                     Some(pos) => {
                         let abs = i + pos;
-                        let tail = &lower[abs..];
-                        match tail.find('>') {
+                        // `pos` came from `find`, so `abs` *is* a
+                        // boundary; the `get` is belt and braces.
+                        match lower.get(abs..).and_then(|tail| tail.find('>')) {
                             Some(gt) => abs + gt + 1,
                             None => lower.len(),
                         }
@@ -659,6 +667,20 @@ mod tests {
                 good,
                 block_private_ip(ip)
             );
+        }
+    }
+
+    #[test]
+    fn html_to_text_does_not_panic_on_multibyte_at_any_offset() {
+        // Fuzz artifact: `-ĉ` (bytes [0x2d, 0xc4, 0x89]). The old
+        // byte-loop in `html_to_text` called `skip_element_at` with
+        // the byte offset of the second byte of `ĉ`, and the
+        // `&lower[i..]` inside that function panicked on the
+        // non-char-boundary slice. Exercising the three boundary
+        // cases the byte loop can hit — first byte, middle byte,
+        // last byte — guards the fix.
+        for case in ["-\u{0109}", "a\u{0109}b", "\u{1F600}", "\u{0109}"] {
+            let _ = html_to_text(case);
         }
     }
 

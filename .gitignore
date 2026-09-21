@@ -24,3 +24,14 @@ CHANGELOG.md.bak
 # the workspace build by the root Cargo.toml's `exclude = ["fuzz"]`,
 # but git still sees it).
 /fuzz/target/
+
+# --- fuzz (cargo-fuzz) ---
+# libFuzzer's evolving corpus: regenerated on every `cargo fuzz run`
+# and by `cargo fuzz tmin`; enormous, machine-local, never checked in.
+fuzz/corpus/
+# Crash/minimization artifacts: belong in the bug report or a test.
+fuzz/artifacts/
+# libFuzzer's build state (already excluded by the workspace
+# `exclude = ["fuzz"]`, but ignore defensively).
+fuzz/target/
+# --- end fuzz ---

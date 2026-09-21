@@ -185,7 +185,20 @@ pub fn parse_unified_diff(patch: &str) -> Result<Vec<Hunk>> {
             h.lines.push(HunkLine::Context(String::new()));
             continue;
         }
-        let (tag, text) = line.split_at(1);
+        // Fuzz finding: a diff line whose first byte starts a multi-byte
+        // UTF-8 character (e.g. `ÿ` = [0xc3, 0xbf]) made the old
+        // `split_at(1)` panic. A well-formed diff line begins with an
+        // ASCII tag (` `, `+`, `-`, `\\`), so a non-boundary first byte
+        // is malformed input — reject it with a diagnostic rather than
+        // panic.
+        let Some((tag, text)) = line.split_at_checked(1) else {
+            return Err(KodError::InvalidParameters {
+                reason: format!(
+                    "diff line does not start on a char boundary: {:?}",
+                    line,
+                ),
+            });
+        };
         let text = text.to_string();
         match tag {
             " " => h.lines.push(HunkLine::Context(text)),
@@ -268,6 +281,23 @@ pub fn render_unified_diff(old: &str, new: &str, path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn parse_unified_diff_rejects_multibyte_first_byte() {
+        // Fuzz artifact bytes:
+        //   [36,36,10,10,64,64,48,11,57,10,10,195,191,0,43,10,10,10,10,10,10,0,0]
+        // The 12th line begins with `\u{ff}` (2 UTF-8 bytes). Pre-fix,
+        // `line.split_at(1)` panicked on the non-boundary byte index.
+        // The fix returns `Err`, matching the crate's contract that a
+        // malformed patch is a `Result::Err`, never a panic.
+        let bytes: &[u8] = &[
+            36, 36, 10, 10, 64, 64, 48, 11, 57, 10, 10, 195, 191, 0, 43, 10, 10, 10, 10, 10,
+            10, 0, 0,
+        ];
+        let patch = std::str::from_utf8(bytes).unwrap();
+        let _ = parse_unified_diff(patch);
+    }
+
     use super::*;
 
     #[test]
