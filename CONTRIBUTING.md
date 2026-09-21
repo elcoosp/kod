@@ -5,7 +5,7 @@ Thank you for your interest in contributing to KOD! This document provides guide
 ## Development Setup
 
 ### Prerequisites
-- Rust 1.75+ (install via [rustup](https://rustup.rs/))
+- Rust 1.85+ (install via [rustup](https://rustup.rs/))
 - Git
 - Ollama (for local LLM testing)
 
