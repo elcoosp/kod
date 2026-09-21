@@ -1603,6 +1603,9 @@ mod tests {
     async fn test_repo_map_cache_rebuilds_on_change() {
         let temp_dir = TempDir::new().unwrap();
         let wd = temp_dir.path().to_path_buf();
+        // `looks_like_a_repo` requires a project marker; the repomap
+        // walk is skipped on a bare tempdir by design.
+        std::fs::create_dir_all(wd.join(".git")).unwrap();
         std::fs::write(wd.join("first.rs"), "pub fn first() {}\n").unwrap();
 
         let db_path = wd.join("test.redb");
