@@ -45,7 +45,7 @@ use std::path::{Path, PathBuf};
 /// Which preset a policy was seeded from. Presets are the coarse
 /// "what kind of session is this" choice; per-tool overrides live in
 /// `[tools.<name>]` on top.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[derive(Default)]
 pub enum Preset {
@@ -62,12 +62,15 @@ pub enum Preset {
 }
 
 /// What a `PolicyEngine::decide` call returns for one tool call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Decision {
+    /// Most permissive.
     Allow,
-    Deny,
     Ask,
+    /// Most restrictive. Ordering: Allow < Ask < Deny, so the
+    /// "narrower of two decisions" is `max(a, b)`.
+    Deny,
 }
 
 /// Which layer produced a decision. Used for logging and for
@@ -356,23 +359,70 @@ impl PolicyEngine {
         // Note: the CLI override is applied further down (Layer 4); the
         // priority above already establishes the correct layering.
 
-        // Layer 3: project policy overrides the preset and merges
-        // the tools map.
+        // Layer 3: project policy. H-S2 — a project layer may narrow
+        // the effective policy, never widen it. The pre-fix behaviour
+        // let a repo shipping `preset = "yolo"` (or
+        // `[tools.write_file] mode = "allow"`) escalate past the
+        // user's global `standard` with no consent gate. An
+        // `.editorconfig`-shaped file should not be able to grant
+        // shell-exec rights.
+        //
+        // Narrowing rules:
+        //   - Preset: `min(global, project)` in the Preset ordering
+        //     (`ReadOnly < Standard < Yolo`), so a project may only
+        //     choose the same or a *stricter* preset.
+        //   - Per-tool mode: `max(global_decision, project_decision)`
+        //     in the Decision ordering (`Allow < Ask < Deny`), so a
+        //     project may only ask more or deny more.
+        //
+        // An attempt to widen is logged at WARN and ignored. A future
+        // opt-in flag could honour the widening; today the safe
+        // direction is taken unconditionally.
         if let Some(root) = project_root
             && let Some((project, _path)) = Policy::load_project(root)?
         {
-            // A project overrides the preset only when it named one
-            // explicitly. `Policy::default()` produces
-            // `Preset::Standard`; without the `preset_explicit` flag
-            // there is no way to distinguish that from a project that
-            // wrote `preset = "standard"` on purpose. The flag comes
-            // from `Policy::from_toml`.
             if project.preset_explicit {
-                effective.preset = project.preset;
-                sources.insert("preset".to_string(), PolicySource::ProjectPolicy);
+                if project.preset > effective.preset {
+                    tracing::warn!(
+                        global = ?effective.preset,
+                        project = ?project.preset,
+                        "project .kod/policy.toml tries to widen the preset; \
+                         keeping the global (stricter) choice",
+                    );
+                } else {
+                    effective.preset = project.preset;
+                    sources.insert("preset".to_string(), PolicySource::ProjectPolicy);
+                }
             }
             for (tool, tp) in project.tools {
-                effective.tools.insert(tool.clone(), tp);
+                // Widen check on the per-tool mode. The "current
+                // effective decision" for a tool is its explicit
+                // override if one exists, otherwise the preset
+                // fallback. A project entry that is strictly *less*
+                // restrictive than that is a widening and is dropped;
+                // a same-or-stricter entry is honoured.
+                let mut accepted = tp;
+                if let Some(proj_mode) = accepted.mode {
+                    let current_effective = effective
+                        .tools
+                        .get(&tool)
+                        .and_then(|g| g.mode)
+                        .unwrap_or_else(|| preset_decision(effective.preset, &tool));
+                    if proj_mode < current_effective {
+                        tracing::warn!(
+                            tool = %tool,
+                            current = ?current_effective,
+                            project = ?proj_mode,
+                            "project .kod/policy.toml widens a tool's mode; \
+                             keeping the stricter effective choice",
+                        );
+                        // Drop the widening field, keep the rest of the
+                        // project's entry (paths/forbidden/etc. may
+                        // still narrow usefully).
+                        accepted.mode = None;
+                    }
+                }
+                effective.tools.insert(tool.clone(), accepted);
                 sources.insert(tool, PolicySource::ProjectPolicy);
             }
             effective.git = project.git;
@@ -618,18 +668,58 @@ fn extract_path_arg(args: &Value) -> Option<String> {
     None
 }
 
-/// Resolve a possibly-relative path against `working_dir`. No
-/// canonicalization: the policy engine compares lexically against
-/// globs the user wrote with `src/**` etc., and canonicalization
-/// would fail on paths that do not exist yet (the exact case a write
-/// pre-approval cares about).
+/// Resolve a possibly-relative path against `working_dir`, with
+/// lexical `..` / `.` normalization.
+///
+/// H-S3: the previous implementation was a bare join. The bypass it
+/// opened is exactly the one the review names: `src/../secrets/x`
+/// matched a `src/**` allowlist lexically while the tool's own
+/// `resolve_path` (which *does* normalize) wrote `<wd>/secrets/x`.
+/// The two implementations disagreed on what path a call touched.
+///
+/// Full canonicalization (symlink resolution) is deliberately *not*
+/// done here: the policy engine runs before the tool, and a write
+/// pre-approval is the case for a path that does not exist yet —
+/// `fs::canonicalize` would fail on the write's own destination. The
+/// tool's `resolve_path` still canonicalizes for symlink safety, so a
+/// symlink that escapes the root is caught by the tool layer. This
+/// function removes the "different lexical answer" hole.
 fn resolve_path(working_dir: &Path, p: &str) -> PathBuf {
     let path = Path::new(p);
-    if path.is_absolute() {
+    let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
         working_dir.join(path)
+    };
+
+    // Lexical `..` / `.` normalization. Mirrors `Path::components()`'s
+    // own handling of CurDir and ParentDir when the path is not yet
+    // resolved on disk.
+    let mut stack: Vec<std::ffi::OsString> = Vec::new();
+    let mut root: Option<PathBuf> = None;
+    for c in absolute.components() {
+        use std::path::Component;
+        match c {
+            Component::Prefix(..) | Component::RootDir => {
+                root = Some(PathBuf::from(c.as_os_str()));
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                // Pop the last normal element; a parent *above* the
+                // root is a no-op (`/..` == `/`). With `proj` on the
+                // stack, the first `..` pops it, a second is a no-op.
+                stack.pop();
+            }
+            Component::Normal(seg) => {
+                stack.push(seg.to_os_string());
+            }
+        }
     }
+    let mut out = root.unwrap_or_default();
+    for s in stack {
+        out.push(s);
+    }
+    out
 }
 
 /// Match a glob pattern against a path.
@@ -1257,5 +1347,158 @@ mod coverage_policy_deny_rules {
         assert_eq!(p.preset, Preset::Standard);
         assert!(!p.preset_explicit, "the flag must default to false");
         assert!(p.tools.is_empty());
+    }
+
+    #[test]
+    fn project_cannot_widen_the_preset() {
+        // H-S2: a repo shipping `.kod/policy.toml` with
+        // `preset = "yolo"` must NOT be able to escalate past the
+        // user's global `standard`.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".kod")).unwrap();
+        std::fs::write(
+            tmp.path().join(".kod").join("policy.toml"),
+            "preset = \"yolo\"\n",
+        )
+        .unwrap();
+
+        let mut cfg = KodConfig::default();
+        cfg.tools.preset = Some("standard".to_string());
+        let engine = PolicyEngine::load(&cfg, Some(tmp.path()), None).expect("load");
+        assert_eq!(
+            engine.effective().preset,
+            Preset::Standard,
+            "project yolo must not widen the global standard preset",
+        );
+    }
+
+    #[test]
+    fn project_can_narrow_the_preset() {
+        // The flip side: a project asking for `read-only` under a
+        // global `standard` is a narrowing and must be honoured.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".kod")).unwrap();
+        std::fs::write(
+            tmp.path().join(".kod").join("policy.toml"),
+            "preset = \"read-only\"\n",
+        )
+        .unwrap();
+
+        let mut cfg = KodConfig::default();
+        cfg.tools.preset = Some("standard".to_string());
+        let engine = PolicyEngine::load(&cfg, Some(tmp.path()), None).expect("load");
+        assert_eq!(engine.effective().preset, Preset::ReadOnly);
+    }
+
+    #[test]
+    fn project_cannot_widen_a_tool_mode() {
+        // A project `[tools.write_file] mode = "allow"` under a global
+        // `Ask` (Standard preset) must not silently grant write
+        // permission. The per-tool override is dropped, the preset
+        // fallback applies.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".kod")).unwrap();
+        std::fs::write(
+            tmp.path().join(".kod").join("policy.toml"),
+            "[tools.write_file]\nmode = \"allow\"\n",
+        )
+        .unwrap();
+
+        let cfg = KodConfig::default(); // preset defaults to Standard
+        let engine = PolicyEngine::load(&cfg, Some(tmp.path()), None).expect("load");
+        let wd = std::path::Path::new("/tmp");
+        let d = engine.decide(
+            "write_file",
+            &serde_json::json!({"path": "a"}),
+            wd,
+            &HashSet::new(),
+        );
+        assert_eq!(d.outcome, Decision::Ask, "project allow must not widen");
+    }
+
+    #[test]
+    fn project_can_narrow_a_tool_mode() {
+        // Reverse: project `mode = "deny"` under global `Ask` is a
+        // narrowing and must be honoured.
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".kod")).unwrap();
+        std::fs::write(
+            tmp.path().join(".kod").join("policy.toml"),
+            "[tools.write_file]\nmode = \"deny\"\n",
+        )
+        .unwrap();
+
+        let cfg = KodConfig::default();
+        let engine = PolicyEngine::load(&cfg, Some(tmp.path()), None).expect("load");
+        let wd = std::path::Path::new("/tmp");
+        let d = engine.decide(
+            "write_file",
+            &serde_json::json!({"path": "a"}),
+            wd,
+            &HashSet::new(),
+        );
+        assert_eq!(d.outcome, Decision::Deny);
+    }
+
+    #[test]
+    fn traversal_is_normalized_before_glob_matching() {
+        // H-S3 regression: a path with `..` that escapes an allowlist
+        // prefix must NOT match that prefix. `src/../secrets/x` is
+        // `<wd>/secrets/x`, not `<wd>/src/secrets/x`.
+        let mut effective = Policy {
+            preset: Preset::Yolo,
+            ..Policy::default()
+        };
+        effective.tools.insert(
+            "write_file".to_string(),
+            ToolPolicy {
+                paths: Some(vec!["src/**".to_string()]),
+                ..Default::default()
+            },
+        );
+        let e = PolicyEngine {
+            effective,
+            sources: BTreeMap::new(),
+        };
+        let wd = Path::new("/proj");
+        // A legitimate path under src/ is allowed.
+        let d = e.decide(
+            "write_file",
+            &serde_json::json!({"path": "src/main.rs"}),
+            wd,
+            &HashSet::new(),
+        );
+        assert_eq!(d.outcome, Decision::Allow);
+        // The traversal must not match the src/** allowlist.
+        let d = e.decide(
+            "write_file",
+            &serde_json::json!({"path": "src/../secrets/x"}),
+            wd,
+            &HashSet::new(),
+        );
+        assert_eq!(
+            d.outcome,
+            Decision::Deny,
+            "src/../secrets/x must not match src/**",
+        );
+    }
+
+    #[test]
+    fn dot_segments_are_stripped_from_the_resolved_path() {
+        let wd = Path::new("/proj");
+        // `.` segments are dropped.
+        assert_eq!(
+            resolve_path(wd, "src/./main.rs"),
+            PathBuf::from("/proj/src/main.rs"),
+        );
+        // `..` pops the previous segment.
+        assert_eq!(
+            resolve_path(wd, "src/sub/../main.rs"),
+            PathBuf::from("/proj/src/main.rs"),
+        );
+        // `..` above the root is a no-op.
+        assert_eq!(resolve_path(wd, "../../etc/x"), PathBuf::from("/etc/x"));
+        // A `..` above an absolute root stays at the root.
+        assert_eq!(resolve_path(wd, "/.."), PathBuf::from("/"));
     }
 }
