@@ -15,41 +15,6 @@ use std::pin::Pin;
 const LOCAL_FALLBACK_API_KEY: &str = "not-needed";
 
 /// Retries attempted on a transient provider error (rate limit, 5xx,
-/// connection reset). Local model servers routinely cold-start on the
-/// first request — the very first prompt against a freshly-started
-/// Ollama frequently fails once and then succeeds on retry. Three
-/// attempts (1 initial + 2 retries) with exponential backoff covers
-/// that case without making a genuinely-broken endpoint feel like a
-/// hang.
-const MAX_RETRIES: u32 = 3;
-
-/// Base backoff in milliseconds. Doubled each retry: 500, 1000.
-/// Kept short because the user is staring at a live terminal — a
-/// 30-second wait on the third try would be worse than the original
-/// error.
-const RETRY_BACKOFF_MS: u64 = 500;
-
-/// Classify whether an error is worth retrying. Retrying a 401 just
-/// wastes the user's time and hides the real problem.
-fn is_retryable(e: &str) -> bool {
-    let lower = e.to_lowercase();
-    lower.contains("rate limit")
-        || lower.contains("429")
-        || lower.contains("too many requests")
-        || lower.contains("timeout")
-        || lower.contains("timed out")
-        || lower.contains("connection reset")
-        || lower.contains("connection closed")
-        || lower.contains("temporarily")
-        || lower.contains("try again")
-        || lower.contains("503")
-        || lower.contains("502")
-        || lower.contains("504")
-        || lower.contains("bad gateway")
-        || lower.contains("service unavailable")
-        || lower.contains("gateway timeout")
-}
-
 /// Adapter that implements kod's [`LlmProvider`] for any OpenAI-compatible endpoint.
 pub struct OpenAICompatProvider {
     inner: OpenAICompatible,
@@ -203,17 +168,35 @@ impl OpenAICompatProvider {
     /// support was the ADR-04 Q1 spike's headline finding; this method
     /// is the first production use of it.
     fn request_from_completion(&self, req: &CompletionRequest) -> LlmRequest {
+        use adk_core::{FunctionResponseData, Part};
         use kod_types::MessageRole;
 
         let mut contents: Vec<Content> = Vec::new();
 
         // System prompt, if any. adk-model's per-provider converters
-        // recognise `role == "system"` and either lift it into the
-        // top-level field or keep it as a role message.
+        // recognise `role == "system"` and lift it into the
+        // top-level field.
         let sys_text = req.system.render_text();
         if !sys_text.is_empty() {
             contents.push(Content::new("system").with_text(sys_text));
         }
+
+        // H-P1: use the *native* OpenAI wire shapes. adk-model 2.2
+        // emits them correctly when the right `Part` variants are
+        // used:
+        //
+        //   role "assistant" + Part::FunctionCall { name, args, id }
+        //     → tool_calls[] on the request body.
+        //   role "tool" + first Part::FunctionResponse { .., id }
+        //     → { role: "tool", tool_call_id: id, content: text }.
+        //
+        // The pre-fix shape flattened both halves into plain text
+        // (`[tool_call id=… name=…]` / `[tool_result …]`) because a
+        // previous maintainer believed adk silently dropped the
+        // parts. That is not true — the parts reach the wire intact
+        // as long as the role is one of the recognised role strings
+        // and FunctionCall/FunctionResponse is the *only* kind of
+        // non-text part in the content.
 
         for m in &req.messages {
             match &m.role {
@@ -221,57 +204,63 @@ impl OpenAICompatProvider {
                     contents.push(Content::new("user").with_text(&m.content));
                 }
                 MessageRole::Assistant | MessageRole::Agent(_) => {
-                    // Assistant message: text form only. adk-model
-                    // 2.2 does not surface `Part::FunctionCall` on
-                    // the OpenAI-compatible wire — a Content that
-                    // carries both text and FunctionCall parts loses
-                    // the text (the FunctionCall path silently drops
-                    // the whole content). Emitting the metadata as
-                    // plain text is the only form that reliably
-                    // reaches the server, and it carries the id so a
-                    // subsequent tool_result can be linked to its
-                    // call.
-                    let mut text = m.content.clone();
-                    for call in &m.tool_calls {
-                        let id = call.id.as_deref().unwrap_or("");
-                        if !text.is_empty() {
-                            text.push('\n');
-                        }
-                        text.push_str(&format!(
-                            "[tool_call id={id} name={}] {}",
-                            call.tool_name, call.arguments,
-                        ));
+                    // Build the assistant turn as text (if any) plus
+                    // one FunctionCall part per tool call. `adk-model`'s
+                    // OpenAI converter extracts the tool_calls from
+                    // the parts list and emits them on the wire; the
+                    // text becomes the assistant's `content` field.
+                    let mut c = Content::new("assistant");
+                    if !m.content.is_empty() {
+                        c.parts.push(Part::Text {
+                            text: m.content.clone(),
+                        });
                     }
-                    let c = if text.is_empty() {
-                        Content::new("assistant")
-                    } else {
-                        Content::new("assistant").with_text(&text)
-                    };
+                    for call in &m.tool_calls {
+                        c.parts.push(Part::FunctionCall {
+                            name: call.tool_name.clone(),
+                            args: call.arguments.clone(),
+                            id: call.id.clone(),
+                            thought_signature: None,
+                        });
+                    }
+                    // OpenAI rejects an assistant message with no
+                    // content and no tool_calls. If both are empty,
+                    // emit a single space — the minimal non-empty
+                    // content the converter's own fallback uses.
+                    if c.parts.is_empty() {
+                        c.parts.push(Part::Text {
+                            text: " ".to_string(),
+                        });
+                    }
                     contents.push(c);
                 }
                 MessageRole::Tool => {
-                    // A tool result. adk-core 2.2's OpenAI-compatible
-                    // converter drops a `tool`-role `Content` that
-                    // carries only text — the wire test in
-                    // `tests/contracts.rs` proved the body never
-                    // reached the socket (both the tool content and
-                    // the `tool_call_id` annotation were absent).
+                    // Tool result: role "tool" with one
+                    // FunctionResponse part whose `id` is the
+                    // tool_call_id. `adk-model`'s converter reads
+                    // `parts.first()` as the response and emits
+                    // {role:"tool", tool_call_id: id, content: text}.
                     //
-                    // Until the native `FunctionResponse` shape is
-                    // pinned, the tool result therefore travels as a
-                    // `user`-role text `Content` with an explicit
-                    // `[tool_result tool_call_id=…]` prefix. The
-                    // link back to the originating call is preserved
-                    // because the assistant message already emits
-                    // `[tool_call id=… name=…]` on the wire, so both
-                    // halves of the pair carry the same id.
-                    let id = m.tool_call_id.clone().unwrap_or_default();
-                    let annotated = if id.is_empty() {
-                        format!("[tool_result]\n{}", m.content)
-                    } else {
-                        format!("[tool_result tool_call_id={id}]\n{}", m.content)
-                    };
-                    contents.push(Content::new("user").with_text(annotated));
+                    // The FunctionResponseData carries a name; the
+                    // caller-supplied tool result does not, so we
+                    // synthesize "tool" — the OpenAI converter does
+                    // not use the name on the wire, only the id and
+                    // the serialized response payload.
+                    let id = m
+                        .tool_call_id
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let data = FunctionResponseData::new(
+                        "tool",
+                        serde_json::json!({ "result": m.content }),
+                    );
+                    let mut c = Content::new("tool");
+                    c.parts.push(Part::FunctionResponse {
+                        function_response: data,
+                        id: Some(id),
+                        annotations: None,
+                    });
+                    contents.push(c);
                 }
                 MessageRole::System => {
                     // A `System` message inside the transcript is a
@@ -302,29 +291,20 @@ impl OpenAICompatProvider {
         request: LlmRequest,
         stream: bool,
     ) -> Result<(String, Vec<ToolCall>, Option<kod_provider::TokenUsage>)> {
-        let mut attempt = 0u32;
-        loop {
-            attempt += 1;
-            match self.collect_once(&request, stream).await {
-                Ok(v) => return Ok(v),
-                Err(e) => {
-                    let msg = e.to_string();
-                    if attempt < MAX_RETRIES && is_retryable(&msg) {
-                        let delay = RETRY_BACKOFF_MS * (1u64 << (attempt - 1).min(3));
-                        tracing::warn!(
-                            attempt,
-                            max_attempts = MAX_RETRIES,
-                            delay_ms = delay,
-                            error = %msg,
-                            "transient provider error; retrying"
-                        );
-                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                        continue;
-                    }
-                    return Err(e);
-                }
-            }
-        }
+        // H-P3: route through the shared `RetryPolicy`. The pre-fix
+        // inline loop used a substring classifier (`is_retryable`) on
+        // the formatted error string, which matches permanent 401 /
+        // 403 bodies that happen to contain "try again" and had no
+        // jitter — a swarm of agents hit a 429 simultaneously and
+        // retried in lockstep. The shared policy classifies from the
+        // typed `KodError` (`is_retryable()`), honours `Retry-After`
+        // on a `RateLimited`, and jitters the backoff.
+        let policy = kod_provider::retry::RetryPolicy::default();
+        kod_provider::retry::with_retry(&policy, || {
+            let req = request.clone();
+            async move { self.collect_once(&req, stream).await }
+        })
+        .await
     }
 
     /// One attempt of the request. Split out so `collect` can retry
@@ -399,7 +379,10 @@ impl LlmProvider for OpenAICompatProvider {
             // Trim the body: an HTML error page from a wrong port is
             // hundreds of lines, and the first few carry the meaning.
             let body_short = if body.len() > 400 {
-                format!("{}…", &body[..body.floor_char_boundary(400)])
+                format!(
+                    "{}…",
+                    &body[..kod_types::strutil::floor_char_boundary(&body, 400)]
+                )
             } else {
                 body
             };
@@ -555,8 +538,15 @@ impl OpenAICompatProvider {
                                 }
                             }
                             Err(e) => {
+                                // H-P10: `return` after the error. The
+                                // stream contract (traits.rs) says an
+                                // Err means the turn is over. The pre-fix
+                                // `break` fell through to the trailing
+                                // `Usage` + `Done`, so a consumer that
+                                // saw `Err` then `Done` could not tell a
+                                // hard failure from a clean stop.
                                 yield Err(adk_err(e));
-                                break;
+                                return;
                             }
                         }
                     }
@@ -566,7 +556,9 @@ impl OpenAICompatProvider {
                     yield Ok(StreamChunk::Done);
                 }
                 Err(e) => {
+                    // H-P10: return rather than fall through to `Done`.
                     yield Err(adk_err(e));
+                    return;
                 }
             }
         })
@@ -632,65 +624,7 @@ fn tool_declarations(tools: &[ToolDefinition]) -> HashMap<String, serde_json::Va
 
 #[cfg(test)]
 mod coverage_openai_helpers {
-    //! Coverage for the pure helpers at the top of the file. These
-    //! are the functions most likely to be silently broken by a
-    //! refactor — the retry classifier in particular, since a wrong
-    //! `is_retryable` answer means either "hang forever on a 401"
-    //! or "give up on a rate limit" and both are bad in different
-    //! directions.
     use super::*;
-
-    // ---- is_retryable --------------------------------------------------
-
-    #[test]
-    fn is_retryable_recognizes_rate_limit_variants() {
-        assert!(is_retryable("rate limit exceeded"));
-        assert!(is_retryable("HTTP 429: Too Many Requests"));
-        assert!(is_retryable("too many requests"));
-    }
-
-    #[test]
-    fn is_retryable_recognizes_timeout_and_connection_errors() {
-        assert!(is_retryable("request timeout"));
-        assert!(is_retryable("connection timed out"));
-        assert!(is_retryable("connection reset by peer"));
-        assert!(is_retryable("connection closed before response"));
-    }
-
-    #[test]
-    fn is_retryable_recognizes_server_errors() {
-        assert!(is_retryable("503 Service Unavailable"));
-        assert!(is_retryable("502 Bad Gateway"));
-        assert!(is_retryable("504 Gateway Timeout"));
-        assert!(is_retryable("server temporarily unavailable"));
-        assert!(is_retryable("please try again"));
-    }
-
-    #[test]
-    fn is_retryable_is_case_insensitive() {
-        assert!(is_retryable("RATE LIMIT"));
-        assert!(is_retryable("Timeout"));
-        assert!(is_retryable("BAD GATEWAY"));
-    }
-
-    #[test]
-    fn is_retryable_rejects_auth_and_not_found_errors() {
-        // Retrying these wastes the user's time and hides the real
-        // problem behind a delay.
-        assert!(!is_retryable("401 Unauthorized"));
-        assert!(!is_retryable("invalid api key"));
-        assert!(!is_retryable("404 Not Found"));
-        assert!(!is_retryable("model not found"));
-        assert!(!is_retryable("400 Bad Request"));
-    }
-
-    #[test]
-    fn is_retryable_rejects_empty_and_unrelated_messages() {
-        assert!(!is_retryable(""));
-        assert!(!is_retryable("everything is fine"));
-        assert!(!is_retryable("some other problem"));
-    }
-
     // ---- normalize_base_url --------------------------------------------
 
     #[test]
@@ -771,17 +705,6 @@ mod coverage_openai_helpers {
     }
 
     // ---- consts --------------------------------------------------------
-
-    #[test]
-    fn retry_constants_have_sane_values() {
-        // `MAX_RETRIES` must be > 1 (one retry is not enough for the
-        // Ollama cold-start case the doc comment names) and the
-        // backoff must be sub-second so the user sees a retry, not
-        // a hang.
-        assert!(MAX_RETRIES >= 2, "MAX_RETRIES = {MAX_RETRIES}");
-        assert!(RETRY_BACKOFF_MS > 0);
-        assert!(RETRY_BACKOFF_MS < 5_000);
-    }
 }
 
 #[cfg(test)]
@@ -792,6 +715,7 @@ mod coverage_openai_provider {
     //! and lives in `tests/contracts.rs`; these tests never touch
     //! the network.
     use super::*;
+    use kod_provider::GenerationOptions;
 
     // ---- with_api_key --------------------------------------------------
 
@@ -943,5 +867,76 @@ mod coverage_openai_provider {
         let p = OpenAICompatProvider::with_api_key("http://localhost:11434", "m", "not-needed")
             .unwrap();
         assert_eq!(p.name(), "openai-compatible");
+    }
+
+    #[test]
+    fn native_tool_call_round_trip_uses_wire_shape() {
+        // H-P1: an assistant turn with a tool call + a tool result
+        // must produce Part::FunctionCall and Part::FunctionResponse
+        // — not plain text. This test builds the two contents
+        // directly and asserts the parts are present.
+        use adk_core::{Content, FunctionResponseData, Part};
+        use kod_provider::request::{CompletionRequest, ModelRef, SystemPrompt};
+        use kod_types::{ChatMessage, MessageId, MessageRole, ToolCall};
+        use time::OffsetDateTime;
+
+        let p = OpenAICompatProvider::with_api_key("http://localhost:11434", "m", "not-needed")
+            .unwrap();
+
+        let now = OffsetDateTime::now_utc();
+        let mut assistant = ChatMessage::text(
+            MessageId::new(),
+            MessageRole::Assistant,
+            "let me check",
+            now,
+        );
+        assistant.tool_calls.push(ToolCall {
+            id: Some("call_1".to_string()),
+            tool_name: "read_file".to_string(),
+            arguments: serde_json::json!({ "path": "a.rs" }),
+        });
+        let mut tool = ChatMessage::text(MessageId::new(), MessageRole::Tool, "file contents", now);
+        tool.tool_call_id = Some("call_1".to_string());
+
+        let req = CompletionRequest {
+            model: ModelRef::new("default", "m"),
+            messages: vec![assistant, tool],
+            system: SystemPrompt::default(),
+            tools: vec![],
+            options: Default::default(),
+        };
+
+        let llm = p.request_from_completion(&req);
+        assert_eq!(llm.contents.len(), 2);
+
+        // Assistant half: FunctionCall part.
+        let a = &llm.contents[0];
+        assert_eq!(a.role, "assistant");
+        assert!(
+            a.parts.iter().any(|p| matches!(
+                p,
+                Part::FunctionCall { name, id, .. }
+                    if name == "read_file"
+                        && id.as_deref() == Some("call_1"),
+            )),
+            "assistant FunctionCall part missing: {:?}",
+            a.parts,
+        );
+
+        // Tool half: FunctionResponse with the matching id.
+        let t = &llm.contents[1];
+        assert_eq!(t.role, "tool");
+        assert!(
+            t.parts.iter().any(|p| matches!(
+                p,
+                Part::FunctionResponse { id, .. }
+                    if id.as_deref() == Some("call_1"),
+            )),
+            "tool FunctionResponse part missing: {:?}",
+            t.parts,
+        );
+        // Silence unused import (used only in docs above).
+        let _ = FunctionResponseData::new("x", serde_json::json!({}));
+        let _ = Content::new("user");
     }
 }
