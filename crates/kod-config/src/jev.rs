@@ -27,6 +27,15 @@ pub struct JevConfig {
     /// Explicit API key. When `None`, the client reads
     /// `TYPESAFE_API_KEY` from the environment. An explicit value
     /// wins over the environment.
+    ///
+    /// H-S4: never serialized in the clear. `kod config show-merged`
+    /// and `kod config export` are common enough that a plaintext
+    /// key in the terminal scrollback (or an exported file) is the
+    /// pre-fix behaviour; `serialize_redacted` emits a stable
+    /// `"[redacted]"` marker instead. Deserialization still accepts a
+    /// literal key so an existing config that carried one keeps
+    /// working.
+    #[serde(serialize_with = "serialize_redacted_option")]
     pub api_key: Option<String>,
     /// Override for the TypeSafe API root.
     ///
@@ -219,7 +228,25 @@ impl JevThresholds {
     }
 }
 
+/// Serialize an `Option<String>` as a redacted marker. Both
+/// `Some(_)` and `None` render as `None` for a missing key, and
+/// `Some("[redacted]")` for a set one — the value itself is never
+/// emitted. This is the one hook that keeps a Jev key out of
+/// `kod config show-merged` / `export` output and any log line that
+/// prints the config.
+fn serialize_redacted_option<S>(value: &Option<String>, ser: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use serde::Serialize;
+    match value {
+        Some(_) => Some("[redacted]").serialize(ser),
+        None => Option::<String>::None.serialize(ser),
+    }
+}
+
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 
@@ -346,6 +373,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn reasoning_timeout_zero_disables_the_valve() {
         let mut c = JevConfig::default();
         c.reasoning_timeout_secs = 0;
@@ -353,9 +381,45 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn zero_cache_ttl_disables_the_cache() {
         let mut c = JevConfig::default();
         c.cache_ttl_secs = 0;
         assert_eq!(c.cache_ttl(), Duration::from_secs(0));
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn api_key_is_redacted_in_serialized_form() {
+        // H-S4: the whole point of the redaction hook. A config
+        // that carries `api_key = "sk-live-..."` must serialize with
+        // the marker, never the value.
+        let cfg = JevConfig {
+            api_key: Some("sk-live-do-not-leak".to_string()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(
+            !json.contains("sk-live-do-not-leak"),
+            "api_key value leaked: {json}",
+        );
+        assert!(json.contains("[redacted]"), "marker missing: {json}");
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn api_key_none_serializes_as_null() {
+        let cfg = JevConfig::default();
+        let v: serde_json::Value = serde_json::to_value(&cfg).unwrap();
+        assert!(v["api_key"].is_null());
+    }
+
+    #[test]
+    fn api_key_round_trips_through_deserialization() {
+        // Deserialize still accepts a real key from a config file;
+        // the redaction only applies on the way out.
+        let json = r#"{"api_key":"sk-live-real"}"#;
+        let cfg: JevConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.api_key.as_deref(), Some("sk-live-real"));
     }
 }
