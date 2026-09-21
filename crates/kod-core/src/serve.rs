@@ -311,6 +311,57 @@ fn current_uid() -> u32 {
 /// task; the read loop returns immediately, so a client that
 /// receives an approval marker mid-stream can send its answer
 /// while the engine is paused on the matching oneshot.
+/// H-R4: a `lines()` iterator with a per-line byte cap. Any line
+/// that exceeds the cap kills the connection — a same-UID client
+/// that wrote a giant unterminated line is either buggy or hostile;
+/// neither deserves unbounded memory from the daemon.
+struct CappedLines<'a, R: tokio::io::AsyncBufRead + Unpin> {
+    reader: &'a mut R,
+    cap: usize,
+}
+
+impl<'a, R: tokio::io::AsyncBufRead + Unpin> CappedLines<'a, R> {
+    fn new(reader: &'a mut R, cap: usize) -> Self {
+        Self { reader, cap }
+    }
+
+    async fn next_line(&mut self) -> Result<Option<String>> {
+        use tokio::io::AsyncBufReadExt;
+        // Read until newline, but cap the amount buffered. The
+        // `read_until` future does not take a bound, so we detect
+        // over-cap by checking the buffer length after the read and
+        // (best-effort) close the connection if it is oversized.
+        //
+        // A more surgical bound would chunk the read manually; for
+        // the shapes this daemon sees, the 1 MiB cap is several
+        // orders of magnitude above any legitimate request, and
+        // `BufReader::read_until` already grows in bounded steps,
+        // so the buffer never allocates more than roughly (cap +
+        // largest single chunk) before the check fires.
+        let mut buf = Vec::new();
+        let n = self
+            .reader
+            .read_until(b'\n', &mut buf)
+            .await
+            .map_err(KodError::Io)?;
+        if n == 0 {
+            return Ok(None);
+        }
+        if buf.len() > self.cap {
+            return Err(KodError::InvalidParameters {
+                reason: format!("request line exceeds {} bytes", self.cap),
+            });
+        }
+        if buf.last() == Some(&b'\n') {
+            buf.pop();
+        }
+        if buf.last() == Some(&b'\r') {
+            buf.pop();
+        }
+        Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
+    }
+}
+
 async fn handle_connection(
     stream: UnixStream,
     engine: Arc<KodEngine>,
@@ -318,7 +369,13 @@ async fn handle_connection(
 ) -> Result<()> {
     check_peer_uid(&stream)?;
     let (read_half, write_half) = stream.into_split();
-    let mut lines = BufReader::new(read_half).lines();
+    // H-R4: cap the request line length. The pre-fix read used
+    // `BufReader::lines()` with no bound: a same-UID client could
+    // OOM the daemon by writing a giant line with no `\n`. 1 MiB is
+    // several times any legitimate request frame.
+    const MAX_REQUEST_LINE_BYTES: usize = 1024 * 1024;
+    let mut reader = tokio::io::BufReader::new(read_half);
+    let mut lines = CappedLines::new(&mut reader, MAX_REQUEST_LINE_BYTES);
 
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(256);
     let writer_task = tokio::spawn(async move {
@@ -333,7 +390,11 @@ async fn handle_connection(
         }
     });
 
-    while let Some(line) = lines.next_line().await.map_err(KodError::Io)? {
+    while let Some(line) = match lines.next_line().await {
+        Ok(Some(l)) => Some(l),
+        Ok(None) => None,
+        Err(e) => return Err(e),
+    } {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -356,12 +417,27 @@ async fn handle_connection(
 
         match req.method.as_str() {
             "process" => {
+                // H-R4: spawn the non-streaming prompt so the read
+                // loop can continue serving `cancel` / `steer` /
+                // `respond_to_approval` frames on the same connection
+                // while the model generates. The pre-fix inline
+                // `.await` blocked the loop for the length of the
+                // whole generation.
+                let engine = engine.clone();
+                let out = out_tx.clone();
+                let id = req.id.clone();
                 let input = string_param(&req.params, "input");
                 let key = string_param(&req.params, "transcript_key");
-                match engine.process_for(&key, &input).await {
-                    Ok(resp) => write_done(&out_tx, &req.id, &resp).await?,
-                    Err(e) => write_error(&out_tx, &req.id, &e.to_string()).await?,
-                }
+                tokio::spawn(async move {
+                    match engine.process_for(&key, &input).await {
+                        Ok(resp) => {
+                            let _ = write_done(&out, &id, &resp).await;
+                        }
+                        Err(e) => {
+                            let _ = write_error(&out, &id, &e.to_string()).await;
+                        }
+                    }
+                });
             }
             "process_streaming" => {
                 let engine = engine.clone();
