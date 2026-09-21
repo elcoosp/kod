@@ -5020,7 +5020,11 @@ impl KodEngine {
             // log read later can reconstruct the total by summing,
             // and a per-turn figure is what a debug pass needs.
             if let (Some(m), Some(p), Some(u)) = (winning_model.as_ref(), pricing, usage.as_ref()) {
-                self.record_cost(key, m, u, p).await;
+                // P1: pass the fingerprint of the request head this
+                // call actually served so the ledger knows which
+                // endpoint is warm for which prefix.
+                let head_fp = Self::cache_head_fingerprint(&system_text, &definitions);
+                self.record_cost_with_head(key, m, u, p, head_fp).await;
             }
             // Model only called tools and never wrote back: ask for a summary.
             let final_text = if final_text.trim().is_empty() && !tool_calls.is_empty() {
@@ -5316,7 +5320,11 @@ impl KodEngine {
             // log read later can reconstruct the total by summing,
             // and a per-turn figure is what a debug pass needs.
             if let (Some(m), Some(p), Some(u)) = (winning_model.as_ref(), pricing, usage.as_ref()) {
-                self.record_cost(key, m, u, p).await;
+                // P1: pass the fingerprint of the request head this
+                // call actually served so the ledger knows which
+                // endpoint is warm for which prefix.
+                let head_fp = Self::cache_head_fingerprint(&system_text, &definitions);
+                self.record_cost_with_head(key, m, u, p, head_fp).await;
             }
             let final_text = if final_text.trim().is_empty() && !tool_calls.is_empty() {
                 let mut summary_prompt = pending.clone();
