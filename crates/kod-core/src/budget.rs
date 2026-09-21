@@ -90,14 +90,36 @@ impl PromptBudget {
     /// return a clear error rather than silently ship a truncated
     ///   prompt. The error string names both numbers so a user can see
     /// how much they need to trim or how big a window to configure.
+    ///
+    /// H-E3: `overhead_chars` is the size of the parts the engine
+    /// appends *outside* the four budgeted sections — the `##
+    /// Environment` / `## Tool use` trailer, the structured system
+    /// prompt, and the tool JSON schemas. The pre-fix budget ran
+    /// over the wrong denominator: it allocated section shares from
+    /// the full window and then appended the overhead on top, so a
+    /// small model's prompt could exceed its window even when every
+    /// section was under its share.
+    /// Backward-compatible wrapper. Callers that do not have an
+    /// overhead estimate use this; H-E3's callers pass it explicitly.
     pub fn allocate(&self, request_chars: usize) -> Result<Allocation, BudgetError> {
-        if request_chars > self.total_chars {
+        self.allocate_with_overhead(request_chars, 0)
+    }
+
+    /// Allocate with the prompt overhead subtracted from the window.
+    /// See the module-level note on H-E3 in `allocate`.
+    pub fn allocate_with_overhead(
+        &self,
+        request_chars: usize,
+        overhead_chars: usize,
+    ) -> Result<Allocation, BudgetError> {
+        let effective_total = self.total_chars.saturating_sub(overhead_chars);
+        if request_chars > effective_total {
             return Err(BudgetError {
                 request_chars,
-                total_chars: self.total_chars,
+                total_chars: effective_total,
             });
         }
-        let remaining = self.total_chars - request_chars;
+        let remaining = effective_total - request_chars;
         // Shares sum to 100%: history 50, skills 20, memory 20,
         // repomap 10. Integer arithmetic, no float drift.
         let history = remaining * 50 / 100;
