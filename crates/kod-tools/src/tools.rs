@@ -73,6 +73,85 @@ where
 }
 
 /// Read a file's contents
+/// Heuristic: does this environment variable name look like it holds
+/// a credential? Used by `execute_command` to strip secrets from the
+/// child's environment. The matcher is deliberately broad — the cost
+/// of a false positive is that a subprocess does not see a variable
+/// it did not need; the cost of a false negative is credential leak.
+///
+/// Covered: anything with `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`,
+/// `CREDENTIAL`, `AUTH`, `BEARER` in the name (case-insensitive), plus
+/// the well-known `*_API_KEY` / `ANTHROPIC_*` / `OPENAI_*` / `AWS_*` /
+/// `GCP_*` / `GOOGLE_*` / `AZURE_*` prefixes. `PATH`, `HOME`, `LANG`,
+/// `TMPDIR`, `PWD`, `SHELL`, `TERM`, and the `LC_*` family are
+/// explicitly allowed.
+fn is_secret_like_env(name: &str) -> bool {
+    // Allow-list for the shell's own furniture, checked first so an
+    // override below never strips them by accident.
+    const ALLOW: &[&str] = &[
+        "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "PWD", "OLDPWD", "LANG", "TMPDIR",
+        "TMP", "TEMP",
+    ];
+    if ALLOW.contains(&name) {
+        return false;
+    }
+    if name.starts_with("LC_") {
+        return false;
+    }
+
+    const TOKENS: &[&str] = &[
+        "KEY",
+        "TOKEN",
+        "SECRET",
+        "PASSWORD",
+        "PASSWD",
+        "CREDENTIAL",
+        "AUTH",
+        "BEARER",
+        "PRIVATE",
+    ];
+    let upper = name.to_ascii_uppercase();
+    if TOKENS.iter().any(|t| upper.contains(t)) {
+        return true;
+    }
+    const PREFIXES: &[&str] = &["ANTHROPIC_", "OPENAI_", "AWS_", "GCP_", "GOOGLE_", "AZURE_"];
+    PREFIXES.iter().any(|p| upper.starts_with(p))
+}
+
+/// H-R13: atomic file write. `std::fs::write` truncates in place; a
+/// crash or ENOSPC mid-write leaves a torn file that the engine then
+/// feeds back to the model. A same-directory temp file + fsync + rename
+/// is atomic on POSIX (and on Windows, `rename` over an existing file
+/// is atomic since Rust 1.55).
+///
+/// The temp file name is `.kod-tmp-<pid>-<nanos>` in the destination
+/// directory (same filesystem — a cross-fs rename is a copy + delete,
+/// not atomic). On any error the temp file is removed.
+fn atomic_write(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = parent.join(format!(".kod-tmp-{}-{:x}", std::process::id(), nanos));
+    let result = (|| -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(content)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 pub struct ReadFileTool {
     pub definition: ToolDefinition,
 }
@@ -392,7 +471,7 @@ impl Tool for WriteFileTool {
             if let Err(e) = write!(file, "{}", content) {
                 return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
             }
-        } else if let Err(e) = std::fs::write(&resolved, content) {
+        } else if let Err(e) = atomic_write(&resolved, content.as_bytes()) {
             return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
         }
 
@@ -517,14 +596,42 @@ impl Tool for ExecuteCommandTool {
             }
             None => tokio::process::Command::new(shell),
         };
-        let mut child = spawn
+        // H-S6: run in the context's working directory. The previous
+        // shape never set `current_dir`, so the child inherited the
+        // process cwd (typically $HOME for a daemon) and the model's
+        // `cargo build` silently built the wrong tree. Only bwrap
+        // happened to pass `--chdir`; Seatbelt and Disabled did not.
+        //
+        // H-S5: strip secret-shaped environment variables. The child
+        // otherwise sees ANTHROPIC_API_KEY, OPENAI_API_KEY, Jev keys,
+        // daemon tokens — a prompt-injected model can read them via
+        // `env` or /proc/self/environ. The policy is "inherit a small
+        // allowlist plus everything that is not obviously a secret";
+        // that keeps `PATH`, `HOME`, `LANG`, and proxy vars working
+        // while dropping the credential-shaped ones.
+        spawn
             .arg(shell_flag)
             .arg(command)
+            .current_dir(&context.working_dir)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(KodError::Io)?;
+            .stderr(std::process::Stdio::piped());
+        for (k, v) in std::env::vars_os() {
+            if let Some(name) = k.to_str()
+                && is_secret_like_env(name)
+            {
+                continue;
+            }
+            spawn.env(&k, &v);
+        }
+        // Re-apply stdio after the env loop (the env calls do not touch
+        // it, but keeping the ordering explicit makes the intent clear).
+        spawn
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        let mut child = spawn.spawn().map_err(KodError::Io)?;
 
         let mut stdout = child
             .stdout
@@ -938,6 +1045,34 @@ impl Tool for PatchFileTool {
         context.can_read(&resolved)?;
         context.can_write(&resolved)?;
 
+        // H-R11: acquire the path lock *first*, before reading the
+        // original. The pre-fix order read + diffed unlocked and only
+        // locked for the write, so two concurrent patch_file calls
+        // both diffed against the same original; the second write
+        // silently reverted the first. `write_file` by contrast
+        // holds the lock across its whole body; the lock table
+        // exists precisely to make this the rule.
+        //
+        // Dry runs still take the lock: a dry-run reads the original
+        // and the caller wants a consistent answer even while a real
+        // patch is in flight.
+        let _lock = match &context.lock_table {
+            Some(table) => match table
+                .acquire(&resolved, &context.holder, context.lock_timeout)
+                .await
+            {
+                Ok(guard) => Some(guard),
+                Err(e) => {
+                    return Ok(ToolResult::Error(format!(
+                        "cannot patch {}: {}",
+                        resolved.display(),
+                        e
+                    )));
+                }
+            },
+            None => None,
+        };
+
         let original = match std::fs::read_to_string(&resolved) {
             Ok(s) => s,
             Err(e) => {
@@ -962,24 +1097,7 @@ impl Tool for PatchFileTool {
             })));
         }
 
-        let _lock = match &context.lock_table {
-            Some(table) => match table
-                .acquire(&resolved, &context.holder, context.lock_timeout)
-                .await
-            {
-                Ok(guard) => Some(guard),
-                Err(e) => {
-                    return Ok(ToolResult::Error(format!(
-                        "cannot patch {}: {}",
-                        resolved.display(),
-                        e
-                    )));
-                }
-            },
-            None => None,
-        };
-
-        if let Err(e) = std::fs::write(&resolved, patched.as_bytes()) {
+        if let Err(e) = atomic_write(&resolved, patched.as_bytes()) {
             return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
         }
 
@@ -1840,5 +1958,64 @@ mod tests {
             }
             other => panic!("expected ToolResult::Error, got {:?}", other),
         }
+    }
+}
+
+#[cfg(test)]
+mod coverage_execute_command_env {
+    //! H-S5 regression suite. The child process must not see
+    //! credential-shaped env vars. The exact set is a policy, not a
+    //! contract — the tests pin the *shape* (an obvious key is
+    //! stripped; an obvious path is kept), so a future expansion of
+    //! the matcher does not silently regress the "secrets never
+    //! reach a subprocess" invariant.
+    use super::is_secret_like_env;
+
+    #[test]
+    fn well_known_credentials_are_stripped() {
+        for name in [
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "TYPESAFE_API_KEY",
+            "AWS_SECRET_ACCESS_KEY",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "AZURE_CLIENT_SECRET",
+            "GITHUB_TOKEN",
+            "MY_PASSWORD",
+            "SOME_BEARER_VALUE",
+            "CUSTOM_API_TOKEN",
+        ] {
+            assert!(is_secret_like_env(name), "{name} should be stripped");
+        }
+    }
+
+    #[test]
+    fn shell_furniture_is_kept() {
+        for name in [
+            "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "PWD", "OLDPWD", "LANG", "TMPDIR",
+            "TMP", "TEMP",
+        ] {
+            assert!(!is_secret_like_env(name), "{name} must be kept");
+        }
+    }
+
+    #[test]
+    fn locale_variants_are_kept() {
+        for name in ["LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_TIME"] {
+            assert!(!is_secret_like_env(name), "{name} must be kept");
+        }
+    }
+
+    #[test]
+    fn ordinary_names_are_kept() {
+        for name in ["CARGO_HOME", "RUSTUP_HOME", "EDITOR", "PAGER", "COLORTERM"] {
+            assert!(!is_secret_like_env(name), "{name} must be kept");
+        }
+    }
+
+    #[test]
+    fn matching_is_case_insensitive() {
+        assert!(is_secret_like_env("anthropic_api_key"));
+        assert!(is_secret_like_env("Some_Token"));
     }
 }
