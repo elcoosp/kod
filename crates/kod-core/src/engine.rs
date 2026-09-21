@@ -2467,7 +2467,7 @@ impl KodEngine {
         // diagnostics (and baseline overwrites) from
         // the main repo — the model saw errors it did
         // not introduce.
-        match kod_tools::CheckTool::run_check(&self.working_dir, 60).await {
+        match kod_tools::CheckTool::run_check(&self.working_dir, self.tool_context.timeout_secs).await {
             Ok(outcome) => {
                 let n = outcome.diagnostics.len();
                 *self.check_baseline.write().await = Some(outcome.diagnostics);
@@ -9130,7 +9130,7 @@ impl KodEngine {
                         // diagnostics (and baseline overwrites) from
                         // the main repo — the model saw errors it did
                         // not introduce.
-                        match kod_tools::CheckTool::run_check(&tool_context.working_dir, 60).await {
+                        match kod_tools::CheckTool::run_check(&tool_context.working_dir, tool_context.timeout_secs).await {
                             Ok(outcome) => {
                                 source = outcome.command.clone();
                                 diags = outcome.diagnostics;
@@ -9170,7 +9170,7 @@ impl KodEngine {
                     // diagnostics (and baseline overwrites) from
                     // the main repo — the model saw errors it did
                     // not introduce.
-                    match kod_tools::CheckTool::run_check(&tool_context.working_dir, 60).await {
+                    match kod_tools::CheckTool::run_check(&tool_context.working_dir, tool_context.timeout_secs).await {
                         Ok(outcome) => {
                             source = outcome.command.clone();
                             diags = outcome.diagnostics;
@@ -10215,7 +10215,7 @@ impl BaselineRefresher {
         // diagnostics (and baseline overwrites) from
         // the main repo — the model saw errors it did
         // not introduce.
-        match kod_tools::CheckTool::run_check(&self.working_dir, 60).await {
+        match kod_tools::CheckTool::run_check(&self.working_dir, 30).await {
             Ok(outcome) => {
                 let n = outcome.diagnostics.len();
                 *self.check_baseline.write().await = Some(outcome.diagnostics);
