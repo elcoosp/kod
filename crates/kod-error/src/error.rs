@@ -117,7 +117,7 @@ impl KodError {
 
     /// Classify an HTTP error status + body into the closest typed variant.
     pub fn provider_status(status: u16, body: &str) -> Self {
-        let snippet = if body.len() > 300 { &body[..300] } else { body };
+        let snippet = kod_types::strutil::truncate_chars(body, 300);
         match status {
             401 | 403 => KodError::Provider(format!("auth error {status}: {snippet}")),
             404 => KodError::Provider(format!("not found {status}: {snippet}")),
