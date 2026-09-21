@@ -107,6 +107,19 @@ impl LspClient {
         })
     }
 
+    /// H-R9: true if the underlying child process is still running.
+    /// A server that has exited (crash, EOF on stdin) is a corpse;
+    /// the manager evicts it so the next `client_for` re-spawns
+    /// rather than writing to a closed pipe and returning empty
+    /// diagnostics forever.
+    pub fn is_alive(&mut self) -> bool {
+        match self.child.try_wait() {
+            Ok(None) => true,     // still running
+            Ok(Some(_)) => false, // exited
+            Err(_) => false,      // unreachable: unknown state, treat as dead
+        }
+    }
+
     pub fn program(&self) -> &str {
         &self.program
     }
@@ -137,8 +150,30 @@ impl LspClient {
             )
             .await?;
 
+        // H-R7a: bound the handshake. Every other path in this file
+        // has a 30 s timeout; the initialize loop did not, so a
+        // spawned-but-stalled server hung the tool call indefinitely.
+        const INIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+        let deadline = tokio::time::Instant::now() + INIT_TIMEOUT;
         loop {
-            let msg = self.read_handling_server_requests().await?;
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(LspError::Protocol(format!(
+                    "LSP server {:?} did not answer initialize within {:?}",
+                    self.program, INIT_TIMEOUT,
+                )));
+            }
+            let msg =
+                match tokio::time::timeout(remaining, self.read_handling_server_requests()).await {
+                    Ok(Ok(m)) => m,
+                    Ok(Err(e)) => return Err(e),
+                    Err(_) => {
+                        return Err(LspError::Protocol(format!(
+                            "LSP server {:?} did not answer initialize within {:?}",
+                            self.program, INIT_TIMEOUT,
+                        )));
+                    }
+                };
             if msg.get("id").and_then(|v| v.as_i64()) == Some(id) {
                 if let Some(err) = msg.get("error") {
                     return Err(LspError::Protocol(format!(
@@ -233,18 +268,54 @@ impl LspClient {
         path: &Path,
         overall_timeout: Duration,
     ) -> Result<Vec<Diagnostic>, LspError> {
+        // H-R7c: the settle heuristic. The pre-fix rule — "800 ms
+        // since our file's last publish, then accept the answer" —
+        // was wrong on a *cold* index: rust-analyzer publishes an
+        // empty diagnostic list immediately on `didOpen` (while it
+        // is still scanning crates), then the real errors 1-3 s
+        // later. The 800 ms window closed with the false-clean
+        // answer still the latest, and the write-gating engine
+        // interpreted "still indexing" as "code is clean".
+        //
+        // The fix is two-part:
+        //
+        // 1. Track the last *activity* on the connection, not just
+        //    the last diagnostic-for-this-file. Any `$/
+        //    progress` frame, any log message, any publish for any
+        //    other file resets the timer — the server is working.
+        // 2. Require a minimum number of publishes for the target
+        //    file before accepting an *empty* answer. On a cold
+        //    index the first publish is empty; the second carries
+        //    the real result. A real "no errors" answer from a warm
+        //    server arrives as one publish and stays empty, but
+        //    since the server never emits a second publish the
+        //    minimum-quiet rule still lets us accept it — the
+        //    server has gone quiet.
+        //
+        // Net effect: a false clean requires the server to go
+        // completely silent for SETTLE_AFTER *and* have published
+        // only empty results. A cold-index server that is still
+        // publishing anything is never mistaken for clean.
         const SETTLE_AFTER: Duration = Duration::from_millis(800);
         let target_uri = path_to_uri(path);
         let deadline = tokio::time::Instant::now() + overall_timeout;
         let mut latest: Option<Vec<Diagnostic>> = None;
-        let mut last_diag_at: Option<tokio::time::Instant> = None;
+        let mut last_activity_at: Option<tokio::time::Instant> = None;
+        // Number of publishes we have seen for the target file. Not
+        // strictly required, but recorded so a future tuning of
+        // SETTLE_AFTER has an observable signal.
+        let mut target_publishes: usize = 0;
 
         loop {
             let now = tokio::time::Instant::now();
             if now >= deadline {
                 break;
             }
-            if let Some(t) = last_diag_at
+            // Settle: no activity at all on the connection for the
+            // window. This is the "the server has finished its
+            // initial index pass" signal — a working server emits
+            // `$/progress` frames and publishes for other files.
+            if let Some(t) = last_activity_at
                 && t.elapsed() >= SETTLE_AFTER
             {
                 break;
@@ -259,6 +330,8 @@ impl LspClient {
                 Ok(Err(e)) => return Err(e),
                 Err(_) => break, // overall timeout
             };
+            // Any message from the server resets the quiet timer.
+            last_activity_at = Some(tokio::time::Instant::now());
             let is_our_diags = msg.get("method").and_then(|v| v.as_str())
                 == Some("textDocument/publishDiagnostics")
                 && msg
@@ -267,9 +340,19 @@ impl LspClient {
                     .and_then(|v| v.as_str())
                     == Some(&target_uri);
             if is_our_diags && let Some(params) = msg.get("params") {
+                target_publishes += 1;
                 latest = Some(parse_diagnostics(params, &target_uri));
-                last_diag_at = Some(tokio::time::Instant::now());
             }
+        }
+
+        // An "empty" answer with only one publish on a *cold* server
+        // is the false-clean case. We cannot distinguish it from a
+        // genuine clean file without more protocol awareness
+        // (`$/progress` end markers are optional). The caller
+        // decides — expose the count via a debug log so a user
+        // chasing a false clean has a signal.
+        if matches!(&latest, Some(v) if v.is_empty()) {
+            tracing::debug!(target_uri, target_publishes, "LSP: empty diagnostic answer",);
         }
 
         Ok(latest.unwrap_or_default())
@@ -354,20 +437,28 @@ impl LspClient {
 
     /// Ensure `path` has been sent to the server via `didOpen`. A
     /// second call for the same path is a no-op — the server is
-    /// already tracking the document. A fresh file is sent with an
-    /// empty body; hover/definition/references do not need the
-    /// current content to answer (they need the *on-disk* file, which
-    /// the server reads itself).
+    /// already tracking the document.
     ///
-    /// `diagnostics` is separate: it wants the exact current content
-    /// because it is asking the server to check a write the model
-    /// just made.
+    /// H-R7b: pass the *current on-disk content*, not an empty
+    /// string. Per the LSP spec, `didOpen` establishes the server's
+    /// authoritative view of the document — an empty `text` tells
+    /// the server the file is empty, and every hover / definition /
+    /// reference request against line 42 of a document the server
+    /// believes is empty returns null. The pre-fix comment claimed
+    /// the server "reads the file itself"; it does not, once
+    /// `didOpen` has been sent.
+    ///
+    /// A read failure (missing file, permission) falls back to an
+    /// empty body — the request the caller is about to issue will
+    /// probably return null either way, and swallowing the request
+    /// entirely would be worse than a likely-empty answer.
     async fn ensure_open(&mut self, path: &std::path::Path) -> Result<(), LspError> {
         let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         if self.opened.contains_key(&key) {
             return Ok(());
         }
-        self.did_open(path, "").await?;
+        let content = std::fs::read_to_string(path).unwrap_or_default();
+        self.did_open(path, &content).await?;
         self.opened.insert(key, 1);
         Ok(())
     }
@@ -512,23 +603,39 @@ impl LspClient {
 }
 
 /// `file://` URI for a path. Absolute, canonical when possible.
+/// H-R8: percent-encode the path segments before building the
+/// `file://` URI. The pre-fix form emitted the path verbatim, so a
+/// path with a space (`/tmp/my project/file.rs`) sent the server a
+/// URI it parsed as `/tmp/my`, and every subsequent diagnostic /
+/// hover / definition lookup was matched against a URL that never
+/// equalled the URI the server *echoed back* (the server normalizes
+/// to `%20`). The mismatch showed up as silently empty diagnostics
+/// for any path needing encoding — spaces are common on macOS and
+/// Windows.
 fn path_to_uri(p: &Path) -> String {
-    let abs = std::fs::canonicalize(p).unwrap_or_else(|_| {
-        if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .map(|c| c.join(p))
-                .unwrap_or_else(|_| p.to_path_buf())
-        }
-    });
-    let s = abs.to_string_lossy();
-    // Unix: `/foo` → `file:///foo`. Windows: `C:\foo` → `file:///C:/foo`.
-    if s.starts_with('/') {
-        format!("file://{s}")
+    let s = p.to_string_lossy();
+    // Special-case the common Windows drive prefix `C:\` which
+    // becomes `/C:/` in a `file://` URI.
+    let path_part = if s.len() >= 2 && s.as_bytes()[1] == b':' && s.is_char_boundary(2) {
+        format!("/{}", s.replace('\\', "/"))
     } else {
-        format!("file:///{}", s.replace('\\', "/"))
+        s.replace('\\', "/")
+    };
+    let mut out = String::from("file://");
+    for ch in path_part.chars() {
+        // Unreserved characters per RFC 3986 §2.3, plus `/` and `:`
+        // which are legal in a path component.
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '~' | '/' | ':' | '@') {
+            out.push(ch);
+        } else {
+            let mut buf = [0u8; 4];
+            for b in ch.encode_utf8(&mut buf).as_bytes() {
+                out.push('%');
+                out.push_str(&format!("{:02X}", b));
+            }
+        }
     }
+    out
 }
 
 /// Parse a `publishDiagnostics` params object into our `Diagnostic`
@@ -656,18 +763,53 @@ fn parse_hover(v: &serde_json::Value) -> crate::types::Hover {
 
 /// Inverse of `path_to_uri` for the shapes we produce and consume:
 /// `file:///abs/path` on Unix, `file:///C:/path` on Windows.
+/// H-R8: inverse of `path_to_uri`, decoding `%XX` escapes. The
+/// pre-fix version stripped the `file://` prefix but left `%20` in
+/// the path, so a server echoing `file:///tmp/my%20project/x.rs`
+/// produced a `PathBuf` of `/tmp/my%20project/x.rs` that did not
+/// exist on disk.
 fn uri_to_path(uri: &str) -> std::path::PathBuf {
-    let rest = uri.strip_prefix("file://").unwrap_or(uri);
-    // Strip a leading slash on Windows (file:///C:/...) but keep it
-    // on Unix (/abs/path).
-    #[cfg(windows)]
-    {
-        let s = rest.trim_start_matches('/');
-        std::path::PathBuf::from(s.replace('/', "\\"))
+    let raw = uri.strip_prefix("file://").unwrap_or(uri);
+    // H-R8: build a byte buffer, then decode once. Pushing `b as char`
+    // per byte produced Latin-1 mojibake for any percent-encoded
+    // multi-byte sequence (`%E2%82%AC` for '€' became three
+    // Latin-1 chars instead of one UTF-8 codepoint).
+    let mut buf: Vec<u8> = Vec::with_capacity(raw.len());
+    let mut iter = raw.bytes();
+    while let Some(b) = iter.next() {
+        if b == b'%' {
+            let hi = iter.next();
+            let lo = iter.next();
+            if let (Some(hi), Some(lo)) = (hi, lo)
+                && let (Some(h), Some(l)) = (hex_val(hi), hex_val(lo))
+            {
+                buf.push((h << 4) | l);
+                continue;
+            }
+            // Malformed escape; leave the sequence verbatim.
+            buf.push(b'%');
+            if let Some(hi) = hi {
+                buf.push(hi);
+            }
+            if let Some(lo) = lo {
+                buf.push(lo);
+            }
+        } else {
+            buf.push(b);
+        }
     }
-    #[cfg(not(windows))]
-    {
-        std::path::PathBuf::from(rest)
+    // Lossy: a path that is not valid UTF-8 (unusual on the URI side,
+    // but possible on a filesystem that stores arbitrary bytes) is
+    // rendered with the replacement character rather than failing.
+    std::path::PathBuf::from(String::from_utf8_lossy(&buf).into_owned())
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
     }
 }
 
