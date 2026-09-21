@@ -9,6 +9,27 @@ pub struct TokenUsage {
     pub total_tokens: usize,
 }
 
+impl TokenUsage {
+    /// H-E6: sum two usage reports from the same logical turn. In an
+    /// agentic loop a single user turn can issue several provider
+    /// calls (one per round, plus a summary); the prompt cost of
+    /// rounds 1..N−1 is exactly as real as the last one's, and the
+    /// pre-fix code kept only the last round's report.
+    ///
+    /// Totals are summed independently — a provider that reports a
+    /// `total_tokens` that is not `prompt + completion` (some cache
+    /// implementations do this) keeps its own arithmetic.
+    pub fn merge(&self, other: &TokenUsage) -> TokenUsage {
+        TokenUsage {
+            prompt_tokens: self.prompt_tokens.saturating_add(other.prompt_tokens),
+            completion_tokens: self
+                .completion_tokens
+                .saturating_add(other.completion_tokens),
+            total_tokens: self.total_tokens.saturating_add(other.total_tokens),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum GenerationResponse {
     Text {
@@ -58,6 +79,14 @@ pub enum StreamChunk {
         arguments: String,
     },
     Usage(TokenUsage),
+    /// H-P6: the provider's stop reason, when it reports one. The
+    /// engine pre-fix had no way to learn a response was truncated
+    /// mid tool-JSON — Anthropic emits `stop_reason = "max_tokens"`
+    /// or `"refusal"` on `message_delta`, and it vanished into the
+    /// `_` arm of the SSE parser. Distinct from `Done` (the stream
+    /// is over) because the reason is a *property* of the finish,
+    /// not the finish itself.
+    StopReason(String),
     Done,
 }
 
