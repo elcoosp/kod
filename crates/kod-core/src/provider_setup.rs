@@ -230,9 +230,10 @@ mod tests {
 
     #[test]
     fn anthropic_endpoint_requires_an_api_key() {
+        let _guard = anthropic_env_lock();
         // Ensure no leaked env var from the environment turns this into
         // an accidental success.
-        // SAFETY: single-threaded test; no other test reads this var.
+        // SAFETY: serialized via anthropic_env_lock.
         unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
 
         let cfg: LlmConfig = toml::from_str(
