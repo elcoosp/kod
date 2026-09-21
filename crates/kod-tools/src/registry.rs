@@ -14,7 +14,11 @@ pub struct ToolRegistry {
     /// `Vec<Box<dyn Tool>>` allowed duplicate names (the first match won
     /// on lookup) and made every `execute_tool` O(n) in the number of
     /// tools.
-    tools: RwLock<std::collections::HashMap<String, Box<dyn Tool>>>,
+    // H-R10: values are `Arc<dyn Tool>` so `execute_tool` can clone
+    // the handle out and drop the lock before awaiting — the pre-fix
+    // shape held the read lock across the entire tool call, so a
+    // 120 s `check` blocked any `register` (MCP hot-reload).
+    tools: RwLock<std::collections::HashMap<String, std::sync::Arc<dyn Tool>>>,
 }
 
 impl ToolRegistry {
@@ -32,7 +36,7 @@ impl ToolRegistry {
     pub async fn register(&self, tool: Box<dyn Tool>) {
         let name = tool.definition().name;
         let mut tools = self.tools.write().await;
-        tools.insert(name, tool);
+        tools.insert(name, std::sync::Arc::from(tool));
     }
 
     /// Remove a tool by name. Returns true if a tool was removed.
@@ -75,8 +79,14 @@ impl ToolRegistry {
     pub async fn get_definitions_for_llm(&self) -> Vec<serde_json::Value> {
         let tools = self.tools.read().await;
 
-        tools
-            .values()
+        // H-R10: sort by name. HashMap iteration order is not
+        // stable across process restarts, so the LLM's tool list
+        // would shuffle from one run to the next — prompt
+        // instability, prefix-cache misses.
+        let mut entries: Vec<_> = tools.values().collect();
+        entries.sort_by_key(|t| t.definition().name);
+        entries
+            .into_iter()
             .map(|tool| {
                 let def = tool.definition();
                 serde_json::json!({
@@ -114,15 +124,11 @@ impl ToolRegistry {
         params: &serde_json::Value,
         context: &ToolContext,
     ) -> Result<kod_types::ToolResult> {
-        // Clone the tool's `Arc`? Tools live behind `Box<dyn Tool>` in the
-        // map; we hold the read lock across the await. That is safe
-        // because `register` is the only writer and it runs at startup
-        // (and on MCP reload, which is serialized). If a future caller
-        // needs concurrent registration during execution, wrap the map
-        // in `Arc<dyn Tool>` values and clone the handle out before
-        // awaiting.
-        let tools = self.tools.read().await;
-        match tools.get(name) {
+        // H-R10: clone the Arc out and drop the read lock before
+        // awaiting the tool body. Registration (MCP hot-reload) no
+        // longer blocks on a running tool call.
+        let tool = { self.tools.read().await.get(name).cloned() };
+        match tool {
             Some(t) => t.execute(params, context).await,
             None => Err(KodError::ToolNotFound {
                 tool_name: name.to_string(),
