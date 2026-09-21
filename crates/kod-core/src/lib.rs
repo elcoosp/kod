@@ -7,6 +7,7 @@ pub mod acp;
 pub mod budget;
 pub mod checkpoint;
 pub mod citations;
+pub mod cache_ledger;
 pub mod config;
 pub mod context;
 pub mod cost;
