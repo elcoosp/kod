@@ -35,3 +35,9 @@ fuzz/artifacts/
 # `exclude = ["fuzz"]`, but ignore defensively).
 fuzz/target/
 # --- end fuzz ---
+
+# Snapshot drift debug artifacts
+# `characterization_prompts` writes a `.actual.txt` next to
+# the expected snapshot when a comparison fails. It is a
+# debugging aid, not a source artifact.
+*.actual.txt
