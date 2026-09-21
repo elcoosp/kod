@@ -20,3 +20,6 @@ kod-config = { path = "../kod-config" }
 [dev-dependencies]
 rstest = { workspace = true }
 tempfile = "3.8"
+
+[lints]
+workspace = true
