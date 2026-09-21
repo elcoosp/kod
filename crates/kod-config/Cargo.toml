@@ -17,3 +17,6 @@ kod-error = { path = "../kod-error" }
 [dev-dependencies]
 rstest = { workspace = true }
 tempfile = "3"
+
+[lints]
+workspace = true
