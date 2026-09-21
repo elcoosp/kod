@@ -279,6 +279,15 @@ impl SwarmRunner {
             .with_swarm_timeout_secs(config.timeout_secs))
     }
 
+    /// Override the agent count (H-C3). The CLI passes `--agents N`;
+    /// the pre-fix path ignored it and used the config-only value.
+    /// The clamp is applied by `new`, so this setter stores the raw
+    /// request; the effective value is still `[2, 8]`.
+    pub fn with_max_agents(mut self, n: usize) -> Self {
+        self.max_agents = n.clamp(2, 8);
+        self
+    }
+
     /// Set the per-agent wall-clock cap in seconds. 0 disables.
     pub fn with_agent_timeout_secs(mut self, secs: u64) -> Self {
         self.agent_timeout_secs = secs;
@@ -474,11 +483,31 @@ impl SwarmRunner {
         // its path. Keyed by AgentId so the wave loop can find the right
         // worktree when it assigns a subtask to an agent.
         struct AgentHandle {
+            /// Dispatch id — unique per subtask. Two subtasks assigned
+            /// to the same pool agent get distinct ids, so their
+            /// transcripts (keyed `swarm:{id}`) cannot collide. H-D1:
+            /// pre-fix both used the pool agent id, so one subtask's
+            /// failure path wiped its peer's history mid-flight.
             id: AgentId,
+            /// The pool agent that owns this subtask (load-balancing
+            /// bookkeeping; distinct from `id`).
+            pool_agent_id: AgentId,
             name: String,
             subtask: Subtask,
             task_id: TaskId,
+            /// Worktree path this subtask runs in, if any. Set at
+            /// dispatch time (not pool time) because the transcript
+            /// key is subtask-scoped.
+            worktree: Option<crate::worktree::WorktreeInfo>,
         }
+
+        // H-D1: the watchdog needs to reach every *dispatch* key
+        // currently running on a given pool agent. This map is the
+        // link between the two identities. Shared between the wave
+        // loop (inserts/removes) and the watchdog (iterates).
+        let dispatch_keys: Arc<
+            parking_lot::Mutex<std::collections::HashMap<AgentId, Vec<String>>>,
+        > = Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new()));
 
         let mut pool_handles: Vec<AgentHandle> = Vec::with_capacity(pool.len());
         for (i, cap) in pool.iter().enumerate() {
@@ -491,12 +520,13 @@ impl SwarmRunner {
             // Point this agent's transcript at its own worktree, if one
             // was created. The per-transcript working_dir override
             // (D4-D1) makes every tool the agent calls run rooted there.
-            if let Some(wt) = worktree_created.get(i) {
-                let key = format!("swarm:{id}");
-                let _ = self
-                    .engine
-                    .set_transcript_working_dir(&key, Some(wt.path.clone()))
-                    .await;
+            // H-D1: the transcript-keyed per-agent state
+            // (working_dir, write_globs) is applied at *dispatch*
+            // time on the subtask-scoped dispatch id, not here. We
+            // still surface the WorktreeCreated event so the UI knows
+            // the pool agent owns a worktree.
+            let pool_worktree = worktree_created.get(i).cloned();
+            if let Some(wt) = &pool_worktree {
                 let _ = chunk_tx
                     .send(SwarmEvent::WorktreeCreated {
                         agent_name: slug.clone(),
@@ -508,7 +538,8 @@ impl SwarmRunner {
 
             capability_agents.entry(*cap).or_default().push(id.clone());
             pool_handles.push(AgentHandle {
-                id,
+                id: id.clone(),
+                pool_agent_id: id,
                 name: slug,
                 // Placeholder subtask — the runner assigns the real
                 // one in the wave loop. Kept non-empty so the
@@ -522,6 +553,7 @@ impl SwarmRunner {
                     depends_on: Vec::new(),
                 },
                 task_id: TaskId::new(),
+                worktree: pool_worktree,
             });
         }
 
@@ -561,38 +593,53 @@ impl SwarmRunner {
                         .unwrap_or_else(|| candidates[0].clone())
                 }
             };
-            let name = pool_handles
+            let (name, worktree) = pool_handles
                 .iter()
                 .find(|h| h.id == chosen)
-                .map(|h| h.name.clone())
-                .unwrap_or_else(|| format!("agent-{}", st.name));
+                .map(|h| (h.name.clone(), h.worktree.clone()))
+                .unwrap_or_else(|| (format!("agent-{}", st.name), None));
 
             let task = Task::new(st.description.clone(), Priority::Medium);
             let task_id = task.id.clone();
             swarm.coordinator().register_task(task).await?;
             swarm.coordinator().assign_task(&task_id, &chosen).await?;
 
-            // Register the subtask's declared write set on the chosen
-            // agent's transcript. A pool agent that serves two
-            // subtasks with different write sets gets the union — the
-            // claim is per transcript, and the coordinator's assign
-            // step already serialised them if they overlapped.
-            if !st.expected_writes.is_empty() {
-                let key = format!("swarm:{chosen}");
+            // H-D1: mint a *fresh* dispatch id for this subtask. The
+            // engine keys its per-transcript state (history, cancel
+            // flag, working dir, write globs, blackboard viewer) on
+            // `swarm:{id}`; giving each subtask its own id means two
+            // concurrently-running subtasks on the same pool agent
+            // cannot collide.
+            let dispatch_id = AgentId::new();
+            let dispatch_key = format!("swarm:{dispatch_id}");
+
+            // Per-transcript working dir: the pool agent's worktree,
+            // if any.
+            if let Some(wt) = &worktree {
                 let _ = self
                     .engine
-                    .set_transcript_write_globs(&key, Some(st.expected_writes.clone()))
+                    .set_transcript_working_dir(&dispatch_key, Some(wt.path.clone()))
+                    .await;
+            }
+
+            // Per-transcript write set.
+            if !st.expected_writes.is_empty() {
+                let _ = self
+                    .engine
+                    .set_transcript_write_globs(&dispatch_key, Some(st.expected_writes.clone()))
                     .await;
                 // Tier 3.5 — subscribe this agent to the shared
                 // blackboard so its prompt includes what the team knows.
-                let _ = self.engine.set_blackboard_viewer(&key, true).await;
+                let _ = self.engine.set_blackboard_viewer(&dispatch_key, true).await;
             }
 
             handles.push(AgentHandle {
-                id: chosen,
+                id: dispatch_id,
+                pool_agent_id: chosen,
                 name,
                 subtask: st.clone(),
                 task_id,
+                worktree,
             });
         }
 
@@ -634,6 +681,22 @@ impl SwarmRunner {
         let watchdog_engine = self.engine.clone();
         let watchdog_swarm = swarm.clone();
         let watchdog_chunk_tx = chunk_tx.clone();
+        let watchdog_dispatch_keys = dispatch_keys.clone();
+        // H-R6: derive the idle threshold from the configured agent
+        // timeout instead of the hardcoded 90 s. A user who raised
+        // `agent_timeout_secs = 1800` for slow tools (cargo build on
+        // a cold cache) still got cancelled at 90 s; the watchdog
+        // ignored the setting entirely.
+        //
+        // 90 s is the floor (in case `agent_timeout_secs` is 0 =
+        // disabled — watchdog still functions), and 1/4 of the
+        // agent timeout is the ceiling so a healthy-but-slow agent
+        // is never cancelled before its real timeout could fire.
+        let watchdog_idle_secs: u64 = if agent_timeout_secs == 0 {
+            90
+        } else {
+            (agent_timeout_secs / 4).max(90).min(agent_timeout_secs)
+        };
         let watchdog_task = tokio::spawn(async move {
             use tokio::time::{Duration, MissedTickBehavior};
             let mut ticker = tokio::time::interval(Duration::from_secs(10));
@@ -659,23 +722,38 @@ impl SwarmRunner {
                     // 90 s without a chunk: the agent is wedged on
                     // something (a hung tool, a stalled stream). Cancel
                     // cooperatively so the retry loop can restart it.
-                    if agent.is_timed_out(Duration::from_secs(90)) {
-                        let key = format!("swarm:{id}");
-                        tracing::warn!(
-                            agent = %agent.name(),
-                            key = %key,
-                            "swarm watchdog: agent has not reported in 90s;                              sending cooperative cancel",
-                        );
-                        watchdog_engine.request_cancel_for(&key);
-                        let _ = watchdog_chunk_tx
-                            .send(SwarmEvent::AgentRetrying {
-                                id: id.clone(),
-                                name: agent.name().to_string(),
-                                attempt: 0,
-                                max_attempts: 0,
-                                previous_error: "watchdog: no output in 90s".to_string(),
-                            })
-                            .await;
+                    if agent.is_timed_out(Duration::from_secs(watchdog_idle_secs)) {
+                        // H-D1: cancel every dispatch key running on
+                        // this pool agent, not the pool agent's own
+                        // name. The engine keys its cancellation set
+                        // by transcript — one dispatch per subtask.
+                        let keys: Vec<String> = watchdog_dispatch_keys
+                            .lock()
+                            .get(&id)
+                            .cloned()
+                            .unwrap_or_default();
+                        if keys.is_empty() {
+                            // No live dispatch: the pool agent is
+                            // between subtasks. Nothing to cancel.
+                            continue;
+                        }
+                        for key in keys {
+                            tracing::warn!(
+                                agent = %agent.name(),
+                                key = %key,
+                                "swarm watchdog: dispatch has not reported within the idle window;                                  sending cooperative cancel",
+                            );
+                            watchdog_engine.request_cancel_for(&key);
+                            let _ = watchdog_chunk_tx
+                                .send(SwarmEvent::AgentRetrying {
+                                    id: id.clone(),
+                                    name: agent.name().to_string(),
+                                    attempt: 0,
+                                    max_attempts: 0,
+                                    previous_error: "watchdog: no output in 90s".to_string(),
+                                })
+                                .await;
+                        }
                     }
                 }
             }
@@ -771,12 +849,48 @@ impl SwarmRunner {
             for &i in &ready {
                 let engine = self.engine.clone();
                 let id = handles[i].id.clone();
+                let pool_agent_id = handles[i].pool_agent_id.clone();
                 let name = handles[i].name.clone();
                 let subtask = handles[i].subtask.clone();
                 let out = chunk_tx.clone();
                 let hub = hub.clone();
                 let swarm = swarm.clone();
+                let dispatch_keys = dispatch_keys.clone();
+                // H-D1: register this dispatch key before the task
+                // starts so the watchdog can find it. The task
+                // removes the entry on every return path.
+                {
+                    let mut m = dispatch_keys.lock();
+                    m.entry(pool_agent_id.clone())
+                        .or_default()
+                        .push(format!("swarm:{id}"));
+                }
                 wave_tasks.push(async move {
+                // H-D1: guard the deregistration even on panic.
+                struct DispatchGuard {
+                    keys: Arc<
+                        parking_lot::Mutex<std::collections::HashMap<AgentId, Vec<String>>>,
+                    >,
+                    pool: AgentId,
+                    key: String,
+                }
+                impl Drop for DispatchGuard {
+                    fn drop(&mut self) {
+                        let mut m = self.keys.lock();
+                        if let Some(v) = m.get_mut(&self.pool) {
+                            v.retain(|k| k != &self.key);
+                            if v.is_empty() {
+                                m.remove(&self.pool);
+                            }
+                        }
+                    }
+                }
+                let _dispatch_guard = DispatchGuard {
+                    keys: dispatch_keys,
+                    pool: pool_agent_id.clone(),
+                    key: format!("swarm:{id}"),
+                };
+
                 // Role preamble is computed once — retries use the
                 // same shaped prompt.
                 // Planner-assigned, not re-inferred — a planner that labelled
@@ -862,12 +976,17 @@ impl SwarmRunner {
                     // last-chunk timestamp — would need a second
                     // cross-task slot for no gain.
                     let swarm_for_hb = swarm.clone();
-                    let id_for_hb = id.clone();
+                    let id_for_hb = pool_agent_id.clone();
                     let pump = tokio::spawn(async move {
                         // The swarm's registry is shared; a lookup per
                         // chunk is a HashMap get. Cheap, and the pump
                         // already crosses an await boundary per chunk
                         // (the mpsc recv), so no extra yield point.
+                        //
+                        // H-D1: heartbeats live on the *pool* agent
+                        // (the one registered in the swarm); the
+                        // dispatch id is an engine-transcript-only
+                        // identity.
                         while let Some(chunk) = rx.recv().await {
                             if let Some(agent) = swarm_for_hb.get_agent(&id_for_hb).await {
                                 agent.record_heartbeat();
@@ -1076,9 +1195,29 @@ impl SwarmRunner {
         let mut writers_per_file: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
         for (id, name, subtask, writes, outcome) in raw {
-            for path in &writes {
+            // H-D3: normalize each write path to the *logical* file
+            // relative to the repo root, stripping any per-agent
+            // worktree prefix. In worktree mode two agents editing
+            // the same file record different absolute paths
+            // (`<repo>/.kod/worktrees/agent-1/src/x.rs` vs
+            // `<repo>/.kod/worktrees/agent-2/src/x.rs`), so the
+            // pre-fix bucket saw no overlap and the merge prompt was
+            // never told. Stripping the worktree prefix makes the two
+            // bucket under the same key.
+            let worktree_prefix: Option<std::path::PathBuf> = handles
+                .iter()
+                .find(|h| h.id == id)
+                .and_then(|h| h.worktree.as_ref().map(|w| w.path.clone()));
+            for raw_path in &writes {
+                let normalized = match &worktree_prefix {
+                    Some(prefix) => std::path::Path::new(raw_path)
+                        .strip_prefix(prefix)
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_else(|_| raw_path.clone()),
+                    None => raw_path.clone(),
+                };
                 writers_per_file
-                    .entry(path.clone())
+                    .entry(normalized)
                     .or_default()
                     .push(name.clone());
             }
@@ -1182,6 +1321,21 @@ impl SwarmRunner {
         // the task) so it cannot fire against a completed run.
         let _ = watchdog_stop_tx.send(()).await;
         let _ = watchdog_task.await;
+
+        // H-R5: tear down every agent + the shared hub. The engine
+        // owns one long-lived hub, so without this step every run
+        // leaks its agents (registered, with unbounded mpsc inboxes
+        // and 100-message histories). In a long-lived daemon that
+        // grows without bound.
+        //
+        // `swarm.shutdown()` stops each agent and unregisters it
+        // from the hub; `clear_all()` drops the hub's own per-agent
+        // maps. Both are best-effort — a shutdown error is logged
+        // and the run still returns its result.
+        if let Err(e) = swarm.shutdown().await {
+            tracing::warn!(error = %e, "swarm shutdown reported an error");
+        }
+        hub.clear_all().await;
 
         Ok(SwarmResponse {
             subtasks,
