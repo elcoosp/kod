@@ -5119,25 +5119,39 @@ impl KodEngine {
 
         // Ground the model: where it runs and what it can touch.
         //
-        // P0 Fix 3: the category filter runs only when the classified
-        // task signature changed and the committed set has seasoned.
-        // Tools sit in the cached prefix, so a per-turn flip here
-        // invalidates the whole prefix; the hysteresis keeps that
-        // cost from being paid on every mis-classified turn.
-        let (definitions, _filter_changed) = self
-            .filter_tool_definitions_with_hysteresis(
+        // P3: the per-turn category filter is retired when
+        // `tool_search` is registered. The filter existed to keep the
+        // tools array small; `tool_search` makes that unnecessary
+        // because the model can pull schemas on demand. The filter
+        // was also cache-hostile — tools sit in the cached prefix,
+        // so a per-turn flip invalidated the whole prefix (P0
+        // hysteresis mitigated that; retiring the filter eliminates
+        // the cause).
+        //
+        // The underlying Jev call is a no-op when no Jev client is
+        // installed, so this changes no golden-prompt bytes. A kod
+        // build without `tool_search` (a minimal embedder) keeps the
+        // filter as a fallback.
+        let has_tool_search = self.tools.has("tool_search").await;
+        let (definitions, _filter_changed) = if has_tool_search {
+            (self.tools.get_definitions().await, false)
+        } else {
+            self.filter_tool_definitions_with_hysteresis(
                 key,
                 input,
                 task_type,
                 self.tools.get_definitions().await,
             )
-            .await;
-        // P5.1 — trim the MCP half of the tool list. Independent of
-        // the category filter above; both feed the same `definitions`
-        // the LLM sees.
-        let definitions = self
-            .filter_mcp_tools_with_jev(key, input, definitions)
-            .await;
+            .await
+        };
+        // P5.1 — trim the MCP half of the tool list. Same reasoning:
+        // `tool_search` surfaces MCP tools on demand, so the per-turn
+        // trim is skipped when it is present.
+        let definitions = if has_tool_search {
+            definitions
+        } else {
+            self.filter_mcp_tools_with_jev(key, input, definitions).await
+        };
         let grounded = self.ground_prompt(key, prompt, &definitions);
         Ok((alloc, definitions, grounded))
     }
