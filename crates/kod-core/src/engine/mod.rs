@@ -1272,6 +1272,7 @@ pub struct KodEngine {
     /// P6: background read-only jobs. One runner per engine so the
     /// concurrency cap is shared across every spawn site.
     background: std::sync::Arc<crate::background::BackgroundJobRunner>,
+
     /// P3: the live tool inventory that `tool_search` reads. Shared
     /// between the tool and the engine so a registry change (MCP
     /// server attached, hot-reload) is visible to the search
@@ -1975,6 +1976,7 @@ impl KodEngine {
             current_sensitivity: RwLock::new(crate::sensitivity::Sensitivity::Public),
             endpoint_health: std::sync::Mutex::new(crate::endpoint_health::EndpointHealth::default()),
             background: std::sync::Arc::new(crate::background::BackgroundJobRunner::default()),
+
             tool_inventory: std::sync::Arc::new(std::sync::RwLock::new(
                 kod_tools::tool_search::ToolInventory::default(),
             )),
