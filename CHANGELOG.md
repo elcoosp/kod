@@ -408,22 +408,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported. `resolve_chain_for_task_gated` gates a hop to a cold
   endpoint against the projected re-processing cost, with a 1.5x
   margin. The ledger observes from the same call that records cost.
-- **P3 — `tool_search`.** A tool that scores a natural-language
-  query against each registered tool's name, description, and
-  category and returns the top N full schemas. The inventory is
-  shared with the engine and refreshed after registration.
+- **P3 — `tool_search` (partial).** A tool that scores a
+  natural-language query against each registered tool's name,
+  description, and category and returns the top N full schemas; the
+  inventory is shared with the engine and refreshed after
+  registration. **Not yet wired:** the per-turn Jev tool-category
+  filter is still the default path. The intent was for
+  `tool_search` to let the model pull schemas on demand so the
+  per-turn filter could be retired (see P0 hysteresis for the
+  interim mitigation). That replacement has not happened.
 - **P4 — conditional AGENTS.md.** `InstructionChain` loads
   `AGENTS.md` / `CLAUDE.md` root-to-leaf, shadows same-named
   sections, and renders the ones whose guards match the turn.
   Fences: `::: when task=…`, `path=…`, `lang=…`. Rendered into the
   volatile prompt slot so a different set does not invalidate the
   prefix cache.
-- **P5 — typed subagent briefs.** `ContextBrief` and
+- **P5 — typed subagent briefs (partial).** `ContextBrief` and
   `SubagentReport` are the two records; `assemble_brief` fills the
-  first from a `ParentContext`, `merge_report` routes the second's
-  fields to the parent's decisions log, steers queue, and conflict
-  check. `boundary_violations` flags writes outside the declared
-  globs.
+  first from a `ParentContext`; the swarm runner builds a brief per
+  subtask and renders it. **Not yet wired:** the report merger
+  (`merge_report`) is not called on subagent output, because
+  subagents currently return prose that nothing parses back into a
+  `SubagentReport`. The `parse_report` helper exists; the call site
+  does not.
 - **P7 — sensitivity-aware routing.** `Sensitivity` classifies a
   turn by its touched paths; `TrustRequirement` maps that to a
   minimum endpoint tier. `EndpointConfig` gains a `trust` field
@@ -435,6 +442,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `heatmap_truncate` scores hits by term overlap and keeps the top
   N. `GrepTool` uses ripgrep when available and re-ranks its
   results.
+
+
+- **P6 — background jobs (partial).** `BackgroundJobRunner` holds
+  job state behind a `DashMap` and caps concurrent jobs with a
+  semaphore. `READ_ONLY_TOOLS` is the whitelist, enforced at
+  `KodEngine::run_tool` when the engine is in background mode.
+  `/jobs` lists jobs and `/review` spawns one. **Not yet
+  implemented:** `spawn_background_review` registers the job and
+  completes it with a placeholder summary; the child engine is not
+  constructed, and no actual cross-model review runs. The runner,
+  the enforcement, and the TUI surface are real; the review itself
+  is a stub. See `docs/design/p2-p5-p6.md` § P6 for what the
+  construction needs.
 
 ### Changed
 
