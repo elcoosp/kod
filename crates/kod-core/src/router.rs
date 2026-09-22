@@ -1017,7 +1017,7 @@ impl TaskRouter {
     /// the caller holds a reference, so it can be embedded in a
     /// `PromptPlan` without forcing the caller to re-render.
     pub(crate) fn repo_map_text(&self) -> Option<std::sync::Arc<String>> {
-        let rendered = self
+        let (rendered, _) = self
             .repo_map_cache
             .get_or_rebuild(&self.config.working_dir)?;
         if rendered.is_empty() {
@@ -1376,12 +1376,11 @@ struct RepoMapCache {
 
 struct CachedRepoMap {
     fingerprint: u64,
-    /// Rendered form only. The structured `RepoMap` was stored here in
-    /// the original P6 design "for D5 PageRank" but had no reader, so it
-    /// was dropped (YAGNI). D5 will add it back with its first consumer;
-    /// the rebuild cost is one shallow walk, already paid at
-    /// invalidation time.
     rendered: std::sync::Arc<String>,
+    /// P4: distinct language identifiers from the walk. Kept alongside
+    /// the rendered form so the `lang=` guard in AGENTS.md sections
+    /// can evaluate without a second walk.
+    languages: std::sync::Arc<Vec<String>>,
 }
 
 impl RepoMapCache {
@@ -1394,7 +1393,10 @@ impl RepoMapCache {
     /// Return the rendered map, rebuilding if the fingerprint changed.
     /// `None` when the working directory yields an empty map (no source
     /// files recognized).
-    fn get_or_rebuild(&self, working_dir: &std::path::Path) -> Option<std::sync::Arc<String>> {
+    fn get_or_rebuild(
+        &self,
+        working_dir: &std::path::Path,
+    ) -> Option<(std::sync::Arc<String>, std::sync::Arc<Vec<String>>)> {
         // H-R15 / S3: the fingerprint and (below) the map build are
         // synchronous filesystem walks. The pre-fix shape ran both on
         // the async runtime's worker thread — a large tree's first
@@ -1409,7 +1411,7 @@ impl RepoMapCache {
             && let Some(cached) = guard.as_ref()
             && cached.fingerprint == fp
         {
-            return Some(cached.rendered.clone());
+            return Some((cached.rendered.clone(), cached.languages.clone()));
         }
         // Slow path: rebuild under the write lock. A concurrent reader
         // that wins the race sees the previous value (safe, may be
@@ -1422,13 +1424,15 @@ impl RepoMapCache {
             return None;
         }
         let rendered = std::sync::Arc::new(map.render(crate::repomap::DEFAULT_MAP_CHARS));
+        let languages = std::sync::Arc::new(map.languages.iter().cloned().collect::<Vec<_>>());
         if let Ok(mut guard) = self.inner.write() {
             *guard = Some(CachedRepoMap {
                 fingerprint: fp,
                 rendered: rendered.clone(),
+                languages: languages.clone(),
             });
         }
-        Some(rendered)
+        Some((rendered, languages))
     }
 }
 
