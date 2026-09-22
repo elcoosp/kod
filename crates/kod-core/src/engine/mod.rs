@@ -2941,14 +2941,57 @@ impl KodEngine {
             },
         );
 
+        // Resolve the provider Arc and the generation options before
+        // the spawn so the task does not need to hold `&self`. The
+        // provider is an `Arc<dyn LlmProvider>` — cheap to clone and
+        // safe across the task boundary.
+        let provider = match self.resolve_provider_for_model_ref(&endpoint).await {
+            Ok(p) => p,
+            Err(e) => {
+                self.background.fail(
+                    id,
+                    format!("could not resolve endpoint {}: {e}", endpoint.display()),
+                );
+                return id;
+            }
+        };
+        let options = self.generation_defaults.read().await.to_options();
         let runner = self.background.clone();
         let subject_clone = subject_text.clone();
+        let endpoint_display = endpoint.display();
+
         tokio::spawn(async move {
             let _permit = runner.acquire_permit().await;
-            let summary = format!(
-                "review of turn {subject} staged ({} chars).",
-                subject_clone.len(),
+            // The review prompt: the reviewer's role preamble plus the
+            // turn being reviewed. No tools — a first-pass review is a
+            // read-and-critique, not a code change. A richer form that
+            // lets the reviewer look up extra context (read a file the
+            // turn mentioned) is a follow-up; it needs a child engine
+            // with the read-only tool registry, which the
+            // `background_mode` gate now supports.
+            let prompt = format!(
+                "You are a reviewer. A different model produced the \
+                 assistant turn below. Read it and reply with a short \
+                 critique: correctness issues, missing edge cases, and \
+                 anything you would have done differently. Be concise; \
+                 three to six bullet points. Do not restate the turn.\n\n\
+                 ## Turn under review (on endpoint {endpoint_display})\n\n\
+                 {subject_clone}",
             );
+            let summary = match provider.generate(&prompt, &options).await {
+                Ok(text) => {
+                    let trimmed = text.trim();
+                    if trimmed.is_empty() {
+                        "(review returned an empty reply)".to_string()
+                    } else {
+                        trimmed.to_string()
+                    }
+                }
+                Err(e) => {
+                    runner.fail(id, format!("review generation failed: {e}"));
+                    return;
+                }
+            };
             runner.complete(id, summary);
         });
 
