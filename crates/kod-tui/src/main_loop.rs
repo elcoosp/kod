@@ -3631,6 +3631,52 @@ impl TuiLoop {
                     }
                 }
             }
+            "/cache" => {
+                // P1 surface: per-endpoint cache warmth and the
+                // currently-warm endpoint. Pairs with `/limits` —
+                // that one shows tool spend, this one shows KV-cache
+                // state.
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                let (snapshot, sticky) = engine.cache_snapshot();
+                let unhealthy = engine.unhealthy_endpoints();
+                if snapshot.is_empty() && unhealthy.is_empty() {
+                    self.app.push_system_message(
+                        "No cache activity yet. A call to a provider that \
+                         reports cache fields will populate this view.",
+                    );
+                    return Ok(());
+                }
+                let mut msg = String::from("Cache ledger\n");
+                if let Some(s) = &sticky {
+                    msg.push_str(&format!("  warm endpoint: {s}\n"));
+                } else {
+                    msg.push_str("  warm endpoint: (none)\n");
+                }
+                msg.push('\n');
+                if !snapshot.is_empty() {
+                    msg.push_str("  endpoint             cached tokens  last used\n");
+                    for (ep, tokens, turn) in &snapshot {
+                        msg.push_str(&format!(
+                            "  {:<20} {:>13}  {}\n",
+                            ep, tokens, turn
+                        ));
+                    }
+                }
+                if !unhealthy.is_empty() {
+                    msg.push_str("\n  Unhealthy (circuit open):\n");
+                    for (ep, fails, err) in &unhealthy {
+                        let e = err.as_deref().unwrap_or("(no error)");
+                        msg.push_str(&format!(
+                            "  {:<20} {} fails  {}\n",
+                            ep, fails, e
+                        ));
+                    }
+                }
+                self.app.push_system_message(msg.trim_end());
+            }
             "/limits" => {
                 let Some(engine) = &self.engine else {
                     self.app.push_system_message("Engine not initialized.");

@@ -145,6 +145,21 @@ impl CacheLedger {
             * (pricing.cache_write_per_mtok_usd + pricing.cache_read_per_mtok_usd)
     }
 
+    /// Snapshot of every endpoint the ledger has observed, for a
+    /// `/cache` surface. Returns `(endpoint, cached_tokens,
+    /// last_used_turn)` in insertion order.
+    pub fn snapshot(&self) -> Vec<(String, u64, u64)> {
+        self.states
+            .iter()
+            .map(|(k, s)| (k.clone(), s.cached_tokens, s.last_used_turn))
+            .collect()
+    }
+
+    /// The endpoint currently warm, if any.
+    pub fn sticky_endpoint(&self) -> Option<&str> {
+        self.sticky.as_deref()
+    }
+
     /// Decide whether to hop from `preferred` to `fallback`.
     ///
     /// `preferred` is the classification's first choice (a cheaper

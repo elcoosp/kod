@@ -2897,6 +2897,33 @@ impl KodEngine {
     }
 
     /// Allocate the next turn id. Monotonic; scoped to the session.
+    /// Snapshot of the cache ledger for a `/cache` surface (P1).
+    /// Returns (endpoint, cached_tokens, last_used_turn) plus the
+    /// currently-warm endpoint's name.
+    pub fn cache_snapshot(&self) -> (Vec<(String, u64, u64)>, Option<String>) {
+        match self.cache_ledger.lock() {
+            Ok(l) => (
+                l.snapshot(),
+                l.sticky_endpoint().map(str::to_string),
+            ),
+            Err(_) => (Vec::new(), None),
+        }
+    }
+
+    /// Snapshot of the endpoint circuit breaker (hygiene 3.2).
+    /// Returns (endpoint, failures, last_error) for every endpoint
+    /// currently in cooldown.
+    pub fn unhealthy_endpoints(&self) -> Vec<(String, u32, Option<String>)> {
+        match self.endpoint_health.lock() {
+            Ok(h) => h
+                .unhealthy()
+                .into_iter()
+                .map(|(name, fails, err)| (name, fails, err.map(str::to_string)))
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
     /// Consume the one-shot marker-suppression flag for `key`.
     ///
     /// Returns `true` exactly once after a tool-filter commit that
