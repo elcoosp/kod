@@ -425,6 +425,107 @@ pub fn default_session_path() -> Option<PathBuf> {
     )
 }
 
+
+/// Rebuild a transcript from the tool-call entries a session log
+/// recorded for one holder.
+///
+/// This is the P2 "rehydrate on restart" half of the context engine:
+/// `read_session` recovers the JSONL entries, and this function turns
+/// the `ToolCall` entries back into the `ChatMessage` pairs the model
+/// saw — an assistant turn carrying the call, immediately followed by
+/// a tool turn carrying its result. Other entry kinds (Cost,
+/// PolicyDecision, …) are audit records, not transcript; they are
+/// skipped.
+///
+/// The function is pure and deterministic: given the same entries
+/// and holder it produces the same messages, in log order, with
+/// stable `tool_call_id` linkage. Timestamps come from the entry's
+/// `timestamp_ms`; a value that cannot be represented as an
+/// `OffsetDateTime` falls back to the Unix epoch rather than
+/// dropping the turn.
+pub fn rehydrate_turns(
+    entries: &[SessionEntry],
+    holder: &str,
+) -> Vec<kod_types::ChatMessage> {
+    use kod_types::{ChatMessage, MessageId, MessageRole};
+
+    let mut out: Vec<ChatMessage> = Vec::new();
+    for entry in entries {
+        let SessionEntry::ToolCall {
+            timestamp_ms,
+            holder: entry_holder,
+            tool_name,
+            arguments,
+            result,
+            ..
+        } = entry
+        else {
+            continue;
+        };
+        if entry_holder != holder {
+            continue;
+        }
+
+        let ts = time::OffsetDateTime::from_unix_timestamp_nanos(
+            (*timestamp_ms as i128) * 1_000_000,
+        )
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+
+        // A stable call id ties the assistant tool-call message to
+        // the tool-result message that answers it. Log entries do not
+        // carry the provider's original id, so we synthesize one from
+        // the position in the rebuilt transcript.
+        let call_id = format!("rehydrated-{:04}", out.len());
+
+        let call = kod_types::ToolCall {
+            id: Some(call_id.clone()),
+            tool_name: tool_name.clone(),
+            arguments: arguments.clone(),
+        };
+
+        let mut assistant = ChatMessage::text(
+            MessageId::new(),
+            MessageRole::Assistant,
+            String::new(), // content lives in tool_calls
+            ts,
+        );
+        assistant.tool_calls.push(call);
+        out.push(assistant);
+
+        let content = render_result_text(result);
+        let mut tool_msg = ChatMessage::text(
+            MessageId::new(),
+            MessageRole::Tool,
+            content,
+            ts,
+        );
+        tool_msg.tool_call_id = Some(call_id);
+        out.push(tool_msg);
+    }
+    out
+}
+
+/// Render a `SessionEntry::ToolCall.result` JSON value into the text
+/// a tool-role message carries. The engine writes one of
+/// `{"success": <v>}`, `{"error": "<s>"}`, or
+/// `{"requires_confirmation": {...}}`; anything else falls through
+/// as compact JSON.
+fn render_result_text(result: &serde_json::Value) -> String {
+    if let Some(v) = result.get("success") {
+        return match v {
+            serde_json::Value::String(s) => s.clone(),
+            other => serde_json::to_string(other).unwrap_or_default(),
+        };
+    }
+    if let Some(s) = result.get("error").and_then(|v| v.as_str()) {
+        return format!("Error: {s}");
+    }
+    if result.get("requires_confirmation").is_some() {
+        return "(rehydrated: tool call required confirmation)".to_string();
+    }
+    serde_json::to_string(result).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -873,5 +974,122 @@ mod coverage_truncated_tail {
         })
         .unwrap();
         assert_eq!(read_session(&p).unwrap().len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod rehydrate_tests {
+    use super::*;
+
+    #[test]
+    fn rehydrate_turns_empty_input_yields_no_messages() {
+        let out = rehydrate_turns(&[], "session");
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn rehydrate_turns_keeps_only_the_holder() {
+        let entries = vec![
+            SessionEntry::ToolCall {
+                timestamp_ms: 1_000,
+                holder: "session".to_string(),
+                tool_name: "read_file".to_string(),
+                arguments: serde_json::json!({"path": "a.rs"}),
+                duration_ms: 5,
+                result: serde_json::json!({"success": "contents of a.rs"}),
+            },
+            SessionEntry::ToolCall {
+                timestamp_ms: 2_000,
+                holder: "swarm:agent-3".to_string(),
+                tool_name: "read_file".to_string(),
+                arguments: serde_json::json!({"path": "b.rs"}),
+                duration_ms: 5,
+                result: serde_json::json!({"success": "contents of b.rs"}),
+            },
+        ];
+        let out = rehydrate_turns(&entries, "session");
+        assert_eq!(out.len(), 2, "one call => two messages (assistant + tool)");
+        assert_eq!(out[0].tool_calls.len(), 1);
+        assert_eq!(out[0].tool_calls[0].tool_name, "read_file");
+        assert_eq!(out[1].role, kod_types::MessageRole::Tool);
+        assert_eq!(out[1].content, "contents of a.rs");
+    }
+
+    #[test]
+    fn rehydrate_turns_links_call_to_result_via_id() {
+        let entries = vec![SessionEntry::ToolCall {
+            timestamp_ms: 1_000,
+            holder: "session".to_string(),
+            tool_name: "grep".to_string(),
+            arguments: serde_json::json!({"pattern": "fn main"}),
+            duration_ms: 5,
+            result: serde_json::json!({"success": "main.rs:1"}),
+        }];
+        let out = rehydrate_turns(&entries, "session");
+        let call_id = out[0].tool_calls[0].id.clone();
+        assert!(call_id.is_some(), "assistant call must carry an id");
+        assert_eq!(
+            out[1].tool_call_id, call_id,
+            "tool result must reference the assistant's call id",
+        );
+    }
+
+    #[test]
+    fn rehydrate_turns_renders_error_results_with_a_prefix() {
+        let entries = vec![SessionEntry::ToolCall {
+            timestamp_ms: 1_000,
+            holder: "session".to_string(),
+            tool_name: "read_file".to_string(),
+            arguments: serde_json::json!({"path": "missing.rs"}),
+            duration_ms: 5,
+            result: serde_json::json!({"error": "no such file"}),
+        }];
+        let out = rehydrate_turns(&entries, "session");
+        assert_eq!(out[1].content, "Error: no such file");
+    }
+
+    #[test]
+    fn rehydrate_turns_skips_non_toolcall_entries() {
+        let entries = vec![
+            SessionEntry::Cost {
+                timestamp_ms: 1_000,
+                holder: "session".to_string(),
+                endpoint: "openai".to_string(),
+                model: "gpt-4".to_string(),
+                prompt_tokens: 100,
+                completion_tokens: 20,
+                cost_usd: 0.001,
+            },
+            SessionEntry::ToolCall {
+                timestamp_ms: 2_000,
+                holder: "session".to_string(),
+                tool_name: "read_file".to_string(),
+                arguments: serde_json::json!({"path": "a.rs"}),
+                duration_ms: 5,
+                result: serde_json::json!({"success": "x"}),
+            },
+        ];
+        let out = rehydrate_turns(&entries, "session");
+        assert_eq!(out.len(), 2, "cost entry contributes no messages");
+    }
+
+    #[test]
+    fn rehydrate_turns_is_deterministic() {
+        let entries = vec![SessionEntry::ToolCall {
+            timestamp_ms: 1_000,
+            holder: "session".to_string(),
+            tool_name: "read_file".to_string(),
+            arguments: serde_json::json!({"path": "a.rs"}),
+            duration_ms: 5,
+            result: serde_json::json!({"success": "contents"}),
+        }];
+        let a = rehydrate_turns(&entries, "session");
+        let b = rehydrate_turns(&entries, "session");
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(x.role, y.role);
+            assert_eq!(x.content, y.content);
+            assert_eq!(x.tool_calls.len(), y.tool_calls.len());
+        }
     }
 }
