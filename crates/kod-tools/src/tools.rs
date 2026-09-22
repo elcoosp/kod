@@ -3,6 +3,7 @@
 use crate::{Tool, ToolContext};
 // P8: the SearchBackend trait must be in scope for the
 // ripgrep fast path to call `.search()` on the backend.
+#[allow(unused_imports)]
 use crate::relevance::SearchBackend;
 use kod_error::{KodError, Result};
 use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};

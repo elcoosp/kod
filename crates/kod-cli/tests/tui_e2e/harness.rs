@@ -286,6 +286,7 @@ pub struct TuiSession {
 
 impl TuiSession {
     /// The declared terminal size.
+    #[allow(dead_code)]
     pub fn size(&self) -> (u16, u16) {
         (self.width, self.height)
     }
@@ -410,6 +411,7 @@ impl TuiSession {
     }
 
     /// Send a key with modifiers.
+    #[allow(dead_code)]
     pub fn send_key_with(&self, key: KeyCode, mods: Modifiers) {
         self.send_bytes(&encode_key(key, mods));
     }
