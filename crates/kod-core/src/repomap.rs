@@ -26,18 +26,16 @@ pub struct Symbol {
 /// The full repository map.
 #[derive(Debug, Clone, Default)]
 pub struct RepoMap {
-    /// Symbols per file, kept for callers that want them directly.
     pub entries: BTreeMap<PathBuf, Vec<Symbol>>,
-    /// Cross-file references: for each file, the paths it imports
-    /// (via `use`, `mod`, `import`, `#include`, `from ... import`,
-    /// ...). Populated by `build_repo_map` when the language is
-    /// recognized; empty otherwise.
     pub imports: BTreeMap<PathBuf, Vec<PathBuf>>,
-    /// Per-file PageRank score computed from `imports`. Higher means
-    /// more files depend on it. All files present in `entries` have
-    /// an entry here (default 1.0 when they have no inbound or
-    /// outbound references).
     pub rank: BTreeMap<PathBuf, f32>,
+    /// P4: distinct languages the walk recognized, as lowercase
+    /// identifiers (`rust`, `python`, `js`, `go`, `ruby`, `java`,
+    /// `c`). The `lang=` guard in `AGENTS.md` sections evaluates
+    /// against this set. A language is present when at least one
+    /// source file of it was seen, regardless of whether the file
+    /// produced symbols.
+    pub languages: std::collections::BTreeSet<String>,
 }
 
 /// Default character budget for the rendered map. At the workspace's
@@ -163,6 +161,7 @@ pub fn build_repo_map(root: &Path) -> RepoMap {
     let mut entries: BTreeMap<PathBuf, Vec<Symbol>> = BTreeMap::new();
     let mut raw_imports: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
     let mut all_files: BTreeMap<PathBuf, PathBuf> = BTreeMap::new(); // rel -> abs
+    let mut languages: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     // Refuse to walk a directory that is not a workspace. See
     // `looks_like_a_repo` for why: a shell in `$HOME` is not a
@@ -172,6 +171,7 @@ pub fn build_repo_map(root: &Path) -> RepoMap {
             entries,
             imports: BTreeMap::new(),
             rank: BTreeMap::new(),
+            languages,
         };
     }
 
@@ -199,6 +199,12 @@ pub fn build_repo_map(root: &Path) -> RepoMap {
         }
         let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
         all_files.insert(rel.clone(), path.to_path_buf());
+        // P4: record the language for the `lang=` guard in AGENTS.md
+        // sections. Uses the same extension table the symbol
+        // extractor does, so the two agree on what a "Rust file" is.
+        if let Some(lang) = language_for(path) {
+            languages.insert(lang.to_string());
+        }
         let (symbols, imports) = extract_symbols_and_imports(path);
         if !symbols.is_empty() {
             entries.insert(rel.clone(), symbols);
@@ -245,6 +251,7 @@ pub fn build_repo_map(root: &Path) -> RepoMap {
         entries,
         imports,
         rank,
+        languages,
     }
 }
 
@@ -371,6 +378,23 @@ fn compute_pagerank(
 /// raw tokens from the file — the caller resolves them against the
 /// set of files it knows about. Empty imports when the extension has
 /// no import extractor.
+/// P4: map a file's extension to a language identifier. Matches the
+/// extension table `extract_symbols_and_imports` uses, so the two
+/// agree on what a "Rust file" is.
+fn language_for(path: &Path) -> Option<&'static str> {
+    match path.extension().and_then(|s| s.to_str()).unwrap_or("") {
+        "rs" => Some("rust"),
+        "py" => Some("python"),
+        "js" | "jsx" => Some("js"),
+        "ts" | "tsx" => Some("ts"),
+        "go" => Some("go"),
+        "rb" => Some("ruby"),
+        "java" => Some("java"),
+        "c" | "h" | "cc" | "cpp" | "hpp" | "cxx" => Some("c"),
+        _ => None,
+    }
+}
+
 fn extract_symbols_and_imports(path: &Path) -> (Vec<Symbol>, Vec<String>) {
     const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
     if let Ok(meta) = std::fs::metadata(path)
