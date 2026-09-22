@@ -955,3 +955,33 @@ mod coverage_openai_provider {
         let _ = Content::new("user");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capabilities_declare_automatic_prompt_cache() {
+        // OpenAI-compatible servers (OpenAI, Ollama, vLLM, ...) prefix-cache
+        // automatically and there is no cache_control marker to send. Kod
+        // must therefore advertise Automatic caching rather than None, so
+        // the engine knows cache-read tokens are possible and does not gate
+        // transcript breakpoints on this provider.
+        use kod_provider::PromptCacheKind;
+        let provider = OpenAICompatProvider::new(
+            "http://localhost:11434/v1",
+            "test-model",
+        )
+        .expect("constructing an OpenAI-compatible provider must succeed");
+        let caps = provider.capabilities();
+        assert_eq!(
+            caps.prompt_cache,
+            PromptCacheKind::Automatic,
+            "OpenAI-compatible provider must declare Automatic prompt cache",
+        );
+        assert!(
+            caps.streaming_tools,
+            "OpenAI-compatible provider streams tool-call text",
+        );
+    }
+}

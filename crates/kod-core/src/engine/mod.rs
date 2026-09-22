@@ -5,7 +5,6 @@
 
 mod jev_advisor;
 
-use crate::context_engine::ChunkScorer;
 use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
 use kod_provider::request::{CompletionRequest, SystemPrompt};
@@ -1282,6 +1281,7 @@ pub struct KodEngine {
     /// entry remembers what fidelity a turn was last scored at and
     /// against which query, so a call on the same topic does not
     /// re-score (and a topic change does).
+    #[allow(dead_code)] // P2 wire-up pending; see context_engine.rs
     fidelity_cache: RwLock<HashMap<String, crate::context_engine::FidelityCache>>,
 
     /// P3: the live tool inventory that `tool_search` reads. Shared
@@ -4593,7 +4593,6 @@ impl KodEngine {
             None => Err(Self::no_provider_error()),
         }
     }
-
 
     /// Like [`Self::record_cost`], but also feeds the cache ledger
     /// with the fingerprint of the request head that was actually
@@ -9394,7 +9393,6 @@ mod tests {
             Err(_) => {} // the tool errored before running
         }
     }
-
 
     use super::*;
     use tempfile::TempDir;
