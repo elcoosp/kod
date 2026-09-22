@@ -8962,63 +8962,43 @@ impl KodEngine {
         }
         let budget = self.history_budget();
 
-        // First pass: find the oldest index that fits under the
-        // budget. `cutoff` is the smallest index that will be
-        // included; iterate newest-to-oldest and stop when the next
-        // turn would push the rendered size over.
-        let mut total = 0usize;
-        let mut cutoff = turns.len();
-        for i in (0..turns.len()).rev() {
-            // `ChatMessage::render_text` emits "User: {content}" /
-            // "Assistant: {content}" / "System: {content}" etc. —
-            // byte-identical to what `HistoryTurn` used to produce
-            // for user and assistant turns. The characterization test
-            // in tests/characterization_history.rs locks this.
-            let line_len = turns[i].render_text().len() + 1; // + '\n'
-            if total + line_len > budget {
-                break;
-            }
-            total += line_len;
-            cutoff = i;
-        }
+        // P2: route the FIFO budget walk through the fidelity
+        // pipeline in `context_engine`. On this first landing the
+        // scorer is configured so every turn scores `Full`; the
+        // pipeline output is byte-identical to the previous inline
+        // walk, and the characterization tests in
+        // `tests/characterization_history.rs` plus the three
+        // `render_history_*` unit tests in this module prove the
+        // swap. A follow-up narrows `with_tail` so old turns can
+        // actually drop below `Full`.
+        //
+        // The `Query` is empty because every turn is already forced
+        // to `Full` by the tail. When the tail shrinks the query
+        // becomes live — the fidelity cache will hold the per-turn
+        // decision across calls and only re-score when the query
+        // changes substantially.
+        let query = crate::context_engine::Query::from_text("");
+        let scorer = crate::context_engine::LexicalScorer::new()
+            .with_tail(turns.len() as u32);
 
-        // Second pass: walk backward past the cutoff and pull in any
-        // pinned turn. A pinned turn is never dropped — the whole
-        // point of pinning is that the user has decided this turn
-        // matters more than the budget. The scan walks to 0 so a
-        // pin at the very start survives even when the budget ran
-        // out at index 20.
-        for i in (0..cutoff).rev() {
-            if turns[i].metadata.pinned {
-                cutoff = i;
-            }
-        }
+        let mut cache_guard = self.fidelity_cache.write().await;
+        let cache = cache_guard
+            .entry(key.to_string())
+            .or_insert_with(crate::context_engine::FidelityCache::new);
 
-        let mut out = String::new();
-        for message in &turns[cutoff..] {
-            // Skip the structured tool transcript slice (AD-02): the
-            // tool results are still delivered to the model via the
-            // `## Tool results` block appended to `pending` at the end
-            // of each round. Rendering them here as `Tool: …` lines
-            // would change the prompt bytes and defeat the AD-16
-            // cacheable prefix invariant. When the engine migrates to
-            // `CompletionRequest` (AD-01), the structured slice goes
-            // on the wire and this filter goes away.
-            if matches!(message.role, kod_types::MessageRole::Tool) {
-                continue;
-            }
-            // An assistant message whose only content is a set of tool
-            // calls (empty text) has nothing to render. Same rationale:
-            // it is structural, not prose.
-            if matches!(message.role, kod_types::MessageRole::Assistant)
-                && message.content.trim().is_empty()
-                && !message.tool_calls.is_empty()
-            {
-                continue;
-            }
-            out.push_str(&message.render_text());
-            out.push('\n');
-        }
+        let (out, consult) = crate::context_engine::render_scored(
+            turns,
+            query,
+            &scorer,
+            cache,
+            budget,
+            true, // skip tool rows and empty tool-call assistants
+        );
+
+        // Drop cache entries for turns that no longer exist in this
+        // transcript key (after a compact or a clear).
+        cache.retain_ids(&consult);
+
         out
     }
 
