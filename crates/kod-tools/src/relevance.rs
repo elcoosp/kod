@@ -191,6 +191,63 @@ fn which_rg() -> Option<PathBuf> {
     None
 }
 
+/// Rank hits by relevance and return their (path, line_number)
+/// identifiers in descending score order. Ties preserve input order
+/// so a caller that reorders a parallel Vec gets a deterministic
+/// result.
+///
+/// Used by `GrepTool` to re-sort its JSON result list without
+/// reformatting it. The scoring is identical to `heatmap_truncate`'s
+/// so the two paths agree.
+pub fn rank_hits(results: &SearchResults, query: &str) -> Vec<(String, u64)> {
+    let terms = tokenize(query);
+    if terms.is_empty() {
+        return results
+            .hits
+            .iter()
+            .map(|h| (h.path.to_string_lossy().into_owned(), h.line_number))
+            .collect();
+    }
+    let total = results.hits.len().max(1) as f64;
+    let df: std::collections::HashMap<&str, usize> = terms
+        .iter()
+        .map(|t| {
+            let n = results
+                .hits
+                .iter()
+                .filter(|h| h.line.to_lowercase().contains(t.as_str()))
+                .count();
+            (t.as_str(), n)
+        })
+        .collect();
+    let mut scored: Vec<(f64, usize, &SearchHit)> = results
+        .hits
+        .iter()
+        .enumerate()
+        .map(|(i, h)| {
+            let lower = h.line.to_lowercase();
+            let mut score = 0.0;
+            for t in &terms {
+                if lower.contains(t.as_str()) {
+                    let n = *df.get(t.as_str()).unwrap_or(&1) as f64;
+                    score += (total / n).ln_1p();
+                }
+            }
+            (score, i, h)
+        })
+        .collect();
+    // Descending score; ties keep input order (stable by index).
+    scored.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.1.cmp(&b.1))
+    });
+    scored
+        .into_iter()
+        .map(|(_, _, h)| (h.path.to_string_lossy().into_owned(), h.line_number))
+        .collect()
+}
+
 /// Rank and truncate a set of hits against the query.
 ///
 /// Returns the formatted output: the top-scoring hits with their

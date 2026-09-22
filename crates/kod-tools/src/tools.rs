@@ -1292,6 +1292,59 @@ impl Tool for GrepTool {
             }
         }
 
+        // P8: relevance-rank the matches before capping the output.
+        // The loop already capped the raw count at MAX_GREP_MATCHES;
+        // this pass keeps the matches a reader would want when the
+        // cap forced a choice. Deterministic, term-overlap scoring
+        // (no model call) from `relevance::heatmap_truncate`.
+        //
+        // A search with no query terms in common with any line keeps
+        // its original order — the scoring is a filter, not a
+        // reordering of everything.
+        if results.len() > 1 {
+            let query_terms = pattern.split_whitespace().collect::<Vec<_>>();
+            if !query_terms.is_empty() {
+                // Build a SearchResults for the scorer.
+                let mut hits: Vec<crate::relevance::SearchHit> = Vec::with_capacity(results.len());
+                for r in &results {
+                    let line = r.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                    let path = r.get("file").and_then(|p| p.as_str()).unwrap_or("");
+                    let line_number = r.get("line").and_then(|n| n.as_u64()).unwrap_or(0);
+                    hits.push(crate::relevance::SearchHit {
+                        path: std::path::PathBuf::from(path),
+                        line_number,
+                        line: line.to_string(),
+                        before: Vec::new(),
+                        after: Vec::new(),
+                    });
+                }
+                let sr = crate::relevance::SearchResults {
+                    hits: hits.clone(),
+                    files_searched: 0,
+                    files_skipped: 0,
+                };
+                // Score and reorder the `results` Vec to match.
+                let ranked = crate::relevance::rank_hits(&sr, pattern);
+                let mut reordered: Vec<serde_json::Value> = Vec::with_capacity(results.len());
+                for (path, line) in ranked {
+                    if let Some(pos) = results.iter().position(|r| {
+                        r.get("file").and_then(|f| f.as_str()) == Some(path.as_str())
+                            && r.get("line").and_then(|n| n.as_u64()) == Some(line)
+                    }) {
+                        reordered.push(results[pos].clone());
+                    }
+                }
+                // Any that the ranker dropped are appended in order.
+                for r in &results {
+                    if !reordered.contains(r) {
+                        reordered.push(r.clone());
+                    }
+                }
+                results = reordered;
+            }
+        }
+
+
         Ok(ToolResult::Success(serde_json::json!({
             "pattern": pattern,
             "case_insensitive": case_insensitive,
