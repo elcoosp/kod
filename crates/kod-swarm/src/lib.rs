@@ -16,6 +16,7 @@
 //! ```
 
 pub mod agent;
+pub mod brief;
 pub mod blackboard;
 pub mod communication;
 pub mod coordination;
