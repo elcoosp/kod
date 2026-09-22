@@ -391,6 +391,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **P0 — cache accounting, transcript breakpoint, filter hysteresis.**
+  `TokenUsage` carries `cache_read_tokens` / `cache_creation_tokens`
+  and `ModelPricing` carries the matching rate tiers; the Anthropic
+  wire parser folds the two fields into `prompt_tokens` so cost math
+  has one number. The messages array carries a second
+  `cache_control` marker on its last block so the growing transcript
+  is read back at the cache rate. The per-turn Jev tool-category
+  filter is gated by `ToolFilterState` hysteresis, and a one-shot
+  marker gate suppresses the transcript breakpoint for the single
+  request after a filter change.
+- **P1 — switch-penalty-aware routing.** `CacheLedger` records the
+  last request head each endpoint served and the cache tokens it
+  reported. `resolve_chain_for_task_gated` gates a hop to a cold
+  endpoint against the projected re-processing cost, with a 1.5x
+  margin. The ledger observes from the same call that records cost.
+- **P3 — `tool_search`.** A tool that scores a natural-language
+  query against each registered tool's name, description, and
+  category and returns the top N full schemas. The inventory is
+  shared with the engine and refreshed after registration.
+- **P4 — conditional AGENTS.md.** `InstructionChain` loads
+  `AGENTS.md` / `CLAUDE.md` root-to-leaf, shadows same-named
+  sections, and renders the ones whose guards match the turn.
+  Fences: `::: when task=…`, `path=…`, `lang=…`. Rendered into the
+  volatile prompt slot so a different set does not invalidate the
+  prefix cache.
+- **P5 — typed subagent briefs.** `ContextBrief` and
+  `SubagentReport` are the two records; `assemble_brief` fills the
+  first from a `ParentContext`, `merge_report` routes the second's
+  fields to the parent's decisions log, steers queue, and conflict
+  check. `boundary_violations` flags writes outside the declared
+  globs.
+- **P7 — sensitivity-aware routing.** `Sensitivity` classifies a
+  turn by its touched paths; `TrustRequirement` maps that to a
+  minimum endpoint tier. `EndpointConfig` gains a `trust` field
+  (trusted / standard / untrusted, default standard), and the chain
+  filter drops endpoints below the requirement.
+- **P8 — relevance-ranked search.** `SearchBackend` with a
+  `RipgrepBackend` that shells out to `rg --json` when it is on
+  PATH and falls back to the in-process walker otherwise.
+  `heatmap_truncate` scores hits by term overlap and keeps the top
+  N. `GrepTool` uses ripgrep when available and re-ranks its
+  results.
+
+### Changed
+
+- **Hygiene (harness review section 9).**
+  `OpenAICompatibleProvider::capabilities()` reports the matrix it
+  actually implements (`prompt_cache = Automatic`,
+  `streaming_tools = true`) instead of the conservative default.
+  Anthropic `list_models` returns a curated model-family list
+  rather than an empty vec. `prompt_allocation` reads a cached
+  budget hint instead of re-parsing `~/.kod/config.toml` every
+  turn. `EndpointHealth` is a three-strikes circuit breaker that
+  skips a chronically failing endpoint for a cooldown. Dead
+  `record_cost` removed in favour of `record_cost_with_head`.
+- **`/help` opens the overlay.** The command routed to the same
+  `toggle_help` the `?` key and F1 use; before, it pushed a text
+  block that left the overlay unreachable from the command the
+  widget advertises.
+
+### Fixed
+
+- **Repomap must not walk a non-repo directory.** `looks_like_a_repo`
+  gates the walk on a VCS directory or a project manifest, so
+  `kod tui` from `$HOME` no longer walks the whole tree per prompt.
+  `MAX_REPO_FILES` caps the walk.
+- **Byte-boundary panics in `html_to_text` and
+  `parse_unified_diff`.** Found by the fuzz suite; both sliced a
+  string on a byte index that could land mid-character.
+- **`replay --execute` no longer demands `--yes` for a read-only
+  log.**
+- **`/help` and the transcript cache breakpoint:** see Changed.
+
 - **Cache marker gate (P0).** The transcript cache breakpoint is now
   suppressed for the single request that follows a tool-filter
   change. `ToolFilterState` carries a one-shot flag, armed on a
