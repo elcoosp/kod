@@ -423,13 +423,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Fences: `::: when task=…`, `path=…`, `lang=…`. Rendered into the
   volatile prompt slot so a different set does not invalidate the
   prefix cache.
-- **P5 — typed subagent briefs.** `ContextBrief` and
+- **P5 — typed subagent briefs (partial).** `ContextBrief` and
   `SubagentReport` are the two records; `assemble_brief` fills the
   first from a `ParentContext`; the swarm runner renders a brief per
-  subtask and parses the reply with `parse_report`. `merge_report`
-  routes the report's fields to the parent's decisions log, steers
-  queue, and conflict check; a `SwarmEvent::BoundaryViolation`
-  surfaces writes outside the declared globs.
+  subtask. **Not wired:** `parse_report` is not called on the
+  subagent's reply at the completion site, so `merge_report`,
+  `boundary_violations`, and the `SwarmEvent::BoundaryViolation`
+  event are unreachable. The brief the agent receives is real; the
+  report it sends back is not consumed.
 - **P7 — sensitivity-aware routing.** `Sensitivity` classifies a
   turn by its touched paths; `TrustRequirement` maps that to a
   minimum endpoint tier. `EndpointConfig` gains a `trust` field
