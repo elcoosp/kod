@@ -811,6 +811,57 @@ impl SwarmRunner {
                 .await;
         }
 
+        // P5: build the parent's context once for the whole run.
+        // The snapshot is taken here so every subtask's brief draws
+        // from the same state — the parent does not change while the
+        // swarm works, and a per-wave rebuild would produce slightly
+        // different briefs for logically-peer subtasks.
+        //
+        // `AgentHandle` is a local struct, so this block lives inline
+        // rather than in a module-level helper.
+        let parent_context = {
+            let decisions = self.engine.recent_decisions("", 16).await;
+            let repomap_text = self.engine.repomap_text().await;
+            let expected_writes: Vec<String> = handles
+                .iter()
+                .flat_map(|h| h.subtask.expected_writes.iter().cloned())
+                .collect();
+            let mut file_summaries = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            let working_dir = self.engine.working_dir();
+            for h in &handles {
+                for token in h.subtask.description.split_whitespace() {
+                    let cleaned = token.trim_matches(|c: char| {
+                        !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-'
+                    });
+                    if cleaned.contains('.') || cleaned.contains('/') {
+                        let path = working_dir.join(cleaned);
+                        if path.is_file()
+                            && seen.insert(path.clone())
+                            && let Ok(d) =
+                                kod_swarm::brief_assembly::digest_file(&path)
+                            && file_summaries.len() < 12
+                        {
+                            file_summaries.push((d.path, d.summary, d.line_count));
+                        }
+                    }
+                }
+            }
+            tracing::debug!(
+                decisions = decisions.len(),
+                digests = file_summaries.len(),
+                repomap_chars = repomap_text.len(),
+                "P5: parent context built for swarm run",
+            );
+            kod_swarm::brief_assembly::ParentContext {
+                decisions,
+                file_summaries,
+                repomap_text,
+                expected_writes,
+                token_budget: 4096,
+            }
+        };
+
         while !remaining.is_empty() && guard > 0 {
             guard -= 1;
 
@@ -2063,6 +2114,8 @@ fn parse_subtasks(text: &str, max: usize) -> Option<Vec<Subtask>> {
     }
     Some(out)
 }
+
+
 
 #[cfg(test)]
 mod tests {
