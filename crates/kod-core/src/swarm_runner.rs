@@ -1340,6 +1340,38 @@ impl SwarmRunner {
                             })
                             .await;
                     }
+                    // P5 (piece 3/3): apply the plan's durable side
+                    // effects. Facts and proposed decisions go to
+                    // the parent's decisions log under the default
+                    // transcript key, open questions to the steers
+                    // queue, and the summary to the blackboard.
+                    for fact in &plan.decisions_to_record {
+                        self.engine
+                            .add_decision(
+                                "",
+                                0,
+                                crate::decisions::DecisionKind::Approach,
+                                fact.clone(),
+                                crate::decisions::DecisionAuthor::Assistant,
+                            )
+                            .await;
+                    }
+                    for q in &plan.steers_to_queue {
+                        self.engine
+                            .steer(&format!("[{name}] {q}"))
+                            .await;
+                    }
+                    if !plan.summary_line.is_empty() {
+                        self.engine.blackboard().put(
+                            format!("agent:{name}:summary"),
+                            serde_json::json!({
+                                "summary": plan.summary_line,
+                            }),
+                            name.clone(),
+                            kod_swarm::AuthorKind::Agent,
+                            vec!["summary".to_string()],
+                        );
+                    }
                     per_agent.push(AgentResult {
                         id,
                         name,
