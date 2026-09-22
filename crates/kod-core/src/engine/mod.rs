@@ -1265,6 +1265,17 @@ pub struct KodEngine {
     /// re-parsed `~/.kod/config.toml` on every turn for two numbers
     /// that do not change within a session.
     budget_hint: std::sync::RwLock<(usize, usize)>,
+
+    /// Per-model metadata keyed by `(endpoint, model id)`. Populated
+    /// whenever a caller fetches `list_models()` — the TUI's `/model`
+    /// refresh, the `serve` protocol handler, or any future explicit
+    /// refresh. `budget_hint_for` consults it before falling back to
+    /// the endpoint config, so once a caller has listed an endpoint's
+    /// models, switching to one of them allocates against that
+    /// model's reported context window rather than the endpoint's
+    /// default. Empty until some caller populates it; every lookup
+    /// degrades to the endpoint config on a miss.
+    model_catalog: std::sync::RwLock<std::collections::HashMap<(String, String), kod_provider::ModelInfo>>,
     /// Circuit breaker for endpoint health (hygiene 3.2). A
     /// chronically failing endpoint is skipped in the chain for a
     /// cooldown instead of being retried as primary every turn.
@@ -1997,6 +2008,11 @@ impl KodEngine {
                 let ep = d.default_endpoint();
                 (ep.context_window, ep.max_tokens.unwrap_or(2048))
             }),
+
+            // Empty until a caller fetches `list_models()`. Every
+            // `budget_hint_for` lookup degrades to the endpoint
+            // config on a miss, so this starts invisible.
+            model_catalog: std::sync::RwLock::new(std::collections::HashMap::new()),
             next_turn_id: std::sync::atomic::AtomicU64::new(1),
             turn_trace_writer: std::sync::RwLock::new(None),
             taint: std::sync::RwLock::new(kod_types::trust::TrustLevel::Assistant),
@@ -4223,6 +4239,66 @@ impl KodEngine {
     /// `default_model` names the endpoint the engine resolves to when
     /// no routing decision has been made yet — usually the config's
     /// `default` endpoint, or the first endpoint of a v2 config.
+
+    /// Record per-model metadata for an endpoint.
+    ///
+    /// Called by any path that has just fetched `list_models()` for
+    /// `endpoint`. Entries merge: a second call with the same
+    /// (endpoint, model) key replaces the previous value. Callers
+    /// that never call this see the endpoint config's window, which
+    /// is the pre-change behavior.
+    pub fn record_model_catalog(
+        &self,
+        endpoint: &str,
+        models: &[kod_provider::ModelInfo],
+    ) {
+        if let Ok(mut guard) = self.model_catalog.write() {
+            for m in models {
+                guard.insert(
+                    (endpoint.to_string(), m.id.clone()),
+                    m.clone(),
+                );
+            }
+        }
+    }
+
+    /// Resolve the `(context_window, max_out_tokens)` hint for a
+    /// model reference.
+    ///
+    /// Priority order: the per-model catalog entry's `context_window`
+    /// (when present), then the endpoint config's `context_window`,
+    /// then the built-in default. `max_out` is always the endpoint
+    /// config's `max_tokens` — a model's generation cap is an
+    /// endpoint-level setting in kod.
+    fn budget_hint_for(&self, model_ref: &kod_provider::ModelRef) -> (usize, usize) {
+        // The endpoint's max_tokens is read once; both the catalog
+        // path and the fallback path need it.
+        let (endpoint_window, endpoint_max_out) = match kod_config::KodConfig::load_default() {
+            Ok(cfg) => {
+                let ep = cfg
+                    .llm
+                    .endpoints
+                    .iter()
+                    .find(|e| e.name == model_ref.endpoint)
+                    .unwrap_or_else(|| cfg.llm.default_endpoint());
+                (ep.context_window, ep.max_tokens.unwrap_or(2048))
+            }
+            Err(_) => (8192, 2048),
+        };
+
+        if let Ok(guard) = self.model_catalog.read() {
+            if let Some(info) = guard.get(&(
+                model_ref.endpoint.clone(),
+                model_ref.model.clone(),
+            )) {
+                if let Some(window) = info.context_window {
+                    return (window, endpoint_max_out);
+                }
+            }
+        }
+        (endpoint_window, endpoint_max_out)
+    }
+
     pub async fn set_registry(
         &self,
         registry: Arc<ProviderRegistry>,
@@ -4230,20 +4306,13 @@ impl KodEngine {
         routing: Option<kod_config::RoutingConfig>,
     ) {
         *self.registry.write().await = Some(registry);
-        // Hygiene: cache the effective endpoint's (window, max_out)
-        // before the move into `current_model`. The config file is
-        // read once here rather than on every prompt.
-        if let Ok(cfg) = kod_config::KodConfig::load_default() {
-            let ep = cfg
-                .llm
-                .endpoints
-                .iter()
-                .find(|e| e.name == default_model.endpoint)
-                .unwrap_or_else(|| cfg.llm.default_endpoint());
-            let hint = (ep.context_window, ep.max_tokens.unwrap_or(2048));
-            if let Ok(mut g) = self.budget_hint.write() {
-                *g = hint;
-            }
+        // Cache the effective model's (window, max_out) before the
+        // move into `current_model`. `budget_hint_for` consults the
+        // per-model catalog when populated, then the endpoint config,
+        // then the built-in default.
+        let hint = self.budget_hint_for(&default_model);
+        if let Ok(mut g) = self.budget_hint.write() {
+            *g = hint;
         }
         *self.current_model.write().await = default_model;
         *self.routing.write().await = routing;
@@ -4255,6 +4324,15 @@ impl KodEngine {
     /// `set_provider` path uses a provider whose model was baked in at
     /// construction).
     pub async fn set_current_model(&self, model_ref: ModelRef) {
+        // Refresh the budget hint for the new model. A model whose
+        // context window has been recorded in the catalog wins over
+        // the endpoint config; a miss falls back to the endpoint
+        // default, which is the same value the previous `/model`
+        // switch would have left in place.
+        let hint = self.budget_hint_for(&model_ref);
+        if let Ok(mut g) = self.budget_hint.write() {
+            *g = hint;
+        }
         *self.current_model.write().await = model_ref;
     }
 

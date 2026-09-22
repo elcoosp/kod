@@ -559,6 +559,12 @@ async fn handle_connection(
             }
             "list_models" => match engine.list_models().await {
                 Ok(models) => {
+                    // Populate the per-model context-window catalog so
+                    // a subsequent `set_model` on this endpoint can
+                    // allocate against the model's real window rather
+                    // than the endpoint default.
+                    let current = engine.current_model().await;
+                    engine.record_model_catalog(&current.endpoint, &models);
                     // Wire compat: the protocol's `models` field is a
                     // flat list of id strings. ModelInfo carries more
                     // (context window, pricing) but the client and the

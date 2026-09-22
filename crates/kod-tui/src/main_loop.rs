@@ -383,12 +383,22 @@ impl TuiLoop {
         // completion candidates, which /model (no args) will later
         // report explicitly when the user asks.
         if let Some(engine) = &self.engine {
-            let models: Vec<String> = engine.list_models().await
-                .unwrap_or_default()
-                .into_iter()
-                .map(|m| m.id)
-                .collect();
-            self.app.set_available_models(models);
+            match engine.list_models().await {
+                Ok(models) => {
+                    // Record per-model windows so a later `/model <x>`
+                    // switch on this endpoint allocates against the
+                    // selected model's real window.
+                    let current = engine.current_model().await;
+                    engine.record_model_catalog(&current.endpoint, &models);
+                    let ids: Vec<String> = models.into_iter().map(|m| m.id).collect();
+                    self.app.set_available_models(ids);
+                }
+                Err(_) => {
+                    // No completion candidates when the fetch fails;
+                    // `/model` will report the failure explicitly when
+                    // the user asks.
+                }
+            }
         }
 
         // Restore a saved session, if any. The chat messages come back
@@ -4705,7 +4715,11 @@ impl TuiLoop {
             return Ok(());
         };
         let models: Vec<String> = match engine.list_models().await {
-            Ok(m) => m.into_iter().map(|x| x.id).collect(),
+            Ok(ms) => {
+                let current = engine.current_model().await;
+                engine.record_model_catalog(&current.endpoint, &ms);
+                ms.into_iter().map(|x| x.id).collect()
+            }
             Err(e) => {
                 // The provider is set but the request failed. Name the
                 // failure instead of reporting an empty list — the
