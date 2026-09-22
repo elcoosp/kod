@@ -33,9 +33,11 @@ pub enum SessionEntry {
     ToolCall {
         /// Unix milliseconds when the call started.
         timestamp_ms: u64,
-        /// The engine-transcript key the call ran under (`session` for
-        /// the interactive session, `swarm:<agent-id>` for a swarm
-        /// agent).
+        /// The engine-transcript key the call ran under. The
+        /// interactive session uses the empty string
+        /// (`DEFAULT_TRANSCRIPT_KEY` in `kod-core`'s engine); a swarm
+        /// agent uses `swarm:<agent-id>` so concurrent agents do not
+        /// interleave their turns.
         holder: String,
         tool_name: String,
         arguments: serde_json::Value,
@@ -524,6 +526,62 @@ fn render_result_text(result: &serde_json::Value) -> String {
         return "(rehydrated: tool call required confirmation)".to_string();
     }
     serde_json::to_string(result).unwrap_or_default()
+}
+
+
+/// Rebuild a transcript from a session log as **prose** messages.
+///
+/// The structured form returned by [`rehydrate_turns`] is the right
+/// shape for a future `CompletionRequest` path (AD-01) where tool
+/// messages go on the wire. The engine's current text-protocol
+/// `render_history` deliberately skips Tool-role rows — they reach
+/// the model via the `## Tool results` block on the live path — so a
+/// rehydrated turn must be prose to survive that filter and appear
+/// in the rendered prompt.
+///
+/// Each recorded `ToolCall` entry becomes one User-role message
+/// summarising the call and its result. Pure and deterministic.
+pub fn rehydrate_prose_turns(
+    entries: &[SessionEntry],
+    holder: &str,
+) -> Vec<kod_types::ChatMessage> {
+    use kod_types::{ChatMessage, MessageId, MessageRole};
+
+    let mut out: Vec<ChatMessage> = Vec::new();
+    for entry in entries {
+        let SessionEntry::ToolCall {
+            timestamp_ms,
+            holder: entry_holder,
+            tool_name,
+            arguments,
+            result,
+            ..
+        } = entry
+        else {
+            continue;
+        };
+        if entry_holder != holder {
+            continue;
+        }
+
+        let ts = time::OffsetDateTime::from_unix_timestamp_nanos(
+            (*timestamp_ms as i128) * 1_000_000,
+        )
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+
+        let args = serde_json::to_string(arguments).unwrap_or_default();
+        let body = format!(
+            "[rehydrated] Tool call `{tool_name}` with arguments {args} returned:\n{}",
+            render_result_text(result),
+        );
+        out.push(ChatMessage::text(
+            MessageId::new(),
+            MessageRole::User,
+            body,
+            ts,
+        ));
+    }
+    out
 }
 
 #[cfg(test)]
