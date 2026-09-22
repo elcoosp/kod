@@ -1,6 +1,9 @@
 //! Built-in tools for common agent operations.
 
 use crate::{Tool, ToolContext};
+// P8: the SearchBackend trait must be in scope for the
+// ripgrep fast path to call `.search()` on the backend.
+use crate::relevance::SearchBackend;
 use kod_error::{KodError, Result};
 use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use regex::Regex;
