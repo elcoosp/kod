@@ -192,6 +192,67 @@ fn truncate_chars(s: &str, max: usize) -> String {
     s[..end].to_string()
 }
 
+/// Per-transcript cache of fidelity decisions. Keyed by the turn's
+/// `MessageId` so a re-render does not re-score.
+///
+/// A turn is re-scored when the query's term set has changed
+/// substantially (Jaccard < 0.3 with the query that last scored the
+/// turn) or the turn's content changed (its hash differs). Between
+/// those changes the cached fidelity holds, which makes a sequence
+/// of calls on the same topic produce a byte-stable transcript.
+#[derive(Debug, Default, Clone)]
+pub struct FidelityCache {
+    /// The query that last scored this cache's turns.
+    pub last_query: Query,
+    /// MessageId -> (content hash, cached fidelity).
+    pub entries: std::collections::HashMap<kod_types::MessageId, (u64, Fidelity)>,
+}
+
+impl FidelityCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Look up a turn's cached fidelity. Returns `None` when the
+    /// query changed substantially or the content hash differs.
+    pub fn lookup(
+        &self,
+        id: &kod_types::MessageId,
+        content_hash: u64,
+        query: &Query,
+    ) -> Option<Fidelity> {
+        if self.last_query.jaccard(query) < 0.3 {
+            return None;
+        }
+        self.entries
+            .get(id)
+            .filter(|(h, _)| *h == content_hash)
+            .map(|(_, f)| *f)
+    }
+
+    /// Store a fidelity decision. Called after a miss.
+    pub fn insert(
+        &mut self,
+        id: kod_types::MessageId,
+        content_hash: u64,
+        fidelity: Fidelity,
+    ) {
+        self.entries.insert(id, (content_hash, fidelity));
+    }
+
+    /// Record that this cache's turns were just scored against
+    /// `query`. Called at the end of a scoring pass.
+    pub fn commit_query(&mut self, query: Query) {
+        self.last_query = query;
+    }
+
+    /// Drop entries for ids not in `keep`. Called after a render so a
+    /// cleared or compacted transcript does not leak cache entries.
+    pub fn retain_ids(&mut self, keep: &std::collections::HashSet<kod_types::MessageId>) {
+        self.entries.retain(|id, _| keep.contains(id));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

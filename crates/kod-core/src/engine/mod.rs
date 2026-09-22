@@ -1277,6 +1277,11 @@ pub struct KodEngine {
     /// enforcement is at the tool call, not by a prompt, because a
     /// prompt cannot be trusted to hold.
     background_mode: std::sync::atomic::AtomicBool,
+    /// P2: per-turn fidelity cache, keyed by transcript key. Each
+    /// entry remembers what fidelity a turn was last scored at and
+    /// against which query, so a call on the same topic does not
+    /// re-score (and a topic change does).
+    fidelity_cache: RwLock<HashMap<String, crate::context_engine::FidelityCache>>,
 
     /// P3: the live tool inventory that `tool_search` reads. Shared
     /// between the tool and the engine so a registry change (MCP
@@ -1982,6 +1987,7 @@ impl KodEngine {
             endpoint_health: std::sync::Mutex::new(crate::endpoint_health::EndpointHealth::default()),
             background: std::sync::Arc::new(crate::background::BackgroundJobRunner::default()),
             background_mode: std::sync::atomic::AtomicBool::new(false),
+            fidelity_cache: RwLock::new(HashMap::new()),
 
             tool_inventory: std::sync::Arc::new(std::sync::RwLock::new(
                 kod_tools::tool_search::ToolInventory::default(),
