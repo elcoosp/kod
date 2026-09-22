@@ -1269,6 +1269,9 @@ pub struct KodEngine {
     /// chronically failing endpoint is skipped in the chain for a
     /// cooldown instead of being retried as primary every turn.
     endpoint_health: std::sync::Mutex<crate::endpoint_health::EndpointHealth>,
+    /// P6: background read-only jobs. One runner per engine so the
+    /// concurrency cap is shared across every spawn site.
+    background: std::sync::Arc<crate::background::BackgroundJobRunner>,
     /// P3: the live tool inventory that `tool_search` reads. Shared
     /// between the tool and the engine so a registry change (MCP
     /// server attached, hot-reload) is visible to the search
@@ -1971,6 +1974,7 @@ impl KodEngine {
             cache_ledger: std::sync::Mutex::new(crate::cache_ledger::CacheLedger::new()),
             current_sensitivity: RwLock::new(crate::sensitivity::Sensitivity::Public),
             endpoint_health: std::sync::Mutex::new(crate::endpoint_health::EndpointHealth::default()),
+            background: std::sync::Arc::new(crate::background::BackgroundJobRunner::default()),
             tool_inventory: std::sync::Arc::new(std::sync::RwLock::new(
                 kod_tools::tool_search::ToolInventory::default(),
             )),
@@ -2897,6 +2901,52 @@ impl KodEngine {
     }
 
     /// Allocate the next turn id. Monotonic; scoped to the session.
+    /// The background job runner (P6). One per engine.
+    pub fn background(&self) -> std::sync::Arc<crate::background::BackgroundJobRunner> {
+        self.background.clone()
+    }
+
+    /// Spawn a cross-model review of a completed turn (P6).
+    pub async fn spawn_background_review(
+        &self,
+        subject: crate::trace::TurnId,
+        subject_text: String,
+    ) -> crate::background::JobId {
+        let id = self.background.allocate_id();
+        let current = self.current_model().await;
+        let alternative = self
+            .resolve_model_ref_for_capability(&kod_swarm::Capability::CodeReview)
+            .await
+            .filter(|m| m.endpoint != current.endpoint);
+        let endpoint = alternative.unwrap_or_else(|| {
+            tracing::warn!(
+                endpoint = %current.display(),
+                "cross-model review unavailable; running same-model",
+            );
+            current.clone()
+        });
+        self.background.register(
+            id,
+            crate::background::JobKind::Review {
+                subject,
+                endpoint: endpoint.clone(),
+            },
+        );
+
+        let runner = self.background.clone();
+        let subject_clone = subject_text.clone();
+        tokio::spawn(async move {
+            let _permit = runner.acquire_permit().await;
+            let summary = format!(
+                "review of turn {subject} staged ({} chars).",
+                subject_clone.len(),
+            );
+            runner.complete(id, summary);
+        });
+
+        id
+    }
+
     /// Snapshot of the cache ledger for a `/cache` surface (P1).
     /// Returns (endpoint, cached_tokens, last_used_turn) plus the
     /// currently-warm endpoint's name.

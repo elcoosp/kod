@@ -194,6 +194,7 @@ async-stream = "0.3"
 compact_str = { version = "0.10.0", features = ["serde"] }
 bitflags = { version = "2.13.0", features = ["serde"] }
 parking_lot = "0.12.5"
+dashmap = "6"
 
 # Storage
 redb = "4.1.0"

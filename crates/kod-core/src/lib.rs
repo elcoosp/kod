@@ -8,6 +8,7 @@ pub mod budget;
 pub mod checkpoint;
 pub mod citations;
 pub mod cache_ledger;
+pub mod background;
 pub mod endpoint_health;
 pub mod sensitivity;
 pub mod config;

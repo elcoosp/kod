@@ -33,6 +33,7 @@ kod-swarm = { path = "../kod-swarm" }
 
 time = { workspace = true }
 parking_lot = { workspace = true }
+dashmap = { workspace = true }
 thiserror = { workspace = true }
 typesafe-ai-rs = { workspace = true }
 [dev-dependencies]
