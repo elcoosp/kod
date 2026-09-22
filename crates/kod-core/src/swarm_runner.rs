@@ -1315,6 +1315,31 @@ impl SwarmRunner {
                             result: text.clone(),
                         })
                         .await;
+                    // P5 (piece 2/3): parse the subagent's reply into
+                    // a typed report and compute a MergePlan. The
+                    // side effects (decisions log, steers, blackboard)
+                    // land in piece 3; this piece only proves the API
+                    // names line up and the plan is computed.
+                    let report = kod_swarm::brief::parse_report(&text);
+                    let brief_for_merge =
+                        kod_swarm::brief_assembly::assemble_brief(
+                            &subtask.description,
+                            role_preamble(subtask.capability),
+                            Vec::new(),
+                            &parent_context,
+                        );
+                    let plan = kod_swarm::brief_assembly::merge_report(
+                        &report,
+                        &brief_for_merge,
+                    );
+                    if !plan.boundary_violations.is_empty() {
+                        let _ = chunk_tx
+                            .send(SwarmEvent::BoundaryViolation {
+                                agent_name: name.clone(),
+                                paths: plan.boundary_violations.clone(),
+                            })
+                            .await;
+                    }
                     per_agent.push(AgentResult {
                         id,
                         name,
