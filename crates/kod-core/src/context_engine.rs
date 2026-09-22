@@ -369,4 +369,16 @@ mod tests {
         assert!(r.contains("first line"));
         assert!(!r.contains("second line"));
     }
+
+    #[test]
+    fn fidelity_ladder_is_strictly_ordered() {
+        // The four fidelities form a strict ladder: Omit < Stub < Digest <
+        // Full. The PDF's meta-attention design (section 5.1) treats these
+        // as comparable levels so a caller can express "at least Stub" or
+        // take max() across two candidate scores. Pin the ordering here so
+        // a future variant reorder cannot silently invert the comparison.
+        assert!(Fidelity::Omit < Fidelity::Stub);
+        assert!(Fidelity::Stub < Fidelity::Digest);
+        assert!(Fidelity::Digest < Fidelity::Full);
+    }
 }
