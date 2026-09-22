@@ -4759,9 +4759,19 @@ impl KodEngine {
         // Register the built-in tools once (start runs exactly once —
         // second call errors above). Tools fail closed via ToolContext
         // permissions unless explicitly granted in `new()`.
+        //
+        // P6: a background job's child engine registers only the
+        // read-only tools from the whitelist. The
+        // `run_tool` gate is the belt; skipping the write-tool
+        // registration is the braces — a tool that is not in the
+        // registry cannot be called at all, so an
+        // `unsafe_code`-level bug in the gate cannot leak.
+        let background = self.is_background();
         self.tools.register(Box::new(ReadFileTool::new())).await;
-        self.tools.register(Box::new(WriteFileTool::new())).await;
-        self.tools.register(Box::new(PatchFileTool::new())).await;
+        if !background {
+            self.tools.register(Box::new(WriteFileTool::new())).await;
+            self.tools.register(Box::new(PatchFileTool::new())).await;
+        }
         // Swarm coordination tools (D4.3). The blackboard is the
         // engine's `AgentCommunicationHub` — the note tool broadcasts
         // a `KnowledgeShare` and the read tool filters the coordinator's
@@ -4781,9 +4791,11 @@ impl KodEngine {
         self.tools.register(Box::new(ListFilesTool::new())).await;
         self.tools.register(Box::new(GrepTool::new())).await;
         self.tools.register(Box::new(FileInfoTool::new())).await;
-        self.tools
-            .register(Box::new(ExecuteCommandTool::new()))
-            .await;
+        if !background {
+            self.tools
+                .register(Box::new(ExecuteCommandTool::new()))
+                .await;
+        }
         // Git tools. Read-only ones (status/diff/branch list) are
         // gated by `GitAccess::Read`; the two write tools (commit,
         // branch create) by `GitAccess::Write`. Both permission
@@ -4856,12 +4868,14 @@ impl KodEngine {
 
         self.tools.register(Box::new(GitStatusTool::new())).await;
         self.tools.register(Box::new(GitDiffTool::new())).await;
-        self.tools
-            .register(Box::new(kod_tools::GitCommitTool::new()))
-            .await;
-        self.tools
-            .register(Box::new(kod_tools::GitBranchTool::new()))
-            .await;
+        if !background {
+            self.tools
+                .register(Box::new(kod_tools::GitCommitTool::new()))
+                .await;
+            self.tools
+                .register(Box::new(kod_tools::GitBranchTool::new()))
+                .await;
+        }
         self.tools
             .register(Box::new(kod_tools::TodoTool::new(self.todo_list.clone())))
             .await;
