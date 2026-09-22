@@ -5,6 +5,7 @@
 
 mod jev_advisor;
 
+use crate::context_engine::ChunkScorer;
 use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
 use kod_provider::request::{CompletionRequest, SystemPrompt};
