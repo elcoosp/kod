@@ -1580,6 +1580,28 @@ impl TuiLoop {
                                 branch,
                             ),
                         ),
+                        kod_core::SwarmEvent::BoundaryViolation {
+                            agent_name,
+                            paths,
+                        } => {
+                            // P5: a subagent wrote outside its
+                            // declared globs. Surface it through the
+                            // same AgentMessage channel the other
+                            // informational swarm events use; the
+                            // paths are listed so the user can see
+                            // exactly what leaked the boundary.
+                            let list = paths
+                                .iter()
+                                .map(|p| p.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            Event::AgentMessage(
+                                "swarm".to_string(),
+                                format!(
+                                    "⚠ {agent_name} wrote outside its declared scope: {list}",
+                                ),
+                            )
+                        }
                         kod_core::SwarmEvent::WorktreesMerged {
                             merged,
                             conflicted,
