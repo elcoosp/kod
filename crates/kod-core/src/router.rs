@@ -1257,6 +1257,30 @@ impl TaskRouter {
                 }
             }
         }
+        // P4: user-authored project instructions (AGENTS.md / CLAUDE.md
+        // with conditional fences). Rendered in the VOLATILE section so
+        // a turn that loads a different set of guards does not
+        // invalidate the cacheable prefix (P0). The load walks root to
+        // leaf and shadows same-named sections; evaluation matches the
+        // guards against this turn's classification and any
+        // @-referenced paths.
+        let instructions = kod_config::instructions::InstructionChain::load(
+            &self.config.working_dir,
+            &self.config.working_dir,
+        );
+        let at_paths = Self::extract_at_paths(input);
+        let task_label = task_type.as_label();
+        let rendered_instructions = instructions.render(
+            Some(task_label),
+            &at_paths,
+            &[], // language hints: a future pass reads the repomap stats
+        );
+        if !rendered_instructions.is_empty() {
+            prompt.push_str("## Project instructions\n\n");
+            prompt.push_str(&rendered_instructions);
+            prompt.push_str("\n");
+        }
+
         // Add user input
         prompt.push_str(&format!(
             "## Conversation so far\n\n{}\n\n## User Request\n\n{}",
@@ -1264,6 +1288,23 @@ impl TaskRouter {
         ));
 
         Ok(prompt)
+    }
+
+    /// Extract `@path` references from an input string, mirroring the
+    /// engine's own extraction. Used to evaluate the `path=` guards in
+    /// AGENTS.md sections.
+    fn extract_at_paths(input: &str) -> Vec<std::path::PathBuf> {
+        input
+            .split_whitespace()
+            .filter_map(|tok| tok.strip_prefix('@'))
+            .map(|rest| {
+                rest.trim_matches(|c: char| {
+                    !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-'
+                })
+            })
+            .filter(|p| !p.is_empty())
+            .map(std::path::PathBuf::from)
+            .collect()
     }
 
     /// The structured form of the same prompt `build_prompt_with_budget`
