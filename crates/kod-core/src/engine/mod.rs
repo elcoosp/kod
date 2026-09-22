@@ -1272,6 +1272,11 @@ pub struct KodEngine {
     /// P6: background read-only jobs. One runner per engine so the
     /// concurrency cap is shared across every spawn site.
     background: std::sync::Arc<crate::background::BackgroundJobRunner>,
+    /// P6: when true this engine is a background job's child. The
+    /// tool layer refuses anything not on the read-only whitelist —
+    /// enforcement is at the tool call, not by a prompt, because a
+    /// prompt cannot be trusted to hold.
+    background_mode: std::sync::atomic::AtomicBool,
 
     /// P3: the live tool inventory that `tool_search` reads. Shared
     /// between the tool and the engine so a registry change (MCP
@@ -1976,6 +1981,7 @@ impl KodEngine {
             current_sensitivity: RwLock::new(crate::sensitivity::Sensitivity::Public),
             endpoint_health: std::sync::Mutex::new(crate::endpoint_health::EndpointHealth::default()),
             background: std::sync::Arc::new(crate::background::BackgroundJobRunner::default()),
+            background_mode: std::sync::atomic::AtomicBool::new(false),
 
             tool_inventory: std::sync::Arc::new(std::sync::RwLock::new(
                 kod_tools::tool_search::ToolInventory::default(),
@@ -4690,9 +4696,37 @@ impl KodEngine {
         name: &str,
         args: serde_json::Value,
     ) -> Result<kod_types::ToolResult> {
+        // P6: a background job's engine refuses any tool outside the
+        // read-only whitelist. Enforcement is here, at the call, not
+        // by a prompt — a prompt cannot be trusted to hold.
+        if self
+            .background_mode
+            .load(std::sync::atomic::Ordering::Relaxed)
+            && !crate::background::is_read_only(name)
+        {
+            return Ok(kod_types::ToolResult::Error(format!(
+                "policy denied: `{name}` is not on the background read-only \
+                 whitelist. Allowed: {}",
+                crate::background::READ_ONLY_TOOLS.join(", "),
+            )));
+        }
         self.tools
             .execute_tool(name, &args, &self.tool_context)
             .await
+    }
+
+    /// Mark this engine as a background job's child (P6). Idempotent;
+    /// a caller that constructs a child engine sets this before
+    /// handing it to a job.
+    pub fn enable_background_mode(&self) {
+        self.background_mode
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether this engine is in background mode.
+    pub fn is_background(&self) -> bool {
+        self.background_mode
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// List available models from the configured provider.
@@ -9237,6 +9271,53 @@ impl BaselineRefresher {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn background_mode_denies_a_write_tool() {
+        let cfg = RouterConfig {
+            working_dir: std::path::PathBuf::from("."),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let db = tempfile::NamedTempFile::new().unwrap().path().to_path_buf();
+        let engine = KodEngine::new(cfg, db).unwrap();
+        engine.enable_background_mode();
+        assert!(engine.is_background());
+        let r = engine
+            .run_tool("write_file", serde_json::json!({"path":"x","content":"y"}))
+            .await
+            .unwrap();
+        match r {
+            kod_types::ToolResult::Error(e) => assert!(e.contains("policy denied")),
+            other => panic!("expected policy denied, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn background_mode_allows_a_read_tool() {
+        let cfg = RouterConfig {
+            working_dir: std::path::PathBuf::from("."),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let db = tempfile::NamedTempFile::new().unwrap().path().to_path_buf();
+        let engine = KodEngine::new(cfg, db).unwrap();
+        engine.enable_background_mode();
+        // read_file is on the whitelist; the call reaches the tool.
+        // The tool may error on a missing file, but not with the
+        // policy-denied message.
+        let r = engine
+            .run_tool("read_file", serde_json::json!({"path":"/nonexistent"}))
+            .await;
+        match r {
+            Ok(kod_types::ToolResult::Error(e)) => {
+                assert!(!e.contains("policy denied"), "read_file must not be denied")
+            }
+            Ok(_) => {} // a real read succeeded
+            Err(_) => {} // the tool errored before running
+        }
+    }
+
+
     use super::*;
     use tempfile::TempDir;
 
