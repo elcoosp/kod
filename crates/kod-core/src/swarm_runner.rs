@@ -903,6 +903,7 @@ impl SwarmRunner {
                 let pool_agent_id = handles[i].pool_agent_id.clone();
                 let name = handles[i].name.clone();
                 let subtask = handles[i].subtask.clone();
+                let parent_context = parent_context.clone();
                 let out = chunk_tx.clone();
                 let hub = hub.clone();
                 let swarm = swarm.clone();
@@ -1006,15 +1007,24 @@ impl SwarmRunner {
 
                     // Retry attempts get the previous error appended so
                     // the model can react to it.
-                    let shaped = match &last_error {
-                        Some(err) => format!(
-                            "{role_prefix}{desc}\n\n[Previous attempt failed: {err}]\n                             Avoid the failure mode above and try a different approach.\n",
-                            role_prefix = role_prefix,
-                            desc = subtask.description,
-                            err = err,
-                        ),
-                        None => format!("{role_prefix}{}", subtask.description),
+                    // P5: build a typed brief from the parent
+                    // context. The role preamble is the first
+                    // constraint; retry attempts add the previous
+                    // error as an extra constraint.
+                    let extra_constraints = match &last_error {
+                        Some(err) => vec![format!(
+                            "The previous attempt failed with: {err}. \
+                             Avoid the failure mode above and try a different approach.",
+                        )],
+                        None => Vec::new(),
                     };
+                    let brief = kod_swarm::brief_assembly::assemble_brief(
+                        &subtask.description,
+                        role_prefix,
+                        extra_constraints,
+                        &parent_context,
+                    );
+                    let shaped = kod_swarm::brief::render_brief(&brief);
 
                     let (tx, mut rx) = mpsc::channel::<String>(64);
                     let out_pump = out.clone();
