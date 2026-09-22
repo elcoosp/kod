@@ -4416,50 +4416,6 @@ impl KodEngine {
         }
     }
 
-    /// Append a `SessionEntry::Cost` for one provider call, when a
-    /// recorder is installed and the endpoint reported pricing.
-    /// Best-effort: a write failure logs and the run continues.
-    async fn record_cost(
-        &self,
-        holder: &str,
-        model_ref: &ModelRef,
-        usage: &kod_provider::TokenUsage,
-        pricing: kod_provider::ModelPricing,
-    ) {
-        if let Ok(guard) = self.session_recorder.read()
-            && let Some(rec) = guard.as_ref()
-        {
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            let cost = pricing.cost_usd(usage.prompt_tokens, usage.completion_tokens);
-            // P1: teach the cache ledger from this call. The
-            // fingerprint is not known here (record_cost sees only
-            // the endpoint and usage), so it is passed in by the
-            // caller — see `record_cost_with_head`. This entry
-            // point keeps the fingerprint at zero, which the ledger
-            // treats as "unknown prefix", making the endpoint look
-            // cold on the next gate — the conservative direction.
-            self.ledger_observe(&model_ref.endpoint, 0, usage);
-            // Tier 1.2 — update the live tracker. Done *before* the
-            // log write so a UI sees the updated spend even if the
-            // recorder fails.
-            self.cost_tracker.record(cost);
-            let entry = crate::session_log::SessionEntry::Cost {
-                timestamp_ms: now_ms,
-                holder: holder.to_string(),
-                endpoint: model_ref.endpoint.clone(),
-                model: model_ref.model.clone(),
-                prompt_tokens: usage.prompt_tokens,
-                completion_tokens: usage.completion_tokens,
-                cost_usd: cost,
-            };
-            if let Err(e) = rec.record(&entry) {
-                tracing::warn!(error = %e, "could not append Cost to session log");
-            }
-        }
-    }
 
     /// Like [`Self::record_cost`], but also feeds the cache ledger
     /// with the fingerprint of the request head that was actually
