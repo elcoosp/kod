@@ -2217,6 +2217,29 @@ impl KodEngine {
     /// is trivially short, or when the classifier scores the turn
     /// below the threshold.
     /// The durable decisions for a transcript (Tier 3.4).
+    /// The last `limit` decisions for `key`, newest-last, as plain
+    /// text strings. Used by the swarm runner to seed a subagent's
+    /// brief with the parent's durable state (P5).
+    pub async fn recent_decisions(&self, key: &str, limit: usize) -> Vec<String> {
+        let log = self.decisions_for(key).await;
+        let start = log.entries.len().saturating_sub(limit);
+        log.entries[start..]
+            .iter()
+            .map(|d| d.text.clone())
+            .collect()
+    }
+
+    /// The rendered repomap text for the engine's working directory,
+    /// if a map was built. Used by the swarm runner (P5) so a
+    /// subagent's brief carries the same view of the repository the
+    /// parent has.
+    pub async fn repomap_text(&self) -> String {
+        self.router
+            .repo_map_text()
+            .map(|s| s.as_str().to_string())
+            .unwrap_or_default()
+    }
+
     pub async fn decisions_for(&self, key: &str) -> crate::decisions::DecisionLog {
         self.decision_logs
             .read()

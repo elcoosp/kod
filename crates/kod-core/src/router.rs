@@ -1016,7 +1016,7 @@ impl TaskRouter {
     /// The returned `Arc<String>` is cheap to clone and lives as long as
     /// the caller holds a reference, so it can be embedded in a
     /// `PromptPlan` without forcing the caller to re-render.
-    fn repo_map_text(&self) -> Option<std::sync::Arc<String>> {
+    pub(crate) fn repo_map_text(&self) -> Option<std::sync::Arc<String>> {
         let rendered = self
             .repo_map_cache
             .get_or_rebuild(&self.config.working_dir)?;
