@@ -4765,6 +4765,12 @@ impl KodEngine {
             .register(Box::new(kod_tools::CheckTool::new()))
             .await;
 
+        // P3: now that every built-in is registered, seed the
+        // `tool_search` inventory. A later MCP server attaches its
+        // own tools and calls `refresh_tool_inventory` again; this
+        // first call covers the built-ins.
+        self.refresh_tool_inventory().await;
+
         // Capture the check baseline in the background. Runs the
         // project's compiler once; the result is stored so the first
         // auto-check can distinguish the model's errors from
