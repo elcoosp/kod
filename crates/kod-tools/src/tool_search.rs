@@ -251,14 +251,16 @@ mod tests {
 
     #[tokio::test]
     async fn limit_caps_the_returned_schemas() {
+        // Query must use terms of >= 2 chars; the tokenizer drops
+        // single letters on purpose (they match nearly everything).
         let t = ToolSearchTool::new(inventory(vec![
-            tool("a", "x", ToolCategory::System),
-            tool("b", "x", ToolCategory::System),
-            tool("c", "x", ToolCategory::System),
+            tool("alpha", "search files", ToolCategory::System),
+            tool("beta", "search files", ToolCategory::System),
+            tool("gamma", "search files", ToolCategory::System),
         ]));
         let ctx = ToolContext::new(std::path::Path::new("."));
         let r = t
-            .execute(&serde_json::json!({"query": "x", "limit": 2}), &ctx)
+            .execute(&serde_json::json!({"query": "search", "limit": 2}), &ctx)
             .await
             .unwrap();
         if let ToolResult::Success(v) = r {

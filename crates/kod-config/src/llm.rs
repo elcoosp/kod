@@ -595,6 +595,7 @@ mod tests {
                     context_window: 8192,
                     timeout_secs: 300,
                     pricing: None,
+                    trust: None,
                 },
                 EndpointConfig {
                     name: "local".into(),
@@ -607,6 +608,7 @@ mod tests {
                     context_window: 8192,
                     timeout_secs: 300,
                     pricing: None,
+                    trust: None,
                 },
             ],
             routing: Some(r),
@@ -638,6 +640,7 @@ mod coverage_llm_validate {
             max_tokens: Some(2048),
             context_window: 8192,
             timeout_secs: 300,
+            trust: None,
             pricing: None,
         }
     }
