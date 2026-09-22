@@ -154,6 +154,12 @@ pub enum SwarmEvent {
         conflicted: Vec<std::path::PathBuf>,
         failed: Vec<(String, String)>,
     },
+    /// P5: a subagent wrote a file outside its declared
+    /// `expected_writes` globs. Emitted after the report is parsed.
+    BoundaryViolation {
+        agent_name: String,
+        paths: Vec<std::path::PathBuf>,
+    },
 }
 
 /// Two or more agents touched the same file. The runner detects
