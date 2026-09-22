@@ -383,7 +383,11 @@ impl TuiLoop {
         // completion candidates, which /model (no args) will later
         // report explicitly when the user asks.
         if let Some(engine) = &self.engine {
-            let models = engine.list_models().await.unwrap_or_default();
+            let models: Vec<String> = engine.list_models().await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|m| m.id)
+                .collect();
             self.app.set_available_models(models);
         }
 
@@ -4700,8 +4704,8 @@ impl TuiLoop {
             self.app.push_system_message("Engine not initialized");
             return Ok(());
         };
-        let models = match engine.list_models().await {
-            Ok(m) => m,
+        let models: Vec<String> = match engine.list_models().await {
+            Ok(m) => m.into_iter().map(|x| x.id).collect(),
             Err(e) => {
                 // The provider is set but the request failed. Name the
                 // failure instead of reporting an empty list — the

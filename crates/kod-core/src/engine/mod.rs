@@ -4787,7 +4787,7 @@ impl KodEngine {
     /// vec makes a caller unable to distinguish "the server has no
     /// models" from "the server is not reachable." The two deserve
     /// different user-facing messages and different recovery paths.
-    pub async fn list_models(&self) -> Result<Vec<String>> {
+    pub async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
         match self.current_provider().await {
             Some(p) => p.list_models().await,
             None => Ok(Vec::new()),
@@ -9778,7 +9778,7 @@ mod tests {
             fn name(&self) -> &str {
                 "slow"
             }
-            async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+            async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
                 Ok(vec![])
             }
             async fn generate(
@@ -10124,7 +10124,7 @@ mod tests {
             fn name(&self) -> &str {
                 "nop"
             }
-            async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+            async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
                 Ok(vec![])
             }
             async fn generate(
@@ -11804,8 +11804,8 @@ mod coverage_mid_stream_switch {
         fn name(&self) -> &str {
             "fixed-text"
         }
-        async fn list_models(&self) -> kod_error::Result<Vec<String>> {
-            Ok(vec!["fixed".to_string()])
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec!["fixed".to_string().into()])
         }
         async fn generate(&self, _p: &str, _o: &GenerationOptions) -> kod_error::Result<String> {
             Ok(self.text.clone())
@@ -11959,7 +11959,7 @@ mod coverage_offtrack_switch {
         fn name(&self) -> &str {
             &self.name
         }
-        async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
             Ok(vec![])
         }
         async fn generate(&self, _p: &str, _o: &GenerationOptions) -> kod_error::Result<String> {

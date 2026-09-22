@@ -39,7 +39,7 @@ impl LlmProvider for FailingProvider {
     fn name(&self) -> &str {
         "failing"
     }
-    async fn list_models(&self) -> Result<Vec<String>> {
+    async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
         Ok(vec![])
     }
     async fn generate(&self, _p: &str, _o: &GenerationOptions) -> Result<String> {
@@ -84,7 +84,7 @@ impl LlmProvider for SuccessProvider {
     fn name(&self) -> &str {
         "success"
     }
-    async fn list_models(&self) -> Result<Vec<String>> {
+    async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
         Ok(vec![])
     }
     async fn generate(&self, _p: &str, _o: &GenerationOptions) -> Result<String> {
@@ -214,7 +214,7 @@ async fn non_retryable_error_does_not_fall_back() {
         fn name(&self) -> &str {
             "auth-failing"
         }
-        async fn list_models(&self) -> Result<Vec<String>> {
+        async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
             Ok(vec![])
         }
         async fn generate(&self, _p: &str, _o: &GenerationOptions) -> Result<String> {

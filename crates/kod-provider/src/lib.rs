@@ -19,5 +19,5 @@ pub use request::{
     CompletionRequest, ModelPricing, ModelRef, PromptCacheKind, ProviderCapabilities, SystemPrompt,
     SystemSegment,
 };
-pub use traits::{GenerationOptions, LlmProvider};
+pub use traits::{GenerationOptions, LlmProvider, ModelInfo};
 pub use types::*;

@@ -559,7 +559,12 @@ async fn handle_connection(
             }
             "list_models" => match engine.list_models().await {
                 Ok(models) => {
-                    let data = serde_json::json!({ "models": models });
+                    // Wire compat: the protocol's `models` field is a
+                    // flat list of id strings. ModelInfo carries more
+                    // (context window, pricing) but the client and the
+                    // existing tooling read bare names.
+                    let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+                    let data = serde_json::json!({ "models": ids });
                     write_ok(&out_tx, &req.id, data).await?
                 }
                 Err(e) => write_error(&out_tx, &req.id, &e.to_string()).await?,

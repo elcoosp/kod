@@ -28,7 +28,7 @@ impl LlmProvider for ScriptedProvider {
     fn name(&self) -> &str {
         "scripted"
     }
-    async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+    async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
         Ok(vec!["scripted".into()])
     }
     async fn generate(&self, prompt: &str, _o: &GenerationOptions) -> kod_error::Result<String> {

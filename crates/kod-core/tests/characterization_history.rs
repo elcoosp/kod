@@ -47,8 +47,8 @@ impl LlmProvider for CaptureProvider {
         "capture"
     }
 
-    async fn list_models(&self) -> Result<Vec<String>> {
-        Ok(vec!["capture-model".to_string()])
+    async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
+        Ok(vec!["capture-model".to_string().into()])
     }
 
     async fn generate(&self, _prompt: &str, _options: &GenerationOptions) -> Result<String> {

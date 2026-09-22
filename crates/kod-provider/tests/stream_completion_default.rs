@@ -61,7 +61,7 @@ impl LlmProvider for CollectedOnlyProvider {
     fn name(&self) -> &str {
         "collected-only"
     }
-    async fn list_models(&self) -> Result<Vec<String>> {
+    async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
         Ok(vec![])
     }
     async fn generate(&self, _p: &str, _o: &GenerationOptions) -> Result<String> {
@@ -186,7 +186,7 @@ async fn error_surfaces_as_one_err_chunk() {
         fn name(&self) -> &str {
             "err"
         }
-        async fn list_models(&self) -> Result<Vec<String>> {
+        async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
             Ok(vec![])
         }
         async fn generate(&self, _p: &str, _o: &GenerationOptions) -> Result<String> {

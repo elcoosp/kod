@@ -45,7 +45,7 @@ impl LlmProvider for RecordingProvider {
         "recording"
     }
 
-    async fn list_models(&self) -> Result<Vec<String>> {
+    async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
         Ok(vec![])
     }
 

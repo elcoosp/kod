@@ -26,7 +26,7 @@ impl LlmProvider for ScriptedProvider {
         "scripted"
     }
 
-    async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+    async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
         Ok(Vec::new())
     }
 
@@ -206,7 +206,7 @@ impl LlmProvider for CapturingProvider {
         "capturing"
     }
 
-    async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+    async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
         Ok(Vec::new())
     }
 
@@ -344,7 +344,7 @@ impl LlmProvider for GoalProvider {
         "goal"
     }
 
-    async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+    async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
         Ok(Vec::new())
     }
 

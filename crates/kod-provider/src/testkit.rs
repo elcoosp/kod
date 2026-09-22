@@ -144,8 +144,8 @@ impl LlmProvider for MockProvider {
         self.capabilities
     }
 
-    async fn list_models(&self) -> Result<Vec<String>> {
-        Ok(vec!["mock-model".to_string()])
+    async fn list_models(&self) -> Result<Vec<crate::traits::ModelInfo>> {
+        Ok(vec![crate::traits::ModelInfo::bare("mock-model")])
     }
 
     async fn generate(&self, prompt: &str, _opts: &GenerationOptions) -> Result<String> {

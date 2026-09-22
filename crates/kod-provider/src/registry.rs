@@ -148,7 +148,7 @@ mod tests {
         fn name(&self) -> &str {
             self.0
         }
-        async fn list_models(&self) -> Result<Vec<String>> {
+        async fn list_models(&self) -> Result<Vec<crate::traits::ModelInfo>> {
             Ok(vec![])
         }
         async fn generate(&self, _p: &str, _o: &GenerationOptions) -> Result<String> {

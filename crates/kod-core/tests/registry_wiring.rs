@@ -44,7 +44,7 @@ impl LlmProvider for NamedProvider {
     fn name(&self) -> &str {
         self.name
     }
-    async fn list_models(&self) -> Result<Vec<String>> {
+    async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
         Ok(vec![])
     }
     async fn generate(&self, _p: &str, _o: &GenerationOptions) -> Result<String> {

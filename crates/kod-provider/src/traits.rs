@@ -6,7 +6,63 @@ use async_trait::async_trait;
 use futures::Stream;
 use kod_error::Result;
 use kod_types::ToolDefinition;
+use serde::{Deserialize, Serialize};
 use std::pin::Pin;
+
+
+/// Metadata about one model a provider can serve.
+///
+/// [`LlmProvider::list_models`] returns these so callers can allocate
+/// budget against a model's real context window and price a turn
+/// against its real cost, instead of a global default. Providers that
+/// cannot report a field leave it `None`; callers fall back to config
+/// defaults. Use [`ModelInfo::bare`] when only the identifier is
+/// known — the shape every test fixture wants.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelInfo {
+    /// Wire identifier (`gpt-4o-mini`, `claude-opus-4`).
+    pub id: String,
+    /// Context window in tokens, when the provider reports it.
+    #[serde(default)]
+    pub context_window: Option<usize>,
+    /// Input price in USD per million tokens.
+    #[serde(default)]
+    pub input_per_mtok_usd: Option<f64>,
+    /// Output price in USD per million tokens.
+    #[serde(default)]
+    pub output_per_mtok_usd: Option<f64>,
+}
+
+impl ModelInfo {
+    /// A model with only its identifier populated.
+    pub fn bare(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            context_window: None,
+            input_per_mtok_usd: None,
+            output_per_mtok_usd: None,
+        }
+    }
+
+    /// The wire identifier.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+impl From<String> for ModelInfo {
+    fn from(id: String) -> Self { Self::bare(id) }
+}
+
+impl From<&str> for ModelInfo {
+    fn from(id: &str) -> Self { Self::bare(id) }
+}
+
+impl std::fmt::Display for ModelInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.id)
+    }
+}
 
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
@@ -14,7 +70,7 @@ pub trait LlmProvider: Send + Sync {
     fn name(&self) -> &str;
 
     /// List available models
-    async fn list_models(&self) -> Result<Vec<String>>;
+    async fn list_models(&self) -> Result<Vec<ModelInfo>>;
 
     /// Generate a completion without tools
     async fn generate(&self, prompt: &str, options: &GenerationOptions) -> Result<String>;
@@ -186,7 +242,7 @@ mod tests {
         fn name(&self) -> &str {
             "recording"
         }
-        async fn list_models(&self) -> Result<Vec<String>> {
+        async fn list_models(&self) -> Result<Vec<ModelInfo>> {
             Ok(vec![])
         }
         async fn generate(&self, _prompt: &str, _opts: &GenerationOptions) -> Result<String> {

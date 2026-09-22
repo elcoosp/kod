@@ -216,17 +216,17 @@ impl LlmProvider for AnthropicProvider {
         }
     }
 
-    async fn list_models(&self) -> Result<Vec<String>> {
+    async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
         // Harness review section 9: Anthropic has no public
         // `GET /v1/models` at time of writing, so an empty vec was
         // returned. A curated list of the model families kod knows
         // is more useful: `/model` offers something to pick from.
         Ok(vec![
-            "claude-opus-4".to_string(),
-            "claude-sonnet-4".to_string(),
-            "claude-haiku-4".to_string(),
-            "claude-3-5-sonnet-latest".to_string(),
-            "claude-3-5-haiku-latest".to_string(),
+            kod_provider::ModelInfo::bare("claude-opus-4"),
+            kod_provider::ModelInfo::bare("claude-sonnet-4"),
+            kod_provider::ModelInfo::bare("claude-haiku-4"),
+            kod_provider::ModelInfo::bare("claude-3-5-sonnet-latest"),
+            kod_provider::ModelInfo::bare("claude-3-5-haiku-latest"),
         ])
     }
 

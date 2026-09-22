@@ -87,8 +87,8 @@ impl LlmProvider for ReplayProvider {
         "replay"
     }
 
-    async fn list_models(&self) -> Result<Vec<String>> {
-        Ok(vec!["replay-fixture".to_string()])
+    async fn list_models(&self) -> Result<Vec<crate::traits::ModelInfo>> {
+        Ok(vec![crate::traits::ModelInfo::bare("replay-fixture")])
     }
 
     async fn generate(&self, _prompt: &str, _options: &GenerationOptions) -> Result<String> {

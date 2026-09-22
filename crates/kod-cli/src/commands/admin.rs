@@ -181,10 +181,10 @@ pub async fn run_models(filter: Option<String>) -> Result<()> {
     };
 
     let needle = filter.as_ref().map(|s| s.to_lowercase());
-    let shown: Vec<&String> = match &needle {
+    let shown: Vec<&kod_provider::ModelInfo> = match &needle {
         Some(n) => models
             .iter()
-            .filter(|m| m.to_lowercase().contains(n))
+            .filter(|m| m.id.to_lowercase().contains(n))
             .collect(),
         None => models.iter().collect(),
     };
@@ -226,7 +226,7 @@ pub async fn run_models(filter: Option<String>) -> Result<()> {
         );
     }
     for m in &shown {
-        if m.as_str() == config.llm.default_endpoint().model {
+        if m.id.as_str() == config.llm.default_endpoint().model {
             println!("  - {}  (current)", m);
         } else {
             println!("  - {}", m);

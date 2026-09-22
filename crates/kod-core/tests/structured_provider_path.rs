@@ -68,7 +68,7 @@ impl LlmProvider for StructuredProvider {
         "structured-test"
     }
 
-    async fn list_models(&self) -> Result<Vec<String>> {
+    async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
         Ok(vec!["test-model".into()])
     }
 

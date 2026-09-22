@@ -24,7 +24,7 @@ impl kod_provider::LlmProvider for NoOpProvider {
         "no-op"
     }
 
-    async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+    async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
         Ok(vec![])
     }
 

@@ -356,7 +356,7 @@ impl LlmProvider for OpenAICompatProvider {
         "openai-compatible"
     }
 
-    async fn list_models(&self) -> Result<Vec<String>> {
+    async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
         let url = format!("{}/models", self.base_url);
         let response = self
             .client
@@ -401,7 +401,7 @@ impl LlmProvider for OpenAICompatProvider {
             .map(|models| {
                 models
                     .iter()
-                    .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(String::from))
+                    .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(kod_provider::ModelInfo::bare))
                     .collect()
             })
             .unwrap_or_default())

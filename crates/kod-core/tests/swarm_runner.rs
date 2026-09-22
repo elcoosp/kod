@@ -34,7 +34,7 @@ impl LlmProvider for ScriptedSwarmProvider {
         "scripted-swarm"
     }
 
-    async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+    async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
         Ok(vec!["scripted-swarm".into()])
     }
 
@@ -221,7 +221,7 @@ async fn test_decompose_sees_repo_context() {
         fn name(&self) -> &str {
             "capture"
         }
-        async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
             Ok(vec![])
         }
         async fn generate(
@@ -325,7 +325,7 @@ async fn test_swarm_detects_file_conflicts() {
         fn name(&self) -> &str {
             "shared-writer"
         }
-        async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
             Ok(vec![])
         }
         async fn generate(
@@ -500,7 +500,7 @@ async fn swarm_falls_back_when_decompose_is_not_json() {
         fn name(&self) -> &str {
             "non-json"
         }
-        async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
             Ok(vec![])
         }
         async fn generate(&self, _p: &str, _o: &GenerationOptions) -> kod_error::Result<String> {

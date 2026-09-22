@@ -192,8 +192,8 @@ impl kod_provider::LlmProvider for NoOpProvider {
         "no-op"
     }
 
-    async fn list_models(&self) -> kod_error::Result<Vec<String>> {
-        Ok(vec!["no-op".to_string()])
+    async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+        Ok(vec![kod_provider::ModelInfo::bare("no-op")])
     }
 
     async fn generate(

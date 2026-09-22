@@ -36,7 +36,7 @@ async fn engine() -> (TempDir, Arc<KodEngine>) {
         fn name(&self) -> &str {
             "nop"
         }
-        async fn list_models(&self) -> kod_error::Result<Vec<String>> {
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
             Ok(vec![])
         }
         async fn generate(
