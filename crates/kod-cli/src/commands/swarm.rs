@@ -260,6 +260,23 @@ pub async fn run_swarm(
                         branch,
                     );
                 }
+                SwarmEvent::BoundaryViolation {
+                    agent_name,
+                    paths,
+                } => {
+                    // P5: a subagent wrote outside its declared
+                    // scope. Printed to stderr so a `kod swarm 2>&1`
+                    // pipe keeps the informational stream on stdout.
+                    let list = paths
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    eprintln!(
+                        "\n⚠ {} wrote outside its declared scope: {}\n",
+                        agent_name, list,
+                    );
+                }
                 SwarmEvent::WorktreesMerged {
                     merged,
                     conflicted,
