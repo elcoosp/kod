@@ -57,7 +57,7 @@ All of these work unchanged, on the same code path:
 </TabItem>
 </Tabs>
 
-The `provider` field accepts `openai-compatible` (aliases `Ollama` and `OpenAI`). An `anthropic` kind is recognised in config but not implemented yet — it fails at the first prompt, and a startup warning makes the gap visible before the session rather than during one.
+The `provider` field accepts `openai-compatible` (aliases `Ollama` and `OpenAI`). The Anthropic provider is implemented and constructed by `build_provider`; see `crates/kod-provider-anthropic` for the wire format and `crates/kod-provider-anthropic/tests/contracts.rs` for the behavioural contract.
 
 ## Endpoints, not a single model
 
