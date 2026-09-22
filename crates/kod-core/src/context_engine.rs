@@ -253,6 +253,123 @@ impl FidelityCache {
     }
 }
 
+
+/// Render a transcript through the fidelity pipeline.
+///
+/// This is the integration point the engine calls from
+/// `render_history_for`: the caller supplies the transcript slice,
+/// the query terms for the current turn, a scorer, a per-transcript
+/// cache, and the byte budget. The function walks newest-to-oldest,
+/// scoring each turn and rendering it at its fidelity, stopping when
+/// the accumulated bytes would exceed `budget`. Pinned turns always
+/// render at `Full` (the scorer guarantees that) and are never
+/// dropped, even when the budget has already been spent.
+///
+/// Returns the rendered text plus the set of `MessageId`s that were
+/// consulted, so the caller can call `cache.retain_ids` after a
+/// compact to drop entries for turns that no longer exist.
+pub fn render_scored(
+    turns: &[ChatMessage],
+    query: Query,
+    scorer: &dyn ChunkScorer,
+    cache: &mut FidelityCache,
+    budget: usize,
+    skip_tools: bool,
+) -> (String, std::collections::HashSet<kod_types::MessageId>) {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut consult: std::collections::HashSet<kod_types::MessageId> =
+        std::collections::HashSet::new();
+
+    if turns.is_empty() {
+        return ("(start of conversation)".to_string(), consult);
+    }
+
+    let n = turns.len();
+
+    // Score every turn once. The cache turns each lookup into a hash
+    // check after the first pass on a given query; a substantial query
+    // change invalidates it, so the scorer reruns.
+    let mut scored: Vec<(usize, Fidelity)> = Vec::with_capacity(n);
+    for (i, message) in turns.iter().enumerate() {
+        consult.insert(message.id.clone());
+        let age_turns = (n - 1 - i) as u32;
+        let chunk = Chunk {
+            message,
+            age_turns,
+            pinned: message.metadata.pinned,
+        };
+        let mut hasher = DefaultHasher::new();
+        message.content.hash(&mut hasher);
+        let content_hash = hasher.finish();
+        let fidelity = cache
+            .lookup(&message.id, content_hash, &query)
+            .unwrap_or_else(|| {
+                let f = scorer.score(&chunk, &query);
+                cache.insert(message.id.clone(), content_hash, f);
+                f
+            });
+        scored.push((i, fidelity));
+    }
+    cache.commit_query(query);
+
+    // Walk newest-to-oldest, accumulating rendered bytes. Stop the
+    // budget walk on the first turn that overflows, matching the
+    // old FIFO semantics. Omit turns contribute zero bytes and do
+    // not advance the cutoff on their own.
+    let mut total = 0usize;
+    let mut cutoff = n;
+    for (i, fidelity) in scored.iter().rev() {
+        let Some(line) = render_at(&turns[*i], *fidelity) else {
+            continue;
+        };
+        let line_len = line.len() + 1; // + '\n'
+        if total + line_len > budget {
+            break;
+        }
+        total += line_len;
+        cutoff = *i;
+    }
+
+    // Pull pinned turns in even past the budget cutoff. The old FIFO
+    // path does the same thing; the invariant "pinned is never
+    // dropped" outranks the byte budget.
+    for (i, _) in &scored {
+        if *i < cutoff && turns[*i].metadata.pinned {
+            cutoff = *i;
+        }
+    }
+
+    let mut out = String::new();
+    for (i, fidelity) in &scored {
+        if *i < cutoff {
+            continue;
+        }
+        let message = &turns[*i];
+        // Skip structural tool rows: they reach the model through the
+        // `## Tool results` block, not through history. Same rationale
+        // as the old render_history_for.
+        if skip_tools && matches!(message.role, kod_types::MessageRole::Tool) {
+            continue;
+        }
+        // An assistant turn whose only content is tool calls carries
+        // no prose.
+        if matches!(message.role, kod_types::MessageRole::Assistant)
+            && message.content.trim().is_empty()
+            && !message.tool_calls.is_empty()
+        {
+            continue;
+        }
+        if let Some(line) = render_at(message, *fidelity) {
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+
+    (out, consult)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,5 +497,116 @@ mod tests {
         assert!(Fidelity::Omit < Fidelity::Stub);
         assert!(Fidelity::Stub < Fidelity::Digest);
         assert!(Fidelity::Digest < Fidelity::Full);
+    }
+
+    fn scored_msg(role: kod_types::MessageRole, content: &str) -> ChatMessage {
+        // Every call gets a fresh MessageId so the fidelity cache
+        // treats these fixtures as distinct turns. The timestamp
+        // defaults to the Unix epoch; scoring does not read it.
+        ChatMessage::text(
+            kod_types::MessageId::new(),
+            role,
+            content,
+            time::OffsetDateTime::UNIX_EPOCH,
+        )
+    }
+
+    #[test]
+    fn render_scored_empty_is_placeholder() {
+        let (out, consult) = render_scored(
+            &[],
+            Query::from_text("anything"),
+            &LexicalScorer::new(),
+            &mut FidelityCache::new(),
+            1000,
+            true,
+        );
+        assert_eq!(out, "(start of conversation)");
+        assert!(consult.is_empty());
+    }
+
+    #[test]
+    fn render_scored_recent_turn_is_full() {
+        let turns = vec![scored_msg(
+            kod_types::MessageRole::User,
+            "hello world this is a recent user turn",
+        )];
+        let (out, _) = render_scored(
+            &turns,
+            Query::from_text("hello world recent user turn"),
+            &LexicalScorer::new().with_tail(5),
+            &mut FidelityCache::new(),
+            10_000,
+            true,
+        );
+        assert!(
+            out.contains("hello world this is a recent user turn"),
+            "recent turn should be Full; got: {out}",
+        );
+    }
+
+    #[test]
+    fn render_scored_pinned_old_turn_survives_tiny_budget() {
+        let mut pinned = scored_msg(
+            kod_types::MessageRole::User,
+            "PINNED old note that must survive any budget",
+        );
+        pinned.metadata.pinned = true;
+        let turns = vec![
+            pinned,
+            scored_msg(kod_types::MessageRole::User, "recent chit chat one"),
+            scored_msg(kod_types::MessageRole::User, "recent chit chat two"),
+            scored_msg(kod_types::MessageRole::User, "recent chit chat three"),
+        ];
+        let (out, _) = render_scored(
+            &turns,
+            Query::from_text("totally unrelated query"),
+            &LexicalScorer::new().with_tail(1),
+            &mut FidelityCache::new(),
+            20, // tiny: only a fragment fits by bytes
+            true,
+        );
+        assert!(
+            out.contains("PINNED"),
+            "pinned turn was dropped by the budget walk: {out}",
+        );
+    }
+
+    #[test]
+    fn render_scored_skips_tool_messages_when_asked() {
+        let turns = vec![
+            scored_msg(kod_types::MessageRole::User, "ordinary user turn here"),
+            scored_msg(kod_types::MessageRole::Tool, "raw tool payload body"),
+        ];
+        let (out, _) = render_scored(
+            &turns,
+            Query::from_text("ordinary user turn"),
+            &LexicalScorer::new().with_tail(5),
+            &mut FidelityCache::new(),
+            10_000,
+            true,
+        );
+        assert!(
+            !out.contains("raw tool payload body"),
+            "tool turn leaked into scored render: {out}",
+        );
+        assert!(out.contains("ordinary user turn"));
+    }
+
+    #[test]
+    fn render_scored_rerenders_the_same_on_second_call() {
+        // Cache hit path: calling twice with the same query must
+        // produce identical output. This pins that the cache does
+        // not accidentally corrupt the render.
+        let turns = vec![
+            scored_msg(kod_types::MessageRole::User, "older user turn about widgets"),
+            scored_msg(kod_types::MessageRole::User, "newer user turn about gadgets"),
+        ];
+        let query = Query::from_text("user turn about widgets gadgets");
+        let mut cache = FidelityCache::new();
+        let scorer = LexicalScorer::new().with_tail(1);
+        let (a, _) = render_scored(&turns, query.clone(), &scorer, &mut cache, 10_000, true);
+        let (b, _) = render_scored(&turns, query, &scorer, &mut cache, 10_000, true);
+        assert_eq!(a, b, "second render with warm cache diverged");
     }
 }
