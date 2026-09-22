@@ -5044,6 +5044,31 @@ impl KodEngine {
         });
         *self.memory_consolidation_task.write().await = Some(handle);
         tracing::debug!(interval_secs, "memory consolidation task started",);
+
+        // P2: rehydrate the transcript from a prior process's session
+        // log when one is available. The path comes from the installed
+        // recorder (set by the CLI/TUI before `start()`); a process
+        // with no recorder has no log to read and this is a no-op.
+        // Failures are logged, not propagated: a corrupt or unreadable
+        // log must not prevent the engine from starting.
+        if let Some(log_path) = self.session_log_path() {
+            match self
+                .rehydrate_from_log_for(DEFAULT_TRANSCRIPT_KEY, &log_path)
+                .await
+            {
+                Ok(0) => tracing::debug!("no transcript to rehydrate"),
+                Ok(n) => tracing::info!(
+                    count = n,
+                    path = %log_path.display(),
+                    "rehydrated transcript from session log",
+                ),
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    path = %log_path.display(),
+                    "could not rehydrate transcript; starting fresh",
+                ),
+            }
+        }
     }
 
     /// Stop the consolidation task (if any) and wait for it to actually
