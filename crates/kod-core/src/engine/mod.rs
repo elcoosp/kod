@@ -1269,6 +1269,11 @@ pub struct KodEngine {
     /// chronically failing endpoint is skipped in the chain for a
     /// cooldown instead of being retried as primary every turn.
     endpoint_health: std::sync::Mutex<crate::endpoint_health::EndpointHealth>,
+    /// P3: the live tool inventory that `tool_search` reads. Shared
+    /// between the tool and the engine so a registry change (MCP
+    /// server attached, hot-reload) is visible to the search
+    /// without re-registering the tool.
+    tool_inventory: std::sync::Arc<std::sync::RwLock<kod_tools::tool_search::ToolInventory>>,
     next_turn_id: std::sync::atomic::AtomicU64,
     /// Append-only writer for `turns.jsonl`, next to the session log.
     /// `None` — the default — is the right shape for a test or a
@@ -1966,6 +1971,9 @@ impl KodEngine {
             cache_ledger: std::sync::Mutex::new(crate::cache_ledger::CacheLedger::new()),
             current_sensitivity: RwLock::new(crate::sensitivity::Sensitivity::Public),
             endpoint_health: std::sync::Mutex::new(crate::endpoint_health::EndpointHealth::default()),
+            tool_inventory: std::sync::Arc::new(std::sync::RwLock::new(
+                kod_tools::tool_search::ToolInventory::default(),
+            )),
             budget_hint: std::sync::RwLock::new({
                 let d = kod_config::LlmConfig::default();
                 let ep = d.default_endpoint();
@@ -2922,6 +2930,18 @@ impl KodEngine {
         };
         let s = crate::sensitivity::classify(&paths, |p| protected.matches(p), |p| protected.matches(p));
         *self.current_sensitivity.write().await = s;
+    }
+
+    /// Refresh the `tool_search` inventory from the live registry.
+    ///
+    /// Called after registering a batch of tools or after an MCP
+    /// server attaches. Cheap; the search reads the same
+    /// `Arc<RwLock>` the engine writes.
+    pub async fn refresh_tool_inventory(&self) {
+        let defs = self.tools.get_definitions().await;
+        if let Ok(mut inv) = self.tool_inventory.write() {
+            *inv = kod_tools::tool_search::ToolInventory::from_definitions(defs);
+        }
     }
 
     /// Set the current turn's sensitivity (P7). Callers set this
@@ -4725,6 +4745,16 @@ impl KodEngine {
         // does not have to re-register the tool.
         self.tools
             .register(Box::new(kod_tools::WebFetchTool::new()))
+            .await;
+
+        // P3: tool_search lets the model find a tool by description.
+        // It reads a shared inventory the engine keeps in sync with
+        // the registry, so a tool added later (an MCP server) is
+        // visible without re-registering.
+        self.tools
+            .register(Box::new(kod_tools::tool_search::ToolSearchTool::new(
+                self.tool_inventory.clone(),
+            )))
             .await;
         // `check` runs the project's compiler/linter and returns
         // structured diagnostics. Registered alongside the other
