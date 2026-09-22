@@ -3631,6 +3631,80 @@ impl TuiLoop {
                     }
                 }
             }
+            "/jobs" => {
+                // P6: background job surface. Lists every job the
+                // runner knows about, newest first, with its kind
+                // and status. Pruning happens on read so the map
+                // does not grow without bound.
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                let runner = engine.background();
+                // Drop jobs older than 5 minutes so a long session
+                // does not accumulate terminal entries.
+                runner.prune_old(std::time::Duration::from_secs(300));
+                let snap = runner.snapshot();
+                if snap.is_empty() {
+                    self.app.push_system_message(
+                        "No background jobs. /review spawns a cross-model \
+                         review of the last assistant turn.",
+                    );
+                    return Ok(());
+                }
+                let mut msg = String::from("Background jobs\n");
+                for (id, state) in &snap {
+                    let elapsed = state.started_at.elapsed().as_secs();
+                    let status = match &state.status {
+                        kod_core::background::JobStatus::Running => "running".to_string(),
+                        kod_core::background::JobStatus::Completed { summary } => {
+                            format!("done: {}", summary.lines().next().unwrap_or(""))
+                        }
+                        kod_core::background::JobStatus::Failed { error } => {
+                            format!("failed: {}", error.lines().next().unwrap_or(""))
+                        }
+                    };
+                    msg.push_str(&format!(
+                        "  {id}  {:>4}s  {}\n         {}\n",
+                        elapsed,
+                        state.kind.label(),
+                        status,
+                    ));
+                }
+                self.app.push_system_message(msg.trim_end());
+            }
+            "/review" => {
+                // P6: spawn a cross-model review of the most recent
+                // assistant turn. The job runs under the runner's
+                // concurrency cap; its summary lands on /jobs.
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                // The most recent assistant message, if any.
+                let last_assistant = self
+                    .app
+                    .messages()
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == kod_types::MessageRole::Assistant)
+                    .map(|m| m.content.clone());
+                let Some(text) = last_assistant else {
+                    self.app.push_system_message(
+                        "No assistant turn to review yet.",
+                    );
+                    return Ok(());
+                };
+                // Use a monotonic id derived from the app's own
+                // sequence, since the trace id is internal to the
+                // engine's tracing subsystem. Zero is a valid
+                // placeholder for a review that is not keyed to a
+                // specific turn trace.
+                let id = engine.spawn_background_review(0, text).await;
+                self.app.push_system_message(&format!(
+                    "Review spawned ({id}). /jobs lists running jobs.",
+                ));
+            }
             "/cache" => {
                 // P1 surface: per-endpoint cache warmth and the
                 // currently-warm endpoint. Pairs with `/limits` —

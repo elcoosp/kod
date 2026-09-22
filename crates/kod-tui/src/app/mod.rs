@@ -455,6 +455,14 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "per-tool quotas: /limits [show | reset]",
     },
     SlashCommand {
+        name: "/jobs",
+        hint: "list background jobs (P6)",
+    },
+    SlashCommand {
+        name: "/review",
+        hint: "spawn a cross-model review of the last assistant turn",
+    },
+    SlashCommand {
         name: "/budget",
         hint: "session cost and limits: /budget | /budget raise <usd> | /budget reset",
     },
