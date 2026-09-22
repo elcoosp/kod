@@ -8971,12 +8971,15 @@ impl KodEngine {
         // swap. A follow-up narrows `with_tail` so old turns can
         // actually drop below `Full`.
         //
-        // The `Query` is empty because every turn is already forced
-        // to `Full` by the tail. When the tail shrinks the query
-        // becomes live — the fidelity cache will hold the per-turn
-        // decision across calls and only re-score when the query
-        // changes substantially.
-        let query = crate::context_engine::Query::from_text("");
+        // P2: the query is the current user turn's text, so the
+        // scorer's relevance term has something to work with on
+        // turns older than the recency tail. `current_request` is
+        // None when a caller renders history without an active turn
+        // (unit tests, `/debug` surfaces); in that case the empty
+        // query makes every out-of-tail turn score by recency alone,
+        // which is the previous FIFO-equivalent behavior.
+        let query_text = self.current_request(key).await.unwrap_or_default();
+        let query = crate::context_engine::Query::from_text(&query_text);
         let scorer = crate::context_engine::LexicalScorer::new()
             .with_tail(10); // P2: recent-10 stay Full; older score by relevance
 
