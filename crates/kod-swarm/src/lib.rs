@@ -17,6 +17,7 @@
 
 pub mod agent;
 pub mod brief;
+pub mod brief_assembly;
 pub mod blackboard;
 pub mod communication;
 pub mod coordination;
