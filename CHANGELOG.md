@@ -444,17 +444,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   results.
 
 
-- **P6 — background jobs (partial).** `BackgroundJobRunner` holds
-  job state behind a `DashMap` and caps concurrent jobs with a
-  semaphore. `READ_ONLY_TOOLS` is the whitelist, enforced at
-  `KodEngine::run_tool` when the engine is in background mode.
-  `/jobs` lists jobs and `/review` spawns one. **Not yet
-  implemented:** `spawn_background_review` registers the job and
-  completes it with a placeholder summary; the child engine is not
-  constructed, and no actual cross-model review runs. The runner,
-  the enforcement, and the TUI surface are real; the review itself
-  is a stub. See `docs/design/p2-p5-p6.md` § P6 for what the
-  construction needs.
+- **P6 — background jobs.** `BackgroundJobRunner` holds job state
+  behind a `DashMap` and caps concurrent jobs with a semaphore.
+  `READ_ONLY_TOOLS` is the whitelist, enforced two ways: a
+  background child registers only the read-only tools at
+  registration time, and `KodEngine::run_tool` refuses anything
+  else when the engine is in background mode. `/jobs` lists jobs;
+  `/review` spawns a cross-model review that picks an endpoint
+  different from the current one (falling back with a warning),
+  calls the provider's `generate`, and stores the critique as the
+  job's summary.
+
+  Scope note: the review is a single read-and-critique pass — no
+  tools, so the reviewer cannot look up files the turn mentioned.
+  A richer form with a tool-equipped child engine is a documented
+  follow-up; the `background_mode` gate now supports constructing
+  one.
 
 ### Changed
 
