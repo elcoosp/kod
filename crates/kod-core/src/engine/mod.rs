@@ -5316,8 +5316,24 @@ impl KodEngine {
                 // not see.
                 if !tool_results.is_empty() {
                     summary_prompt.push_str("\n\n## Tool results from this turn\n");
+                    // Harness review hygiene: render each result
+                    // through `summarize_tool_result` (the same
+                    // structured text the TUI shows for a tool row),
+                    // not Rust's `Debug` impl. A `{:?}` embeds the
+                    // enum's internal shape and escape sequences,
+                    // wasting prompt tokens on a form the model was
+                    // never trained on.
+                    let calls: Vec<_> = tool_calls.iter().collect();
                     for (i, r) in tool_results.iter().enumerate() {
-                        summary_prompt.push_str(&format!("\n### Result {}\n{:?}\n", i + 1, r));
+                        let name = calls
+                            .get(i)
+                            .map(|c| c.tool_name.as_str())
+                            .unwrap_or("tool");
+                        summary_prompt.push_str(&format!(
+                            "\n### Result {}\n{}\n",
+                            i + 1,
+                            summarize_tool_result(name, r),
+                        ));
                     }
                 }
                 summary_prompt.push_str(
@@ -5624,8 +5640,24 @@ impl KodEngine {
                 // results are rendered into the text prompt.
                 if !tool_results.is_empty() {
                     summary_prompt.push_str("\n\n## Tool results from this turn\n");
+                    // Harness review hygiene: render each result
+                    // through `summarize_tool_result` (the same
+                    // structured text the TUI shows for a tool row),
+                    // not Rust's `Debug` impl. A `{:?}` embeds the
+                    // enum's internal shape and escape sequences,
+                    // wasting prompt tokens on a form the model was
+                    // never trained on.
+                    let calls: Vec<_> = tool_calls.iter().collect();
                     for (i, r) in tool_results.iter().enumerate() {
-                        summary_prompt.push_str(&format!("\n### Result {}\n{:?}\n", i + 1, r));
+                        let name = calls
+                            .get(i)
+                            .map(|c| c.tool_name.as_str())
+                            .unwrap_or("tool");
+                        summary_prompt.push_str(&format!(
+                            "\n### Result {}\n{}\n",
+                            i + 1,
+                            summarize_tool_result(name, r),
+                        ));
                     }
                 }
                 summary_prompt.push_str(
