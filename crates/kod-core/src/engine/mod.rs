@@ -1281,7 +1281,6 @@ pub struct KodEngine {
     /// entry remembers what fidelity a turn was last scored at and
     /// against which query, so a call on the same topic does not
     /// re-score (and a topic change does).
-    #[allow(dead_code)] // P2 wire-up pending; see context_engine.rs
     fidelity_cache: RwLock<HashMap<String, crate::context_engine::FidelityCache>>,
 
     /// P3: the live tool inventory that `tool_search` reads. Shared
@@ -8979,7 +8978,7 @@ impl KodEngine {
         // changes substantially.
         let query = crate::context_engine::Query::from_text("");
         let scorer = crate::context_engine::LexicalScorer::new()
-            .with_tail(turns.len() as u32);
+            .with_tail(10); // P2: recent-10 stay Full; older score by relevance
 
         let mut cache_guard = self.fidelity_cache.write().await;
         let cache = cache_guard
