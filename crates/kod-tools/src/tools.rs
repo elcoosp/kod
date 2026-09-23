@@ -577,6 +577,52 @@ impl Tool for ExecuteCommandTool {
 
         context.can_execute_command(command)?;
 
+        // P2-d: a background command hands off to the engine's spawner
+        // and returns a job id immediately. The engine owns the spool,
+        // the job registry, and the soft-interrupt channel that reports
+        // completion — the tool crate cannot see any of them, which is
+        // why the hand-off is a hook.
+        //
+        // A context with no hook (a unit test, an embedder) runs the
+        // command inline, so the flag degrades rather than failing.
+        if params
+            .get("run_in_background")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            let stall = params
+                .get("stall_wake_seconds")
+                .and_then(|v| v.as_u64());
+            match &context.on_background_command {
+                Some(hook) => match hook.spawn(command, stall, &context.holder) {
+                    Some(job_id) => {
+                        return Ok(ToolResult::Success(serde_json::json!({
+                            "background": true,
+                            "job_id": job_id,
+                            "note": "started in the background; output goes to a \
+                                     spool file. Completion and stalls arrive as \
+                                     background notices.",
+                        })));
+                    }
+                    None => {
+                        // The engine's runner refused (shutting down,
+                        // or a cap). Falling through to inline is the
+                        // safe reading: the command the model asked
+                        // for still runs, it just blocks.
+                        tracing::warn!(
+                            "background spawn declined; running inline",
+                        );
+                    }
+                },
+                None => {
+                    tracing::debug!(
+                        "run_in_background requested but no spawner is installed; \
+                         running inline",
+                    );
+                }
+            }
+        }
+
         // Pick the platform shell. The previous code hard-coded `sh -c`,
         // which silently broke the x86_64-pc-windows-msvc release target
         // CI builds: spawn succeeded, `sh` was not found, and the caller
