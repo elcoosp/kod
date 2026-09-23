@@ -59,7 +59,7 @@ pub fn build_messages_body(req: &CompletionRequest) -> Value {
         body["stop_sequences"] = json!(req.options.stop_sequences);
     }
     if !req.tools.is_empty() {
-        body["tools"] = tools_array(&req.tools);
+        body["tools"] = tools_array_with_cache(&req.tools);
     }
     body
 }
@@ -141,21 +141,35 @@ pub fn messages_array_with_cache(messages: &[ChatMessage], cache_transcript: boo
     let Some(arr) = out.as_array_mut() else {
         return out;
     };
-    // Find the last entry that has a non-empty content array. The
-    // API rejects an empty content array; the merge logic never
-    // produces one, but a defensive walk keeps this honest.
-    let Some(last) = arr
-        .iter_mut()
-        .rev()
-        .find(|m| m.get("content").and_then(Value::as_array).is_some_and(|a| !a.is_empty()))
-    else {
-        return out;
-    };
-    let Some(blocks) = last.get_mut("content").and_then(Value::as_array_mut) else {
-        return out;
-    };
-    if let Some(block) = blocks.last_mut() {
-        block["cache_control"] = json!({"type": "ephemeral"});
+    // Sliding two-marker window on the two most recent assistant
+    // messages (jcode design §4.1). Anchoring on assistant messages
+    // rather than the trailing message: ephemeral suffixes (memory
+    // injections, steers) land *after* the markers and cannot move
+    // them, so the cached prefix stays put even when a user-role
+    // steer is appended between turns.
+    //
+    // Turn N's write marker (the newest assistant) becomes turn N+1's
+    // read marker (the second-to-last assistant). The window slides
+    // by one assistant turn per request; everything the previous turn
+    // wrote is a read on this turn's request.
+    let mut placed = 0usize;
+    for m in arr.iter_mut().rev() {
+        if placed >= MAX_MESSAGE_BREAKPOINTS {
+            break;
+        }
+        if m.get("role").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+        let Some(blocks) = m.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        if blocks.is_empty() {
+            continue;
+        }
+        if let Some(block) = blocks.last_mut() {
+            block["cache_control"] = json!({"type": "ephemeral"});
+            placed += 1;
+        }
     }
     out
 }
@@ -286,6 +300,35 @@ pub fn build_streaming_body(req: &CompletionRequest) -> Value {
 /// Anthropic uses `input_schema` where OpenAI uses `parameters`. The
 /// description is passed through; a missing description becomes an
 /// empty string so the tool block is well-formed.
+/// Anthropic accepts at most four cache breakpoints per request.
+/// kod spends them as: tools (1) + system (1) + messages (2).
+pub const MAX_BREAKPOINTS: usize = 4;
+/// Message-side markers: the last two assistant turns. Turn N's
+/// write marker becomes turn N+1's read marker.
+pub const MAX_MESSAGE_BREAKPOINTS: usize = 2;
+
+/// Like [`tools_array`] but attaches an Anthropic cache breakpoint to
+/// the last tool definition. Tool schemas are sorted by name in the
+/// engine's registry, so the marked prefix is byte-stable across a
+/// session. Subject to the P0-c tool-surface freeze — a tool-array
+/// change is a documented prefix break, not a per-turn event.
+pub fn tools_array_with_cache(tools: &[ToolDefinition]) -> Value {
+    let mut arr: Vec<Value> = tools
+        .iter()
+        .map(|t| {
+            json!({
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.parameters_schema,
+            })
+        })
+        .collect();
+    if let Some(last) = arr.last_mut() {
+        last["cache_control"] = json!({"type": "ephemeral"});
+    }
+    json!(arr)
+}
+
 pub fn tools_array(tools: &[ToolDefinition]) -> Value {
     let arr: Vec<Value> = tools
         .iter()
@@ -959,14 +1002,33 @@ mod tests {
     }
 
     #[test]
-    fn transcript_breakpoint_lands_on_the_final_block_regardless_of_type() {
-        // A tool result at the end is a user-role turn whose content
-        // array is `[tool_result, text]` — H-P9 requires the
-        // tool_result block *first*, so the last block is the user's
-        // text. The marker must land on the final block whichever
-        // type it is; Anthropic caches everything up to and including
-        // the marked block, so "final" is what matters, not "what
-        // kind".
+    fn transcript_breakpoint_lands_on_the_two_most_recent_assistant_messages() {
+        // The sliding window: on a request with three assistant turns,
+        // the second-to-last and last each carry a marker; the first
+        // does not.
+        let msgs = [user("u1"), assistant("a1"), user("u2"),
+                    assistant("a2"), user("u3"), assistant("a3")];
+        let arr = messages_array_with_cache(&msgs, true);
+        let entries = arr.as_array().unwrap();
+        let marked: Vec<usize> = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m["role"] == json!("assistant")
+                && m["content"].as_array().unwrap().iter()
+                    .any(|b| b.get("cache_control").is_some()))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(marked.len(), 2, "expected 2 assistant markers, got {marked:?}");
+        // Marked entries are the 4th and 6th (a2 and a3), not a1.
+        assert!(marked.contains(&3));
+        assert!(marked.contains(&5));
+    }
+
+    #[test]
+    fn transcript_breakpoint_skips_trailing_user_and_tool_messages() {
+        // A trailing user/tool message does NOT get a marker. This is
+        // the sliding-window invariant: anchoring on the assistant
+        // turn keeps the marker in place when a steer is appended.
         let tool_msg = kod_types::ChatMessage {
             id: kod_types::MessageId::new(),
             role: kod_types::MessageRole::Tool,
@@ -976,20 +1038,72 @@ mod tests {
             tool_calls: Vec::new(),
             tool_call_id: Some("call-1".to_string()),
         };
-        // A user turn followed by a tool result: the merge produces
-        // one user-role message with [tool_result, text].
-        let arr = messages_array_with_cache(&[user("hi"), tool_msg], true);
+        // [user, assistant, tool] — the tool merges into a user entry.
+        let arr = messages_array_with_cache(&[user("hi"), assistant("ok"), tool_msg], true);
         let entries = arr.as_array().unwrap();
-        let last = entries.last().unwrap();
-        let blocks = last["content"].as_array().unwrap();
-        // The tool_result is present and precedes the text — that is
-        // the H-P9 invariant and this test would fail if it broke.
-        assert_eq!(blocks[0]["type"], "tool_result");
-        assert_eq!(blocks[1]["type"], "text");
-        // And the marker is on the *last* block, not the tool_result.
-        let last_block = blocks.last().unwrap();
-        assert_eq!(last_block["cache_control"]["type"], "ephemeral");
+        // The assistant entry carries the only marker.
+        let assistant_idx = entries.iter().position(|m| m["role"] == json!("assistant"))
+            .expect("assistant entry present");
+        let blocks = entries[assistant_idx]["content"].as_array().unwrap();
+        assert_eq!(blocks.last().unwrap()["cache_control"]["type"], "ephemeral");
+        // No marker on the merged user entry.
+        for (i, m) in entries.iter().enumerate() {
+            if m["role"] == json!("assistant") { continue; }
+            if let Some(blocks) = m["content"].as_array() {
+                for b in blocks {
+                    assert!(b.get("cache_control").is_none(),
+                        "non-assistant entry {i} carries a marker: {b}");
+                }
+            }
+        }
     }
+
+    #[test]
+    fn transcript_breakpoint_on_a_single_assistant_places_one_marker() {
+        // The window fills in on the next turn. First turn with one
+        // assistant writes one marker; second turn adds the sliding
+        // read.
+        let arr = messages_array_with_cache(&[user("u1"), assistant("a1"), user("u2")], true);
+        let mut markers = 0;
+        for m in arr.as_array().unwrap() {
+            if let Some(blocks) = m["content"].as_array() {
+                for b in blocks {
+                    if b.get("cache_control").is_some() { markers += 1; }
+                }
+            }
+        }
+        assert_eq!(markers, 1);
+    }
+
+    #[test]
+    fn tools_array_with_cache_marks_only_the_last_tool() {
+        use kod_types::{ToolCategory, ToolId, ToolPermissions};
+        let mk = |name: &str| ToolDefinition {
+            trust_level: kod_types::trust::TrustLevel::default(),
+            id: ToolId::new(),
+            name: name.into(),
+            description: format!("{name} tool"),
+            category: ToolCategory::FileSystem,
+            parameters_schema: serde_json::json!({
+                "type": "object",
+                "properties": {"path": {"type": "string"}}
+            }),
+            permissions: ToolPermissions::default(),
+        };
+        let t1 = mk("alpha");
+        let t2 = mk("beta");
+        let arr = tools_array_with_cache(&[t1, t2]);
+        let entries = arr.as_array().unwrap();
+        assert!(entries[0].get("cache_control").is_none(), "first tool unmarked");
+        assert_eq!(entries[1]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn tools_array_with_cache_on_empty_slice_is_empty_array() {
+        let arr = tools_array_with_cache(&[]);
+        assert!(arr.as_array().unwrap().is_empty());
+    }
+
 
     #[test]
     fn transcript_breakpoint_suppressed_when_flag_is_false() {
