@@ -20,6 +20,7 @@ pub mod brief;
 pub mod brief_assembly;
 pub mod blackboard;
 pub mod communication;
+pub mod completion_report;
 pub mod coordination;
 pub mod file_touch;
 pub mod swarm;
