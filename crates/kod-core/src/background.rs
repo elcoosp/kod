@@ -71,6 +71,14 @@ pub enum JobKind {
     Eval { transcript: PathBuf },
     /// Generate prose documentation for a module.
     Docs { path: PathBuf },
+    /// A shell command running in the background (P2-d). `command` is
+    /// truncated for display; the spool path is where the output goes.
+    Shell {
+        /// The command as issued, truncated for the job list.
+        command: String,
+        /// Where the command's stdout+stderr are collected.
+        spool: PathBuf,
+    },
 }
 
 impl JobKind {
@@ -85,6 +93,9 @@ impl JobKind {
             }
             JobKind::Docs { path } => {
                 format!("docs {}", path.display())
+            }
+            JobKind::Shell { command, .. } => {
+                format!("shell: {command}")
             }
         }
     }

@@ -653,6 +653,26 @@ fn shorten_path(path: &str) -> String {
 /// cap is generous (32k chars, roughly 8k tokens) because a summary of
 /// a summary compounds error; the model needs enough of the original
 /// to write something usable.
+
+/// Push a background notice onto a transcript's steer queue.
+async fn push_background_interrupt(
+    steers: &std::sync::Arc<
+        tokio::sync::RwLock<HashMap<String, Vec<crate::steer::SoftInterrupt>>>,
+    >,
+    holder: &str,
+    content: String,
+) {
+    if content.trim().is_empty() {
+        return;
+    }
+    steers
+        .write()
+        .await
+        .entry(holder.to_string())
+        .or_default()
+        .push(crate::steer::SoftInterrupt::background(content));
+}
+
 fn build_summary_prompt(dropped: &[kod_types::ChatMessage]) -> String {
     const CAP: usize = 32_000;
     let mut body = String::new();
@@ -1189,7 +1209,9 @@ pub struct KodEngine {
     /// (D4-D4, AD-11). `steer("note")` writes to the default key;
     /// `steer_for(key, note)` targets one agent. The loops drain only
     /// their own key.
-    steers: RwLock<HashMap<String, Vec<crate::steer::SoftInterrupt>>>,
+        /// Arc-shared so a spawned background watcher can deliver an
+    /// interrupt without holding a reference to the engine.
+    steers: std::sync::Arc<RwLock<HashMap<String, Vec<crate::steer::SoftInterrupt>>>>,
     /// Set by [`KodEngine::request_cancel`]; loops check it between
     /// rounds. Keyed by transcript (D4-D4): a cancel for
     /// `swarm:{agent-id}` stops only that agent, not the whole swarm.
@@ -1871,6 +1893,165 @@ impl KodEngine {
         });
     }
 
+
+    /// Build the hook `execute_command` calls when the model sets
+    /// `run_in_background` (P2-d).
+    ///
+    /// The hook spawns the command with its output going to a spool
+    /// file, registers a job, and launches a watcher that fires a
+    /// `SoftInterrupt::background` on completion or — when the caller
+    /// set `stall_wake_seconds` — on a silence long enough to mean the
+    /// command is wedged. The interrupt rides the same steer channel a
+    /// user note does, so it lands at the next round boundary without
+    /// the watcher needing the engine.
+    ///
+    /// Returns `None` when the spool cannot be created or the spawn
+    /// fails, which the tool reads as "run it inline."
+    pub(crate) fn build_background_hook(&self) -> kod_tools::context::BackgroundSpawnHook {
+        let steers = std::sync::Arc::clone(&self.steers);
+        let runner = std::sync::Arc::clone(&self.background);
+        let working_dir = self.working_dir.clone();
+
+        kod_tools::context::BackgroundSpawnHook::new(
+            move |command: &str, stall: Option<u64>, holder: &str| -> Option<String> {
+                let job = runner.allocate_id();
+                let id_str = job.0.to_string();
+
+                let dir = dirs::home_dir()
+                    .map(|h| h.join(".kod").join("background"))
+                    .unwrap_or_else(std::env::temp_dir);
+                let spool_path = dir.join(format!("{}.log", job.0));
+
+                let mut spool = match crate::output_spool::OutputSpool::create(&spool_path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "background spool create failed");
+                        return None;
+                    }
+                };
+
+                runner.register(
+                    job,
+                    crate::background::JobKind::Shell {
+                        command: command.chars().take(120).collect(),
+                        spool: spool_path.clone(),
+                    },
+                );
+
+                let full = format!("{command} 2>&1");
+                let mut cmd = if cfg!(windows) {
+                    let mut c = tokio::process::Command::new("cmd");
+                    c.arg("/C").arg(&full);
+                    c
+                } else {
+                    let mut c = tokio::process::Command::new("sh");
+                    c.arg("-c").arg(&full);
+                    c
+                };
+                cmd.current_dir(&working_dir);
+                cmd.stdout(std::process::Stdio::piped());
+                cmd.stderr(std::process::Stdio::null());
+
+                let mut child = match cmd.spawn() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        runner.fail(job, format!("spawn failed: {e}"));
+                        return None;
+                    }
+                };
+
+                let Some(mut stdout) = child.stdout.take() else {
+                    runner.fail(job, "child had no stdout pipe".to_string());
+                    return None;
+                };
+
+                let stall_secs = stall.filter(|s| *s > 0).map(|s| s.max(30));
+                let holder = holder.to_string();
+
+                // The outer closure is `Fn` — it is called once per
+                // background request — so every value the task owns
+                // must be cloned out of it. The `Arc`s are cheap; the
+                // job id is named in two notices and returned to the
+                // caller, so the task takes a copy.
+                let steers_task = std::sync::Arc::clone(&steers);
+                let runner_task = std::sync::Arc::clone(&runner);
+                let id_task = id_str.clone();
+
+                tokio::spawn(async move {
+                    use tokio::io::AsyncReadExt as _;
+                    let mut buf = [0u8; 4096];
+                    let mut stall_reported = false;
+                    let stall_dur = stall_secs.map(std::time::Duration::from_secs);
+
+                    loop {
+                        let read = match stall_dur {
+                            Some(d) => match tokio::time::timeout(d, stdout.read(&mut buf)).await {
+                                Ok(r) => r,
+                                Err(_) => {
+                                    if !stall_reported {
+                                        push_background_interrupt(
+                                            &steers_task,
+                                            &holder,
+                                            format!(
+                                                "background job {id_task} has produced no output for {secs}s",
+                                                secs = stall_secs.unwrap_or(0),
+                                            ),
+                                        )
+                                        .await;
+                                        stall_reported = true;
+                                    }
+                                    continue;
+                                }
+                            },
+                            None => stdout.read(&mut buf).await,
+                        };
+
+                        match read {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                if spool.append(&buf[..n]).is_err() {
+                                    break;
+                                }
+                                stall_reported = false;
+                            }
+                            Err(_) => break,
+                        }
+                    }
+
+                    let status = child.wait().await;
+                    let preview = spool.preview();
+                    let summary = match status {
+                        Ok(s) if s.success() => format!(
+                            "completed; {} bytes of output.\n{}",
+                            spool.written(),
+                            preview,
+                        ),
+                        Ok(s) => format!(
+                            "exited with {s}; {} bytes of output.\n{}",
+                            spool.written(),
+                            preview,
+                        ),
+                        Err(e) => format!("could not read exit status: {e}"),
+                    };
+                    runner_task.complete(job, summary.clone());
+                    push_background_interrupt(
+                        &steers_task,
+                        &holder,
+                        format!("background job {id_task} finished: {summary}"),
+                    )
+                    .await;
+                });
+
+                Some(id_str)
+            },
+        )
+    }
+
+    /// Install the hook on a per-call context.
+    fn install_background_hook(&self, ctx: &mut ToolContext) {
+        ctx.on_background_command = Some(self.build_background_hook());
+    }
+
     async fn maybe_compact_for(&self, key: &str) -> usize {
         // Budget from the cached window; the `0` case (no registry
         // installed) makes `decide` return `None` and nothing runs.
@@ -2261,7 +2442,7 @@ impl KodEngine {
             tool_context,
             lock_table,
             working_dir: working_dir.clone(),
-            steers: RwLock::new(HashMap::new()),
+            steers: std::sync::Arc::new(RwLock::new(HashMap::new())),
             cancels: parking_lot::RwLock::new(std::collections::HashMap::new()),
             history: RwLock::new(HashMap::new()),
             observed_usage: RwLock::new(HashMap::new()),
@@ -8403,6 +8584,12 @@ pub(crate) fn filter_chain_by_trust(
             tool_context.allowed_write_globs = Some(globs);
         }
         tool_context.permissions.network_access = self.network_access_setting();
+
+        // P2-d: let `execute_command` hand a `run_in_background`
+        // request to the job runner. Installed for every transcript —
+        // a swarm agent starting a long build is as legitimate as the
+        // session doing it.
+        self.install_background_hook(&mut tool_context);
 
         // P1-c: a swarm transcript observes every file touch. The
         // interactive session (holder `""` → `effective_holder`
