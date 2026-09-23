@@ -1179,6 +1179,8 @@ impl SwarmRunner {
                         }
                     });
 
+                    let attempt_cancel_epoch = engine.cancel_epoch_for(&transcript_key);
+
                     let run = engine
                         .process_streaming_with_model_for(
                             &transcript_key,
@@ -1214,7 +1216,12 @@ impl SwarmRunner {
                     let _ = pump.await;
                     engine.forget_transcript(&transcript_key).await;
                     engine.set_blackboard_viewer(&transcript_key, false).await;
-                    engine.clear_cancel_for(&transcript_key);
+                    // Clear only cancels that predate this attempt. A
+                    // coordinator cancel that landed *during* the
+                    // attempt bumped the epoch, and this clear must
+                    // not erase it — that would let a retry run on an
+                    // agent the user already stopped.
+                    engine.clear_cancel_through(&transcript_key, attempt_cancel_epoch);
 
                     match outcome {
                         Ok(resp) => {
@@ -1231,6 +1238,20 @@ impl SwarmRunner {
                             last_error = Some(err.clone());
                             if attempt >= max_attempts {
                                 return (id, name, subtask, Vec::new(), Err(err));
+                            }
+                            // A cancel that survived the scoped clear
+                            // (`clear_cancel_through` above) means a
+                            // coordinator stopped this agent while it
+                            // ran. Do not retry — the stop outranks
+                            // the retry budget.
+                            if engine.is_cancelled_for(&transcript_key) {
+                                return (
+                                    id,
+                                    name,
+                                    subtask,
+                                    Vec::new(),
+                                    Err("a coordinator cancelled this agent".to_string()),
+                                );
                             }
                             // Announce the retry so a live UI can show
                             // "agent-1 retrying (2/2): …".

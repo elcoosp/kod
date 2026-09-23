@@ -1194,7 +1194,16 @@ pub struct KodEngine {
     /// rounds. Keyed by transcript (D4-D4): a cancel for
     /// `swarm:{agent-id}` stops only that agent, not the whole swarm.
     /// The default key `""` is the interactive session.
-    cancels: parking_lot::RwLock<std::collections::HashSet<String>>,
+        /// Per-transcript cancel state: `key → (fire_epoch, fired)`.
+    ///
+    /// The epoch exists because `clear_cancel_for` is called on a
+    /// retry path (the swarm runner clears before reusing a
+    /// transcript key), and a cancel that arrived *after* the runner
+    /// decided to retry must not be erased by that clear. A clear
+    /// carries the epoch it observed; if a newer fire has happened
+    /// since, the clear is a no-op and the cancel stands. Without
+    /// this, cancelling an agent mid-retry could be silently undone.
+    cancels: parking_lot::RwLock<std::collections::HashMap<String, (u64, bool)>>,
     /// Transcripts, one per key. `DEFAULT_TRANSCRIPT_KEY` is the
     /// interactive session; a swarm agent uses `swarm:<agent-id>` so
     /// concurrent agents do not interleave their turns.
@@ -2253,7 +2262,7 @@ impl KodEngine {
             lock_table,
             working_dir: working_dir.clone(),
             steers: RwLock::new(HashMap::new()),
-            cancels: parking_lot::RwLock::new(std::collections::HashSet::new()),
+            cancels: parking_lot::RwLock::new(std::collections::HashMap::new()),
             history: RwLock::new(HashMap::new()),
             observed_usage: RwLock::new(HashMap::new()),
             injected_memory_at: RwLock::new(HashMap::new()),
@@ -9535,16 +9544,26 @@ pub(crate) fn filter_chain_by_trust(
     /// Ask the default transcript's running prompt to stop at the next
     /// round boundary.
     pub fn request_cancel(&self) {
-        self.request_cancel_for(DEFAULT_TRANSCRIPT_KEY);
+        let _ = self.request_cancel_for(DEFAULT_TRANSCRIPT_KEY);
     }
 
     /// Ask a specific transcript's running prompt to stop. Used by the
     /// swarm runner's per-agent cancel (D4-D4) so cancelling one agent
     /// does not stop the whole team.
-    pub fn request_cancel_for(&self, key: &str) {
+    /// Request a cancel and return the new fire epoch.
+    ///
+    /// The caller that may later clear (the swarm retry path) records
+    /// the returned epoch and passes it to
+    /// [`Self::clear_cancel_through`], so a cancel arriving in the
+    /// interim is not erased.
+    pub fn request_cancel_for(&self, key: &str) -> u64 {
         // H-E10: `cancels` is a parking_lot RwLock — synchronous, no
         // block_on on the async hot path.
-        self.cancels.write().insert(key.to_string());
+        let mut g = self.cancels.write();
+        let entry = g.entry(key.to_string()).or_insert((0, false));
+        entry.0 = entry.0.wrapping_add(1);
+        entry.1 = true;
+        entry.0
     }
 
     /// Clear a previous cancel for the default transcript (called when
@@ -9558,6 +9577,32 @@ pub(crate) fn filter_chain_by_trust(
         self.cancels.write().remove(key);
     }
 
+    /// The current fire epoch for a transcript, without firing.
+    ///
+    /// Used by the swarm runner to record "what this attempt should
+    /// clear through": it captures the epoch before the attempt, and
+    /// on retry passes it to [`Self::clear_cancel_through`]. Zero when
+    /// no cancel was ever requested for the key.
+    pub fn cancel_epoch_for(&self, key: &str) -> u64 {
+        self.cancels.read().get(key).map(|(e, _)| *e).unwrap_or(0)
+    }
+
+    /// Clear a transcript's cancel only if no newer fire has happened
+    /// since `observed_epoch`.
+    ///
+    /// The swarm retry path: it records the epoch before an attempt,
+    /// and on retry clears through that epoch. A cancel that arrived
+    /// during the attempt bumped the epoch, so the clear is refused
+    /// and the cancel survives — which is the whole point.
+    pub fn clear_cancel_through(&self, key: &str, observed_epoch: u64) {
+        let mut g = self.cancels.write();
+        if let Some(entry) = g.get_mut(key)
+            && entry.0 <= observed_epoch
+        {
+            g.remove(key);
+        }
+    }
+
     /// True if a cancel was requested for the default transcript.
     pub fn is_cancelled(&self) -> bool {
         self.is_cancelled_for(DEFAULT_TRANSCRIPT_KEY)
@@ -9565,7 +9610,10 @@ pub(crate) fn filter_chain_by_trust(
 
     /// True if a cancel was requested for `key`.
     pub fn is_cancelled_for(&self, key: &str) -> bool {
-        self.cancels.read().contains(key)
+        self.cancels
+            .read()
+            .get(key)
+            .is_some_and(|(_, fired)| *fired)
     }
 
     /// Queue a steering note on the default transcript.
