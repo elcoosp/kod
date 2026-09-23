@@ -72,19 +72,14 @@ pub struct CompletionReport {
     /// Open questions or suggested next steps. One per line in the
     /// block; split here so a consumer does not re-parse.
     pub followups: Vec<String>,
-}
-
-impl CompletionReport {
-    /// Whether the block was actually present in the input. A caller
-    /// that wants to distinguish "the agent reported done" from "the
-    /// agent said nothing and we defaulted" checks this, not the
-    /// status — `Unknown` status with `had_block == false` is the
-    /// "no report" case, while `Unknown` with `had_block == true` is
-    /// "the agent wrote a block but its status attribute was junk".
-    pub fn had_block(&self) -> bool {
-        self.status != ReportStatus::Unknown || !self.followups.is_empty()
-            || self.validation.is_some()
-    }
+    /// Whether the `<completion-report>` block was present at all.
+    ///
+    /// Stored, not derived: a block whose status attribute was junk
+    /// and which carried only a summary is indistinguishable from
+    /// "no block" by its other fields, and the two cases call for
+    /// different handling (one is an agent that tried and formatted
+    /// wrong, the other is an agent that ignored the contract).
+    pub had_block: bool,
 }
 
 /// The open tag without its attributes.
@@ -105,6 +100,7 @@ pub fn parse(text: &str) -> CompletionReport {
     let Some(open_at) = text.find(OPEN_PREFIX) else {
         return CompletionReport {
             summary: text.trim().to_string(),
+            had_block: false,
             ..Default::default()
         };
     };
@@ -178,6 +174,7 @@ pub fn parse(text: &str) -> CompletionReport {
         summary,
         validation,
         followups,
+        had_block: true,
     }
 }
 
@@ -275,7 +272,7 @@ validation: cargo check  (clean)
         let r = parse(text);
         assert_eq!(r.status, ReportStatus::Unknown);
         assert_eq!(r.summary, text);
-        assert!(!r.had_block());
+        assert!(!r.had_block);
     }
 
     #[test]
@@ -288,7 +285,7 @@ summary: three of the four tests pass
         let r = parse(text);
         assert_eq!(r.status, ReportStatus::Unknown);
         assert_eq!(r.summary, "three of the four tests pass");
-        assert!(r.had_block(), "a summary means the block was present");
+        assert!(r.had_block, "a summary means the block was present");
     }
 
     #[test]
