@@ -1258,6 +1258,14 @@ pub struct KodEngine {
     /// a swarm subtask has its brief's expected writes). The gate
     /// reads it when filtering the endpoint chain.
     current_sensitivity: RwLock<crate::sensitivity::Sensitivity>,
+
+    /// P7: per-endpoint trust tier, from `EndpointConfig::trust`. An
+    /// endpoint that declared no tier is treated as `standard`, which
+    /// is the same default `TrustRequirement::satisfied_by` applies.
+    /// Populated by `set_registry` from the loaded config; empty
+    /// until a registry is installed, at which point every endpoint
+    /// in the config has an entry.
+    endpoint_trust: RwLock<std::collections::HashMap<String, String>>,
     /// Cached `(context_window, max_tokens)` for the current
     /// endpoint (harness review section 9 hygiene). Populated by
     /// `set_registry`, which every entry point calls before the
@@ -1995,6 +2003,7 @@ impl KodEngine {
             tool_filter_states: RwLock::new(HashMap::new()),
             cache_ledger: std::sync::Mutex::new(crate::cache_ledger::CacheLedger::new()),
             current_sensitivity: RwLock::new(crate::sensitivity::Sensitivity::Public),
+            endpoint_trust: RwLock::new(std::collections::HashMap::new()),
             endpoint_health: std::sync::Mutex::new(crate::endpoint_health::EndpointHealth::default()),
             background: std::sync::Arc::new(crate::background::BackgroundJobRunner::default()),
             background_mode: std::sync::atomic::AtomicBool::new(false),
@@ -4314,6 +4323,20 @@ impl KodEngine {
         if let Ok(mut g) = self.budget_hint.write() {
             *g = hint;
         }
+        // P7: retain each endpoint's trust tier so the routing gate
+        // can drop an endpoint that does not meet the turn's
+        // sensitivity requirement. An endpoint without a declared
+        // tier is `standard`, matching `TrustRequirement`'s default.
+        if let Ok(cfg) = kod_config::KodConfig::load_default() {
+            let mut trust = self.endpoint_trust.write().await;
+            trust.clear();
+            for ep in &cfg.llm.endpoints {
+                trust.insert(
+                    ep.name.clone(),
+                    ep.trust.clone().unwrap_or_else(|| "standard".to_string()),
+                );
+            }
+        }
         *self.current_model.write().await = default_model;
         *self.routing.write().await = routing;
     }
@@ -4490,28 +4513,12 @@ impl KodEngine {
             let sensitivity = *self.current_sensitivity.read().await;
             let req = crate::sensitivity::TrustRequirement::for_sensitivity(sensitivity);
             if req.0.is_some() {
-                let routing = self.routing.read().await;
-                let registry = self.registry.read().await;
-                if let (Some(routing), Some(registry)) = (routing.as_ref(), registry.as_ref()) {
-                    let _ = registry;
-                    let _ = routing;
-                }
+                let trust_map = self.endpoint_trust.read().await;
                 let filtered: Vec<ModelRef> = chain
                     .iter()
                     .filter(|m| {
-                        let tier = routing
-                            .as_ref()
-                            .and_then(|r| r.by_task.get(&m.endpoint).cloned())
-                            .and_then(|_| {
-                                // The routing table names endpoints; the
-                                // trust tier lives in the config's
-                                // endpoint list. Look it up via the
-                                // registry's stored capabilities if
-                                // available, else fall back to the
-                                // stored tier on the endpoint itself.
-                                None::<String>
-                            });
-                        req.satisfied_by(tier.as_deref())
+                        let tier = trust_map.get(&m.endpoint).map(String::as_str);
+                        req.satisfied_by(tier)
                     })
                     .cloned()
                     .collect();
@@ -4519,7 +4526,8 @@ impl KodEngine {
                     tracing::warn!(
                         sensitivity = sensitivity.label(),
                         endpoints = chain.len(),
-                        "no endpoint meets the sensitivity requirement;                          using the unfiltered chain",
+                        "no endpoint meets the sensitivity requirement; \
+                         using the unfiltered chain",
                     );
                 } else {
                     chain = filtered;
