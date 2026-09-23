@@ -537,6 +537,43 @@ pub enum FileOp {
 /// A tool call never fails because the hook errored — the callback
 /// returns `()`, and the tool treats a missing hook as a no-op. That
 /// is deliberate: observation must never become a failure path.
+/// A callback that starts a command in the background.
+///
+/// Returns a short job id when the engine accepted it, `None` when no
+/// background runner is available (a bare `ToolContext` in a test, or
+/// an engine without a job runner). The tool treats `None` as "run it
+/// inline", so a caller that never installs the hook gets the
+/// pre-background behavior.
+///
+/// The tool crate cannot spawn-and-spool itself: the spool, the job
+/// registry, and the soft-interrupt channel all live in `kod-core`.
+/// The hook is the seam.
+#[derive(Clone)]
+pub struct BackgroundSpawnHook {
+    inner: std::sync::Arc<
+        dyn Fn(&str, Option<u64>, &str) -> Option<String> + Send + Sync,
+    >,
+}
+
+impl std::fmt::Debug for BackgroundSpawnHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BackgroundSpawnHook")
+    }
+}
+
+impl BackgroundSpawnHook {
+    pub fn new(
+        f: impl Fn(&str, Option<u64>, &str) -> Option<String> + Send + Sync + 'static,
+    ) -> Self {
+        Self { inner: std::sync::Arc::new(f) }
+    }
+
+    /// `(command, stall_wake_seconds, holder)` → job id, or `None`.
+    pub fn spawn(&self, command: &str, stall: Option<u64>, holder: &str) -> Option<String> {
+        (self.inner)(command, stall, holder)
+    }
+}
+
 #[derive(Clone)]
 pub struct FileTouchHook {
     inner: std::sync::Arc<dyn Fn(&str, &std::path::Path, FileOp, Option<&str>) + Send + Sync>,
@@ -620,6 +657,10 @@ pub struct ToolContext {
     /// P1-c: fired after a successful file read/write/edit. `None`
     /// outside a swarm run — no observation happens, no overhead paid.
     pub on_file_touch: Option<FileTouchHook>,
+
+    /// P2-d: starts a shell command in the background. `None` outside
+    /// an engine that owns a job runner.
+    pub on_background_command: Option<BackgroundSpawnHook>,
 }
 
 impl ToolContext {
@@ -638,7 +679,8 @@ impl ToolContext {
             allowed_domains: Vec::new(),
             allowed_write_globs: None,
         
-            on_file_touch: None,}
+            on_file_touch: None,
+            on_background_command: None,}
     }
 
     /// Install a shared lock table and set the writer identity.
@@ -675,6 +717,13 @@ impl ToolContext {
     /// the duration of a run; every other caller leaves it `None`.
     pub fn with_file_touch_hook(mut self, hook: FileTouchHook) -> Self {
         self.on_file_touch = Some(hook);
+        self
+    }
+
+    /// Install a background-command spawner. The engine sets this so
+    /// `execute_command` can honor `run_in_background`.
+    pub fn with_background_hook(mut self, hook: BackgroundSpawnHook) -> Self {
+        self.on_background_command = Some(hook);
         self
     }
 

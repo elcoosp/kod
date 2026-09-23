@@ -525,6 +525,19 @@ impl ExecuteCommandTool {
                         "command": {
                             "type": "string",
                             "description": "Command to execute"
+                        },
+                        "run_in_background": {
+                            "type": "boolean",
+                            "description": "Start the command and return immediately. \
+                                            Output goes to a spool file; the job \
+                                            reports completion and stalls through \
+                                            a background interrupt."
+                        },
+                        "stall_wake_seconds": {
+                            "type": "integer",
+                            "description": "With run_in_background: notify if the \
+                                            command produces no output for this many \
+                                            seconds (minimum 30). Omit to disable."
                         }
                     },
                     "required": ["command"]
