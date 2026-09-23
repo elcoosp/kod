@@ -1907,7 +1907,7 @@ impl KodEngine {
     ///
     /// Returns `None` when the spool cannot be created or the spawn
     /// fails, which the tool reads as "run it inline."
-    pub(crate) fn build_background_hook(&self) -> kod_tools::context::BackgroundSpawnHook {
+    pub fn build_background_hook(&self) -> kod_tools::context::BackgroundSpawnHook {
         let steers = std::sync::Arc::clone(&self.steers);
         let runner = std::sync::Arc::clone(&self.background);
         let working_dir = self.working_dir.clone();
@@ -9838,6 +9838,19 @@ pub(crate) fn filter_chain_by_trust(
 
     /// Drain queued steer notes for `key` (each is applied once, in
     /// order).
+    /// The soft interrupts currently queued for `key`, without
+    /// draining. A caller that wants to display or test what is
+    /// pending reads here; the round-boundary drain is
+    /// [`Self::take_steers_for`].
+    pub async fn pending_steers_for(&self, key: &str) -> Vec<crate::steer::SoftInterrupt> {
+        self.steers
+            .read()
+            .await
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     async fn take_steers_for(&self, key: &str) -> Vec<crate::steer::SoftInterrupt> {
         let mut guard = self.steers.write().await;
         guard.remove(key).unwrap_or_default()
