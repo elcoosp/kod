@@ -539,7 +539,7 @@ pub enum FileOp {
 /// is deliberate: observation must never become a failure path.
 #[derive(Clone)]
 pub struct FileTouchHook {
-    inner: std::sync::Arc<dyn Fn(&str, &std::path::Path, FileOp) + Send + Sync>,
+    inner: std::sync::Arc<dyn Fn(&str, &std::path::Path, FileOp, Option<&str>) + Send + Sync>,
 }
 
 impl std::fmt::Debug for FileTouchHook {
@@ -549,11 +549,11 @@ impl std::fmt::Debug for FileTouchHook {
 }
 
 impl FileTouchHook {
-    pub fn new(f: impl Fn(&str, &std::path::Path, FileOp) + Send + Sync + 'static) -> Self {
+    pub fn new(f: impl Fn(&str, &std::path::Path, FileOp, Option<&str>) + Send + Sync + 'static) -> Self {
         Self { inner: std::sync::Arc::new(f) }
     }
-    pub fn call(&self, holder: &str, path: &std::path::Path, op: FileOp) {
-        (self.inner)(holder, path, op)
+    pub fn call(&self, holder: &str, path: &std::path::Path, op: FileOp, intent: Option<&str>) {
+        (self.inner)(holder, path, op, intent)
     }
 }
 
@@ -680,9 +680,9 @@ impl ToolContext {
 
     /// Fire the file-touch observer, if one is installed. Never fails
     /// — observation is not a correctness path.
-    pub fn note_file_touch(&self, path: &std::path::Path, op: FileOp) {
+    pub fn note_file_touch(&self, path: &std::path::Path, op: FileOp, intent: Option<&str>) {
         if let Some(hook) = &self.on_file_touch {
-            hook.call(&self.holder, path, op);
+            hook.call(&self.holder, path, op, intent);
         }
     }
 

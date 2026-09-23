@@ -53,6 +53,10 @@ pub struct FileTouch {
     /// Human-scannable summary, e.g. `"edited lines 18-25"`. `None`
     /// for reads and for callers that did not compute one.
     pub summary: Option<String>,
+    /// The model-declared reason for the operation, from the `intent`
+    /// field every tool schema carries (P3-d). Shown in the conflict
+    /// notice so a peer sees *why*, not just *what*.
+    pub intent: Option<String>,
     pub at: Instant,
 }
 
@@ -222,6 +226,7 @@ mod tests {
             path: PathBuf::from(path),
             op,
             summary: None,
+            intent: None,
             at: Instant::now(),
         }
     }

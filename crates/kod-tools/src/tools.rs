@@ -232,7 +232,11 @@ impl Tool for ReadFileTool {
         // permission check, before the content probe) means every
         // success path — including the redact path — records the
         // touch exactly once.
-        context.note_file_touch(&resolved, crate::context::FileOp::Read);
+        context.note_file_touch(
+            &resolved,
+            crate::context::FileOp::Read,
+            params["intent"].as_str(),
+        );
 
         // Total size from metadata (the byte cap below can hide it).
         let total_size = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
@@ -488,7 +492,11 @@ impl Tool for WriteFileTool {
         // P1-c: fire only after the write is durable. A failed write
         // returns above and produces no touch — the file is unchanged,
         // so there is nothing for a peer to know about.
-        context.note_file_touch(&resolved, crate::context::FileOp::Write);
+        context.note_file_touch(
+            &resolved,
+            crate::context::FileOp::Write,
+            params["intent"].as_str(),
+        );
 
         Ok(ToolResult::Success(serde_json::json!({
             "path": resolved.to_string_lossy().to_string(),
@@ -1118,7 +1126,11 @@ impl Tool for PatchFileTool {
 
         // P1-c: a real patch is a modification; a dry run returned
         // above and does not touch the file, so it produces no event.
-        context.note_file_touch(&resolved, crate::context::FileOp::Edit);
+        context.note_file_touch(
+            &resolved,
+            crate::context::FileOp::Edit,
+            params["intent"].as_str(),
+        );
 
         Ok(ToolResult::Success(serde_json::json!({
             "path": resolved.to_string_lossy().to_string(),

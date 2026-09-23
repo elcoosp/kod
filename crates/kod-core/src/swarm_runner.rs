@@ -2044,6 +2044,9 @@ fn render_swarm_conflict_notice(
     if let Some(su) = &t.summary {
         s.push_str(&format!(" ({su})"));
     }
+    if let Some(intent) = &t.intent {
+        s.push_str(&format!(" — their stated intent: {intent}"));
+    }
     s.push_str(
         ". You have touched this file during this run. Re-read it before \
          your next edit; do not revert the other agent's change — the \

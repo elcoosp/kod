@@ -114,6 +114,13 @@ impl ToolRegistry {
         let tools = self.tools.read().await;
         let mut defs: Vec<ToolDefinition> = tools.values().map(|t| t.definition()).collect();
         defs.sort_by(|a, b| a.name.cmp(&b.name));
+        // P3-d: every schema gets an optional `intent` field. One
+        // injection point keeps the wording identical across all
+        // tools, and an MCP proxy that brings its own schema gets the
+        // same field without the adapter knowing.
+        for def in &mut defs {
+            inject_intent_field(&mut def.parameters_schema);
+        }
         defs
     }
 
@@ -136,3 +143,23 @@ impl ToolRegistry {
         }
     }
 }
+
+/// Add an optional `intent` string property to a tool's parameters
+/// schema, if it is not already there.
+///
+/// The wording is terse on purpose: this rides on every tool schema of
+/// every request, so a sentence here is a sentence per tool per turn.
+/// `intent` is surfaced to the UI and to the swarm file-touch bus — a
+/// peer seeing "agent-1 edited lines 18-25" also sees *why*.
+pub fn inject_intent_field(schema: &mut serde_json::Value) {
+    let Some(props) = schema.get_mut("properties").and_then(|p| p.as_object_mut()) else {
+        return;
+    };
+    props.entry("intent").or_insert_with(|| {
+        serde_json::json!({
+            "type": "string",
+            "description": "Short label: why this call is being made.",
+        })
+    });
+}
+

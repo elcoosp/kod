@@ -2696,7 +2696,7 @@ impl KodEngine {
         bus: std::sync::Arc<kod_swarm::file_touch::FileTouchBus>,
         service: std::sync::Arc<kod_swarm::file_touch::FileTouchService>,
     ) -> kod_tools::context::FileTouchHook {
-        kod_tools::context::FileTouchHook::new(move |holder, path, op| {
+        kod_tools::context::FileTouchHook::new(move |holder, path, op, intent| {
             let kod_op = match op {
                 kod_tools::context::FileOp::Read => kod_swarm::file_touch::FileOp::Read,
                 kod_tools::context::FileOp::Write => kod_swarm::file_touch::FileOp::Write,
@@ -2707,6 +2707,7 @@ impl KodEngine {
                 path: path.to_path_buf(),
                 op: kod_op,
                 summary: None,
+                intent: intent.map(str::to_string),
                 at: std::time::Instant::now(),
             };
             service.record(touch.clone());
@@ -13282,8 +13283,7 @@ mod swarm_file_hook_tests {
         hook.call(
             "swarm:agent-1",
             std::path::Path::new("/tmp/f.rs"),
-            kod_tools::context::FileOp::Write,
-        );
+            kod_tools::context::FileOp::Write, None);
 
         // Service recorded it.
         assert!(service.has_touched("swarm:agent-1", &std::path::PathBuf::from("/tmp/f.rs")));
@@ -13309,13 +13309,11 @@ mod swarm_file_hook_tests {
         hook.call(
             "swarm:first",
             std::path::Path::new("/a.rs"),
-            kod_tools::context::FileOp::Read,
-        );
+            kod_tools::context::FileOp::Read, None);
         hook.call(
             "swarm:second",
             std::path::Path::new("/b.rs"),
-            kod_tools::context::FileOp::Write,
-        );
+            kod_tools::context::FileOp::Write, None);
 
         assert!(service.has_touched("swarm:first", &std::path::PathBuf::from("/a.rs")));
         assert!(service.has_touched("swarm:second", &std::path::PathBuf::from("/b.rs")));
@@ -13332,8 +13330,8 @@ mod swarm_file_hook_tests {
         let service = std::sync::Arc::new(FileTouchService::new());
         let hook = KodEngine::build_swarm_file_hook(bus, service.clone());
 
-        hook.call("reader", std::path::Path::new("/f.rs"), kod_tools::context::FileOp::Read);
-        hook.call("writer", std::path::Path::new("/f.rs"), kod_tools::context::FileOp::Write);
+        hook.call("reader", std::path::Path::new("/f.rs"), kod_tools::context::FileOp::Read, None);
+        hook.call("writer", std::path::Path::new("/f.rs"), kod_tools::context::FileOp::Write, None);
 
         let writer_view = service.conflicts_for(&std::path::PathBuf::from("/f.rs"), "writer");
         assert!(writer_view.is_empty(), "reader is not a conflict for writer");
