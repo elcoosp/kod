@@ -20,7 +20,7 @@
 //! for 30 calls and got 10 results would believe 20 more ran.
 
 use crate::{Tool, ToolContext, ToolRegistry};
-use kod_error::{KodError, Result};
+use kod_error::Result;
 use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use serde_json::Value;
 use std::sync::Weak;

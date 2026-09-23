@@ -5030,6 +5030,16 @@ pub(crate) fn filter_chain_by_trust(
         self.tools.register(Box::new(ListFilesTool::new())).await;
         self.tools.register(Box::new(GrepTool::new())).await;
         self.tools.register(Box::new(FileInfoTool::new())).await;
+        // P3-e: batch runs N sub-calls in one round. The tool holds a
+        // Weak to the registry so it cannot keep the engine alive and
+        // cannot outlive the tools it dispatches to. Registered with
+        // the rest of the file tools because its common case is
+        // batching reads.
+        self.tools
+            .register(Box::new(kod_tools::batch::BatchTool::new(
+                std::sync::Arc::downgrade(&self.tools),
+            )))
+            .await;
         if !background {
             self.tools
                 .register(Box::new(ExecuteCommandTool::new()))
