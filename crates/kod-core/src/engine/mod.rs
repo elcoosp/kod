@@ -1879,7 +1879,7 @@ impl KodEngine {
         // Compute the cut once, using a read guard, so both the
         // StartBackground and CompactNow paths agree on which
         // messages are in play.
-        let (cut, dropped_for_summary) = {
+        let (_cut, dropped_for_summary) = {
             let guard = self.history.read().await;
             let Some(turns) = guard.get(key) else {
                 return 0;
