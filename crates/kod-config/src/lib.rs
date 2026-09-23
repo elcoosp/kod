@@ -21,4 +21,4 @@ pub use policy::{
     ReadProtection, SessionDeny, ToolPolicy,
 };
 pub use skills::SkillsConfig;
-pub use swarm::SwarmConfig;
+pub use swarm::{Isolation, SwarmConfig};

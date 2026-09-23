@@ -98,6 +98,7 @@ async fn from_config_clamps_agents_and_applies_budget_knobs() {
         agent_timeout_secs: 42,
         agent_retries: 7,
         timeout_secs: 999,
+            isolation: kod_config::Isolation::default(),
     };
     let runner = SwarmRunner::from_config(engine, &config).await.unwrap();
     // `max_agents` is clamped to [2, 8]; 3 is in range.

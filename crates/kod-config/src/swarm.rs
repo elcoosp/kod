@@ -7,6 +7,32 @@
 
 use serde::{Deserialize, Serialize};
 
+/// How the swarm isolates agents' file writes from one another.
+///
+/// The pre-Isolation runner always created one git worktree per agent
+/// when the working directory was a git repo, and fell back to the
+/// shared root otherwise. That implicit policy is the wrong default
+/// for a codebase that wants the "swarm on one branch" workflow: a
+/// shared checkout with observation and notice (see `file_touch.rs`)
+/// is often the right answer, and it costs no merge step.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Isolation {
+    /// Same checkout, same branch, all agents. File touches are
+    /// observed and conflicting peers are notified (P1-c); no
+    /// worktrees, no merge. This is the jcode-style workflow.
+    Shared,
+    /// One git worktree per agent, merged back after the run. The
+    /// pre-Isolation behaviour, made explicit. Requires a git
+    /// working directory; a non-git root is an error, not a silent
+    /// fallback to Shared.
+    Worktree,
+    /// Worktree when the working directory is a git repo, shared
+    /// otherwise. The runner's previous implicit policy.
+    #[default]
+    Auto,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SwarmConfig {
@@ -33,6 +59,11 @@ pub struct SwarmConfig {
     /// bounds N agents across dependency waves. Design §D4.3 sets the
     /// default at 30 minutes. `0` disables the cap.
     pub timeout_secs: u64,
+    /// Isolation policy. Defaults to `auto`: worktrees when the
+    /// working directory is a git repo, shared otherwise — the
+    /// runner's behavior before this field existed.
+    #[serde(default)]
+    pub isolation: Isolation,
 }
 
 impl Default for SwarmConfig {
@@ -43,6 +74,7 @@ impl Default for SwarmConfig {
             agent_timeout_secs: 300,
             agent_retries: 1,
             timeout_secs: 1800,
+            isolation: Isolation::default(),
         }
     }
 }
@@ -136,6 +168,7 @@ mod coverage_swarm_config {
             agent_timeout_secs: 120,
             agent_retries: 2,
             timeout_secs: 600,
+                    isolation: Isolation::default(),
         };
         let toml_str = toml::to_string(&c).unwrap();
         let parsed: SwarmConfig = toml::from_str(&toml_str).unwrap();

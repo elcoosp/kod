@@ -236,6 +236,10 @@ pub struct SwarmRunner {
     /// (30 minutes) — long enough for a large run, short enough that
     /// a hung agent does not wedge a terminal forever.
     swarm_timeout_secs: u64,
+    /// Isolation policy for this run (P1-c). `Auto` keeps the
+    /// pre-Isolation implicit policy; `Shared` skips worktree
+    /// creation entirely; `Worktree` refuses a non-git root.
+    isolation: kod_config::Isolation,
 }
 
 impl SwarmRunner {
@@ -263,6 +267,7 @@ impl SwarmRunner {
             agent_timeout_secs: 300,
             agent_retries: 1,
             swarm_timeout_secs: 1800,
+            isolation: kod_config::Isolation::default(),
         })
     }
 
@@ -274,6 +279,13 @@ impl SwarmRunner {
     /// `max_agents` is clamped by `SwarmRunner::new` to `[2, 8]`; the
     /// other three are applied verbatim, including the "0 disables"
     /// convention for the two timeouts.
+    /// Set the isolation policy. Consuming builder, chained from
+    /// `new`/`from_config`.
+    pub fn with_isolation(mut self, isolation: kod_config::Isolation) -> Self {
+        self.isolation = isolation;
+        self
+    }
+
     pub async fn from_config(
         engine: Arc<KodEngine>,
         config: &kod_config::SwarmConfig,
@@ -282,7 +294,8 @@ impl SwarmRunner {
             .await?
             .with_agent_timeout_secs(config.agent_timeout_secs)
             .with_agent_retries(config.agent_retries)
-            .with_swarm_timeout_secs(config.timeout_secs))
+            .with_swarm_timeout_secs(config.timeout_secs)
+            .with_isolation(config.isolation))
     }
 
     /// Override the agent count (H-C3). The CLI passes `--agents N`;
@@ -324,21 +337,51 @@ impl SwarmRunner {
         goal: &str,
         chunk_tx: &mpsc::Sender<SwarmEvent>,
     ) -> Result<SwarmResponse> {
-        // 0. Try to set up worktrees (D4-D2). `None` when the working
-        //    directory is not a git repo — the runner then falls back
-        //    to the shared root, exactly the pre-D4 behaviour.
-        let mut worktree_mgr: Option<crate::worktree::WorktreeManager> =
-            match crate::worktree::WorktreeManager::detect(self.engine.working_dir()) {
-                Ok(Some(m)) => Some(m),
-                Ok(None) => None,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "worktree detect failed; using shared workspace"
-                    );
-                    None
+        // 0. Isolation policy (P1-c). `Shared` skips worktree
+        //    detection entirely: one checkout, all agents, and the
+        //    file-touch bus is the coordination mechanism. `Worktree`
+        //    requires a git root — a failure there is an error, not a
+        //    silent fallback to shared, because the caller asked for
+        //    isolation and getting the opposite without being told is
+        //    worse than failing. `Auto` keeps the runner's previous
+        //    implicit policy.
+        let mut worktree_mgr: Option<crate::worktree::WorktreeManager> = match self.isolation {
+            kod_config::Isolation::Shared => {
+                tracing::info!("swarm: shared workspace (isolation = shared)");
+                None
+            }
+            kod_config::Isolation::Worktree => {
+                match crate::worktree::WorktreeManager::detect(self.engine.working_dir()) {
+                    Ok(Some(m)) => Some(m),
+                    Ok(None) => {
+                        return Err(KodError::Config(
+                            "[swarm] isolation = \"worktree\" but the working \
+                             directory is not a git repository"
+                                .to_string(),
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(KodError::Config(format!(
+                            "[swarm] isolation = \"worktree\" but worktree setup \
+                             failed: {e}"
+                        )));
+                    }
                 }
-            };
+            }
+            kod_config::Isolation::Auto => {
+                match crate::worktree::WorktreeManager::detect(self.engine.working_dir()) {
+                    Ok(Some(m)) => Some(m),
+                    Ok(None) => None,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "worktree detect failed; using shared workspace"
+                        );
+                        None
+                    }
+                }
+            }
+        };
         if worktree_mgr.is_some() {
             tracing::info!("swarm: worktree mode enabled (per-agent isolation)");
         }
