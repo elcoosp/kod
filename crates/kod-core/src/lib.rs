@@ -33,6 +33,7 @@ pub mod router;
 pub mod serve;
 pub mod session_log;
 pub mod state;
+pub mod steer;
 pub mod swarm_adapters;
 pub mod swarm_runner;
 pub mod tool_quota;

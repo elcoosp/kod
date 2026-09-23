@@ -1358,7 +1358,10 @@ impl SwarmRunner {
                     }
                     for q in &plan.steers_to_queue {
                         self.engine
-                            .steer(&format!("[{name}] {q}"))
+                            .steer_interrupt_for(
+                                crate::engine::DEFAULT_TRANSCRIPT_KEY,
+                                crate::steer::SoftInterrupt::swarm(format!("[{name}] {q}")),
+                            )
                             .await;
                     }
                     if !plan.summary_line.is_empty() {

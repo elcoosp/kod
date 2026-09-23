@@ -1041,7 +1041,7 @@ struct ToolRound {
 /// without an explicit key operate on this. Swarm agents use a
 /// `swarm:<agent-id>` key so concurrent agents do not interleave their
 /// turns into one shared history.
-const DEFAULT_TRANSCRIPT_KEY: &str = "";
+pub(crate) const DEFAULT_TRANSCRIPT_KEY: &str = "";
 
 /// Main engine for KOD
 /// H-S13: a conservative static allowlist for the Jev-driven sandbox
@@ -1140,7 +1140,7 @@ pub struct KodEngine {
     /// (D4-D4, AD-11). `steer("note")` writes to the default key;
     /// `steer_for(key, note)` targets one agent. The loops drain only
     /// their own key.
-    steers: RwLock<HashMap<String, Vec<String>>>,
+    steers: RwLock<HashMap<String, Vec<crate::steer::SoftInterrupt>>>,
     /// Set by [`KodEngine::request_cancel`]; loops check it between
     /// rounds. Keyed by transcript (D4-D4): a cancel for
     /// `swarm:{agent-id}` stops only that agent, not the whole swarm.
@@ -6493,10 +6493,12 @@ pub(crate) fn filter_chain_by_trust(
         messages: &mut Vec<kod_types::ChatMessage>,
         key: &str,
     ) {
-        for note in self.take_steers_for(key).await {
-            let body = format!(
-                "## User steer (new instruction — adjust course now, do not restart what already worked)\n{note}"
-            );
+        for interrupt in self.take_steers_for(key).await {
+            // The header is `SoftInterrupt::render`'s job now. For a
+            // User-source interrupt the rendered text is byte-identical
+            // to the pre-P1-b string (`steer.rs` pins that), so the
+            // golden prompts and recorded transcripts are unchanged.
+            let body = interrupt.render();
             pending.push_str(&format!("\n\n{body}\n"));
             messages.push(kod_types::ChatMessage::text(
                 kod_types::MessageId::new(),
@@ -9037,20 +9039,34 @@ pub(crate) fn filter_chain_by_trust(
     /// Queue a steering note on `key`. Injected into that transcript's
     /// conversation after the current tool round finishes.
     pub async fn steer_for(&self, key: &str, note: &str) {
-        let note = note.trim();
-        if note.is_empty() {
+        self.steer_interrupt_for(key, crate::steer::SoftInterrupt::user(note))
+            .await;
+    }
+
+    /// Queue a typed soft interrupt on `key`.
+    ///
+    /// The typed entry point for producers that are not the user:
+    /// swarm conflict notices, background-task completions, harness
+    /// system messages. [`steer_for`] is the user-facing wrapper.
+    ///
+    /// An empty body is dropped — an interrupt with no content would
+    /// render a bare header into the transcript, which is noise the
+    /// model has to read past.
+    pub async fn steer_interrupt_for(
+        &self,
+        key: &str,
+        interrupt: crate::steer::SoftInterrupt,
+    ) {
+        if interrupt.content.trim().is_empty() {
             return;
         }
         let mut guard = self.steers.write().await;
-        guard
-            .entry(key.to_string())
-            .or_default()
-            .push(note.to_string());
+        guard.entry(key.to_string()).or_default().push(interrupt);
     }
 
     /// Drain queued steer notes for `key` (each is applied once, in
     /// order).
-    async fn take_steers_for(&self, key: &str) -> Vec<String> {
+    async fn take_steers_for(&self, key: &str) -> Vec<crate::steer::SoftInterrupt> {
         let mut guard = self.steers.write().await;
         guard.remove(key).unwrap_or_default()
     }
