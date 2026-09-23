@@ -139,7 +139,20 @@ impl ToolRegistry {
         // H-R10: clone the Arc out and drop the read lock before
         // awaiting the tool body. Registration (MCP hot-reload) no
         // longer blocks on a running tool call.
-        let tool = { self.tools.read().await.get(resolved).cloned() };
+        let mut tool = { self.tools.read().await.get(resolved).cloned() };
+
+        // A model that capitalizes a real tool name (`Read_File`) gets
+        // a case-insensitive second chance. Done here rather than in
+        // the alias module so that module stays free of the registry's
+        // name set.
+        if tool.is_none() {
+            let guard = self.tools.read().await;
+            tool = guard
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(resolved))
+                .map(|(_, v)| v.clone());
+        }
+
         match tool {
             Some(t) => t.execute(params, context).await,
             None => Err(KodError::ToolNotFound {
