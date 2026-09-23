@@ -1113,6 +1113,19 @@ fn command_is_sandbox_downgrade_safe(command: &str) -> bool {
     true
 }
 
+/// The bus and registry shared by every agent in a swarm run.
+///
+/// Installed by [`KodEngine::install_swarm_file_bus`] before the
+/// runner spawns agents and removed when the run ends. The engine's
+/// per-call [`ToolContext`] derives a file-touch hook from it for
+/// swarm transcripts; the interactive session (`""`) never gets a
+/// hook, so a single-user turn pays zero observation cost.
+#[derive(Clone)]
+pub(crate) struct SwarmFileBus {
+    pub bus: std::sync::Arc<kod_swarm::file_touch::FileTouchBus>,
+    pub service: std::sync::Arc<kod_swarm::file_touch::FileTouchService>,
+}
+
 pub struct KodEngine {
     router: Arc<TaskRouter>,
     /// Named-endpoint map (A4b). When `Some`, `resolve_provider` reads
@@ -1401,6 +1414,11 @@ pub struct KodEngine {
     /// comment promised this, but neither call existed and every
     /// run leaked its agents.
     swarm_hub: Arc<kod_swarm::AgentCommunicationHub>,
+
+    /// P1-c: the file-touch bus for the current swarm run, `None`
+    /// outside one. Read by `run_tool_calls` to decide whether to
+    /// install a per-call touch hook.
+    swarm_file_bus: RwLock<Option<SwarmFileBus>>,
     /// Shared blackboard for the current swarm run (Tier 3.5).
     /// Auto-populated with write claims, discovered files, and
     /// completed subtasks; empty when no swarm is running.
@@ -2049,6 +2067,7 @@ impl KodEngine {
             pending_questions: RwLock::new(std::collections::HashMap::new()),
             next_question_id: std::sync::atomic::AtomicU64::new(1),
             swarm_hub: Arc::new(kod_swarm::AgentCommunicationHub::new()),
+            swarm_file_bus: RwLock::new(None),
             blackboard: kod_swarm::Blackboard::new(),
             blackboard_viewers: RwLock::new(std::collections::HashSet::new()),
             session_id: kod_types::SessionId::new(),
@@ -2407,6 +2426,59 @@ impl KodEngine {
     }
 
     /// The swarm blackboard (Tier 3.5).
+    /// Install the shared file-touch bus for a swarm run.
+    ///
+    /// Called once by the runner before it spawns agents. Removing it
+    /// (`uninstall_swarm_file_bus`) when the run ends is what keeps a
+    /// long-lived engine from observing touches on a later non-swarm
+    /// turn.
+    pub async fn install_swarm_file_bus(
+        &self,
+        bus: std::sync::Arc<kod_swarm::file_touch::FileTouchBus>,
+        service: std::sync::Arc<kod_swarm::file_touch::FileTouchService>,
+    ) {
+        *self.swarm_file_bus.write().await = Some(SwarmFileBus { bus, service });
+    }
+
+    /// Remove the file-touch bus. Safe to call when none is installed.
+    pub async fn uninstall_swarm_file_bus(&self) {
+        *self.swarm_file_bus.write().await = None;
+    }
+
+    /// Build the per-call file-touch hook for a swarm transcript.
+    ///
+    /// Split out from `run_tool_calls` so it is testable without an
+    /// engine: the returned hook records the touch in the service and
+    /// publishes it on the bus, in that order — a subscriber that
+    /// sees an event is guaranteed the service already knows about
+    /// it, so `conflicts_for` answers correctly on receipt.
+    ///
+    /// The `holder` argument from the closure (the `ToolContext`'s
+    /// own holder string) is used as the agent id, not the captured
+    /// value, so a context re-used under a different holder still
+    /// attributes correctly.
+    pub(crate) fn build_swarm_file_hook(
+        bus: std::sync::Arc<kod_swarm::file_touch::FileTouchBus>,
+        service: std::sync::Arc<kod_swarm::file_touch::FileTouchService>,
+    ) -> kod_tools::context::FileTouchHook {
+        kod_tools::context::FileTouchHook::new(move |holder, path, op| {
+            let kod_op = match op {
+                kod_tools::context::FileOp::Read => kod_swarm::file_touch::FileOp::Read,
+                kod_tools::context::FileOp::Write => kod_swarm::file_touch::FileOp::Write,
+                kod_tools::context::FileOp::Edit => kod_swarm::file_touch::FileOp::Edit,
+            };
+            let touch = kod_swarm::file_touch::FileTouch {
+                agent_id: holder.to_string(),
+                path: path.to_path_buf(),
+                op: kod_op,
+                summary: None,
+                at: std::time::Instant::now(),
+            };
+            service.record(touch.clone());
+            bus.publish(touch);
+        })
+    }
+
     pub fn blackboard(&self) -> &kod_swarm::Blackboard {
         &self.blackboard
     }
@@ -7872,6 +7944,20 @@ pub(crate) fn filter_chain_by_trust(
         }
         tool_context.permissions.network_access = self.network_access_setting();
 
+        // P1-c: a swarm transcript observes every file touch. The
+        // interactive session (holder `""` → `effective_holder`
+        // `"session"`) never gets a hook, so a single-user turn pays
+        // nothing. `swarm_file_bus` is `None` outside a swarm run
+        // regardless of the holder, so this is a no-op then too.
+        if effective_holder != "session"
+            && let Some(sfb) = self.swarm_file_bus.read().await.clone()
+        {
+            tool_context.on_file_touch = Some(Self::build_swarm_file_hook(
+                sfb.bus,
+                sfb.service,
+            ));
+        }
+
         // Any mutating tool in the round forces the serial path so
         // `[write_file(a), read_file(a)]` cannot race.
         let mut any_mutating = false;
@@ -12849,6 +12935,83 @@ mod p7_trust_filter_tests {
         // config's window, not 500_000.
         let (window, _) = engine.budget_hint_for(&ModelRef::new("ep", "unknown"));
         assert_ne!(window, 500_000, "must not leak another model's window");
+    }
+}
+
+#[cfg(test)]
+mod swarm_file_hook_tests {
+    use super::*;
+    use kod_swarm::file_touch::{FileTouchBus, FileTouchService};
+
+    #[test]
+    fn swarm_file_hook_records_and_publishes() {
+        let bus = std::sync::Arc::new(FileTouchBus::new());
+        let service = std::sync::Arc::new(FileTouchService::new());
+        let mut rx = bus.subscribe();
+
+        let hook = KodEngine::build_swarm_file_hook(bus.clone(), service.clone());
+        hook.call(
+            "swarm:agent-1",
+            std::path::Path::new("/tmp/f.rs"),
+            kod_tools::context::FileOp::Write,
+        );
+
+        // Service recorded it.
+        assert!(service.has_touched("swarm:agent-1", &std::path::PathBuf::from("/tmp/f.rs")));
+
+        // And the bus delivered a matching event.
+        let ev = rx.try_recv().expect("one published event");
+        let kod_swarm::file_touch::SwarmBusEvent::FileTouch(t) = ev;
+        assert_eq!(t.agent_id, "swarm:agent-1");
+        assert_eq!(t.path, std::path::PathBuf::from("/tmp/f.rs"));
+        assert_eq!(t.op, kod_swarm::file_touch::FileOp::Write);
+    }
+
+    #[test]
+    fn swarm_file_hook_uses_the_holder_arg_not_a_captured_value() {
+        // The closure's `holder` argument is the source of truth for
+        // the agent id. A context that gets re-used under a different
+        // holder (which the engine does not currently do, but the
+        // hook contract permits) must attribute to the caller.
+        let bus = std::sync::Arc::new(FileTouchBus::new());
+        let service = std::sync::Arc::new(FileTouchService::new());
+        let hook = KodEngine::build_swarm_file_hook(bus, service.clone());
+
+        hook.call(
+            "swarm:first",
+            std::path::Path::new("/a.rs"),
+            kod_tools::context::FileOp::Read,
+        );
+        hook.call(
+            "swarm:second",
+            std::path::Path::new("/b.rs"),
+            kod_tools::context::FileOp::Write,
+        );
+
+        assert!(service.has_touched("swarm:first", &std::path::PathBuf::from("/a.rs")));
+        assert!(service.has_touched("swarm:second", &std::path::PathBuf::from("/b.rs")));
+        assert!(!service.has_touched("swarm:first", &std::path::PathBuf::from("/b.rs")));
+    }
+
+    #[test]
+    fn swarm_file_hook_reads_do_not_conflict_with_writes() {
+        // End-to-end through the hook: two agents, one reads, one
+        // writes the same file. The writer's conflict view is empty
+        // (the reader did not modify anything); the reader's view
+        // names the writer.
+        let bus = std::sync::Arc::new(FileTouchBus::new());
+        let service = std::sync::Arc::new(FileTouchService::new());
+        let hook = KodEngine::build_swarm_file_hook(bus, service.clone());
+
+        hook.call("reader", std::path::Path::new("/f.rs"), kod_tools::context::FileOp::Read);
+        hook.call("writer", std::path::Path::new("/f.rs"), kod_tools::context::FileOp::Write);
+
+        let writer_view = service.conflicts_for(&std::path::PathBuf::from("/f.rs"), "writer");
+        assert!(writer_view.is_empty(), "reader is not a conflict for writer");
+
+        let reader_view = service.conflicts_for(&std::path::PathBuf::from("/f.rs"), "reader");
+        assert_eq!(reader_view.len(), 1);
+        assert_eq!(reader_view[0].peer, "writer");
     }
 }
 
