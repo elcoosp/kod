@@ -645,6 +645,36 @@ fn shorten_path(path: &str) -> String {
 /// Render a tool result for chat: file lists become counts + names,
 /// command output keeps its lines, everything caps at [`TOOL_RESULT_LINES`]
 /// with an explicit "…and N more" instead of a mid-token cut.
+
+/// Build the summarization prompt from the block about to be dropped.
+///
+/// Bounded: the dropped block can be arbitrarily large, and the
+/// summary call should cost a fraction of the context it replaces. The
+/// cap is generous (32k chars, roughly 8k tokens) because a summary of
+/// a summary compounds error; the model needs enough of the original
+/// to write something usable.
+fn build_summary_prompt(dropped: &[kod_types::ChatMessage]) -> String {
+    const CAP: usize = 32_000;
+    let mut body = String::new();
+    for m in dropped {
+        let line = m.render_text();
+        if body.len() + line.len() + 1 > CAP {
+            body.push_str("\n[...earlier messages truncated for the summary call...]\n");
+            break;
+        }
+        body.push_str(&line);
+        body.push('\n');
+    }
+    format!(
+        "Summarize the conversation excerpt below into four sections: \
+         Context (what was being worked on), What we did (the changes \
+         made), Current state (what works and what does not), and User \
+         preferences (anything the user asked for that should persist). \
+         Be specific; name files and functions. Do not restate the \
+         excerpt, extract from it.\n\n## Excerpt\n\n{body}",
+    )
+}
+
 pub fn summarize_tool_result(name: &str, result: &ToolResult) -> String {
     match result {
         ToolResult::Success(v) => summarize_success(name, v),
@@ -1163,6 +1193,19 @@ pub struct KodEngine {
     /// interactive session; a swarm agent uses `swarm:<agent-id>` so
     /// concurrent agents do not interleave their turns.
     history: RwLock<HashMap<String, Vec<kod_types::ChatMessage>>>,
+    /// P2-a: summaries produced by the background compaction task,
+    /// keyed by transcript. Written when the summary call completes,
+    /// consumed by `maybe_compact_for` on the turn that crosses the
+    /// hard threshold. An entry that is present replaces the
+    /// emergency no-LLM text; an absent entry falls back to it.
+    pending_summaries: std::sync::Arc<RwLock<HashMap<String, String>>>,
+
+    /// P2-a: transcripts with a summary task currently running, so a
+    /// soft threshold crossed on three consecutive turns starts one
+    /// task, not three. Cleared when the task finishes (success or
+    /// failure).
+    summaries_in_flight: std::sync::Arc<RwLock<std::collections::HashSet<String>>>,
+
     /// P2-a: the token count the provider reported for the most
     /// recent request on each transcript (prompt + completion). This
     /// is the *observed* number, not a char estimate — the two
@@ -1742,6 +1785,64 @@ impl KodEngine {
     /// LLM summarization that replaces the dropped block with real
     /// prose is a follow-up; what matters here is that the transcript
     /// never grows past the window and never splits a tool pair.
+    /// P2-a: spawn the background summarization for a transcript
+    /// whose size has crossed the soft threshold.
+    ///
+    /// The task clones the provider (an `Arc`, cheap) and the two
+    /// `Arc`-shared state maps, builds a prompt from the block that
+    /// would be dropped, and writes the result to `pending_summaries`.
+    /// When the hard threshold is crossed on a later turn,
+    /// `maybe_compact_for` uses that text in place of the emergency
+    /// summary: real prose rather than counts and file names.
+    ///
+    /// Fire-and-forget. A failure clears the in-flight mark so the
+    /// next soft-threshold turn retries; the emergency path still
+    /// bounds the context meanwhile, which is the property that has
+    /// to hold.
+    async fn spawn_compaction_summary(&self, key: &str, dropped: Vec<kod_types::ChatMessage>) {
+        // One task per transcript; a second call while one is running
+        // is a no-op rather than a duplicate request.
+        {
+            let mut in_flight = self.summaries_in_flight.write().await;
+            if !in_flight.insert(key.to_string()) {
+                return;
+            }
+        }
+
+        let Some(provider) = self.current_provider().await else {
+            self.summaries_in_flight.write().await.remove(key);
+            return;
+        };
+        let options = self.generation_defaults.read().await.to_options();
+        let prompt = build_summary_prompt(&dropped);
+
+        // Clone the shared state; the task never touches `self`.
+        let pending = self.pending_summaries.clone();
+        let in_flight = self.summaries_in_flight.clone();
+        let engine_key = key.to_string();
+
+        tokio::spawn(async move {
+            let result = provider.generate(&prompt, &options).await;
+            match result {
+                Ok(text) if !text.trim().is_empty() => {
+                    pending
+                        .write()
+                        .await
+                        .insert(engine_key.clone(), text.trim().to_string());
+                }
+                Ok(_) => {
+                    tracing::warn!(key = %engine_key,
+                        "compaction summary returned empty; emergency path will be used");
+                }
+                Err(e) => {
+                    tracing::warn!(key = %engine_key, error = %e,
+                        "compaction summary failed; emergency path will be used");
+                }
+            }
+            in_flight.write().await.remove(&engine_key);
+        });
+    }
+
     async fn maybe_compact_for(&self, key: &str) -> usize {
         // Budget from the cached window; the `0` case (no registry
         // installed) makes `decide` return `None` and nothing runs.
@@ -1770,16 +1871,51 @@ impl KodEngine {
             }
         };
 
-        if crate::compaction::decide(used, window as u64)
-            != crate::compaction::Action::CompactNow
-        {
+        let action = crate::compaction::decide(used, window as u64);
+        if action == crate::compaction::Action::None {
             return 0;
         }
+
+        // Compute the cut once, using a read guard, so both the
+        // StartBackground and CompactNow paths agree on which
+        // messages are in play.
+        let (cut, dropped_for_summary) = {
+            let guard = self.history.read().await;
+            let Some(turns) = guard.get(key) else {
+                return 0;
+            };
+            let Some(cut) =
+                crate::compaction::safe_cutoff(turns, crate::compaction::RECENT_TURNS_TO_KEEP)
+            else {
+                return 0;
+            };
+            if cut == 0 {
+                // No safe cut drops anything: one enormous
+                // un-splittable block. Leave it; the request is
+                // rejected and the caller sees the real limit.
+                return 0;
+            }
+            (cut, turns[..cut].to_vec())
+        };
+
+        if action == crate::compaction::Action::StartBackground {
+            // Queue a background summary for the block that *would*
+            // be dropped. It lands in `pending_summaries` for the turn
+            // that later crosses the hard threshold.
+            self.spawn_compaction_summary(key, dropped_for_summary).await;
+            return 0;
+        }
+
+        // CompactNow: take the pending summary if the background task
+        // has finished, else fall back to the emergency text.
+        let background_summary = self.pending_summaries.write().await.remove(key);
 
         let mut guard = self.history.write().await;
         let Some(turns) = guard.get_mut(key) else {
             return 0;
         };
+        // Recompute against the live transcript; it may have grown
+        // since the read-guard pass above.
         let Some(cut) = crate::compaction::safe_cutoff(
             turns,
             crate::compaction::RECENT_TURNS_TO_KEEP,
@@ -1787,14 +1923,11 @@ impl KodEngine {
             return 0;
         };
         if cut == 0 {
-            // No safe cut drops anything — a transcript that is one
-            // enormous un-splittable block. Leave it; the request will
-            // be rejected and the caller sees the real limit.
             return 0;
         }
-
         let dropped: Vec<kod_types::ChatMessage> = turns.drain(..cut).collect();
-        let summary = crate::compaction::emergency_summary(&dropped, window as u64);
+        let summary = background_summary
+            .unwrap_or_else(|| crate::compaction::emergency_summary(&dropped, window as u64));
         let mut summary_msg = kod_types::ChatMessage::text(
             kod_types::MessageId::new(),
             kod_types::MessageRole::User,
@@ -2104,6 +2237,8 @@ impl KodEngine {
             cancels: parking_lot::RwLock::new(std::collections::HashSet::new()),
             history: RwLock::new(HashMap::new()),
             observed_usage: RwLock::new(HashMap::new()),
+            pending_summaries: std::sync::Arc::new(RwLock::new(HashMap::new())),
+            summaries_in_flight: std::sync::Arc::new(RwLock::new(std::collections::HashSet::new())),
             transcript_working_dirs: RwLock::new(HashMap::new()),
             plans: RwLock::new(HashMap::new()),
             decision_logs: RwLock::new(HashMap::new()),
