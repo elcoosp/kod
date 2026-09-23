@@ -14,7 +14,7 @@
 //!    scores near zero; a fact from yesterday scores near one.
 
 use crate::stopwords;
-use kod_types::MemoryEntry;
+use kod_types::{MemoryEntry, MemoryType};
 use time::OffsetDateTime;
 
 /// The three weights and the recency half-life.
@@ -78,7 +78,32 @@ impl QueryTerms {
     }
 }
 
+/// Half-life multiplier for a durable long-term entry.
+///
+/// A stored preference or fact should not fade at the rate of a
+/// session episode. Four times the base half-life means a long-term
+/// entry that has not been touched in two months still scores most of
+/// its recency weight — which is the point of marking it durable.
+const LONG_TERM_MULTIPLIER: f32 = 4.0;
+
+/// Half-life multiplier for a short-term entry — decays fastest.
+/// A short-term entry is in-session context; a day-old one is stale.
+const SHORT_TERM_MULTIPLIER: f32 = 0.5;
+
 impl HybridScorer {
+    /// The recency half-life that applies to `memory_type`.
+    ///
+    /// The `half_life_days` field is the *base*; the type scales it.
+    /// A caller that set `half_life_days` explicitly still gets that
+    /// value as the anchor, so a custom scorer's intent is preserved.
+    pub fn half_life_for(&self, memory_type: MemoryType) -> f32 {
+        match memory_type {
+            MemoryType::LongTerm => self.half_life_days * LONG_TERM_MULTIPLIER,
+            MemoryType::Episodic => self.half_life_days,
+            MemoryType::ShortTerm => self.half_life_days * SHORT_TERM_MULTIPLIER,
+        }
+    }
+
     /// Score one entry against the query terms + optional cosine.
     pub fn score(
         &self,
@@ -94,7 +119,8 @@ impl HybridScorer {
         };
         let semantic_component = ws * cosine.unwrap_or(0.0).clamp(0.0, 1.0);
         let keyword_component = wk * self.keyword_bm25_lite(query, entry);
-        let recency_component = self.w_recency * recency(entry.timestamp, now, self.half_life_days);
+        let recency_component =
+            self.w_recency * recency(entry.timestamp, now, self.half_life_for(entry.memory_type));
         semantic_component + keyword_component + recency_component
     }
 
@@ -258,6 +284,51 @@ mod tests {
             "rare idf {} should exceed common idf {}",
             query.idf("rare"),
             query.idf("common")
+        );
+    }
+
+    #[test]
+    fn long_term_decays_slower_than_episodic() {
+        let s = HybridScorer::default();
+        assert!(s.half_life_for(MemoryType::LongTerm) > s.half_life_for(MemoryType::Episodic));
+        assert!(s.half_life_for(MemoryType::Episodic) > s.half_life_for(MemoryType::ShortTerm));
+    }
+
+    #[test]
+    fn episodic_uses_the_base_half_life() {
+        // The base field is the anchor; a custom value flows through.
+        let s = HybridScorer {
+            half_life_days: 30.0,
+            ..HybridScorer::default()
+        };
+        assert_eq!(s.half_life_for(MemoryType::Episodic), 30.0);
+    }
+
+    #[test]
+    fn a_long_term_entry_outscores_an_episodic_one_of_the_same_age() {
+        use kod_types::{MemoryEntry, MemoryId, MemoryType};
+        let now = time::OffsetDateTime::now_utc();
+        let old = now - time::Duration::days(30);
+        let mk = |t: MemoryType| MemoryEntry {
+            id: MemoryId::new(),
+            memory_type: t,
+            content: "the user prefers tabs".to_string(),
+            timestamp: old,
+            relevance: 1.0,
+            metadata: Default::default(),
+        };
+        let s = HybridScorer {
+            w_semantic: 0.0,
+            w_keyword: 0.0,
+            w_recency: 1.0,
+            ..HybridScorer::default()
+        };
+        let q = QueryTerms::build("tabs", &[]);
+        let lt = s.score(&q, &mk(MemoryType::LongTerm), None, now);
+        let ep = s.score(&q, &mk(MemoryType::Episodic), None, now);
+        assert!(
+            lt > ep,
+            "long-term {lt} should beat episodic {ep} at the same age"
         );
     }
 }
