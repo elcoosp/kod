@@ -237,6 +237,12 @@ pub struct ModelPricing {
     /// Default ratio is 1.25x input (Anthropic's cache-write premium).
     #[serde(default = "default_cache_write_rate")]
     pub cache_write_per_mtok_usd: f64,
+    /// How the provider reports cache tokens. Defaults to `Split`
+    /// (Anthropic); OpenAI-compatible endpoints override to `Subset`
+    /// at provider construction. A config written before this field
+    /// existed loads as `Split`, which is the pre-change behavior.
+    #[serde(default)]
+    pub cache_convention: crate::CacheConvention,
 }
 
 /// Default cache-read rate as a fraction of the full input rate.
@@ -270,6 +276,7 @@ impl ModelPricing {
             output_per_mtok_usd,
             cache_read_per_mtok_usd: input_per_mtok_usd * DEFAULT_CACHE_READ_RATIO,
             cache_write_per_mtok_usd: input_per_mtok_usd * DEFAULT_CACHE_WRITE_RATIO,
+            cache_convention: crate::CacheConvention::Split,
         }
     }
 
@@ -286,6 +293,7 @@ impl ModelPricing {
             output_per_mtok_usd,
             cache_read_per_mtok_usd,
             cache_write_per_mtok_usd,
+            cache_convention: crate::CacheConvention::Split,
         }
     }
 
@@ -312,7 +320,17 @@ impl ModelPricing {
     /// and every kod call site has one.
     pub fn cost_for_usage(&self, usage: &crate::TokenUsage) -> f64 {
         let m = 1_000_000.0;
-        (usage.uncached_input_tokens() as f64 / m) * self.input_per_mtok_usd
+        // The convention decides what `prompt_tokens` already contains.
+        // Split: prompt is the *uncached* portion already (Anthropic's
+        // `input_tokens`). Subset: prompt includes cache_read, so the
+        // fresh portion is prompt − cache_read.
+        let fresh = match self.cache_convention {
+            crate::CacheConvention::Split => usage.uncached_input_tokens(),
+            crate::CacheConvention::Subset => {
+                usage.prompt_tokens.saturating_sub(usage.cache_read_tokens)
+            }
+        };
+        (fresh as f64 / m) * self.input_per_mtok_usd
             + (usage.cache_read_tokens as f64 / m) * self.cache_read_per_mtok_usd
             + (usage.cache_creation_tokens as f64 / m) * self.cache_write_per_mtok_usd
             + (usage.completion_tokens as f64 / m) * self.output_per_mtok_usd
@@ -474,5 +492,90 @@ mod coverage_prompt_types {
             ProviderCapabilities::default(),
             ProviderCapabilities::conservative(),
         );
+    }
+}
+
+#[cfg(test)]
+mod cache_convention_tests {
+    use super::*;
+
+
+    #[test]
+    fn split_convention_bills_fresh_at_full_and_cache_at_discount() {
+        // kod's `prompt_tokens` is the *total* input window — Anthropic's
+        // `input + cache_read + cache_creation` folded into one number at
+        // the wire layer. The Split convention recovers the fresh portion
+        // by subtracting both cache fields, so a 6M window with 5M served
+        // from cache bills 1M fresh + 5M read.
+        let pricing = ModelPricing {
+            input_per_mtok_usd: 3.0,
+            output_per_mtok_usd: 15.0,
+            cache_read_per_mtok_usd: 0.3,
+            cache_write_per_mtok_usd: 3.75,
+            cache_convention: crate::CacheConvention::Split,
+        };
+        let usage = crate::TokenUsage {
+            prompt_tokens: 6_000_000,      // total window = fresh + read
+            completion_tokens: 0,
+            total_tokens: 6_000_000,
+            cache_read_tokens: 5_000_000,
+            cache_creation_tokens: 0,
+        };
+        // fresh = 6M - 5M - 0 = 1M → 1M * 3 + 5M * 0.3 = 3 + 1.5 = 4.5
+        assert!((pricing.cost_for_usage(&usage) - 4.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn subset_convention_bills_cached_portion_at_the_discount() {
+        // OpenAI shape: prompt includes cached tokens.
+        let pricing = ModelPricing {
+            input_per_mtok_usd: 3.0,
+            output_per_mtok_usd: 15.0,
+            cache_read_per_mtok_usd: 0.3,
+            cache_write_per_mtok_usd: 3.75,
+            cache_convention: crate::CacheConvention::Subset,
+        };
+        let usage = crate::TokenUsage {
+            prompt_tokens: 6_000_000,      // includes the cached 5M
+            completion_tokens: 0,
+            total_tokens: 6_000_000,
+            cache_read_tokens: 5_000_000,
+            cache_creation_tokens: 0,
+        };
+        // fresh = 6M - 5M = 1M * 3 = 3; read 5M * 0.3 = 1.5; total 4.5
+        assert!((pricing.cost_for_usage(&usage) - 4.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn conventions_diverge_when_cache_creation_is_reported() {
+        // Split subtracts BOTH cache fields (read and creation) from the
+        // window; Subset subtracts only the read field. Given a usage
+        // that reports creation > 0, the two conventions produce
+        // different fresh portions and therefore different bills — this
+        // is the exact divergence a wrong config would introduce.
+        let base = ModelPricing {
+            input_per_mtok_usd: 10.0,
+            output_per_mtok_usd: 0.0,
+            cache_read_per_mtok_usd: 1.0,
+            cache_write_per_mtok_usd: 12.5,
+            cache_convention: crate::CacheConvention::Split,
+        };
+        let mut subset = base;
+        subset.cache_convention = crate::CacheConvention::Subset;
+        let usage = crate::TokenUsage {
+            prompt_tokens: 1_000_000,       // total window
+            completion_tokens: 0,
+            total_tokens: 1_000_000,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 100_000,
+        };
+        let split_cost = base.cost_for_usage(&usage);
+        let subset_cost = subset.cost_for_usage(&usage);
+        // Split: fresh = 1M - 0 - 100k = 900k → 0.9M * 10 = 9.0
+        //        + 100k * 12.5 / 1M = 1.25 → total 10.25
+        // Subset: fresh = 1M - 0 = 1M → 1M * 10 = 10.0
+        //        + 100k * 12.5 / 1M = 1.25 → total 11.25
+        assert!((split_cost - 10.25).abs() < 1e-6, "split = {split_cost}");
+        assert!((subset_cost - 11.25).abs() < 1e-6, "subset = {subset_cost}");
     }
 }
