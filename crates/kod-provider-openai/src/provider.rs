@@ -334,12 +334,10 @@ impl OpenAICompatProvider {
                     // *subset* served from cache.
                     cache_read_tokens: usage
                         .cache_read_input_token_count
-                        .unwrap_or(0)
-                        .max(0) as usize,
+                        .map(|n| n.max(0) as u64),
                     cache_creation_tokens: usage
                         .cache_creation_input_token_count
-                        .unwrap_or(0)
-                        .max(0) as usize,
+                        .map(|n| n.max(0) as u64),
                 });
             }
             if let Some(content) = response.content {
@@ -538,12 +536,10 @@ impl OpenAICompatProvider {
                                         total_tokens: usage.total_token_count.max(0) as usize,
                                         cache_read_tokens: usage
                                             .cache_read_input_token_count
-                                            .unwrap_or(0)
-                                            .max(0) as usize,
+                                            .map(|n| n.max(0) as u64),
                                         cache_creation_tokens: usage
                                             .cache_creation_input_token_count
-                                            .unwrap_or(0)
-                                            .max(0) as usize,
+                                            .map(|n| n.max(0) as u64),
                                     });
                                 }
                                 if let Some(content) = response.content {
@@ -1017,8 +1013,8 @@ mod tests {
             prompt_tokens: 10_000,
             completion_tokens: 500,
             total_tokens: 10_500,
-            cache_read_tokens: 8_000,
-            cache_creation_tokens: 0,
+            cache_read_tokens: Some(8_000),
+            cache_creation_tokens: Some(0),
         };
         let pricing = ModelPricing::new(3.0, 15.0)
             .with_cache_convention(CacheConvention::Subset);

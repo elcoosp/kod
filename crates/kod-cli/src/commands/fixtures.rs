@@ -45,8 +45,8 @@ pub async fn run_fixture_replay(name: &str, strict: bool, first_round_only: bool
                 // captured replay would have recorded from an OpenAI-
                 // compatible endpoint. A future fixture format bump
                 // can add them.
-                cache_read_tokens: 0,
-                cache_creation_tokens: 0,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
             }),
         })
         .collect();

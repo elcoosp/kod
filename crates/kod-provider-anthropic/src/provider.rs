@@ -627,18 +627,23 @@ fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
     let usage = v.get("usage").map(|u| {
         let input = u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
         let output = u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
-        let cache_read = u
-            .get("cache_read_input_tokens")
-            .and_then(|n| n.as_u64())
-            .unwrap_or(0) as usize;
+        // Option preserved: `None` means the field was absent, which
+        // is different from "present and zero." kod's `TokenUsage`
+        // keeps that distinction so the hit-rate readout can say
+        // "unknown" rather than lying with "0%".
+        let cache_read = u.get("cache_read_input_tokens").and_then(|n| n.as_u64());
         let cache_creation = u
             .get("cache_creation_input_tokens")
-            .and_then(|n| n.as_u64())
-            .unwrap_or(0) as usize;
+            .and_then(|n| n.as_u64());
+        let read_usize = cache_read.unwrap_or(0) as usize;
+        let creation_usize = cache_creation.unwrap_or(0) as usize;
         kod_provider::TokenUsage {
-            prompt_tokens: input + cache_read + cache_creation,
+            // `prompt_tokens` is the total window the provider billed
+            // and processed. Anthropic reports `input_tokens` excluding
+            // the cache fields, so they are added back here.
+            prompt_tokens: input + read_usize + creation_usize,
             completion_tokens: output,
-            total_tokens: input + cache_read + cache_creation + output,
+            total_tokens: input + read_usize + creation_usize + output,
             cache_read_tokens: cache_read,
             cache_creation_tokens: cache_creation,
         }

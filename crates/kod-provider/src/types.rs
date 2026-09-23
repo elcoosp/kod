@@ -34,16 +34,16 @@ pub struct TokenUsage {
     pub completion_tokens: usize,
     pub total_tokens: usize,
     /// Tokens served from the provider's KV cache (Anthropic
-    /// `cache_read_input_tokens`). Billed at a discounted rate — 0.1x
-    /// input on Anthropic at time of writing. Zero for providers that
-    /// do not report cache state.
+    /// `cache_read_input_tokens`). `None` means the provider did not
+    /// report cache state; `Some(0)` means it reported a total miss.
+    /// The distinction matters: a ledger cannot tell "no cache
+    /// support" from "100% miss" without it.
     #[serde(default)]
-    pub cache_read_tokens: usize,
+    pub cache_read_tokens: Option<u64>,
     /// Tokens written to the provider's KV cache this call (Anthropic
-    /// `cache_creation_input_tokens`). Billed at a premium — 1.25x
-    /// input on Anthropic. Zero for providers that do not report it.
+    /// `cache_creation_input_tokens`). `None` when unreported.
     #[serde(default)]
-    pub cache_creation_tokens: usize,
+    pub cache_creation_tokens: Option<u64>,
 }
 
 impl TokenUsage {
@@ -60,21 +60,22 @@ impl TokenUsage {
     /// than the prompt window yields 0 rather than wrapping.
     pub fn uncached_input_tokens(&self) -> usize {
         self.prompt_tokens
-            .saturating_sub(self.cache_read_tokens)
-            .saturating_sub(self.cache_creation_tokens)
+            .saturating_sub(self.cache_read_tokens.unwrap_or(0) as usize)
+            .saturating_sub(self.cache_creation_tokens.unwrap_or(0) as usize)
     }
 
     /// Fraction of input tokens served from cache this call.
     ///
-    /// Zero for a call with no input tokens or a provider that does
-    /// not report cache fields — not NaN, so callers can print it
-    /// without a guard.
-    pub fn cache_hit_rate(&self) -> f64 {
+    /// `None` when the provider did not report cache reads (the
+    /// metric is unknown, not zero) or when the call had no input
+    /// tokens (the ratio is undefined). A caller that prints a hit
+    /// rate must show "unknown" for `None` rather than "0%".
+    pub fn cache_hit_rate(&self) -> Option<f64> {
+        let read = self.cache_read_tokens?;
         if self.prompt_tokens == 0 {
-            0.0
-        } else {
-            self.cache_read_tokens as f64 / self.prompt_tokens as f64
+            return None;
         }
+        Some(read as f64 / self.prompt_tokens as f64)
     }
 
     /// H-E6: sum two usage reports from the same logical turn. In an
@@ -93,12 +94,16 @@ impl TokenUsage {
                 .completion_tokens
                 .saturating_add(other.completion_tokens),
             total_tokens: self.total_tokens.saturating_add(other.total_tokens),
-            cache_read_tokens: self
-                .cache_read_tokens
-                .saturating_add(other.cache_read_tokens),
-            cache_creation_tokens: self
-                .cache_creation_tokens
-                .saturating_add(other.cache_creation_tokens),
+            cache_read_tokens: match (self.cache_read_tokens, other.cache_read_tokens) {
+                (None, None) => None,
+                (Some(a), None) | (None, Some(a)) => Some(a),
+                (Some(a), Some(b)) => Some(a.saturating_add(b)),
+            },
+            cache_creation_tokens: match (self.cache_creation_tokens, other.cache_creation_tokens) {
+                (None, None) => None,
+                (Some(a), None) | (None, Some(a)) => Some(a),
+                (Some(a), Some(b)) => Some(a.saturating_add(b)),
+            },
         }
     }
 }

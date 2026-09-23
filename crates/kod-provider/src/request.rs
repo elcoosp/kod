@@ -316,8 +316,8 @@ impl ModelPricing {
             prompt_tokens,
             completion_tokens,
             total_tokens: prompt_tokens.saturating_add(completion_tokens),
-            cache_read_tokens: 0,
-            cache_creation_tokens: 0,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
         })
     }
 
@@ -336,12 +336,15 @@ impl ModelPricing {
         let fresh = match self.cache_convention {
             crate::CacheConvention::Split => usage.uncached_input_tokens(),
             crate::CacheConvention::Subset => {
-                usage.prompt_tokens.saturating_sub(usage.cache_read_tokens)
+                let read = usage.cache_read_tokens.unwrap_or(0) as usize;
+                usage.prompt_tokens.saturating_sub(read)
             }
         };
+        let read = usage.cache_read_tokens.unwrap_or(0);
+        let write = usage.cache_creation_tokens.unwrap_or(0);
         (fresh as f64 / m) * self.input_per_mtok_usd
-            + (usage.cache_read_tokens as f64 / m) * self.cache_read_per_mtok_usd
-            + (usage.cache_creation_tokens as f64 / m) * self.cache_write_per_mtok_usd
+            + (read as f64 / m) * self.cache_read_per_mtok_usd
+            + (write as f64 / m) * self.cache_write_per_mtok_usd
             + (usage.completion_tokens as f64 / m) * self.output_per_mtok_usd
     }
 }
@@ -527,8 +530,8 @@ mod cache_convention_tests {
             prompt_tokens: 6_000_000,      // total window = fresh + read
             completion_tokens: 0,
             total_tokens: 6_000_000,
-            cache_read_tokens: 5_000_000,
-            cache_creation_tokens: 0,
+            cache_read_tokens: Some(5_000_000),
+            cache_creation_tokens: Some(0),
         };
         // fresh = 6M - 5M - 0 = 1M → 1M * 3 + 5M * 0.3 = 3 + 1.5 = 4.5
         assert!((pricing.cost_for_usage(&usage) - 4.5).abs() < 1e-9);
@@ -548,8 +551,8 @@ mod cache_convention_tests {
             prompt_tokens: 6_000_000,      // includes the cached 5M
             completion_tokens: 0,
             total_tokens: 6_000_000,
-            cache_read_tokens: 5_000_000,
-            cache_creation_tokens: 0,
+            cache_read_tokens: Some(5_000_000),
+            cache_creation_tokens: Some(0),
         };
         // fresh = 6M - 5M = 1M * 3 = 3; read 5M * 0.3 = 1.5; total 4.5
         assert!((pricing.cost_for_usage(&usage) - 4.5).abs() < 1e-9);
@@ -575,8 +578,8 @@ mod cache_convention_tests {
             prompt_tokens: 1_000_000,       // total window
             completion_tokens: 0,
             total_tokens: 1_000_000,
-            cache_read_tokens: 0,
-            cache_creation_tokens: 100_000,
+            cache_read_tokens: Some(0),
+            cache_creation_tokens: Some(100_000),
         };
         let split_cost = base.cost_for_usage(&usage);
         let subset_cost = subset.cost_for_usage(&usage);

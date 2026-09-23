@@ -97,7 +97,7 @@ impl CacheLedger {
             .entry(endpoint.to_string())
             .or_default();
         state.head_fingerprint = head_fingerprint;
-        state.cached_tokens = usage.cache_read_tokens as u64;
+        state.cached_tokens = usage.cache_read_tokens.unwrap_or(0);
         state.last_used_turn = turn;
         // The endpoint we just used is now the warm one. A later
         // turn that considers hopping away will be gated against
@@ -210,8 +210,8 @@ mod tests {
             prompt_tokens: 1000,
             completion_tokens: 100,
             total_tokens: 1100,
-            cache_read_tokens: cache_read,
-            cache_creation_tokens: 0,
+            cache_read_tokens: Some(cache_read as u64),
+            cache_creation_tokens: None,
         }
     }
 
