@@ -21,6 +21,7 @@ pub mod brief_assembly;
 pub mod blackboard;
 pub mod communication;
 pub mod coordination;
+pub mod file_touch;
 pub mod swarm;
 
 pub use agent::{Agent, AgentBuilder, AgentState, Capability, ModelConfig};
