@@ -1441,6 +1441,30 @@ impl SwarmRunner {
                         &report,
                         &brief_for_merge,
                     );
+                    // P3-e: the tag-delimited completion report is a
+                    // *second* contract, independent of the JSON brief
+                    // above. `parse_report` handles the JSON shape a
+                    // structured reply uses; `completion_report::parse`
+                    // handles the `<completion-report>` block the
+                    // subtask prompt asks for at the end of the final
+                    // message. Both can be present; the followups are
+                    // routed to the parent's steers queue here so the
+                    // coordinator sees open questions before the merge
+                    // synthesis runs.
+                    let cr = kod_swarm::completion_report::parse(&text);
+                    if cr.had_block {
+                        for f_up in &cr.followups {
+                            let _ = self
+                                .engine
+                                .steer_interrupt_for(
+                                    crate::engine::DEFAULT_TRANSCRIPT_KEY,
+                                    crate::steer::SoftInterrupt::swarm(format!(
+                                        "[{name}] followup: {f_up}"
+                                    )),
+                                )
+                                .await;
+                        }
+                    }
                     if !plan.boundary_violations.is_empty() {
                         let _ = chunk_tx
                             .send(SwarmEvent::BoundaryViolation {
