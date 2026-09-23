@@ -1163,6 +1163,13 @@ pub struct KodEngine {
     /// interactive session; a swarm agent uses `swarm:<agent-id>` so
     /// concurrent agents do not interleave their turns.
     history: RwLock<HashMap<String, Vec<kod_types::ChatMessage>>>,
+    /// P2-a: the token count the provider reported for the most
+    /// recent request on each transcript (prompt + completion). This
+    /// is the *observed* number, not a char estimate — the two
+    /// disagree by 20-50% and the compaction decision needs the real
+    /// one. Absent until a transcript's first completed call.
+    observed_usage: RwLock<HashMap<String, u64>>,
+
     /// Per-transcript working-directory override (D4-D1). A swarm
     /// agent registers its worktree path here before running; tool
     /// calls on that transcript use the override for
@@ -1722,6 +1729,94 @@ impl KodEngine {
             .insert(key.to_string(), trace);
     }
 
+    /// P2-a: compact `key`'s transcript before the next render when
+    /// the observed token count has crossed the hard threshold.
+    ///
+    /// Called from `prepare_turn` immediately before
+    /// `render_history_for`, so the compacted transcript is what gets
+    /// rendered and the current turn pays the smaller prompt. Returns
+    /// the number of messages dropped (0 when no compaction ran).
+    ///
+    /// This is the *emergency* path only: it drops the oldest safe
+    /// block and inserts a factual no-LLM summary. The background
+    /// LLM summarization that replaces the dropped block with real
+    /// prose is a follow-up; what matters here is that the transcript
+    /// never grows past the window and never splits a tool pair.
+    async fn maybe_compact_for(&self, key: &str) -> usize {
+        // Budget from the cached window; the `0` case (no registry
+        // installed) makes `decide` return `None` and nothing runs.
+        let (window, _max_out) = self
+            .budget_hint
+            .read()
+            .map(|g| *g)
+            .unwrap_or((0, 0));
+        if window == 0 {
+            return 0;
+        }
+
+        // Observed count when we have one; otherwise a cheap estimate
+        // from the raw history (4 chars/token — the same rough figure
+        // the prompt builder uses) so a resumed session with a huge
+        // transcript still compacts on its first turn.
+        let used = match self.observed_usage.read().await.get(key) {
+            Some(&n) => n,
+            None => {
+                let guard = self.history.read().await;
+                let chars: usize = guard
+                    .get(key)
+                    .map(|t| t.iter().map(|m| m.content.len()).sum())
+                    .unwrap_or(0);
+                (chars / 4) as u64
+            }
+        };
+
+        if crate::compaction::decide(used, window as u64)
+            != crate::compaction::Action::CompactNow
+        {
+            return 0;
+        }
+
+        let mut guard = self.history.write().await;
+        let Some(turns) = guard.get_mut(key) else {
+            return 0;
+        };
+        let Some(cut) = crate::compaction::safe_cutoff(
+            turns,
+            crate::compaction::RECENT_TURNS_TO_KEEP,
+        ) else {
+            return 0;
+        };
+        if cut == 0 {
+            // No safe cut drops anything — a transcript that is one
+            // enormous un-splittable block. Leave it; the request will
+            // be rejected and the caller sees the real limit.
+            return 0;
+        }
+
+        let dropped: Vec<kod_types::ChatMessage> = turns.drain(..cut).collect();
+        let summary = crate::compaction::emergency_summary(&dropped, window as u64);
+        let mut summary_msg = kod_types::ChatMessage::text(
+            kod_types::MessageId::new(),
+            kod_types::MessageRole::User,
+            format!("## Previous Conversation Summary\n{summary}"),
+            time::OffsetDateTime::now_utc(),
+        );
+        // Pinned so the render path never drops the summary for
+        // budget reasons — losing it would lose the only record of
+        // what was compacted away.
+        summary_msg.metadata.pinned = true;
+        turns.insert(0, summary_msg);
+
+        tracing::info!(
+            key,
+            dropped = cut,
+            used_tokens = used,
+            window,
+            "P2-a: emergency compaction ran",
+        );
+        cut
+    }
+
     pub(crate) async fn prepare_turn(
         &self,
         key: &str,
@@ -1744,6 +1839,10 @@ impl KodEngine {
                     .await;
             }
         }
+        // P2-a: compact before rendering, so the current turn pays
+        // the smaller prompt. A no-op unless the observed usage has
+        // crossed the hard threshold.
+        let _ = self.maybe_compact_for(key).await;
         let history = self.render_history_for(key).await;
         self.remember_turn_for(key, true, input).await;
         let (alloc, definitions, pending) = self
@@ -2004,6 +2103,7 @@ impl KodEngine {
             steers: RwLock::new(HashMap::new()),
             cancels: parking_lot::RwLock::new(std::collections::HashSet::new()),
             history: RwLock::new(HashMap::new()),
+            observed_usage: RwLock::new(HashMap::new()),
             transcript_working_dirs: RwLock::new(HashMap::new()),
             plans: RwLock::new(HashMap::new()),
             decision_logs: RwLock::new(HashMap::new()),
@@ -4800,6 +4900,18 @@ pub(crate) fn filter_chain_by_trust(
         // useful even if the log write is skipped because no
         // recorder is installed.
         self.ledger_observe(&model_ref.endpoint, head_fingerprint, usage);
+
+        // P2-a: record the observed size for the compaction decision.
+        // `prompt + completion` is the whole window the provider
+        // processed; that is what the next request will roughly
+        // repeat before new turns are appended.
+        let observed = usage
+            .prompt_tokens
+            .saturating_add(usage.completion_tokens) as u64;
+        self.observed_usage
+            .write()
+            .await
+            .insert(holder.to_string(), observed);
         // Delegate the accounting to the base method; it will feed
         // the ledger again with a zero fingerprint, which is a
         // no-op overwrite of the correct value just written. (The
