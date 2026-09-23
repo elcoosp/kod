@@ -1071,6 +1071,12 @@ struct ToolRound {
 /// without an explicit key operate on this. Swarm agents use a
 /// `swarm:<agent-id>` key so concurrent agents do not interleave their
 /// turns into one shared history.
+/// §7.3: how long a memory entry stays out of the prompt after being
+/// injected once. 45 minutes: long enough that a working session does
+/// not repeat itself, short enough that a fact is refreshed before it
+/// is forgotten.
+const MEMORY_INJECTION_TTL_MS: u64 = 45 * 60 * 1000;
+
 pub(crate) const DEFAULT_TRANSCRIPT_KEY: &str = "";
 
 /// Main engine for KOD
@@ -1205,6 +1211,19 @@ pub struct KodEngine {
     /// task, not three. Cleared when the task finishes (success or
     /// failure).
     summaries_in_flight: std::sync::Arc<RwLock<std::collections::HashSet<String>>>,
+
+    /// §7.3: when each memory entry was last injected into a prompt,
+    /// per transcript. A long session retrieves the same preference
+    /// on every turn — the entry still matches the query, so nothing
+    /// filters it — and the model reads it for the tenth time. The
+    /// response that consumed an injection is already in the
+    /// transcript; re-sending it is pure noise.
+    ///
+    /// Value is wall-clock ms of the injection. An entry younger than
+    /// [`MEMORY_INJECTION_TTL_MS`] is skipped; older is re-injected,
+    /// because the turn that saw it has scrolled out of the context
+    /// by then.
+    injected_memory_at: RwLock<HashMap<String, HashMap<kod_types::MemoryId, u64>>>,
 
     /// P2-a: the token count the provider reported for the most
     /// recent request on each transcript (prompt + completion). This
@@ -2237,6 +2256,7 @@ impl KodEngine {
             cancels: parking_lot::RwLock::new(std::collections::HashSet::new()),
             history: RwLock::new(HashMap::new()),
             observed_usage: RwLock::new(HashMap::new()),
+            injected_memory_at: RwLock::new(HashMap::new()),
             pending_summaries: std::sync::Arc::new(RwLock::new(HashMap::new())),
             summaries_in_flight: std::sync::Arc::new(RwLock::new(std::collections::HashSet::new())),
             transcript_working_dirs: RwLock::new(HashMap::new()),
@@ -5669,6 +5689,13 @@ pub(crate) fn filter_chain_by_trust(
         response.memory_context = self
             .filter_memory_context_with_jev(key, response.memory_context)
             .await;
+        // §7.3 — then drop anything injected recently. Order matters:
+        // Jev filters by *relevance*, this filters by *novelty*, and
+        // an entry that fails both should not have its injection clock
+        // started.
+        response.memory_context = self
+            .apply_memory_injection_ttl(key, response.memory_context)
+            .await;
         // Tier 2.4 — record this turn's retrieval.
         if let Some(turn_id) = retrieval_log_turn_id
             && let Some(ctx) = response.memory_context.as_ref()
@@ -5682,6 +5709,48 @@ pub(crate) fn filter_chain_by_trust(
             self.log_memory_retrieval(turn_id, input, &entries);
         }
         Ok(response)
+    }
+
+
+    /// §7.3: drop memory entries injected within the TTL window.
+    ///
+    /// Returns the context with recently-shown entries removed and
+    /// records the survivors as injected-now. A memory injected 50
+    /// minutes ago comes back — by then the turn that consumed it is
+    /// far enough back that repeating it is useful, not noise.
+    ///
+    /// Best-effort: the map is per-transcript, so a swarm agent's view
+    /// is its own.
+    async fn apply_memory_injection_ttl(
+        &self,
+        key: &str,
+        context: Option<kod_types::MemoryContext>,
+    ) -> Option<kod_types::MemoryContext> {
+        let Some(mut ctx) = context else { return None };
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        let mut guard = self.injected_memory_at.write().await;
+        let seen = guard.entry(key.to_string()).or_default();
+
+        let within = |id: &kod_types::MemoryId| -> bool {
+            seen.get(id)
+                .is_some_and(|&at| now_ms.saturating_sub(at) < MEMORY_INJECTION_TTL_MS)
+        };
+        ctx.working_memory.retain(|e| !within(&e.id));
+        ctx.long_term.retain(|e| !within(&e.id));
+
+        for e in ctx.working_memory.iter().chain(ctx.long_term.iter()) {
+            seen.insert(e.id.clone(), now_ms);
+        }
+
+        // Bound the map: an expired entry cannot suppress anything, so
+        // dropping it is exact.
+        seen.retain(|_, &mut at| now_ms.saturating_sub(at) < MEMORY_INJECTION_TTL_MS);
+
+        Some(ctx)
     }
 
     /// S10: refine the router's task type and skills with Jev's
