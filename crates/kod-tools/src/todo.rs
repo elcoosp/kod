@@ -26,6 +26,32 @@ pub struct TodoItem {
     pub id: u64,
     pub text: String,
     pub status: TodoStatus,
+    /// Ids of todos that must reach `Completed` before this one may
+    /// start. Empty for an unblocked item.
+    ///
+    /// Deliberately model-set, not harness-inferred: the harness
+    /// cannot know that "write the parser" depends on "design the
+    /// grammar", the model can. The tool's contribution is
+    /// enforcement — `update` refuses to move a blocked item to
+    /// `in_progress` and names the blockers, so the model gets a
+    /// concrete continuation rather than a silent no-op.
+    #[serde(default)]
+    pub blocked_by: Vec<u64>,
+}
+
+impl TodoItem {
+    /// Whether every blocker has reached `Completed`.
+    ///
+    /// A *cancelled* blocker does not unblock: cancelling a
+    /// prerequisite means the plan is broken, and treating it as done
+    /// would hide that. The item stays blocked until the model either
+    /// revives the prerequisite or calls `unblock`.
+    pub fn is_ready(&self, all: &[TodoItem]) -> bool {
+        self.blocked_by.iter().all(|bid| {
+            all.iter()
+                .any(|it| it.id == *bid && it.status == TodoStatus::Completed)
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,16 +150,27 @@ impl Tool for TodoTool {
                 let id = self
                     .next_id
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                // Optional `blocked_by`: ids this item waits on. Ids
+                // that do not exist yet are accepted — the model may
+                // add the prerequisite next; the item is simply never
+                // ready until they appear and complete.
+                let blocked_by: Vec<u64> = params
+                    .get("blocked_by")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_u64).collect())
+                    .unwrap_or_default();
                 let item = TodoItem {
                     id,
                     text,
                     status: TodoStatus::Pending,
+                    blocked_by: blocked_by.clone(),
                 };
                 self.list.write().await.push(item.clone());
                 Ok(ToolResult::Success(serde_json::json!({
                     "id": id,
                     "text": item.text,
                     "status": "pending",
+                    "blocked_by": blocked_by,
                 })))
             }
             "update" => {
@@ -161,6 +198,32 @@ impl Tool for TodoTool {
                     }
                 };
                 let mut list = self.list.write().await;
+                // Readiness gate: `in_progress` on a blocked item is
+                // refused with the blocker ids named. Every other
+                // transition is allowed — cancelling a blocked item is
+                // legitimate, and completing one out of order is the
+                // model's call.
+                if status == TodoStatus::InProgress {
+                    let all: Vec<TodoItem> = list.clone();
+                    if let Some(item) = all.iter().find(|it| it.id == id)
+                        && !item.is_ready(&all)
+                    {
+                        let pending: Vec<u64> = item
+                            .blocked_by
+                            .iter()
+                            .filter(|bid| {
+                                !all.iter().any(|it| {
+                                    it.id == **bid && it.status == TodoStatus::Completed
+                                })
+                            })
+                            .copied()
+                            .collect();
+                        return Ok(ToolResult::Error(format!(
+                            "todo {id} is blocked by {pending:?}; complete those first \
+                             (or `unblock` this item if the dependency no longer applies)",
+                        )));
+                    }
+                }
                 match list.iter_mut().find(|it| it.id == id) {
                     Some(item) => {
                         item.status = status;
@@ -172,11 +235,35 @@ impl Tool for TodoTool {
                     None => Ok(ToolResult::Error(format!("no todo with id {}", id))),
                 }
             }
+            "unblock" => {
+                // Clear an item's blockers. The model calls this when
+                // a dependency no longer applies — the tool cannot
+                // infer that.
+                let id = params["id"]
+                    .as_u64()
+                    .ok_or_else(|| KodError::InvalidParameters {
+                        reason: "'unblock' requires 'id'".to_string(),
+                    })?;
+                let mut list = self.list.write().await;
+                match list.iter_mut().find(|it| it.id == id) {
+                    Some(item) => {
+                        let cleared = std::mem::take(&mut item.blocked_by);
+                        Ok(ToolResult::Success(serde_json::json!({
+                            "id": id,
+                            "cleared": cleared,
+                        })))
+                    }
+                    None => Ok(ToolResult::Error(format!("no todo with id {}", id))),
+                }
+            }
             "list" => {
                 let list = self.list.read().await;
                 let items: Vec<Value> = list
                     .iter()
                     .map(|it| {
+                        // `ready` distinguishes a pending item that can
+                        // start from one waiting on a blocker.
+                        let ready = it.is_ready(&list);
                         serde_json::json!({
                             "id": it.id,
                             "text": it.text,
@@ -185,7 +272,9 @@ impl Tool for TodoTool {
                                 TodoStatus::InProgress => "in_progress",
                                 TodoStatus::Completed => "completed",
                                 TodoStatus::Cancelled => "cancelled",
-                            }
+                            },
+                            "blocked_by": it.blocked_by,
+                            "ready": ready,
                         })
                     })
                     .collect();
@@ -508,5 +597,133 @@ mod coverage_todo_lifecycle {
             ToolResult::Success(v) => assert_eq!(v["count"], 1),
             other => panic!("got {other:?}"),
         }
+    }
+}
+
+
+#[cfg(test)]
+mod semantic_todo_tests {
+    use super::*;
+
+    /// Add a todo and return the id the tool assigned. Ids are
+    /// assigned by an internal counter, not by the caller, so a test
+    /// that hardcodes 0 gets a blocker that points at nothing.
+    async fn add(tool: &TodoTool, ctx: &ToolContext, text: &str, blocked_by: Vec<u64>) -> u64 {
+        let params = if blocked_by.is_empty() {
+            serde_json::json!({"action": "add", "text": text})
+        } else {
+            serde_json::json!({"action": "add", "text": text, "blocked_by": blocked_by})
+        };
+        match tool.execute(&params, ctx).await.unwrap() {
+            ToolResult::Success(v) => v["id"].as_u64().unwrap(),
+            other => panic!("add failed: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn blocked_item_refuses_to_start() {
+        let tool = TodoTool::new(new_list());
+        let ctx = ToolContext::new(std::env::temp_dir());
+        let dep = add(&tool, &ctx, "design", vec![]).await;
+        let child = add(&tool, &ctx, "build", vec![dep]).await;
+
+        let r = tool
+            .execute(
+                &serde_json::json!({"action": "update", "id": child, "status": "in_progress"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Error(msg) => {
+                assert!(msg.contains("blocked by"), "got: {msg}");
+                assert!(msg.contains(&dep.to_string()), "message must name the blocker: {msg}");
+            }
+            other => panic!("expected refusal, got {other:?}"),
+        }
+
+        // Completing the prerequisite unblocks the dependent.
+        tool.execute(
+            &serde_json::json!({"action": "update", "id": dep, "status": "completed"}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+        let r = tool
+            .execute(
+                &serde_json::json!({"action": "update", "id": child, "status": "in_progress"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(r, ToolResult::Success(_)));
+    }
+
+    #[tokio::test]
+    async fn unblock_clears_the_blockers() {
+        let tool = TodoTool::new(new_list());
+        let ctx = ToolContext::new(std::env::temp_dir());
+        let dep = add(&tool, &ctx, "dep", vec![]).await;
+        let child = add(&tool, &ctx, "child", vec![dep]).await;
+
+        tool.execute(&serde_json::json!({"action": "unblock", "id": child}), &ctx)
+            .await
+            .unwrap();
+        let r = tool
+            .execute(
+                &serde_json::json!({"action": "update", "id": child, "status": "in_progress"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(r, ToolResult::Success(_)), "unblocked item starts");
+    }
+
+    #[tokio::test]
+    async fn list_marks_readiness() {
+        let tool = TodoTool::new(new_list());
+        let ctx = ToolContext::new(std::env::temp_dir());
+        let dep = add(&tool, &ctx, "a", vec![]).await;
+        let _child = add(&tool, &ctx, "b", vec![dep]).await;
+
+        let r = tool
+            .execute(&serde_json::json!({"action": "list"}), &ctx)
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Success(v) => {
+                let items = v["items"].as_array().unwrap();
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[0]["ready"], true, "a has no blockers");
+                assert_eq!(items[1]["ready"], false, "b waits on a");
+            }
+            other => panic!("expected success, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_blocker_does_not_unblock() {
+        let tool = TodoTool::new(new_list());
+        let ctx = ToolContext::new(std::env::temp_dir());
+        let dep = add(&tool, &ctx, "a", vec![]).await;
+        let child = add(&tool, &ctx, "b", vec![dep]).await;
+
+        tool.execute(
+            &serde_json::json!({"action": "update", "id": dep, "status": "cancelled"}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+        let r = tool
+            .execute(
+                &serde_json::json!({"action": "update", "id": child, "status": "in_progress"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(
+            matches!(r, ToolResult::Error(_)),
+            "cancelled blocker must not count as done",
+        );
     }
 }
