@@ -182,5 +182,16 @@ pub fn inject_intent_field(schema: &mut serde_json::Value) {
             "description": "Short label: why this call is being made.",
         })
     });
+    // The context guard withholds an oversized result unless the
+    // model opts in. The flag rides on every schema so the model
+    // knows the escape exists before it hits the wall.
+    props.entry("accept_large_output").or_insert_with(|| {
+        serde_json::json!({
+            "type": "boolean",
+            "description": "Set true to receive an oversized result in full. \
+                            Otherwise a result over the cap is withheld with \
+                            its size; narrow the query or re-issue with this flag.",
+        })
+    });
 }
 

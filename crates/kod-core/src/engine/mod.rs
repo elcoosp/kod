@@ -7745,16 +7745,48 @@ pub(crate) fn filter_chain_by_trust(
         }
         for (i, call) in calls.iter().enumerate() {
             let id = call.id.clone().unwrap_or_else(|| format!("call_{i}"));
+            // P3-d: does the model consent to a large result? The
+            // flag is in the schema of every tool, so a call that
+            // wants the full output sets it. Absent or false means
+            // the context guard withholds.
+            let accepts_large = call
+                .arguments
+                .get("accept_large_output")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
             let rendered = match results.get(i) {
                 Some(kod_types::ToolResult::Success(v)) => {
                     let raw = v.to_string();
                     if raw.len() > STRUCTURED_TOOL_MSG_CAP {
-                        format!(
-                            "{}…[truncated: {} of {} bytes]",
-                            truncate_chars(&raw, STRUCTURED_TOOL_MSG_CAP),
-                            STRUCTURED_TOOL_MSG_CAP,
-                            raw.len(),
-                        )
+                        if accepts_large {
+                            // Consented: truncate at the cap anyway,
+                            // because the endpoint's window is the
+                            // hard limit — the flag buys the model
+                            // the result up to the wire cap, not past
+                            // it.
+                            format!(
+                                "{}…[truncated at the {} byte wire cap; the \
+                                 full result was {} bytes — narrow the query \
+                                 to see the rest]",
+                                truncate_chars(&raw, STRUCTURED_TOOL_MSG_CAP),
+                                STRUCTURED_TOOL_MSG_CAP,
+                                raw.len(),
+                            )
+                        } else {
+                            // Withheld, not truncated. The model gets
+                            // the size and the flag, so its next move
+                            // is informed: narrow the query, or
+                            // re-issue with consent.
+                            format!(
+                                "[result withheld: {} bytes exceeds the {} byte \
+                                 cap. Narrow the query, or re-issue this call \
+                                 with `accept_large_output: true` to receive it \
+                                 truncated to the cap.]",
+                                raw.len(),
+                                STRUCTURED_TOOL_MSG_CAP,
+                            )
+                        }
                     } else {
                         raw
                     }
