@@ -297,6 +297,15 @@ impl ModelPricing {
         }
     }
 
+    /// Set the cache convention for this pricing. Consuming builder —
+    /// chain after `new` or `with_cache_rates`. `Split` is the
+    /// default; OpenAI-compatible endpoints override to `Subset`
+    /// because their `prompt_tokens` includes cached tokens.
+    pub fn with_cache_convention(mut self, conv: crate::CacheConvention) -> Self {
+        self.cache_convention = conv;
+        self
+    }
+
     /// Cost for a call with the given token counts, in USD.
     ///
     /// Kept for callers that only have the two-token-count shape;

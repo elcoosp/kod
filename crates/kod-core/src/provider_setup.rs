@@ -70,10 +70,27 @@ pub fn build_registry(
         // (A5+) overrides here.
         let mut caps = kod_provider::ProviderCapabilities::conservative();
         if let Some(p) = &endpoint.pricing {
-            caps.pricing = Some(kod_provider::ModelPricing::new(
-                p.input_per_mtok_usd,
-                p.output_per_mtok_usd,
-            ));
+            // The cache convention follows the wire provider, not the
+            // config: OpenAI-compatible endpoints report `cached_tokens`
+            // as a subset of `prompt_tokens`; Anthropic reports
+            // `cache_read_input_tokens` outside `input_tokens`. Getting
+            // this wrong over-bills every cached turn at the full input
+            // rate.
+            let conv = match endpoint.provider {
+                kod_config::ProviderKind::OpenAICompatible => {
+                    kod_provider::CacheConvention::Subset
+                }
+                kod_config::ProviderKind::Anthropic => {
+                    kod_provider::CacheConvention::Split
+                }
+            };
+            caps.pricing = Some(
+                kod_provider::ModelPricing::new(
+                    p.input_per_mtok_usd,
+                    p.output_per_mtok_usd,
+                )
+                .with_cache_convention(conv),
+            );
         }
         registry.insert(
             endpoint.name.clone(),

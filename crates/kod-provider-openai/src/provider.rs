@@ -329,7 +329,17 @@ impl OpenAICompatProvider {
                     prompt_tokens: usage.prompt_token_count.max(0) as usize,
                     completion_tokens: usage.candidates_token_count.max(0) as usize,
                     total_tokens: usage.total_token_count.max(0) as usize,
-                    ..Default::default()
+                    // Subset convention: `prompt_token_count` already
+                    // includes cached tokens; the cache field is the
+                    // *subset* served from cache.
+                    cache_read_tokens: usage
+                        .cache_read_input_token_count
+                        .unwrap_or(0)
+                        .max(0) as usize,
+                    cache_creation_tokens: usage
+                        .cache_creation_input_token_count
+                        .unwrap_or(0)
+                        .max(0) as usize,
                 });
             }
             if let Some(content) = response.content {
@@ -526,7 +536,14 @@ impl OpenAICompatProvider {
                                         prompt_tokens: usage.prompt_token_count.max(0) as usize,
                                         completion_tokens: usage.candidates_token_count.max(0) as usize,
                                         total_tokens: usage.total_token_count.max(0) as usize,
-                                        ..Default::default()
+                                        cache_read_tokens: usage
+                                            .cache_read_input_token_count
+                                            .unwrap_or(0)
+                                            .max(0) as usize,
+                                        cache_creation_tokens: usage
+                                            .cache_creation_input_token_count
+                                            .unwrap_or(0)
+                                            .max(0) as usize,
                                     });
                                 }
                                 if let Some(content) = response.content {
@@ -983,5 +1000,33 @@ mod tests {
             caps.streaming_tools,
             "OpenAI-compatible provider streams tool-call text",
         );
+    }
+
+    #[test]
+    fn openai_usage_carries_cache_subset() {
+        // The Subset convention: `prompt_tokens` includes cached
+        // tokens, so the cached portion must be subtracted before
+        // billing. This pins that the cost math honours it — a
+        // regression that reverted to Split would over-bill every
+        // cached turn at the full input rate.
+        use kod_provider::request::ModelPricing;
+        use kod_provider::CacheConvention;
+        use kod_provider::TokenUsage;
+
+        let usage = TokenUsage {
+            prompt_tokens: 10_000,
+            completion_tokens: 500,
+            total_tokens: 10_500,
+            cache_read_tokens: 8_000,
+            cache_creation_tokens: 0,
+        };
+        let pricing = ModelPricing::new(3.0, 15.0)
+            .with_cache_convention(CacheConvention::Subset);
+        let cost = pricing.cost_for_usage(&usage);
+        // fresh = 10k - 8k = 2k → 0.006
+        // read  = 8k → 0.0024
+        // completion = 500 → 0.0075
+        // total ≈ 0.0159
+        assert!((cost - 0.0159).abs() < 1e-6, "cost = {cost}");
     }
 }
