@@ -442,6 +442,20 @@ impl SwarmRunner {
             worktree_created.clear();
         }
 
+        // P1-c: install the file-touch bus for the duration of the
+        // run. Every dispatch subscribes below; every file op an agent
+        // performs publishes here. Uninstalled at the end of the run
+        // so a reused engine does not observe touches on a later
+        // non-swarm turn.
+        let file_bus = std::sync::Arc::new(kod_swarm::file_touch::FileTouchBus::new());
+        let file_service = std::sync::Arc::new(kod_swarm::file_touch::FileTouchService::new());
+        self.engine
+            .install_swarm_file_bus(file_bus.clone(), file_service.clone())
+            .await;
+        // Subscribers live as long as their agents. Aborted in the
+        // cleanup block after the wave loop finishes.
+        let mut file_subscribers: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
         // 2. Spawn a capability pool and register tasks (design D4.3).
         //
         // Design: "dispatch = least_loaded_agent parmi
@@ -637,6 +651,45 @@ impl SwarmRunner {
                 // Tier 3.5 — subscribe this agent to the shared
                 // blackboard so its prompt includes what the team knows.
                 let _ = self.engine.set_blackboard_viewer(&dispatch_key, true).await;
+            }
+
+            // P1-c: subscribe this dispatch to the file-touch bus.
+            // The task runs until the agent retires (aborted in the
+            // cleanup block). It only reacts to *modifications* by
+            // *other* agents on paths this agent has touched — a read
+            // is not a conflict, and a touch on a file this agent
+            // never saw is not this agent's business.
+            {
+                let engine = self.engine.clone();
+                let bus = file_bus.clone();
+                let service = file_service.clone();
+                let observer = dispatch_key.clone();
+                file_subscribers.push(tokio::spawn(async move {
+                    let mut rx = bus.subscribe();
+                    while let Ok(ev) = rx.recv().await {
+                        let kod_swarm::file_touch::SwarmBusEvent::FileTouch(t) = ev;
+                        if t.agent_id == observer {
+                            continue;
+                        }
+                        if !t.op.is_modification() {
+                            continue;
+                        }
+                        if !service.has_touched(&observer, &t.path) {
+                            continue;
+                        }
+                        let conflicts = service.conflicts_for(&t.path, &observer);
+                        if conflicts.is_empty() {
+                            continue;
+                        }
+                        let notice = render_swarm_conflict_notice(&t, &conflicts);
+                        engine
+                            .steer_interrupt_for(
+                                &observer,
+                                crate::steer::SoftInterrupt::swarm(notice),
+                            )
+                            .await;
+                    }
+                }));
             }
 
             handles.push(AgentHandle {
@@ -1253,6 +1306,19 @@ impl SwarmRunner {
             let _ = self.engine.clear_transcript_working_dir(&key).await;
             self.engine.clear_transcript_write_globs(&key).await;
         }
+
+        // P1-c: stop the file-touch observers and drop their entries
+        // from the service. Doing this after the transcript cleanup
+        // means an observer cannot race a straggler write into a
+        // steer for an agent that has already retired.
+        for h in file_subscribers.drain(..) {
+            h.abort();
+        }
+        for h in &handles {
+            let key = format!("swarm:{}", h.id);
+            file_service.clear_agent(&key);
+        }
+        self.engine.uninstall_swarm_file_bus().await;
 
         // 4. Report terminal status. The coordinator's load accounting
         //    needs the completion, and the events let a live UI update.
@@ -1884,6 +1950,41 @@ fn collect_writes(resp: &crate::router::TaskResponse) -> Vec<String> {
 /// gets one job; the preamble says what that job is. A writer that
 /// tries to also test, or a tester that tries to fix, produces worse
 /// output than an agent that stays in its lane.
+
+/// Compose the text of a swarm file-touch notice.
+///
+/// The notice names the file, the peer, the peer's operation, and
+/// every conflicting peer at once — a file two agents both modified
+/// produces one notice naming both, not two notices naming each.
+///
+/// The instruction ("re-read before continuing; do not revert the
+/// other agent's change") is the same posture jcode's system prompt
+/// takes: the cost of a collision is a re-read, not a revert, and the
+/// system does not silently reconcile.
+fn render_swarm_conflict_notice(
+    t: &kod_swarm::file_touch::FileTouch,
+    peers: &[kod_swarm::file_touch::PeerConflict],
+) -> String {
+    let mut s = format!(
+        "`{}` was modified by {}",
+        t.path.display(),
+        peers
+            .iter()
+            .map(|p| format!("`{}`", p.peer))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    if let Some(su) = &t.summary {
+        s.push_str(&format!(" ({su})"));
+    }
+    s.push_str(
+        ". You have touched this file during this run. Re-read it before \
+         your next edit; do not revert the other agent's change — the \
+         merge step is not aware of this notice.",
+    );
+    s
+}
+
 fn role_preamble(cap: Capability) -> &'static str {
     match cap {
         Capability::Coding => {
