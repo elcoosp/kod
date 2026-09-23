@@ -62,8 +62,11 @@ pub trait SearchBackend: Send + Sync {
     fn name(&self) -> &'static str;
 }
 
-/// Shell out to `rg --json`. Falls back to [`RegexWalker`] when `rg`
-/// is not on `PATH`.
+/// Shell out to `rg --json`. When `rg` is not on `PATH` `search`
+/// returns `Err`, and the caller (the grep tool) falls back to its
+/// in-process walker. The backend does not carry a fallback walker
+/// itself — the tool owns that code, and duplicating it here would
+/// mean two walkers to keep in step.
 pub struct RipgrepBackend {
     /// The path to `rg`, discovered once. `None` means the walker
     /// fallback is used.
