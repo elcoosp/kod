@@ -287,7 +287,7 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
     }
 
     let segments = split_segments(&tokens);
-    let mut pipe_fed = segments.len() > 1;
+    let pipe_fed = segments.len() > 1;
 
     for seg in &segments {
         let (program, args, clean) = unwrap(seg);

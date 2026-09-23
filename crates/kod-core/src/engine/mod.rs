@@ -7803,6 +7803,78 @@ pub(crate) fn filter_chain_by_trust(
                 decisions.push((i, decision));
                 continue;
             }
+            // P2-c: blast-radius gate for shell commands, ahead of
+            // the policy engine. The policy engine decides *project
+            // intent* ("is this command allowed here"); this decides
+            // *blast radius* ("does this command delete the user's
+            // home directory"). They are orthogonal — the policy may
+            // allow `rm` in the workdir while this refuses `rm -rf ~`
+            // — so the risk gate runs first and its Catastrophic
+            // verdict is not overridable by a permissive policy.
+            if call.tool_name == "execute_command"
+                && let Some(cmd) = call.arguments.get("command").and_then(|c| c.as_str())
+            {
+                let ctx = kod_risk::RiskContext {
+                    working_dir: working_dir.to_path_buf(),
+                    home_dir: std::env::var_os("HOME")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| std::path::PathBuf::from("/")),
+                    scratch_dir: std::env::temp_dir(),
+                };
+                let assessment = kod_risk::assess(cmd, &ctx);
+                match assessment.level {
+                    kod_risk::RiskLevel::Catastrophic => {
+                        // Refused outright. The policy engine cannot
+                        // widen this.
+                        let reason = assessment
+                            .findings
+                            .iter()
+                            .map(|f| f.reason.clone())
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        denied.insert(
+                            i,
+                            format!(
+                                "command-risk: {reason}. If you genuinely need this, \
+                                 run it yourself outside the agent."
+                            ),
+                        );
+                        decisions.push((
+                            i,
+                            kod_config::PolicyDecision {
+                                outcome: kod_config::Decision::Deny,
+                                rule: format!("command-risk: {reason}"),
+                                source: kod_config::PolicySource::Preset,
+                            },
+                        ));
+                        continue;
+                    }
+                    kod_risk::RiskLevel::Confirm => {
+                        // Not denied — asked. The finding names what
+                        // is uncertain, so the user's approval is
+                        // informed rather than a rubber stamp.
+                        let reason = assessment
+                            .findings
+                            .iter()
+                            .map(|f| f.reason.clone())
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        need_approval.insert(i);
+                        decisions.push((
+                            i,
+                            kod_config::PolicyDecision {
+                                outcome: kod_config::Decision::Ask,
+                                rule: format!("command-risk: {reason}"),
+                                source: kod_config::PolicySource::Preset,
+                            },
+                        ));
+                        continue;
+                    }
+                    // Safe / Low: fall through to the policy engine
+                    // unchanged.
+                    _ => {}
+                }
+            }
             let decision = match &policy {
                 Some(p) => p.decide(&call.tool_name, &call.arguments, working_dir, &deny_rules),
                 None => kod_config::PolicyDecision {
