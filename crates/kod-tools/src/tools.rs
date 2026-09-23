@@ -227,6 +227,12 @@ impl Tool for ReadFileTool {
             }
         }
         context.can_read(&resolved)?;
+        // P1-c: a read is a read, whether the file turns out to be
+        // text, binary, or truncated. Firing here (after the
+        // permission check, before the content probe) means every
+        // success path — including the redact path — records the
+        // touch exactly once.
+        context.note_file_touch(&resolved, crate::context::FileOp::Read);
 
         // Total size from metadata (the byte cap below can hide it).
         let total_size = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
@@ -478,6 +484,11 @@ impl Tool for WriteFileTool {
         } else if let Err(e) = atomic_write(&resolved, content.as_bytes()) {
             return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
         }
+
+        // P1-c: fire only after the write is durable. A failed write
+        // returns above and produces no touch — the file is unchanged,
+        // so there is nothing for a peer to know about.
+        context.note_file_touch(&resolved, crate::context::FileOp::Write);
 
         Ok(ToolResult::Success(serde_json::json!({
             "path": resolved.to_string_lossy().to_string(),
@@ -1104,6 +1115,10 @@ impl Tool for PatchFileTool {
         if let Err(e) = atomic_write(&resolved, patched.as_bytes()) {
             return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
         }
+
+        // P1-c: a real patch is a modification; a dry run returned
+        // above and does not touch the file, so it produces no event.
+        context.note_file_touch(&resolved, crate::context::FileOp::Edit);
 
         Ok(ToolResult::Success(serde_json::json!({
             "path": resolved.to_string_lossy().to_string(),

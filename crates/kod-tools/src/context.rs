@@ -517,6 +517,46 @@ fn which(program: &str) -> bool {
     false
 }
 
+/// Which file operation happened. Matches `kod_swarm::file_touch::FileOp`
+/// semantically; kept as its own enum so `kod-tools` does not depend
+/// on `kod-swarm` (the dependency runs the other way).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileOp {
+    Read,
+    Write,
+    Edit,
+}
+
+/// A callback fired after a successful file operation.
+///
+/// The holder string is `ToolContext::holder` — the transcript key or
+/// agent id the call ran under, so a listener can attribute the touch
+/// without the tool layer knowing anything about swarms. `path` is the
+/// absolute, resolved path the tool actually read or wrote.
+///
+/// A tool call never fails because the hook errored — the callback
+/// returns `()`, and the tool treats a missing hook as a no-op. That
+/// is deliberate: observation must never become a failure path.
+#[derive(Clone)]
+pub struct FileTouchHook {
+    inner: std::sync::Arc<dyn Fn(&str, &std::path::Path, FileOp) + Send + Sync>,
+}
+
+impl std::fmt::Debug for FileTouchHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FileTouchHook")
+    }
+}
+
+impl FileTouchHook {
+    pub fn new(f: impl Fn(&str, &std::path::Path, FileOp) + Send + Sync + 'static) -> Self {
+        Self { inner: std::sync::Arc::new(f) }
+    }
+    pub fn call(&self, holder: &str, path: &std::path::Path, op: FileOp) {
+        (self.inner)(holder, path, op)
+    }
+}
+
 /// Context for tool execution
 #[derive(Debug, Clone)]
 pub struct ToolContext {
@@ -576,6 +616,10 @@ pub struct ToolContext {
     /// The redactor used to sanitize file content under `Redact`
     /// mode. `None` disables redaction even when a rule matched.
     pub redactor: Option<std::sync::Arc<kod_types::redact::Redactor>>,
+
+    /// P1-c: fired after a successful file read/write/edit. `None`
+    /// outside a swarm run — no observation happens, no overhead paid.
+    pub on_file_touch: Option<FileTouchHook>,
 }
 
 impl ToolContext {
@@ -593,7 +637,8 @@ impl ToolContext {
             redactor: None,
             allowed_domains: Vec::new(),
             allowed_write_globs: None,
-        }
+        
+            on_file_touch: None,}
     }
 
     /// Install a shared lock table and set the writer identity.
@@ -626,6 +671,21 @@ impl ToolContext {
     }
 
     /// Set timeout
+    /// Install a file-touch observer. The swarm runner sets this for
+    /// the duration of a run; every other caller leaves it `None`.
+    pub fn with_file_touch_hook(mut self, hook: FileTouchHook) -> Self {
+        self.on_file_touch = Some(hook);
+        self
+    }
+
+    /// Fire the file-touch observer, if one is installed. Never fails
+    /// — observation is not a correctness path.
+    pub fn note_file_touch(&self, path: &std::path::Path, op: FileOp) {
+        if let Some(hook) = &self.on_file_touch {
+            hook.call(&self.holder, path, op);
+        }
+    }
+
     pub fn with_timeout(mut self, timeout_secs: u64) -> Self {
         self.timeout_secs = timeout_secs;
         self
