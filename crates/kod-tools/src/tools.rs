@@ -1300,7 +1300,7 @@ impl Tool for GrepTool {
         // The loop already capped the raw count at MAX_GREP_MATCHES;
         // this pass keeps the matches a reader would want when the
         // cap forced a choice. Deterministic, term-overlap scoring
-        // (no model call) from `relevance::heatmap_truncate`.
+        // (no model call) from `relevance::rank_hits`.
         //
         // A search with no query terms in common with any line keeps
         // its original order — the scoring is a filter, not a
