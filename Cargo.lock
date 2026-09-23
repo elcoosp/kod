@@ -2465,6 +2465,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kod-schema-dialect"
+version = "0.1.0"
+dependencies = [
+ "rstest",
+ "serde_json",
+]
+
+[[package]]
 name = "kod-skills"
 version = "0.1.0"
 dependencies = [
