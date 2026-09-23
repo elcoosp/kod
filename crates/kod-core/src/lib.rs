@@ -26,6 +26,7 @@ pub mod jev;
 pub mod lsp_tools;
 pub mod mcp_adapters;
 pub mod memory_tools;
+pub mod output_spool;
 pub mod plan;
 pub mod provider_setup;
 pub mod repomap;
