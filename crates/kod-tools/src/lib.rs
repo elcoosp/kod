@@ -34,6 +34,7 @@
 //! ```
 
 pub mod ask;
+pub mod batch;
 pub mod tool_search;
 pub mod relevance;
 pub mod check;
