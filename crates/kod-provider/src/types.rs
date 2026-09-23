@@ -2,6 +2,32 @@
 
 use kod_types::ToolCall;
 
+/// How a provider reports its prompt-cache tokens.
+///
+/// Two conventions in the wild, incompatible in how they bill:
+///
+/// * **Split** (Anthropic): `input_tokens` excludes cache tokens.
+///   The prompt window the provider processed is
+///   `input + cache_read + cache_creation`; `input` alone bills at
+///   the full rate. This is what `uncached_input_tokens()` assumes.
+/// * **Subset** (OpenAI-compatible): cached tokens are *inside*
+///   `prompt_tokens`. The cached portion bills at the cache-read
+///   rate; the remainder bills at the input rate.
+///
+/// The `ModelPricing` carrier knows which one applies — a provider
+/// that reports one way and bills the other undercounts cost by the
+/// cache-read discount times the cached tokens, which on a long
+/// session is the single largest cost-accounting error available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheConvention {
+    /// Anthropic: cache tokens live outside `prompt_tokens`.
+    #[default]
+    Split,
+    /// OpenAI-compatible: cache tokens are a subset of `prompt_tokens`.
+    Subset,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TokenUsage {
     pub prompt_tokens: usize,
