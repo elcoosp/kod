@@ -33,6 +33,7 @@
 //! # fn main() {}
 //! ```
 
+pub mod aliases;
 pub mod ask;
 pub mod batch;
 pub mod tool_search;

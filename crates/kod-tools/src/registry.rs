@@ -131,13 +131,21 @@ impl ToolRegistry {
         params: &serde_json::Value,
         context: &ToolContext,
     ) -> Result<kod_types::ToolResult> {
+        // Resolve a model-supplied alias to the name kod registered
+        // (`shell_exec` → `execute_command`). A name that is already
+        // real passes through unchanged.
+        let resolved = crate::aliases::resolve_tool_name(name);
+
         // H-R10: clone the Arc out and drop the read lock before
         // awaiting the tool body. Registration (MCP hot-reload) no
         // longer blocks on a running tool call.
-        let tool = { self.tools.read().await.get(name).cloned() };
+        let tool = { self.tools.read().await.get(resolved).cloned() };
         match tool {
             Some(t) => t.execute(params, context).await,
             None => Err(KodError::ToolNotFound {
+                // The error names what the model sent, not the
+                // resolved form — the model needs to see its own
+                // call to correct it.
                 tool_name: name.to_string(),
             }),
         }
