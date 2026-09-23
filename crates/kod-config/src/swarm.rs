@@ -96,6 +96,35 @@ mod tests {
         assert_eq!(c.max_agents, 3);
         assert!(c.merge_results);
     }
+
+    #[test]
+    fn isolation_defaults_to_auto() {
+        // Auto is the runner's pre-Isolation implicit policy: worktrees
+        // when the working directory is a git repo, shared otherwise.
+        // A regression to `Shared` would silently stop creating
+        // worktrees for a user who never asked for that.
+        assert_eq!(SwarmConfig::default().isolation, Isolation::Auto);
+    }
+
+    #[test]
+    fn isolation_round_trips_each_variant() {
+        for variant in [Isolation::Shared, Isolation::Worktree, Isolation::Auto] {
+            let c = SwarmConfig { isolation: variant, ..SwarmConfig::default() };
+            let toml_str = toml::to_string(&c).unwrap();
+            let parsed: SwarmConfig = toml::from_str(&toml_str).unwrap();
+            assert_eq!(parsed.isolation, variant, "round trip failed for {variant:?}");
+        }
+    }
+
+    #[test]
+    fn isolation_parses_from_lowercase_string() {
+        // `isolation = "worktree"` in the config file. The
+        // `rename_all = "lowercase"` on the enum is what makes this
+        // work; a change to `snake_case` would reject "worktree".
+        let toml_str = "isolation = \"worktree\"\n";
+        let parsed: SwarmConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.isolation, Isolation::Worktree);
+    }
 }
 
 #[cfg(test)]
