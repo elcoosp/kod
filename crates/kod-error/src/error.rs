@@ -104,6 +104,68 @@ pub enum KodError {
     Internal(String),
 }
 
+
+/// Whether a transport-layer error message names a transient failure
+/// worth retrying.
+///
+/// Distinct from [`KodError::is_retryable`], which classifies a typed
+/// error. This one takes the raw text a transport library produced —
+/// hyper, rustls, reqwest — where a `GOAWAY` frame or a `close_notify`
+/// alert arrives as a string, not a code.
+///
+/// The vocabulary is harvested from real failure logs. A phrase earns
+/// a place only if it means "the same request may succeed later":
+/// a DNS failure for a typo'd host is *not* here, because retrying it
+/// wastes the budget on a permanent error. When in doubt, leave it
+/// out; a missed retry costs one failure, a spurious retry costs the
+/// whole retry budget on something that will never succeed.
+pub fn is_transient_transport_error(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    const PATTERNS: &[&str] = &[
+        // Rate / overload, in prose.
+        "429",
+        "rate limit",
+        "too many requests",
+        "overloaded",
+        "temporarily",
+        "try again",
+        // Server-side, in prose.
+        "500 ",
+        "502",
+        "503",
+        "504",
+        "bad gateway",
+        "service unavailable",
+        "gateway timeout",
+        "internal server error",
+        "server error 5",
+        // Connection lifecycle.
+        "connection reset",
+        "connection closed",
+        "connection refused",
+        "broken pipe",
+        "unexpected eof",
+        "eof occurred",
+        // HTTP/2 + TLS teardown. A `GOAWAY` frame during a streaming
+        // response is the classic "the server rotated a node mid-flight"
+        // case; the request is safe to replay.
+        "goaway",
+        "close_notify",
+        "stream_read_error",
+        "transport error",
+        "h2 protocol error",
+        "http2 error",
+        // Timeouts.
+        "timeout",
+        "timed out",
+        "deadline exceeded",
+        // Provider-side capacity.
+        "capacity",
+        "no capacity available",
+    ];
+    PATTERNS.iter().any(|p| m.contains(p))
+}
+
 impl KodError {
     /// Construct a `RateLimited` from an HTTP 429 response.
     /// `retry_after` is parsed from the `Retry-After` header, if present.
@@ -135,24 +197,7 @@ impl KodError {
     pub fn is_retryable(&self) -> bool {
         match self {
             KodError::RateLimited { .. } | KodError::ProviderTimeout { .. } => true,
-            KodError::Provider(msg) => {
-                let m = msg.to_lowercase();
-                m.contains("429")
-                    || m.contains("rate limit")
-                    || m.contains("timeout")
-                    || m.contains("timed out")
-                    || m.contains("connection reset")
-                    || m.contains("connection closed")
-                    || m.contains("temporarily")
-                    || m.contains("try again")
-                    || m.contains("502")
-                    || m.contains("503")
-                    || m.contains("504")
-                    || m.contains("bad gateway")
-                    || m.contains("service unavailable")
-                    || m.contains("gateway timeout")
-                    || m.contains("server error 5")
-            }
+            KodError::Provider(msg) => is_transient_transport_error(msg),
             KodError::Network(_) => true,
             _ => false,
         }
