@@ -333,6 +333,57 @@ pub enum ProviderKind {
 /// `temperature`, `max_tokens` — lives here rather than in a global
 /// `LlmConfig`, so a swarm can route a planner to one endpoint and a
 /// coder to another without sharing options.
+/// The context window for a model family, when the model name matches
+/// a known prefix.
+///
+/// This is the tier between "the provider told us" (the live catalog,
+/// authoritative) and "the config says 8192 because the user never
+/// changed the default." A named family is more likely to be right
+/// than a default nobody touched: `qwen2.5-coder:7b` really is 32k,
+/// and reporting 8k silently truncates a conversation that would have
+/// fit.
+///
+/// A deliberate `[llm.endpoints].context_window` is checked *before*
+/// this table by the caller, so a user who knows better wins.
+///
+/// Matching is by `starts_with` on the lowercased model name, longest
+/// prefix first, so `gpt-4o` is not shadowed by `gpt-4`.
+pub fn family_context_window(model: &str) -> Option<usize> {
+    const TABLE: &[(&str, usize)] = &[
+        ("claude-3", 200_000),
+        ("claude-4", 200_000),
+        ("claude-opus", 200_000),
+        ("claude-sonnet", 200_000),
+        ("claude-haiku", 200_000),
+        ("gpt-4o", 128_000),
+        ("gpt-4-turbo", 128_000),
+        ("gpt-4.1", 1_000_000),
+        ("gpt-4", 8_192),
+        ("gpt-3.5", 16_385),
+        ("o1", 200_000),
+        ("o3", 200_000),
+        ("o4", 200_000),
+        ("gemini-1.5", 1_000_000),
+        ("gemini-2", 1_000_000),
+        ("qwen2.5-coder", 32_768),
+        ("qwen2.5", 32_768),
+        ("deepseek", 64_000),
+        ("llama-3", 8_192),
+        ("llama3", 8_192),
+        ("codellama", 16_384),
+        ("mistral", 32_768),
+        ("mixtral", 32_768),
+        ("command-r", 128_000),
+        ("phi-3", 4_096),
+        ("phi-4", 16_384),
+    ];
+    let lower = model.to_lowercase();
+    TABLE
+        .iter()
+        .find(|(prefix, _)| lower.starts_with(prefix))
+        .map(|(_, w)| *w)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EndpointConfig {
     pub name: String,
@@ -977,5 +1028,34 @@ mod coverage_routing_shape {
         assert!(parsed.by_task.is_empty());
         assert!(parsed.fallback.is_empty());
         assert!(parsed.swarm.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod family_tests {
+    use super::*;
+
+    #[test]
+    fn family_table_matches_known_models() {
+        assert_eq!(family_context_window("claude-opus-4"), Some(200_000));
+        assert_eq!(family_context_window("qwen2.5-coder:7b"), Some(32_768));
+        assert_eq!(family_context_window("deepseek-chat"), Some(64_000));
+    }
+
+    #[test]
+    fn gpt_4o_is_not_shadowed_by_gpt_4() {
+        assert_eq!(family_context_window("gpt-4o"), Some(128_000));
+        assert_eq!(family_context_window("gpt-4"), Some(8_192));
+        assert_eq!(family_context_window("gpt-4-turbo"), Some(128_000));
+    }
+
+    #[test]
+    fn unknown_family_returns_none() {
+        assert_eq!(family_context_window("my-custom-model"), None);
+    }
+
+    #[test]
+    fn matching_is_case_insensitive() {
+        assert_eq!(family_context_window("Claude-Opus-4"), Some(200_000));
     }
 }

@@ -4646,6 +4646,8 @@ pub(crate) fn filter_chain_by_trust(
             Err(_) => (8192, 2048),
         };
 
+        // Tier 1: the live catalog. The provider's own reported
+        // window is authoritative when present.
         if let Ok(guard) = self.model_catalog.read() {
             if let Some(info) = guard.get(&(
                 model_ref.endpoint.clone(),
@@ -4656,6 +4658,24 @@ pub(crate) fn filter_chain_by_trust(
                 }
             }
         }
+
+        // Tier 2: a *deliberate* endpoint config. The compile-time
+        // default is 8192; a value that differs from it was set by
+        // the user, who knows their deployment better than a
+        // name-based heuristic.
+        const COMPILE_DEFAULT_WINDOW: usize = 8192;
+        if endpoint_window != COMPILE_DEFAULT_WINDOW {
+            return (endpoint_window, endpoint_max_out);
+        }
+
+        // Tier 3: the model-name family table. More accurate than a
+        // default nobody changed, less accurate than a live report.
+        if let Some(w) = kod_config::llm::family_context_window(&model_ref.model) {
+            return (w, endpoint_max_out);
+        }
+
+        // Tier 4: the endpoint config as-is (the default), which is
+        // the pre-cascade behavior.
         (endpoint_window, endpoint_max_out)
     }
 

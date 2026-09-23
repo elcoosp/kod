@@ -2320,6 +2320,7 @@ dependencies = [
  "kod-provider",
  "kod-provider-anthropic",
  "kod-provider-openai",
+ "kod-risk",
  "kod-skills",
  "kod-swarm",
  "kod-tools",
@@ -2454,6 +2455,13 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "kod-risk"
+version = "0.1.0"
+dependencies = [
+ "rstest",
 ]
 
 [[package]]
