@@ -1249,6 +1249,16 @@ pub struct KodEngine {
     /// (P0 Fix 3). Keyed by transcript key so a swarm agent's filter
     /// state does not leak into the main session's.
     tool_filter_states: RwLock<HashMap<String, ToolFilterState>>,
+
+    /// FNV-1a of the sorted tool definition bytes as of the last
+    /// request per transcript key. `build_grounded_request` compares
+    /// on each request and journals a change. The tools array lives
+    /// inside the cached prefix (wire order: tools → system →
+    /// messages), so ANY change here invalidates the whole prefix.
+    /// A change caused by a late MCP registration is legitimate; a
+    /// change with no cause is a bug, and the journal is the way to
+    /// tell the difference.
+    tool_surface_fingerprint: RwLock<HashMap<String, u64>>,
     /// P1 cache ledger. One per engine (not per transcript): a
     /// swarm agent and the interactive session may share an endpoint,
     /// and sharing one warm cache across both is the point.
@@ -2001,6 +2011,7 @@ impl KodEngine {
             tool_counts: std::sync::Arc::new(crate::tool_quota::ToolCounts::new()),
             tool_quotas: std::sync::RwLock::new(None),
             tool_filter_states: RwLock::new(HashMap::new()),
+            tool_surface_fingerprint: RwLock::new(HashMap::new()),
             cache_ledger: std::sync::Mutex::new(crate::cache_ledger::CacheLedger::new()),
             current_sensitivity: RwLock::new(crate::sensitivity::Sensitivity::Public),
             endpoint_trust: RwLock::new(std::collections::HashMap::new()),
@@ -7030,6 +7041,45 @@ pub(crate) fn filter_chain_by_trust(
     /// commit changed the enabled tool set, and consumed here on
     /// the next call so exactly one request per prefix change skips
     /// the transcript cache breakpoint.
+    /// Fingerprint the tool surface for `key` and journal a change.
+    ///
+    /// Split out so `build_grounded_request` stays focused. The hash
+    /// is over the concatenation of `name`, `description`, and the
+    /// serialized `parameters_schema` per tool, in registry order.
+    /// That order is sorted (see `registry.rs`) so a re-registration
+    /// of the same set produces the same fingerprint.
+    async fn note_tool_surface_fingerprint(&self, key: &str, definitions: &[ToolDefinition]) {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for d in definitions {
+            use std::hash::Hash;
+            d.name.hash(&mut hasher);
+            d.description.hash(&mut hasher);
+            d.parameters_schema.to_string().hash(&mut hasher);
+        }
+        let fingerprint = std::hash::Hasher::finish(&hasher);
+
+        let mut guard = self.tool_surface_fingerprint.write().await;
+        let previous = guard.insert(key.to_string(), fingerprint);
+        drop(guard);
+
+        if let Some(prev) = previous {
+            if prev != fingerprint {
+                // Late MCP registration is the expected cause. Anything
+                // else is worth a look at the journal.
+                crate::cache_journal::record(
+                    crate::cache_journal::InvalidationCause::ToolSurfaceChanged {
+                        previous_fingerprint: prev,
+                        current_fingerprint: fingerprint,
+                        reason: format!(
+                            "{} definitions on this request",
+                            definitions.len()
+                        ),
+                    },
+                );
+            }
+        }
+    }
+
     async fn build_grounded_request(
         &self,
         key: &str,
@@ -7077,6 +7127,13 @@ pub(crate) fn filter_chain_by_trust(
             system = system.with(cacheable, true);
         }
         system = system.with(grounded_volatile, false);
+        // P0-c/P1-a: fingerprint the tool surface and journal any
+        // change. The tools array is part of the cached prefix; a
+        // change here invalidates it at every endpoint. Recording the
+        // cause turns a silent miss into a debuggable event. Hash is
+        // over the serialized definitions in the order the registry
+        // returns them (which is byte-stable per `registry.rs`'s sort).
+        self.note_tool_surface_fingerprint(key, definitions).await;
         CompletionRequest {
             system,
             messages,
