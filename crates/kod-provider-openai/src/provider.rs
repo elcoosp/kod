@@ -552,7 +552,22 @@ impl LlmProvider for OpenAICompatProvider {
 }
 
 impl OpenAICompatProvider {
-    /// Live-token SSE stream for a prepared request (text and/or tool calls).
+    /// Live-token SSE stream for a prepared request (text and/or tool
+    /// calls).
+    ///
+    /// §9.2: an attempt loop wraps the `adk-model` streaming call so a
+    /// pre-commit failure (transport error, stall, or clean-but-empty
+    /// completion) is retried without the caller seeing the doomed
+    /// attempt's chunks. Once anything has committed — a non-empty
+    /// text delta or a non-empty tool-call arguments fragment — the
+    /// attempt is delivered as-is and never retried; a retry would
+    /// re-generate content the caller already saw.
+    ///
+    /// §9.1 note: the `adk-model` transport surfaces errors as
+    /// `AdkError` (a string-shaped type with no headers), so retry
+    /// hints cannot be extracted here. Retry hints are extracted on
+    /// the Anthropic native-Messages path, which owns the raw
+    /// `reqwest::Response`.
     fn stream_request(
         &self,
         request: LlmRequest,
@@ -561,105 +576,239 @@ impl OpenAICompatProvider {
         let concurrency = Arc::clone(&self.concurrency);
         let guard_enabled = self.stream_guard_enabled;
         Box::pin(async_stream::stream! {
-            // §9.9: hold one admission permit for the lifetime of the
-            // streaming HTTP request. Released when this stream body
-            // exits — normal completion, hard error, or the caller
-            // dropping the stream. The bracket never extends past the
-            // stream; see `kod_provider::concurrency`.
-            let _permit = concurrency.acquire().await;
-            // §9.3: one guard per stream. A fresh stream is a fresh
-            // attempt; the previous attempt's tail is not evidence
-            // about this one.
-            let mut guard = if guard_enabled {
-                Some(kod_provider::stream_guard::StreamGuard::new())
-            } else {
-                None
-            };
-            match inner.generate_content(request, true).await {
-                Ok(mut responses) => {
-                    let mut last_usage: Option<kod_provider::TokenUsage> = None;
-                    let mut next_tool_index: usize = 0;
-                    while let Some(item) = responses.next().await {
-                        match item {
-                            Ok(response) => {
-                                if let Some(usage) = response.usage_metadata {
-                                    last_usage = Some(kod_provider::TokenUsage {
-                                        prompt_tokens: usage.prompt_token_count.max(0) as usize,
-                                        completion_tokens: usage.candidates_token_count.max(0) as usize,
-                                        total_tokens: usage.total_token_count.max(0) as usize,
-                                        cache_read_tokens: usage
-                                            .cache_read_input_token_count
-                                            .map(|n| n.max(0) as u64),
-                                        cache_creation_tokens: usage
-                                            .cache_creation_input_token_count
-                                            .map(|n| n.max(0) as u64),
-                                    });
+            // §9.2: attempt loop.
+            const MAX_STREAM_ATTEMPTS: u32 = 3;
+            let mut empty_retry =
+                kod_provider::retry_safety::EmptyCompletionRetry::new();
+            let mut attempt: u32 = 0;
+
+            loop {
+                attempt += 1;
+
+                // §9.9: one admission permit per streaming HTTP
+                // request, released when this attempt ends.
+                let _permit = concurrency.acquire().await;
+
+                // §9.3: fresh guard per attempt. The previous
+                // attempt's tail is not evidence about this one.
+                let mut guard = if guard_enabled {
+                    Some(kod_provider::stream_guard::StreamGuard::new())
+                } else {
+                    None
+                };
+
+                // §9.2: fresh tracker and pre-commit buffer per
+                // attempt.
+                let mut tracker =
+                    kod_provider::retry_safety::AttemptTracker::new();
+                let mut buffered: Vec<StreamChunk> = Vec::new();
+                let mut accumulated_text = String::new();
+                let mut last_usage: Option<kod_provider::TokenUsage> = None;
+
+                let mut responses = match inner
+                    .generate_content(request.clone(), true)
+                    .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let err = adk_err(e);
+                        if attempt < MAX_STREAM_ATTEMPTS {
+                            tracing::warn!(
+                                attempt,
+                                error = %err,
+                                "openai-compat stream: pre-commit transport error; retrying",
+                            );
+                            continue;
+                        }
+                        yield Err(err);
+                        return;
+                    }
+                };
+
+                let mut transport_error: Option<KodError> = None;
+                let mut stall_detector: Option<&'static str> = None;
+                let mut next_tool_index: usize = 0;
+
+                'read: while let Some(item) = responses.next().await {
+                    match item {
+                        Ok(response) => {
+                            if let Some(usage) = response.usage_metadata {
+                                let u = kod_provider::TokenUsage {
+                                    prompt_tokens: usage.prompt_token_count.max(0) as usize,
+                                    completion_tokens: usage.candidates_token_count.max(0) as usize,
+                                    total_tokens: usage.total_token_count.max(0) as usize,
+                                    cache_read_tokens: usage
+                                        .cache_read_input_token_count
+                                        .map(|n| n.max(0) as u64),
+                                    cache_creation_tokens: usage
+                                        .cache_creation_input_token_count
+                                        .map(|n| n.max(0) as u64),
+                                };
+                                last_usage = Some(u.clone());
+                                let chunk = StreamChunk::Usage(u);
+                                // Usage never commits; the tracker
+                                // and buffer decide.
+                                let was_committed = tracker.is_committed();
+                                tracker.observe(&chunk);
+                                if tracker.is_committed() {
+                                    if !was_committed {
+                                        for b in buffered.drain(..) {
+                                            yield Ok(b);
+                                        }
+                                    }
+                                    yield Ok(chunk);
+                                } else {
+                                    buffered.push(chunk);
                                 }
-                                if let Some(content) = response.content {
-                                    for part in content.parts {
-                                        match part {
-                                            Part::Text { text } => {
-                                                if !text.is_empty() {
-                                                    let chunk = StreamChunk::Text(text);
-                                                    let stall = guard.as_mut().and_then(
-                                                        |g| g.feed_chunk(&chunk),
-                                                    );
+                            }
+                            if let Some(content) = response.content {
+                                for part in content.parts {
+                                    match part {
+                                        Part::Text { text } => {
+                                            if !text.is_empty() {
+                                                let chunk = StreamChunk::Text(text);
+                                                if let StreamChunk::Text(t) = &chunk {
+                                                    accumulated_text.push_str(t);
+                                                }
+                                                let stall = guard
+                                                    .as_mut()
+                                                    .and_then(|g| g.feed_chunk(&chunk));
+                                                if let Some(detector) = stall {
+                                                    stall_detector = Some(detector);
+                                                    break 'read;
+                                                }
+                                                let was_committed =
+                                                    tracker.is_committed();
+                                                tracker.observe(&chunk);
+                                                if tracker.is_committed() {
+                                                    if !was_committed {
+                                                        for b in buffered.drain(..) {
+                                                            yield Ok(b);
+                                                        }
+                                                    }
                                                     yield Ok(chunk);
-                                                    if let Some(detector) = stall {
-                                                        yield Err(KodError::Provider(format!(
-                                                            "stream stall detected: {detector}"
-                                                        )));
-                                                        return;
+                                                } else {
+                                                    buffered.push(chunk);
+                                                }
+                                            }
+                                        }
+                                        Part::FunctionCall {
+                                            name, args, id, ..
+                                        } => {
+                                            let index = next_tool_index;
+                                            next_tool_index += 1;
+                                            let start = StreamChunk::ToolCallStart {
+                                                index,
+                                                id,
+                                                name,
+                                            };
+                                            // Start carries no
+                                            // model-authored content:
+                                            // never commits, never
+                                            // trips the guard.
+                                            let was_committed =
+                                                tracker.is_committed();
+                                            tracker.observe(&start);
+                                            if tracker.is_committed() {
+                                                if !was_committed {
+                                                    for b in buffered.drain(..) {
+                                                        yield Ok(b);
                                                     }
                                                 }
+                                                yield Ok(start);
+                                            } else {
+                                                buffered.push(start);
                                             }
-                                            Part::FunctionCall { name, args, id, .. } => {
-                                                let index = next_tool_index;
-                                                next_tool_index += 1;
-                                                yield Ok(StreamChunk::ToolCallStart { index, id, name });
-                                                let delta = StreamChunk::ToolCallDelta {
-                                                    index,
-                                                    arguments: args.to_string(),
-                                                };
-                                                let stall = guard.as_mut().and_then(
-                                                    |g| g.feed_chunk(&delta),
-                                                );
-                                                yield Ok(delta);
-                                                if let Some(detector) = stall {
-                                                    yield Err(KodError::Provider(format!(
-                                                        "stream stall detected: {detector}"
-                                                    )));
-                                                    return;
+                                            let delta = StreamChunk::ToolCallDelta {
+                                                index,
+                                                arguments: args.to_string(),
+                                            };
+                                            let stall = guard
+                                                .as_mut()
+                                                .and_then(|g| g.feed_chunk(&delta));
+                                            if let Some(detector) = stall {
+                                                stall_detector = Some(detector);
+                                                break 'read;
+                                            }
+                                            let was_committed =
+                                                tracker.is_committed();
+                                            tracker.observe(&delta);
+                                            if tracker.is_committed() {
+                                                if !was_committed {
+                                                    for b in buffered.drain(..) {
+                                                        yield Ok(b);
+                                                    }
                                                 }
+                                                yield Ok(delta);
+                                            } else {
+                                                buffered.push(delta);
                                             }
-                                            _ => {}
                                         }
+                                        _ => {}
                                     }
                                 }
                             }
-                            Err(e) => {
-                                // H-P10: `return` after the error. The
-                                // stream contract (traits.rs) says an
-                                // Err means the turn is over. The pre-fix
-                                // `break` fell through to the trailing
-                                // `Usage` + `Done`, so a consumer that
-                                // saw `Err` then `Done` could not tell a
-                                // hard failure from a clean stop.
-                                yield Err(adk_err(e));
-                                return;
-                            }
+                        }
+                        Err(e) => {
+                            transport_error = Some(adk_err(e));
+                            break 'read;
                         }
                     }
-                    if let Some(usage) = last_usage {
-                        yield Ok(StreamChunk::Usage(usage));
-                    }
-                    yield Ok(StreamChunk::Done);
                 }
-                Err(e) => {
-                    // H-P10: return rather than fall through to `Done`.
-                    yield Err(adk_err(e));
+
+                // ---- decide ----
+                if let Some(err) = transport_error {
+                    if tracker.is_safe_to_retry() && attempt < MAX_STREAM_ATTEMPTS {
+                        tracing::warn!(
+                            attempt,
+                            error = %err,
+                            "openai-compat stream: pre-commit read error; retrying",
+                        );
+                        continue;
+                    }
+                    yield Err(err);
                     return;
                 }
+                if let Some(detector) = stall_detector {
+                    let err = KodError::Provider(format!(
+                        "stream stall detected: {detector}"
+                    ));
+                    if tracker.is_safe_to_retry() && attempt < MAX_STREAM_ATTEMPTS {
+                        tracing::warn!(
+                            attempt,
+                            detector,
+                            "openai-compat stream: pre-commit stall; retrying",
+                        );
+                        continue;
+                    }
+                    yield Err(err);
+                    return;
+                }
+                if tracker.is_safe_to_retry()
+                    && empty_retry.should_retry(&accumulated_text, last_usage.as_ref())
+                    && attempt < MAX_STREAM_ATTEMPTS
+                {
+                    tracing::warn!(
+                        attempt,
+                        attempts = empty_retry.attempts(),
+                        "openai-compat stream: empty completion; retrying",
+                    );
+                    empty_retry.observe_retry();
+                    let delay_ms = empty_retry.next_delay_ms();
+                    if delay_ms > 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            delay_ms,
+                        ))
+                        .await;
+                    }
+                    continue;
+                }
+
+                for b in buffered.drain(..) {
+                    yield Ok(b);
+                }
+                yield Ok(StreamChunk::Done);
+                return;
             }
         })
     }

@@ -13,6 +13,10 @@ git log to find out. Update this file when the status changes.
 | `CompactionDispatcher` | `kod-core/src/compaction_dispatcher.rs` | invoked by `maybe_compact_for` before the summary path | `tests/mechanical_compaction.rs` |
 | `PauseGate` | `kod-core/src/pause_gate.rs` | three check points: `run_collected_loop`, `run_streaming_loop`, `run_tool_calls` | `tests/pause_gate_integration.rs` |
 | `ToolLoopGuard` | `kod-core/src/tool_loop_guard.rs` | `maybe_emit_loop_corrective` after every `run_tool_calls` | `tests/tool_loop_guard_integration.rs` |
+| `ProviderConcurrency` | `kod-provider/src/concurrency.rs` | `acquire()`/drop bracket around every streaming HTTP request in both provider crates | `concurrency.rs` unit tests; retry-hit assertions in `kod-provider-anthropic/tests/stream_retry.rs` |
+| `StreamGuard` | `kod-provider/src/stream_guard.rs` | fed every model-authored chunk in both providers' SSE loops; `StallVerdict::Loop` → transient `KodError::Provider` | `stream_guard.rs` unit tests (`feed_chunk` covered); `stream_retry.rs` exercises the delivered-vs-retried fork |
+| `ReplaySafety` (`AttemptTracker` + `EmptyCompletionRetry`) | `kod-provider/src/retry_safety.rs` | attempt loop in both providers' `stream_completion` paths: retry only while nothing has committed; `EmptyCompletionRetry` covers the clean-but-empty case | `retry_safety.rs` unit tests; `kod-provider-anthropic/tests/stream_retry.rs` pins the three-way fork (HTTP error / empty / committed) |
+| `RetryHints` (`extract_retry_hints`) | `kod-provider/src/retry.rs` | Anthropic native-Messages error paths extract hints from response headers before constructing `KodError`; the OpenAI-compatible path cannot (its `AdkError` transport exposes no headers) | `retry.rs` unit tests; no integration test yet |
 
 ## Config surface landed, engine-side reader pending
 
@@ -30,10 +34,6 @@ question the doc leaves open, or a supporting tool.
 |---|---|---|
 | `UnexpectedStopClassifier` | `kod-core/src/unexpected_stop.rs` | Judge role (same as AutoThinking). Classifier is a call to the judgment framework; the framework exists, the role resolution does not. |
 | `Advisor EmissionGuard` | `kod-swarm/src/advisor.rs` | The `advise` tool itself. The guard is the tool's admission policy; the tool does not exist yet. |
-| `ReplaySafety` (`AttemptTracker` + `EmptyCompletionRetry`) | `kod-provider/src/retry_safety.rs` | Adoption inside each provider crate's `stream_completion` / `complete`. Clean change but per-crate. |
-| `StreamGuard` (exact-cycle + header-runaway) | `kod-provider/src/stream_guard.rs` | Same: adoption inside each provider's SSE loop. |
-| `RetryHints` (`extract_retry_hints`) | `kod-provider/src/retry.rs` | Same: called by a provider's error path before constructing `KodError::RateLimited`. |
-| `ProviderConcurrency` | `kod-provider/src/concurrency.rs` | Same: an `acquire`/drop bracket around each provider's request. |
 | `ToolSearchTool` | `kod-tools/src/tool_search.rs` | Engine tool inventory wiring (the tool exists; the engine does not yet mount it). |
 | `BatchTool` | `kod-tools/src/batch.rs` | Registry wiring. |
 | `UnexpectedStopClassifier` | (see above) | — |
