@@ -1,6 +1,6 @@
 //! Layer 1: rewrite a schema into what a provider accepts.
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 /// The role a keyword's value plays in the schema tree.
 ///
