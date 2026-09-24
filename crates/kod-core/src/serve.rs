@@ -85,6 +85,15 @@ use tokio::sync::Notify;
 /// the right to reject a higher one in a future release.
 pub const PROTOCOL_VERSION: u8 = 1;
 
+/// The oldest protocol version this server still speaks.
+pub const MIN_PROTOCOL_VERSION: u8 = 1;
+
+/// The newest protocol version this server speaks. A client asking
+/// for a version above this is running ahead of the server; one below
+/// `MIN` is behind it. Both get a named error rather than a confusing
+/// failure deeper in the dispatch.
+pub const MAX_PROTOCOL_VERSION: u8 = 1;
+
 /// Default socket path for this user.
 pub fn default_socket_path() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
@@ -415,7 +424,58 @@ async fn handle_connection(
             }
         };
 
+        // Version gate. A client that declares a version outside the
+        // server's range gets a named error here rather than an
+        // opaque parse failure or a silently-wrong result deeper in
+        // the dispatch. A missing `v` is an older client that
+        // predates the field; it is allowed through, since every
+        // version-1 method works without it.
+        if let Some(v) = req.v
+            && !(MIN_PROTOCOL_VERSION..=MAX_PROTOCOL_VERSION).contains(&v)
+        {
+            write_error(
+                &out_tx,
+                &req.id,
+                &format!(
+                    "unsupported protocol version {v}; this server speaks \
+                     {MIN_PROTOCOL_VERSION}..={MAX_PROTOCOL_VERSION}",
+                ),
+            )
+            .await?;
+            continue;
+        }
+
         match req.method.as_str() {
+            "hello" => {
+                // Explicit negotiation: the client declares the range
+                // it can speak, the server answers with its own and
+                // the overlap. A client whose range does not intersect
+                // the server's gets `compatible: false` and can
+                // disconnect with a clear reason instead of failing on
+                // the first real request.
+                let client_min = req
+                    .params
+                    .get("min")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1) as u8;
+                let client_max = req
+                    .params
+                    .get("max")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(client_min as u64) as u8;
+                let lo = client_min.max(MIN_PROTOCOL_VERSION);
+                let hi = client_max.min(MAX_PROTOCOL_VERSION);
+                let compatible = lo <= hi;
+                let data = serde_json::json!({
+                    "server_min": MIN_PROTOCOL_VERSION,
+                    "server_max": MAX_PROTOCOL_VERSION,
+                    "client_min": client_min,
+                    "client_max": client_max,
+                    "compatible": compatible,
+                    "use": if compatible { Some(hi) } else { None },
+                });
+                write_ok(&out_tx, &req.id, data).await?
+            }
             "process" => {
                 // H-R4: spawn the non-streaming prompt so the read
                 // loop can continue serving `cancel` / `steer` /
@@ -599,7 +659,15 @@ async fn handle_connection(
                 write_ack(&out_tx, &req.id).await?;
             }
             other => {
-                write_error(&out_tx, &req.id, &format!("unknown method: {other}")).await?;
+                write_error(
+                &out_tx,
+                &req.id,
+                &format!(
+                    "unknown method: {other} (server speaks protocol \
+                     {MIN_PROTOCOL_VERSION}..={MAX_PROTOCOL_VERSION})",
+                ),
+            )
+            .await?;
             }
         }
     }
