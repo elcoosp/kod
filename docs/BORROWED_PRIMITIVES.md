@@ -18,6 +18,7 @@ git log to find out. Update this file when the status changes.
 | `ReplaySafety` (`AttemptTracker` + `EmptyCompletionRetry`) | `kod-provider/src/retry_safety.rs` | attempt loop in both providers' `stream_completion` paths: retry only while nothing has committed; `EmptyCompletionRetry` covers the clean-but-empty case | `retry_safety.rs` unit tests; `kod-provider-anthropic/tests/stream_retry.rs` **and** `kod-provider-openai/tests/stream_retry.rs` each pin the three-way fork (HTTP error / empty / committed) |
 | `RetryHints` (`extract_retry_hints`) | `kod-provider/src/retry.rs` | Anthropic native-Messages error paths extract hints from response headers before constructing `KodError`; the OpenAI-compatible path cannot (its `AdkError` transport exposes no headers) | `retry.rs` unit tests; no integration test yet |
 | `AutoThinking` | `kod-core/src/auto_thinking.rs` | `resolve_turn_effort` in `engine/mod.rs`: an endpoint with `effort = "auto"` classifies the turn via a `judge`-role `JudgmentClient`, using the model's ladder from `model_catalog` | `auto_thinking.rs` unit tests (classifier in isolation); no engine-level integration test yet |
+| `UnexpectedStopClassifier` | `kod-core/src/unexpected_stop.rs` | `diagnose_unexpected_stop` in `engine/mod.rs`, called at both post-stream sites after `remember_turn_for`. **Diagnostic only**: verdict is logged, no corrective is emitted yet | `unexpected_stop.rs` unit tests (classifier in isolation); no engine-level integration test yet |
 
 ## Config surface landed, engine-side reader pending
 
@@ -32,11 +33,9 @@ question the doc leaves open, or a supporting tool.
 
 | Primitive | Module | Blocked on |
 |---|---|---|
-| `UnexpectedStopClassifier` | `kod-core/src/unexpected_stop.rs` | Judge role (same as AutoThinking). Classifier is a call to the judgment framework; the framework exists, the role resolution does not. |
 | `Advisor EmissionGuard` | `kod-swarm/src/advisor.rs` | The `advise` tool itself. The guard is the tool's admission policy; the tool does not exist yet. |
 | `ToolSearchTool` | `kod-tools/src/tool_search.rs` | Engine tool inventory wiring (the tool exists; the engine does not yet mount it). |
 | `BatchTool` | `kod-tools/src/batch.rs` | Registry wiring. |
-| `UnexpectedStopClassifier` | (see above) | — |
 
 ## Deferred to a future slice, not-yet-built
 

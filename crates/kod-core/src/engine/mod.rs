@@ -5900,6 +5900,88 @@ pub(crate) fn filter_chain_by_trust(
         }
     }
 
+    /// Delta §9.4 (diagnostic half): classify whether a clean stop
+    /// was actually an answer.
+    ///
+    /// This is the wiring that makes the `UnexpectedStopClassifier`
+    /// observable from the engine. It runs on every completed turn,
+    /// but only *evaluates* on the candidate pattern (a clean stop
+    /// with non-empty text and no tool calls) — most turns cost
+    /// nothing more than a `StopCandidate` build and a `is_candidate`
+    /// check. A turn that is a candidate, with a `judge` role
+    /// configured, spends exactly one judge call.
+    ///
+    /// # Diagnostic-only, for now
+    ///
+    /// The classifier's verdict is **logged** — at `info` for an
+    /// unexpected stop, at `debug` for an expected one, at `warn` for
+    /// a judge failure — but the engine takes no corrective action on
+    /// it in this commit. Extending the turn (injecting a synthetic
+    /// nudge and re-entering the streaming chain) is a distinct
+    /// policy decision that touches the streaming loop's control
+    /// flow, and it deserves its own commit. Landing the diagnostic
+    /// first means the verdict is visible in traces and can be
+    /// measured against real sessions before it can affect them.
+    ///
+    /// # Where the stop reason comes from
+    ///
+    /// The engine does not currently thread the provider's
+    /// `StopReason` chunk out of the streaming loop. Passing `None`
+    /// is correct: `StopCandidate.stop_reason` treats `None` as
+    /// "consistent with a clean stop" — the very shape the
+    /// classifier was built to judge. Once the loop's stop reason
+    /// is threaded through (a small follow-up), the caller upgrades
+    /// to `Some(reason)` and the "not a truncation detector"
+    /// property in the module doc becomes an active gate rather
+    /// than a doc invariant.
+    async fn diagnose_unexpected_stop(
+        &self,
+        holder: &str,
+        request: &str,
+        reply: &str,
+        tool_call_count: usize,
+    ) {
+        use crate::unexpected_stop::{StopCandidate, UnexpectedVerdict, is_candidate};
+
+        let candidate = StopCandidate {
+            stop_reason: None,
+            text: reply,
+            has_tool_calls: tool_call_count > 0,
+        };
+        if !is_candidate(&candidate) {
+            return;
+        }
+
+        let client = match self.resolve_judge_client().await {
+            Some(c) => c,
+            None => {
+                tracing::debug!(
+                    holder = %holder,
+                    "unexpected-stop candidate but no judge role configured",
+                );
+                return;
+            }
+        };
+        let classifier = crate::unexpected_stop::UnexpectedStopClassifier::new(client);
+        match classifier.classify(request, reply).await {
+            Ok(true) => tracing::info!(
+                holder = %holder,
+                verdict = ?UnexpectedVerdict::Unexpected,
+                "unexpected stop detected (diagnostic only; no corrective emitted)",
+            ),
+            Ok(false) => tracing::debug!(
+                holder = %holder,
+                verdict = ?UnexpectedVerdict::Expected,
+                "stop classified as expected",
+            ),
+            Err(e) => tracing::warn!(
+                holder = %holder,
+                error = %e,
+                "unexpected-stop judge failed",
+            ),
+        }
+    }
+
     /// Like [`Self::record_cost`], but also feeds the cache ledger
     /// with the fingerprint of the request head that was actually
     /// sent. The engine calls this from the two loops, which have
@@ -7029,6 +7111,16 @@ pub(crate) fn filter_chain_by_trust(
             };
             self.remember_turn_for(key, false, &final_text).await;
 
+            // Delta §9.4 (diagnostic): same classifier call as the
+            // streaming path. Non-blocking.
+            self.diagnose_unexpected_stop(
+                key,
+                &request_text,
+                &final_text,
+                tool_calls.len(),
+            )
+            .await;
+
             return Ok(TaskResponse {
                 task_type: response.task_type,
                 text: Some(final_text),
@@ -7381,6 +7473,19 @@ pub(crate) fn filter_chain_by_trust(
                 None => final_text,
             };
             self.remember_turn_for(key, false, &final_text).await;
+
+            // Delta §9.4 (diagnostic): classify a clean stop with
+            // no tool calls. Non-blocking — the reply is delivered
+            // unchanged; only a log line records the verdict.
+            // Wired here after `remember_turn_for` so the classifier
+            // sees the same `final_text` the caller will receive.
+            self.diagnose_unexpected_stop(
+                key,
+                &request_text,
+                &final_text,
+                tool_calls.len(),
+            )
+            .await;
 
             // Tier 3.4 — extract durable decisions from this turn.
             // Two Jev calls, gated; no-op when Jev is disabled.
