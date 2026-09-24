@@ -6558,7 +6558,7 @@ pub(crate) fn filter_chain_by_trust(
         input: &str,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
     ) -> Result<TaskResponse> {
-        self.process_streaming_with_model_for(key, input, chunk_tx, None)
+        self.process_streaming_with_model_for(key, input, chunk_tx, None, None)
             .await
     }
 
@@ -6582,6 +6582,7 @@ pub(crate) fn filter_chain_by_trust(
         input: &str,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
         override_model: Option<ModelRef>,
+        effort: Option<kod_types::effort::EffortLevel>,
     ) -> Result<TaskResponse> {
         {
             let running = self.is_running.read().await;
@@ -6638,7 +6639,13 @@ pub(crate) fn filter_chain_by_trust(
                 initial_messages,
             } = prep;
             self.snapshot_prompt(key, &pending, &alloc).await;
-            let options = self.generation_defaults.read().await.to_options();
+            let mut options = self.generation_defaults.read().await.to_options();
+            // The caller's effort, when it expressed one. `None`
+            // leaves the config default, which is what the TUI and
+            // CLI pass.
+            if effort.is_some() {
+                options.effort = effort;
+            }
             // Fallback chain (A6). Streaming retries reuse the same
             // chunk_tx, so a successful fallback continues the visible
             // stream exactly where the failed attempt stopped; a

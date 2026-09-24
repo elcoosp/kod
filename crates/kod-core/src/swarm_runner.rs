@@ -245,6 +245,11 @@ pub struct SwarmRunner {
     /// swarm — the phase gate below is a no-op then, and the runner
     /// behaves exactly as before.
     overnight_manifest: Option<crate::overnight::OvernightManifest>,
+
+    /// Reasoning effort for the coordinator calls (decompose, merge).
+    root_effort: kod_types::effort::EffortLevel,
+    /// Reasoning effort for each worker's dispatch.
+    worker_effort: kod_types::effort::EffortLevel,
 }
 
 impl SwarmRunner {
@@ -274,6 +279,8 @@ impl SwarmRunner {
             swarm_timeout_secs: 1800,
             isolation: kod_config::Isolation::default(),
             overnight_manifest: None,
+            root_effort: kod_types::effort::EffortLevel::Max,
+            worker_effort: kod_types::effort::EffortLevel::Medium,
         })
     }
 
@@ -287,6 +294,17 @@ impl SwarmRunner {
     /// convention for the two timeouts.
     /// Set the isolation policy. Consuming builder, chained from
     /// `new`/`from_config`.
+    /// Set the coordinator and worker effort levels.
+    pub fn with_efforts(
+        mut self,
+        root: kod_types::effort::EffortLevel,
+        worker: kod_types::effort::EffortLevel,
+    ) -> Self {
+        self.root_effort = root;
+        self.worker_effort = worker;
+        self
+    }
+
     pub fn with_isolation(mut self, isolation: kod_config::Isolation) -> Self {
         self.isolation = isolation;
         self
@@ -315,7 +333,8 @@ impl SwarmRunner {
             .with_agent_timeout_secs(config.agent_timeout_secs)
             .with_agent_retries(config.agent_retries)
             .with_swarm_timeout_secs(config.timeout_secs)
-            .with_isolation(config.isolation))
+            .with_isolation(config.isolation)
+            .with_efforts(config.root_effort, config.worker_effort))
     }
 
     /// Override the agent count (H-C3). The CLI passes `--agents N`;
@@ -1226,6 +1245,7 @@ impl SwarmRunner {
                             &shaped,
                             &tx,
                             override_model.clone(),
+                            Some(self.worker_effort),
                         );
 
                     let outcome: std::result::Result<
@@ -1820,6 +1840,7 @@ impl SwarmRunner {
                 &prompt,
                 &GenerationOptions {
                     temperature: Some(0.2),
+                    effort: Some(self.root_effort),
                     ..Default::default()
                 },
             )
@@ -1905,6 +1926,7 @@ impl SwarmRunner {
                 &prompt,
                 &GenerationOptions {
                     temperature: Some(0.2),
+                    effort: Some(self.root_effort),
                     ..Default::default()
                 },
             )
@@ -2013,6 +2035,7 @@ impl SwarmRunner {
                 &prompt,
                 &GenerationOptions {
                     temperature: Some(0.3),
+                    effort: Some(self.root_effort),
                     ..Default::default()
                 },
             )
