@@ -428,6 +428,26 @@ pub fn default_session_path() -> Option<PathBuf> {
 }
 
 
+/// Which shape a rehydrated transcript takes.
+///
+/// Both forms come from the same JSONL entries; they differ in what
+/// the caller can do with the result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RehydrationMode {
+    /// One `User`-role prose message per tool call. This is what the
+    /// text-protocol `render_history_for` can display — it skips
+    /// `Tool`-role rows, so a structured pair would be invisible.
+    #[default]
+    Prose,
+    /// An `Assistant` message carrying `tool_calls`, then a `Tool`
+    /// message carrying each result, linked by `tool_call_id`. This
+    /// is the shape a `CompletionRequest` puts on the wire; it is
+    /// not what the current text renderer shows, so a caller that
+    /// wants the resumed conversation to *affect the prompt* wants
+    /// `Prose`.
+    Structured,
+}
+
 /// Rebuild a transcript from the tool-call entries a session log
 /// recorded for one holder.
 ///
