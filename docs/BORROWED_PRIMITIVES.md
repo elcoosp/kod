@@ -22,6 +22,7 @@ git log to find out. Update this file when the status changes.
 | `ToolSearchTool` | `kod-tools/src/tool_search.rs` | registered at `engine.start()` from the engine's `tool_inventory` (refreshed in `refresh_tool_inventory`) | `tool_search.rs` unit tests |
 | `BatchTool` | `kod-tools/src/batch.rs` | registered at `engine.start()` with a `Weak<ToolRegistry>` backreference so it cannot outlive the tools it dispatches to | `batch.rs` unit tests |
 | `Advisor EmissionGuard` | `kod-swarm/src/advisor.rs` + `kod-core/src/advisor_tools.rs` | the `advise` tool runs the four-stage pipeline (empty / noise / rank-aware dedupe / budget) and routes admitted notes through the engine's steer queue; `begin_update` resets the per-turn budget at the top of `process_streaming_with_model_for` | `advisor.rs` unit tests (34); `advisor_tools.rs` (12, including the doc's 114-Stops incident) |
+| Internal-URL router (§7.5) | `kod-tools/src/internal_url.rs` | `ProtocolRouter` + `ProtocolHandler` + `ResolveContext`; the `read_file` and `write_file` tools dispatch on handled schemes; the engine installs a router holding an `ArtifactHandler` into every per-call `ToolContext`, and exposes `store_artifact` for offload sites (shake, minimizer) | `internal_url.rs` (25 unit + 7 integration); engine-level tests exercise the routing end to end |
 
 ## Deferred to a future slice, not-yet-built
 

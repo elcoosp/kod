@@ -1208,6 +1208,14 @@ pub struct KodEngine {
     is_running: Arc<RwLock<bool>>,
     tools: Arc<ToolRegistry>,
     tool_context: ToolContext,
+    /// Delta §7.5: the in-memory artifact store the internal-URL
+    /// router serves for `artifact://`. Exposed publicly via
+    /// [`Self::store_artifact`] so shake, the minimizer, and any
+    /// future large-blob offload path have one place to write. The
+    /// router that dispatches to it is installed into the base
+    /// `tool_context` at construction, so every per-call context
+    /// the engine derives sees the same store.
+    artifact_handler: Arc<kod_tools::ArtifactHandler>,
     /// Shared per-path advisory locks. Cloned into every per-call
     /// tool context the engine derives, so a swarm agent and the
     /// interactive session contend on the same table.
@@ -2845,16 +2853,27 @@ impl KodEngine {
         // `LlmConfig::network_access` flag is a follow-up — the
         // context is built before the config is available here, and
         // the CLI/TUI do not currently pass a context in.
+        // Delta §7.5: the artifact store + the protocol router. The
+        // handler is stored on the engine so offload sites
+        // (`store_artifact`) can write; the router is installed into
+        // the base `tool_context` so every derived per-call context
+        // sees the same handler.
+        let artifact_handler = Arc::new(kod_tools::ArtifactHandler::new());
+        let protocol_router = kod_tools::ProtocolRouter::new().register(
+            Arc::clone(&artifact_handler) as Arc<dyn kod_tools::ProtocolHandler>,
+        );
         let tool_context =
-            ToolContext::new(working_dir.clone()).with_permissions(ToolPermissions {
-                read_files: true,
-                write_files: true,
-                execute_commands: true,
-                network_access: false,
-                git_access: kod_types::GitAccess::Write,
-                allowed_paths: Vec::new(),
-                forbidden_paths: Vec::new(),
-            });
+            ToolContext::new(working_dir.clone())
+                .with_permissions(ToolPermissions {
+                    read_files: true,
+                    write_files: true,
+                    execute_commands: true,
+                    network_access: false,
+                    git_access: kod_types::GitAccess::Write,
+                    allowed_paths: Vec::new(),
+                    forbidden_paths: Vec::new(),
+                })
+                .with_protocol_router(protocol_router);
         let router = TaskRouter::new(config, db_path)?;
         let lock_table = Arc::new(PathLockTable::new());
         // Snapshots are best-effort: a session without a home directory
@@ -2872,6 +2891,7 @@ impl KodEngine {
             is_running: Arc::new(RwLock::new(false)),
             tools: Arc::new(ToolRegistry::new()),
             tool_context,
+            artifact_handler,
             lock_table,
             working_dir: working_dir.clone(),
             steers: std::sync::Arc::new(RwLock::new(HashMap::new())),
@@ -6171,6 +6191,40 @@ pub(crate) fn filter_chain_by_trust(
     /// The working directory tools are rooted at.
     pub fn working_dir(&self) -> &std::path::Path {
         &self.working_dir
+    }
+
+    /// Delta §7.5: store a blob of text as an artifact and return the
+    /// `artifact://<id>` URL the model can `read_file`.
+    ///
+    /// This is the entry point for any code that wants to offload
+    /// text out of the transcript — shake, the shell-output
+    /// minimizer, a large tool result. The URL is stable; the bytes
+    /// are immutable; a later turn that re-reads the URL sees the
+    /// same content.
+    ///
+    /// The id is caller-supplied. A caller that wants uniqueness
+    /// generates one (a UUID, a content hash); a caller that wants
+    /// to fail on collision passes a deterministic id. The
+    /// underlying store refuses to overwrite.
+    pub async fn store_artifact(
+        &self,
+        id: impl Into<String>,
+        text: impl Into<String>,
+        mime: impl Into<String>,
+    ) -> Result<String> {
+        self.artifact_handler
+            .store(id, text, mime)
+            .await
+            .map_err(|e| KodError::InvalidParameters {
+                reason: format!("store_artifact: {e}"),
+            })
+    }
+
+    /// The artifact handler the internal-URL router dispatches to.
+    /// Public so a caller that wants to preload artifacts before a
+    /// session, or inspect the store, can reach it directly.
+    pub fn artifact_handler(&self) -> &Arc<kod_tools::ArtifactHandler> {
+        &self.artifact_handler
     }
 
     /// Execute a registered tool by name with the engine's own tool
