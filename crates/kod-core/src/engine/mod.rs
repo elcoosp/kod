@@ -7666,15 +7666,25 @@ pub(crate) fn filter_chain_by_trust(
         // prompt on that key). The timeout is per-chunk, not
         // per-stream — a slow-but-alive connection that sends
         // something every few seconds never trips it.
-        const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+        // A reasoning model produces no output while it thinks, and
+        // a `Max`-effort request can be legitimately silent for
+        // minutes. The base is 120 s — correct for a fast model — and
+        // the effort scales it: 240 s at `High`, 360 s at `Xhigh`,
+        // 480 s at `Max`. An unset effort is `Medium`, whose
+        // multiplier is 1.0, so every existing caller's timeout is
+        // unchanged.
+        let stream_idle_timeout = kod_provider::effort::scaled_idle_timeout(
+            std::time::Duration::from_secs(120),
+            options.effort.unwrap_or_default(),
+        );
         let mut stream_error: Option<kod_error::KodError> = None;
         loop {
-            let next = match tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()).await {
+            let next = match tokio::time::timeout(stream_idle_timeout, stream.next()).await {
                 Ok(Some(item)) => item,
                 Ok(None) => break,
                 Err(_) => {
                     stream_error = Some(kod_error::KodError::ProviderTimeout {
-                        timeout_ms: STREAM_IDLE_TIMEOUT.as_millis() as u64,
+                        timeout_ms: stream_idle_timeout.as_millis() as u64,
                     });
                     break;
                 }
