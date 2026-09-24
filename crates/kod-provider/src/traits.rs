@@ -31,6 +31,18 @@ pub struct ModelInfo {
     /// Output price in USD per million tokens.
     #[serde(default)]
     pub output_per_mtok_usd: Option<f64>,
+    /// The reasoning-effort ladder this model supports, in ascending
+    /// order (`[Low, Medium, High]`, `[Low, Medium, High, Xhigh,
+    /// Max]`, …). `None` when the provider does not report a ladder
+    /// — the `AutoThinking` classifier treats that as `[Medium]` and
+    /// every classification collapses to the neutral default.
+    ///
+    /// Delta §9.6: the ladder is what makes `effort = "auto"` a real
+    /// decision instead of a guess. A caller reading it knows which
+    /// levels the model accepts; the classifier clamps and ceilings
+    /// against it.
+    #[serde(default)]
+    pub efforts: Option<Vec<kod_types::effort::EffortLevel>>,
 }
 
 impl ModelInfo {
@@ -41,6 +53,7 @@ impl ModelInfo {
             context_window: None,
             input_per_mtok_usd: None,
             output_per_mtok_usd: None,
+            efforts: None,
         }
     }
 
@@ -314,6 +327,36 @@ mod tests {
             seen.contains("User: hello"),
             "default adapter should render the message transcript: {seen}"
         );
+    }
+
+    #[test]
+    fn model_info_efforts_round_trips() {
+        use kod_types::effort::EffortLevel;
+        let m = ModelInfo {
+            id: "x".into(),
+            context_window: Some(1000),
+            input_per_mtok_usd: None,
+            output_per_mtok_usd: None,
+            efforts: Some(vec![
+                EffortLevel::Low,
+                EffortLevel::Medium,
+                EffortLevel::High,
+            ]),
+        };
+        let s = serde_json::to_string(&m).unwrap();
+        assert!(s.contains("\"efforts\""), "efforts missing from json: {s}");
+        let back: ModelInfo = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.efforts, m.efforts);
+    }
+
+    #[test]
+    fn model_info_without_efforts_defaults_to_none() {
+        // Wire compat: a provider response that omits `efforts`
+        // deserializes with the field as `None`. This is the shape
+        // every existing endpoint produces today.
+        let json = r#"{"id":"x","context_window":1000,"input_per_mtok_usd":null,"output_per_mtok_usd":null}"#;
+        let m: ModelInfo = serde_json::from_str(json).unwrap();
+        assert!(m.efforts.is_none());
     }
 
     #[tokio::test]
