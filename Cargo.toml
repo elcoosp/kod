@@ -19,6 +19,7 @@ members = [
     "crates/kod-core",
     "crates/kod-risk",
     "crates/kod-schema-dialect",
+    "crates/kod-minimize",
 ]
 
 [workspace.package]

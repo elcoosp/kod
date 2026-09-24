@@ -2398,6 +2398,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kod-minimize"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "rstest",
+ "serde",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "kod-provider"
 version = "0.1.0"
 dependencies = [
