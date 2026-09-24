@@ -37,6 +37,7 @@ pub mod retry_strategy;
 pub mod router;
 pub mod serve;
 pub mod session_log;
+pub mod shake;
 pub mod state;
 pub mod steer;
 pub mod swarm_adapters;
