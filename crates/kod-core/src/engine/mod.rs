@@ -1300,6 +1300,14 @@ pub struct KodEngine {
     /// bytes the provider is charging for.
     context_gauges: RwLock<HashMap<String, crate::context_gauge::ContextGauge>>,
 
+    /// Delta §9.4: per-transcript tool-call loop guards. When the
+    /// model issues the same tool call (same name, same arguments)
+    /// `DEFAULT_LOOP_THRESHOLD` rounds in a row, the guard emits a
+    /// corrective that the round loop injects as a System message
+    /// before the next model call. See `crate::tool_loop_guard` for
+    /// the fingerprint rules.
+    tool_loop_guards: RwLock<HashMap<String, crate::tool_loop_guard::ToolLoopGuard>>,
+
     /// Per-transcript working-directory override (D4-D1). A swarm
     /// agent registers its worktree path here before running; tool
     /// calls on that transcript use the override for
@@ -2818,6 +2826,7 @@ impl KodEngine {
             history: RwLock::new(HashMap::new()),
             observed_usage: RwLock::new(HashMap::new()),
             context_gauges: RwLock::new(HashMap::new()),
+            tool_loop_guards: RwLock::new(HashMap::new()),
             compaction_dispatcher: std::sync::Arc::new(
                 crate::compaction_dispatcher::CompactionDispatcher::new(vec![
                     // The engine's dispatcher fires only after
@@ -7485,6 +7494,19 @@ pub(crate) fn filter_chain_by_trust(
                         break;
                     }
                     let section = self.run_tool_calls(&calls, round.holder, None).await;
+                    // Delta §9.4: check for a repeated tool round and,
+                    // if the guard fires, append a corrective System
+                    // message before the loop continues. Runs on both
+                    // ToolCalls and Mixed arms; the guard's per-key
+                    // state means a Mixed-then-ToolCalls sequence is
+                    // observed as a single stream of rounds.
+                    self.maybe_emit_loop_corrective(
+                        round.holder,
+                        &calls,
+                        &section.results,
+                        messages,
+                    )
+                    .await;
                     tool_calls.extend(calls);
                     tool_results.extend(section.results.clone());
                     messages.extend(section.messages.iter().cloned());
@@ -7522,6 +7544,19 @@ pub(crate) fn filter_chain_by_trust(
                         break;
                     }
                     let section = self.run_tool_calls(&calls, round.holder, None).await;
+                    // Delta §9.4: check for a repeated tool round and,
+                    // if the guard fires, append a corrective System
+                    // message before the loop continues. Runs on both
+                    // ToolCalls and Mixed arms; the guard's per-key
+                    // state means a Mixed-then-ToolCalls sequence is
+                    // observed as a single stream of rounds.
+                    self.maybe_emit_loop_corrective(
+                        round.holder,
+                        &calls,
+                        &section.results,
+                        messages,
+                    )
+                    .await;
                     tool_calls.extend(calls);
                     tool_results.extend(section.results.clone());
                     messages.extend(section.messages.iter().cloned());
@@ -7731,6 +7766,17 @@ pub(crate) fn filter_chain_by_trust(
             let section = self
                 .run_tool_calls(&calls, round.holder, Some(chunk_tx))
                 .await;
+            // Delta §9.4: check for a repeated tool round. The
+            // corrective is a request-shaped System message; the TUI
+            // does not see it (only `messages` is affected), and the
+            // next round's provider call is the one that reads it.
+            self.maybe_emit_loop_corrective(
+                round.holder,
+                &calls,
+                &section.results,
+                messages,
+            )
+            .await;
             // Each call finished: hand the TUI its completion live (header
             // + summary + wall time) so the "running …" row fills in now,
             // not when the whole loop returns. Markers travel the same
@@ -9032,6 +9078,56 @@ pub(crate) fn filter_chain_by_trust(
             }
         }
         (need_approval, denied)
+    }
+
+    /// Delta §9.4: observe a completed tool round against the
+    /// transcript's loop guard, and — on a detected loop — append a
+    /// System corrective to `messages` so the next model call sees
+    /// it.
+    ///
+    /// Called right after every `run_tool_calls` in both the
+    /// collected and streaming loops. The corrective is pushed to
+    /// the request-shaped `messages`, not to `self.history` — the
+    /// corrective steers the *current* turn; persisting it across
+    /// turns would let a single loop pollute every future prompt.
+    /// The guard's own streak state is per-transcript, so a loop
+    /// that resumes after an intervening non-loop round fires its
+    /// next corrective exactly when the streak rebuilds.
+    async fn maybe_emit_loop_corrective(
+        &self,
+        key: &str,
+        calls: &[kod_types::ToolCall],
+        results: &[kod_types::ToolResult],
+        messages: &mut Vec<kod_types::ChatMessage>,
+    ) {
+        let mut guards = self.tool_loop_guards.write().await;
+        let guard = guards
+            .entry(key.to_string())
+            .or_insert_with(crate::tool_loop_guard::ToolLoopGuard::new);
+        let Some(corrective) = guard.observe_round(calls, results) else {
+            return;
+        };
+        // Drop the guard lock before touching `messages` (a caller
+        // may hold an unrelated lock; keeping this one held would
+        // invite a lock-ordering issue in a future refactor).
+        drop(guards);
+        let body = format!(
+            "[tool-loop corrective] You have called `{}` {} rounds in a \
+             row with the same arguments. The result is not changing; \
+             stopping the loop is the right move. Arguments: {}. Last \
+             result: {}. Try a different tool, different arguments, or \
+             ask the user for guidance.",
+            corrective.tool_name,
+            corrective.count,
+            corrective.arguments_summary,
+            corrective.result_summary,
+        );
+        messages.push(kod_types::ChatMessage::text(
+            kod_types::MessageId::new(),
+            kod_types::MessageRole::System,
+            body,
+            time::OffsetDateTime::now_utc(),
+        ));
     }
 
     /// Execute one round of model-requested tool calls.
