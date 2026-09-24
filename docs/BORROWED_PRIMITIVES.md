@@ -21,16 +21,7 @@ git log to find out. Update this file when the status changes.
 | `UnexpectedStopClassifier` | `kod-core/src/unexpected_stop.rs` | `diagnose_unexpected_stop` in `engine/mod.rs`, called at both post-stream sites after `remember_turn_for`. **Diagnostic only**: verdict is logged, no corrective is emitted yet | `unexpected_stop.rs` unit tests (classifier in isolation); no engine-level integration test yet |
 | `ToolSearchTool` | `kod-tools/src/tool_search.rs` | registered at `engine.start()` from the engine's `tool_inventory` (refreshed in `refresh_tool_inventory`) | `tool_search.rs` unit tests |
 | `BatchTool` | `kod-tools/src/batch.rs` | registered at `engine.start()` with a `Weak<ToolRegistry>` backreference so it cannot outlive the tools it dispatches to | `batch.rs` unit tests |
-
-## Present and tested in isolation; no engine caller yet
-
-Each of these is a self-contained primitive with a full test suite.
-None is broken; none is inert because of a bug. They await a policy
-question the doc leaves open, or a supporting tool.
-
-| Primitive | Module | Blocked on |
-|---|---|---|
-| `Advisor EmissionGuard` | `kod-swarm/src/advisor.rs` | The `advise` tool itself. The guard is the tool's admission policy; the tool does not exist yet. |
+| `Advisor EmissionGuard` | `kod-swarm/src/advisor.rs` + `kod-core/src/advisor_tools.rs` | the `advise` tool runs the four-stage pipeline (empty / noise / rank-aware dedupe / budget) and routes admitted notes through the engine's steer queue; `begin_update` resets the per-turn budget at the top of `process_streaming_with_model_for` | `advisor.rs` unit tests (34); `advisor_tools.rs` (12, including the doc's 114-Stops incident) |
 
 ## Deferred to a future slice, not-yet-built
 
