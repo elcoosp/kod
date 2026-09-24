@@ -351,8 +351,20 @@ impl ArtifactHandler {
     }
 
     /// Store a new artifact under `id` and return the URL the model
-    /// will use. Refuses to overwrite; a caller that wants to replace
-    /// an artifact generates a new id.
+    /// will use.
+    ///
+    /// # Idempotent for identical content
+    ///
+    /// A caller that uses a content-addressed id (the minimizer does:
+    /// `cmd-<hash>`) will call `store` with the same id and the same
+    /// text every time the same command produces the same output. The
+    /// second call is not a write; it is a *confirmation* that the
+    /// content is already present, and it returns the same URL. Only
+    /// a genuine hash collision — same id, *different* content — is
+    /// refused. That refusal is the honest signal: the caller's id
+    /// scheme has a collision and the caller must resolve it (a
+    /// longer id, a different hash) rather than the store silently
+    /// overwriting the earlier content.
     pub async fn store(
         &self,
         id: impl Into<String>,
@@ -361,20 +373,23 @@ impl ArtifactHandler {
     ) -> std::result::Result<String, ProtocolError> {
         let id = id.into();
         let url = format!("artifact://{id}");
+        let text = text.into();
+        let mime = mime.into();
         let mut store = self.store.write().await;
-        if store.contains_key(&id) {
+        if let Some(existing) = store.get(&id) {
+            if existing.text == text && existing.mime == mime {
+                // Identical re-store: the artifact is already here
+                // with the same bytes. Return the same URL.
+                return Ok(url);
+            }
             return Err(ProtocolError::Handler {
                 url,
-                message: "artifact id already exists; artifacts are immutable".to_string(),
+                message: "artifact id already exists with different content; \
+                          the id scheme has a hash collision"
+                    .to_string(),
             });
         }
-        store.insert(
-            id.clone(),
-            StoredArtifact {
-                text: text.into(),
-                mime: mime.into(),
-            },
-        );
+        store.insert(id.clone(), StoredArtifact { text, mime });
         Ok(format!("artifact://{id}"))
     }
 
@@ -488,7 +503,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn overwriting_an_artifact_is_refused() {
+    async fn restoring_identical_content_returns_the_same_url() {
+        // Idempotent for identical content: a content-addressed
+        // caller re-storing the same bytes gets the same URL, not
+        // an error.
+        let h = ArtifactHandler::new();
+        let u1 = h.store("abc", "hello", "text/plain").await.unwrap();
+        let u2 = h.store("abc", "hello", "text/plain").await.unwrap();
+        assert_eq!(u1, u2);
+    }
+
+    #[tokio::test]
+    async fn overwriting_an_artifact_with_different_content_is_refused() {
+        // A genuine hash collision — same id, different content —
+        // is refused. The store does not silently overwrite the
+        // earlier content, and it does not return a URL that would
+        // resolve to the wrong bytes.
         let h = ArtifactHandler::new();
         h.store("abc", "hello", "text/plain").await.unwrap();
         let err = h.store("abc", "world", "text/plain").await.unwrap_err();
