@@ -6,6 +6,9 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+hmac = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -14,6 +17,7 @@ time = { workspace = true }
 uuid = { version = "1.11", features = ["v4", "serde"] }
 
 [dev-dependencies]
+tempfile = "3.8"
 rstest = { workspace = true }
 
 [lints]

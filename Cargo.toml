@@ -216,6 +216,11 @@ chrono = { version = "0.4", features = ["serde"] }
 # Diffing
 similar = "2.7"
 
+# Secret placeholders (delta §14.1)
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+
 # System
 libc = "0.2"
 

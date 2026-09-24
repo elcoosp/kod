@@ -2589,11 +2589,15 @@ dependencies = [
 name = "kod-types"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "compact_str 0.10.0",
+ "hmac",
  "regex",
  "rstest",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "time",
  "uuid",
 ]
