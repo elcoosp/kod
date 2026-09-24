@@ -19,6 +19,7 @@ futures = { workspace = true }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
 kod-risk = { path = "../kod-risk" }
+kod-schema-dialect = { path = "../kod-schema-dialect" }
 kod-config = { path = "../kod-config" }
 regex = { workspace = true }
 ignore = { workspace = true }

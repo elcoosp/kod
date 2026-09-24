@@ -275,6 +275,26 @@ impl McpToolAdapter {
         } else {
             def.input_schema.clone()
         };
+        // A third-party MCP server's schema is written for whatever
+        // draft its author had in mind, not for kod's providers. The
+        // common tripwires — `const`, `oneOf`, single-member
+        // combinators — produce a 400 that names the construct and
+        // fails every request until someone edits the server. Sanitize
+        // once here, at admission, against the strictest dialect
+        // (OpenAI's): the result is valid for the lenient one too, so
+        // a single rewrite serves every endpoint the tool reaches.
+        let (schema, dialect_changes) = kod_schema_dialect::sanitize(
+            &schema,
+            &kod_schema_dialect::spec_for_provider("openai"),
+        );
+        if !dialect_changes.is_empty() {
+            tracing::debug!(
+                tool = %full_name,
+                server = %server,
+                changes = dialect_changes.len(),
+                "sanitized an MCP tool schema for provider dialects",
+            );
+        }
         Self {
             host,
             server,

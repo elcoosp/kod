@@ -2321,6 +2321,7 @@ dependencies = [
  "kod-provider-anthropic",
  "kod-provider-openai",
  "kod-risk",
+ "kod-schema-dialect",
  "kod-skills",
  "kod-swarm",
  "kod-tools",
