@@ -30,6 +30,7 @@ pub mod mcp_adapters;
 pub mod memory_tools;
 pub mod overnight;
 pub mod output_spool;
+pub mod pause_gate;
 pub mod plan;
 pub mod provider_setup;
 pub mod repomap;
