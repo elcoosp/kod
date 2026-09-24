@@ -401,162 +401,284 @@ impl LlmProvider for AnthropicProvider {
         let guard_enabled = self.stream_guard_enabled;
 
         Box::pin(async_stream::stream! {
-            // §9.9: one admission permit per streaming HTTP request.
-            let _permit = concurrency.acquire().await;
-            // §9.3: one guard per stream, fresh per attempt.
-            let mut guard = if guard_enabled {
-                Some(kod_provider::stream_guard::StreamGuard::new())
-            } else {
-                None
-            };
-            let resp = match client
-                .post(&url)
-                .header("x-api-key", &api_key)
-                .header("anthropic-version", "2023-06-01")
-                .header("accept", "text/event-stream")
-                .json(&body)
-                .send()
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    yield Err(KodError::Provider(format!(
-                        "anthropic stream: POST {url}: {e}"
-                    )));
+            // §9.2: attempt loop. A stream that fails before
+            // committing (see `kod_provider::retry_safety`) is retried
+            // from scratch, with a fresh tracker, guard, and buffer.
+            // Once committed, no retry: the caller has already seen
+            // content a replay would have to re-generate.
+            const MAX_STREAM_ATTEMPTS: u32 = 3;
+            let mut empty_retry = kod_provider::retry_safety::EmptyCompletionRetry::new();
+            let mut attempt: u32 = 0;
+
+            loop {
+                attempt += 1;
+
+                // §9.9: one admission permit per streaming HTTP
+                // request, released when this attempt ends.
+                let _permit = concurrency.acquire().await;
+
+                // §9.3: fresh guard per attempt. The previous
+                // attempt's tail is not evidence about this one.
+                let mut guard = if guard_enabled {
+                    Some(kod_provider::stream_guard::StreamGuard::new())
+                } else {
+                    None
+                };
+
+                // §9.2: pre-commit buffering. Non-committing chunks
+                // (ToolCallStart markers, empty text/deltas, Usage,
+                // StopReason, Done) sit in `buffered` until the
+                // attempt commits; if the attempt dies before
+                // committing, the buffer is discarded and the caller
+                // never sees the doomed attempt's markers.
+                let mut tracker = kod_provider::retry_safety::AttemptTracker::new();
+                let mut buffered: Vec<StreamChunk> = Vec::new();
+                let mut accumulated_text = String::new();
+                let mut last_usage: Option<kod_provider::TokenUsage> = None;
+
+                // ---- POST ----
+                let resp = match client
+                    .post(&url)
+                    .header("x-api-key", &api_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("accept", "text/event-stream")
+                    .json(&body)
+                    .send()
+                    .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let err = KodError::Provider(format!(
+                            "anthropic stream: POST {url}: {e}"
+                        ));
+                        if attempt < MAX_STREAM_ATTEMPTS {
+                            tracing::warn!(
+                                attempt,
+                                error = %err,
+                                "anthropic stream: pre-commit transport error; retrying"
+                            );
+                            continue;
+                        }
+                        yield Err(err);
+                        return;
+                    }
+                };
+
+                // ---- status check ----
+                let status = resp.status();
+                if !status.is_success() {
+                    let hint_headers: Vec<(String, String)> = resp
+                        .headers()
+                        .iter()
+                        .filter_map(|(k, v)| {
+                            v.to_str()
+                                .ok()
+                                .map(|s| (k.as_str().to_string(), s.to_string()))
+                        })
+                        .collect();
+                    let text = resp.text().await.unwrap_or_default();
+                    let hints = kod_provider::retry::extract_retry_hints(
+                        Some(status.as_u16()),
+                        &hint_headers,
+                        &text,
+                    );
+                    if let Some(delay) = hints.delay {
+                        tracing::warn!(
+                            status = status.as_u16(),
+                            hint_delay_secs = delay.as_secs(),
+                            cap_declined = hints.cap_declined,
+                            "anthropic stream: server suggested a retry delay",
+                        );
+                    }
+                    if attempt < MAX_STREAM_ATTEMPTS && !hints.cap_declined {
+                        tracing::warn!(
+                            attempt,
+                            status = status.as_u16(),
+                            "anthropic stream: pre-commit HTTP error; retrying"
+                        );
+                        continue;
+                    }
+                    let err = if hints.cap_declined {
+                        KodError::Provider(format!(
+                            "anthropic stream: HTTP {}: {} (server requested a retry delay above the 60 s cap)",
+                            status.as_u16(),
+                            text,
+                        ))
+                    } else {
+                        KodError::provider_status(status.as_u16(), &text)
+                    };
+                    yield Err(err);
                     return;
                 }
-            };
-            let status = resp.status();
-            if !status.is_success() {
-                // §9.1: same hint extraction as the non-streaming path.
-                // Captured before `.text()` consumes the response.
-                let hint_headers: Vec<(String, String)> = resp
-                    .headers()
-                    .iter()
-                    .filter_map(|(k, v)| {
-                        v.to_str()
-                            .ok()
-                            .map(|s| (k.as_str().to_string(), s.to_string()))
-                    })
-                    .collect();
-                let text = resp.text().await.unwrap_or_default();
-                let hints = kod_provider::retry::extract_retry_hints(
-                    Some(status.as_u16()),
-                    &hint_headers,
-                    &text,
-                );
-                if let Some(delay) = hints.delay {
-                    tracing::warn!(
-                        status = status.as_u16(),
-                        hint_delay_secs = delay.as_secs(),
-                        cap_declined = hints.cap_declined,
-                        "anthropic stream: server suggested a retry delay",
-                    );
-                }
-                let err = if hints.cap_declined {
-                    KodError::Provider(format!(
-                        "anthropic stream: HTTP {}: {} (server requested a retry delay above the 60 s cap)",
-                        status.as_u16(),
-                        text,
-                    ))
-                } else {
-                    KodError::provider_status(status.as_u16(), &text)
-                };
-                yield Err(err);
-                return;
-            }
 
-            let mut stream = resp.bytes_stream();
-            // H-P2: work in bytes, not `String`. `bytes_stream`
-            // yields TCP chunks, and a multi-byte UTF-8 character can
-            // straddle the boundary between two of them. The pre-fix
-            // code did `buf.push_str(&String::from_utf8_lossy(&bytes))`
-            // per chunk: half a CJK character becomes U+FFFD, and the
-            // other half is lost on the next decode — visible as
-            // mojibake in streamed text and *corrupted tool
-            // arguments*. Accumulate bytes here, find line breaks on
-            // bytes, and decode each complete line once (itself, not
-            // the partial tail).
-            let mut buf: Vec<u8> = Vec::new();
-            let mut state = crate::wire::AnthropicStreamState::default();
-            let mut done_sent = false;
+                // ---- SSE read ----
+                let mut stream = resp.bytes_stream();
+                // H-P2: work in bytes, not `String`. `bytes_stream`
+                // yields TCP chunks, and a multi-byte UTF-8 character
+                // can straddle the boundary between two of them.
+                let mut buf: Vec<u8> = Vec::new();
+                let mut state = crate::wire::AnthropicStreamState::default();
+                let mut done_sent = false;
+                let mut transport_error: Option<KodError> = None;
+                let mut stall_detector: Option<&'static str> = None;
 
-            while let Some(chunk) = stream.next().await {
-                match chunk {
-                    Ok(bytes) => {
-                        buf.extend_from_slice(&bytes);
-                        // SSE frames are separated by a blank line.
-                        // Find `\n` on bytes; `String::from_utf8`
-                        // on a complete line cannot split a char.
-                        while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
-                            let mut line_bytes: Vec<u8> = buf.drain(..=nl).collect();
-                            // Drop the trailing newline (and a CR
-                            // before it, the SSE convention).
-                            line_bytes.pop();
-                            if line_bytes.last() == Some(&b'\r') {
+                'read: while let Some(chunk) = stream.next().await {
+                    match chunk {
+                        Ok(bytes) => {
+                            buf.extend_from_slice(&bytes);
+                            while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
+                                let mut line_bytes: Vec<u8> = buf.drain(..=nl).collect();
                                 line_bytes.pop();
-                            }
-                            let line = String::from_utf8_lossy(&line_bytes).into_owned();
-                            for chunk in crate::wire::parse_sse_line(&mut state, &line) {
-                                if matches!(chunk, StreamChunk::Done) {
-                                    done_sent = true;
+                                if line_bytes.last() == Some(&b'\r') {
+                                    line_bytes.pop();
                                 }
-                                let stall = guard
-                                    .as_mut()
-                                    .and_then(|g| g.feed_chunk(&chunk));
-                                yield Ok(chunk);
-                                if let Some(detector) = stall {
-                                    yield Err(KodError::Provider(format!(
-                                        "stream stall detected: {detector}"
-                                    )));
-                                    return;
+                                let line = String::from_utf8_lossy(&line_bytes).into_owned();
+                                for chunk in crate::wire::parse_sse_line(&mut state, &line) {
+                                    if matches!(chunk, StreamChunk::Done) {
+                                        done_sent = true;
+                                    }
+                                    if let StreamChunk::Text(t) = &chunk {
+                                        accumulated_text.push_str(t);
+                                    }
+                                    if let StreamChunk::Usage(u) = &chunk {
+                                        last_usage = Some(u.clone());
+                                    }
+                                    let stall = guard
+                                        .as_mut()
+                                        .and_then(|g| g.feed_chunk(&chunk));
+                                    if let Some(detector) = stall {
+                                        stall_detector = Some(detector);
+                                        break 'read;
+                                    }
+                                    let was_committed = tracker.is_committed();
+                                    tracker.observe(&chunk);
+                                    if tracker.is_committed() {
+                                        if !was_committed {
+                                            for b in buffered.drain(..) {
+                                                yield Ok(b);
+                                            }
+                                        }
+                                        yield Ok(chunk);
+                                    } else {
+                                        buffered.push(chunk);
+                                    }
                                 }
                             }
                         }
-                    }
-                    Err(e) => {
-                        yield Err(KodError::Provider(format!(
-                            "anthropic stream: read error: {e}"
-                        )));
-                        return;
-                    }
-                }
-            }
-            // H-P2 (tail): an unterminated final line — the last
-            // frame arrives without a trailing newline — was dropped
-            // by the pre-fix loop, and it is frequently the final
-            // `message_delta` (usage) or `message_stop`. Flush it
-            // here.
-            if !buf.is_empty() {
-                let line = String::from_utf8_lossy(&buf).into_owned();
-                buf.clear();
-                for chunk in crate::wire::parse_sse_line(&mut state, &line) {
-                    if matches!(chunk, StreamChunk::Done) {
-                        done_sent = true;
-                    }
-                    let stall = guard.as_mut().and_then(|g| g.feed_chunk(&chunk));
-                    yield Ok(chunk);
-                    if let Some(detector) = stall {
-                        yield Err(KodError::Provider(format!(
-                            "stream stall detected: {detector}"
-                        )));
-                        return;
+                        Err(e) => {
+                            transport_error = Some(KodError::Provider(format!(
+                                "anthropic stream: read error: {e}"
+                            )));
+                            break 'read;
+                        }
                     }
                 }
-            }
 
-            // The spec says `message_stop` terminates; if the transport
-            // closes without one (a truncated stream), still emit a
-            // `Done` so the engine's assembly loop terminates instead
-            // of stalling on the last partial call.
-            // The two branches were identical; collapse them. The
-            // contract is the same either way: the transport closed
-            // (or `message_stop` arrived), the engine needs a `Done`.
-            if !done_sent {
-                yield Ok(StreamChunk::Done);
+                // H-P2 (tail): an unterminated final line — the last
+                // frame arrives without a trailing newline — was
+                // dropped by the pre-fix loop and is frequently the
+                // final `message_delta` (usage) or `message_stop`.
+                if transport_error.is_none() && stall_detector.is_none() && !buf.is_empty() {
+                    let line = String::from_utf8_lossy(&buf).into_owned();
+                    buf.clear();
+                    for chunk in crate::wire::parse_sse_line(&mut state, &line) {
+                        if matches!(chunk, StreamChunk::Done) {
+                            done_sent = true;
+                        }
+                        if let StreamChunk::Text(t) = &chunk {
+                            accumulated_text.push_str(t);
+                        }
+                        if let StreamChunk::Usage(u) = &chunk {
+                            last_usage = Some(u.clone());
+                        }
+                        let stall = guard.as_mut().and_then(|g| g.feed_chunk(&chunk));
+                        if let Some(detector) = stall {
+                            stall_detector = Some(detector);
+                            break;
+                        }
+                        let was_committed = tracker.is_committed();
+                        tracker.observe(&chunk);
+                        if tracker.is_committed() {
+                            if !was_committed {
+                                for b in buffered.drain(..) {
+                                    yield Ok(b);
+                                }
+                            }
+                            yield Ok(chunk);
+                        } else {
+                            buffered.push(chunk);
+                        }
+                    }
+                }
+
+                // ---- decide ----
+
+                // Mid-stream transport failure. Retry only if nothing
+                // committed.
+                if let Some(err) = transport_error {
+                    if tracker.is_safe_to_retry() && attempt < MAX_STREAM_ATTEMPTS {
+                        tracing::warn!(
+                            attempt,
+                            error = %err,
+                            "anthropic stream: pre-commit read error; retrying"
+                        );
+                        continue;
+                    }
+                    yield Err(err);
+                    return;
+                }
+
+                // Stall detected. Same retry rule as a transport
+                // failure: safe only while uncommitted.
+                if let Some(detector) = stall_detector {
+                    let err = KodError::Provider(format!(
+                        "stream stall detected: {detector}"
+                    ));
+                    if tracker.is_safe_to_retry() && attempt < MAX_STREAM_ATTEMPTS {
+                        tracing::warn!(
+                            attempt,
+                            detector,
+                            "anthropic stream: pre-commit stall; retrying"
+                        );
+                        continue;
+                    }
+                    yield Err(err);
+                    return;
+                }
+
+                // Clean stream end. The empty-completion case: a stop
+                // with no visible content and at most one completion
+                // token is almost always an upstream wobble, worth a
+                // bounded retry.
+                if tracker.is_safe_to_retry()
+                    && empty_retry.should_retry(&accumulated_text, last_usage.as_ref())
+                    && attempt < MAX_STREAM_ATTEMPTS
+                {
+                    tracing::warn!(
+                        attempt,
+                        attempts = empty_retry.attempts(),
+                        "anthropic stream: empty completion; retrying"
+                    );
+                    empty_retry.observe_retry();
+                    let delay_ms = empty_retry.next_delay_ms();
+                    if delay_ms > 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    }
+                    continue;
+                }
+
+                // No retry: deliver what this attempt produced.
+                for b in buffered.drain(..) {
+                    yield Ok(b);
+                }
+                if !done_sent {
+                    yield Ok(StreamChunk::Done);
+                }
+                return;
             }
         })
     }
+
 }
 
 impl AnthropicProvider {
