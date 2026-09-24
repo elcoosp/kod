@@ -181,14 +181,31 @@ impl std::fmt::Display for BudgetError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let est_tokens = self.request_chars / PromptBudget::CHARS_PER_TOKEN;
         let window_tokens = self.total_chars / PromptBudget::CHARS_PER_TOKEN;
-        write!(
-            f,
-            "the request is too long for this model: {} chars (~{} tokens) \
-             against a usable prompt budget of {} chars (~{} tokens). \
-             Shorten the request, or set a larger context_window on the \
-             endpoint.",
-            self.request_chars, est_tokens, self.total_chars, window_tokens,
-        )
+        // When the request itself is small relative to the window,
+        // the shortfall is the *overhead* — the tool schemas, the
+        // mandatory system prompt, the environment trailer. The
+        // advice "shorten the request" would be nonsense for a
+        // 14-char ask; name the actual constraint.
+        if self.request_chars < self.total_chars / 4 && self.total_chars < 1024 {
+            write!(
+                f,
+                "the prompt's fixed overhead exceeds this model's window: \
+                 {} chars (~{} tokens) available after reserving the \
+                 completion, with the tool schemas and system prompt \
+                 already consuming it. Raise the endpoint's context_window, \
+                 or reduce the tool surface (fewer registered tools).",
+                self.total_chars, window_tokens,
+            )
+        } else {
+            write!(
+                f,
+                "the request is too long for this model: {} chars (~{} tokens) \
+                 against a usable prompt budget of {} chars (~{} tokens). \
+                 Shorten the request, or set a larger context_window on the \
+                 endpoint.",
+                self.request_chars, est_tokens, self.total_chars, window_tokens,
+            )
+        }
     }
 }
 

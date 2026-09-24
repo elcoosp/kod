@@ -1201,7 +1201,11 @@ pub struct KodEngine {
     /// back to `current_model` as a single-element chain. Populated by
     /// `set_registry` from the config's `routing` field.
     routing: RwLock<Option<kod_config::RoutingConfig>>,
-    is_running: RwLock<bool>,
+    /// `Arc`-shared so the advisor sink can observe run state
+    /// without holding a reference to the engine (which would be a
+    /// cycle: the engine owns the tool registry owns the tool owns
+    /// the sink). Same pattern as `steers` and `lock_table`.
+    is_running: Arc<RwLock<bool>>,
     tools: Arc<ToolRegistry>,
     tool_context: ToolContext,
     /// Shared per-path advisory locks. Cloned into every per-call
@@ -1299,6 +1303,11 @@ pub struct KodEngine {
     /// A stale anchor would make `estimate` lie about the size of the
     /// bytes the provider is charging for.
     context_gauges: RwLock<HashMap<String, crate::context_gauge::ContextGauge>>,
+    /// Delta §11.8: the advisor emission guard. Shared with the
+    /// `advise` tool; the tool admits through it, the turn loop
+    /// calls `begin_update` on it once per turn so the per-update
+    /// budget resets exactly once per user prompt.
+    advisor_guard: std::sync::Arc<parking_lot::Mutex<kod_swarm::advisor::EmissionGuard>>,
 
     /// Delta §9.4: per-transcript tool-call loop guards. When the
     /// model issues the same tool call (same name, same arguments)
@@ -2860,7 +2869,7 @@ impl KodEngine {
             registry: RwLock::new(None),
             current_model: RwLock::new(ModelRef::new("default", "")),
             routing: RwLock::new(None),
-            is_running: RwLock::new(false),
+            is_running: Arc::new(RwLock::new(false)),
             tools: Arc::new(ToolRegistry::new()),
             tool_context,
             lock_table,
@@ -2871,6 +2880,9 @@ impl KodEngine {
             history: RwLock::new(HashMap::new()),
             observed_usage: RwLock::new(HashMap::new()),
             context_gauges: RwLock::new(HashMap::new()),
+            advisor_guard: std::sync::Arc::new(parking_lot::Mutex::new(
+                kod_swarm::advisor::EmissionGuard::new(),
+            )),
             tool_loop_guards: RwLock::new(HashMap::new()),
             compaction_dispatcher: std::sync::Arc::new(
                 crate::compaction_dispatcher::CompactionDispatcher::new(vec![
@@ -6350,6 +6362,24 @@ pub(crate) fn filter_chain_by_trust(
             }
         }
 
+        // Delta §11.8: the advisor channel. Registered alongside the
+        // other swarm tools. The tool holds a `Weak<KodEngine>` so it
+        // cannot keep the engine alive; it shares the guard whose
+        // `begin_update` the turn loop calls once per turn.
+        {
+            let sink: std::sync::Arc<dyn crate::advisor_tools::AdvisorSink> =
+                std::sync::Arc::new(crate::advisor_tools::SteerQueueSink {
+                    steers: std::sync::Arc::clone(&self.steers),
+                    is_running: std::sync::Arc::clone(&self.is_running),
+                });
+            self.tools
+                .register(Box::new(crate::advisor_tools::AdviseTool::new(
+                    self.advisor_guard.clone(),
+                    sink,
+                )))
+                .await;
+        }
+
         self.tools.register(Box::new(GitStatusTool::new())).await;
         self.tools.register(Box::new(GitDiffTool::new())).await;
         if !background {
@@ -7197,6 +7227,10 @@ pub(crate) fn filter_chain_by_trust(
         self.set_current_request(key, input).await;
         // Tier 1.1 — a fresh user turn clears any prior taint.
         self.reset_taint();
+        // Delta §11.8: a fresh user turn resets the advisor
+        // emission budget. The dedupe history persists — a note
+        // admitted last turn is still a duplicate this turn.
+        self.advisor_guard.lock().begin_update();
         self.tool_counts.begin_turn();
         // Tier 1.4 — open a turn trace. Emitted when this call returns.
         let trace_id = self.next_turn_id();
