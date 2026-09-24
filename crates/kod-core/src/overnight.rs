@@ -89,6 +89,28 @@ impl OvernightManifest {
         }
     }
 
+    /// Build a manifest for a run of `duration` starting now.
+    ///
+    /// A convenience over [`Self::for_duration`] so a caller that does
+    /// not depend on `time` — the TUI — can construct one without
+    /// taking the dependency for a single `now_utc()` call.
+    pub fn starting_now(
+        mission: impl Into<String>,
+        duration: std::time::Duration,
+        artifacts_dir: impl Into<std::path::PathBuf>,
+    ) -> Self {
+        // The std type is what a caller without the `time` dependency
+        // produces. Seconds is the common unit; a sub-second overnight
+        // duration is not a thing.
+        let as_time = time::Duration::seconds(duration.as_secs() as i64);
+        Self::for_duration(
+            mission,
+            as_time,
+            artifacts_dir,
+            time::OffsetDateTime::now_utc(),
+        )
+    }
+
     /// The phase `now` falls in, given whether the report is done.
     ///
     /// The clock alone decides `Running` vs `WindDown`; a caller that

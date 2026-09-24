@@ -1497,6 +1497,21 @@ impl TuiLoop {
 
 
     async fn dispatch_swarm(&mut self, goal: String) -> Result<()> {
+        self.dispatch_swarm_with(goal, None).await
+    }
+
+    /// The swarm dispatch, with an optional overnight manifest.
+    ///
+    /// `None` is an ordinary swarm. `Some` adds the phase gate (no
+    /// new work after the handoff point) and renders the task-card
+    /// report when the run finishes. Everything else is shared, which
+    /// is why this is one function with a parameter rather than two
+    /// copies of a 160-line dispatch.
+    async fn dispatch_swarm_with(
+        &mut self,
+        goal: String,
+        overnight: Option<kod_core::overnight::OvernightManifest>,
+    ) -> Result<()> {
         let Some(engine) = self.engine.clone() else {
             self.app.push_system_message("Engine not initialized.");
             return Ok(());
@@ -1529,7 +1544,10 @@ impl TuiLoop {
         let event_tx = self.event_handler.sender();
         let handle = tokio::spawn(async move {
             let runner = match kod_core::SwarmRunner::from_config(engine, &swarm_config).await {
-                Ok(r) => r,
+                Ok(r) => match overnight.clone() {
+                    Some(m) => r.with_overnight(m),
+                    None => r,
+                },
                 Err(e) => {
                     let _ = event_tx.send(Event::SwarmError(e.to_string())).await;
                     return;
@@ -1647,6 +1665,40 @@ impl TuiLoop {
 
             match result {
                 Ok(resp) => {
+                    // Overnight: render the report before announcing
+                    // completion, so the message names where it landed.
+                    if let Some(m) = &overnight {
+                        let cards: Vec<kod_core::overnight::TaskCard> = resp
+                            .subtasks
+                            .iter()
+                            .filter_map(|st| {
+                                resp.per_agent
+                                    .iter()
+                                    .find(|r| r.subtask == st.name)
+                                    .map(|r| {
+                                        kod_core::overnight::build_task_card(
+                                            st, r, &[], None,
+                                        )
+                                    })
+                            })
+                            .collect();
+                        let report = kod_core::overnight::render_report(
+                            &m.mission,
+                            &cards,
+                            &resp.merged,
+                        );
+                        let _ = std::fs::create_dir_all(&m.artifacts_dir);
+                        let path = m.artifacts_dir.join("report.md");
+                        let msg = match std::fs::write(&path, &report) {
+                            Ok(()) => {
+                                format!("overnight report written to {}", path.display())
+                            }
+                            Err(e) => format!("could not write the overnight report: {e}"),
+                        };
+                        let _ = event_tx
+                            .send(Event::AgentMessage("overnight".to_string(), msg))
+                            .await;
+                    }
                     let _ = event_tx.send(Event::SwarmComplete(resp.merged)).await;
                 }
                 Err(e) => {
@@ -2108,6 +2160,50 @@ impl TuiLoop {
                     );
                 }
             },
+            "/overnight" => {
+                // `/overnight 2h <goal>` — a swarm that stops starting
+                // work at the handoff point and writes a report.
+                let rest: String = parts.collect::<Vec<_>>().join(" ");
+                let rest = rest.trim();
+                let (dur_str, goal) = match rest.split_once(char::is_whitespace) {
+                    Some((d, g)) => (d, g.trim()),
+                    None => (rest, ""),
+                };
+                match parse_overnight_duration(dur_str) {
+                    Some(d) if !goal.is_empty() => {
+                        let Some(engine) = self.engine.clone() else {
+                            self.app.push_system_message("Engine not initialized.");
+                            return Ok(());
+                        };
+                        // Artifacts go under the working directory, so
+                        // a run's report travels with the repo it ran
+                        // against.
+                        let artifacts = engine
+                            .working_dir()
+                            .join(".kod")
+                            .join("overnight");
+                        let manifest = kod_core::overnight::OvernightManifest::starting_now(
+                            goal.to_string(),
+                            d,
+                            artifacts,
+                        );
+                        self.app.push_system_message(&format!(
+                            "Overnight run started: {goal}\n  \
+                             Handoff at {}, target {}",
+                            manifest.handoff_ready_at, manifest.target_wake_at,
+                        ));
+                        self.dispatch_swarm_with(goal.to_string(), Some(manifest))
+                            .await?;
+                    }
+                    _ => {
+                        self.app.push_system_message(
+                            "Usage: /overnight <duration> <goal> — e.g. \
+                             `/overnight 2h add retry logic`. Duration is \
+                             hours (`2`), `30m`, or `1h30m`.",
+                        );
+                    }
+                }
+            }
             "/swarm" => {
                 let rest: String = parts.collect::<Vec<_>>().join(" ");
                 let goal = rest.trim();
