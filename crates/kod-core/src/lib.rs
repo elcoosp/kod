@@ -17,6 +17,7 @@ pub mod background;
 pub mod endpoint_health;
 pub mod sensitivity;
 pub mod compaction;
+pub mod compaction_dispatcher;
 pub mod config;
 pub mod context;
 pub mod cost;
