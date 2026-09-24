@@ -661,6 +661,17 @@ pub struct ToolContext {
     /// P2-d: starts a shell command in the background. `None` outside
     /// an engine that owns a job runner.
     pub on_background_command: Option<BackgroundSpawnHook>,
+
+    /// Delta §7.5: the internal-URL router. When `Some`, `read_file`
+    /// and `write_file` first check whether the path carries a scheme
+    /// this router handles — `artifact://`, `memory://`, `xd://` — and
+    /// dispatch to the handler instead of touching the filesystem. A
+    /// bare path always falls through to the ordinary file path.
+    ///
+    /// `None` in unit tests and any context built before the engine
+    /// installed its router; the tools then behave exactly as they
+    /// did before this field existed.
+    pub protocol_router: Option<crate::internal_url::ProtocolRouter>,
 }
 
 impl ToolContext {
@@ -680,7 +691,9 @@ impl ToolContext {
             allowed_write_globs: None,
         
             on_file_touch: None,
-            on_background_command: None,}
+            on_background_command: None,
+            protocol_router: None,
+        }
     }
 
     /// Install a shared lock table and set the writer identity.
@@ -691,6 +704,18 @@ impl ToolContext {
     ) -> Self {
         self.lock_table = Some(table);
         self.holder = holder.into();
+        self
+    }
+
+    /// Delta §7.5: install the internal-URL router. `read_file` and
+    /// `write_file` will dispatch to a handler when the path carries
+    /// a scheme the router knows. The engine calls this once when it
+    /// derives a per-call context.
+    pub fn with_protocol_router(
+        mut self,
+        router: crate::internal_url::ProtocolRouter,
+    ) -> Self {
+        self.protocol_router = Some(router);
         self
     }
 

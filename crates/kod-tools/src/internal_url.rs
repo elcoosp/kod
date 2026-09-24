@@ -673,3 +673,241 @@ mod tests {
         assert!(!r.immutable);
     }
 }
+
+#[cfg(test)]
+mod integration_tests {
+    //! End-to-end: `read_file` and `write_file` dispatch to the
+    //! router when the path carries a handled scheme, and fall
+    //! through to the filesystem when it does not.
+
+    use super::*;
+    use crate::{Tool, ToolContext, ReadFileTool, WriteFileTool};
+    use kod_types::ToolResult;
+    use std::sync::Arc;
+
+    fn ctx_with_router(router: ProtocolRouter) -> (ToolContext, tempfile::TempDir) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // The default `ToolPermissions` denies both reads and writes
+        // — an engine grants them per session. These tests exercise
+        // filesystem fall-through, so they need the grants the
+        // engine would have provided.
+        let perms = kod_types::ToolPermissions {
+            read_files: true,
+            write_files: true,
+            ..Default::default()
+        };
+        let ctx = ToolContext::new(tmp.path())
+            .with_locks(Arc::new(crate::PathLockTable::new()), "session")
+            .with_permissions(perms)
+            .with_protocol_router(router);
+        (ctx, tmp)
+    }
+
+    #[tokio::test]
+    async fn read_file_dispatches_to_the_artifact_handler() {
+        let handler = Arc::new(ArtifactHandler::new());
+        handler.store("abc", "hello from artifact", "text/plain").await.unwrap();
+        let router = ProtocolRouter::new().register(handler);
+        let (ctx, _tmp) = ctx_with_router(router);
+
+        let tool = ReadFileTool::new();
+        let r = tool
+            .execute(&serde_json::json!({"path": "artifact://abc"}), &ctx)
+            .await
+            .unwrap();
+        let ToolResult::Success(v) = r else {
+            panic!("expected Success, got {r:?}");
+        };
+        assert_eq!(v["content"], "hello from artifact");
+        assert_eq!(v["source"], "internal-url");
+        assert_eq!(v["immutable"], true);
+    }
+
+    #[tokio::test]
+    async fn read_file_falls_through_to_the_filesystem_for_a_bare_path() {
+        let handler = Arc::new(ArtifactHandler::new());
+        let router = ProtocolRouter::new().register(handler);
+        let (ctx, tmp) = ctx_with_router(router);
+
+        std::fs::write(tmp.path().join("plain.txt"), "filesystem content").unwrap();
+
+        let tool = ReadFileTool::new();
+        let r = tool
+            .execute(&serde_json::json!({"path": "plain.txt"}), &ctx)
+            .await
+            .unwrap();
+        let ToolResult::Success(v) = r else {
+            panic!("expected Success, got {r:?}");
+        };
+        // The filesystem branch returns a different JSON shape —
+        // `source` is absent because it was not an internal URL.
+        assert!(v.get("source").is_none());
+        let content = v["content"].as_str().unwrap_or_default();
+        assert!(content.contains("filesystem content"), "got: {v}");
+    }
+
+    #[tokio::test]
+    async fn read_file_errors_cleanly_on_missing_artifact() {
+        let handler = Arc::new(ArtifactHandler::new());
+        let router = ProtocolRouter::new().register(handler);
+        let (ctx, _tmp) = ctx_with_router(router);
+
+        let tool = ReadFileTool::new();
+        let r = tool
+            .execute(&serde_json::json!({"path": "artifact://missing"}), &ctx)
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Error(msg) => {
+                assert!(msg.contains("artifact://missing"), "got: {msg}");
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_file_without_a_router_does_not_dispatch() {
+        // A context built without `.with_protocol_router(...)` sees a
+        // router-less world. The `artifact://` path is treated as a
+        // filesystem path — resolution fails with an ordinary
+        // filesystem error — and no handler is invoked. Either an
+        // `Err` from resolution or a `Success` without `source` is
+        // an acceptable shape; what must NOT happen is a dispatch.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let perms = kod_types::ToolPermissions {
+            read_files: true,
+            ..Default::default()
+        };
+        let ctx = ToolContext::new(tmp.path())
+            .with_locks(Arc::new(crate::PathLockTable::new()), "session")
+            .with_permissions(perms);
+        let tool = ReadFileTool::new();
+        let r = tool
+            .execute(&serde_json::json!({"path": "artifact://abc"}), &ctx)
+            .await;
+        match r {
+            Ok(ToolResult::Success(v)) => {
+                assert!(
+                    v.get("source").is_none(),
+                    "no router means no internal-URL dispatch",
+                );
+            }
+            // Error, RequiresConfirmation, and any future ToolResult
+            // variant all mean "no dispatch happened"; only Success
+            // with `source == "internal-url"` would be a bug.
+            Ok(_) => {}
+            Err(_) => {}
+        }
+    }
+
+    #[tokio::test]
+    async fn write_file_dispatches_and_refuses_immutable_artifacts() {
+        let handler = Arc::new(ArtifactHandler::new());
+        handler.store("abc", "hello", "text/plain").await.unwrap();
+        let router = ProtocolRouter::new().register(handler);
+        let (ctx, _tmp) = ctx_with_router(router);
+
+        let tool = WriteFileTool::new();
+        let r = tool
+            .execute(
+                &serde_json::json!({"path": "artifact://abc", "content": "new"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        match r {
+            ToolResult::Error(msg) => assert!(msg.contains("read-only"), "got: {msg}"),
+            other => panic!("expected Error(read-only), got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn write_file_dispatches_to_a_writable_handler() {
+        // A handler that accepts writes. Proves the write branch
+        // reaches a writable handler and returns the expected shape.
+        struct Scratch {
+            store: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
+        }
+        #[async_trait::async_trait]
+        impl ProtocolHandler for Scratch {
+            fn scheme(&self) -> &'static str {
+                "scratch"
+            }
+            async fn resolve(
+                &self,
+                url: &str,
+                _ctx: &ResolveContext,
+            ) -> std::result::Result<ResolvedResource, ProtocolError> {
+                let key = url.strip_prefix("scratch://").unwrap_or(url);
+                let store = self.store.read().await;
+                match store.get(key) {
+                    Some(v) => Ok(ResolvedResource::text(v.clone())),
+                    None => Err(ProtocolError::NotFound {
+                        url: url.to_string(),
+                    }),
+                }
+            }
+            async fn write(
+                &self,
+                url: &str,
+                content: &str,
+                _ctx: &ResolveContext,
+            ) -> std::result::Result<(), ProtocolError> {
+                let key = url.strip_prefix("scratch://").unwrap_or(url).to_string();
+                let mut store = self.store.write().await;
+                store.insert(key, content.to_string());
+                Ok(())
+            }
+        }
+
+        let router = ProtocolRouter::new().register(Arc::new(Scratch {
+            store: std::sync::Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
+        }));
+        let (ctx, _tmp) = ctx_with_router(router);
+
+        let writer = WriteFileTool::new();
+        let r = writer
+            .execute(
+                &serde_json::json!({"path": "scratch://note", "content": "hello"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let ToolResult::Success(v) = r else {
+            panic!("expected Success, got {r:?}");
+        };
+        assert_eq!(v["source"], "internal-url");
+
+        // Round-trip: read it back.
+        let reader = ReadFileTool::new();
+        let r = reader
+            .execute(&serde_json::json!({"path": "scratch://note"}), &ctx)
+            .await
+            .unwrap();
+        let ToolResult::Success(v) = r else {
+            panic!("expected Success, got {r:?}");
+        };
+        assert_eq!(v["content"], "hello");
+    }
+
+    #[tokio::test]
+    async fn write_file_falls_through_to_the_filesystem() {
+        let router = ProtocolRouter::new().register(Arc::new(ArtifactHandler::new()));
+        let (ctx, tmp) = ctx_with_router(router);
+
+        let tool = WriteFileTool::new();
+        let r = tool
+            .execute(
+                &serde_json::json!({"path": "plain.txt", "content": "fs write"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(r, ToolResult::Success(_)));
+        let on_disk = std::fs::read_to_string(tmp.path().join("plain.txt")).unwrap();
+        assert_eq!(on_disk, "fs write");
+    }
+}
+

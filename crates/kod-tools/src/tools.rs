@@ -212,6 +212,36 @@ impl Tool for ReadFileTool {
                 reason: "Missing 'path' parameter".to_string(),
             })?;
 
+        // Delta §7.5: internal-URL dispatch. When the path carries a
+        // scheme the router knows (`artifact://`, `memory://`, …) the
+        // read is a handler call, not a filesystem access. The check
+        // happens before `resolve_path` because that method would
+        // interpret the URL as a relative filesystem path and mangle
+        // it into `<cwd>/artifact://foo`.
+        //
+        // The tool's own `read_files` permission still gates the
+        // whole call — the router is a dispatch layer, not a
+        // capability — so a session that cannot read files also
+        // cannot read artifacts.
+        if let Some(router) = context.protocol_router.as_ref()
+            && router.handles(path)
+        {
+            let rctx = crate::internal_url::ResolveContext::new(
+                context.holder.clone(),
+                context.working_dir.clone(),
+            );
+            return match router.resolve(path, &rctx).await {
+                Ok(r) => Ok(ToolResult::Success(serde_json::json!({
+                    "path": path,
+                    "content": r.text,
+                    "mime": r.mime,
+                    "immutable": r.immutable,
+                    "source": "internal-url",
+                }))),
+                Err(e) => Ok(ToolResult::Error(e.to_string())),
+            };
+        }
+
         let resolved = context.resolve_path(path)?;
         // Tier 1.3 — known-secret path check.
         if let Some(rp) = context.read_protection.as_ref()
@@ -405,6 +435,41 @@ impl Tool for WriteFileTool {
             .ok_or_else(|| KodError::InvalidParameters {
                 reason: "Missing 'path' parameter".to_string(),
             })?;
+
+        // Delta §7.5: internal-URL dispatch for schemes that support
+        // a write. A handler that is read-only returns `ReadOnly`
+        // and this branch produces a clear refusal; the model is
+        // told the URL cannot be written rather than the write
+        // silently doing nothing.
+        //
+        // The `append` parameter is currently ignored for internal
+        // URLs: the one write-capable handler this commit ships
+        // (`conflict://`, in a later slice) is a full-replacement
+        // API. A future handler that cares can read it from `params`
+        // in its own `write` impl, which is where the semantics
+        // belong.
+        if let Some(router) = context.protocol_router.as_ref()
+            && router.handles(path)
+        {
+            let content = params["content"]
+                .as_str()
+                .ok_or_else(|| KodError::InvalidParameters {
+                    reason: "Missing 'content' parameter".to_string(),
+                })?;
+            let rctx = crate::internal_url::ResolveContext::new(
+                context.holder.clone(),
+                context.working_dir.clone(),
+            );
+            return match router.write(path, content, &rctx).await {
+                Ok(()) => Ok(ToolResult::Success(serde_json::json!({
+                    "path": path,
+                    "bytes": content.len(),
+                    "source": "internal-url",
+                }))),
+                Err(e) => Ok(ToolResult::Error(e.to_string())),
+            };
+        }
+
         let content = params["content"]
             .as_str()
             .ok_or_else(|| KodError::InvalidParameters {
