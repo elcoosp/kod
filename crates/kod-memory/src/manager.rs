@@ -1113,3 +1113,207 @@ mod coverage_report_types {
         assert_eq!(m.embedder_name(), "none");
     }
 }
+
+/// A retrieved context that has been held since it was computed.
+///
+/// Retrieval is not free — it embeds the query, scores candidates,
+/// consults the vector index — so a caller that retrieves once and
+/// injects several turns later is saving work. The saving is only
+/// sound while the answer is still fresh: a memory retired in the
+/// meantime must not be injected, and a memory whose content changed
+/// must be re-read, not served from the stale copy.
+///
+/// This is the notebook's `PendingMemory`: a snapshot plus the checks
+/// that make it safe to use later.
+#[derive(Debug, Clone)]
+pub struct PendingMemory {
+    /// What the caller retrieved, as of `computed_at_ms`.
+    pub context: kod_types::MemoryContext,
+    /// Millis since the epoch when retrieval ran.
+    pub computed_at_ms: u64,
+    /// The ids the snapshot holds, for a `retain` after revalidation.
+    pub ids: Vec<kod_types::MemoryId>,
+}
+
+/// How long a snapshot stays usable without revalidation.
+///
+/// Two minutes: long enough to cover "retrieve while the user types,
+/// inject when they submit," short enough that a memory retired in
+/// between is unlikely to have been retired by the retrieval itself.
+pub const FRESHNESS_WINDOW_MS: u64 = 120_000;
+
+impl PendingMemory {
+    /// Snapshot `context` as of now.
+    pub fn snapshot(context: kod_types::MemoryContext) -> Self {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let ids = context
+            .working_memory
+            .iter()
+            .chain(context.long_term.iter())
+            .map(|e| e.id.clone())
+            .collect();
+        Self {
+            context,
+            computed_at_ms: now_ms,
+            ids,
+        }
+    }
+
+    /// Whether the snapshot is inside the freshness window.
+    pub fn is_fresh(&self) -> bool {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        now_ms.saturating_sub(self.computed_at_ms) < FRESHNESS_WINDOW_MS
+    }
+
+    /// Drop entries that are no longer valid against the current store.
+    ///
+    /// Two things invalidate a snapshot entry: it was superseded (a
+    /// later memory replaced it), or it was removed. Content changes
+    /// are handled by re-reading the entry rather than dropping it —
+    /// the caller wanted *that* memory, and an edited memory is still
+    /// the same memory.
+    ///
+    /// Returns the number of entries dropped, so a caller can log that
+    /// its snapshot went stale rather than silently injecting less.
+    pub async fn revalidate(&mut self, store: &crate::long_term::LongTermMemory) -> usize {
+        let before = self.ids.len();
+
+        let mut keep_working = Vec::with_capacity(self.context.working_memory.len());
+        for e in self.context.working_memory.drain(..) {
+            if let Ok(Some(current)) = store.get(&e.id).await
+                && current.is_active()
+            {
+                // Re-read the content: the entry may have been edited
+                // since the snapshot, and the newer text is what the
+                // model should see.
+                keep_working.push(current);
+            }
+        }
+        self.context.working_memory = keep_working;
+
+        let mut keep_long = Vec::with_capacity(self.context.long_term.len());
+        for e in self.context.long_term.drain(..) {
+            if let Ok(Some(current)) = store.get(&e.id).await
+                && current.is_active()
+            {
+                keep_long.push(current);
+            }
+        }
+        self.context.long_term = keep_long;
+
+        let after = self.context.working_memory.len() + self.context.long_term.len();
+        before.saturating_sub(after)
+    }
+}
+
+#[cfg(test)]
+mod freshness_tests {
+    use super::*;
+    use kod_types::{MemoryContext, MemoryEntry, MemoryId, MemoryMetadata, MemoryType};
+    use time::OffsetDateTime;
+
+    fn entry(content: &str) -> MemoryEntry {
+        MemoryEntry {
+            id: MemoryId::new(),
+            memory_type: MemoryType::LongTerm,
+            content: content.to_string(),
+            timestamp: OffsetDateTime::now_utc(),
+            relevance: 1.0,
+            metadata: MemoryMetadata::default(),
+            superseded_by: None,
+            contradicts: Vec::new(),
+        }
+    }
+
+    fn ctx_with(entries: Vec<MemoryEntry>) -> MemoryContext {
+        MemoryContext {
+            working_memory: Vec::new(),
+            long_term: entries,
+            total_tokens: 0,
+        }
+    }
+
+    fn fixture() -> (tempfile::TempDir, crate::long_term::LongTermMemory) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db = crate::long_term::LongTermMemory::new(&tmp.path().join("m.redb")).unwrap();
+        (tmp, db)
+    }
+
+    #[test]
+    fn a_fresh_snapshot_is_fresh() {
+        let p = PendingMemory::snapshot(ctx_with(vec![]));
+        assert!(p.is_fresh());
+    }
+
+    #[tokio::test]
+    async fn revalidate_keeps_an_active_entry_and_rereads_it() {
+        let (_tmp, store) = fixture();
+        let e = entry("original");
+        let id = e.id.clone();
+        store.store(e.clone()).await.unwrap();
+
+        let mut p = PendingMemory::snapshot(ctx_with(vec![e]));
+
+        // Edit the stored copy: revalidation must serve the new text.
+        let mut edited = store.get(&id).await.unwrap().unwrap();
+        edited.content = "edited".to_string();
+        store.update(edited).await.unwrap();
+
+        let dropped = p.revalidate(&store).await;
+        assert_eq!(dropped, 0);
+        assert_eq!(p.context.long_term[0].content, "edited");
+    }
+
+    #[tokio::test]
+    async fn revalidate_drops_a_superseded_entry() {
+        let (_tmp, store) = fixture();
+        let a = entry("the user prefers tabs");
+        let b = entry("the user prefers spaces");
+        let (aid, bid) = (a.id.clone(), b.id.clone());
+        store.store(a.clone()).await.unwrap();
+        store.store(b.clone()).await.unwrap();
+        store.supersede(&aid, &bid).await.unwrap();
+
+        let mut p = PendingMemory::snapshot(ctx_with(vec![a]));
+        let dropped = p.revalidate(&store).await;
+        assert_eq!(dropped, 1);
+        assert!(p.context.long_term.is_empty(), "a superseded entry is dropped");
+    }
+
+    #[tokio::test]
+    async fn revalidate_drops_a_removed_entry() {
+        let (_tmp, store) = fixture();
+        let e = entry("gone");
+        let id = e.id.clone();
+        store.store(e.clone()).await.unwrap();
+        store.remove(&id).await.unwrap();
+
+        let mut p = PendingMemory::snapshot(ctx_with(vec![e]));
+        let dropped = p.revalidate(&store).await;
+        assert_eq!(dropped, 1);
+        assert!(p.context.long_term.is_empty());
+    }
+
+    #[tokio::test]
+    async fn revalidate_keeps_a_contradicted_entry() {
+        // Contradicted is not superseded: both sides surface.
+        let (_tmp, store) = fixture();
+        let a = entry("a");
+        let b = entry("b");
+        let (aid, bid) = (a.id.clone(), b.id.clone());
+        store.store(a.clone()).await.unwrap();
+        store.store(b.clone()).await.unwrap();
+        store.link_contradiction(&aid, &bid).await.unwrap();
+
+        let mut p = PendingMemory::snapshot(ctx_with(vec![a]));
+        let dropped = p.revalidate(&store).await;
+        assert_eq!(dropped, 0);
+        assert_eq!(p.context.long_term.len(), 1);
+    }
+}
