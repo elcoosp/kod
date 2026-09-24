@@ -41,6 +41,7 @@ pub mod relevance;
 pub mod check;
 pub mod context;
 pub mod git;
+pub mod internal_url;
 pub mod patch;
 pub mod path_lock;
 pub mod plan;
@@ -62,6 +63,10 @@ pub use tools::{
 pub use web::WebFetchTool;
 
 pub use context::ToolContext;
+pub use internal_url::{
+    ArtifactHandler, ProtocolError, ProtocolHandler, ProtocolRouter, ResolveContext,
+    ResolvedResource, scheme_of,
+};
 pub use path_lock::{LockError, PathLockGuard, PathLockTable};
 pub use plan::PlanTool;
 pub use registry::ToolRegistry;
