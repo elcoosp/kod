@@ -405,6 +405,8 @@ impl Tool for TodoTool {
                             },
                             "blocked_by": it.blocked_by,
                             "ready": ready,
+                            "confidence": it.confidence,
+                            "evidence": it.evidence.iter().map(|e| e.note.clone()).collect::<Vec<_>>(),
                         })
                     })
                     .collect();
@@ -855,5 +857,120 @@ mod semantic_todo_tests {
             matches!(r, ToolResult::Error(_)),
             "cancelled blocker must not count as done",
         );
+    }
+}
+
+#[cfg(test)]
+mod evidence_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_fresh_todo_is_speculative() {
+        let list = new_list();
+        let tool = TodoTool::new(list.clone());
+        let ctx = ToolContext::new(std::env::temp_dir());
+        tool.execute(&serde_json::json!({"action": "add", "text": "x"}), &ctx)
+            .await
+            .unwrap();
+        let g = list.read().await;
+        assert_eq!(g[0].confidence, ConfidenceState::Speculative);
+        assert!(g[0].evidence.is_empty());
+    }
+
+    #[tokio::test]
+    async fn note_evidence_raises_and_records() {
+        let list = new_list();
+        let tool = TodoTool::new(list.clone());
+        let ctx = ToolContext::new(std::env::temp_dir());
+        tool.execute(&serde_json::json!({"action": "add", "text": "x"}), &ctx)
+            .await
+            .unwrap();
+        let id = list.read().await[0].id;
+
+        assert!(note_evidence(
+            &list,
+            id,
+            "cargo check passed".to_string(),
+            ConfidenceState::Corroborated,
+        ));
+        let g = list.read().await;
+        assert_eq!(g[0].confidence, ConfidenceState::Corroborated);
+        assert_eq!(g[0].evidence.len(), 1);
+        assert_eq!(g[0].evidence[0].note, "cargo check passed");
+    }
+
+    #[tokio::test]
+    async fn a_weaker_observation_does_not_lower_confidence() {
+        let list = new_list();
+        let tool = TodoTool::new(list.clone());
+        let ctx = ToolContext::new(std::env::temp_dir());
+        tool.execute(&serde_json::json!({"action": "add", "text": "x"}), &ctx)
+            .await
+            .unwrap();
+        let id = list.read().await[0].id;
+
+        note_evidence(&list, id, "check passed".into(), ConfidenceState::Verified);
+        note_evidence(&list, id, "a file".into(), ConfidenceState::Corroborated);
+        let g = list.read().await;
+        assert_eq!(g[0].confidence, ConfidenceState::Verified);
+        assert_eq!(g[0].evidence.len(), 2, "both observations are recorded");
+    }
+
+    #[tokio::test]
+    async fn evidence_for_an_unknown_id_is_a_no_op() {
+        let list = new_list();
+        assert!(!note_evidence(
+            &list,
+            999,
+            "nothing".into(),
+            ConfidenceState::Verified,
+        ));
+    }
+
+    #[tokio::test]
+    async fn in_progress_todo_finds_the_one() {
+        let list = new_list();
+        let tool = TodoTool::new(list.clone());
+        let ctx = ToolContext::new(std::env::temp_dir());
+        for text in ["a", "b"] {
+            tool.execute(&serde_json::json!({"action": "add", "text": text}), &ctx)
+                .await
+                .unwrap();
+        }
+        let a = list.read().await[0].id;
+        tool.execute(
+            &serde_json::json!({"action": "update", "id": a, "status": "in_progress"}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+        assert_eq!(in_progress_todo(&list), Some(a));
+    }
+
+    #[tokio::test]
+    async fn two_in_progress_todos_yield_none() {
+        // Ambiguous: the harness cannot tell which todo evidence
+        // belongs to, so it declines rather than guessing.
+        let list = new_list();
+        let tool = TodoTool::new(list.clone());
+        let ctx = ToolContext::new(std::env::temp_dir());
+        for text in ["a", "b"] {
+            tool.execute(&serde_json::json!({"action": "add", "text": text}), &ctx)
+                .await
+                .unwrap();
+        }
+        let (a, b) = {
+            let g = list.read().await;
+            (g[0].id, g[1].id)
+        };
+        for id in [a, b] {
+            tool.execute(
+                &serde_json::json!({"action": "update", "id": id, "status": "in_progress"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(in_progress_todo(&list), None);
     }
 }
