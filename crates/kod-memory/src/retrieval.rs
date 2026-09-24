@@ -17,13 +17,123 @@ use crate::stopwords;
 use kod_types::{MemoryEntry, MemoryType};
 use time::OffsetDateTime;
 
-/// The three weights and the recency half-life.
+/// Which decay shape scoring uses.
+///
+/// `Exponential` is the pre-Weibull behaviour (`2^(-Δt/H)`), kept so a
+/// caller that wants the historical shape — or an A/B in a test — can
+/// select it. `Weibull` is the default: `exp(-((age / η) ** k))`, with
+/// per-type `(η, k)` from [`weibull_shape_for`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Decay {
+    Exponential,
+    #[default]
+    Weibull,
+}
+
+/// One memory type's Weibull decay: `exp(-((age_hours / η) ** k))`.
+///
+/// The shape parameter `k` is the whole point. `k < 1` is heavy-tailed
+/// — durable knowledge decays slowly and then almost stops, so a
+/// preference stated six months ago still scores meaningfully.
+/// `k > 1` decays slowly early then fast; `k == 1` is the plain
+/// exponential the workspace used before this module grew a `k`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DecayShape {
+    /// Scale, in hours. The decay is `e^{-1}` when `age == η`
+    /// (assuming `k == 1`).
+    pub eta_hours: f32,
+    /// Shape. See the type docs.
+    pub k: f32,
+}
+
+impl DecayShape {
+    /// `decay(age_hours)` in `[0, 1]`, monotone decreasing in age.
+    ///
+    /// `age <= 0` is `1.0`. A non-positive `η` or `k` is a caller
+    /// error and returns `0.0` rather than dividing by zero or
+    /// producing a NaN that would poison the score sum.
+    pub fn decay(&self, age_hours: f32) -> f32 {
+        if age_hours <= 0.0 {
+            return 1.0;
+        }
+        if self.eta_hours <= 0.0 || self.k <= 0.0 {
+            return 0.0;
+        }
+        let ratio = age_hours / self.eta_hours;
+        (-(ratio.powf(self.k))).exp()
+    }
+}
+
+/// The per-type Weibull shape, mapped from the oh-my-pi delta §12.1
+/// table onto kod's three memory types.
+///
+/// The table in the design note is finer-grained (`preference`,
+/// `commitment`, `event`, …). kod's enum has three types, so the map
+/// is by *durability* rather than by name:
+///
+/// * `LongTerm` — durable knowledge. The note's `preference`
+///   (`k=0.4, η=4380`) is the closest analogue.
+/// * `Episodic` — session-scoped facts. Between `learning`
+///   (`k=0.7, η=1440`) and `decision` (`k=1.0, η=336`); the table's
+///   `learning` row is used because episodic entries are the extracted
+///   "what happened" facts, not the strategic choices.
+/// * `ShortTerm` — the working set. `context` (`k=0.85, η=360`) with a
+///   shorter scale (`η=168`, one week) so a short-term entry from
+///   yesterday is already meaningfully faded.
+pub fn weibull_shape_for(t: MemoryType) -> DecayShape {
+    match t {
+        MemoryType::LongTerm => DecayShape {
+            eta_hours: 4380.0,
+            k: 0.4,
+        },
+        MemoryType::Episodic => DecayShape {
+            eta_hours: 1440.0,
+            k: 0.7,
+        },
+        MemoryType::ShortTerm => DecayShape {
+            eta_hours: 168.0,
+            k: 1.0,
+        },
+    }
+}
+
+/// A shape that reproduces `2^(-Δt / half_life)` under the Weibull
+/// formula. Used when [`Decay::Exponential`] is selected: the caller's
+/// `half_life_days` becomes the anchor, and the shape is derived so
+/// [`DecayShape::decay`] returns the same number `recency` did.
+///
+/// `2^(-x) = e^{-x·ln2}`, so `η = half_life / ln2` with `k = 1`.
+fn exponential_shape(half_life_days: f32) -> DecayShape {
+    DecayShape {
+        eta_hours: (half_life_days * 24.0) / std::f32::consts::LN_2,
+        k: 1.0,
+    }
+}
+
+/// Decay of `ts` under `shape`, measured against `now`.
+///
+/// The Weibull counterpart of [`recency`]; `recency` is left alone so
+/// external callers keep the exponential contract.
+pub fn decay_at(ts: OffsetDateTime, now: OffsetDateTime, shape: DecayShape) -> f32 {
+    let delta = now - ts;
+    let secs = delta.whole_seconds().max(0) as f32;
+    if secs == 0.0 {
+        return 1.0;
+    }
+    shape.decay(secs / 3600.0)
+}
+
+/// The three weights, the recency half-life, and the decay shape.
 #[derive(Debug, Clone, Copy)]
 pub struct HybridScorer {
     pub w_semantic: f32,
     pub w_keyword: f32,
     pub w_recency: f32,
     pub half_life_days: f32,
+    /// Which decay shape to apply. `Weibull` (the default) uses the
+    /// per-type table; `Exponential` derives a shape from
+    /// `half_life_days` so the pre-Weibull behaviour stays reachable.
+    pub decay: Decay,
 }
 
 impl Default for HybridScorer {
@@ -33,6 +143,7 @@ impl Default for HybridScorer {
             w_keyword: 0.3,
             w_recency: 0.1,
             half_life_days: 14.0,
+            decay: Decay::default(),
         }
     }
 }
@@ -96,11 +207,31 @@ impl HybridScorer {
     /// The `half_life_days` field is the *base*; the type scales it.
     /// A caller that set `half_life_days` explicitly still gets that
     /// value as the anchor, so a custom scorer's intent is preserved.
+    ///
+    /// This method is the *exponential* reading. It is what
+    /// [`Decay::Exponential`] selects and what the historical tests
+    /// assert on. Under the default [`Decay::Weibull`], scoring uses
+    /// [`Self::decay_shape_for`] instead; this value is not consulted.
     pub fn half_life_for(&self, memory_type: MemoryType) -> f32 {
         match memory_type {
             MemoryType::LongTerm => self.half_life_days * LONG_TERM_MULTIPLIER,
             MemoryType::Episodic => self.half_life_days,
             MemoryType::ShortTerm => self.half_life_days * SHORT_TERM_MULTIPLIER,
+        }
+    }
+
+    /// The decay shape scoring actually uses for `memory_type`.
+    ///
+    /// `Exponential` derives one from [`Self::half_life_for`] so the
+    /// pre-Weibull behaviour is preserved bit for bit; `Weibull` reads
+    /// the per-type table in [`weibull_shape_for`]. Called by
+    /// [`Self::score`], and public so a caller building a `/memory`
+    /// readout can show the effective `(η, k)` without reimplementing
+    /// the selection.
+    pub fn decay_shape_for(&self, memory_type: MemoryType) -> DecayShape {
+        match self.decay {
+            Decay::Exponential => exponential_shape(self.half_life_for(memory_type)),
+            Decay::Weibull => weibull_shape_for(memory_type),
         }
     }
 
@@ -119,8 +250,8 @@ impl HybridScorer {
         };
         let semantic_component = ws * cosine.unwrap_or(0.0).clamp(0.0, 1.0);
         let keyword_component = wk * self.keyword_bm25_lite(query, entry);
-        let recency_component =
-            self.w_recency * recency(entry.timestamp, now, self.half_life_for(entry.memory_type));
+        let shape = self.decay_shape_for(entry.memory_type);
+        let recency_component = self.w_recency * decay_at(entry.timestamp, now, shape);
         semantic_component + keyword_component + recency_component
     }
 
@@ -305,6 +436,145 @@ mod tests {
             ..HybridScorer::default()
         };
         assert_eq!(s.half_life_for(MemoryType::Episodic), 30.0);
+    }
+
+    #[test]
+    fn weibull_long_term_holds_up_at_six_months() {
+        // The whole reason `k < 1` exists. A durable long-term entry
+        // at 180 days must still score meaningfully — under a plain
+        // exponential with a 56-day half-life (the LT anchor) it would
+        // be `2^{-3.21} ≈ 0.108`, effectively gone.
+        let shape = weibull_shape_for(MemoryType::LongTerm);
+        let six_months_hours = 180.0 * 24.0;
+        let d = shape.decay(six_months_hours);
+        assert!(
+            (0.30..=0.45).contains(&d),
+            "expected ~0.37 at 6 months, got {d}",
+        );
+    }
+
+    #[test]
+    fn weibull_short_term_is_faded_within_a_few_weeks() {
+        // The counterpart. A short-term entry is session context; by
+        // 3 weeks it should be nearly gone. `eta = 168h, k = 1` puts
+        // 504h at `e^{-3} ≈ 0.05`.
+        let shape = weibull_shape_for(MemoryType::ShortTerm);
+        let d = shape.decay(3.0 * 7.0 * 24.0);
+        assert!(d < 0.10, "expected < 0.10 at 3 weeks, got {d}");
+    }
+
+    #[test]
+    fn weibull_decay_is_monotone_in_age() {
+        // For every type, `decay(t1) >= decay(t2)` when `t1 <= t2`.
+        // A shape that violated this would make the scorer prefer
+        // an older entry over a fresher one under identical content.
+        for t in [MemoryType::LongTerm, MemoryType::Episodic, MemoryType::ShortTerm] {
+            let shape = weibull_shape_for(t);
+            let mut prev = 1.0f32;
+            for i in 0..100 {
+                let age = i as f32 * 24.0;
+                let d = shape.decay(age);
+                assert!(
+                    d <= prev + 1e-6,
+                    "{t:?} non-monotone at age {age}: {prev} -> {d}",
+                );
+                prev = d;
+            }
+        }
+    }
+
+    #[test]
+    fn weibull_shape_for_is_deterministic() {
+        // The table is a pure function of the type. Two calls return
+        // identical shapes; a regression that returned a randomised
+        // `k` would make recall scores non-reproducible.
+        for t in [MemoryType::LongTerm, MemoryType::Episodic, MemoryType::ShortTerm] {
+            let a = weibull_shape_for(t);
+            let b = weibull_shape_for(t);
+            assert_eq!(a.eta_hours, b.eta_hours);
+            assert_eq!(a.k, b.k);
+        }
+    }
+
+    #[test]
+    fn weibull_long_term_is_heavier_tailed_than_episodic() {
+        // The design's core claim: durable knowledge decays *slower
+        // in the tail* than episodic facts. At 90 days the LT shape
+        // must score higher than the Episodic shape.
+        let lt = weibull_shape_for(MemoryType::LongTerm);
+        let ep = weibull_shape_for(MemoryType::Episodic);
+        let age = 90.0 * 24.0;
+        assert!(
+            lt.decay(age) > ep.decay(age),
+            "LT {} should exceed EP {} at 90d",
+            lt.decay(age),
+            ep.decay(age),
+        );
+    }
+
+    #[test]
+    fn exponential_mode_matches_the_free_recency_function() {
+        // `Decay::Exponential` must reproduce the historical
+        // `2^(-Δt/H)` bit for bit. The check is at the half-life
+        // point, where both forms should be exactly 0.5.
+        let s = HybridScorer {
+            decay: Decay::Exponential,
+            half_life_days: 30.0,
+            ..HybridScorer::default()
+        };
+        let now = OffsetDateTime::now_utc();
+        let shape = s.decay_shape_for(MemoryType::Episodic);
+        // An entry exactly one base half-life old: `exponential_shape`
+        // anchors Episodic at `half_life_days` (the multiplier is 1.0).
+        let e = entry("x", 30);
+        let weibull_form = decay_at(e.timestamp, now, shape);
+        let exp_form = recency(e.timestamp, now, s.half_life_for(MemoryType::Episodic));
+        assert!(
+            (weibull_form - exp_form).abs() < 0.01,
+            "exponential mode diverged from recency: {weibull_form} vs {exp_form}",
+        );
+        assert!(
+            (weibull_form - 0.5).abs() < 0.05,
+            "half-life point should be ~0.5, got {weibull_form}",
+        );
+    }
+
+    #[test]
+    fn decay_shape_with_zero_eta_is_zero_not_nan() {
+        // A caller error — a zero or negative scale — must not
+        // produce a NaN that poisons the score sum. The contract is
+        // `0.0` for a nonsensical shape.
+        let bad = DecayShape {
+            eta_hours: 0.0,
+            k: 1.0,
+        };
+        assert_eq!(bad.decay(100.0), 0.0);
+        let bad = DecayShape {
+            eta_hours: -1.0,
+            k: 1.0,
+        };
+        assert_eq!(bad.decay(100.0), 0.0);
+        let bad = DecayShape {
+            eta_hours: 100.0,
+            k: 0.0,
+        };
+        assert_eq!(bad.decay(100.0), 0.0);
+    }
+
+    #[test]
+    fn decay_at_age_zero_is_one() {
+        let now = OffsetDateTime::now_utc();
+        let shape = weibull_shape_for(MemoryType::LongTerm);
+        assert_eq!(decay_at(now, now, shape), 1.0);
+    }
+
+    #[test]
+    fn weibull_default_is_selected() {
+        // The default on the struct is `Weibull`. A regression that
+        // flipped it back to `Exponential` silently changes every
+        // recall score — this pins the choice.
+        let s = HybridScorer::default();
+        assert_eq!(s.decay, Decay::Weibull);
     }
 
     #[test]
