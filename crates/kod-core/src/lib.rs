@@ -43,6 +43,7 @@ pub mod state;
 pub mod steer;
 pub mod swarm_adapters;
 pub mod swarm_runner;
+pub mod tool_loop_guard;
 pub mod tool_quota;
 pub mod trace;
 pub mod trace_writer;
