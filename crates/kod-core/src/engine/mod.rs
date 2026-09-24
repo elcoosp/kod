@@ -1230,6 +1230,13 @@ pub struct KodEngine {
     /// since, the clear is a no-op and the cancel stands. Without
     /// this, cancelling an agent mid-retry could be silently undone.
     cancels: parking_lot::RwLock<std::collections::HashMap<String, (u64, bool)>>,
+    /// Delta §9.8: the process-wide pause gate. Checked at exactly
+    /// two boundaries — before each model call and before each tool
+    /// round — so an in-flight stream runs to completion rather than
+    /// being torn down at the check. `Arc` because the TUI and CLI
+    /// hold their own clone to call `pause` / `resume` from the
+    /// keybinding layer without going through the engine.
+    pause_gate: std::sync::Arc<crate::pause_gate::PauseGate>,
     /// Transcripts, one per key. `DEFAULT_TRANSCRIPT_KEY` is the
     /// interactive session; a swarm agent uses `swarm:<agent-id>` so
     /// concurrent agents do not interleave their turns.
@@ -2807,6 +2814,7 @@ impl KodEngine {
             working_dir: working_dir.clone(),
             steers: std::sync::Arc::new(RwLock::new(HashMap::new())),
             cancels: parking_lot::RwLock::new(std::collections::HashMap::new()),
+            pause_gate: std::sync::Arc::new(crate::pause_gate::PauseGate::new()),
             history: RwLock::new(HashMap::new()),
             observed_usage: RwLock::new(HashMap::new()),
             context_gauges: RwLock::new(HashMap::new()),
@@ -7278,6 +7286,8 @@ pub(crate) fn filter_chain_by_trust(
                 if self.is_cancelled_for(key) {
                     return Err(KodError::InvalidState("cancelled by user".to_string()));
                 }
+                // Delta §9.8: the pause gate's model-call boundary.
+                self.pause_gate.wait_if_paused().await;
                 if turn > 1 {
                     let _ = chunk_tx.send(format!("\n\n—— turn {turn} ——\n")).await;
                     let nudge = "Continue working toward the goal above. If it is now fully reached, reply with GOAL MET plus a short summary instead of calling more tools.";
@@ -7433,6 +7443,8 @@ pub(crate) fn filter_chain_by_trust(
             if self.is_cancelled_for(round.holder) {
                 return Err(KodError::InvalidState("cancelled by user".to_string()));
             }
+            // Delta §9.8: the pause gate's model-call boundary.
+            self.pause_gate.wait_if_paused().await;
             // Pre-queued steers reach round 1. `apply_steers`
             // also runs after a tool round; both calls are safe
             // because it drains.
@@ -7618,6 +7630,8 @@ pub(crate) fn filter_chain_by_trust(
             if self.is_cancelled_for(round.holder) {
                 return Err(KodError::InvalidState("cancelled by user".to_string()));
             }
+            // Delta §9.8: the pause gate's model-call boundary.
+            self.pause_gate.wait_if_paused().await;
             // Pre-queued steers reach round 1. See the same comment in
             // `run_collected_loop`.
             self.apply_steers(pending, messages, round.holder).await;
@@ -9037,6 +9051,8 @@ pub(crate) fn filter_chain_by_trust(
         holder: &str,
         chunk_tx: Option<&tokio::sync::mpsc::Sender<String>>,
     ) -> ToolRound {
+        // Delta §9.8: the pause gate's tool-round boundary.
+        self.pause_gate.wait_if_paused().await;
         // The tool context is scoped per transcript — a swarm agent
         // gets its own working dir and write-globs.
         let effective_holder: &str = if holder.is_empty() { "session" } else { holder };
@@ -10306,6 +10322,30 @@ pub(crate) fn filter_chain_by_trust(
     /// True if a cancel was requested for the default transcript.
     pub fn is_cancelled(&self) -> bool {
         self.is_cancelled_for(DEFAULT_TRANSCRIPT_KEY)
+    }
+
+    /// Delta §9.8: pause the process-wide gate.
+    ///
+    /// In-flight streams run to completion (they are not checked
+    /// mid-stream); the next model call and the next tool round
+    /// park at their respective boundaries until `resume`. A run
+    /// that is aborted while paused stays paused — the abort
+    /// releases the run, not the gate.
+    pub fn pause(&self) {
+        self.pause_gate.pause();
+    }
+
+    /// Delta §9.8: resume the process-wide gate. Idempotent.
+    pub fn resume(&self) {
+        self.pause_gate.resume();
+    }
+
+    /// Whether the gate is currently paused, for a UI readout.
+    /// Cheap (an atomic load); a caller that checks this and then
+    /// proceeds has a race between the check and the proceed —
+    /// call `wait_if_paused` at a boundary instead.
+    pub fn is_paused(&self) -> bool {
+        self.pause_gate.is_paused()
     }
 
     /// True if a cancel was requested for `key`.
