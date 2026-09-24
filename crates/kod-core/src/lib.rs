@@ -4,6 +4,7 @@
 //! into a unified task routing and execution engine.
 
 pub mod acp;
+pub mod auto_thinking;
 pub mod budget;
 pub mod checkpoint;
 pub mod citations;
