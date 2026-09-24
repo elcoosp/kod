@@ -87,3 +87,6 @@ pub use swarm_runner::{
     WorktreeMergeOutcome,
 };
 pub use worktree::{MergeReport, WorktreeInfo, WorktreeManager};
+pub mod preflight;
+pub mod presence;
+pub mod commit_lock;

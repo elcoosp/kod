@@ -2327,6 +2327,7 @@ dependencies = [
  "kod-swarm",
  "kod-tools",
  "kod-types",
+ "libc",
  "parking_lot",
  "proptest",
  "regex",
