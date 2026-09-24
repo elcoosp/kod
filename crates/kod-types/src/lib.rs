@@ -3,6 +3,7 @@ pub mod memory;
 pub mod message;
 pub mod redact;
 pub mod secret_placeholder;
+pub mod secret_sources;
 pub mod skill;
 pub mod strutil;
 pub mod tool;
