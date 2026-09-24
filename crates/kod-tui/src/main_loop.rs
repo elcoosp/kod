@@ -1494,6 +1494,8 @@ impl TuiLoop {
     /// `dispatch_prompt`: a spawned task runs the runner, its events
     /// flow through the event channel, and Esc / Ctrl+C aborts the task
     /// via `gen_task`.
+
+
     async fn dispatch_swarm(&mut self, goal: String) -> Result<()> {
         let Some(engine) = self.engine.clone() else {
             self.app.push_system_message("Engine not initialized.");
@@ -5748,6 +5750,48 @@ fn parse_at_agent_prefix(input: &str) -> Option<(usize, &str)> {
     Some((n, text))
 }
 
+/// Parse an overnight duration like `2h`, `90m`, `1h30m`.
+///
+/// Returns `None` on anything it cannot read, so a caller reports the
+/// usage string rather than guessing a default — an overnight run that
+/// silently used the wrong duration is worse than one that refused.
+///
+/// Hours and minutes are the units that matter here; a run measured in
+/// seconds is not an overnight run, and a run measured in days exceeds
+/// any sensible wake target.
+fn parse_overnight_duration(s: &str) -> Option<Duration> {
+    let s = s.trim().to_ascii_lowercase();
+    if s.is_empty() {
+        return None;
+    }
+    // Plain integer: hours, the common case (`/overnight 2`).
+    if let Ok(h) = s.parse::<i64>() {
+        return (h > 0).then(|| Duration::from_secs((h as u64) * 3600));
+    }
+    let mut total = Duration::ZERO;
+    let mut num = String::new();
+    let mut saw_any = false;
+    for ch in s.chars() {
+        if ch.is_ascii_digit() {
+            num.push(ch);
+            continue;
+        }
+        let n: i64 = num.parse().ok()?;
+        num.clear();
+        match ch {
+            'h' => total += Duration::from_secs((n as u64) * 3600),
+            'm' => total += Duration::from_secs((n as u64) * 60),
+            _ => return None,
+        }
+        saw_any = true;
+    }
+    // A trailing number with no unit is not a valid compound form.
+    if !num.is_empty() || !saw_any || total.is_zero() {
+        return None;
+    }
+    Some(total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6785,6 +6829,41 @@ mod tests {
         assert!(bodies[0].contains("before text"), "got: {bodies:?}");
         assert!(bodies[1].contains("read_file"), "got: {bodies:?}");
         assert!(bodies[2].contains("after text"), "got: {bodies:?}");
+    }
+
+    #[test]
+    fn a_bare_number_is_hours() {
+        assert_eq!(
+            parse_overnight_duration("2"),
+            Some(Duration::from_secs(7200)),
+        );
+    }
+
+    #[test]
+    fn hours_and_minutes_parse() {
+        assert_eq!(parse_overnight_duration("30m"), Some(Duration::from_secs(1800)));
+        assert_eq!(parse_overnight_duration("2h"), Some(Duration::from_secs(7200)));
+        assert_eq!(
+            parse_overnight_duration("1h30m"),
+            Some(Duration::from_secs(5400)),
+        );
+    }
+
+    #[test]
+    fn case_and_whitespace_are_tolerated() {
+        assert_eq!(parse_overnight_duration(" 2H "), Some(Duration::from_secs(7200)));
+    }
+
+    #[test]
+    fn garbage_is_none_not_a_default() {
+        // An overnight run with the wrong duration is worse than one
+        // that refused, so this returns None rather than a guess.
+        assert!(parse_overnight_duration("soon").is_none());
+        assert!(parse_overnight_duration("").is_none());
+        assert!(parse_overnight_duration("2x").is_none());
+        assert!(parse_overnight_duration("h").is_none());
+        assert!(parse_overnight_duration("2h30").is_none());
+        assert!(parse_overnight_duration("0").is_none());
     }
 }
 
