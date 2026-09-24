@@ -2,6 +2,7 @@
 //!
 //! This crate defines the traits and types that all LLM providers must implement.
 
+pub mod concurrency;
 pub mod registry;
 pub mod replay;
 pub mod request;
