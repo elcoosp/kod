@@ -241,6 +241,65 @@ impl LongTermMemory {
     }
 
     /// Count entries without materialising them.
+/// Mark `old` as replaced by `new`.
+    ///
+    /// The old entry stays on disk — deleting it loses the audit
+    /// trail of what was believed before — but stops appearing in
+    /// retrieval. Both ids must exist; a caller superseding an entry
+    /// that was already removed gets an error naming which one.
+    pub async fn supersede(&self, old: &MemoryId, new: &MemoryId) -> Result<()> {
+        let mut entry = self
+            .get(old)
+            .await?
+            .ok_or_else(|| KodError::InvalidState(format!("no entry {old}")))?;
+        if self.get(new).await?.is_none() {
+            return Err(KodError::InvalidState(format!("no entry {new}")));
+        }
+        entry.superseded_by = Some(new.clone());
+        self.update(entry).await
+    }
+
+    /// Record that two entries disagree.
+    ///
+    /// The link is symmetric: both entries carry each other's id, so a
+    /// caller reading either side sees the disagreement. Both stay
+    /// active — a contradiction is a fact to surface, not one to
+    /// resolve by picking a winner.
+    pub async fn link_contradiction(&self, a: &MemoryId, b: &MemoryId) -> Result<()> {
+        let mut ea = self
+            .get(a)
+            .await?
+            .ok_or_else(|| KodError::InvalidState(format!("no entry {a}")))?;
+        let mut eb = self
+            .get(b)
+            .await?
+            .ok_or_else(|| KodError::InvalidState(format!("no entry {b}")))?;
+        if !ea.contradicts.contains(b) {
+            ea.contradicts.push(b.clone());
+            self.update(ea).await?;
+        }
+        if !eb.contradicts.contains(a) {
+            eb.contradicts.push(a.clone());
+            self.update(eb).await?;
+        }
+        Ok(())
+    }
+
+    /// Entries `id` contradicts, for a caller surfacing the
+    /// disagreement.
+    pub async fn contradictions_of(&self, id: &MemoryId) -> Result<Vec<MemoryEntry>> {
+        let Some(entry) = self.get(id).await? else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::new();
+        for other in &entry.contradicts {
+            if let Some(e) = self.get(other).await? {
+                out.push(e);
+            }
+        }
+        Ok(out)
+    }
+
     pub async fn count(&self) -> Result<usize> {
         self.blocking(|db| {
             let txn = db.begin_read().map_err(|e| {
@@ -496,5 +555,102 @@ mod coverage_store_batch {
         assert_eq!(got.metadata.tags, vec!["a".to_string()]);
         assert_eq!(got.metadata.project_key.as_deref(), Some("p"));
         assert_eq!(got.metadata.last_retrieved_at_ms, Some(12345));
+    }
+}
+
+#[cfg(test)]
+mod supersession_tests {
+    use super::*;
+    use kod_types::{MemoryEntry, MemoryId, MemoryType, MemoryMetadata};
+    use time::OffsetDateTime;
+
+    fn entry(content: &str) -> MemoryEntry {
+        MemoryEntry {
+            id: MemoryId::new(),
+            memory_type: MemoryType::LongTerm,
+            content: content.to_string(),
+            timestamp: OffsetDateTime::now_utc(),
+            relevance: 1.0,
+            metadata: MemoryMetadata::default(),
+            superseded_by: None,
+            contradicts: Vec::new(),
+        }
+    }
+
+    fn fixture() -> (tempfile::TempDir, LongTermMemory) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db = LongTermMemory::new(&tmp.path().join("mem.redb")).unwrap();
+        (tmp, db)
+    }
+
+    #[tokio::test]
+    async fn supersede_marks_the_old_entry() {
+        let (_tmp, s) = fixture();
+        let old = entry("the user prefers tabs");
+        let new = entry("the user prefers spaces");
+        let (old_id, new_id) = (old.id.clone(), new.id.clone());
+        s.store(old).await.unwrap();
+        s.store(new).await.unwrap();
+
+        s.supersede(&old_id, &new_id).await.unwrap();
+        let got = s.get(&old_id).await.unwrap().unwrap();
+        assert_eq!(got.superseded_by.as_ref(), Some(&new_id));
+        assert!(!got.is_active(), "a superseded entry is inactive");
+    }
+
+    #[tokio::test]
+    async fn supersede_with_a_missing_replacement_errors() {
+        let (_tmp, s) = fixture();
+        let old = entry("x");
+        let old_id = old.id.clone();
+        s.store(old).await.unwrap();
+        let ghost = MemoryId::new();
+        assert!(s.supersede(&old_id, &ghost).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn link_contradiction_is_symmetric() {
+        let (_tmp, s) = fixture();
+        let a = entry("the build uses cargo");
+        let b = entry("the build uses make");
+        let (aid, bid) = (a.id.clone(), b.id.clone());
+        s.store(a).await.unwrap();
+        s.store(b).await.unwrap();
+
+        s.link_contradiction(&aid, &bid).await.unwrap();
+        let ga = s.get(&aid).await.unwrap().unwrap();
+        let gb = s.get(&bid).await.unwrap().unwrap();
+        assert!(ga.contradicts.contains(&bid));
+        assert!(gb.contradicts.contains(&aid), "the link is symmetric");
+        assert!(ga.is_active(), "a contradicted entry stays active");
+    }
+
+    #[tokio::test]
+    async fn linking_twice_does_not_duplicate() {
+        let (_tmp, s) = fixture();
+        let a = entry("a");
+        let b = entry("b");
+        let (aid, bid) = (a.id.clone(), b.id.clone());
+        s.store(a).await.unwrap();
+        s.store(b).await.unwrap();
+        s.link_contradiction(&aid, &bid).await.unwrap();
+        s.link_contradiction(&aid, &bid).await.unwrap();
+        let ga = s.get(&aid).await.unwrap().unwrap();
+        assert_eq!(ga.contradicts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn contradictions_of_returns_the_peers() {
+        let (_tmp, s) = fixture();
+        let a = entry("a");
+        let b = entry("b");
+        let (aid, bid) = (a.id.clone(), b.id.clone());
+        s.store(a).await.unwrap();
+        s.store(b).await.unwrap();
+        s.link_contradiction(&aid, &bid).await.unwrap();
+
+        let peers = s.contradictions_of(&aid).await.unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].id, bid);
     }
 }
