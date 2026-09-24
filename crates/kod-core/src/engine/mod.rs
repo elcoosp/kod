@@ -1272,6 +1272,13 @@ pub struct KodEngine {
     /// one. Absent until a transcript's first completed call.
     observed_usage: RwLock<HashMap<String, u64>>,
 
+    /// Delta §4.1: the ordered compaction ladder. Called from
+    /// `maybe_compact_for` before the summary path so a mechanical
+    /// reduction (shake / prune) can avoid a model call entirely.
+    /// The doc's rule: reduction before summarization.
+    compaction_dispatcher:
+        std::sync::Arc<crate::compaction_dispatcher::CompactionDispatcher>,
+
     /// Delta §2.4: a per-transcript anchor on the provider's own last
     /// settled usage, plus the message index that usage covered. The
     /// gauge turns per-turn context-size accounting from O(transcript)
@@ -2255,6 +2262,23 @@ impl KodEngine {
             return 0;
         }
 
+        // Delta §4.1: reduction before summarization. Try a mechanical
+        // pass first — shake and prune are pure functions that do not
+        // need the model, and a successful plan avoids the summary
+        // call entirely. Only when the mechanical rungs find nothing
+        // (or fall short) does the summary path run.
+        if let Some(plan) = self.try_mechanical_compaction(key, window as u64).await {
+            let affected = self.apply_compaction_plan(key, plan).await;
+            if affected > 0 {
+                tracing::info!(
+                    holder = key,
+                    affected,
+                    "mechanical compaction reduced the transcript before summarization",
+                );
+                return affected;
+            }
+        }
+
         // Compute the cut once, using a read guard, so both the
         // StartBackground and CompactNow paths agree on which
         // messages are in play.
@@ -2515,6 +2539,133 @@ impl KodEngine {
             .and_then(|g| g.estimate(tail_estimate))
     }
 
+    /// Delta §4.1: try a mechanical compaction pass on `key` at
+    /// `window_tokens`. Returns the plan when the dispatcher has work,
+    /// `None` when no rung has anything to reduce.
+    ///
+    /// Holds the transcript read lock across the dispatcher call —
+    /// both `ShakeMethod` and `PruneMethod` are pure functions that
+    /// only read the transcript, so no write-lock contention is
+    /// possible. `prefix_is_warm` is passed `false` for now: the
+    /// engine's `CacheLedger` tracks warmth per-endpoint, not
+    /// per-transcript, and computing it correctly is a follow-up. The
+    /// conservative `false` skips the cache-warm guard, which errs on
+    /// the side of *more* reduction — a deliberate bias for a first
+    /// landing where the alternative is doing nothing.
+    async fn try_mechanical_compaction(
+        &self,
+        key: &str,
+        window_tokens: u64,
+    ) -> Option<crate::compaction_dispatcher::CompactionPlan> {
+        let guard = self.history.read().await;
+        let turns = guard.get(key)?;
+        if turns.is_empty() {
+            return None;
+        }
+
+        // Precompute the suffix-token vector: `suffix[i]` is the
+        // estimated token count of everything strictly after `turns[i]`.
+        // The estimator is O(transcript) but a single pass, and it is
+        // built once per dispatcher attempt (which only fires when the
+        // threshold has been crossed).
+        let mut suffix: Vec<u64> = vec![0u64; turns.len()];
+        let mut acc = 0u64;
+        for i in (0..turns.len()).rev() {
+            suffix[i] = acc;
+            acc += (turns[i].content.len() / 4) as u64;
+        }
+        let estimator = move |i: usize| suffix.get(i).copied().unwrap_or(0);
+
+        let ctx = crate::compaction_dispatcher::CompactionContext {
+            transcript: turns,
+            window_tokens,
+            suffix_tokens_after: &estimator,
+            prefix_is_warm: false,
+        };
+        let outcome = self.compaction_dispatcher.compact(&ctx).await;
+        // Notices from skipped stubs are dropped here — the engine has
+        // no user-visible channel for them yet, and a per-turn notice
+        // storm would be the same failure the advisor guard (§11.8)
+        // exists to prevent. A `/debug` surface is a follow-up.
+        let _ = outcome.notices;
+        outcome.plan
+    }
+
+    /// Delta §4.1: apply a mechanical compaction plan to `key`.
+    ///
+    /// Returns the number of message mutations applied. `Shake` plans
+    /// carry per-message byte ranges already ordered descending by
+    /// start (the planner's contract), so splicing them in the order
+    /// given leaves earlier offsets valid. `Prune` plans blank whole
+    /// message bodies. A `Summary` plan is not produced by this path
+    /// (that is the existing summary flow's shape) and is a no-op here.
+    async fn apply_compaction_plan(
+        &self,
+        key: &str,
+        plan: crate::compaction_dispatcher::CompactionPlan,
+    ) -> usize {
+        use crate::compaction_dispatcher::CompactionPlan;
+        use crate::prune::PruneAction;
+        use std::collections::HashMap;
+
+        let mut history = self.history.write().await;
+        let Some(turns) = history.get_mut(key) else {
+            return 0;
+        };
+
+        // Snapshot the id → index map once. Message ids are unique
+        // within a transcript by construction.
+        let idx: HashMap<kod_types::MessageId, usize> = turns
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.id.clone(), i))
+            .collect();
+
+        let mut affected = 0usize;
+        match plan {
+            CompactionPlan::Shake(shake) => {
+                for action in shake.actions {
+                    let Some(&i) = idx.get(&action.message_id) else {
+                        continue;
+                    };
+                    let content = &mut turns[i].content;
+                    let start = action.range.start.min(content.len());
+                    let end = action.range.end.min(content.len());
+                    if start >= end {
+                        continue;
+                    }
+                    if !content.is_char_boundary(start) || !content.is_char_boundary(end) {
+                        // A byte range that is not on a char boundary
+                        // would panic `replace_range`; skip rather
+                        // than trust the planner's arithmetic when a
+                        // non-ASCII transcript has been edited under
+                        // it.
+                        continue;
+                    }
+                    content.replace_range(start..end, &action.placeholder);
+                    affected += 1;
+                }
+            }
+            CompactionPlan::Prune(prune) => {
+                for (id, action) in prune.actions {
+                    let Some(&i) = idx.get(&id) else { continue };
+                    match action {
+                        PruneAction::Blank { placeholder } => {
+                            turns[i].content = placeholder;
+                            affected += 1;
+                        }
+                    }
+                }
+            }
+            CompactionPlan::Summary { .. } => {
+                // Not produced by try_mechanical_compaction. Left as
+                // an explicit arm so a future Summary-producing rung
+                // fails loudly here rather than silently no-oping.
+            }
+        }
+        affected
+    }
+
     fn apply_retry_adjustment(
         action: crate::retry_strategy::RetryAction,
         options: &mut GenerationOptions,
@@ -2659,6 +2810,16 @@ impl KodEngine {
             history: RwLock::new(HashMap::new()),
             observed_usage: RwLock::new(HashMap::new()),
             context_gauges: RwLock::new(HashMap::new()),
+            compaction_dispatcher: std::sync::Arc::new(
+                crate::compaction_dispatcher::CompactionDispatcher::new(vec![
+                    Box::new(crate::compaction_dispatcher::ShakeMethod::new(
+                        crate::shake::ShakeConfig::default(),
+                    )),
+                    Box::new(crate::compaction_dispatcher::PruneMethod::new(
+                        crate::prune::PruneConfig::default(),
+                    )),
+                ]),
+            ),
             injected_memory_at: RwLock::new(HashMap::new()),
             prewarmed: RwLock::new(std::collections::HashSet::new()),
             pending_summaries: std::sync::Arc::new(RwLock::new(HashMap::new())),
