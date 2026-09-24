@@ -648,7 +648,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use kod_error::Result as KodResult;
-    use kod_types::{ChatMessage, ToolCall, ToolDefinition};
+    use kod_types::ToolDefinition;
     use std::sync::Mutex;
 
     // -----------------------------------------------------------------

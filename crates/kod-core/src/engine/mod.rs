@@ -2256,20 +2256,31 @@ impl KodEngine {
             return 0;
         }
 
-        // Observed count when we have one; otherwise a cheap estimate
-        // from the raw history (4 chars/token — the same rough figure
-        // the prompt builder uses) so a resumed session with a huge
-        // transcript still compacts on its first turn.
-        let used = match self.observed_usage.read().await.get(key) {
-            Some(&n) => n,
-            None => {
-                let guard = self.history.read().await;
-                let chars: usize = guard
-                    .get(key)
-                    .map(|t| t.iter().map(|m| m.content.len()).sum())
-                    .unwrap_or(0);
-                (chars / 4) as u64
-            }
+        // Delta §2.4 (adoption): prefer the provider-anchored gauge.
+        // Its value is the anchor's `prompt_tokens` (the exact number
+        // the provider last charged for — system prompt, tools, and
+        // messages) plus a char-arithmetic tail for messages appended
+        // since. The `observed_usage` fallback below records only
+        // `prompt + completion` from the last call, so it under-counts
+        // by whatever the provider charged for the prompt *scaffolding*
+        // (identity block, tool schemas, repo map). The gauge is the
+        // more accurate of the two; the fallback exists for the first
+        // turn of a session, when no anchor has been established yet,
+        // and for a resumed session whose transcript was loaded from
+        // disk without a preceding call.
+        let used = match self.anchored_context_tokens(key).await {
+            Some(n) => n,
+            None => match self.observed_usage.read().await.get(key) {
+                Some(&n) => n,
+                None => {
+                    let guard = self.history.read().await;
+                    let chars: usize = guard
+                        .get(key)
+                        .map(|t| t.iter().map(|m| m.content.len()).sum())
+                        .unwrap_or(0);
+                    (chars / 4) as u64
+                }
+            },
         };
 
         let action = crate::compaction::decide(used, window as u64);
@@ -2552,6 +2563,40 @@ impl KodEngine {
             .await
             .get(holder)
             .and_then(|g| g.estimate(tail_estimate))
+    }
+
+    /// Delta §2.4 (adoption): the anchored context-size estimate for
+    /// `holder`, with a char-arithmetic tail for messages appended
+    /// after the anchor.
+    ///
+    /// The anchor records the provider's own `prompt_tokens` on the
+    /// last settled call. That number covers the system prompt,
+    /// tool schemas, and every message up to the anchor index.
+    /// Messages added since (the user's new prompt, tool round-trips
+    /// from the previous turn) are the tail — the caller supplies
+    /// their estimate.
+    ///
+    /// Returns `None` when there is no anchor: the first turn of a
+    /// session, or after a compaction cleared the anchor. The
+    /// caller falls back to `observed_usage` or the message-count
+    /// heuristic in that case.
+    async fn anchored_context_tokens(&self, holder: &str) -> Option<u64> {
+        let tail_start = {
+            let gauges = self.context_gauges.read().await;
+            gauges.get(holder).and_then(|g| g.tail_start())?
+        };
+        let tail: u64 = {
+            let history = self.history.read().await;
+            match history.get(holder) {
+                Some(turns) => turns
+                    .iter()
+                    .skip(tail_start)
+                    .map(|m| (m.content.len() / 4) as u64)
+                    .sum(),
+                None => 0,
+            }
+        };
+        self.context_tokens_for(holder, tail).await
     }
 
     /// Delta §4.1: try a mechanical compaction pass on `key` at

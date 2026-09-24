@@ -10,6 +10,7 @@ use kod_provider::{GenerationOptions, GenerationResponse, LlmProvider, StreamChu
 use kod_types::{ToolCall, ToolDefinition};
 use std::collections::HashMap;
 use std::pin::Pin;
+use std::sync::Arc;
 
 /// Fallback API key for local servers (Ollama, LM Studio, MLX) that accept any value.
 const LOCAL_FALLBACK_API_KEY: &str = "not-needed";
@@ -36,6 +37,12 @@ pub struct OpenAICompatProvider {
     /// and TLS state, which is what makes back-to-back switches cheap.
     client: reqwest::Client,
     timeout_secs: u64,
+    /// Per-endpoint streaming concurrency bracket (§9.9). The cap is
+    /// held only around the streaming HTTP request itself, never
+    /// around the agent's lifetime; see `kod_provider::concurrency`
+    /// for why that distinction is the deadlock fix in issue #3749.
+    /// `0` means unbounded, which is the default.
+    concurrency: Arc<kod_provider::concurrency::ProviderConcurrency>,
 }
 
 impl OpenAICompatProvider {
@@ -85,7 +92,22 @@ impl OpenAICompatProvider {
             api_key,
             client,
             timeout_secs,
+            concurrency: Arc::new(
+                kod_provider::concurrency::ProviderConcurrency::new(0),
+            ),
         })
+    }
+
+    /// Set the per-endpoint streaming concurrency cap (§9.9).
+    ///
+    /// `0` is unbounded and is the default — a caller that never
+    /// touches this method sees exactly the behavior it saw before
+    /// the primitive existed. A caller that sets a positive cap
+    /// wraps **only the streaming HTTP request** in the bracket; the
+    /// agent's own lifetime is unrelated to slot occupancy.
+    pub fn with_concurrency(self, cap: usize) -> Self {
+        self.concurrency.set_cap(cap);
+        self
     }
 
     /// Switch models, keeping the same endpoint, credentials, and
@@ -119,6 +141,7 @@ impl OpenAICompatProvider {
             // increment, not a rebuild.
             client: self.client,
             timeout_secs: self.timeout_secs,
+            concurrency: self.concurrency,
         })
     }
 
@@ -521,7 +544,14 @@ impl OpenAICompatProvider {
         request: LlmRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + '_>> {
         let inner = &self.inner;
+        let concurrency = Arc::clone(&self.concurrency);
         Box::pin(async_stream::stream! {
+            // §9.9: hold one admission permit for the lifetime of the
+            // streaming HTTP request. Released when this stream body
+            // exits — normal completion, hard error, or the caller
+            // dropping the stream. The bracket never extends past the
+            // stream; see `kod_provider::concurrency`.
+            let _permit = concurrency.acquire().await;
             match inner.generate_content(request, true).await {
                 Ok(mut responses) => {
                     let mut last_usage: Option<kod_provider::TokenUsage> = None;

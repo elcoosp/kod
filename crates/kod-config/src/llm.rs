@@ -36,7 +36,8 @@ impl Default for LlmConfig {
                 timeout_secs: 300,
                 pricing: None,
                 trust: None,
-            }],
+                effort: None,
+}],
             routing: None,
         }
     }
@@ -56,7 +57,7 @@ impl LlmConfig {
         self.endpoints.first().unwrap_or_else(|| {
             FALLBACK.get_or_init(|| LlmConfig::default().endpoints.into_iter().next().unwrap())
         })
-    }
+}
 
     /// Mutable variant. When the endpoints vec is empty, a default
     /// endpoint is pushed first so the caller has something to mutate.
@@ -65,7 +66,7 @@ impl LlmConfig {
             self.endpoints = LlmConfig::default().endpoints;
         }
         &mut self.endpoints[0]
-    }
+}
 
     /// Clamp out-of-range or nonsensical values on every endpoint.
     /// Called by `KodConfig::load_default()` after deserialization.
@@ -404,6 +405,30 @@ pub struct EndpointConfig {
     pub timeout_secs: u64,
     #[serde(default)]
     pub pricing: Option<PricingConfig>,
+    /// Reasoning-effort preference for this endpoint (delta §9.6).
+    ///
+    /// One of:
+    ///   * a fixed level the caller names (`"low"`, `"medium"`,
+    ///     `"high"`, `"xhigh"`, `"max"`) — passed through to the
+    ///     provider unchanged;
+    ///   * the sentinel `"auto"` — the engine classifies the turn's
+    ///     reasoning needs per-prompt and picks a level from the
+    ///     model's supported ladder, with the auto ceiling applied
+    ///     (never the top level, so a user who has not opted into
+    ///     minute-long turns is not surprised by one).
+    ///
+    /// `None` (the default) means "no preference" — the provider
+    /// applies its own default. This is what every existing config
+    /// gets, so the field is purely additive.
+    ///
+    /// Stored as a `String` rather than a typed enum, matching the
+    /// `trust` field above: `"auto"` is a sentinel that has no
+    /// `EffortLevel` counterpart, and a config file is a human-authored
+    /// artifact where a plain string reads more clearly than a nested
+    /// struct. Validation happens at load time (see the loader), not
+    /// at deserialization.
+    #[serde(default)]
+    pub effort: Option<String>,
     /// Trust tier (P7). A turn that touches a read-protected path
     /// (`.env`, a private key) is routed only to endpoints that
     /// declare `trusted`; a turn that touches a dotfile is routed
@@ -449,6 +474,48 @@ pub struct RoutingConfig {
     /// for swarm role-based routing (A7).
     #[serde(default)]
     pub swarm: std::collections::BTreeMap<String, String>,
+}
+
+#[cfg(test)]
+mod effort_field_tests {
+    //! Delta §9.6: the new `effort` config field. Two shapes:
+    //! absent (None, the pre-change behaviour) and present. The
+    //! validation of the *value* happens at load time, not at
+    //! deserialization; these tests pin only the serde shape.
+    use super::EndpointConfig;
+
+    fn minimal_toml(extra: &str) -> String {
+        format!(
+            r#"
+name = "test"
+provider = "openai-compatible"
+base_url = "http://localhost:11434/v1"
+model = "test-model"
+context_window = 8192
+{extra}
+"#,
+        )
+    }
+
+    #[test]
+    fn effort_absent_deserializes_to_none() {
+        let cfg: EndpointConfig = toml::from_str(&minimal_toml("")).unwrap();
+        assert!(cfg.effort.is_none());
+    }
+
+    #[test]
+    fn effort_can_be_the_auto_sentinel() {
+        let cfg: EndpointConfig =
+            toml::from_str(&minimal_toml(r#"effort = "auto""#)).unwrap();
+        assert_eq!(cfg.effort.as_deref(), Some("auto"));
+    }
+
+    #[test]
+    fn effort_can_be_a_fixed_level() {
+        let cfg: EndpointConfig =
+            toml::from_str(&minimal_toml(r#"effort = "high""#)).unwrap();
+        assert_eq!(cfg.effort.as_deref(), Some("high"));
+    }
 }
 
 #[cfg(test)]
@@ -647,7 +714,8 @@ mod tests {
                     timeout_secs: 300,
                     pricing: None,
                     trust: None,
-                },
+                    effort: None,
+},
                 EndpointConfig {
                     name: "local".into(),
                     provider: ProviderKind::OpenAICompatible,
@@ -660,7 +728,8 @@ mod tests {
                     timeout_secs: 300,
                     pricing: None,
                     trust: None,
-                },
+                    effort: None,
+},
             ],
             routing: Some(r),
             ..LlmConfig::default()
@@ -692,9 +761,10 @@ mod coverage_llm_validate {
             context_window: 8192,
             timeout_secs: 300,
             trust: None,
+            effort: None,
             pricing: None,
         }
-    }
+}
 
     #[test]
     fn validate_does_not_change_an_already_valid_config() {

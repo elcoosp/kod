@@ -13,6 +13,7 @@ use kod_provider::{
 use kod_types::{ToolCall, ToolDefinition};
 use std::collections::HashMap;
 use std::pin::Pin;
+use std::sync::Arc;
 
 /// Wrapper that implements kod's [`LlmProvider`] over the Anthropic
 /// Messages API.
@@ -35,6 +36,10 @@ pub struct AnthropicProvider {
     /// built with connect-only + a per-request wrapper, so a long
     /// stream is not killed mid-flight.
     timeout_secs: u64,
+    /// Per-endpoint streaming concurrency bracket (§9.9). Same
+    /// semantics as the OpenAI provider's field; see
+    /// `kod_provider::concurrency`. The default cap is 0 (unbounded).
+    concurrency: Arc<kod_provider::concurrency::ProviderConcurrency>,
 }
 
 impl AnthropicProvider {
@@ -81,7 +86,21 @@ impl AnthropicProvider {
             api_key,
             client,
             timeout_secs,
+            concurrency: Arc::new(
+                kod_provider::concurrency::ProviderConcurrency::new(0),
+            ),
         })
+    }
+
+    /// Set the per-endpoint streaming concurrency cap (§9.9).
+    ///
+    /// `0` is unbounded and is the default. A positive cap wraps only
+    /// the streaming HTTP request — see the OpenAI provider's
+    /// `with_concurrency` for the contract, and
+    /// `kod_provider::concurrency` for the deadlock reasoning.
+    pub fn with_concurrency(self, cap: usize) -> Self {
+        self.concurrency.set_cap(cap);
+        self
     }
 
     /// Switch models on the same endpoint and credentials.
@@ -98,6 +117,7 @@ impl AnthropicProvider {
             // session cache warm across `/model` switches.
             client: self.client,
             timeout_secs: self.timeout_secs,
+            concurrency: self.concurrency,
         })
     }
 
@@ -332,8 +352,11 @@ impl LlmProvider for AnthropicProvider {
         let url = format!("{}/messages", self.base_url);
         let client = self.client.clone();
         let api_key = self.api_key.clone();
+        let concurrency = Arc::clone(&self.concurrency);
 
         Box::pin(async_stream::stream! {
+            // §9.9: one admission permit per streaming HTTP request.
+            let _permit = concurrency.acquire().await;
             let resp = match client
                 .post(&url)
                 .header("x-api-key", &api_key)
@@ -441,7 +464,11 @@ impl AnthropicProvider {
         request: LlmRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + '_>> {
         let inner = &self.inner;
+        let concurrency = Arc::clone(&self.concurrency);
         Box::pin(async_stream::stream! {
+            // §9.9: one admission permit per streaming HTTP request,
+            // held for the stream's lifetime only.
+            let _permit = concurrency.acquire().await;
             match inner.generate_content(request, true).await {
                 Ok(mut responses) => {
                     let mut last_usage: Option<kod_provider::TokenUsage> = None;
