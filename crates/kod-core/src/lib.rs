@@ -48,6 +48,7 @@ pub mod tool_quota;
 pub mod trace;
 pub mod trace_writer;
 pub mod transcript_coherence;
+pub mod unexpected_stop;
 pub mod worktree;
 
 pub use cost::{CostSnapshot, CostTracker, SoftWarningTrigger};
