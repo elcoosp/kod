@@ -41,3 +41,6 @@ fuzz/target/
 # the expected snapshot when a comparison fails. It is a
 # debugging aid, not a source artifact.
 *.actual.txt
+
+# .wr.sh write-script backups
+*.wr-bak.*
