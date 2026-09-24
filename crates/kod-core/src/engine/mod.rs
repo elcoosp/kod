@@ -7,7 +7,7 @@ mod jev_advisor;
 
 use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
-use kod_provider::request::{CompletionRequest, SystemPrompt};
+use kod_provider::request::{CompletionRequest, SystemPrompt, SystemSegment};
 use kod_provider::{
     GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderRegistry, StreamChunk,
 };
@@ -1405,6 +1405,14 @@ pub struct KodEngine {
     read_protection: std::sync::RwLock<Option<kod_config::ReadProtection>>,
     /// The redactor used for content sanitization (Tier 1.3).
     redactor: std::sync::Arc<kod_types::redact::Redactor>,
+    /// Delta §14.1: the reversible secret-placeholder vault. When
+    /// `Some` and `[security.redact] in_prompt = true`, outgoing
+    /// prompts have every registered secret replaced with a
+    /// placeholder, and incoming tool arguments have placeholders
+    /// replaced with the raw value. `None` disables the whole
+    /// mechanism; `RwLock<Option<...>>` because a caller installs the
+    /// vault after construction (same shape as `policy`).
+    secret_vault: RwLock<Option<std::sync::Arc<kod_types::secret_placeholder::SecretVault>>>,
     /// Session cost accumulator (Tier 1.2). Clone the engine to
     /// share it with a UI.
     cost_tracker: crate::cost::CostTracker,
@@ -2994,6 +3002,11 @@ impl KodEngine {
             sandbox_mode_atomic: std::sync::atomic::AtomicU8::new(2),
             read_protection: std::sync::RwLock::new(None),
             redactor: std::sync::Arc::new(kod_types::redact::Redactor::default()),
+            // Delta §14.1: the vault is installed by the CLI/TUI via
+            // `set_secret_vault` after construction. A default
+            // engine — every test, every embedder — sees `None` and
+            // is unaffected.
+            secret_vault: RwLock::new(None),
             cost_tracker: crate::cost::CostTracker::new(),
             state_store: std::sync::RwLock::new(None),
             tool_counts: std::sync::Arc::new(crate::tool_quota::ToolCounts::new()),
@@ -3632,6 +3645,86 @@ impl KodEngine {
     }
 
     /// Replace the default redactor (Tier 1.3).
+    /// Delta §14.1: install a secret-placeholder vault. After this,
+    /// every outgoing prompt has registered secrets replaced with
+    /// placeholders, and every incoming tool argument has
+    /// placeholders replaced with raw values.
+    ///
+    /// Idempotent. Passing a vault when one is already installed
+    /// replaces it — the previous vault's registered secrets become
+    /// unknown, which means any placeholder still in flight will
+    /// pass through the deobfuscator unchanged. That is the correct
+    /// behavior for a test that swaps vaults; a production caller
+    /// installs once.
+    pub async fn set_secret_vault(
+        &self,
+        vault: std::sync::Arc<kod_types::secret_placeholder::SecretVault>,
+    ) {
+        *self.secret_vault.write().await = Some(vault);
+    }
+
+    /// Delta §14.1: the current vault, if one is installed.
+    pub async fn secret_vault(
+        &self,
+    ) -> Option<std::sync::Arc<kod_types::secret_placeholder::SecretVault>> {
+        self.secret_vault.read().await.clone()
+    }
+
+    /// Delta §14.1: replace every registered secret in `text` with
+    /// its placeholder. No-op when no vault is installed.
+    pub async fn obfuscate_secrets(&self, text: &str) -> String {
+        match self.secret_vault.read().await.as_ref() {
+            Some(v) => v.obfuscate(text),
+            None => text.to_string(),
+        }
+    }
+
+    /// Delta §14.1: replace every placeholder in `text` with the raw
+    /// secret. Returns `(restored_text, count)`; count is zero when
+    /// no vault is installed.
+    pub async fn deobfuscate_secrets(&self, text: &str) -> (String, usize) {
+        match self.secret_vault.read().await.as_ref() {
+            Some(v) => v.deobfuscate(text),
+            None => (text.to_string(), 0),
+        }
+    }
+
+    /// Delta §14.1: walk a JSON value recursively and deobfuscate
+    /// every string. The tool-argument path uses this — arguments
+    /// are arbitrary JSON, and the model may have put a placeholder
+    /// in a nested field.
+    async fn deobfuscate_json(&self, value: &mut serde_json::Value) -> usize {
+        let vault = match self.secret_vault.read().await.as_ref() {
+            Some(v) => std::sync::Arc::clone(v),
+            None => return 0,
+        };
+        fn walk(v: &mut serde_json::Value, vault: &kod_types::secret_placeholder::SecretVault) -> usize {
+            let mut n = 0;
+            match v {
+                serde_json::Value::String(s) => {
+                    let (out, c) = vault.deobfuscate(s);
+                    if c > 0 {
+                        *s = out;
+                        n += c;
+                    }
+                }
+                serde_json::Value::Array(a) => {
+                    for item in a.iter_mut() {
+                        n += walk(item, vault);
+                    }
+                }
+                serde_json::Value::Object(o) => {
+                    for (_, item) in o.iter_mut() {
+                        n += walk(item, vault);
+                    }
+                }
+                _ => {}
+            }
+            n
+        }
+        walk(value, &vault)
+    }
+
     pub fn set_redactor(&mut self, redactor: kod_types::redact::Redactor) {
         self.redactor = std::sync::Arc::new(redactor);
     }
@@ -8202,7 +8295,7 @@ pub(crate) fn filter_chain_by_trust(
                 // switching has a target.
                 fallback: round.fallback,
             };
-            let (text, calls, usage, off_track) = self
+            let (text, mut calls, usage, off_track) = self
                 .stream_round(
                     &current_provider,
                     round_for_this.system_text,
@@ -8250,6 +8343,25 @@ pub(crate) fn filter_chain_by_trust(
                         &call.arguments,
                     )))
                     .await;
+            }
+            // Delta §14.1: deobfuscate placeholders in every tool
+            // call's arguments before the tool runs. A model that
+            // read `«Credential-abc»` and writes that string back in
+            // an `edit`/`write_file` argument gets the raw value
+            // substituted here — the model never saw the bytes; the
+            // tool gets them. The mutation is on the local `calls`
+            // vec, so the assistant message's `tool_calls` field
+            // (which stays with the placeholder in the transcript)
+            // is unaffected.
+            for call in calls.iter_mut() {
+                let n = self.deobfuscate_json(&mut call.arguments).await;
+                if n > 0 {
+                    tracing::debug!(
+                        tool = %call.tool_name,
+                        count = n,
+                        "deobfuscated secret placeholders in tool arguments",
+                    );
+                }
             }
             let section = self
                 .run_tool_calls(&calls, round.holder, Some(chunk_tx))
@@ -8769,6 +8881,52 @@ pub(crate) fn filter_chain_by_trust(
         // over the serialized definitions in the order the registry
         // returns them (which is byte-stable per `registry.rs`'s sort).
         self.note_tool_surface_fingerprint(key, definitions).await;
+
+        // Delta §14.1: obfuscate registered secrets in every string
+        // about to reach the provider. The outbound direction is
+        // where the model's *seeing* a secret is prevented; the
+        // inbound direction (tool-arg deobfuscation) is where the
+        // model's *writing* a placeholder is turned back into the
+        // raw value. Both directions are gated on the same vault:
+        // no vault, no substitution.
+        //
+        // The config gate `[security.redact] in_prompt` is honored
+        // here — a user who disabled in-prompt redaction gets the
+        // pre-§14.1 behavior, which is the raw bytes reaching the
+        // provider.
+        let in_prompt_enabled = match kod_config::KodConfig::load_default() {
+            Ok(cfg) => cfg.security.redact.in_prompt,
+            Err(_) => true,
+        };
+        let (system, messages) = if in_prompt_enabled {
+            let vault = self.secret_vault.read().await.clone();
+            match vault {
+                Some(v) if !v.is_empty() => {
+                    let system = SystemPrompt {
+                        segments: system
+                            .segments
+                            .into_iter()
+                            .map(|s| SystemSegment {
+                                text: v.obfuscate(&s.text),
+                                cacheable: s.cacheable,
+                            })
+                            .collect(),
+                    };
+                    let messages: Vec<kod_types::ChatMessage> = messages
+                        .into_iter()
+                        .map(|mut m| {
+                            m.content = v.obfuscate(&m.content);
+                            m
+                        })
+                        .collect();
+                    (system, messages)
+                }
+                _ => (system, messages),
+            }
+        } else {
+            (system, messages)
+        };
+
         CompletionRequest {
             system,
             messages,
