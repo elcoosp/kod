@@ -75,6 +75,15 @@ pub struct MemoryManager {
     vector_index: parking_lot::RwLock<Option<crate::vector_index::VectorIndex>>,
     /// Tunables for the hybrid scorer.
     scorer: crate::retrieval::HybridScorer,
+    /// Redactor applied to memory content and metadata tags before
+    /// storage (borrow from oh-my-pi, delta §12.4).
+    ///
+    /// Memory content is replayed into every prompt for the lifetime
+    /// of the entry. A credential stored once leaks forever; the write
+    /// path is the only place to stop that. `Some` by default (see
+    /// `MemoryManager::new`); `None` only when a caller explicitly
+    /// disables redaction for a test or a legacy-data migration.
+    redactor: Option<std::sync::Arc<kod_types::redact::Redactor>>,
 }
 
 impl MemoryManager {
@@ -89,6 +98,12 @@ impl MemoryManager {
             embedder: None,
             vector_index: parking_lot::RwLock::new(None),
             scorer: crate::retrieval::HybridScorer::default(),
+            // On by default. The builtin rule set covers the vendor
+            // keys the design note names (OpenAI, Anthropic, GitHub,
+            // AWS, Google, Stripe, ...) plus a Shannon-entropy
+            // heuristic for high-entropy tokens near secret-shaped
+            // keywords. See `kod_types::redact`.
+            redactor: Some(std::sync::Arc::new(kod_types::redact::Redactor::default())),
         })
     }
 
@@ -121,6 +136,32 @@ impl MemoryManager {
     /// Replace the retrieval scoring weights.
     pub fn set_scorer(&mut self, scorer: crate::retrieval::HybridScorer) {
         self.scorer = scorer;
+    }
+
+    /// Replace the write-path redactor. `None` disables redaction —
+    /// use only for tests or a legacy-data migration that needs the
+    /// stored bytes verbatim.
+    pub fn set_redactor(&mut self, redactor: Option<kod_types::redact::Redactor>) {
+        self.redactor = redactor.map(std::sync::Arc::new);
+    }
+
+    /// Disable write-path redaction. Shortcut for
+    /// `set_redactor(None)`; named so a call site reads as what it is.
+    pub fn disable_redaction(&mut self) {
+        self.redactor = None;
+    }
+
+    /// Redact one string through the installed redactor, or return it
+    /// unchanged when redaction is disabled. The `String` return is
+    /// cloned from the input only when redaction is off — a
+    /// `Cow<'_, str>` would be more efficient at the call sites but
+    /// this is not a hot path and the clone is free of allocation
+    /// surprises.
+    fn redact_text(&self, text: &str) -> String {
+        match self.redactor.as_ref() {
+            Some(r) => r.redact(text).0,
+            None => text.to_string(),
+        }
     }
 
     /// Rebuild the vector index from the long-term store, using the
@@ -220,6 +261,20 @@ impl MemoryManager {
         content: &str,
         mut metadata: kod_types::MemoryMetadata,
     ) -> Result<MemoryId> {
+        // Memory-write redaction (borrow from oh-my-pi, delta §12.4).
+        // Anything stored here is replayed into every future prompt
+        // for the lifetime of the entry; a leaked credential is a
+        // leak forever, and the write path is the only place to stop
+        // it. Redaction runs before the dedup check so the dedup
+        // comparison is over the form that actually gets stored.
+        let content_owned = self.redact_text(content);
+        let content: &str = content_owned.as_str();
+        metadata.tags = metadata
+            .tags
+            .iter()
+            .map(|t| self.redact_text(t))
+            .collect();
+
         // H-D4: cap content length. `memory_save` is model-invocable
         // with no dedup, no rate limit, and no size limit; a runaway
         // agent can mint a fresh 100 KB entry per call and grow the
@@ -354,6 +409,11 @@ impl MemoryManager {
         id: &MemoryId,
         content: &str,
     ) -> Result<()> {
+        // Same redaction as the store path — an update can introduce a
+        // secret that the original store did not carry. See the
+        // module doc for the "replayed forever" rationale.
+        let content_owned = self.redact_text(content);
+        let content: &str = content_owned.as_str();
         match memory_type {
             MemoryType::ShortTerm => {
                 // Short-term memory doesn't support update, so remove and re-add
@@ -1036,6 +1096,231 @@ mod tests {
         // Retrieve
         assert!(manager.get_short_term(&short_id).is_some());
         assert!(manager.get_long_term(&long_id).await.unwrap().is_some());
+    }
+}
+
+/// Memory-write redaction tests (borrow from oh-my-pi, delta §12.4).
+///
+/// # The problem the tests defend against
+///
+/// A memory entry is replayed into every future prompt for the
+/// lifetime of the entry. If an entry contains a credential — because
+/// the model saved one, because the extraction pass pulled one out of
+/// a transcript, because a user pasted one and asked the assistant to
+/// remember it — that credential is in every prompt from now on.
+/// `store` and `update` are the write path; these tests pin the
+/// redaction that happens there.
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+    use kod_types::MemoryMetadata;
+    use tempfile::TempDir;
+
+    /// The redactor's builtin `openai-key` rule matches `sk-` followed
+    /// by 20+ alnum chars.
+    const SAMPLE_OPENAI_KEY: &str = "sk-abcdef1234567890ABCDEFGHIJ";
+    /// The builtin `github-pat` rule matches `ghp_` + 36+ alnum.
+    const SAMPLE_GITHUB_PAT: &str = "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn fixture() -> (TempDir, MemoryManager) {
+        let tmp = TempDir::new().unwrap();
+        let m = MemoryManager::new(tmp.path().join("t.redb"), 10).unwrap();
+        (tmp, m)
+    }
+
+    #[tokio::test]
+    async fn an_openai_key_in_content_is_redacted_before_storage() {
+        let (_tmp, manager) = fixture();
+        let id = manager
+            .store(
+                MemoryType::LongTerm,
+                &format!("my key is {SAMPLE_OPENAI_KEY}"),
+            )
+            .await
+            .unwrap();
+        let stored = manager.get_long_term(&id).await.unwrap().unwrap();
+        assert!(
+            !stored.content.contains(SAMPLE_OPENAI_KEY),
+            "key survived storage: {}",
+            stored.content,
+        );
+        assert!(
+            stored.content.contains("[REDACTED:openai-key]"),
+            "expected the named marker, got: {}",
+            stored.content,
+        );
+    }
+
+    #[tokio::test]
+    async fn a_github_pat_in_content_is_redacted() {
+        let (_tmp, manager) = fixture();
+        let id = manager
+            .store(
+                MemoryType::LongTerm,
+                &format!("token: {SAMPLE_GITHUB_PAT}"),
+            )
+            .await
+            .unwrap();
+        let stored = manager.get_long_term(&id).await.unwrap().unwrap();
+        assert!(!stored.content.contains(SAMPLE_GITHUB_PAT));
+        assert!(stored.content.contains("[REDACTED:github-pat]"));
+    }
+
+    #[tokio::test]
+    async fn redaction_reaches_the_tags() {
+        // The doc names nested metadata explicitly. A tag is short
+        // and normally harmless, but nothing stops a caller from
+        // putting a key in one, and tags are rendered into prompts
+        // too.
+        let (_tmp, manager) = fixture();
+        let id = manager
+            .store_with_metadata(
+                MemoryType::LongTerm,
+                "harmless-looking fact",
+                MemoryMetadata {
+                    tags: vec![SAMPLE_OPENAI_KEY.to_string(), "safe-tag".to_string()],
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let stored = manager.get_long_term(&id).await.unwrap().unwrap();
+        let joined = stored.metadata.tags.join("|");
+        assert!(
+            !joined.contains(SAMPLE_OPENAI_KEY),
+            "key survived in tags: {joined}",
+        );
+        assert!(
+            stored.metadata.tags.iter().any(|t| t == "safe-tag"),
+            "harmless tag lost: {:?}",
+            stored.metadata.tags,
+        );
+    }
+
+    #[tokio::test]
+    async fn update_also_redacts() {
+        // An update can introduce a secret the original store did not
+        // carry; the write path covers both.
+        let (_tmp, manager) = fixture();
+        let id = manager
+            .store(MemoryType::LongTerm, "clean fact")
+            .await
+            .unwrap();
+        manager
+            .update(
+                MemoryType::LongTerm,
+                &id,
+                &format!("updated with {SAMPLE_OPENAI_KEY}"),
+            )
+            .await
+            .unwrap();
+        let stored = manager.get_long_term(&id).await.unwrap().unwrap();
+        assert!(
+            !stored.content.contains(SAMPLE_OPENAI_KEY),
+            "key survived update: {}",
+            stored.content,
+        );
+    }
+
+    #[tokio::test]
+    async fn redaction_is_on_by_default() {
+        // A fresh manager redacts. This is the "safe by default"
+        // contract; an opt-in redactor would leave every existing
+        // install leaking until someone flipped a config bit.
+        let (_tmp, manager) = fixture();
+        assert!(manager.redactor.is_some());
+    }
+
+    #[tokio::test]
+    async fn redaction_can_be_disabled_explicitly() {
+        // The escape hatch for a test or a migration that needs the
+        // bytes verbatim. Named `disable_redaction` so it reads as
+        // what it is at every call site.
+        let (_tmp, mut manager) = fixture();
+        manager.disable_redaction();
+        let id = manager
+            .store(
+                MemoryType::LongTerm,
+                &format!("key {SAMPLE_OPENAI_KEY}"),
+            )
+            .await
+            .unwrap();
+        let stored = manager.get_long_term(&id).await.unwrap().unwrap();
+        assert!(
+            stored.content.contains(SAMPLE_OPENAI_KEY),
+            "disabled redactor must pass bytes through",
+        );
+    }
+
+    #[tokio::test]
+    async fn ordinary_content_is_unchanged_by_redaction() {
+        // No false positives on ordinary prose. If the redactor
+        // flagged "project" as a secret, every memory entry would
+        // become a marker.
+        let (_tmp, manager) = fixture();
+        let original = "The user prefers tabs over spaces.";
+        let id = manager.store(MemoryType::LongTerm, original).await.unwrap();
+        let stored = manager.get_long_term(&id).await.unwrap().unwrap();
+        assert_eq!(stored.content, original);
+    }
+
+    #[tokio::test]
+    async fn dedup_runs_after_redaction() {
+        // Two different keys redact to different markers, so they are
+        // two distinct entries. Two identical writes redact to the
+        // same bytes, so they dedup to one.
+        let (_tmp, manager) = fixture();
+        let a = manager
+            .store(
+                MemoryType::LongTerm,
+                &format!("key {SAMPLE_OPENAI_KEY}"),
+            )
+            .await
+            .unwrap();
+        let b = manager
+            .store(
+                MemoryType::LongTerm,
+                &format!("token {SAMPLE_GITHUB_PAT}"),
+            )
+            .await
+            .unwrap();
+        assert_ne!(a, b, "different secrets must be different entries");
+
+        let c = manager
+            .store(
+                MemoryType::LongTerm,
+                &format!("key {SAMPLE_OPENAI_KEY}"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(a, c, "identical writes dedup to one entry");
+    }
+
+    #[tokio::test]
+    async fn the_marker_is_the_named_form_not_the_bare_form() {
+        // kod's redactor uses `[REDACTED:<rule>]`; the design note
+        // shows a bare `[REDACTED]`. The named form is deliberately
+        // kept — a reader (or a log viewer) can tell *what kind* of
+        // secret was there without seeing the value.
+        let (_tmp, manager) = fixture();
+        let id = manager
+            .store(
+                MemoryType::LongTerm,
+                &format!("key {SAMPLE_OPENAI_KEY}"),
+            )
+            .await
+            .unwrap();
+        let stored = manager.get_long_term(&id).await.unwrap().unwrap();
+        assert!(
+            stored.content.contains("[REDACTED:openai-key]"),
+            "expected the named marker: {}",
+            stored.content,
+        );
+        assert!(
+            !stored.content.contains("[REDACTED]"),
+            "bare marker should not appear: {}",
+            stored.content,
+        );
     }
 }
 
