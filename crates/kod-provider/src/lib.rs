@@ -22,3 +22,6 @@ pub use request::{
 pub use traits::{GenerationOptions, LlmProvider, ModelInfo};
 pub use types::*;
 pub mod effort;
+pub mod validation;
+pub mod structured;
+pub use structured::{run_structured, extract_json};
