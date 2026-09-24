@@ -2853,6 +2853,11 @@ impl KodEngine {
         // `LlmConfig::network_access` flag is a follow-up — the
         // context is built before the config is available here, and
         // the CLI/TUI do not currently pass a context in.
+        // TaskRouter first: the `memory://` handler needs a handle to
+        // it, and the protocol router's construction depends on the
+        // handler.
+        let router = TaskRouter::new(config, db_path)?;
+        let router_for_handler = Arc::new(router);
         // Delta §7.5: the artifact store + the protocol router. The
         // handler is stored on the engine so offload sites
         // (`store_artifact`) can write; the router is installed into
@@ -2861,6 +2866,17 @@ impl KodEngine {
         let artifact_handler = Arc::new(kod_tools::ArtifactHandler::new());
         let protocol_router = kod_tools::ProtocolRouter::new().register(
             Arc::clone(&artifact_handler) as Arc<dyn kod_tools::ProtocolHandler>,
+        );
+        // Delta §7.5: `memory://search/<query>` delegates to the
+        // router's long-term retrieval. Registered unconditionally —
+        // when memory is disabled the handler returns a clear
+        // "memory is disabled" error, which is more useful to the
+        // model than a "unknown scheme" one.
+        let memory_handler = Arc::new(crate::memory_handler::MemoryHandler::new(
+            Arc::clone(&router_for_handler),
+        ));
+        let protocol_router = protocol_router.register(
+            memory_handler as Arc<dyn kod_tools::ProtocolHandler>,
         );
         let tool_context =
             ToolContext::new(working_dir.clone())
@@ -2874,7 +2890,6 @@ impl KodEngine {
                     forbidden_paths: Vec::new(),
                 })
                 .with_protocol_router(protocol_router);
-        let router = TaskRouter::new(config, db_path)?;
         let lock_table = Arc::new(PathLockTable::new());
         // Snapshots are best-effort: a session without a home directory
         // still runs, it just cannot roll back. The manager is
@@ -2884,7 +2899,7 @@ impl KodEngine {
             crate::checkpoint::CheckpointManager::for_working_dir(&working_dir).map(Arc::new);
 
         Ok(Self {
-            router: Arc::new(router),
+            router: router_for_handler,
             registry: RwLock::new(None),
             current_model: RwLock::new(ModelRef::new("default", "")),
             routing: RwLock::new(None),

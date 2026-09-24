@@ -30,6 +30,7 @@ pub mod hooks;
 pub mod jev;
 pub mod lsp_tools;
 pub mod mcp_adapters;
+pub mod memory_handler;
 pub mod memory_tools;
 pub mod overnight;
 pub mod output_spool;
