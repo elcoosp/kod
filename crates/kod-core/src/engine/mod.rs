@@ -2878,6 +2878,27 @@ impl KodEngine {
         let protocol_router = protocol_router.register(
             memory_handler as Arc<dyn kod_tools::ProtocolHandler>,
         );
+        // Delta §5: the minimizer + the artifact-store hook. The
+        // hook captures the `Arc<ArtifactHandler>` directly, so it
+        // does not need a reference to the engine (which would be a
+        // cycle: the engine owns the base context owns the hook).
+        let minimizer = Arc::new(kod_tools::kod_minimize::Minimizer::with_builtins());
+        let artifact_store_hook: kod_tools::context::ArtifactStoreHook = {
+            let handler = Arc::clone(&artifact_handler);
+            kod_tools::context::ArtifactStoreHook::new(
+                move |id: String, text: String, mime: String| {
+                    let handler = Arc::clone(&handler);
+                    Box::pin(async move {
+                        handler
+                            .store(id, text, mime)
+                            .await
+                            .map_err(|e| KodError::InvalidParameters {
+                                reason: format!("artifact store: {e}"),
+                            })
+                    })
+                },
+            )
+        };
         let tool_context =
             ToolContext::new(working_dir.clone())
                 .with_permissions(ToolPermissions {
@@ -2889,7 +2910,8 @@ impl KodEngine {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 })
-                .with_protocol_router(protocol_router);
+                .with_protocol_router(protocol_router)
+                .with_minimizer(minimizer, artifact_store_hook);
         let lock_table = Arc::new(PathLockTable::new());
         // Snapshots are best-effort: a session without a home directory
         // still runs, it just cannot roll back. The manager is

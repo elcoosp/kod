@@ -886,13 +886,63 @@ impl Tool for ExecuteCommandTool {
         #[cfg(not(unix))]
         let exit_signal: Option<i32> = None;
 
+        // Delta §5: minimize stdout before it reaches the wire cap
+        // (16 KiB in the engine) or the model. The minimizer never
+        // rewrites a piped or chained command; a single command
+        // with a matching def gets a rewrite. When a rewrite
+        // happened and a store hook is installed, the raw capture
+        // is offloaded as an artifact so the model can still fetch
+        // it via `read_file artifact://<id>`.
+        let raw_stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
+        let exit_code = status.code().unwrap_or(-1);
+        let (stdout_text, minimized_filter, artifact_url) = match context.minimizer.as_ref() {
+            Some(min) => {
+                let m = min.minimize(command, &raw_stdout, exit_code);
+                if m.was_rewritten() {
+                    let url = match context.on_artifact_store.as_ref() {
+                        Some(store) => {
+                            // Stable content-addressed id: same
+                            // command + same output → same artifact
+                            // (and the store's overwrite refusal
+                            // means a genuine collision is a no-op,
+                            // not a lost write).
+                            use std::hash::{Hash, Hasher};
+                            let mut h =
+                                std::collections::hash_map::DefaultHasher::new();
+                            command.hash(&mut h);
+                            raw_stdout.hash(&mut h);
+                            let id = format!("cmd-{:016x}", h.finish());
+                            let text = raw_stdout.clone();
+                            match store.call(id, text, "text/plain".to_string()).await {
+                                Ok(u) => Some(u),
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "artifact store failed; continuing without raw");
+                                    None
+                                }
+                            }
+                        }
+                        None => None,
+                    };
+                    (m.text, m.filter, url)
+                } else {
+                    (raw_stdout, None, None)
+                }
+            }
+            None => (raw_stdout, None, None),
+        };
+
         Ok(ToolResult::Success(serde_json::json!({
-            "stdout": String::from_utf8_lossy(&stdout_bytes).to_string(),
+            "stdout": stdout_text,
             "stderr": String::from_utf8_lossy(&stderr_bytes).to_string(),
-            "exit_code": status.code().unwrap_or(-1),
+            "exit_code": exit_code,
             "exit_signal": exit_signal,
             "stdout_truncated": stdout_truncated,
             "stderr_truncated": stderr_truncated,
+            // Delta §5: which def rewrote the stdout, and where the
+            // raw is if a rewrite happened. `null` on both means the
+            // stdout is unmodified.
+            "stdout_minimized_by": minimized_filter,
+            "stdout_artifact": artifact_url,
             // Explicit, not inferred. The timeout kill and the
             // output-cap kill both surface as a signal, and the
             // summariser needs to distinguish them: an `exit_signal`
