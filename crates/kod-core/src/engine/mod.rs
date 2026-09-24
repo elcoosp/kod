@@ -9199,6 +9199,43 @@ pub(crate) fn filter_chain_by_trust(
                 );
             }
         }
+        // Tier 3.5.1: a successful write is harness-observed evidence
+        // for whatever todo the model is working on. The model cannot
+        // set its own confidence — this is where the harness raises
+        // it, from work it actually saw land.
+        //
+        // Only when exactly one todo is `in_progress`: with two, the
+        // evidence's owner is ambiguous, and attributing it to the
+        // wrong one is worse than leaving both Speculative.
+        {
+            let wrote = calls.iter().zip(results.iter()).any(|(c, r)| {
+                matches!(c.tool_name.as_str(), "write_file" | "patch_file")
+                    && matches!(r, kod_types::ToolResult::Success(_))
+            });
+            if wrote
+                && let Some(todo_id) = kod_tools::todo::in_progress_todo(&self.todo_list)
+            {
+                let files: Vec<&str> = calls
+                    .iter()
+                    .filter(|c| {
+                        matches!(c.tool_name.as_str(), "write_file" | "patch_file")
+                    })
+                    .filter_map(|c| c.arguments.get("path").and_then(|p| p.as_str()))
+                    .collect();
+                let note = if files.is_empty() {
+                    "a write landed".to_string()
+                } else {
+                    format!("wrote {}", files.join(", "))
+                };
+                let _ = kod_tools::todo::note_evidence(
+                    &self.todo_list,
+                    todo_id,
+                    note,
+                    kod_tools::todo::ConfidenceState::Corroborated,
+                );
+            }
+        }
+
         // Structured transcript slice (S10 phase 4).
         let messages = Self::build_round_messages(calls, &results);
 
