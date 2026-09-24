@@ -51,15 +51,23 @@
 //!
 //! # Methods
 //!
-//! | Method              | Params                                            |
-//! |---------------------|---------------------------------------------------|
-//! | `process`           | `{input, transcript_key?}`                        |
-//! | `process_streaming` | `{input, transcript_key?}`                        |
-//! | `steer`             | `{note, transcript_key?}`                         |
-//! | `cancel`            | `{transcript_key?}`                               |
-//! | `shutdown`          | `{}`                                              |
-//! | `list_models`       | `{}`                                              |
-//! | `set_model`         | `{endpoint, model}`                               |
+//! | Method                 | Params                                          |
+//! |------------------------|-------------------------------------------------|
+//! | `hello`                | `{min, max}` — version negotiation              |
+//! | `process`              | `{input, transcript_key?}`                      |
+//! | `process_streaming`    | `{input, transcript_key?}`                      |
+//! | `steer`                | `{note, transcript_key?}`                       |
+//! | `cancel`               | `{transcript_key?}`                             |
+//! | `respond_to_approval`  | `{id, decision}`                                |
+//! | `respond_to_question`  | `{id, answer}`                                  |
+//! | `swarm`                | `{goal, max_agents?, merge?}`                   |
+//! | `peek_session`         | `{key, max_chars?}` — non-attaching read        |
+//! | `list_models`          | `{}`                                            |
+//! | `set_model`            | `{endpoint, model}`                             |
+//! | `shutdown`             | `{}`                                            |
+//!
+//! `PROTOCOL_METHODS` below is the same list, for a client author to
+//! read as data rather than parse out of this table.
 //!
 //! # Lifecycle
 //!
