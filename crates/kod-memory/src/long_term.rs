@@ -353,6 +353,9 @@ mod tests {
             timestamp: time::OffsetDateTime::now_utc(),
             relevance: 1.0,
             metadata: Default::default(),
+        
+            superseded_by: None,
+            contradicts: Vec::new(),
         };
 
         memory.store(entry.clone()).await.unwrap();
@@ -400,6 +403,9 @@ mod tests {
                     timestamp: time::OffsetDateTime::now_utc(),
                     relevance: 1.0,
                     metadata: Default::default(),
+                
+                    superseded_by: None,
+                    contradicts: Vec::new(),
                 };
                 m.store(entry).await.unwrap();
             }));
@@ -432,6 +438,9 @@ mod coverage_store_batch {
             timestamp: time::OffsetDateTime::now_utc(),
             relevance: 1.0,
             metadata: Default::default(),
+        
+            superseded_by: None,
+            contradicts: Vec::new(),
         }
     }
 

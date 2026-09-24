@@ -187,6 +187,9 @@ mod tests {
             timestamp: OffsetDateTime::now_utc() - Duration::days(age_days),
             relevance: 1.0,
             metadata: Default::default(),
+        
+            superseded_by: None,
+            contradicts: Vec::new(),
         }
     }
 
@@ -316,6 +319,9 @@ mod tests {
             timestamp: old,
             relevance: 1.0,
             metadata: Default::default(),
+        
+            superseded_by: None,
+            contradicts: Vec::new(),
         };
         let s = HybridScorer {
             w_semantic: 0.0,
@@ -352,6 +358,9 @@ mod coverage_scoring_composition {
             timestamp: OffsetDateTime::now_utc() - Duration::days(age_days),
             relevance: 1.0,
             metadata: Default::default(),
+        
+            superseded_by: None,
+            contradicts: Vec::new(),
         }
     }
 

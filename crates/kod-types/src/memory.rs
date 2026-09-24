@@ -26,6 +26,27 @@ pub struct MemoryEntry {
     pub timestamp: OffsetDateTime,
     pub relevance: f32,
     pub metadata: MemoryMetadata,
+    /// Set when a later entry replaces this one. A superseded entry is
+    /// kept on disk — deleting it loses the audit trail — but excluded
+    /// from retrieval. `Some(id)` names the replacement.
+    #[serde(default)]
+    pub superseded_by: Option<MemoryId>,
+    /// Entries this one contradicts. Both stay active: a contradiction
+    /// is a fact to surface, not one to silently resolve by picking a
+    /// winner. The pair is for a caller to see and a user to settle.
+    #[serde(default)]
+    pub contradicts: Vec<MemoryId>,
+}
+
+impl MemoryEntry {
+    /// Whether this entry should be offered to retrieval.
+    ///
+    /// A superseded entry is not: it was replaced on purpose. A
+    /// contradicted one is — surfacing both sides of a disagreement
+    /// is the point.
+    pub fn is_active(&self) -> bool {
+        self.superseded_by.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -67,6 +88,9 @@ mod tests {
             timestamp: OffsetDateTime::now_utc(),
             relevance: 0.9,
             metadata: MemoryMetadata::default(),
+        
+            superseded_by: None,
+            contradicts: Vec::new(),
         };
 
         let json = serde_json::to_string(&entry).unwrap();
@@ -188,6 +212,9 @@ mod coverage_memory_type {
                 project_key: Some("proj".into()),
                 last_retrieved_at_ms: Some(1_700_000_000_000),
             },
+        
+            superseded_by: None,
+            contradicts: Vec::new(),
         };
         let json = serde_json::to_string(&e).unwrap();
         let parsed: MemoryEntry = serde_json::from_str(&json).unwrap();

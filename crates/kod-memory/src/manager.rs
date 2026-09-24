@@ -292,6 +292,9 @@ impl MemoryManager {
                     timestamp: OffsetDateTime::now_utc(),
                     relevance: 1.0,
                     metadata,
+                
+                    superseded_by: None,
+                    contradicts: Vec::new(),
                 };
                 self.short_term.store(entry);
                 // Compact down to 80% once the cap is reached.
@@ -309,6 +312,9 @@ impl MemoryManager {
                     timestamp: OffsetDateTime::now_utc(),
                     relevance: 0.8,
                     metadata,
+                
+                    superseded_by: None,
+                    contradicts: Vec::new(),
                 };
                 self.long_term.store(entry).await?;
             }
@@ -320,6 +326,9 @@ impl MemoryManager {
                     timestamp: OffsetDateTime::now_utc(),
                     relevance: 0.7,
                     metadata,
+                
+                    superseded_by: None,
+                    contradicts: Vec::new(),
                 };
                 self.long_term.store(entry).await?;
             }

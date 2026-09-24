@@ -199,6 +199,9 @@ mod coverage_engine_context {
             timestamp: OffsetDateTime::now_utc(),
             relevance: 1.0,
             metadata: Default::default(),
+        
+            superseded_by: None,
+            contradicts: Vec::new(),
         }
     }
 
