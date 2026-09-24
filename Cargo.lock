@@ -2537,6 +2537,7 @@ dependencies = [
  "ignore",
  "kod-config",
  "kod-error",
+ "kod-minimize",
  "kod-types",
  "libc",
  "regex",

@@ -21,6 +21,7 @@ similar = { workspace = true }
 reqwest = { workspace = true, features = ["stream"] }
 futures = { workspace = true }
 kod-config = { path = "../kod-config" }
+kod-minimize = { path = "../kod-minimize" }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
 

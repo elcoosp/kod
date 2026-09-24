@@ -662,6 +662,16 @@ pub struct ToolContext {
     /// an engine that owns a job runner.
     pub on_background_command: Option<BackgroundSpawnHook>,
 
+    /// Delta §5: offload hook for the minimizer. When `Some`, a
+    /// rewritten `execute_command` result offloads the raw capture
+    /// and includes the `artifact://<id>` URL in the result JSON.
+    pub on_artifact_store: Option<ArtifactStoreHook>,
+
+    /// Delta §5: the shell-output minimizer. When `Some`,
+    /// `execute_command` runs the captured stdout through it before
+    /// returning. `None` disables minimization.
+    pub minimizer: Option<std::sync::Arc<kod_minimize::Minimizer>>,
+
     /// Delta §7.5: the internal-URL router. When `Some`, `read_file`
     /// and `write_file` first check whether the path carries a scheme
     /// this router handles — `artifact://`, `memory://`, `xd://` — and
@@ -672,6 +682,57 @@ pub struct ToolContext {
     /// installed its router; the tools then behave exactly as they
     /// did before this field existed.
     pub protocol_router: Option<crate::internal_url::ProtocolRouter>,
+}
+
+/// Delta §5: offload a raw capture to the engine's artifact store
+/// and return the `artifact://<id>` URL.
+///
+/// Same callback pattern as [`BackgroundSpawnHook`]: the tool crate
+/// does not depend on `kod-core`, and the engine supplies a closure
+/// that reaches the engine's `ArtifactHandler`.
+///
+/// Wrapped in a newtype (rather than a bare `Arc<dyn Fn>` type
+/// alias) so a manual `Debug` impl can skip the closure body — a
+/// `ToolContext` derives `Debug`, and a bare `Arc<dyn Fn>` has no
+/// `Debug` impl.
+#[derive(Clone)]
+pub struct ArtifactStoreHook(std::sync::Arc<ArtifactStoreFn>);
+
+type ArtifactStoreFn = dyn Fn(
+        String,
+        String,
+        String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>>
+    + Send
+    + Sync;
+
+impl ArtifactStoreHook {
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(
+                String,
+                String,
+                String,
+            )
+                -> std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<String>> + Send>,
+                >
+            + Send
+            + Sync
+            + 'static,
+    {
+        Self(std::sync::Arc::new(f))
+    }
+
+    pub async fn call(&self, id: String, text: String, mime: String) -> Result<String> {
+        (self.0)(id, text, mime).await
+    }
+}
+
+impl std::fmt::Debug for ArtifactStoreHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<artifact-store-hook>")
+    }
 }
 
 impl ToolContext {
@@ -692,6 +753,8 @@ impl ToolContext {
         
             on_file_touch: None,
             on_background_command: None,
+            on_artifact_store: None,
+            minimizer: None,
             protocol_router: None,
         }
     }
@@ -704,6 +767,20 @@ impl ToolContext {
     ) -> Self {
         self.lock_table = Some(table);
         self.holder = holder.into();
+        self
+    }
+
+    /// Delta §5: install the minimizer + the artifact-store hook.
+    /// Both are optional and independent of each other; a caller
+    /// that provides only a minimizer gets the rewritten output
+    /// with no artifact URL.
+    pub fn with_minimizer(
+        mut self,
+        minimizer: std::sync::Arc<kod_minimize::Minimizer>,
+        artifact_store: ArtifactStoreHook,
+    ) -> Self {
+        self.minimizer = Some(minimizer);
+        self.on_artifact_store = Some(artifact_store);
         self
     }
 

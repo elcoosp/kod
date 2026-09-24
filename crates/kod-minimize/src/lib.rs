@@ -233,6 +233,17 @@ impl Minimizer {
     }
 }
 
+impl std::fmt::Debug for Minimizer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Print the def ids; the `Def` bodies are large and Debug
+        // would be noise. The ids are what a caller actually wants
+        // to see in a log line.
+        f.debug_struct("Minimizer")
+            .field("defs", &self.def_ids())
+            .finish()
+    }
+}
+
 /// The built-in defs, embedded at compile time.
 ///
 /// Adding a def is one `.toml` file and one entry here. The tuple is
