@@ -6681,6 +6681,15 @@ pub(crate) fn filter_chain_by_trust(
                     }
                     Err(e) if e.is_retryable() && i + 1 < chain.len() => {
                         let next = &chain[i + 1];
+                        // A retryable error *usually* fires before any
+                        // token, but not always — a stream can produce
+                        // output and then fail. Without a reset the
+                        // fallback's text appends to the dead
+                        // attempt's, and the user reads a sentence
+                        // that was never said by one model. Emitting
+                        // the reset is unconditional: on the common
+                        // path it drops an empty bubble, a no-op.
+                        let _ = chunk_tx.send(stream_reset_marker()).await;
                         tracing::warn!(
                             from = %model_ref.display(),
                             to = %next.display(),
