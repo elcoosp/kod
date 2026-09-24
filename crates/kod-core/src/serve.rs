@@ -1247,3 +1247,54 @@ mod coverage_serve_handlers {
         assert_eq!(mode, 0o600, "socket file must be 0600, got {mode:o}");
     }
 }
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn version_range_constants_are_ordered() {
+        assert!(MIN_PROTOCOL_VERSION <= PROTOCOL_VERSION);
+        assert!(PROTOCOL_VERSION <= MAX_PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn a_missing_version_parses_as_none() {
+        // An older client predates the field; every v1 method works
+        // without it, so the gate lets it through.
+        let req: Request =
+            serde_json::from_str(r#"{"id":"1","method":"list_models"}"#).unwrap();
+        assert!(req.v.is_none());
+    }
+
+    #[test]
+    fn an_out_of_range_version_is_outside_the_supported_range() {
+        let req: Request =
+            serde_json::from_str(r#"{"v":9,"id":"1","method":"list_models"}"#).unwrap();
+        let v = req.v.unwrap();
+        assert!(
+            !(MIN_PROTOCOL_VERSION..=MAX_PROTOCOL_VERSION).contains(&v),
+            "v={v} should be outside the server range",
+        );
+    }
+
+    #[test]
+    fn the_hello_overlap_is_the_intersection() {
+        // Pure arithmetic over the same range the hello arm uses:
+        // a client speaking 1..=3 against a server speaking 1..=1
+        // overlaps at 1.
+        let (client_min, client_max) = (1u8, 3u8);
+        let lo = client_min.max(MIN_PROTOCOL_VERSION);
+        let hi = client_max.min(MAX_PROTOCOL_VERSION);
+        assert!(lo <= hi);
+        assert_eq!(hi, 1);
+    }
+
+    #[test]
+    fn a_disjoint_range_has_no_overlap() {
+        let (client_min, client_max) = (5u8, 7u8);
+        let lo = client_min.max(MIN_PROTOCOL_VERSION);
+        let hi = client_max.min(MAX_PROTOCOL_VERSION);
+        assert!(lo > hi, "5..=7 against 1..=1 must not overlap");
+    }
+}
