@@ -1243,6 +1243,11 @@ pub struct KodEngine {
     /// failure).
     summaries_in_flight: std::sync::Arc<RwLock<std::collections::HashSet<String>>>,
 
+    /// Transcripts that have already been prewarmed for the turn
+    /// currently being composed. Cleared when the turn begins, so the
+    /// next fresh turn warms again.
+    prewarmed: RwLock<std::collections::HashSet<String>>,
+
     /// §7.3: when each memory entry was last injected into a prompt,
     /// per transcript. A long session retrieves the same preference
     /// on every turn — the entry still matches the query, so nothing
@@ -1907,6 +1912,102 @@ impl KodEngine {
     ///
     /// Returns `None` when the spool cannot be created or the spawn
     /// fails, which the tool reads as "run it inline."
+
+    /// Fire a speculative request that warms the provider's connection
+    /// and its KV-cache prefix.
+    ///
+    /// Called when the user starts typing a fresh turn, so the real
+    /// request — seconds later, once they finish composing — reads a
+    /// cache that is already written. For a local model the same
+    /// request keeps the weights resident, which is the larger win:
+    /// `ollama` unloads after five idle minutes and the first real
+    /// turn otherwise pays a full reload.
+    ///
+    /// **The economics are not free.** A request that writes the cache
+    /// pays ~1.25x on the prefix; the real turn then reads at ~0.1x.
+    /// That is a loss if the turn follows immediately and a win once
+    /// the user has typed for a few seconds — which is why the caller
+    /// fires on the first keystroke of a fresh turn, not on submit.
+    ///
+    /// One-shot per transcript: the latch is set here and cleared when
+    /// a real turn begins. A run of keystrokes warms once.
+    ///
+    /// Never awaited by the caller. The request is discarded: this
+    /// exists for its side effects on the provider, not for its
+    /// output.
+    pub async fn prewarm(&self, key: &str) {
+        // Latch first, so a burst of keystrokes does not queue a burst
+        // of requests behind the first one.
+        {
+            let mut g = self.prewarmed.write().await;
+            if !g.insert(key.to_string()) {
+                return;
+            }
+        }
+
+        let Some(provider) = self.current_provider().await else {
+            return;
+        };
+        // No trace means no prompt has been built yet — a fresh
+        // session has nothing cached to warm.
+        let Some(trace) = self.last_prompt_trace_for(key).await else {
+            return;
+        };
+
+        // Only the cacheable head is worth sending: the volatile tail
+        // (environment, tool inventory, memory) differs every turn and
+        // would not be a cache hit anyway.
+        const VOLATILE_MARKER: &str = "## Volatile suffix";
+        let cacheable = match trace.text.find(VOLATILE_MARKER) {
+            Some(i) => trace.text[..i].trim_end(),
+            None => return,
+        };
+        if cacheable.is_empty() {
+            return;
+        }
+
+        let mut system = kod_provider::request::SystemPrompt::new();
+        system = system.with(cacheable.to_string(), true);
+
+        let model = self.current_model.read().await.clone();
+        let req = kod_provider::request::CompletionRequest {
+            system,
+            messages: vec![kod_types::ChatMessage::text(
+                kod_types::MessageId::new(),
+                kod_types::MessageRole::User,
+                "warm",
+                time::OffsetDateTime::now_utc(),
+            )],
+            tools: Vec::new(),
+            // One output token: the response is discarded, and a
+            // larger budget is money spent for nothing.
+            options: kod_provider::GenerationOptions {
+                model: None,
+                max_tokens: Some(1),
+                temperature: Some(0.0),
+                top_p: None,
+                stop_sequences: Vec::new(),
+            },
+            model,
+            cache_transcript: false,
+        };
+
+        // Bounded: a provider that hangs must not leave a task
+        // parked forever. Five seconds is longer than a warm cache
+        // read and shorter than a user's typing.
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            provider.complete(&req),
+        )
+        .await;
+    }
+
+    /// Clear the prewarm latch so the next keystroke of a new turn
+    /// warms again.
+    pub(crate) async fn reset_prewarm(&self, key: &str) {
+        self.prewarmed.write().await.remove(key);
+    }
+
     pub fn build_background_hook(&self) -> kod_tools::context::BackgroundSpawnHook {
         let steers = std::sync::Arc::clone(&self.steers);
         let runner = std::sync::Arc::clone(&self.background);
@@ -2166,6 +2267,10 @@ impl KodEngine {
         retrieval_log_turn_id: Option<u64>,
         create_plan: bool,
     ) -> Result<TurnPreparation> {
+        // A real turn is starting: the prewarm's speculation is over,
+        // and the next fresh turn should warm again.
+        self.reset_prewarm(key).await;
+
         let response = self
             .classify_and_filter(key, input, retrieval_log_turn_id)
             .await?;
@@ -2447,6 +2552,7 @@ impl KodEngine {
             history: RwLock::new(HashMap::new()),
             observed_usage: RwLock::new(HashMap::new()),
             injected_memory_at: RwLock::new(HashMap::new()),
+            prewarmed: RwLock::new(std::collections::HashSet::new()),
             pending_summaries: std::sync::Arc::new(RwLock::new(HashMap::new())),
             summaries_in_flight: std::sync::Arc::new(RwLock::new(std::collections::HashSet::new())),
             transcript_working_dirs: RwLock::new(HashMap::new()),

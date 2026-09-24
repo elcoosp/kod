@@ -5512,8 +5512,25 @@ impl TuiLoop {
             // The movement/command keys (j/k/g/G/y/r/t/o/u/f) are Normal-mode
             // only so they don't steal letters from your prompt.
             KeyCode::Char(c) => {
+                // Fire a speculative warm on the first character of a
+                // fresh turn: the provider's prefix cache is written
+                // while the user keeps composing, so the real request
+                // reads instead of writes. The engine latches per
+                // transcript, so firing only when the input was empty
+                // is enough — a task per keystroke would be waste.
+                let was_empty = self.app.input().is_empty();
                 self.app.add_char(c);
                 self.app.reset_completion();
+                if was_empty
+                    && !self.app.is_generating()
+                    && let Some(engine) = self.engine.clone()
+                {
+                    tokio::spawn(async move {
+                        // `DEFAULT_TRANSCRIPT_KEY` is crate-private in
+                        // kod-core; its value is the empty string.
+                        engine.prewarm("").await;
+                    });
+                }
             }
             _ => {}
         }
