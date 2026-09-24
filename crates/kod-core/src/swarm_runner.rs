@@ -240,6 +240,11 @@ pub struct SwarmRunner {
     /// pre-Isolation implicit policy; `Shared` skips worktree
     /// creation entirely; `Worktree` refuses a non-git root.
     isolation: kod_config::Isolation,
+
+    /// Overnight policy, when this run is one. `None` for an ordinary
+    /// swarm — the phase gate below is a no-op then, and the runner
+    /// behaves exactly as before.
+    overnight_manifest: Option<crate::overnight::OvernightManifest>,
 }
 
 impl SwarmRunner {
@@ -268,6 +273,7 @@ impl SwarmRunner {
             agent_retries: 1,
             swarm_timeout_secs: 1800,
             isolation: kod_config::Isolation::default(),
+            overnight_manifest: None,
         })
     }
 
@@ -283,6 +289,20 @@ impl SwarmRunner {
     /// `new`/`from_config`.
     pub fn with_isolation(mut self, isolation: kod_config::Isolation) -> Self {
         self.isolation = isolation;
+        self
+    }
+
+    /// Run this swarm as an overnight job.
+    ///
+    /// The manifest is policy only: the runner consults its phase to
+    /// decide whether a new wave may start, and the caller renders the
+    /// report from the cards afterward. Nothing about the dispatch
+    /// mechanics changes.
+    pub fn with_overnight(
+        mut self,
+        manifest: crate::overnight::OvernightManifest,
+    ) -> Self {
+        self.overnight_manifest = Some(manifest);
         self
     }
 
@@ -979,6 +999,25 @@ impl SwarmRunner {
                 report_run_timeout(chunk_tx, &handles, &remaining, self.swarm_timeout_secs).await;
                 break;
             }
+
+            // Overnight phase gate. Once the manifest's handoff point
+            // passes, no new wave starts — the remaining subtasks are
+            // reported as not-started rather than dispatched. This is
+            // enforcement, not advice: a prompt asking the model to
+            // wind down does not bound the run, refusing to dispatch
+            // does. An ordinary swarm has no manifest and skips this.
+            if let Some(manifest) = &self.overnight_manifest
+                && !manifest
+                    .phase_at(time::OffsetDateTime::now_utc(), false)
+                    .allows_new_work()
+            {
+                tracing::info!(
+                    remaining = remaining.len(),
+                    "overnight: handoff point reached; not starting new work",
+                );
+                break;
+            }
+
             let (ready, blocked): (Vec<usize>, Vec<usize>) =
                 remaining.into_iter().partition(|&i| {
                     handles[i]
