@@ -15,6 +15,7 @@
 //! assert_eq!(agent.name(), "architect");
 //! ```
 
+pub mod advisor;
 pub mod agent;
 pub mod brief;
 pub mod brief_assembly;
