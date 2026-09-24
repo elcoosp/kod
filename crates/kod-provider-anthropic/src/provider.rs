@@ -283,13 +283,46 @@ impl LlmProvider for AnthropicProvider {
             .map_err(|e| KodError::Provider(format!("anthropic: POST {url}: {e}")))?;
         let status = resp.status();
         if !status.is_success() {
+            // §9.1: extract retry-delay hints from the response before
+            // `.text()` consumes it. Headers are the only place
+            // `retry-after`, `retry-after-ms`, and `x-ratelimit-reset`
+            // appear; the body may carry a free-form "try again in N"
+            // hint that the extractor also reads.
+            let hint_headers: Vec<(String, String)> = resp
+                .headers()
+                .iter()
+                .filter_map(|(k, v)| {
+                    v.to_str()
+                        .ok()
+                        .map(|s| (k.as_str().to_string(), s.to_string()))
+                })
+                .collect();
             let text = resp.text().await.unwrap_or_default();
+            let hints = kod_provider::retry::extract_retry_hints(
+                Some(status.as_u16()),
+                &hint_headers,
+                &text,
+            );
+            if let Some(delay) = hints.delay {
+                tracing::warn!(
+                    status = status.as_u16(),
+                    hint_delay_secs = delay.as_secs(),
+                    cap_declined = hints.cap_declined,
+                    "anthropic complete: server suggested a retry delay",
+                );
+            }
             let snippet = if text.len() > 400 {
                 format!("{}…", kod_types::strutil::truncate_chars(&text, 400))
             } else {
                 text
             };
-            return Err(KodError::provider_status(status.as_u16(), &snippet));
+            let mut err = KodError::provider_status(status.as_u16(), &snippet);
+            if hints.cap_declined {
+                err = KodError::Provider(format!(
+                    "{err} (server requested a retry delay above the 60 s cap; declining automatic retry)",
+                ));
+            }
+            return Err(err);
         }
         let parsed: serde_json::Value = resp
             .json()
@@ -395,8 +428,41 @@ impl LlmProvider for AnthropicProvider {
             };
             let status = resp.status();
             if !status.is_success() {
+                // §9.1: same hint extraction as the non-streaming path.
+                // Captured before `.text()` consumes the response.
+                let hint_headers: Vec<(String, String)> = resp
+                    .headers()
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        v.to_str()
+                            .ok()
+                            .map(|s| (k.as_str().to_string(), s.to_string()))
+                    })
+                    .collect();
                 let text = resp.text().await.unwrap_or_default();
-                yield Err(KodError::provider_status(status.as_u16(), &text));
+                let hints = kod_provider::retry::extract_retry_hints(
+                    Some(status.as_u16()),
+                    &hint_headers,
+                    &text,
+                );
+                if let Some(delay) = hints.delay {
+                    tracing::warn!(
+                        status = status.as_u16(),
+                        hint_delay_secs = delay.as_secs(),
+                        cap_declined = hints.cap_declined,
+                        "anthropic stream: server suggested a retry delay",
+                    );
+                }
+                let err = if hints.cap_declined {
+                    KodError::Provider(format!(
+                        "anthropic stream: HTTP {}: {} (server requested a retry delay above the 60 s cap)",
+                        status.as_u16(),
+                        text,
+                    ))
+                } else {
+                    KodError::provider_status(status.as_u16(), &text)
+                };
+                yield Err(err);
                 return;
             }
 
