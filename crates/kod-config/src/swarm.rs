@@ -64,6 +64,24 @@ pub struct SwarmConfig {
     /// runner's behavior before this field existed.
     #[serde(default)]
     pub isolation: Isolation,
+    /// Reasoning effort for the coordinator — the decompose and merge
+    /// calls. Planning a swarm and reconciling its results is the
+    /// hard part of a run, so it defaults to the maximum.
+    #[serde(default = "default_root_effort")]
+    pub root_effort: kod_types::effort::EffortLevel,
+    /// Reasoning effort for the workers. Each runs one subtask, which
+    /// is narrower than planning; `Medium` is the default and the
+    /// token saving over `Max` is real across N agents.
+    #[serde(default = "default_worker_effort")]
+    pub worker_effort: kod_types::effort::EffortLevel,
+}
+
+fn default_root_effort() -> kod_types::effort::EffortLevel {
+    kod_types::effort::EffortLevel::Max
+}
+
+fn default_worker_effort() -> kod_types::effort::EffortLevel {
+    kod_types::effort::EffortLevel::Medium
 }
 
 impl Default for SwarmConfig {
@@ -75,6 +93,8 @@ impl Default for SwarmConfig {
             agent_retries: 1,
             timeout_secs: 1800,
             isolation: Isolation::default(),
+            root_effort: default_root_effort(),
+            worker_effort: default_worker_effort(),
         }
     }
 }
@@ -197,7 +217,9 @@ mod coverage_swarm_config {
             agent_timeout_secs: 120,
             agent_retries: 2,
             timeout_secs: 600,
-                    isolation: Isolation::default(),
+            isolation: Isolation::default(),
+            root_effort: default_root_effort(),
+            worker_effort: default_worker_effort(),
         };
         let toml_str = toml::to_string(&c).unwrap();
         let parsed: SwarmConfig = toml::from_str(&toml_str).unwrap();

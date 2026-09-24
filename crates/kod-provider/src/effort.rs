@@ -12,85 +12,7 @@
 //! model still fails fast. It is a pure function of `(base, effort)`;
 //! a caller that never sets an effort gets the base unchanged.
 
-use serde::{Deserialize, Serialize};
-
-/// How much reasoning effort a request asks for.
-///
-/// Ordered weakest to strongest: the `Ord` derive is the strength
-/// order, which the timeout multiplier relies on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum EffortLevel {
-    /// No reasoning: a direct answer.
-    None,
-    /// A little: a short chain.
-    Minimal,
-    Low,
-    /// The default. A model that thinks briefly.
-    #[default]
-    Medium,
-    High,
-    /// Above high: for a hard problem where the answer matters more
-    /// than the latency.
-    Xhigh,
-    /// The maximum the provider offers. Minutes of silence are normal.
-    Max,
-}
-
-impl EffortLevel {
-    /// The idle-timeout multiplier for this effort.
-    ///
-    /// A `Medium` request uses the base unchanged — that is what a
-    /// caller who set no effort gets, so the default is neutral. Above
-    /// it the multiplier grows; below it shrinks, so a `None`-effort
-    /// request fails fast rather than waiting out a timeout sized for
-    /// a thinking model.
-    ///
-    /// The progression is roughly exponential: 180s base becomes 360s
-    /// at `High`, 540s at `Xhigh`, 720s at `Max`. Those are the
-    /// notebook's numbers — a reasoning model's silence scales with
-    /// how much it was asked to reason.
-    pub fn timeout_multiplier(self) -> f32 {
-        match self {
-            Self::None => 0.5,
-            Self::Minimal => 0.75,
-            Self::Low => 0.9,
-            Self::Medium => 1.0,
-            Self::High => 2.0,
-            Self::Xhigh => 3.0,
-            Self::Max => 4.0,
-        }
-    }
-
-    /// Parse a provider's spelling. Unknown values are `Medium` — a
-    /// value kod does not recognise is more likely a new tier than a
-    /// mistake, and defaulting to the neutral multiplier is the safe
-    /// reading.
-    pub fn parse(s: &str) -> Self {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "none" => Self::None,
-            "minimal" | "min" => Self::Minimal,
-            "low" => Self::Low,
-            "medium" | "med" => Self::Medium,
-            "high" => Self::High,
-            "xhigh" | "x-high" | "extra-high" => Self::Xhigh,
-            "max" => Self::Max,
-            _ => Self::Medium,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Minimal => "minimal",
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::Xhigh => "xhigh",
-            Self::Max => "max",
-        }
-    }
-}
+pub use kod_types::effort::EffortLevel;
 
 /// Scale an idle timeout by the effort a request asked for.
 ///
@@ -115,10 +37,6 @@ mod tests {
         assert_eq!(scaled_idle_timeout(base, EffortLevel::Medium), base);
     }
 
-    #[test]
-    fn default_is_medium() {
-        assert_eq!(EffortLevel::default(), EffortLevel::Medium);
-    }
 
     #[test]
     fn higher_effort_gets_more_time() {
@@ -138,21 +56,6 @@ mod tests {
         assert!(none < base, "a no-reasoning request should not wait out a thinking timeout");
     }
 
-    #[test]
-    fn ordering_is_weakest_to_strongest() {
-        let levels = [
-            EffortLevel::None,
-            EffortLevel::Minimal,
-            EffortLevel::Low,
-            EffortLevel::Medium,
-            EffortLevel::High,
-            EffortLevel::Xhigh,
-            EffortLevel::Max,
-        ];
-        for pair in levels.windows(2) {
-            assert!(pair[0] < pair[1], "{:?} must sort before {:?}", pair[0], pair[1]);
-        }
-    }
 
     #[test]
     fn multipliers_are_monotone() {
@@ -181,32 +84,6 @@ mod tests {
         assert_eq!(scaled_idle_timeout(Duration::ZERO, EffortLevel::Max), Duration::ZERO);
     }
 
-    #[test]
-    fn parsing_is_case_insensitive_and_accepts_aliases() {
-        assert_eq!(EffortLevel::parse("MAX"), EffortLevel::Max);
-        assert_eq!(EffortLevel::parse("x-high"), EffortLevel::Xhigh);
-        assert_eq!(EffortLevel::parse("min"), EffortLevel::Minimal);
-    }
 
-    #[test]
-    fn an_unknown_effort_is_medium() {
-        // A value kod does not know is more likely a new tier than a
-        // mistake; the neutral multiplier is the safe reading.
-        assert_eq!(EffortLevel::parse("turbo"), EffortLevel::Medium);
-    }
 
-    #[test]
-    fn every_level_round_trips_through_its_name() {
-        for l in [
-            EffortLevel::None,
-            EffortLevel::Minimal,
-            EffortLevel::Low,
-            EffortLevel::Medium,
-            EffortLevel::High,
-            EffortLevel::Xhigh,
-            EffortLevel::Max,
-        ] {
-            assert_eq!(EffortLevel::parse(l.as_str()), l);
-        }
-    }
 }

@@ -587,6 +587,10 @@ impl GenerationDefaults {
             temperature: self.temperature,
             top_p: None,
             stop_sequences: Vec::new(),
+            // No preference: the caller's own timeout applies
+            // unchanged. A swarm worker's effort is set at its
+            // dispatch, not here.
+            effort: None,
         }
     }
 }
@@ -2035,6 +2039,9 @@ impl KodEngine {
                 temperature: Some(0.0),
                 top_p: None,
                 stop_sequences: Vec::new(),
+                // A prewarm is not a reasoning call; it should fail
+                // fast rather than wait out a thinking timeout.
+                effort: Some(kod_provider::effort::EffortLevel::None),
             },
             model,
             cache_transcript: false,
@@ -6086,16 +6093,6 @@ pub(crate) fn filter_chain_by_trust(
     ///
     /// Best-effort: the map is per-transcript, so a swarm agent's view
     /// is its own.
-    async fn apply_memory_injection_ttl(
-        &self,
-        key: &str,
-        context: Option<kod_types::MemoryContext>,
-    ) -> Option<kod_types::MemoryContext> {
-        self.apply_memory_injection_ttl_with_drops(key, context)
-            .await
-            .0
-    }
-
     /// As [`Self::apply_memory_injection_ttl`], but also returns
     /// `(id, reason)` for each entry the TTL dropped, so the retrieval
     /// log can say *why* an entry that scored well was not injected.

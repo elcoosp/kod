@@ -220,6 +220,11 @@ pub struct GenerationOptions {
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub stop_sequences: Vec<String>,
+    /// How much reasoning the request asks for. `None` means the
+    /// caller expressed no preference — a provider that bounds its
+    /// stream by effort uses the base timeout unchanged, which is the
+    /// behavior every existing caller gets.
+    pub effort: Option<crate::effort::EffortLevel>,
 }
 
 #[cfg(test)]
