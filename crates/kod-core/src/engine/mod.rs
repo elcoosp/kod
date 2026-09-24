@@ -1272,6 +1272,20 @@ pub struct KodEngine {
     /// one. Absent until a transcript's first completed call.
     observed_usage: RwLock<HashMap<String, u64>>,
 
+    /// Delta §2.4: a per-transcript anchor on the provider's own last
+    /// settled usage, plus the message index that usage covered. The
+    /// gauge turns per-turn context-size accounting from O(transcript)
+    /// into O(new messages since the anchor). Distinct from
+    /// `observed_usage` above (which stores only the raw u64) because
+    /// the gauge also carries the anchor position, which is what makes
+    /// tail-only estimation possible.
+    ///
+    /// Cleared on any event that invalidates the anchored prefix:
+    /// compaction (messages removed), transcript forget, model switch.
+    /// A stale anchor would make `estimate` lie about the size of the
+    /// bytes the provider is charging for.
+    context_gauges: RwLock<HashMap<String, crate::context_gauge::ContextGauge>>,
+
     /// Per-transcript working-directory override (D4-D1). A swarm
     /// agent registers its worktree path here before running; tool
     /// calls on that transcript use the override for
@@ -2463,6 +2477,44 @@ impl KodEngine {
         }
     }
 
+    /// Delta §2.4: record a settled usage report into the transcript's
+    /// context gauge. Called from `record_cost_with_head`, which is
+    /// the one place the engine already has the `usage` and the
+    /// transcript key together.
+    async fn gauge_observe(
+        &self,
+        holder: &str,
+        covers_through: usize,
+        usage: &kod_provider::TokenUsage,
+    ) {
+        let mut gauges = self.context_gauges.write().await;
+        gauges
+            .entry(holder.to_string())
+            .or_default()
+            .observe(covers_through, usage);
+    }
+
+    /// Delta §2.4: the anchored context-token estimate for `holder`,
+    /// if an anchor exists. `tail_estimate` is the caller's estimate
+    /// of the tokens added since the anchor; pass `0` for a readout
+    /// that only wants to know "what did the provider last charge
+    /// for?".
+    ///
+    /// `None` when no settled call has been observed for this
+    /// transcript yet (the first turn of a session) or when the
+    /// anchor was cleared by a compaction / forget / model switch.
+    pub async fn context_tokens_for(
+        &self,
+        holder: &str,
+        tail_estimate: u64,
+    ) -> Option<u64> {
+        self.context_gauges
+            .read()
+            .await
+            .get(holder)
+            .and_then(|g| g.estimate(tail_estimate))
+    }
+
     fn apply_retry_adjustment(
         action: crate::retry_strategy::RetryAction,
         options: &mut GenerationOptions,
@@ -2606,6 +2658,7 @@ impl KodEngine {
             cancels: parking_lot::RwLock::new(std::collections::HashMap::new()),
             history: RwLock::new(HashMap::new()),
             observed_usage: RwLock::new(HashMap::new()),
+            context_gauges: RwLock::new(HashMap::new()),
             injected_memory_at: RwLock::new(HashMap::new()),
             prewarmed: RwLock::new(std::collections::HashSet::new()),
             pending_summaries: std::sync::Arc::new(RwLock::new(HashMap::new())),
@@ -5436,6 +5489,26 @@ pub(crate) fn filter_chain_by_trust(
         // useful even if the log write is skipped because no
         // recorder is installed.
         self.ledger_observe(&model_ref.endpoint, head_fingerprint, usage);
+
+        // Delta §2.4: anchor the per-transcript context gauge on this
+        // settled usage. `covers_through` is the last index the
+        // provider charged for; since `record_cost_with_head` runs
+        // immediately after the stream completes and before any
+        // mutation of `self.history[holder]`, the history's current
+        // length is exactly the message count that was sent. A
+        // caller with an unusual transcript-mutation shape that
+        // breaks this invariant would over- or under-count the tail
+        // by the difference, which is a bug in that caller, not here.
+        {
+            let covers_through = self
+                .history
+                .read()
+                .await
+                .get(holder)
+                .map(|turns| turns.len().saturating_sub(1))
+                .unwrap_or(0);
+            self.gauge_observe(holder, covers_through, usage).await;
+        }
 
         // P2-a: record the observed size for the compaction decision.
         // `prompt + completion` is the whole window the provider
@@ -10492,6 +10565,9 @@ pub(crate) fn filter_chain_by_trust(
     pub async fn forget_transcript(&self, key: &str) {
         self.history.write().await.remove(key);
         self.last_prompt.write().await.remove(key);
+        // The transcript this gauge anchored on is gone; drop the
+        // anchor with it.
+        self.context_gauges.write().await.remove(key);
     }
 
     /// Compact the default transcript to the last `max_turns` turns.
@@ -10501,13 +10577,30 @@ pub(crate) fn filter_chain_by_trust(
     }
 
     /// Compact the transcript for `key` to the last `max_turns` turns.
+    ///
+    /// A compaction removes messages from the front of the transcript,
+    /// which is exactly the prefix the context gauge anchored on. The
+    /// gauge is cleared here so the next settled call re-anchors on
+    /// the new transcript; without the clear, the gauge's `estimate`
+    /// would keep adding a tail onto a prefix the provider is no
+    /// longer charging for.
     pub async fn compact_history_for(&self, key: &str, max_turns: usize) {
-        let mut history = self.history.write().await;
-        if let Some(turns) = history.get_mut(key)
-            && turns.len() > max_turns
-        {
-            let drop = turns.len() - max_turns;
-            turns.drain(..drop);
+        // Take and release the history lock before touching the gauge,
+        // so a lock-ordering bug between the two maps is impossible.
+        let shrank = {
+            let mut history = self.history.write().await;
+            if let Some(turns) = history.get_mut(key)
+                && turns.len() > max_turns
+            {
+                let drop = turns.len() - max_turns;
+                turns.drain(..drop);
+                true
+            } else {
+                false
+            }
+        };
+        if shrank {
+            self.context_gauges.write().await.remove(key);
         }
     }
 }
