@@ -40,7 +40,7 @@
 //! * Not a plugin system. Schemes are registered at engine
 //!   construction; there is no dynamic discovery.
 
-use kod_error::{KodError, Result};
+use kod_error::KodError;
 use std::collections::HashMap;
 use std::sync::Arc;
 
