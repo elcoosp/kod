@@ -207,3 +207,346 @@ mod tests {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Retry-hint extraction (borrow from oh-my-pi, delta §9.1).
+//
+// The pre-existing `with_retry` honours a bare `Retry-After` integer by
+// way of `KodError::RateLimited { retry_after_secs }`. That leaves four
+// shapes of hint unread:
+//
+//   * `retry-after-ms: 2500`           (Anthropic)
+//   * `x-ratelimit-reset`              (OpenAI, most gateways)
+//   * `x-ratelimit-reset-ms`           (OpenAI, some gateways)
+//   * free-form body text like
+//     `"please try again in ~5m"`.
+//
+// `extract_retry_hints` reads all of them and returns the *largest*
+// delay suggested. When that delay exceeds `HINT_CAP`, the caller is
+// expected to decline the retry and surface the original error — a
+// server asking for ten minutes is not asking us to sleep ten minutes
+// inside a streaming turn.
+//
+// The function is pure and dependency-free (no `reqwest::HeaderMap`,
+// no `time`): callers pass a slice of `(name, value)` pairs and the
+// body as `&str`. That keeps it testable and lets a provider crate
+// wire it in with a one-line adapter built from a `HeaderMap`.
+// ---------------------------------------------------------------------------
+
+/// What a provider's error response suggests for the retry delay.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RetryHints {
+    /// The longest delay any header or text hint suggested, when one
+    /// was found.
+    pub delay: Option<Duration>,
+    /// True when `delay` exceeds [`HINT_CAP`]. The caller should
+    /// surface the original error instead of retrying.
+    pub cap_declined: bool,
+}
+
+/// Above this, the caller declines the retry. 60 seconds is long
+/// enough to cover any transient 429 the provider actually wants us
+/// to wait out, short enough that an overnight run is not parked on
+/// one endpoint.
+pub const HINT_CAP: Duration = Duration::from_secs(60);
+
+/// Read every retry-delay hint out of an error response and return
+/// the largest one.
+///
+/// `status` is accepted for future use (a caller that wants to
+/// suppress body-text hints on a 4xx that is obviously not a rate
+/// limit) and is currently unused.
+pub fn extract_retry_hints(
+    status: Option<u16>,
+    headers: &[(String, String)],
+    body: &str,
+) -> RetryHints {
+    let _ = status;
+    let mut best: Option<Duration> = None;
+    let mut push = |d: Duration| {
+        best = Some(match best {
+            Some(b) if b >= d => b,
+            _ => d,
+        });
+    };
+
+    for (k, v) in headers {
+        match k.to_ascii_lowercase().as_str() {
+            "retry-after-ms" => {
+                if let Some(d) = parse_millis(v) {
+                    push(d);
+                }
+            }
+            "retry-after" => {
+                if let Some(d) = parse_retry_after(v) {
+                    push(d);
+                }
+            }
+            "x-ratelimit-reset-ms" | "x-ratelimit-reset" => {
+                if let Some(d) = parse_rate_limit_reset(v) {
+                    push(d);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(d) = scan_suffix_hint(body) {
+        push(d);
+    }
+    if let Some(d) = scan_text_hint(body) {
+        push(d);
+    }
+
+    match best {
+        Some(d) if d > HINT_CAP => RetryHints {
+            delay: Some(d),
+            cap_declined: true,
+        },
+        Some(d) => RetryHints {
+            delay: Some(d),
+            cap_declined: false,
+        },
+        None => RetryHints::default(),
+    }
+}
+
+/// Parse a bare integer millisecond value (`retry-after-ms: 2500`).
+fn parse_millis(v: &str) -> Option<Duration> {
+    let n: u64 = v.trim().parse().ok()?;
+    Some(Duration::from_millis(n))
+}
+
+/// `Retry-After` per HTTP: an integer number of seconds, or an
+/// HTTP-date. HTTP-date parsing needs a date library, which this
+/// module deliberately does not pull in; an HTTP-date value is
+/// therefore ignored (the retry loop falls back to its own backoff).
+/// Every real provider kod has met sends the integer form.
+fn parse_retry_after(v: &str) -> Option<Duration> {
+    let n: u64 = v.trim().parse().ok()?;
+    Some(Duration::from_secs(n))
+}
+
+/// `X-RateLimit-Reset` / `-Reset-Ms`. Three shapes in the wild:
+///
+/// * epoch milliseconds (> 10^12): subtract `now` in millis.
+/// * epoch seconds     (> 10^9):  subtract `now` in seconds.
+/// * bare delta seconds (<= 10^9): use as-is.
+///
+/// Ambiguity is inherent — no provider declares which it sends — so
+/// the magnitude heuristic is the pragmatic answer. A value between
+/// 10^9 and 10^12 is "epoch seconds", which is correct for every
+/// endpoint whose clock is within a few decades of ours.
+fn parse_rate_limit_reset(v: &str) -> Option<Duration> {
+    let n: i64 = v.trim().parse().ok()?;
+    let now_ms: i64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    if n > 1_000_000_000_000 {
+        let delta = n.saturating_sub(now_ms);
+        Some(Duration::from_millis(delta.max(0) as u64))
+    } else if n > 1_000_000_000 {
+        let delta = n.saturating_sub(now_ms / 1000);
+        Some(Duration::from_secs(delta.max(0) as u64))
+    } else {
+        Some(Duration::from_secs(n.max(0) as u64))
+    }
+}
+
+/// Some gateways append `retry-after-ms=N` to the body after the
+/// JSON payload. Scan for the last such token.
+fn scan_suffix_hint(body: &str) -> Option<Duration> {
+    let needle = "retry-after-ms=";
+    let pos = body.rfind(needle)?;
+    let after = &body[pos + needle.len()..];
+    let digits: String = after
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse::<u64>().ok().map(Duration::from_millis)
+}
+
+/// Free-form text like `"try again in ~5m"` or `"retry after 30s"`.
+/// Scans a fixed list of cue phrases; each cue is followed by a
+/// number and an optional unit.
+fn scan_text_hint(body: &str) -> Option<Duration> {
+    let lower = body.to_ascii_lowercase();
+    const CUES: &[&str] = &["try again in", "retry after", "retry in", "wait "];
+    for cue in CUES {
+        let Some(pos) = lower.find(cue) else { continue };
+        let after = &lower[pos + cue.len()..];
+        let trimmed = after.trim_start_matches(|c: char| c.is_whitespace() || c == '~');
+        let mut num_end = 0usize;
+        for (i, c) in trimmed.char_indices() {
+            if c.is_ascii_digit() {
+                num_end = i + c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if num_end == 0 {
+            continue;
+        }
+        let n: u64 = match trimmed[..num_end].parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let rest = trimmed[num_end..].trim_start();
+        let unit: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
+        let secs = match unit.as_str() {
+            "" | "s" | "sec" | "secs" | "second" | "seconds" => n,
+            "m" | "min" | "mins" | "minute" | "minutes" => n.saturating_mul(60),
+            "h" | "hr" | "hrs" | "hour" | "hours" => n.saturating_mul(3600),
+            _ => continue,
+        };
+        return Some(Duration::from_secs(secs));
+    }
+    None
+}
+
+#[cfg(test)]
+mod hint_tests {
+    use super::*;
+
+    fn hdr(k: &str, v: &str) -> (String, String) {
+        (k.to_string(), v.to_string())
+    }
+
+    #[test]
+    fn no_hints_is_the_default() {
+        let r = extract_retry_hints(None, &[], "some error text");
+        assert_eq!(r, RetryHints::default());
+        assert!(r.delay.is_none());
+        assert!(!r.cap_declined);
+    }
+
+    #[test]
+    fn retry_after_integer_is_read() {
+        let r = extract_retry_hints(Some(429), &[hdr("Retry-After", "30")], "");
+        assert_eq!(r.delay, Some(Duration::from_secs(30)));
+        assert!(!r.cap_declined);
+    }
+
+    #[test]
+    fn retry_after_ms_is_read() {
+        let r = extract_retry_hints(Some(429), &[hdr("retry-after-ms", "2500")], "");
+        assert_eq!(r.delay, Some(Duration::from_millis(2500)));
+    }
+
+    #[test]
+    fn the_largest_hint_wins() {
+        let r = extract_retry_hints(
+            Some(429),
+            &[hdr("Retry-After", "5"), hdr("retry-after-ms", "8000")],
+            "",
+        );
+        assert_eq!(r.delay, Some(Duration::from_secs(8)));
+    }
+
+    #[test]
+    fn a_long_hint_declines_the_cap() {
+        let r = extract_retry_hints(Some(429), &[hdr("Retry-After", "600")], "");
+        assert_eq!(r.delay, Some(Duration::from_secs(600)));
+        assert!(r.cap_declined);
+    }
+
+    #[test]
+    fn text_hint_seconds() {
+        let r = extract_retry_hints(Some(429), &[], "please try again in ~30s");
+        assert_eq!(r.delay, Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn text_hint_minutes() {
+        let r = extract_retry_hints(Some(429), &[], "please retry in 2 minutes");
+        assert_eq!(r.delay, Some(Duration::from_secs(120)));
+    }
+
+    #[test]
+    fn text_hint_hours() {
+        let r = extract_retry_hints(None, &[], "retry after 1 hour");
+        assert_eq!(r.delay, Some(Duration::from_secs(3600)));
+        assert!(r.cap_declined);
+    }
+
+    #[test]
+    fn suffix_hint_in_body_is_read() {
+        let r = extract_retry_hints(
+            None,
+            &[],
+            "{\"error\":\"rate limited\"} retry-after-ms=4500",
+        );
+        assert_eq!(r.delay, Some(Duration::from_millis(4500)));
+    }
+
+    #[test]
+    fn rate_limit_reset_epoch_seconds_is_a_future_delta() {
+        // One hour from now, in epoch seconds.
+        let now_s = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let future = (now_s + 3600).to_string();
+        let r = extract_retry_hints(
+            Some(429),
+            &[hdr("x-ratelimit-reset", &future)],
+            "",
+        );
+        let d = r.delay.expect("epoch hint");
+        let secs = d.as_secs();
+        assert!(
+            (3595..=3605).contains(&secs),
+            "expected ~3600 s, got {secs}",
+        );
+    }
+
+    #[test]
+    fn rate_limit_reset_bare_delta_is_seconds() {
+        let r = extract_retry_hints(
+            Some(429),
+            &[hdr("x-ratelimit-reset", "45")],
+            "",
+        );
+        assert_eq!(r.delay, Some(Duration::from_secs(45)));
+    }
+
+    #[test]
+    fn a_non_numeric_header_value_is_ignored() {
+        // HTTP-date form not parsed in this module; the header
+        // contributes no hint and the loop falls back to backoff.
+        let r = extract_retry_hints(
+            Some(429),
+            &[hdr("Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT")],
+            "",
+        );
+        assert!(r.delay.is_none());
+    }
+
+    #[test]
+    fn unrelated_headers_are_ignored() {
+        let r = extract_retry_hints(
+            Some(500),
+            &[
+                hdr("content-type", "application/json"),
+                hdr("x-request-id", "abc-123"),
+            ],
+            "{}",
+        );
+        assert_eq!(r, RetryHints::default());
+    }
+
+    #[test]
+    fn header_names_are_case_insensitive() {
+        let r = extract_retry_hints(Some(429), &[hdr("RETRY-AFTER", "10")], "");
+        assert_eq!(r.delay, Some(Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn the_cap_is_the_documented_sixty_seconds() {
+        assert_eq!(HINT_CAP, Duration::from_secs(60));
+    }
+}
