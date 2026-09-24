@@ -6,6 +6,7 @@ pub mod registry;
 pub mod replay;
 pub mod request;
 pub mod retry;
+pub mod retry_safety;
 pub mod stream_guard;
 pub mod traits;
 pub mod types;
