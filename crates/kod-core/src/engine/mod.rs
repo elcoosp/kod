@@ -5715,6 +5715,72 @@ pub(crate) fn filter_chain_by_trust(
         }
     }
 
+    /// Resolve the `judge` role to a [`kod_provider::judgment::JudgmentClient`],
+    /// when one is configured.
+    ///
+    /// # Why this exists
+    ///
+    /// `AutoThinking` (delta §9.6) and the `UnexpectedStopClassifier`
+    /// (§9.4) are both `JudgmentClient` consumers. The client is
+    /// constructed from a `(provider, model_ref, options)` triple, but
+    /// nothing in the engine resolved a *role name* into that triple —
+    /// so the two classifiers were testable only against a manually
+    /// constructed client (see `auto_thinking.rs` and
+    /// `unexpected_stop.rs` test fixtures). This method is the missing
+    /// bridge: it turns the config-level `judge` role into a client the
+    /// engine can hand to either classifier.
+    ///
+    /// # Where the role is looked up
+    ///
+    /// `RoutingConfig` carries two maps. `swarm` is role-addressed —
+    /// the natural home for a `"judge"` entry — and is checked first.
+    /// `by_task` is task-shaped (`"Simple"`, `"Debugging"`) and is a
+    /// reasonable second home for a caller who thinks of the judge as
+    /// a routing task. Either location suffices.
+    ///
+    /// # No fallback to `current_model`
+    ///
+    /// Unlike [`Self::resolve_chain_for_task`], this deliberately does
+    /// **not** fall back to the current model when no `judge` role is
+    /// configured. The design's premise (§9.5) is that the judge is a
+    /// *different* model from the one being judged — a judge that is
+    /// the same model as the producer provides no independent signal
+    /// and, on a small local model, is actively harmful (it will agree
+    /// with itself). Absence of a `judge` role therefore means
+    /// "judging is disabled", and the caller's contract is to fall
+    /// back to whatever behaviour it had before the judge path
+    /// existed. See `auto_thinking.rs`'s keyword fallback and
+    /// `unexpected_stop.rs`'s "most turns are not candidates" gate.
+    ///
+    /// Returns `None` in four cases: no routing config, no `judge`
+    /// entry in either map, an endpoint name that the registry does
+    /// not know, or a legacy single-provider engine with no registry.
+    pub async fn resolve_judge_client(&self) -> Option<kod_provider::judgment::JudgmentClient> {
+        let routing = self.routing.read().await.clone();
+        let routing = routing.as_ref()?;
+
+        let endpoint_name = routing
+            .swarm
+            .get("judge")
+            .or_else(|| routing.by_task.get("judge"))?
+            .clone();
+
+        let registry = {
+            let g = self.registry.read().await;
+            g.as_ref().map(Arc::clone)?
+        };
+
+        let model_name = registry.default_model(&endpoint_name)?;
+        let model_ref = ModelRef::new(endpoint_name, model_name);
+        let provider = registry.resolve(&model_ref).ok()?;
+
+        Some(kod_provider::judgment::JudgmentClient::new(
+            provider,
+            model_ref,
+            kod_provider::judgment::JudgmentOptions::default(),
+        ))
+    }
+
     /// Like [`Self::record_cost`], but also feeds the cache ledger
     /// with the fingerprint of the request head that was actually
     /// sent. The engine calls this from the two loops, which have
@@ -5724,7 +5790,7 @@ pub(crate) fn filter_chain_by_trust(
         holder: &str,
         model_ref: &ModelRef,
         usage: &kod_provider::TokenUsage,
-        pricing: kod_provider::ModelPricing,
+        pricing: Option<kod_provider::ModelPricing>,
         head_fingerprint: u64,
     ) {
         // Feed the ledger first — it is cheap and the value is
@@ -5770,7 +5836,12 @@ pub(crate) fn filter_chain_by_trust(
         // zero-fingerprint pass only clears it, so do the accounting
         // inline here rather than risk a second overwrite.)
 
-        if let Ok(guard) = self.session_recorder.read()
+        // The session-log cost line is the only part of this method
+        // that needs pricing. A local endpoint with no `[pricing]`
+        // block still gets its usage recorded (context gauge, cache
+        // ledger, observed-usage) — only the cost line is skipped.
+        if let Some(pricing) = pricing
+            && let Ok(guard) = self.session_recorder.read()
             && let Some(rec) = guard.as_ref()
         {
             let now_ms = std::time::SystemTime::now()
@@ -6747,12 +6818,19 @@ pub(crate) fn filter_chain_by_trust(
             // pricing. One line per call, not per session — a session
             // log read later can reconstruct the total by summing,
             // and a per-turn figure is what a debug pass needs.
-            if let (Some(m), Some(p), Some(u)) = (winning_model.as_ref(), pricing, usage.as_ref()) {
+            // Delta §2.4: usage must be recorded regardless of
+            // whether pricing is known. The context gauge (anchored
+            // context-token estimate) and the cache ledger both
+            // depend on the settled `usage`, not on cost. The
+            // session-log cost line is the only thing that needs
+            // `pricing`, so it lives inside the optional binding
+            // in `record_cost_with_head`.
+            if let (Some(m), Some(u)) = (winning_model.as_ref(), usage.as_ref()) {
                 // P1: pass the fingerprint of the request head this
                 // call actually served so the ledger knows which
                 // endpoint is warm for which prefix.
                 let head_fp = Self::cache_head_fingerprint(&system_text, &definitions);
-                self.record_cost_with_head(key, m, u, p, head_fp).await;
+                self.record_cost_with_head(key, m, u, pricing, head_fp).await;
                 // Hygiene 3.2: a successful call clears the breaker.
                 if let Ok(mut h) = self.endpoint_health.lock() {
                     h.record_success(&m.endpoint);
@@ -7092,12 +7170,19 @@ pub(crate) fn filter_chain_by_trust(
             // pricing. One line per call, not per session — a session
             // log read later can reconstruct the total by summing,
             // and a per-turn figure is what a debug pass needs.
-            if let (Some(m), Some(p), Some(u)) = (winning_model.as_ref(), pricing, usage.as_ref()) {
+            // Delta §2.4: usage must be recorded regardless of
+            // whether pricing is known. The context gauge (anchored
+            // context-token estimate) and the cache ledger both
+            // depend on the settled `usage`, not on cost. The
+            // session-log cost line is the only thing that needs
+            // `pricing`, so it lives inside the optional binding
+            // in `record_cost_with_head`.
+            if let (Some(m), Some(u)) = (winning_model.as_ref(), usage.as_ref()) {
                 // P1: pass the fingerprint of the request head this
                 // call actually served so the ledger knows which
                 // endpoint is warm for which prefix.
                 let head_fp = Self::cache_head_fingerprint(&system_text, &definitions);
-                self.record_cost_with_head(key, m, u, p, head_fp).await;
+                self.record_cost_with_head(key, m, u, pricing, head_fp).await;
                 // Hygiene 3.2: a successful call clears the breaker.
                 if let Ok(mut h) = self.endpoint_health.lock() {
                     h.record_success(&m.endpoint);
@@ -14351,6 +14436,7 @@ mod p7_trust_filter_tests {
                 context_window: Some(500_000),
                 input_per_mtok_usd: None,
                 output_per_mtok_usd: None,
+                efforts: None,
             }],
         );
 
@@ -14381,6 +14467,7 @@ mod p7_trust_filter_tests {
                 context_window: Some(500_000),
                 input_per_mtok_usd: None,
                 output_per_mtok_usd: None,
+                efforts: None,
             }],
         );
 
