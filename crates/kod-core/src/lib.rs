@@ -91,4 +91,5 @@ pub use swarm_runner::{
 pub use worktree::{MergeReport, WorktreeInfo, WorktreeManager};
 pub mod preflight;
 pub mod presence;
+pub mod prune;
 pub mod commit_lock;
