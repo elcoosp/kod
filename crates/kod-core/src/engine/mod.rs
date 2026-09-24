@@ -2847,7 +2847,14 @@ impl KodEngine {
     /// Log one memory retrieval event (Tier 2.4). Called once per
     /// prompt that retrieves anything; a no-op when no recorder is
     /// installed or the retrieval was empty.
-    fn log_memory_retrieval(&self, turn_id: u64, query: &str, retrieved: &[(String, f32)]) {
+    fn log_memory_retrieval(
+        &self,
+        turn_id: u64,
+        query: &str,
+        retrieved: &[(String, f32)],
+        considered: usize,
+        dropped: &[(String, String)],
+    ) {
         if retrieved.is_empty() {
             return;
         }
@@ -2869,6 +2876,8 @@ impl KodEngine {
             retrieved: retrieved.to_vec(),
             referenced: Vec::new(),
             user_corrected: false,
+            considered,
+            dropped: dropped.to_vec(),
         };
         if let Ok(guard) = self.session_recorder.read()
             && let Some(rec) = guard.as_ref()
@@ -6037,9 +6046,15 @@ pub(crate) fn filter_chain_by_trust(
         // Jev filters by *relevance*, this filters by *novelty*, and
         // an entry that fails both should not have its injection clock
         // started.
-        response.memory_context = self
-            .apply_memory_injection_ttl(key, response.memory_context)
+        let considered_before_ttl = response
+            .memory_context
+            .as_ref()
+            .map(|c| c.working_memory.len() + c.long_term.len())
+            .unwrap_or(0);
+        let (ctx, ttl_drops) = self
+            .apply_memory_injection_ttl_with_drops(key, response.memory_context)
             .await;
+        response.memory_context = ctx;
         // Tier 2.4 — record this turn's retrieval.
         if let Some(turn_id) = retrieval_log_turn_id
             && let Some(ctx) = response.memory_context.as_ref()
@@ -6050,7 +6065,13 @@ pub(crate) fn filter_chain_by_trust(
                 .chain(ctx.long_term.iter())
                 .map(|e| (e.id.to_string(), e.relevance))
                 .collect();
-            self.log_memory_retrieval(turn_id, input, &entries);
+            self.log_memory_retrieval(
+                turn_id,
+                input,
+                &entries,
+                considered_before_ttl.max(entries.len()),
+                &ttl_drops,
+            );
         }
         Ok(response)
     }
@@ -6070,7 +6091,22 @@ pub(crate) fn filter_chain_by_trust(
         key: &str,
         context: Option<kod_types::MemoryContext>,
     ) -> Option<kod_types::MemoryContext> {
-        let Some(mut ctx) = context else { return None };
+        self.apply_memory_injection_ttl_with_drops(key, context)
+            .await
+            .0
+    }
+
+    /// As [`Self::apply_memory_injection_ttl`], but also returns
+    /// `(id, reason)` for each entry the TTL dropped, so the retrieval
+    /// log can say *why* an entry that scored well was not injected.
+    async fn apply_memory_injection_ttl_with_drops(
+        &self,
+        key: &str,
+        context: Option<kod_types::MemoryContext>,
+    ) -> (Option<kod_types::MemoryContext>, Vec<(String, String)>) {
+        let Some(mut ctx) = context else {
+            return (None, Vec::new());
+        };
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -6083,6 +6119,16 @@ pub(crate) fn filter_chain_by_trust(
             seen.get(id)
                 .is_some_and(|&at| now_ms.saturating_sub(at) < MEMORY_INJECTION_TTL_MS)
         };
+        let mut drops: Vec<(String, String)> = Vec::new();
+        for e in ctx.working_memory.iter().chain(ctx.long_term.iter()) {
+            if within(&e.id) {
+                let mins = seen
+                    .get(&e.id)
+                    .map(|&at| now_ms.saturating_sub(at) / 60_000)
+                    .unwrap_or(0);
+                drops.push((e.id.to_string(), format!("injected {mins}m ago")));
+            }
+        }
         ctx.working_memory.retain(|e| !within(&e.id));
         ctx.long_term.retain(|e| !within(&e.id));
 
@@ -6094,7 +6140,7 @@ pub(crate) fn filter_chain_by_trust(
         // dropping it is exact.
         seen.retain(|_, &mut at| now_ms.saturating_sub(at) < MEMORY_INJECTION_TTL_MS);
 
-        Some(ctx)
+        (Some(ctx), drops)
     }
 
     /// S10: refine the router's task type and skills with Jev's

@@ -149,6 +149,16 @@ pub enum SessionEntry {
         /// of this turn. Filled in on the *next* turn.
         #[serde(default)]
         user_corrected: bool,
+        /// How many entries retrieval considered before filtering.
+        /// `retrieved.len()` is what survived; the difference is what
+        /// the filters dropped, and `dropped` says why.
+        #[serde(default)]
+        considered: usize,
+        /// `(id, reason)` for entries that were retrieved and then
+        /// dropped before injection. The reasons are the harness's
+        /// words: `"jev: irrelevant"`, `"injected 12m ago"`.
+        #[serde(default)]
+        dropped: Vec<(String, String)>,
     },
     /// One redaction event, aggregated per rule per write (Tier 1.3).
     /// Emitted *after* the entry whose payload was redacted, so a
@@ -789,6 +799,8 @@ mod coverage_entry_roundtrip {
                 retrieved: vec![("mem-1".into(), 0.9), ("mem-2".into(), 0.4)],
                 referenced: vec!["mem-1".into()],
                 user_corrected: false,
+                considered: 3,
+                dropped: vec![("mem-3".into(), "injected 12m ago".into())],
             },
             SessionEntry::Redaction {
                 timestamp_ms: 10,
