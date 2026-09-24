@@ -48,6 +48,8 @@ struct CostInner {
     session_warned: RwLock<bool>,
     turn_warned: RwLock<bool>,
     on_exhausted: RwLock<OnExhausted>,
+    /// Rolling spend for windowed queries (P2-d preflight).
+    window: SpendWindow,
 }
 
 impl Default for CostTracker {
@@ -68,6 +70,9 @@ impl CostTracker {
                 session_warned: RwLock::new(false),
                 turn_warned: RwLock::new(false),
                 on_exhausted: RwLock::new(OnExhausted::Ask),
+                // 4096 entries: far more than a run produces,
+                // and the cap only matters if it is ever hit.
+                window: SpendWindow::new(4096),
             }),
         }
     }
@@ -96,6 +101,7 @@ impl CostTracker {
         let micro = usd_to_micro(cost_usd);
         self.inner.session_micro.fetch_add(micro, Ordering::Relaxed);
         self.inner.turn_micro.fetch_add(micro, Ordering::Relaxed);
+        self.inner.window.record(micro);
     }
 
     /// Reset the per-turn counter. Called at the start of a new turn.
@@ -106,11 +112,27 @@ impl CostTracker {
 
     /// Snapshot the state.
     /// Reset every counter. Called by `/budget reset`.
+    /// USD spent within `window` (the last hour, the last day).
+    ///
+    /// The session total answers "how much so far"; this answers
+    /// "how much recently," which is what a quota projection needs —
+    /// a daily limit exhausted an hour in shows as a large hourly
+    /// figure while the session total still looks modest.
+    pub fn spend_in(&self, window: std::time::Duration) -> f64 {
+        self.inner.window.spend_in(window)
+    }
+
+    /// Clear the rolling window.
+    fn clear_window(&self) {
+        self.inner.window.clear();
+    }
+
     pub fn reset(&self) {
         self.inner.session_micro.store(0, Ordering::Relaxed);
         self.inner.turn_micro.store(0, Ordering::Relaxed);
         *self.inner.session_warned.write() = false;
         *self.inner.turn_warned.write() = false;
+        self.clear_window();
     }
 
     pub fn snapshot(&self) -> CostSnapshot {
@@ -315,5 +337,96 @@ mod tests {
         let t = CostTracker::new();
         t.record(1000.0);
         assert!(!t.snapshot().exhausted);
+    }
+}
+
+/// A bounded record of recent spend, for windowed queries.
+///
+/// The session total answers "how much have I spent"; it cannot
+/// answer "how much in the last hour." An overnight run needs the
+/// latter — a daily quota exhausted at hour one is a wasted run, and
+/// the running total does not show it happening.
+///
+/// The ring is bounded: one entry per recorded cost, oldest dropped
+/// past the cap. At a few hundred provider calls per run the cap is
+/// never reached, and if it were, dropping the oldest entry makes the
+/// window sum an *under*-estimate — the safe direction, because an
+/// under-estimate warns later, never earlier.
+pub struct SpendWindow {
+    entries: parking_lot::RwLock<std::collections::VecDeque<(u64, u64)>>,
+    cap: usize,
+}
+
+impl SpendWindow {
+    /// A window holding at most `cap` entries.
+    pub fn new(cap: usize) -> Self {
+        Self {
+            entries: parking_lot::RwLock::new(std::collections::VecDeque::new()),
+            cap: cap.max(1),
+        }
+    }
+
+    /// Append `micro` USD spent now.
+    pub fn record(&self, micro: u64) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let mut g = self.entries.write();
+        g.push_back((now, micro));
+        while g.len() > self.cap {
+            g.pop_front();
+        }
+    }
+
+    /// Total USD spent within the last `window`.
+    ///
+    /// Prunes entries older than the window on read, so a long-running
+    /// process does not accumulate history it will never query.
+    pub fn spend_in(&self, window: std::time::Duration) -> f64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let cutoff = now.saturating_sub(window.as_millis() as u64);
+        let mut g = self.entries.write();
+        while g.front().is_some_and(|(at, _)| *at < cutoff) {
+            g.pop_front();
+        }
+        let micro: u64 = g.iter().map(|(_, m)| *m).sum();
+        micro as f64 / 1_000_000.0
+    }
+
+    /// Drop every entry. Used when a caller resets accounting.
+    pub fn clear(&self) {
+        self.entries.write().clear();
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    #[test]
+    fn spend_in_reflects_recorded_costs() {
+        let t = CostTracker::new();
+        t.record(1.50);
+        t.record(0.25);
+        let hour = std::time::Duration::from_secs(3600);
+        assert!((t.spend_in(hour) - 1.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn spend_in_is_zero_on_a_fresh_tracker() {
+        let t = CostTracker::new();
+        assert_eq!(t.spend_in(std::time::Duration::from_secs(3600)), 0.0);
+    }
+
+    #[test]
+    fn reset_clears_the_window() {
+        let t = CostTracker::new();
+        t.record(2.0);
+        t.reset();
+        assert_eq!(t.spend_in(std::time::Duration::from_secs(3600)), 0.0);
     }
 }
