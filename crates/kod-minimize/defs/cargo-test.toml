@@ -1,0 +1,61 @@
+schema_version = 1
+id = "cargo-test"
+program = "cargo"
+subcommands = ["test"]
+
+# The `test result: FAILED. N passed; M failed` summary line is the
+# headline; the failure names and the panic assertions are the
+# actionable detail. The per-test progress lines (`test
+# foo::bar ... ok`) are the noise.
+stages = [
+    { kind = "strip_ansi" },
+    { kind = "keep_lines", patterns = [
+        "^test result:",
+        "^failures:",
+        "^    [a-zA-Z0-9_:]+$",
+        "^---- ",
+        "^thread ",
+        "^assertion",
+        "^error",
+    ] },
+    { kind = "max_lines", n = 80 },
+]
+
+[[tests]]
+name = "keeps_summary_and_failure_detail"
+raw = """
+running 3 tests
+test foo::passes ... ok
+test foo::also_passes ... ok
+test bar::fails ... FAILED
+
+failures:
+
+---- bar::fails stdout ----
+thread 'bar::fails' panicked at src/lib.rs:10:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+note: run with `RUST_BACKTRACE=1` for a backtrace
+
+failures:
+    bar::fails
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; finished in 0.01s
+"""
+
+[[tests.checks]]
+kind = "contains"
+value = "test result: FAILED"
+
+[[tests.checks]]
+kind = "contains"
+value = "bar::fails"
+
+[[tests.checks]]
+kind = "contains"
+value = "assertion"
+
+[[tests.checks]]
+kind = "not_contains"
+value = "foo::passes"

@@ -1,0 +1,53 @@
+schema_version = 1
+id = "pytest"
+program = "pytest"
+
+# pytest's default output is a session header, per-test progress
+# dots, a FAILURES section with the assertion, and a short summary
+# at the end. The useful lines are the failure summaries
+# (`FAILED test_x.py::test_y - ...`), the assertion detail lines
+# (`E   assert 1 == 2`), and the section headers.
+stages = [
+    { kind = "strip_ansi" },
+    { kind = "keep_lines", patterns = [
+        "^FAILED ",
+        "^ERROR ",
+        "^E  ",
+        "^_{3,}",
+        "^=+ ",
+    ] },
+    { kind = "max_lines", n = 80 },
+]
+
+[[tests]]
+name = "keeps_failures_and_summary"
+raw = """
+============================= test session starts =============================
+collected 3 items
+
+test_foo.py ..F                                                          [100%]
+
+================================== FAILURES ===================================
+____________________________ test_something _________________________________
+
+    def test_something():
+>       assert 1 == 2
+E       assert 1 == 2
+
+test_foo.py:5: AssertionError
+=========================== short test summary info ============================
+FAILED test_foo.py::test_something - assert 1 == 2
+========================= 1 failed, 2 passed in 0.12s =========================
+"""
+
+[[tests.checks]]
+kind = "contains"
+value = "FAILED test_foo.py::test_something"
+
+[[tests.checks]]
+kind = "contains"
+value = "E       assert"
+
+[[tests.checks]]
+kind = "not_contains"
+value = "collected 3 items"

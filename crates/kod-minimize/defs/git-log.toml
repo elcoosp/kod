@@ -1,0 +1,57 @@
+schema_version = 1
+id = "git-log"
+program = "git"
+subcommands = ["log"]
+only_on_exit = 0
+
+# `git log` (without `--oneline`) prints a `commit <hash>` header,
+# then Author/Date, then the message indented four spaces. The
+# minimizer keeps the hash line and the message lines, drops
+# Author/Date, shortens the hash to seven characters, and unindents
+# the message.
+#
+# `git log --oneline` produces output this def's `keep_lines` will
+# not match (no `commit ` prefix); the pipeline's preserve-if-empty
+# valve then returns that output unchanged, which is exactly right —
+# it is already in the reduced form.
+stages = [
+    { kind = "strip_ansi" },
+    { kind = "keep_lines", patterns = ["^commit ", "^    "] },
+    { kind = "replace", pattern = "^commit ([0-9a-f]{7})[0-9a-f]+$", replacement = "$1" },
+    { kind = "replace", pattern = "^    ", replacement = "" },
+    { kind = "max_lines", n = 40 },
+]
+
+[[tests]]
+name = "reduces_to_hash_and_subject"
+raw = """
+commit a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+Author: Alice <alice@example.com>
+Date:   Mon Jan 1 00:00:00 2026 +0000
+
+    Fix the parser bug
+
+    The parser dropped trailing commas.
+
+commit b2c3d4e5f6b2c3d4e5f6b2c3d4e5f6b2c3d4e5f6
+Author: Bob <bob@example.com>
+Date:   Sun Dec 31 00:00:00 2025 +0000
+
+    Add tests
+"""
+
+[[tests.checks]]
+kind = "contains"
+value = "a1b2c3d"
+
+[[tests.checks]]
+kind = "contains"
+value = "Fix the parser bug"
+
+[[tests.checks]]
+kind = "not_contains"
+value = "Author:"
+
+[[tests.checks]]
+kind = "not_contains"
+value = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"

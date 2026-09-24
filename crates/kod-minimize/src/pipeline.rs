@@ -185,6 +185,26 @@ pub(crate) fn run(stages: &[Stage], raw: &str) -> Result<String, PipelineError> 
     for stage in stages {
         text = run_one(stage, text)?;
     }
+
+    // Safety valve. A pipeline that reduced non-empty input to
+    // empty output is almost certainly a filter that did not match
+    // the shape it expected: a `git log` def applied to
+    // `git log --oneline` output finds no `commit ` lines and
+    // would otherwise hand the model an empty string. Returning the
+    // raw input is strictly better than returning nothing — the
+    // model still has the output to read, and the caller's
+    // `Minimized` shape records that a def *did* run (the filter
+    // field is set), so a caller that wants to know "was this a
+    // pass-through?" checks the byte delta, not the filter alone.
+    //
+    // The valve is a deliberate trade: a def cannot produce an
+    // empty result on purpose. No shipped def wants that, and an
+    // author who did would be writing a stage that drops
+    // everything, which is a mistake worth catching here rather
+    // than in a downstream user's confusion.
+    if text.trim().is_empty() && !raw.trim().is_empty() {
+        return Ok(raw.to_string());
+    }
     Ok(text)
 }
 

@@ -238,10 +238,22 @@ impl Minimizer {
 /// Adding a def is one `.toml` file and one entry here. The tuple is
 /// `(filename, contents)` — the filename is only used in the warn log
 /// when a def fails to parse.
-pub const BUILTIN_DEFS: &[(&str, &str)] = &[(
-    "git-status.toml",
-    include_str!("../defs/git-status.toml"),
-)];
+pub const BUILTIN_DEFS: &[(&str, &str)] = &[
+    (
+        "git-status.toml",
+        include_str!("../defs/git-status.toml"),
+    ),
+    ("git-log.toml", include_str!("../defs/git-log.toml")),
+    (
+        "cargo-check.toml",
+        include_str!("../defs/cargo-check.toml"),
+    ),
+    (
+        "cargo-test.toml",
+        include_str!("../defs/cargo-test.toml"),
+    ),
+    ("pytest.toml", include_str!("../defs/pytest.toml")),
+];
 
 #[cfg(test)]
 mod tests {
@@ -362,5 +374,135 @@ stages = [ { kind = "max_lines", n = 2 } ]
         .unwrap();
         let m = Minimizer::empty().register(d1).register(d2);
         assert_eq!(m.def_ids(), vec!["test".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod def_tests {
+    //! One test per built-in def: every def parses, and the
+    //! end-to-end `Minimizer::minimize` call reaches it.
+    use super::*;
+
+    fn def_ids() -> Vec<String> {
+        Minimizer::with_builtins().def_ids()
+    }
+
+    #[test]
+    fn all_five_defs_are_registered() {
+        let ids = def_ids();
+        for want in [
+            "git-status",
+            "git-log",
+            "cargo-check",
+            "cargo-test",
+            "pytest",
+        ] {
+            assert!(
+                ids.contains(&want.to_string()),
+                "def {want} not registered; ids = {ids:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn every_builtin_def_parses() {
+        for (name, text) in BUILTIN_DEFS {
+            Def::from_toml(text)
+                .unwrap_or_else(|e| panic!("def {name} does not parse: {e}"));
+        }
+    }
+
+    #[test]
+    fn git_log_is_minimized() {
+        let m = Minimizer::with_builtins();
+        // Raw string: the message line must carry its four-space
+        // indent, and the `\<newline>` continuation in an ordinary
+        // Rust string literal would strip it. That is what made the
+        // first version of this test pass `Author:` through — the
+        // indent was gone, `^    ` matched nothing, and the
+        // preserve-if-empty valve handed back the raw input.
+        let raw = "\
+commit abc1234deadbeefdeadbeefdeadbeefdeadbeef
+Author: A
+Date:   D
+
+    Fix the parser
+";
+        let r = m.minimize("git log", raw, 0);
+        assert_eq!(r.filter.as_deref(), Some("git-log"));
+        assert!(r.text.contains("abc1234"), "got: {}", r.text);
+        assert!(r.text.contains("Fix the parser"), "got: {}", r.text);
+        assert!(!r.text.contains("Author:"), "got: {}", r.text);
+    }
+
+    #[test]
+    fn cargo_check_is_minimized() {
+        let m = Minimizer::with_builtins();
+        let raw = "\
+   Compiling x
+error[E0308]: mismatched types
+ --> src/main.rs:5:5
+  |
+5 |     let x: i32 = \"hi\";
+";
+        let r = m.minimize("cargo check", raw, 101);
+        assert_eq!(r.filter.as_deref(), Some("cargo-check"));
+        assert!(r.text.contains("error[E0308]"), "got: {}", r.text);
+        assert!(!r.text.contains("Compiling"), "got: {}", r.text);
+    }
+
+    #[test]
+    fn cargo_test_is_minimized() {
+        let m = Minimizer::with_builtins();
+        // Raw string: the failure line's leading spaces are the
+        // shape the def's `^    [a-zA-Z0-9_:]+$` pattern matches.
+        // The `\<newline>` continuation would strip them.
+        let raw = "\
+test result: FAILED. 2 passed; 1 failed
+failures:
+    bar::fails
+";
+        let r = m.minimize("cargo test", raw, 101);
+        assert_eq!(r.filter.as_deref(), Some("cargo-test"));
+        assert!(r.text.contains("test result: FAILED"), "got: {}", r.text);
+        assert!(r.text.contains("bar::fails"), "got: {}", r.text);
+    }
+
+    #[test]
+    fn pytest_is_minimized() {
+        let m = Minimizer::with_builtins();
+        let raw = "collected 1 item\n\
+                   FAILED test_foo.py::test_x - assert 1 == 2\n";
+        let r = m.minimize("pytest", raw, 1);
+        assert_eq!(r.filter.as_deref(), Some("pytest"));
+        assert!(r.text.contains("FAILED test_foo.py::test_x"), "got: {}", r.text);
+        assert!(!r.text.contains("collected"), "got: {}", r.text);
+    }
+
+    #[test]
+    fn a_def_that_matches_nothing_falls_back_to_raw() {
+        // The safety valve. A `git log --oneline` output goes through
+        // the git-log def (subcommand matches) but has no `commit `
+        // lines, so `keep_lines` drops everything. The valve returns
+        // the raw text instead of an empty string.
+        let m = Minimizer::with_builtins();
+        let raw = "abc1234 Fix the parser\n\
+                   def5678 Add tests\n";
+        let r = m.minimize("git log --oneline", raw, 0);
+        // The def matched (git + log), so the filter field is set,
+        // but the text is the raw input because the pipeline was
+        // empty after filtering.
+        assert_eq!(r.filter.as_deref(), Some("git-log"));
+        assert_eq!(r.text, raw, "preserve-if-empty must return the raw text");
+    }
+
+    #[test]
+    fn an_empty_input_through_a_def_is_ok() {
+        // An actually-empty input is not a bug — the command
+        // produced nothing. The valve only fires when a pipeline
+        // *reduced* non-empty input to empty.
+        let m = Minimizer::with_builtins();
+        let r = m.minimize("git status", "", 0);
+        assert_eq!(r.text, "");
     }
 }
