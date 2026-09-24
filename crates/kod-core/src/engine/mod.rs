@@ -5781,6 +5781,125 @@ pub(crate) fn filter_chain_by_trust(
         ))
     }
 
+    /// The reasoning-effort ladder a model supports, from the live
+    /// catalog.
+    ///
+    /// Falls back to `[Medium]` when the catalog has no entry, the
+    /// entry has no `efforts` field, or the field is an empty vec.
+    /// That is the same default `ModelInfo::efforts`'s doc names, and
+    /// it is what makes `AutoThinking` collapse to the neutral level
+    /// for a provider that does not report a ladder — the classifier
+    /// has only one label to pick, so the answer is deterministically
+    /// `Medium`.
+    fn supported_efforts_for(
+        &self,
+        model_ref: &ModelRef,
+    ) -> Vec<kod_types::effort::EffortLevel> {
+        if let Ok(guard) = self.model_catalog.read()
+            && let Some(info) = guard
+                .get(&(model_ref.endpoint.clone(), model_ref.model.clone()))
+            && let Some(ladder) = info.efforts.as_ref()
+            && !ladder.is_empty()
+        {
+            return ladder.clone();
+        }
+        vec![kod_types::effort::EffortLevel::Medium]
+    }
+
+    /// Delta §9.6: resolve the reasoning effort for one turn.
+    ///
+    /// Precedence, strongest first:
+    ///
+    /// 1. An explicit caller effort (`Some` on the `effort` parameter
+    ///    of `process_streaming_with_model_for`). A caller that named
+    ///    a level gets that level; the config cannot override it.
+    /// 2. The endpoint config's `effort` field, when present and not
+    ///    the `"auto"` sentinel. A fixed string is parsed through
+    ///    `EffortLevel::parse`, which returns `Medium` for an
+    ///    unrecognized value.
+    /// 3. When the config says `"auto"`: build a judge client from
+    ///    the `judge` role (`resolve_judge_client`), look up the
+    ///    model's ladder (`supported_efforts_for`), and classify the
+    ///    turn's input. The classifier clamps to the ladder and
+    ///    ceilings the auto answer one tier below the top, per the
+    ///    design.
+    /// 4. When no `judge` role is configured, or classification
+    ///    fails: `None`, which leaves `options.effort` at whatever
+    ///    the generation defaults supplied. Judging is optional; a
+    ///    session without a `judge` role simply does not get the
+    ///    LLM-judge effort decision, and every other behaviour is
+    ///    unchanged.
+    ///
+    /// # Why a judge failure is silent
+    ///
+    /// A judge hiccup (a network blip, a model that replied in
+    /// prose) must not fail the turn. The classifier itself already
+    /// maps an unparseable reply to `Medium`; the `Err` arm here is
+    /// for the harder failure shapes (provider error, timeout) and
+    /// logs at `warn` for a developer reading a trace, then falls
+    /// through to the caller's default. The alternative — failing
+    /// every turn on a judge hiccup — would make `effort = "auto"` a
+    /// liability rather than a feature.
+    async fn resolve_turn_effort(
+        &self,
+        input: &str,
+        model_ref: &ModelRef,
+        caller_effort: Option<kod_types::effort::EffortLevel>,
+    ) -> Option<kod_types::effort::EffortLevel> {
+        if caller_effort.is_some() {
+            return caller_effort;
+        }
+
+        let config_effort = match kod_config::KodConfig::load_default() {
+            Ok(cfg) => cfg
+                .llm
+                .endpoints
+                .iter()
+                .find(|e| e.name == model_ref.endpoint)
+                .unwrap_or_else(|| cfg.llm.default_endpoint())
+                .effort
+                .clone(),
+            Err(_) => None,
+        };
+        let config_effort = config_effort?;
+
+        if config_effort != "auto" {
+            return Some(kod_types::effort::EffortLevel::parse(&config_effort));
+        }
+
+        // The `"auto"` sentinel. Build a judge.
+        let client = match self.resolve_judge_client().await {
+            Some(c) => c,
+            None => {
+                tracing::debug!(
+                    endpoint = %model_ref.endpoint,
+                    "effort = \"auto\" but no judge role is configured; leaving effort unset",
+                );
+                return None;
+            }
+        };
+        let supported = self.supported_efforts_for(model_ref);
+        let classifier = crate::auto_thinking::AutoThinking::new(client);
+        match classifier.classify(input, &supported).await {
+            Ok(level) => {
+                tracing::debug!(
+                    effort = level.as_str(),
+                    endpoint = %model_ref.endpoint,
+                    "auto-thinking classified the turn",
+                );
+                Some(level)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    endpoint = %model_ref.endpoint,
+                    error = %e,
+                    "auto-thinking judge failed; leaving effort at the config default",
+                );
+                None
+            }
+        }
+    }
+
     /// Like [`Self::record_cost`], but also feeds the cache ledger
     /// with the fingerprint of the request head that was actually
     /// sent. The engine calls this from the two loops, which have
@@ -7033,11 +7152,20 @@ pub(crate) fn filter_chain_by_trust(
             } = prep;
             self.snapshot_prompt(key, &pending, &alloc).await;
             let mut options = self.generation_defaults.read().await.to_options();
-            // The caller's effort, when it expressed one. `None`
-            // leaves the config default, which is what the TUI and
-            // CLI pass.
-            if effort.is_some() {
-                options.effort = effort;
+            // Delta §9.6: resolve the turn's reasoning effort.
+            // Precedence is caller > endpoint config (fixed) >
+            // endpoint config ("auto" → judge classification) >
+            // generation default. The resolver's own doc names the
+            // silent-fallthrough contract when no judge role is
+            // configured.
+            {
+                let primary = self.current_model.read().await.clone();
+                if let Some(level) = self
+                    .resolve_turn_effort(input, &primary, effort)
+                    .await
+                {
+                    options.effort = Some(level);
+                }
             }
             // Fallback chain (A6). Streaming retries reuse the same
             // chunk_tx, so a successful fallback continues the visible

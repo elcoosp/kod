@@ -17,12 +17,12 @@ git log to find out. Update this file when the status changes.
 | `StreamGuard` | `kod-provider/src/stream_guard.rs` | fed every model-authored chunk in both providers' SSE loops; `StallVerdict::Loop` → transient `KodError::Provider` | `stream_guard.rs` unit tests (`feed_chunk` covered); `stream_retry.rs` exercises the delivered-vs-retried fork |
 | `ReplaySafety` (`AttemptTracker` + `EmptyCompletionRetry`) | `kod-provider/src/retry_safety.rs` | attempt loop in both providers' `stream_completion` paths: retry only while nothing has committed; `EmptyCompletionRetry` covers the clean-but-empty case | `retry_safety.rs` unit tests; `kod-provider-anthropic/tests/stream_retry.rs` **and** `kod-provider-openai/tests/stream_retry.rs` each pin the three-way fork (HTTP error / empty / committed) |
 | `RetryHints` (`extract_retry_hints`) | `kod-provider/src/retry.rs` | Anthropic native-Messages error paths extract hints from response headers before constructing `KodError`; the OpenAI-compatible path cannot (its `AdkError` transport exposes no headers) | `retry.rs` unit tests; no integration test yet |
+| `AutoThinking` | `kod-core/src/auto_thinking.rs` | `resolve_turn_effort` in `engine/mod.rs`: an endpoint with `effort = "auto"` classifies the turn via a `judge`-role `JudgmentClient`, using the model's ladder from `model_catalog` | `auto_thinking.rs` unit tests (classifier in isolation); no engine-level integration test yet |
 
 ## Config surface landed, engine-side reader pending
 
 | Primitive | Config field | Blocked on |
 |---|---|---|
-| `AutoThinking` | `EndpointConfig.effort` (`"auto"` sentinel) + `ModelInfo.efforts` | Judge-role resolution: the classifier's `JudgmentClient` has no engine path to a `judge` model role. |
 
 ## Present and tested in isolation; no engine caller yet
 
