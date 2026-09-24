@@ -276,6 +276,11 @@ impl TuiLoop {
             ..RouterConfig::default()
         };
         let engine = KodEngine::new(router_config, db_path)?;
+        // Delta §14.1: install the secret-placeholder vault. Same
+        // best-effort shape as the CLI path.
+        if let Err(e) = engine.install_default_secret_vault().await {
+            tracing::warn!(error = %e, "secret vault unavailable; placeholders disabled");
+        }
         engine.set_history_budget(history_budget);
 
         let (registry, default_model, routing) =

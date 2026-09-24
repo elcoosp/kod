@@ -3645,6 +3645,53 @@ impl KodEngine {
     }
 
     /// Replace the default redactor (Tier 1.3).
+    /// Delta §14.1: load or create the vault at the conventional
+    /// per-install path, scan the process environment for
+    /// secret-shaped variables, register everything found, and
+    /// install the result on this engine.
+    ///
+    /// The key file lives at `~/.kod/secret-placeholder.key` (mode
+    /// `0600` on Unix; the store refuses to load a truncated one).
+    /// A missing `HOME` is not an error: the engine simply runs
+    /// without a vault, which is the pre-§14.1 behavior.
+    ///
+    /// This is the one call the CLI and TUI make. It is idempotent;
+    /// a caller that has already installed a vault replaces it.
+    pub async fn install_default_secret_vault(&self) -> std::io::Result<()> {
+        let Some(home) = dirs::home_dir() else {
+            tracing::debug!(
+                "no home directory; secret placeholders are disabled",
+            );
+            return Ok(());
+        };
+        let path = home.join(".kod").join("secret-placeholder.key");
+        let vault = match kod_types::secret_placeholder::SecretVault::load_or_create(&path) {
+            Ok(v) => std::sync::Arc::new(v),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    path = %path.display(),
+                    "could not load secret-placeholder vault; continuing without",
+                );
+                return Ok(());
+            }
+        };
+        // Scan the environment once at install. The vault is
+        // per-process, so a variable that appears later in the
+        // process's lifetime is not picked up — an acceptable
+        // trade for not touching `std::env` on every turn.
+        let discovered =
+            kod_types::secret_sources::scan_env(|| std::env::vars().collect());
+        let count = kod_types::secret_sources::register_discovered(&vault, discovered);
+        tracing::debug!(
+            count,
+            path = %path.display(),
+            "secret-placeholder vault installed",
+        );
+        self.set_secret_vault(vault).await;
+        Ok(())
+    }
+
     /// Delta §14.1: install a secret-placeholder vault. After this,
     /// every outgoing prompt has registered secrets replaced with
     /// placeholders, and every incoming tool argument has

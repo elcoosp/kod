@@ -150,6 +150,20 @@ async fn engine_from_config(
         ..RouterConfig::default()
     };
     let engine = Arc::new(KodEngine::new(router_config, db_path)?);
+    // Delta §14.1: install the secret-placeholder vault. Loads (or
+    // creates) ~/.kod/secret-placeholder.key and registers every
+    // secret-shaped environment variable. Best-effort: a failure to
+    // load the key file leaves the engine running without
+    // placeholders, which is the pre-§14.1 behavior.
+    if let Err(e) = engine.install_default_secret_vault().await {
+        // `kod-cli` does not depend on `tracing`; the user-facing
+        // surface is stderr, and a vault that could not be created
+        // is exactly the kind of startup note a user wants to see.
+        eprintln!(
+            "kod: secret-placeholder vault unavailable ({e}); \
+             placeholders disabled for this session",
+        );
+    }
 
     // History budget from the model's window (~3 chars/token).
     engine.set_history_budget(
