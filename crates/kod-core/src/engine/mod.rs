@@ -2812,9 +2812,28 @@ impl KodEngine {
             context_gauges: RwLock::new(HashMap::new()),
             compaction_dispatcher: std::sync::Arc::new(
                 crate::compaction_dispatcher::CompactionDispatcher::new(vec![
+                    // The engine's dispatcher fires only after
+                    // `maybe_compact_for` has already decided the
+                    // transcript is over threshold — i.e. "reduce
+                    // now, or a summary call follows." Under that
+                    // regime the default shake config's 16,000-token
+                    // protect window and 4,000-token savings gate
+                    // are miscalibrated: they assume an
+                    // *opportunistic* call on an otherwise-clean
+                    // session, where "no reduction" is a valid
+                    // outcome. Here, no reduction means the model
+                    // gets a round-trip. `aggressive()` (protect
+                    // 4,000, savings gate 0) matches the situation.
                     Box::new(crate::compaction_dispatcher::ShakeMethod::new(
-                        crate::shake::ShakeConfig::default(),
+                        crate::shake::ShakeConfig::aggressive(),
                     )),
+                    // Prune keeps its defaults: a supersede prune
+                    // only fires when a read is provably replaced by
+                    // a newer read of the same path, so its
+                    // 40,000-token protect window is not the same
+                    // "protect the recent tail at all costs" thing
+                    // shake's is. Shrinking it would blank reads
+                    // whose only failing is being recent.
                     Box::new(crate::compaction_dispatcher::PruneMethod::new(
                         crate::prune::PruneConfig::default(),
                     )),
@@ -10729,6 +10748,23 @@ pub(crate) fn filter_chain_by_trust(
         // The transcript this gauge anchored on is gone; drop the
         // anchor with it.
         self.context_gauges.write().await.remove(key);
+    }
+
+    /// Read-only snapshot of the stored transcript for `key`.
+    ///
+    /// Returns turns verbatim, including tool rows and empty
+    /// assistant turns that `render_history_for` filters out. This
+    /// is the raw transcript as the engine stores it, useful for
+    /// tests that inspect the effects of a mutation and for any
+    /// future diagnostic surface that wants to see what actually
+    /// exists rather than the prompt-shaped view.
+    pub async fn history_for(&self, key: &str) -> Vec<kod_types::ChatMessage> {
+        self.history
+            .read()
+            .await
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Compact the default transcript to the last `max_turns` turns.
