@@ -37,6 +37,13 @@ pub struct TodoItem {
     /// concrete continuation rather than a silent no-op.
     #[serde(default)]
     pub blocked_by: Vec<u64>,
+    /// How much the harness trusts the completion. Model cannot set
+    /// it — see [`ConfidenceState`].
+    #[serde(default)]
+    pub confidence: ConfidenceState,
+    /// What the harness observed, appended as it happens.
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
 }
 
 impl TodoItem {
@@ -61,6 +68,58 @@ pub enum TodoStatus {
     InProgress,
     Completed,
     Cancelled,
+}
+
+
+/// How much the harness trusts a completed todo.
+///
+/// The model cannot set this. A todo that the model marks `completed`
+/// with nothing to back it up is [`ConfidenceState::Speculative`] — the
+/// model says it is done, and the model is the one that would be wrong.
+/// Evidence the *harness* observed raises it: a file the agent
+/// actually wrote, a check that actually passed.
+///
+/// This is the notebook's "the model can't self-report done" made
+/// concrete. An enum, not a score, because the question is categorical
+/// — do we have evidence or not — and a number would invite treating
+/// 0.6 as nearly done.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ConfidenceState {
+    /// The model marked it complete; nothing corroborates it.
+    #[default]
+    Speculative,
+    /// The harness observed work: files written under this todo's
+    /// span, a check that passed.
+    Corroborated,
+    /// A check passed *and* the files it touched are the ones the
+    /// todo named. The strongest signal the harness can produce
+    /// without understanding the task.
+    Verified,
+}
+
+impl ConfidenceState {
+    /// Raise to at least `other`. Never lowers: evidence once seen is
+    /// not unseen when a later observation is weaker.
+    pub fn raise_to(self, other: Self) -> Self {
+        // The derive gives Ord on declaration order, which is the
+        // strength order here.
+        if (other as u8) > (self as u8) {
+            other
+        } else {
+            self
+        }
+    }
+}
+
+/// One thing the harness observed that bears on a todo.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Evidence {
+    /// What was seen, in the harness's words: `"3 files written"`,
+    /// `"cargo check passed"`.
+    pub note: String,
+    /// Milliseconds since the epoch, so the report can order them.
+    pub at_ms: u64,
 }
 
 /// The shared list. Clone the `Arc` to share it.
@@ -122,6 +181,72 @@ impl TodoTool {
     }
 }
 
+
+/// Record harness-observed evidence bearing on a todo.
+///
+/// Free function, not a method: the caller holds the `Arc<TodoList>`
+/// the engine shares, and running through the tool would need an
+/// `execute` call with fabricated parameters.
+///
+/// `raise` is the confidence the observation supports — a passing
+/// check is [`ConfidenceState::Corroborated`], a check whose files
+/// match the todo's own `expected_writes` is
+/// [`ConfidenceState::Verified`]. Raising is monotone: a weaker
+/// observation after a stronger one leaves the stronger standing.
+///
+/// Returns `true` when a matching todo was found and updated, so a
+/// caller can log "this evidence landed" versus "the todo was already
+/// gone."
+pub fn note_evidence(
+    list: &TodoList,
+    todo_id: u64,
+    note: String,
+    raise: ConfidenceState,
+) -> bool {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    // `try_write` in a sync fn: the evidence path runs on the engine's
+    // async runtime, and blocking there on a lock the tool holds while
+    // the model is mid-call would be a stall for a log line. Dropping
+    // evidence under contention is the right trade — the next
+    // observation re-raises.
+    let Ok(mut guard) = list.try_write() else {
+        return false;
+    };
+    for item in guard.iter_mut() {
+        if item.id == todo_id {
+            item.confidence = item.confidence.raise_to(raise);
+            item.evidence.push(Evidence { note, at_ms: now_ms });
+            return true;
+        }
+    }
+    false
+}
+
+/// The id of the single `in_progress` todo, if exactly one exists.
+///
+/// A caller tracking "what is the agent working on" reads here. Two
+/// in-progress todos means the model is not sequencing its work; the
+/// function returns `None` rather than guessing which one evidence
+/// belongs to.
+pub fn in_progress_todo(list: &TodoList) -> Option<u64> {
+    let Ok(guard) = list.try_read() else {
+        return None;
+    };
+    let mut found = None;
+    for item in guard.iter() {
+        if item.status == TodoStatus::InProgress {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(item.id);
+        }
+    }
+    found
+}
+
 #[async_trait::async_trait]
 impl Tool for TodoTool {
     fn definition(&self) -> ToolDefinition {
@@ -164,6 +289,11 @@ impl Tool for TodoTool {
                     text,
                     status: TodoStatus::Pending,
                     blocked_by: blocked_by.clone(),
+                    // A fresh todo has no evidence, so it is
+                    // Speculative — which is accurate, not a
+                    // placeholder.
+                    confidence: ConfidenceState::Speculative,
+                    evidence: Vec::new(),
                 };
                 self.list.write().await.push(item.clone());
                 Ok(ToolResult::Success(serde_json::json!({
