@@ -76,6 +76,8 @@
 //! before the most recent delta crossed the scan stride — the last
 //! few bytes can complete a pattern the last scan did not see.
 
+use crate::types::StreamChunk;
+
 /// Configuration for a [`StreamGuard`].
 #[derive(Debug, Clone)]
 pub struct StreamGuardConfig {
@@ -181,6 +183,32 @@ impl StreamGuard {
     /// Bytes currently retained.
     pub fn tail_len(&self) -> usize {
         self.tail.len()
+    }
+
+    /// Extract the model-authored bytes from a stream chunk and feed
+    /// them to the guard. Returns `Some(detector)` when a stall was
+    /// detected on this chunk.
+    ///
+    /// Only `Text` and `ToolCallDelta` carry model-authored free
+    /// content; `ToolCallStart` carries identifiers, and
+    /// `Usage`/`StopReason`/`Done` are metadata. Feeding an empty
+    /// string is a no-op — that matches the design's "an empty
+    /// `Text` or an empty `ToolCallDelta` is a no-op" rule for the
+    /// commit tracker, applied here so a provider that emits
+    /// zero-length deltas does not perturb the scan counter.
+    pub fn feed_chunk(&mut self, chunk: &StreamChunk) -> Option<&'static str> {
+        let bytes: &[u8] = match chunk {
+            StreamChunk::Text(t) => t.as_bytes(),
+            StreamChunk::ToolCallDelta { arguments, .. } => arguments.as_bytes(),
+            _ => return None,
+        };
+        if bytes.is_empty() {
+            return None;
+        }
+        match self.feed(bytes) {
+            StallVerdict::Clean => None,
+            StallVerdict::Loop { detector } => Some(detector),
+        }
     }
 }
 
@@ -514,5 +542,62 @@ mod tests {
             }
             other => panic!("expected Loop, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn feed_chunk_extracts_text_bytes() {
+        let mut g = StreamGuard::new();
+        let chunk = StreamChunk::Text("hello world".into());
+        assert_eq!(g.feed_chunk(&chunk), None);
+        assert!(g.tail_len() > 0, "text bytes must reach the tail");
+    }
+
+    #[test]
+    fn feed_chunk_returns_detector_on_a_degenerate_text_loop() {
+        let mut g = StreamGuard::new();
+        let degenerate: String = "I will analyze this. ".repeat(120);
+        let chunk = StreamChunk::Text(degenerate);
+        assert_eq!(g.feed_chunk(&chunk), Some("exact-cycle"));
+    }
+
+    #[test]
+    fn feed_chunk_handles_tool_call_delta_bytes() {
+        let mut g = StreamGuard::new();
+        let chunk = StreamChunk::ToolCallDelta {
+            index: 0,
+            arguments: "{\"path\": \"src/lib.rs\"}".into(),
+        };
+        assert_eq!(g.feed_chunk(&chunk), None);
+        assert!(g.tail_len() > 0, "tool-call args must reach the tail");
+    }
+
+    #[test]
+    fn feed_chunk_returns_detector_on_a_degenerate_tool_call_loop() {
+        let mut g = StreamGuard::new();
+        let degenerate: String = "{\"a\": 1}".repeat(200);
+        let chunk = StreamChunk::ToolCallDelta {
+            index: 0,
+            arguments: degenerate,
+        };
+        assert!(g.feed_chunk(&chunk).is_some());
+    }
+
+    #[test]
+    fn feed_chunk_ignores_metadata_chunks() {
+        let mut g = StreamGuard::new();
+        assert_eq!(g.feed_chunk(&StreamChunk::Done), None);
+        assert_eq!(
+            g.feed_chunk(&StreamChunk::ToolCallStart {
+                index: 0,
+                id: None,
+                name: "read_file".into(),
+            }),
+            None,
+        );
+        assert_eq!(
+            g.feed_chunk(&StreamChunk::Text(String::new())),
+            None,
+            "empty text is a no-op",
+        );
     }
 }

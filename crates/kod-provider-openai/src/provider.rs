@@ -43,6 +43,12 @@ pub struct OpenAICompatProvider {
     /// for why that distinction is the deadlock fix in issue #3749.
     /// `0` means unbounded, which is the default.
     concurrency: Arc<kod_provider::concurrency::ProviderConcurrency>,
+    /// Whether the §9.3 stream stall detector runs on this provider's
+    /// streaming paths. On by default; the guard fires only on
+    /// degenerate content (exact suffix cycles, header runaways).
+    /// Disable only when a caller has evidence a legitimate stream
+    /// is being misclassified.
+    stream_guard_enabled: bool,
 }
 
 impl OpenAICompatProvider {
@@ -95,7 +101,14 @@ impl OpenAICompatProvider {
             concurrency: Arc::new(
                 kod_provider::concurrency::ProviderConcurrency::new(0),
             ),
+            stream_guard_enabled: true,
         })
+    }
+
+    /// Opt in or out of the §9.3 stream stall detector. On by default.
+    pub fn with_stream_guard(mut self, enabled: bool) -> Self {
+        self.stream_guard_enabled = enabled;
+        self
     }
 
     /// Set the per-endpoint streaming concurrency cap (§9.9).
@@ -142,6 +155,7 @@ impl OpenAICompatProvider {
             client: self.client,
             timeout_secs: self.timeout_secs,
             concurrency: self.concurrency,
+            stream_guard_enabled: self.stream_guard_enabled,
         })
     }
 
@@ -545,6 +559,7 @@ impl OpenAICompatProvider {
     ) -> Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send + '_>> {
         let inner = &self.inner;
         let concurrency = Arc::clone(&self.concurrency);
+        let guard_enabled = self.stream_guard_enabled;
         Box::pin(async_stream::stream! {
             // §9.9: hold one admission permit for the lifetime of the
             // streaming HTTP request. Released when this stream body
@@ -552,6 +567,14 @@ impl OpenAICompatProvider {
             // dropping the stream. The bracket never extends past the
             // stream; see `kod_provider::concurrency`.
             let _permit = concurrency.acquire().await;
+            // §9.3: one guard per stream. A fresh stream is a fresh
+            // attempt; the previous attempt's tail is not evidence
+            // about this one.
+            let mut guard = if guard_enabled {
+                Some(kod_provider::stream_guard::StreamGuard::new())
+            } else {
+                None
+            };
             match inner.generate_content(request, true).await {
                 Ok(mut responses) => {
                     let mut last_usage: Option<kod_provider::TokenUsage> = None;
@@ -577,17 +600,37 @@ impl OpenAICompatProvider {
                                         match part {
                                             Part::Text { text } => {
                                                 if !text.is_empty() {
-                                                    yield Ok(StreamChunk::Text(text));
+                                                    let chunk = StreamChunk::Text(text);
+                                                    let stall = guard.as_mut().and_then(
+                                                        |g| g.feed_chunk(&chunk),
+                                                    );
+                                                    yield Ok(chunk);
+                                                    if let Some(detector) = stall {
+                                                        yield Err(KodError::Provider(format!(
+                                                            "stream stall detected: {detector}"
+                                                        )));
+                                                        return;
+                                                    }
                                                 }
                                             }
                                             Part::FunctionCall { name, args, id, .. } => {
                                                 let index = next_tool_index;
                                                 next_tool_index += 1;
                                                 yield Ok(StreamChunk::ToolCallStart { index, id, name });
-                                                yield Ok(StreamChunk::ToolCallDelta {
+                                                let delta = StreamChunk::ToolCallDelta {
                                                     index,
                                                     arguments: args.to_string(),
-                                                });
+                                                };
+                                                let stall = guard.as_mut().and_then(
+                                                    |g| g.feed_chunk(&delta),
+                                                );
+                                                yield Ok(delta);
+                                                if let Some(detector) = stall {
+                                                    yield Err(KodError::Provider(format!(
+                                                        "stream stall detected: {detector}"
+                                                    )));
+                                                    return;
+                                                }
                                             }
                                             _ => {}
                                         }

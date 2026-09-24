@@ -40,6 +40,10 @@ pub struct AnthropicProvider {
     /// semantics as the OpenAI provider's field; see
     /// `kod_provider::concurrency`. The default cap is 0 (unbounded).
     concurrency: Arc<kod_provider::concurrency::ProviderConcurrency>,
+    /// Whether the §9.3 stream stall detector runs on this provider's
+    /// streaming paths. On by default; same contract as the OpenAI
+    /// provider's field.
+    stream_guard_enabled: bool,
 }
 
 impl AnthropicProvider {
@@ -89,7 +93,14 @@ impl AnthropicProvider {
             concurrency: Arc::new(
                 kod_provider::concurrency::ProviderConcurrency::new(0),
             ),
+            stream_guard_enabled: true,
         })
+    }
+
+    /// Opt in or out of the §9.3 stream stall detector. On by default.
+    pub fn with_stream_guard(mut self, enabled: bool) -> Self {
+        self.stream_guard_enabled = enabled;
+        self
     }
 
     /// Set the per-endpoint streaming concurrency cap (§9.9).
@@ -118,6 +129,7 @@ impl AnthropicProvider {
             client: self.client,
             timeout_secs: self.timeout_secs,
             concurrency: self.concurrency,
+            stream_guard_enabled: self.stream_guard_enabled,
         })
     }
 
@@ -353,10 +365,17 @@ impl LlmProvider for AnthropicProvider {
         let client = self.client.clone();
         let api_key = self.api_key.clone();
         let concurrency = Arc::clone(&self.concurrency);
+        let guard_enabled = self.stream_guard_enabled;
 
         Box::pin(async_stream::stream! {
             // §9.9: one admission permit per streaming HTTP request.
             let _permit = concurrency.acquire().await;
+            // §9.3: one guard per stream, fresh per attempt.
+            let mut guard = if guard_enabled {
+                Some(kod_provider::stream_guard::StreamGuard::new())
+            } else {
+                None
+            };
             let resp = match client
                 .post(&url)
                 .header("x-api-key", &api_key)
@@ -416,7 +435,16 @@ impl LlmProvider for AnthropicProvider {
                                 if matches!(chunk, StreamChunk::Done) {
                                     done_sent = true;
                                 }
+                                let stall = guard
+                                    .as_mut()
+                                    .and_then(|g| g.feed_chunk(&chunk));
                                 yield Ok(chunk);
+                                if let Some(detector) = stall {
+                                    yield Err(KodError::Provider(format!(
+                                        "stream stall detected: {detector}"
+                                    )));
+                                    return;
+                                }
                             }
                         }
                     }
@@ -440,7 +468,14 @@ impl LlmProvider for AnthropicProvider {
                     if matches!(chunk, StreamChunk::Done) {
                         done_sent = true;
                     }
+                    let stall = guard.as_mut().and_then(|g| g.feed_chunk(&chunk));
                     yield Ok(chunk);
+                    if let Some(detector) = stall {
+                        yield Err(KodError::Provider(format!(
+                            "stream stall detected: {detector}"
+                        )));
+                        return;
+                    }
                 }
             }
 
