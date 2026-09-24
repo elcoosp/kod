@@ -1935,6 +1935,54 @@ impl KodEngine {
     /// Never awaited by the caller. The request is discarded: this
     /// exists for its side effects on the provider, not for its
     /// output.
+
+    /// A read-only snapshot of a transcript, for a client that wants
+    /// to see what a session is doing **without attaching to it**.
+    ///
+    /// Attaching would disturb the very session being previewed — the
+    /// peek must not touch the history, the steers, or the cancel
+    /// flag. This reads the history under a shared lock, renders the
+    /// last few turns, and returns. Nothing is mutated.
+    ///
+    /// `max_chars` bounds the tail: a peek is for orientation, and a
+    /// caller that wants the whole transcript can read the session
+    /// log.
+    pub async fn peek_transcript(&self, key: &str, max_chars: usize) -> serde_json::Value {
+        let (count, tail) = {
+            let guard = self.history.read().await;
+            let turns = guard.get(key);
+            let count = turns.map(|t| t.len()).unwrap_or(0);
+            let mut out = String::new();
+            if let Some(turns) = turns {
+                // The last 20 turns, newest-last, matching the order
+                // the model would see them.
+                for m in turns.iter().rev().take(20).rev() {
+                    // Tool rows are structural; a peek shows prose.
+                    if matches!(m.role, kod_types::MessageRole::Tool) {
+                        continue;
+                    }
+                    out.push_str(&m.render_text());
+                    out.push('\n');
+                }
+            }
+            (count, out)
+        };
+
+        let total = tail.chars().count();
+        let tail = if total > max_chars {
+            tail.chars().skip(total - max_chars).collect::<String>()
+        } else {
+            tail
+        };
+
+        serde_json::json!({
+            "key": key,
+            "messages": count,
+            "tail": tail,
+            "truncated": total > max_chars,
+        })
+    }
+
     pub async fn prewarm(&self, key: &str) {
         // Latch first, so a burst of keystrokes does not queue a burst
         // of requests behind the first one.

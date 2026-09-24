@@ -552,6 +552,21 @@ async fn handle_connection(
                     }
                 });
             }
+            "peek_session" => {
+                // A read-only view of another transcript. An empty
+                // `key` is the interactive session; `swarm:<id>` is
+                // an agent. Nothing is attached, nothing is mutated —
+                // which is the point: a client previewing a session
+                // must not disturb it.
+                let key = string_param(&req.params, "key");
+                let max_chars = req
+                    .params
+                    .get("max_chars")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(4000) as usize;
+                let data = engine.peek_transcript(&key, max_chars).await;
+                write_ok(&out_tx, &req.id, data).await?
+            }
             "shutdown" => {
                 write_ack(&out_tx, &req.id).await?;
                 shutdown.notify_one();
