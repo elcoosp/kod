@@ -88,6 +88,31 @@ pub const PROTOCOL_VERSION: u8 = 1;
 /// The oldest protocol version this server still speaks.
 pub const MIN_PROTOCOL_VERSION: u8 = 1;
 
+/// Every method the protocol accepts, as strings.
+///
+/// For a client author and for the module doc table. This is *not* a
+/// check on the dispatch: a `match` on `&str` cannot be verified
+/// against a const without refactoring the match into a table, and a
+/// test claiming to would be lying. A method listed here that the
+/// dispatch does not handle is a server bug a reviewer catches; an
+/// unknown method at runtime lands in the `other =>` arm and gets a
+/// named error, which is the behavior that matters.
+pub const PROTOCOL_METHODS: &[&str] = &[
+    "cancel",
+    "hello",
+    "list_models",
+    "peek_session",
+    "process",
+    "process_streaming",
+    "respond_to_approval",
+    "respond_to_question",
+    "set_model",
+    "shutdown",
+    "steer",
+    "swarm",
+];
+
+
 /// The newest protocol version this server speaks. A client asking
 /// for a version above this is running ahead of the server; one below
 /// `MIN` is behind it. Both get a named error rather than a confusing
@@ -1296,5 +1321,28 @@ mod version_tests {
         let lo = client_min.max(MIN_PROTOCOL_VERSION);
         let hi = client_max.min(MAX_PROTOCOL_VERSION);
         assert!(lo > hi, "5..=7 against 1..=1 must not overlap");
+    }
+
+    #[test]
+    fn protocol_methods_are_sorted_and_unique() {
+        // Sorted so the doc table and a client's generated list are
+        // stable across builds; unique so a typo'd duplicate does not
+        // hide a missing method.
+        let mut sorted = PROTOCOL_METHODS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), PROTOCOL_METHODS.len(), "duplicates present");
+        assert_eq!(sorted.as_slice(), PROTOCOL_METHODS, "must be sorted");
+    }
+
+    #[test]
+    fn protocol_methods_are_well_formed() {
+        for m in PROTOCOL_METHODS {
+            assert!(!m.is_empty());
+            assert!(
+                m.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "method {m:?} is not snake_case",
+            );
+        }
     }
 }
