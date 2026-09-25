@@ -27,6 +27,7 @@ pub mod advisor_tools;
 pub mod engine;
 pub mod goals;
 pub mod async_delivery;
+pub mod run_collector;
 pub mod speculation;
 pub mod snapcompact;
 pub mod fixture;
