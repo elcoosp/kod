@@ -136,6 +136,11 @@ pub enum Stage {
     /// intent is "the output was too long"; kept separate so a def
     /// can express which bound it means without the reader guessing.
     MaxLines { n: usize },
+    /// Delta §5: a Rust-implemented filter. `filter` names one of the
+    /// functions in [`crate::native`]; an unknown name aborts the
+    /// pipeline so the def author sees the typo rather than a silent
+    /// pass-through.
+    Native { filter: String },
 }
 
 /// A pipeline stage failed.
@@ -237,6 +242,13 @@ fn run_one(stage: &Stage, input: String) -> Result<String, PipelineError> {
         Stage::HeadLines { n } => Ok(take_lines(&input, *n, LineBound::Head)),
         Stage::TailLines { n } => Ok(take_lines(&input, *n, LineBound::Tail)),
         Stage::MaxLines { n } => Ok(take_lines(&input, *n, LineBound::Head)),
+        Stage::Native { filter } => match crate::native::run(filter, &input) {
+            Some(out) => Ok(out),
+            None => Err(PipelineError::Stage {
+                stage: "native",
+                reason: format!("unknown native filter `{filter}`"),
+            }),
+        },
     }
 }
 

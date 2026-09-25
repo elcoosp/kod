@@ -58,6 +58,7 @@
 //!   silently drops content.
 
 pub mod pipeline;
+pub mod native;
 pub mod plan;
 
 use pipeline::{Def, PipelineError};
