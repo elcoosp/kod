@@ -28,6 +28,12 @@ git log to find out. Update this file when the status changes.
 | Handoff compaction (§4.1) | `kod-core/src/compaction_dispatcher.rs` (`HandoffMethod`) | one LLM call producing a briefing document (Objective / Done / State / Next / Constraints); returned as `CompactionPlan::Summary` covering the older half. `CompactionContext` gains a `ProviderHandle` (None when no provider → `Unavailable`). Sits *last* in the engine's ladder: mechanical rungs run first, handoff catches the case where they cannot reduce | dispatcher unit tests; integration tests in `kod-core/tests/handoff_compaction.rs` (scripted provider produces a handoff, the plan is applied) |
 | Provider-native compaction (§4.4) | `kod-provider-anthropic/src/wire.rs` (`build_compaction_body`, `parse_compaction_block`, `prepend_compaction_block`); `LlmProvider::native_compact`; `RemoteMethod` in the dispatcher | Anthropic `compact-2026-01-12` beta: the API summarizes, returns a `compaction` block with an `encrypted_content` token. `RemoteMethod` calls it, produces a `NativeSummary` plan; `apply_compaction_plan` stores the block per-transcript; `build_grounded_request` attaches it to the next request; `build_messages_body` prepends it to the first user message | wire-layer unit tests (11); dispatcher unit tests; end-to-end replay test |
 
+## Primitive landed; engine wiring is a follow-up
+
+| Primitive | Module | What's landed | What's missing |
+|---|---|---|---|
+| Speculative read execution (§10) | `kod-core/src/speculation.rs` | `Evidence` + `capture_evidence` + `read_with_evidence` + `validate` + `consume`: the TOCTOU shape, with a digest gate that catches the same-inode same-size same-mtime edit (11 tests). | The streaming-loop hook. Value comes from overlapping the read with the provider's generation tail, which requires recognizing a `read_file` candidate mid-stream — incremental JSON parsing in the `partials` map at `stream_round`'s `ToolCallDelta` arm. A round-level prefetch (the easy shape) has no benefit: `run_tool_calls` fires after the round completes. |
+
 ## Deferred to a future slice, not-yet-built
 
 These are named in the design note but not implemented; each is
