@@ -44,7 +44,8 @@ use std::collections::HashMap;
 /// What kind of agent a ref names. The dispatch policy can treat
 /// them differently (an advisor is never parked, a main agent is
 /// never killed by a subagent).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AgentKind {
     Main,
     Sub,
@@ -52,7 +53,8 @@ pub enum AgentKind {
 }
 
 /// The lifecycle state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Lifecycle {
     /// Live, between turns.
     Idle,
@@ -65,7 +67,7 @@ pub enum Lifecycle {
 }
 
 /// The metrics a UI reads. Not used by the lifecycle itself.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AgentHistory {
     /// The model the agent last ran under, if any.
     pub resolved_model: Option<String>,
@@ -76,7 +78,7 @@ pub struct AgentHistory {
 }
 
 /// One registered agent.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AgentRef {
     pub id: String,
     pub kind: AgentKind,
@@ -345,6 +347,84 @@ impl AgentRegistry {
         v
     }
 
+    /// Persist every ref to a JSON file. Best-effort: the caller
+    /// owns the path and the error.
+    ///
+    /// The file is a JSON object mapping id → `AgentRef`. It is
+    /// written whole (not appended) — a registry is small and the
+    /// atomic-replace shape is simpler than a log.
+    pub fn persist(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string_pretty(&self.agents)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json)?;
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    }
+
+    /// Load a persisted registry. Every ref comes back in the
+    /// `Parked` state — a ref on disk describes an agent that was
+    /// parked (or the process died while it was idle), and the
+    /// caller revives the ones it needs.
+    ///
+    /// A missing file is not an error: a fresh install has no
+    /// registry yet. A corrupt file is: a truncated write that
+    /// happened to survive is worse than no file, and silently
+    /// starting empty would hide it.
+    pub fn load(path: &std::path::Path) -> std::io::Result<Self> {
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                let mut agents: HashMap<String, AgentRef> = serde_json::from_str(&text)
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+                    })?;
+                // A ref on disk is not live; park it.
+                for a in agents.values_mut() {
+                    if a.lifecycle != Lifecycle::Dead {
+                        a.lifecycle = Lifecycle::Parked;
+                    }
+                }
+                Ok(Self {
+                    agents,
+                    park_after_ms: None,
+                })
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Cold revive: return a ref by id, loading it from the
+    /// persisted registry if it is not already in memory.
+    ///
+    /// The in-memory `revive` needs the ref to be present; after a
+    /// process restart it is not. This method loads the persisted
+    /// file into the registry (once) and then revives. The caller
+    /// that follows with the ref's `session_file` to rebuild the
+    /// session has everything the registry can give it — the tool
+    /// surface and system prompt come from the caller's own
+    /// reconstruction, since the session log carries no init entry
+    /// today.
+    pub fn cold_revive(
+        &mut self,
+        id: &str,
+        persisted_path: &std::path::Path,
+    ) -> Result<AgentRef, RegistryError> {
+        if !self.agents.contains_key(id) {
+            // Load the persisted file and merge its refs in without
+            // clobbering anything already live. A ref already in
+            // memory wins — the in-memory one is the truth.
+            let loaded = Self::load(persisted_path).map_err(|_| RegistryError::Unknown)?;
+            for (k, v) in loaded.agents {
+                self.agents.entry(k).or_insert(v);
+            }
+        }
+        self.revive(id)
+    }
+
     /// How many agents are in each state. For a UI readout.
     pub fn counts(&self) -> (usize, usize, usize, usize) {
         let mut idle = 0;
@@ -561,5 +641,127 @@ mod tests {
         r.park("a", 0).unwrap();
         let a = r.ensure_live("a").unwrap();
         assert_eq!(a.lifecycle, Lifecycle::Idle);
+    }
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn persist_then_load_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("registry.json");
+        let mut r = AgentRegistry::new();
+        r.register("root", AgentKind::Main);
+        r.register_child("child", AgentKind::Sub, "root");
+        r.persist(&path).unwrap();
+
+        let loaded = AgentRegistry::load(&path).unwrap();
+        assert_eq!(loaded.live_ids(), vec!["child".to_string(), "root".to_string()]);
+        assert_eq!(loaded.depth_of("child"), 1);
+    }
+
+    #[test]
+    fn loaded_refs_start_parked() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("registry.json");
+        let mut r = AgentRegistry::new();
+        r.register("a", AgentKind::Sub);
+        r.mark_active("a").unwrap();
+        r.persist(&path).unwrap();
+
+        let loaded = AgentRegistry::load(&path).unwrap();
+        assert_eq!(loaded.get("a").unwrap().lifecycle, Lifecycle::Parked);
+    }
+
+    #[test]
+    fn a_dead_ref_stays_dead_on_load() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("registry.json");
+        let mut r = AgentRegistry::new();
+        r.register("a", AgentKind::Sub);
+        r.kill("a").unwrap();
+        r.persist(&path).unwrap();
+
+        let loaded = AgentRegistry::load(&path).unwrap();
+        assert_eq!(loaded.get("a").unwrap().lifecycle, Lifecycle::Dead);
+    }
+
+    #[test]
+    fn load_of_a_missing_file_is_empty() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("nope.json");
+        let r = AgentRegistry::load(&path).unwrap();
+        assert_eq!(r.counts(), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn load_of_a_corrupt_file_errors() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("bad.json");
+        std::fs::write(&path, "not json at all").unwrap();
+        assert!(AgentRegistry::load(&path).is_err());
+    }
+
+    #[test]
+    fn cold_revive_loads_a_persisted_ref() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("registry.json");
+        let mut r = AgentRegistry::new();
+        r.register("a", AgentKind::Sub);
+        r.set_session_file("a", std::path::PathBuf::from("/tmp/a.jsonl")).unwrap();
+        r.park("a", 0).unwrap();
+        r.persist(&path).unwrap();
+
+        // A fresh registry knows nothing of "a".
+        let mut fresh = AgentRegistry::new();
+        assert!(fresh.get("a").is_none());
+
+        // Cold revive loads and revives.
+        let a = fresh.cold_revive("a", &path).unwrap();
+        assert_eq!(a.lifecycle, Lifecycle::Idle);
+        assert_eq!(a.generation, 1);
+        assert_eq!(
+            a.session_file.as_deref(),
+            Some(std::path::Path::new("/tmp/a.jsonl")),
+        );
+    }
+
+    #[test]
+    fn cold_revive_prefers_an_in_memory_ref() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("registry.json");
+        // Persist a ref with session_file "/old".
+        let mut r = AgentRegistry::new();
+        r.register("a", AgentKind::Sub);
+        r.set_session_file("a", std::path::PathBuf::from("/old")).unwrap();
+        r.park("a", 0).unwrap();
+        r.persist(&path).unwrap();
+
+        // Build a fresh registry with the ref already in memory,
+        // pointing at a different session file.
+        let mut fresh = AgentRegistry::new();
+        fresh.register("a", AgentKind::Sub);
+        fresh.set_session_file("a", std::path::PathBuf::from("/new")).unwrap();
+
+        let a = fresh.cold_revive("a", &path).unwrap();
+        assert_eq!(
+            a.session_file.as_deref(),
+            Some(std::path::Path::new("/new")),
+            "the in-memory ref wins",
+        );
+    }
+
+    #[test]
+    fn cold_revive_of_an_unknown_id_errors() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("registry.json");
+        let mut r = AgentRegistry::new();
+        assert_eq!(
+            r.cold_revive("nope", &path),
+            Err(RegistryError::Unknown),
+        );
     }
 }
