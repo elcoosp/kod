@@ -223,6 +223,32 @@ pub enum SessionEntry {
         /// "jev" | "heuristic" | "llm".
         source: String,
     },
+    /// Delta §11.2: what a cold revive needs to rebuild a session.
+    ///
+    /// Written once when an agent's session starts. A `cold_revive`
+    /// after a process restart reads the most recent entry for the
+    /// holder and has the endpoint, model, and tool names the
+    /// session ran with — enough to rebuild the tool surface
+    /// without the caller having to reconstruct it from scratch.
+    ///
+    /// `system_prompt_hash` is a fingerprint, not the prompt text:
+    /// the prompt is large, and a caller that needs the exact bytes
+    /// can rebuild it from the same config. The hash lets a caller
+    /// detect "the config changed since this session ran" and
+    /// refuse a stale revive.
+    SessionInit {
+        timestamp_ms: u64,
+        /// The transcript key the session ran under.
+        holder: String,
+        /// The endpoint name the session routed to.
+        endpoint: String,
+        /// The model the session ran.
+        model: String,
+        /// Every tool the session had registered.
+        tool_names: Vec<String>,
+        /// A fingerprint of the rendered system prompt.
+        system_prompt_hash: u64,
+    },
 }
 
 /// Append-only writer for a session log.
@@ -424,6 +450,34 @@ pub fn read_session(path: &Path) -> Result<Vec<SessionEntry>> {
 /// `~/.kod/sessions/<unix-ms>.jsonl`. A caller that wants a stable
 /// path (a test, a script that names its own log) sets
 /// `KOD_SESSION_LOG` and this is not consulted.
+/// Delta §11.2: the most recent `SessionInit` for a holder, if the
+/// log carries one.
+///
+/// A cold revive reads this to rebuild a session's tool surface. A
+/// log written before the variant existed returns `None` — the
+/// caller then falls back to rebuilding from config.
+pub fn session_init_for(path: &Path, holder: &str) -> Result<Option<(String, String, Vec<String>, u64)>> {
+    let entries = read_session(path)?;
+    let mut found = None;
+    for e in entries {
+        if let SessionEntry::SessionInit {
+            holder: h,
+            endpoint,
+            model,
+            tool_names,
+            system_prompt_hash,
+            ..
+        } = e
+            && h == holder
+        {
+            // Keep walking: a later entry wins (a session that
+            // restarted mid-run has more than one).
+            found = Some((endpoint, model, tool_names, system_prompt_hash));
+        }
+    }
+    Ok(found)
+}
+
 pub fn default_session_path() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let ts = std::time::SystemTime::now()

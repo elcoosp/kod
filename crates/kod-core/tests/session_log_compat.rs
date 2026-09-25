@@ -98,6 +98,7 @@ fn reads_every_known_variant_and_skips_the_unknown_one() {
             SessionEntry::ToolOutcome { .. } => {}
             SessionEntry::Redaction { .. } => {}
             SessionEntry::MemoryRetrieval { .. } => {}
+            SessionEntry::SessionInit { .. } => {}
         }
     }
 }
