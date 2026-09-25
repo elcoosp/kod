@@ -8620,7 +8620,12 @@ pub(crate) fn filter_chain_by_trust(
                 }
             }
             let section = self
-                .run_tool_calls(&calls, round.holder, Some(chunk_tx))
+                .run_tool_calls_with_speculations(
+                    &calls,
+                    round.holder,
+                    Some(chunk_tx),
+                    &speculations,
+                )
                 .await;
             // Delta §9.4: check for a repeated tool round. The
             // corrective is a request-shaped System message; the TUI
@@ -10124,6 +10129,30 @@ pub(crate) fn filter_chain_by_trust(
         holder: &str,
         chunk_tx: Option<&tokio::sync::mpsc::Sender<String>>,
     ) -> ToolRound {
+        // No speculations: the wrapper exists so the many test call
+        // sites (and any caller without a streaming round behind it)
+        // keep the pre-§10 signature. The streaming loop uses the
+        // 4-arg form directly.
+        self.run_tool_calls_with_speculations(calls, holder, chunk_tx, &[]).await
+    }
+
+    /// Delta §10: `run_tool_calls` plus the speculative reads the
+    /// streaming round produced. `speculations` is indexed parallel
+    /// to `calls` — `speculations[i]` is the pre-fetched read for
+    /// `calls[i]`, or `None`.
+    ///
+    /// For each call with a speculation, the coordinator validates
+    /// the file's identity (TOCTOU digest check) and, on match, puts
+    /// the pre-fetched bytes on the per-call `ToolContext` so
+    /// `ReadFileTool` uses them without re-reading. On mismatch the
+    /// speculation is dropped and the tool reads as usual.
+    async fn run_tool_calls_with_speculations(
+        &self,
+        calls: &[ToolCall],
+        holder: &str,
+        chunk_tx: Option<&tokio::sync::mpsc::Sender<String>>,
+        speculations: &[Option<crate::speculation::SpeculativeRead>],
+    ) -> ToolRound {
         // Delta §9.8: the pause gate's tool-round boundary.
         self.pause_gate.wait_if_paused().await;
         // The tool context is scoped per transcript — a swarm agent
@@ -10219,6 +10248,42 @@ pub(crate) fn filter_chain_by_trust(
                             "checkpoint snapshot failed"
                         ),
                     }
+                }
+            }
+        }
+
+        // Delta §10: validate every speculative read up-front. A
+        // speculation whose evidence still describes the file becomes
+        // a `PrefetchedRead` keyed by call index; a stale one is
+        // dropped here and the tool reads as usual. Doing this once,
+        // before either dispatch branch, means the serial and
+        // parallel paths agree on which calls have a prefetch.
+        let mut prefetches: std::collections::HashMap<usize, kod_tools::context::PrefetchedRead> =
+            std::collections::HashMap::new();
+        for (i, spec) in speculations.iter().enumerate() {
+            let Some(spec) = spec.as_ref() else { continue };
+            match crate::speculation::validate(&spec.path, &spec.evidence) {
+                Ok(true) => {
+                    prefetches.insert(
+                        i,
+                        kod_tools::context::PrefetchedRead {
+                            path: spec.path.clone(),
+                            text: spec.text.clone(),
+                        },
+                    );
+                }
+                Ok(false) => {
+                    tracing::debug!(
+                        path = %spec.path.display(),
+                        "speculative read discarded: file changed since the read",
+                    );
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        path = %spec.path.display(),
+                        error = %e,
+                        "speculative read discarded: validation failed",
+                    );
                 }
             }
         }
@@ -10330,7 +10395,7 @@ pub(crate) fn filter_chain_by_trust(
                 // the round's configured mode. A clone of the
                 // context is used so the decision does not leak to
                 // sibling calls.
-                let call_ctx = if call.tool_name == "execute_command"
+                let mut call_ctx = if call.tool_name == "execute_command"
                     && let Some(cmd) = call.arguments.get("command").and_then(|v| v.as_str())
                 {
                     let chosen = self
@@ -10346,6 +10411,12 @@ pub(crate) fn filter_chain_by_trust(
                 } else {
                     tool_context.clone()
                 };
+                // Delta §10: attach the pre-validated speculative read
+                // for this call, if any. `ReadFileTool` checks the
+                // path matches before using it.
+                if let Some(pf) = prefetches.get(&i) {
+                    call_ctx.prefetched_read = Some(pf.clone());
+                }
                 // Tier 2.5 — quota check before dispatch.
                 let command = if call.tool_name == "execute_command" {
                     call.arguments.get("command").and_then(|v| v.as_str())
@@ -10422,7 +10493,13 @@ pub(crate) fn filter_chain_by_trust(
                 .map(|&i| {
                     let call = &calls_for_dispatch[i];
                     let start = std::time::Instant::now();
-                    let ctx = tool_context.clone();
+                    let mut ctx = tool_context.clone();
+                    // Delta §10: same prefetch attach as the serial
+                    // branch. The index into `prefetches` is the call
+                    // index, not the dispatch order.
+                    if let Some(pf) = prefetches.get(&i) {
+                        ctx.prefetched_read = Some(pf.clone());
+                    }
                     async move {
                         let res = self
                             .tools
