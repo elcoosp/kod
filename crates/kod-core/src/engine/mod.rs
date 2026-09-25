@@ -30,6 +30,10 @@ use tokio::sync::RwLock;
 /// user has waited minutes for nothing.
 const MAX_TOOL_ROUNDS: usize = 40;
 
+/// Delta §4.5: the minimum token count a tool result must have
+/// before the inline-imaging pass considers rasterizing it.
+const MIN_INLINE_IMAGE_TOKENS: u64 = 3_000;
+
 /// Notice appended to the conversation when the tool loop hits
 /// [`MAX_TOOL_ROUNDS`] without a text-only reply. The loop calls the
 /// provider one more time afterwards to request a summary; this note
@@ -675,6 +679,16 @@ async fn push_background_interrupt(
         .entry(holder.to_string())
         .or_default()
         .push(crate::steer::SoftInterrupt::background(content));
+}
+
+/// A cheap non-cryptographic hash for the image-render cache key.
+fn simple_hash(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
 }
 
 fn build_summary_prompt(dropped: &[kod_types::ChatMessage]) -> String {
@@ -1333,6 +1347,9 @@ pub struct KodEngine {
     /// to the next request built for that transcript so the server
     /// reuses its KV cache instead of re-reading.
     native_compaction_blocks: RwLock<HashMap<String, String>>,
+    /// Delta §4.5: rasterized-frame cache keyed on
+    /// `tool_call_id:content_hash`.
+    image_render_cache: RwLock<HashMap<String, kod_types::RasterizedImage>>,
     /// Delta §10: whether speculative reads are admitted. On by
     /// default — the primitive's cost is one wasted read in the worst
     /// case, and the validation step (TOCTOU digest check) means the
@@ -3203,6 +3220,7 @@ impl KodEngine {
             // engine — every test, every embedder — sees `None` and
             // is unaffected.
             native_compaction_blocks: RwLock::new(HashMap::new()),
+            image_render_cache: RwLock::new(HashMap::new()),
             speculative_reads: RwLock::new(true),
             image_frames: RwLock::new(HashMap::new()),
             secret_vault: RwLock::new(None),
@@ -9207,6 +9225,82 @@ pub(crate) fn filter_chain_by_trust(
                     },
                 );
             }
+        }
+    }
+
+    /// Delta §4.5: the inline-imaging pass.
+    ///
+    /// Walk the outgoing messages and, for each large *text* tool
+    /// result with a vision provider in play, rasterize its body
+    /// into a PNG and attach it to the message's metadata. The wire
+    /// layer emits the image; the text stays in `content` for the
+    /// local transcript and any fallback.
+    async fn inline_image_tool_results(&self, messages: &mut [kod_types::ChatMessage]) {
+        let vision = match self.current_provider().await {
+            Some(p) => p.capabilities().vision,
+            None => false,
+        };
+        if !vision {
+            return;
+        }
+
+        // The freshest tool result is the working set; never image
+        // it.
+        let last_tool = messages
+            .iter()
+            .rposition(|m| m.role == kod_types::MessageRole::Tool);
+
+        for (i, m) in messages.iter_mut().enumerate() {
+            if m.role != kod_types::MessageRole::Tool {
+                continue;
+            }
+            if Some(i) == last_tool {
+                continue;
+            }
+            if m.content.starts_with("Error:") || m.content.starts_with("error:") {
+                continue;
+            }
+            if m.metadata.image.is_some() {
+                continue;
+            }
+            let tokens = (m.content.len() / 4) as u64;
+            if tokens < MIN_INLINE_IMAGE_TOKENS {
+                continue;
+            }
+            let frame_est = crate::compaction_dispatcher::FRAME_TOKEN_ESTIMATE;
+            let ratio = frame_est as f64 / tokens.max(1) as f64;
+            if ratio >= crate::compaction_dispatcher::SAVINGS_MARGIN {
+                continue;
+            }
+
+            let cache_key = format!(
+                "{}:{}",
+                m.tool_call_id.as_deref().unwrap_or(""),
+                simple_hash(&m.content),
+            );
+            let cached = {
+                let g = self.image_render_cache.read().await;
+                g.get(&cache_key).cloned()
+            };
+            let frame = match cached {
+                Some(f) => f,
+                None => match crate::snapcompact::rasterize_to_png(&m.content) {
+                    Ok(png) => {
+                        let f = kod_types::RasterizedImage {
+                            png_base64: crate::snapcompact::base64_encode(&png),
+                            media_type: "image/png".to_string(),
+                            source_lines: m.content.lines().count(),
+                        };
+                        self.image_render_cache
+                            .write()
+                            .await
+                            .insert(cache_key, f.clone());
+                        f
+                    }
+                    Err(_) => continue,
+                },
+            };
+            m.metadata.image = Some(frame);
         }
     }
 

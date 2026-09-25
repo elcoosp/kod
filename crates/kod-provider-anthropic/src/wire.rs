@@ -264,12 +264,31 @@ fn messages_array_impl(messages: &[ChatMessage]) -> Value {
                 // empty string — the API rejects it, but the local
                 // error is closer to the bug than a crash here.
                 let id = m.tool_call_id.clone().unwrap_or_default();
+                // Delta §4.5: a message with a rasterized image emits
+                // the image block first (the model reads the frame)
+                // and the text body as a second block. A caller that
+                // did not image keeps the plain string form.
+                let content_value = if let Some(img) = m.metadata.image.as_ref() {
+                    json!([
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": img.media_type,
+                                "data": img.png_base64,
+                            }
+                        },
+                        { "type": "text", "text": m.content },
+                    ])
+                } else {
+                    json!(m.content)
+                };
                 (
                     "user",
                     json!([{
                         "type": "tool_result",
                         "tool_use_id": id,
-                        "content": m.content,
+                        "content": content_value,
                     }]),
                 )
             }

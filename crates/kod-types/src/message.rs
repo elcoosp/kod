@@ -68,7 +68,24 @@ pub enum MessageRole {
     Agent(AgentId),
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// A rasterized image attached to a message (delta §4.5).
+///
+/// The engine's inline-imaging pass replaces a large text tool
+/// result with a PNG a vision model reads for fewer tokens. The
+/// image travels on the message's metadata so the wire layer emits
+/// it alongside (or instead of) the text — no side channel.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RasterizedImage {
+    /// Base64 of the PNG, no data-URL prefix.
+    pub png_base64: String,
+    /// The media type string the provider expects (`image/png`).
+    pub media_type: String,
+    /// Number of source text lines the frame covers. Kept for the
+    /// UI's "N lines imaged" readout.
+    pub source_lines: usize,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MessageMetadata {
     pub skill_applied: Option<String>,
     pub tools_used: Vec<String>,
@@ -85,6 +102,15 @@ pub struct MessageMetadata {
     /// parses, with every message unpinned.
     #[serde(default)]
     pub pinned: bool,
+    /// Delta §4.5: when a vision model is in play, the engine may
+    /// replace this message's large text body with a rasterized
+    /// image. The text stays in `content` (the local transcript
+    /// keeps the readable form); the wire layer emits the image
+    /// block, and the model reads the frame.
+    ///
+    /// `None` on every message that has not been imaged.
+    #[serde(default)]
+    pub image: Option<RasterizedImage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
