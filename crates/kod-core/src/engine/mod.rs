@@ -2661,11 +2661,26 @@ impl KodEngine {
         }
         let estimator = move |i: usize| suffix.get(i).copied().unwrap_or(0);
 
+        // Build a provider handle for the LLM-calling methods. None
+        // when no provider is installed — those methods report
+        // `Unavailable` and the dispatcher falls through to the
+        // mechanical rungs.
+        let provider_handle = match self.current_provider().await {
+            Some(p) => {
+                let options = self.generation_defaults.read().await.to_options();
+                Some(crate::compaction_dispatcher::ProviderHandle {
+                    provider: p,
+                    options,
+                })
+            }
+            None => None,
+        };
         let ctx = crate::compaction_dispatcher::CompactionContext {
             transcript: turns,
             window_tokens,
             suffix_tokens_after: &estimator,
             prefix_is_warm: false,
+            provider: provider_handle,
         };
         let outcome = self.compaction_dispatcher.compact(&ctx).await;
         // Notices from skipped stubs are dropped here — the engine has
@@ -2963,6 +2978,23 @@ impl KodEngine {
                     // outcome. Here, no reduction means the model
                     // gets a round-trip. `aggressive()` (protect
                     // 4,000, savings gate 0) matches the situation.
+                    // Delta §4.1: the *engine's* ladder ordering
+                    // differs from the design's default. The
+                    // design's `[remote, snapcompact, handoff,
+                    // shake, soft]` is the right order for a
+                    // deliberate compaction (`/compact`), where the
+                    // caller asked for the best reduction and is
+                    // willing to wait for it.
+                    //
+                    // The engine's dispatch regime is different: it
+                    // fires *after* `maybe_compact_for` decided the
+                    // transcript is over threshold — "reduce now, or
+                    // a summary call follows". Under that pressure a
+                    // cheap elision that clears the threshold is
+                    // strictly better than an expensive LLM call that
+                    // does not need to happen. So the mechanical
+                    // rungs go first, and handoff catches the case
+                    // where neither mechanical rung can reduce.
                     Box::new(crate::compaction_dispatcher::ShakeMethod::new(
                         crate::shake::ShakeConfig::aggressive(),
                     )),
@@ -2976,6 +3008,14 @@ impl KodEngine {
                     Box::new(crate::compaction_dispatcher::PruneMethod::new(
                         crate::prune::PruneConfig::default(),
                     )),
+                    // The LLM rung last: it runs only when the
+                    // mechanical rungs found nothing to elide, which
+                    // is exactly the case where the alternative is
+                    // the existing post-dispatcher summary path.
+                    // Paying one call for a handoff document — which
+                    // preserves meaning a shake cannot — is worth it
+                    // there.
+                    Box::new(crate::compaction_dispatcher::HandoffMethod::new()),
                 ]),
             ),
             injected_memory_at: RwLock::new(HashMap::new()),

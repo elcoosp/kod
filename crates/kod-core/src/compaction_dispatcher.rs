@@ -101,6 +101,32 @@ pub const DEFAULT_KEEP_RECENT_TOKENS: u64 = 20_000;
 /// explicitly. `Send` is added for symmetry: a `Sync` closure is
 /// always usable from a `Send` future, but the bound spells out the
 /// requirement rather than relying on the reader to reason it out.
+/// A provider handle the LLM-calling methods (`handoff`, `soft`) use
+/// to make their one call. Carried in [`CompactionContext`] rather
+/// than stored on the method because the provider is installed on the
+/// engine *after* the dispatcher is constructed (`set_registry` runs
+/// later than `KodEngine::new`), and because a method is a `Box<dyn
+/// CompactionMethod>` shared across the dispatcher's lifetime while
+/// the provider may change.
+///
+/// `None` when no provider is installed; the methods that need one
+/// report [`MethodOutcome::Unavailable`] and the dispatcher falls
+/// through.
+#[derive(Clone)]
+pub struct ProviderHandle {
+    pub provider: std::sync::Arc<dyn kod_provider::LlmProvider>,
+    pub options: kod_provider::GenerationOptions,
+}
+
+impl std::fmt::Debug for ProviderHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderHandle")
+            .field("provider", &self.provider.name())
+            .field("options", &self.options)
+            .finish()
+    }
+}
+
 pub struct CompactionContext<'a> {
     /// The transcript, in send order.
     pub transcript: &'a [ChatMessage],
@@ -113,6 +139,9 @@ pub struct CompactionContext<'a> {
     /// Whether the provider's prefix cache is still warm. Passed
     /// through to the methods that respect it.
     pub prefix_is_warm: bool,
+    /// The provider handle for methods that make an LLM call
+    /// (`handoff`, `soft`). `None` when no provider is installed.
+    pub provider: Option<ProviderHandle>,
 }
 
 /// What a method produced.
@@ -430,13 +459,105 @@ impl CompactionMethod for SnapcompactMethod {
     }
 }
 
-/// One-shot handoff document summarization.
+/// The design's `handoff` rung: one-shot handoff document *as* the
+/// compaction summary.
+///
+/// # What a handoff document is
+///
+/// Not a summary. A summary narrates what happened; a handoff
+/// document *instructs the next agent*. The difference matters when
+/// the compaction is happening so the session can keep going: the
+/// model reading the handoff needs to know what to do next, what has
+/// already been tried, and what the current state is — not a
+/// paragraph of prose about the previous ten turns.
+///
+/// The prompt asks for that shape explicitly. The output is used
+/// verbatim as the replacement text for the older half of the
+/// transcript: `CompactionPlan::Summary` with `covers_through` at the
+/// split point.
+///
+/// # Why the first half
+///
+/// The same split the engine's existing summary path uses: the
+/// *newer* half stays (it is the working set), the *older* half is
+/// replaced. A `handoff` on the newer half would throw away the
+/// context the model most needs.
+///
+/// # When this is not available
+///
+/// * No provider in the context (`None`) — the engine has not
+///   installed a registry yet, or the session is offline.
+/// * Fewer than [`MIN_HANDOFF_MESSAGES`] messages — a transcript
+///   with a couple of turns does not have anything worth a handoff
+///   call.
 pub struct HandoffMethod;
 
+/// The smallest transcript the handoff method will act on. Below
+/// this, a one-call LLM handoff costs more than the tokens it saves.
+pub const MIN_HANDOFF_MESSAGES: usize = 4;
+
 impl HandoffMethod {
-    pub fn stub() -> Self {
+    pub fn new() -> Self {
         Self
     }
+
+    /// Alias for [`Self::new`], preserved for the stub-registration
+    /// shape the dispatcher's constructor used before the real
+    /// implementation landed.
+    pub fn stub() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for HandoffMethod {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Build the handoff prompt from a slice of the transcript.
+///
+/// Distinct from `build_summary_prompt` in the engine: the summary
+/// prompt asks for four labelled sections of *history*; the handoff
+/// prompt asks for a *briefing document* a next agent could pick up
+/// from. Same input, different output shape.
+fn build_handoff_prompt(dropped: &[ChatMessage]) -> String {
+    const CAP: usize = 24_000;
+    let mut body = String::new();
+    for m in dropped {
+        let line = m.render_text();
+        if body.len() + line.len() + 1 > CAP {
+            body.push_str("\n[...earlier messages truncated for the handoff call...]\n");
+            break;
+        }
+        body.push_str(&line);
+        body.push('\n');
+    }
+    format!(
+        "You are handing this session off to another agent who will \
+         continue the work. Write a briefing document with these \
+         sections:\n\n\
+         ## Objective\n\
+         What the session is trying to accomplish, in one or two \
+         sentences.\n\n\
+         ## What has been done\n\
+         Concrete changes made, with file paths and function names. \
+         Past tense, itemized. Skip narration.\n\n\
+         ## Current state\n\
+         What works, what is broken, what is mid-change. Be specific \
+         about the boundary — the next agent needs to know what to \
+         trust.\n\n\
+         ## What to do next\n\
+         The immediate next step, if one is clear. If not, what needs \
+         investigation.\n\n\
+         ## Constraints and preferences\n\
+         Anything the user stated that must persist: conventions, \
+         choices that were settled, things to avoid.\n\n\
+         Write only the document. Do not restate the excerpt; \
+         extract from it. If a section has nothing, write `(none)` \
+         rather than inventing content.\n\n\
+         ## Excerpt\n\n{body}",
+    )
 }
 
 #[async_trait]
@@ -444,13 +565,44 @@ impl CompactionMethod for HandoffMethod {
     fn name(&self) -> &'static str {
         "handoff"
     }
-    fn available(&self, _ctx: &CompactionContext<'_>) -> bool {
-        true
+
+    fn available(&self, ctx: &CompactionContext<'_>) -> bool {
+        ctx.provider.is_some() && ctx.transcript.len() >= MIN_HANDOFF_MESSAGES
     }
-    async fn run(&self, _ctx: &CompactionContext<'_>) -> MethodOutcome {
-        MethodOutcome::Unavailable(
-            "handoff summarization is not yet wired into the engine".to_string(),
-        )
+
+    async fn run(&self, ctx: &CompactionContext<'_>) -> MethodOutcome {
+        let Some(handle) = ctx.provider.as_ref() else {
+            return MethodOutcome::Unavailable(
+                "no provider installed; handoff needs one LLM call".to_string(),
+            );
+        };
+        if ctx.transcript.len() < MIN_HANDOFF_MESSAGES {
+            return MethodOutcome::Unavailable(format!(
+                "transcript has {} messages; handoff needs at least {}",
+                ctx.transcript.len(),
+                MIN_HANDOFF_MESSAGES,
+            ));
+        }
+
+        // The older half is what gets replaced. The split preserves
+        // the working set (newer messages) unchanged, which is the
+        // whole point of doing a handoff rather than a full summary.
+        let split = ctx.transcript.len() / 2;
+        let dropped = &ctx.transcript[..split];
+        let prompt = build_handoff_prompt(dropped);
+
+        match handle.provider.generate(&prompt, &handle.options).await {
+            Ok(text) if !text.trim().is_empty() => MethodOutcome::Plan(CompactionPlan::Summary {
+                covers_through: split - 1,
+                text: text.trim().to_string(),
+            }),
+            Ok(_) => MethodOutcome::Failed(
+                "handoff call returned empty; falling through to the next method".to_string(),
+            ),
+            Err(e) => MethodOutcome::Failed(format!(
+                "handoff call failed: {e}; falling through to the next method",
+            )),
+        }
     }
 }
 
@@ -536,6 +688,9 @@ mod tests {
             window_tokens: 200_000,
             suffix_tokens_after: estimator,
             prefix_is_warm: false,
+            // Tests that exercise shake/prune do not need a provider.
+            // A test that exercises `handoff` supplies one.
+            provider: None,
         }
     }
 
@@ -672,6 +827,7 @@ mod tests {
         let out = d.compact(&ctx(&t, &est)).await;
         assert_eq!(out.method, Some("second"));
         assert_eq!(out.notices.len(), 1);
+        assert_eq!(out.notices.len(), 1);
         assert!(out.notices[0].contains("first"));
         assert!(out.notices[0].contains("not wired"));
     }
@@ -695,6 +851,7 @@ mod tests {
         let est = big_suffix();
         let out = d.compact(&ctx(&t, &est)).await;
         assert_eq!(out.method, Some("second"));
+        assert_eq!(out.notices.len(), 1);
         assert_eq!(out.notices.len(), 1);
         assert!(out.notices[0].contains("first"));
         assert!(out.notices[0].contains("falling through"));
@@ -900,11 +1057,19 @@ mod tests {
     #[tokio::test]
     async fn the_default_ladder_falls_through_to_shake() {
         // The ladder is [remote, snapcompact, handoff, shake, soft].
-        // The dispatcher stops at the first plan; shake produces one,
-        // so exactly three stubs run before it — remote, snapcompact,
-        // handoff. Soft is behind shake and is never reached. A test
-        // asserting four notices (as an earlier version of this one
-        // did) is off-by-one about the ladder's own ordering.
+        // The dispatcher stops at the first plan; shake produces one.
+        //
+        // `remote` and `snapcompact` are stubs whose `available()`
+        // returns true, so each produces a notice. `handoff` is real
+        // and its `available()` requires a provider — this test
+        // builds a context with none, so it is skipped *without a
+        // notice* (availability, not failure). `soft` is behind
+        // shake and never runs.
+        //
+        // Net: two notices before shake. A previous version of this
+        // test expected three, because handoff was a stub with
+        // `available() = true`; making handoff real changed its
+        // availability semantics.
         let big = "x".repeat(100_000);
         let content = format!("```\n{big}\n```");
         let transcript = vec![user(&content)];
@@ -920,15 +1085,20 @@ mod tests {
         assert!(matches!(out.plan, Some(CompactionPlan::Shake(_))));
         assert_eq!(
             out.notices.len(),
-            3,
-            "three stubs precede shake; got: {:?}",
+            2,
+            "two stubs precede shake (handoff is unavailable without a \
+             provider, not failed); got: {:?}",
             out.notices,
         );
-        // The three notices name the three stubs before shake, in
-        // order. `soft` is not among them — it is behind shake.
+        // The two notices name the two stubs before shake, in order.
         assert!(out.notices[0].contains("remote"));
         assert!(out.notices[1].contains("snapcompact"));
-        assert!(out.notices[2].contains("handoff"));
+        assert!(
+            !out.notices.iter().any(|n| n.contains("handoff")),
+            "an unavailable (not failed) method does not produce a \
+             notice: {:?}",
+            out.notices,
+        );
         assert!(
             !out.notices.iter().any(|n| n.contains("`soft`")),
             "soft is behind shake and must not have run: {:?}",
