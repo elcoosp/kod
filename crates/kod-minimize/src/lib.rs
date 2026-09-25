@@ -261,6 +261,10 @@ pub const BUILTIN_DEFS: &[(&str, &str)] = &[
         include_str!("../defs/cargo-check.toml"),
     ),
     (
+        "cargo-check-json.toml",
+        include_str!("../defs/cargo-check-json.toml"),
+    ),
+    (
         "cargo-test.toml",
         include_str!("../defs/cargo-test.toml"),
     ),

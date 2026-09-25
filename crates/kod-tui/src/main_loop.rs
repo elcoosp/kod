@@ -5808,6 +5808,16 @@ fn format_entry_one_line(entry: &kod_core::session_log::SessionEntry) -> String 
             retrieved.len(),
             referenced.len(),
         ),
+        SessionEntry::SessionInit {
+            holder,
+            endpoint,
+            model,
+            tool_names,
+            ..
+        } => format!(
+            "  {holder:>8}  init     {endpoint}/{model} ({} tools)",
+            tool_names.len(),
+        ),
     }
 }
 

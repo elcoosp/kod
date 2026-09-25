@@ -1,0 +1,37 @@
+schema_version = 1
+id = "cargo-check-json"
+program = "cargo"
+subcommands = ["check"]
+
+# The native `cargo-json` filter parses NDJSON rather than rewriting
+# lines. It only applies to a command that asked cargo for JSON
+# output; a def whose stages expect JSON on a plain-text run would
+# fall through to the raw text.
+#
+# The filter has no configurable stages — the whole transformation
+# is one Rust function. A def that wanted to combine it with a
+# `max_lines` cap would add a second stage.
+stages = [
+    { kind = "native", filter = "cargo-json" },
+    { kind = "max_lines", n = 60 },
+]
+
+[[tests]]
+name = "extracts_diagnostics_from_ndjson"
+raw = """
+{"reason":"compiler-artifact","target":{"name":"my-crate"}}
+{"reason":"compiler-message","message":{"level":"error","message":"mismatched types","code":{"code":"E0308"},"spans":[{"file_name":"src/main.rs","line_start":5,"column_start":5,"is_primary":true}]}}
+{"reason":"build-finished","success":false}
+"""
+
+[[tests.checks]]
+kind = "contains"
+value = "error[E0308]"
+
+[[tests.checks]]
+kind = "contains"
+value = "src/main.rs:5:5"
+
+[[tests.checks]]
+kind = "not_contains"
+value = "compiler-artifact"
