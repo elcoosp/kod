@@ -574,12 +574,57 @@ impl CompactionMethod for RemoteMethod {
     }
 }
 
-/// Bitmap-frame imaging (`snapcompact`).
+/// Bitmap-frame imaging (`snapcompact`): rasterize the older half of
+/// the transcript into a PNG a vision model reads for far fewer
+/// tokens than the raw text.
+///
+/// # Availability
+///
+/// Requires a provider whose `capabilities().vision` is true. A
+/// text-only provider would receive an image block it cannot
+/// interpret — worse than the text it replaced.
+///
+/// # Savings margin
+///
+/// The design's `SAVINGS_MARGIN = 0.9`: the rasterized frame must be
+/// at least 10% cheaper in tokens than the text it replaces, or the
+/// method declines. The frame token estimate is the design's
+/// `FRAME_TOKEN_ESTIMATE`; the text estimate is the transcript's
+/// char count over the 4-chars-per-token convention. Below the
+/// margin the method returns `NoChange` and the dispatcher falls
+/// through.
+///
+/// # What this renders
+///
+/// The older half (`len / 2`), matching the handoff method's split.
+/// A single frame per the plan shape: a transcript past the canvas
+/// limit produces `NoChange` rather than a truncated frame — the
+/// rasterizer refuses too-large input and the method honours that.
 pub struct SnapcompactMethod;
 
+/// The design's per-frame token estimate. A 1568×1568 PNG of text
+/// bills at roughly this many tokens regardless of how much text it
+/// holds, which is what makes the compression real.
+pub const FRAME_TOKEN_ESTIMATE: u64 = 5_024;
+
+/// The design's savings margin. Rasterizing is only a win when the
+/// frame is meaningfully cheaper than the text.
+pub const SAVINGS_MARGIN: f64 = 0.9;
+
 impl SnapcompactMethod {
-    pub fn stub() -> Self {
+    pub fn new() -> Self {
         Self
+    }
+
+    /// Alias, preserved for the stub-era registration.
+    pub fn stub() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for SnapcompactMethod {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -588,13 +633,71 @@ impl CompactionMethod for SnapcompactMethod {
     fn name(&self) -> &'static str {
         "snapcompact"
     }
-    fn available(&self, _ctx: &CompactionContext<'_>) -> bool {
-        true
+
+    fn available(&self, ctx: &CompactionContext<'_>) -> bool {
+        match ctx.provider.as_ref() {
+            Some(h) => {
+                h.provider.capabilities().vision
+                    && ctx.transcript.len() >= MIN_REMOTE_MESSAGES
+            }
+            None => false,
+        }
     }
-    async fn run(&self, _ctx: &CompactionContext<'_>) -> MethodOutcome {
-        MethodOutcome::Unavailable(
-            "snapcompact needs a rasterizer that is not yet part of the workspace".to_string(),
-        )
+
+    async fn run(&self, ctx: &CompactionContext<'_>) -> MethodOutcome {
+        let Some(handle) = ctx.provider.as_ref() else {
+            return MethodOutcome::Unavailable(
+                "no provider installed; snapcompact needs a vision provider".to_string(),
+            );
+        };
+        if !handle.provider.capabilities().vision {
+            return MethodOutcome::Unavailable(
+                "provider does not have the vision capability".to_string(),
+            );
+        }
+        if ctx.transcript.len() < MIN_REMOTE_MESSAGES {
+            return MethodOutcome::Unavailable(format!(
+                "transcript has {} messages; snapcompact needs at least {}",
+                ctx.transcript.len(),
+                MIN_REMOTE_MESSAGES,
+            ));
+        }
+
+        // Older half, same split as handoff.
+        let split = ctx.transcript.len() / 2;
+        let dropped = &ctx.transcript[..split];
+        let text: String = dropped
+            .iter()
+            .map(|m| m.render_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Savings margin. The text token estimate is the transcript
+        // convention (chars / 4); the frame estimate is the design's
+        // constant. Below the margin the frame is not worth it.
+        let text_tokens = (text.len() as u64) / 4;
+        if text_tokens == 0 {
+            return MethodOutcome::NoChange;
+        }
+        let frame_estimate = FRAME_TOKEN_ESTIMATE;
+        let ratio = frame_estimate as f64 / text_tokens as f64;
+        if ratio >= SAVINGS_MARGIN {
+            return MethodOutcome::NoChange;
+        }
+
+        match crate::snapcompact::rasterize_to_png(&text) {
+            Ok(png) => {
+                let source_lines = text.lines().count();
+                let base64 = crate::snapcompact::base64_encode(&png);
+                MethodOutcome::Plan(CompactionPlan::Image {
+                    covers_through: split.saturating_sub(1),
+                    png_base64: base64,
+                    source_lines,
+                })
+            }
+            Err(crate::snapcompact::RasterizeError::Empty) => MethodOutcome::NoChange,
+            Err(e) => MethodOutcome::Failed(format!("snapcompact rasterize failed: {e}")),
+        }
     }
 }
 
@@ -1152,26 +1255,14 @@ mod tests {
 
     #[tokio::test]
     async fn every_remaining_stub_reports_unavailable_with_a_named_reason() {
-        // Only two rungs are still stubs: `snapcompact` (needs a
-        // rasterizer) and `soft` (needs a summarizer pipeline).
-        // `remote` and `handoff` are real methods now; their
-        // availability and run semantics are exercised separately
-        // (`real_methods_are_unavailable_without_a_provider` below).
+        // Only `soft` is still a stub. `remote`, `handoff`, and
+        // `snapcompact` are real methods now; their availability and
+        // run semantics are exercised separately (see
+        // `real_methods_are_unavailable_without_a_provider` below and
+        // the snapcompact tests in `snapcompact.rs`).
         let transcript: Vec<ChatMessage> = Vec::new();
         let est = big_suffix();
         let c = ctx(&transcript, &est);
-
-        let snap = SnapcompactMethod::stub();
-        assert!(snap.available(&c));
-        match snap.run(&c).await {
-            MethodOutcome::Unavailable(reason) => {
-                assert!(reason.contains("rasterizer"), "got: {reason}");
-            }
-            other => panic!(
-                "snapcompact should be unavailable, got {}",
-                variant_name(&other),
-            ),
-        }
 
         let soft = SoftMethod::stub();
         assert!(soft.available(&c));
@@ -1185,14 +1276,32 @@ mod tests {
 
     #[tokio::test]
     async fn real_methods_are_unavailable_without_a_provider() {
-        // `remote` and `handoff` are real methods whose
-        // `available()` gates on a provider handle. A context with
-        // no provider must report `Unavailable` from both, and the
-        // reason must name the missing provider rather than the
+        // `remote`, `handoff`, and `snapcompact` are real methods
+        // whose `available()` gates on a provider handle. A context
+        // with no provider must report `Unavailable` from each, and
+        // the reason must name the missing provider rather than the
         // missing wire support the stub-era messages referenced.
         let transcript: Vec<ChatMessage> = Vec::new();
         let est = big_suffix();
         let c = ctx(&transcript, &est);
+
+        let snap = SnapcompactMethod::new();
+        assert!(
+            !snap.available(&c),
+            "snapcompact without a provider is not available",
+        );
+        match snap.run(&c).await {
+            MethodOutcome::Unavailable(reason) => {
+                assert!(
+                    reason.contains("provider"),
+                    "snapcompact reason should name the missing provider: {reason}",
+                );
+            }
+            other => panic!(
+                "snapcompact should be unavailable, got {}",
+                variant_name(&other),
+            ),
+        }
 
         let remote = RemoteMethod::new();
         assert!(
@@ -1230,16 +1339,15 @@ mod tests {
         // The ladder is [remote, snapcompact, handoff, shake, soft].
         // The dispatcher stops at the first plan; shake produces one.
         //
-        // `remote` and `handoff` are real methods whose
-        // `available()` gates on a provider handle. This test builds
-        // a context with none, so both are skipped *without a
-        // notice* (availability, not failure).
+        // Every rung before shake is now a real method whose
+        // `available()` gates on a provider handle — `remote`,
+        // `snapcompact` (also needs vision), and `handoff`. This
+        // test builds a context with no provider, so all three are
+        // skipped *without a notice* (availability, not failure).
         //
-        // `snapcompact` is the only remaining `available() = true`
-        // stub before shake, so it is the only notice. `soft` is
-        // behind shake and never runs.
+        // `soft` is behind shake and never runs.
         //
-        // Net: one notice before shake.
+        // Net: no notices before shake.
         let big = "x".repeat(100_000);
         let content = format!("```\n{big}\n```");
         let transcript = vec![user(&content)];
@@ -1255,17 +1363,21 @@ mod tests {
         assert!(matches!(out.plan, Some(CompactionPlan::Shake(_))));
         assert_eq!(
             out.notices.len(),
-            1,
-            "only snapcompact is still an available()=true stub before \
-             shake; remote and handoff gate on a provider and are \
-             skipped silently; got: {:?}",
+            0,
+            "every rung before shake gates on a provider now \
+             (remote, snapcompact, handoff), so none produces a \
+             notice when the context has none; got: {:?}",
             out.notices,
         );
-        // The remaining notice names snapcompact.
-        assert!(out.notices[0].contains("snapcompact"));
         assert!(
             !out.notices.iter().any(|n| n.contains("remote")),
             "remote without a provider is unavailable, not failed — no \
+             notice: {:?}",
+            out.notices,
+        );
+        assert!(
+            !out.notices.iter().any(|n| n.contains("snapcompact")),
+            "snapcompact without a vision provider is unavailable — no \
              notice: {:?}",
             out.notices,
         );
