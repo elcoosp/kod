@@ -56,7 +56,6 @@
 //!   an interrupt pre-empts) is the caller's turn loop.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::Mutex;
@@ -380,6 +379,7 @@ impl Default for IrcBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn a_send_to_a_live_receiver_is_injected() {
