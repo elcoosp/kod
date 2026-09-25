@@ -8341,6 +8341,10 @@ pub(crate) fn filter_chain_by_trust(
             // options and model are constant for the turn.
             // Tier 1.3 — redact before grounding. No-op by default.
             let _ = self.redact_messages_for_prompt(messages);
+            // Delta §4.5: rasterize large text tool results before
+            // the request is built. No-op when the provider has no
+            // vision capability or no result crosses the threshold.
+            self.inline_image_tool_results(messages).await;
 
             let req = self.build_grounded_request(
                 round.holder,
@@ -8596,6 +8600,8 @@ pub(crate) fn filter_chain_by_trust(
             // provider sees them. No-op when `[security.redact]
             // in_prompt = false` (the default).
             let _ = self.redact_messages_for_prompt(messages);
+            // Delta §4.5: rasterize large text tool results.
+            self.inline_image_tool_results(messages).await;
 
             // Rebuild a RoundContext for this round so the
             // effective model_ref is visible to the grounded
