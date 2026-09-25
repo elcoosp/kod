@@ -4000,6 +4000,39 @@ impl KodEngine {
             .cloned()
     }
 
+    /// Delta §11.6: the current goal, if any. A UI readout.
+    pub async fn current_goal(&self) -> Option<crate::goals::Goal> {
+        self.goal_runtime.read().await.current().cloned()
+    }
+
+    /// Delta §11.6: pause the active goal.
+    pub async fn pause_goal(&self) {
+        self.goal_runtime.write().await.pause();
+    }
+
+    /// Delta §11.6: resume a paused goal.
+    pub async fn resume_goal(&self) {
+        self.goal_runtime.write().await.resume();
+    }
+
+    /// Delta §11.6: drop the active goal.
+    pub async fn drop_goal(&self) {
+        self.goal_runtime.write().await.drop_current();
+    }
+
+    /// Delta §11.6: set a token budget on the active goal. Returns
+    /// `false` when there is no goal to attach it to.
+    pub async fn set_goal_token_budget(&self, tokens: u64) -> bool {
+        let mut rt = self.goal_runtime.write().await;
+        match rt.current_mut() {
+            Some(g) => {
+                g.token_budget = Some(tokens);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Delta §14.1: replace every registered secret in `text` with
     /// its placeholder. No-op when no vault is installed.
     pub async fn obfuscate_secrets(&self, text: &str) -> String {
