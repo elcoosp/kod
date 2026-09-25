@@ -26,6 +26,7 @@ pub mod doctor;
 pub mod advisor_tools;
 pub mod engine;
 pub mod goals;
+pub mod async_delivery;
 pub mod speculation;
 pub mod snapcompact;
 pub mod fixture;
