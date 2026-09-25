@@ -8698,28 +8698,27 @@ pub(crate) fn filter_chain_by_trust(
     ///   shows the steer in the exact position the pre-migration
     ///   path would have placed it, which is what users have learned
     ///   to read.
-    /// Delta §11.4: drain every owner's batched async-result message
-    /// into the transcript's steer queue. Called at a round boundary;
-    /// a no-op when nothing is queued.
-    async fn drain_async_results(&self, holder: &str) {
-        let msg = {
-            let mut d = self.async_delivery.lock();
-            d.drain(holder)
-        };
-        if let Some(m) = msg {
-            let mut q = self.steers.write().await;
-            q.entry(holder.to_string())
-                .or_default()
-                .push(crate::steer::SoftInterrupt::background(m));
-        }
-    }
-
     async fn apply_steers(
         &self,
         pending: &mut String,
         messages: &mut Vec<kod_types::ChatMessage>,
         key: &str,
     ) {
+        // Delta §11.4: fold any batched async-job results into the
+        // steer queue before draining it. The queue is owner-routed
+        // and epoch-guarded; a result whose session moved on was
+        // already dropped. Doing this here means every round boundary
+        // that already applies steers also picks up finished-job
+        // results, with no second call site to forget.
+        {
+            let msg = self.async_delivery.lock().drain(key);
+            if let Some(m) = msg {
+                let mut q = self.steers.write().await;
+                q.entry(key.to_string())
+                    .or_default()
+                    .push(crate::steer::SoftInterrupt::background(m));
+            }
+        }
         for interrupt in self.take_steers_for(key).await {
             // The header is `SoftInterrupt::render`'s job now. For a
             // User-source interrupt the rendered text is byte-identical
