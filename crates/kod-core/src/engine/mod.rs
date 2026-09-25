@@ -2757,10 +2757,44 @@ impl KodEngine {
                     }
                 }
             }
-            CompactionPlan::Summary { .. } => {
-                // Not produced by try_mechanical_compaction. Left as
-                // an explicit arm so a future Summary-producing rung
-                // fails loudly here rather than silently no-oping.
+            CompactionPlan::Summary {
+                covers_through,
+                text,
+            } => {
+                // Delta §4.1: the handoff rung produces this plan.
+                // The summary replaces the first `covers_through + 1`
+                // messages: they are the older half the handoff
+                // document stands in for. The newer half (the
+                // working set) is untouched, which is the entire
+                // reason a handoff is preferred to a full summary
+                // when it can be made.
+                //
+                // Clamp: the plan is computed under a read guard and
+                // applied under the write guard, so the transcript
+                // could in principle have shrunk (a concurrent
+                // forget, a session reset). Clamping to
+                // `len - 1` means we never drain more than exists.
+                if turns.is_empty() {
+                    return 0;
+                }
+                let end = (covers_through + 1).min(turns.len());
+                if end == 0 {
+                    return 0;
+                }
+                let dropped: Vec<kod_types::ChatMessage> =
+                    turns.drain(..end).collect();
+                let mut summary_msg = kod_types::ChatMessage::text(
+                    kod_types::MessageId::new(),
+                    kod_types::MessageRole::User,
+                    format!("## Previous Conversation Handoff\n{text}"),
+                    time::OffsetDateTime::now_utc(),
+                );
+                // Pinned: the render path never drops the handoff
+                // for budget reasons — losing it would lose the only
+                // record of what it replaced.
+                summary_msg.metadata.pinned = true;
+                turns.insert(0, summary_msg);
+                affected = dropped.len();
             }
         }
         affected
