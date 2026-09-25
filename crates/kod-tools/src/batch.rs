@@ -82,7 +82,10 @@ impl BatchTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
-                load_mode: Default::default(),
+                // Delta §6: batch is occasional-use with a non-trivial
+                // schema; mount it behind `xd://batch` rather than
+                // paying for the schema on every request.
+                load_mode: kod_types::LoadMode::Discoverable,
             },
             registry,
         }

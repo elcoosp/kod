@@ -167,7 +167,8 @@ impl ReadFileTool {
                 trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "read_file".to_string(),
-                description: "Read a file and return its contents".to_string(),
+                description: "Read a file. Also serves `xd://` (mounted tools), `artifact://`, and `memory://` URLs."
+                    .to_string(),
                 category: ToolCategory::FileSystem,
                 parameters_schema: serde_json::json!({
                     "type": "object",
@@ -416,7 +417,8 @@ impl WriteFileTool {
                 trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "write_file".to_string(),
-                description: "Write content to a file".to_string(),
+                description: "Write content to a file. `write xd://<tool>` runs a mounted tool."
+                    .to_string(),
                 category: ToolCategory::FileSystem,
                 parameters_schema: serde_json::json!({
                     "type": "object",
