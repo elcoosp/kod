@@ -389,3 +389,85 @@ mod tests {
         assert!(j.label().contains("t.jsonl"));
     }
 }
+
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn a_panicking_job_is_marked_failed() {
+        let runner = Arc::new(BackgroundJobRunner::new(4));
+        let id = runner.allocate_id();
+        runner.register(id, JobKind::Shell {
+            command: "boom".to_string(),
+            spool: std::path::PathBuf::from("/tmp/boom.log"),
+        });
+
+        runner.spawn_guarded(id, async {
+            panic!("simulated task panic");
+        });
+
+        // The watcher runs on its own task; give it a moment.
+        for _ in 0..50 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            let snap = runner.snapshot();
+            if let Some((_, state)) = snap.iter().find(|(i, _)| *i == id)
+                && matches!(state.status, JobStatus::Failed { .. })
+            {
+                return; // success
+            }
+        }
+        panic!("job was never marked failed; snapshot: {:?}", runner.snapshot());
+    }
+
+    #[tokio::test]
+    async fn a_job_that_completes_then_panics_keeps_its_completion() {
+        // The watcher must not overwrite a legitimate completion.
+        let runner = Arc::new(BackgroundJobRunner::new(4));
+        let id = runner.allocate_id();
+        runner.register(id, JobKind::Shell {
+            command: "ok".to_string(),
+            spool: std::path::PathBuf::from("/tmp/ok.log"),
+        });
+
+        let r2 = Arc::clone(&runner);
+        runner.spawn_guarded(id, async move {
+            r2.complete(id, "finished".to_string());
+            panic!("cleanup panic after completion");
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let snap = runner.snapshot();
+        let (_, state) = snap.iter().find(|(i, _)| *i == id).expect("job present");
+        assert!(
+            matches!(&state.status, JobStatus::Completed { summary } if summary == "finished"),
+            "completion must be sticky, got: {:?}",
+            state.status,
+        );
+    }
+
+    #[tokio::test]
+    async fn a_clean_job_stays_running_until_it_completes_itself() {
+        let runner = Arc::new(BackgroundJobRunner::new(4));
+        let id = runner.allocate_id();
+        runner.register(id, JobKind::Shell {
+            command: "clean".to_string(),
+            spool: std::path::PathBuf::from("/tmp/clean.log"),
+        });
+
+        let r2 = Arc::clone(&runner);
+        runner.spawn_guarded(id, async move {
+            r2.complete(id, "done".to_string());
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let snap = runner.snapshot();
+        let (_, state) = snap.iter().find(|(i, _)| *i == id).expect("job present");
+        assert!(
+            matches!(&state.status, JobStatus::Completed { summary } if summary == "done"),
+            "got: {:?}",
+            state.status,
+        );
+    }
+}
