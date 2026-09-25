@@ -8121,6 +8121,16 @@ pub(crate) fn filter_chain_by_trust(
                     if calls.is_empty() {
                         break;
                     }
+                    // Delta §14.1: deobfuscate placeholders in each
+                    // tool call's arguments before the tool runs.
+                    // Same pattern as the streaming path; the
+                    // `calls` binding is mutable so the local copy
+                    // carries raw values while the transcript's
+                    // assistant message keeps the placeholder.
+                    let mut calls = calls;
+                    for call in calls.iter_mut() {
+                        let _ = self.deobfuscate_json(&mut call.arguments).await;
+                    }
                     let section = self.run_tool_calls(&calls, round.holder, None).await;
                     // Delta §9.4: check for a repeated tool round and,
                     // if the guard fires, append a corrective System
@@ -8170,6 +8180,16 @@ pub(crate) fn filter_chain_by_trust(
                     append_round_text(&mut final_text, &content);
                     if calls.is_empty() {
                         break;
+                    }
+                    // Delta §14.1: deobfuscate placeholders in each
+                    // tool call's arguments before the tool runs.
+                    // Same pattern as the streaming path; the
+                    // `calls` binding is mutable so the local copy
+                    // carries raw values while the transcript's
+                    // assistant message keeps the placeholder.
+                    let mut calls = calls;
+                    for call in calls.iter_mut() {
+                        let _ = self.deobfuscate_json(&mut call.arguments).await;
                     }
                     let section = self.run_tool_calls(&calls, round.holder, None).await;
                     // Delta §9.4: check for a repeated tool round and,
@@ -8930,22 +8950,18 @@ pub(crate) fn filter_chain_by_trust(
         self.note_tool_surface_fingerprint(key, definitions).await;
 
         // Delta §14.1: obfuscate registered secrets in every string
-        // about to reach the provider. The outbound direction is
-        // where the model's *seeing* a secret is prevented; the
-        // inbound direction (tool-arg deobfuscation) is where the
-        // model's *writing* a placeholder is turned back into the
-        // raw value. Both directions are gated on the same vault:
-        // no vault, no substitution.
+        // about to reach the provider.
         //
-        // The config gate `[security.redact] in_prompt` is honored
-        // here — a user who disabled in-prompt redaction gets the
-        // pre-§14.1 behavior, which is the raw bytes reaching the
-        // provider.
-        let in_prompt_enabled = match kod_config::KodConfig::load_default() {
-            Ok(cfg) => cfg.security.redact.in_prompt,
-            Err(_) => true,
-        };
-        let (system, messages) = if in_prompt_enabled {
+        // The gate is *the vault's presence*, not
+        // `[security.redact] in_prompt`. The two are different
+        // mechanisms with different goals: `in_prompt` runs the
+        // one-way [`kod_types::redact::Redactor`] and replaces a
+        // secret with `[REDACTED:...]`, which the model cannot
+        // round-trip; the vault replaces a secret with a placeholder
+        // the model can work with and the engine reverses. A user
+        // who installed a vault wants the reversible form; a user
+        // who did not gets raw bytes and the pre-§14.1 shape.
+        let (system, messages) = {
             let vault = self.secret_vault.read().await.clone();
             match vault {
                 Some(v) if !v.is_empty() => {
@@ -8970,8 +8986,6 @@ pub(crate) fn filter_chain_by_trust(
                 }
                 _ => (system, messages),
             }
-        } else {
-            (system, messages)
         };
 
         CompletionRequest {
