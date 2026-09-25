@@ -3054,6 +3054,9 @@ impl KodEngine {
         // handler.
         let router = TaskRouter::new(config, db_path)?;
         let router_for_handler = Arc::new(router);
+        // The tool registry is created here (rather than as a struct
+        // literal field) so the xd:// handler below can share it.
+        let tools_for_router: Arc<ToolRegistry> = Arc::new(ToolRegistry::new());
         // Delta §7.5: the artifact store + the protocol router. The
         // handler is stored on the engine so offload sites
         // (`store_artifact`) can write; the router is installed into
@@ -3073,6 +3076,15 @@ impl KodEngine {
         ));
         let protocol_router = protocol_router.register(
             memory_handler as Arc<dyn kod_tools::ProtocolHandler>,
+        );
+        // Delta §6: the `xd://` scheme mounts discoverable tools. It
+        // shares the engine's registry, so a tool demoted from the
+        // tools array is still reachable through read/write.
+        let xd_handler = Arc::new(kod_tools::xd_handler::XdHandler::new(
+            Arc::clone(&tools_for_router),
+        ));
+        let protocol_router = protocol_router.register(
+            xd_handler as Arc<dyn kod_tools::ProtocolHandler>,
         );
         // Delta §5: the minimizer + the artifact-store hook. The
         // hook captures the `Arc<ArtifactHandler>` directly, so it
@@ -3122,7 +3134,7 @@ impl KodEngine {
             current_model: RwLock::new(ModelRef::new("default", "")),
             routing: RwLock::new(None),
             is_running: Arc::new(RwLock::new(false)),
-            tools: Arc::new(ToolRegistry::new()),
+            tools: tools_for_router,
             tool_context,
             artifact_handler,
             lock_table,
