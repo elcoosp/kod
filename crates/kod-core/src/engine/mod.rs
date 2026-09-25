@@ -1279,6 +1279,11 @@ pub struct KodEngine {
     /// hold their own clone to call `pause` / `resume` from the
     /// keybinding layer without going through the engine.
     pause_gate: std::sync::Arc<crate::pause_gate::PauseGate>,
+    /// Delta §11.6: the session's goal runtime. At most one active
+    /// objective, with a token and wall-clock budget. The goal loop
+    /// accounts each turn's usage against it and stops when the
+    /// budget is spent.
+    goal_runtime: RwLock<crate::goals::GoalRuntime>,
     /// Transcripts, one per key. `DEFAULT_TRANSCRIPT_KEY` is the
     /// interactive session; a swarm agent uses `swarm:<agent-id>` so
     /// concurrent agents do not interleave their turns.
@@ -3142,6 +3147,7 @@ impl KodEngine {
             steers: std::sync::Arc::new(RwLock::new(HashMap::new())),
             cancels: parking_lot::RwLock::new(std::collections::HashMap::new()),
             pause_gate: std::sync::Arc::new(crate::pause_gate::PauseGate::new()),
+            goal_runtime: RwLock::new(crate::goals::GoalRuntime::new()),
             history: RwLock::new(HashMap::new()),
             observed_usage: RwLock::new(HashMap::new()),
             context_gauges: RwLock::new(HashMap::new()),
@@ -8184,6 +8190,9 @@ pub(crate) fn filter_chain_by_trust(
         // See process(): clone out of the lock before any long await.
         let _provider_probe = self.registry.read().await.clone();
         if _provider_probe.is_some() {
+            // Delta §11.6: start the goal in the runtime. A second
+            // call replaces any previous goal (status Dropped).
+            self.goal_runtime.write().await.start(goal.to_string());
             // S10 phase 3: same shared pipeline as the other two entry
             // points. The goal path is the one caller that does *not*
             // write a retrieval-log entry (`None`), and the one that
@@ -8348,6 +8357,11 @@ pub(crate) fn filter_chain_by_trust(
                 }
                 let (final_text, calls, results, usage, _retry) =
                     turn_outcome.ok_or_else(|| turn_err.unwrap_or_else(Self::no_provider_error))?;
+                // Delta §11.6: account this turn's usage against the
+                // active goal before merging into the session total.
+                if let Some(u) = usage.as_ref() {
+                    self.goal_runtime.write().await.observe_usage(u);
+                }
                 last_usage = match (last_usage, usage) {
                     (Some(prev), Some(next)) => Some(prev.merge(&next)),
                     (Some(prev), None) => Some(prev),
@@ -8361,6 +8375,35 @@ pub(crate) fn filter_chain_by_trust(
                 tool_calls.extend(calls);
                 tool_results.extend(results);
                 if reply_declares_goal_met(&final_text) {
+                    self.goal_runtime.write().await.complete();
+                    break;
+                }
+                // Delta §11.6: budget check. The runtime flips to
+                // BudgetLimited when either the token or the
+                // wall-clock budget is spent; emit the steer once
+                // and stop the loop.
+                let (status, steer) = {
+                    let mut rt = self.goal_runtime.write().await;
+                    let steer = rt
+                        .current_mut()
+                        .map(|g| g.take_budget_steer())
+                        .unwrap_or(false);
+                    (rt.current().map(|g| g.status), steer)
+                };
+                if steer {
+                    let _ = chunk_tx
+                        .send(
+                            "\n\n[goal budget exhausted — stopping. \
+                             Raise the budget or drop the goal to continue.]\n"
+                                .to_string(),
+                        )
+                        .await;
+                }
+                if status == Some(crate::goals::GoalStatus::BudgetLimited) {
+                    all_text.push_str(
+                        "\n\n(Goal loop stopped — budget exhausted. \
+                         Raise the budget to continue.)",
+                    );
                     break;
                 }
                 if turn == MAX_GOAL_TURNS {
