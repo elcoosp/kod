@@ -3952,6 +3952,21 @@ impl KodEngine {
         }
     }
 
+    /// Delta §11.2: the `SessionInit` a previous run wrote for a
+    /// session log, if the log carries one.
+    ///
+    /// A cold revive reads this to rebuild a subagent's tool surface
+    /// after a restart. Returns `(endpoint, model, tool_names,
+    /// system_prompt_hash)`; the caller compares the fingerprint to
+    /// its own rebuilt surface and refuses the revive when they
+    /// differ.
+    pub fn session_init_from_log(
+        log_path: &std::path::Path,
+        holder: &str,
+    ) -> kod_error::Result<Option<(String, String, Vec<String>, u64)>> {
+        crate::session_log::session_init_for(log_path, holder)
+    }
+
     /// Delta §10: enable or disable speculative reads. On by default.
     pub async fn set_speculative_reads(&self, on: bool) {
         *self.speculative_reads.write().await = on;
@@ -6939,8 +6954,63 @@ pub(crate) fn filter_chain_by_trust(
 
         self.start_memory_consolidation_task().await;
 
+        // Delta §11.2: record what a cold revive needs to rebuild the
+        // session's tool surface. Written once, here, so a restart can
+        // read it back.
+        self.record_session_init().await;
+
         tracing::info!("KOD engine started");
         Ok(())
+    }
+
+    /// Delta §11.2: append a `SessionInit` entry to the session log.
+    ///
+    /// The entry carries the endpoint, model, tool names, and a
+    /// fingerprint of the tool surface + working dir. It is written
+    /// once at `start()`; a caller that resumes a session reads it
+    /// with `session_log::session_init_for`.
+    async fn record_session_init(&self) {
+        let model = self.current_model().await;
+        let defs = self.tools.get_definitions().await;
+        let tool_names: Vec<String> = defs.into_iter().map(|d| d.name).collect();
+        // Fingerprint: the working dir and the sorted tool set. A
+        // config change that adds or removes a tool, or moves the
+        // project, changes the hash — which is exactly the "has the
+        // session's surface drifted" signal a cold revive wants.
+        let mut fingerprint_input = format!("{}\n", self.working_dir.display());
+        let mut sorted = tool_names.clone();
+        sorted.sort();
+        for n in &sorted {
+            fingerprint_input.push_str(n);
+            fingerprint_input.push('\n');
+        }
+        let system_prompt_hash = {
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for b in fingerprint_input.as_bytes() {
+                h ^= *b as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            h
+        };
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let entry = crate::session_log::SessionEntry::SessionInit {
+            timestamp_ms: now_ms,
+            holder: String::new(),
+            endpoint: model.endpoint.clone(),
+            model: model.model.clone(),
+            tool_names,
+            system_prompt_hash,
+        };
+        let guard = self.session_recorder.read();
+        if let Ok(g) = guard
+            && let Some(rec) = g.as_ref()
+            && let Err(e) = rec.record(&entry)
+        {
+            tracing::warn!(error = %e, "could not record session_init");
+        }
     }
 
     /// Spawn the periodic memory-consolidation task (design D2.5).
