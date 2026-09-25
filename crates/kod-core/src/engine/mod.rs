@@ -2668,9 +2668,11 @@ impl KodEngine {
         let provider_handle = match self.current_provider().await {
             Some(p) => {
                 let options = self.generation_defaults.read().await.to_options();
+                let model = self.current_model.read().await.clone();
                 Some(crate::compaction_dispatcher::ProviderHandle {
                     provider: p,
                     options,
+                    model,
                 })
             }
             None => None,

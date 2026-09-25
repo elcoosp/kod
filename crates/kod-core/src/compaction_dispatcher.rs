@@ -116,12 +116,19 @@ pub const DEFAULT_KEEP_RECENT_TOKENS: u64 = 20_000;
 pub struct ProviderHandle {
     pub provider: std::sync::Arc<dyn kod_provider::LlmProvider>,
     pub options: kod_provider::GenerationOptions,
+    /// The model to name in a request built from this handle. The
+    /// `native_compact` call needs a `CompletionRequest`, and a
+    /// `CompletionRequest` names a `ModelRef` — the provider knows
+    /// its own default model, but the *engine* is the one that knows
+    /// which endpoint this turn routed to.
+    pub model: kod_provider::ModelRef,
 }
 
 impl std::fmt::Debug for ProviderHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProviderHandle")
             .field("provider", &self.provider.name())
+            .field("model", &self.model.display())
             .field("options", &self.options)
             .finish()
     }
@@ -409,12 +416,58 @@ impl CompactionMethod for PruneMethod {
 // the notices sees an accurate picture of which rungs are
 // operational.
 
-/// Provider-native compaction (`compact-2026-01-12` on Anthropic).
+/// Provider-native compaction: the API summarizes the prompt and
+/// returns a block the client replays.
+///
+/// # What is wired
+///
+/// The provider is asked to compact via [`LlmProvider::native_compact`].
+/// When it returns a `NativeCompaction`, the plain-text `summary` is
+/// returned as a `CompactionPlan::Summary` — the older half of the
+/// transcript is replaced by the summary in kod's view.
+///
+/// # What is not wired (yet)
+///
+/// The encrypted block itself is not stored and not replayed. The
+/// server-side compaction is therefore a one-shot: the summary
+/// replaces the older half locally, but the *next* request does not
+/// carry the encrypted block, so the server re-reads the newer
+/// transcript without the pre-computed KV reuse the block would
+/// allow. The local reduction is still real, and the summary is
+/// what kod would send anyway. Replay is the follow-up commit: the
+/// wire layer already has `prepend_compaction_block`, and the
+/// storage is a per-transcript `String` map on the engine.
+///
+/// # When this is not available
+///
+/// * No provider in the context.
+/// * `capabilities().native_compaction == false`.
+/// * Fewer than [`MIN_REMOTE_MESSAGES`] messages.
+///
+/// All three produce `Unavailable`, not `Failed`, and the dispatcher
+/// falls through without a user notice. A provider that does not
+/// implement the feature is not a failure.
 pub struct RemoteMethod;
 
+/// Below this, the compaction call has nothing meaningful to
+/// summarize. Matches the handoff method's floor, for the same
+/// reason: one LLM round trip costs more than the tokens saved.
+pub const MIN_REMOTE_MESSAGES: usize = 4;
+
 impl RemoteMethod {
-    pub fn stub() -> Self {
+    pub fn new() -> Self {
         Self
+    }
+
+    /// Alias, preserved for the stub-era registration.
+    pub fn stub() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for RemoteMethod {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -423,15 +476,68 @@ impl CompactionMethod for RemoteMethod {
     fn name(&self) -> &'static str {
         "remote"
     }
-    fn available(&self, _ctx: &CompactionContext<'_>) -> bool {
-        // The method is registered but the wire-layer support does
-        // not exist yet; the `run` body reports why.
-        true
+
+    fn available(&self, ctx: &CompactionContext<'_>) -> bool {
+        match ctx.provider.as_ref() {
+            Some(h) => {
+                h.provider.capabilities().native_compaction
+                    && ctx.transcript.len() >= MIN_REMOTE_MESSAGES
+            }
+            None => false,
+        }
     }
-    async fn run(&self, _ctx: &CompactionContext<'_>) -> MethodOutcome {
-        MethodOutcome::Unavailable(
-            "provider-native compaction is not wired in kod-provider-anthropic".to_string(),
-        )
+
+    async fn run(&self, ctx: &CompactionContext<'_>) -> MethodOutcome {
+        let Some(handle) = ctx.provider.as_ref() else {
+            return MethodOutcome::Unavailable(
+                "no provider installed; provider-native compaction needs one".to_string(),
+            );
+        };
+        if !handle.provider.capabilities().native_compaction {
+            return MethodOutcome::Unavailable(
+                "provider does not implement native compaction".to_string(),
+            );
+        }
+        if ctx.transcript.len() < MIN_REMOTE_MESSAGES {
+            return MethodOutcome::Unavailable(format!(
+                "transcript has {} messages; native compaction needs at least {}",
+                ctx.transcript.len(),
+                MIN_REMOTE_MESSAGES,
+            ));
+        }
+
+        // Build the completion request the same shape `complete`
+        // takes. Empty system prompt: the compaction request's job
+        // is the transcript, and the server-side summarizer is
+        // instructed by the API itself. No tools: a summarization
+        // request that could call a tool would be a bug.
+        let mut req = kod_provider::request::CompletionRequest::new(handle.model.clone());
+        req.system = kod_provider::request::SystemPrompt::new();
+        req.messages = ctx.transcript.to_vec();
+        req.tools = Vec::new();
+        req.options = handle.options.clone();
+        // No transcript marker: this is not a turn, it is a
+        // summarization. A `cache_control` marker on the transcript
+        // would be silently wrong.
+        req.cache_transcript = false;
+
+        match handle.provider.native_compact(&req).await {
+            Ok(Some(compaction)) => {
+                // The server compacted whatever it saw; in kod's
+                // view the whole transcript is covered. The apply
+                // step clamps to the live length, so `len - 1` here
+                // means "everything that was sent".
+                let covers_through = ctx.transcript.len().saturating_sub(1);
+                MethodOutcome::Plan(CompactionPlan::Summary {
+                    covers_through,
+                    text: compaction.summary,
+                })
+            }
+            Ok(None) => MethodOutcome::NoChange,
+            Err(e) => MethodOutcome::Failed(format!(
+                "provider-native compaction failed: {e}",
+            )),
+        }
     }
 }
 
@@ -1012,40 +1118,30 @@ mod tests {
     // ---- Stub availability ----------------------------------------------
 
     #[tokio::test]
-    async fn every_stub_reports_unavailable_with_a_named_reason() {
+    async fn every_remaining_stub_reports_unavailable_with_a_named_reason() {
+        // Only two rungs are still stubs: `snapcompact` (needs a
+        // rasterizer) and `soft` (needs a summarizer pipeline).
+        // `remote` and `handoff` are real methods now; their
+        // availability and run semantics are exercised separately
+        // (`real_methods_are_unavailable_without_a_provider` below).
         let transcript: Vec<ChatMessage> = Vec::new();
         let est = big_suffix();
         let c = ctx(&transcript, &est);
 
-        let remote = RemoteMethod::stub();
-        assert!(remote.available(&c));
-        match remote.run(&c).await {
-            MethodOutcome::Unavailable(reason) => {
-                assert!(
-                    reason.contains("anthropic"),
-                    "remote reason should name the missing wire support: {reason}",
-                );
-            }
-            other => panic!("remote should be unavailable, got {}", variant_name(&other)),
-        }
-
         let snap = SnapcompactMethod::stub();
+        assert!(snap.available(&c));
         match snap.run(&c).await {
             MethodOutcome::Unavailable(reason) => {
                 assert!(reason.contains("rasterizer"), "got: {reason}");
             }
-            other => panic!("snapcompact should be unavailable, got {}", variant_name(&other)),
-        }
-
-        let handoff = HandoffMethod::stub();
-        match handoff.run(&c).await {
-            MethodOutcome::Unavailable(reason) => {
-                assert!(reason.contains("handoff"), "got: {reason}");
-            }
-            other => panic!("handoff should be unavailable, got {}", variant_name(&other)),
+            other => panic!(
+                "snapcompact should be unavailable, got {}",
+                variant_name(&other),
+            ),
         }
 
         let soft = SoftMethod::stub();
+        assert!(soft.available(&c));
         match soft.run(&c).await {
             MethodOutcome::Unavailable(reason) => {
                 assert!(reason.contains("soft"), "got: {reason}");
@@ -1055,21 +1151,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn real_methods_are_unavailable_without_a_provider() {
+        // `remote` and `handoff` are real methods whose
+        // `available()` gates on a provider handle. A context with
+        // no provider must report `Unavailable` from both, and the
+        // reason must name the missing provider rather than the
+        // missing wire support the stub-era messages referenced.
+        let transcript: Vec<ChatMessage> = Vec::new();
+        let est = big_suffix();
+        let c = ctx(&transcript, &est);
+
+        let remote = RemoteMethod::new();
+        assert!(
+            !remote.available(&c),
+            "remote without a provider is not available",
+        );
+        match remote.run(&c).await {
+            MethodOutcome::Unavailable(reason) => {
+                assert!(
+                    reason.contains("provider"),
+                    "remote reason should name the missing provider: {reason}",
+                );
+            }
+            other => panic!("remote should be unavailable, got {}", variant_name(&other)),
+        }
+
+        let handoff = HandoffMethod::new();
+        assert!(
+            !handoff.available(&c),
+            "handoff without a provider is not available",
+        );
+        match handoff.run(&c).await {
+            MethodOutcome::Unavailable(reason) => {
+                assert!(
+                    reason.contains("provider"),
+                    "handoff reason should name the missing provider: {reason}",
+                );
+            }
+            other => panic!("handoff should be unavailable, got {}", variant_name(&other)),
+        }
+    }
+
+    #[tokio::test]
     async fn the_default_ladder_falls_through_to_shake() {
         // The ladder is [remote, snapcompact, handoff, shake, soft].
         // The dispatcher stops at the first plan; shake produces one.
         //
-        // `remote` and `snapcompact` are stubs whose `available()`
-        // returns true, so each produces a notice. `handoff` is real
-        // and its `available()` requires a provider — this test
-        // builds a context with none, so it is skipped *without a
-        // notice* (availability, not failure). `soft` is behind
-        // shake and never runs.
+        // `remote` and `handoff` are real methods whose
+        // `available()` gates on a provider handle. This test builds
+        // a context with none, so both are skipped *without a
+        // notice* (availability, not failure).
         //
-        // Net: two notices before shake. A previous version of this
-        // test expected three, because handoff was a stub with
-        // `available() = true`; making handoff real changed its
-        // availability semantics.
+        // `snapcompact` is the only remaining `available() = true`
+        // stub before shake, so it is the only notice. `soft` is
+        // behind shake and never runs.
+        //
+        // Net: one notice before shake.
         let big = "x".repeat(100_000);
         let content = format!("```\n{big}\n```");
         let transcript = vec![user(&content)];
@@ -1085,14 +1222,20 @@ mod tests {
         assert!(matches!(out.plan, Some(CompactionPlan::Shake(_))));
         assert_eq!(
             out.notices.len(),
-            2,
-            "two stubs precede shake (handoff is unavailable without a \
-             provider, not failed); got: {:?}",
+            1,
+            "only snapcompact is still an available()=true stub before \
+             shake; remote and handoff gate on a provider and are \
+             skipped silently; got: {:?}",
             out.notices,
         );
-        // The two notices name the two stubs before shake, in order.
-        assert!(out.notices[0].contains("remote"));
-        assert!(out.notices[1].contains("snapcompact"));
+        // The remaining notice names snapcompact.
+        assert!(out.notices[0].contains("snapcompact"));
+        assert!(
+            !out.notices.iter().any(|n| n.contains("remote")),
+            "remote without a provider is unavailable, not failed — no \
+             notice: {:?}",
+            out.notices,
+        );
         assert!(
             !out.notices.iter().any(|n| n.contains("handoff")),
             "an unavailable (not failed) method does not produce a \
