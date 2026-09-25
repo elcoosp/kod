@@ -245,6 +245,9 @@ impl LlmProvider for AnthropicProvider {
             embeddings: false,
             streaming_tools: true,
             pricing: None,
+            // Delta §4.4: Anthropic implements the
+            // `compact-2026-01-12` beta.
+            native_compaction: true,
         }
     }
 
@@ -329,6 +332,48 @@ impl LlmProvider for AnthropicProvider {
             .await
             .map_err(|e| KodError::Provider(format!("anthropic: invalid JSON: {e}")))?;
         parse_response(&parsed)
+    }
+
+    /// Delta §4.4: the `compact-2026-01-12` beta call.
+    ///
+    /// Same shape as `complete` — POST to `/v1/messages` — with two
+    /// differences: the body carries `pause_after_compaction: true`
+    /// (built by `wire::build_compaction_body`) and the request
+    /// carries the beta header. The response is parsed for a
+    /// compaction block instead of a normal message.
+    ///
+    /// Returns `Ok(None)` when the server answered normally without a
+    /// compaction block. That is not an error — it means the request
+    /// was under the API's 50k-token floor, or the server chose not
+    /// to compact. The dispatcher treats `None` as "no plan, fall
+    /// through", which is the correct behaviour.
+    async fn native_compact(
+        &self,
+        req: &CompletionRequest,
+    ) -> Result<Option<kod_provider::NativeCompaction>> {
+        let body = crate::wire::build_compaction_body(req);
+        let url = format!("{}/messages", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("anthropic-beta", crate::wire::ANTHROPIC_COMPACTION_BETA)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                KodError::Provider(format!("anthropic native_compact: POST {url}: {e}"))
+            })?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(KodError::provider_status(status.as_u16(), &text));
+        }
+        let parsed: serde_json::Value = resp.json().await.map_err(|e| {
+            KodError::Provider(format!("anthropic native_compact: invalid JSON: {e}"))
+        })?;
+        Ok(crate::wire::parse_compaction_block(&parsed))
     }
 
     async fn generate(&self, prompt: &str, options: &GenerationOptions) -> Result<String> {

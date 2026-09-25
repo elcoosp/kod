@@ -3,6 +3,7 @@
 //! This crate defines the traits and types that all LLM providers must implement.
 
 pub mod concurrency;
+pub mod native_compaction;
 pub mod judgment;
 pub mod registry;
 pub mod replay;
@@ -23,6 +24,7 @@ pub use request::{
     CompletionRequest, ModelPricing, ModelRef, PromptCacheKind, ProviderCapabilities, SystemPrompt,
     SystemSegment,
 };
+pub use native_compaction::NativeCompaction;
 pub use traits::{GenerationOptions, LlmProvider, ModelInfo};
 pub use types::*;
 pub mod effort;

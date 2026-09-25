@@ -181,6 +181,11 @@ pub struct ProviderCapabilities {
     /// cost accounting reads this; absence disables the `$` display
     /// rather than showing a guess.
     pub pricing: Option<ModelPricing>,
+    /// Delta §4.4: `true` when the provider implements server-side
+    /// compaction — the `remote` rung of the compaction dispatcher.
+    /// Anthropic's `compact-2026-01-12` beta is the one provider
+    /// that does today.
+    pub native_compaction: bool,
 }
 
 impl ProviderCapabilities {
@@ -195,6 +200,7 @@ impl ProviderCapabilities {
             embeddings: false,
             streaming_tools: false,
             pricing: None,
+            native_compaction: false,
         }
     }
 }

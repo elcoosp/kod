@@ -1673,15 +1673,10 @@ pub const ANTHROPIC_COMPACTION_MIN_TRIGGER_TOKENS: u64 = 50_000;
 /// compaction summary for any provider that cannot consume the
 /// encrypted block (and shown in the TUI so a user can see what
 /// the compaction actually preserved).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NativeCompaction {
-    /// Opaque token to prepend to the next request's first user
-    /// message. Anthropic drops every message before the block.
-    pub encrypted_content: String,
-    /// The human-readable summary text. Same content the server
-    /// would use internally.
-    pub summary: String,
-}
+/// Re-exported from `kod-provider`: the same type the trait method
+/// returns. The wire layer builds and parses it; the engine stores
+/// it. One definition, two crates.
+pub use kod_provider::NativeCompaction;
 
 /// Build the body for a `pause_after_compaction` request.
 ///

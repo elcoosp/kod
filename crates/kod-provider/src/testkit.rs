@@ -690,6 +690,7 @@ mod coverage_testkit {
             embeddings: false,
             streaming_tools: false,
             pricing: None,
+            native_compaction: false,
         };
         let p =
             MockProvider::new("custom-caps", Script::Text("x".into())).with_capabilities(custom);

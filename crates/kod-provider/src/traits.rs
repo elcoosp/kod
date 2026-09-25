@@ -113,6 +113,31 @@ pub trait LlmProvider: Send + Sync {
     /// explicit cache support, OpenAI for pricing — override this.
     /// The conservative default disables nothing that works (tools on,
     /// streaming_tools off), which is the safe side of the trade.
+    /// Delta §4.4: provider-native compaction.
+    ///
+    /// A provider with server-side compaction summarizes the prompt
+    /// itself: the request carries a "compact this" signal, the
+    /// response carries a compaction block, and the caller stores the
+    /// block and replays it on the next call. Providers without it
+    /// return `Ok(None)` — the default — and the compaction
+    /// dispatcher's `remote` rung reports `Unavailable` and falls
+    /// through.
+    ///
+    /// The request is the same `CompletionRequest` a `complete` call
+    /// would take. Each provider decides how to signal the compaction
+    /// request on its own wire (Anthropic: a `compact-2026-01-12`
+    /// beta header plus a `pause_after_compaction` field).
+    ///
+    /// The default implementation returns `Ok(None)` — the same
+    /// "provider does not support this" answer the capability flag
+    /// reports, so a caller can trust either.
+    async fn native_compact(
+        &self,
+        _req: &CompletionRequest,
+    ) -> Result<Option<crate::native_compaction::NativeCompaction>> {
+        Ok(None)
+    }
+
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities::conservative()
     }
