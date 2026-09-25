@@ -3842,6 +3842,34 @@ impl KodEngine {
         self.secret_vault.read().await.clone()
     }
 
+    /// Delta §4.4: install a provider-native compaction block for a
+    /// transcript. The `NativeSummary` arm of
+    /// `apply_compaction_plan` calls the same storage; this setter
+    /// exists so a caller (or a test) can seed one without running
+    /// the whole compaction pipeline.
+    ///
+    /// An empty `encrypted` value is treated as "remove any stored
+    /// block" — a cleared compaction should not leave a stale token
+    /// behind.
+    pub async fn set_native_compaction_block(&self, key: &str, encrypted: &str) {
+        let mut blocks = self.native_compaction_blocks.write().await;
+        if encrypted.is_empty() {
+            blocks.remove(key);
+        } else {
+            blocks.insert(key.to_string(), encrypted.to_string());
+        }
+    }
+
+    /// Delta §4.4: the stored provider-native compaction block for a
+    /// transcript, if any.
+    pub async fn native_compaction_block(&self, key: &str) -> Option<String> {
+        self.native_compaction_blocks
+            .read()
+            .await
+            .get(key)
+            .cloned()
+    }
+
     /// Delta §14.1: replace every registered secret in `text` with
     /// its placeholder. No-op when no vault is installed.
     pub async fn obfuscate_secrets(&self, text: &str) -> String {
