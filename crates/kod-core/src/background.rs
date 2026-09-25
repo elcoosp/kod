@@ -185,6 +185,19 @@ impl BackgroundJobRunner {
         }
     }
 
+    /// Mark a job failed, but only when it is still `Running`.
+    ///
+    /// Used by the guarded-spawn watcher: a task that panicked
+    /// *after* completing legitimately (a cleanup panic) must not
+    /// overwrite the completion it already recorded.
+    pub fn fail_if_running(&self, id: JobId, error: String) {
+        if let Some(mut state) = self.jobs.get_mut(&id)
+            && matches!(state.status, JobStatus::Running)
+        {
+            state.status = JobStatus::Failed { error };
+        }
+    }
+
     /// Mark a job failed.
     pub fn fail(&self, id: JobId, error: String) {
         if let Some(mut state) = self.jobs.get_mut(&id) {
@@ -193,6 +206,37 @@ impl BackgroundJobRunner {
     }
 
     /// Snapshot of every job, newest first, for the `/jobs` surface.
+    /// Spawn `fut` and watch its `JoinHandle`, converting a panic
+    /// into a job failure.
+    ///
+    /// A plain `tokio::spawn` catches panics at the task boundary —
+    /// the process is safe — but the `JoinHandle` that reports the
+    /// panic is dropped if nobody keeps it. A job whose task
+    /// panicked then stays `Running` forever, and a caller waiting
+    /// on it waits forever. This helper keeps the handle and turns
+    /// the panic into `fail_if_running`.
+    ///
+    /// `self` must be an `Arc` so the watcher can share the runner
+    /// with the spawning task.
+    pub fn spawn_guarded<F>(self: &std::sync::Arc<Self>, id: JobId, fut: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let handle = tokio::spawn(fut);
+        let me = std::sync::Arc::clone(self);
+        tokio::spawn(async move {
+            match handle.await {
+                Ok(()) => {}
+                Err(e) if e.is_panic() => {
+                    me.fail_if_running(id, format!("job panicked: {e}"));
+                }
+                Err(e) => {
+                    me.fail_if_running(id, format!("job cancelled: {e}"));
+                }
+            }
+        });
+    }
+
     pub fn snapshot(&self) -> Vec<(JobId, JobState)> {
         let mut out: Vec<(JobId, JobState)> = self
             .jobs

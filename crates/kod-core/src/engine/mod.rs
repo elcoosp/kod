@@ -2258,7 +2258,11 @@ impl KodEngine {
                 let delivery_task = std::sync::Arc::clone(&async_delivery);
                 let id_task = id_str.clone();
 
-                tokio::spawn(async move {
+                // Guarded spawn: a panic inside the task becomes a
+                // job failure rather than a permanently-Running job
+                // whose caller waits forever.
+                let runner_for_watch = std::sync::Arc::clone(&runner_task);
+                runner_for_watch.spawn_guarded(job, async move {
                     use tokio::io::AsyncReadExt as _;
                     let mut buf = [0u8; 4096];
                     let mut stall_reported = false;
@@ -4539,7 +4543,8 @@ impl KodEngine {
         let subject_clone = subject_text.clone();
         let endpoint_display = endpoint.display();
 
-        tokio::spawn(async move {
+        let runner_for_watch = std::sync::Arc::clone(&runner);
+        runner_for_watch.spawn_guarded(id, async move {
             let _permit = runner.acquire_permit().await;
             // The review prompt: the reviewer's role preamble plus the
             // turn being reviewed. No tools — a first-pass review is a
