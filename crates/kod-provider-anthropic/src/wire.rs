@@ -1598,3 +1598,334 @@ mod coverage_wire_builders {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Native compaction lane (delta §4.4)
+// ---------------------------------------------------------------------------
+//
+// Anthropic's `compact-2026-01-12` beta lets the API summarize the
+// prompt from the already-cached prefix, returning a `compaction`
+// content block whose `encrypted_content` can be replayed verbatim
+// on the next call (the API drops everything before it) while the
+// plain `summary` text doubles as the summary for non-Anthropic
+// providers.
+//
+// # Why a lane of its own
+//
+// The design's §4.1 dispatcher carries this as the `remote` rung —
+// the first rung in the design's default order. It exists because a
+// provider-native compaction runs *server-side* and therefore does
+// not pay the round-trip and token cost of a client-side summarize
+// call: the model that reads the summary is the same one that
+// produced the context, and the summary is what the API itself
+// would have generated internally.
+//
+// # The API contract
+//
+// A compaction request is a normal Messages request with two
+// additions:
+//
+// 1. The `anthropic-beta: compact-2026-01-12` header.
+// 2. The body field `pause_after_compaction: true`, which tells the
+//    API to stop after producing the compaction block rather than
+//    continuing the completion.
+//
+// The response contains a `compaction` content block; its
+// `encrypted_content` is the replay token and its `summary` field
+// is the human-readable text. On the next call, the client sends
+// back the same messages plus the encrypted block prefixed to the
+// first user message — the API then drops every message before
+// that point and charges only the tail.
+//
+// # What this module does NOT do
+//
+// * It does not call the API. `build_compaction_body` is a pure
+//   function; the caller (the provider's `complete` path or the
+//   new `native_compact` method) does the POST.
+// * It does not handle the replay. Parsing the response into a
+//   `NativeCompaction` is `parse_compaction_block`; *storing* the
+//   block in the transcript and putting it back on the next
+//   request is the engine's job.
+// * It does not decide when to compact. The dispatcher's `remote`
+//   rung does that.
+
+/// The beta header that enables the compaction API. Sent as
+/// `anthropic-beta: <this>`.
+///
+/// The value is a date-stamped version, matching Anthropic's beta
+/// convention. A future API revision will carry a later stamp; the
+/// constant is here so the upgrade is one line.
+pub const ANTHROPIC_COMPACTION_BETA: &str = "compact-2026-01-12";
+
+/// The API's floor on the prompt size before it will compact.
+///
+/// From the design note: below this, the server rejects a
+/// `pause_after_compaction: true` request. The dispatcher should
+/// check this before attempting the rung — a wasted 400 response
+/// costs a round trip.
+pub const ANTHROPIC_COMPACTION_MIN_TRIGGER_TOKENS: u64 = 50_000;
+
+/// A parsed `compaction` block from an Anthropic response.
+///
+/// `encrypted_content` is opaque to kod — a base64 blob the API
+/// produces and consumes — but must be replayed verbatim on the
+/// next call. `summary` is the plain-text form, used as the
+/// compaction summary for any provider that cannot consume the
+/// encrypted block (and shown in the TUI so a user can see what
+/// the compaction actually preserved).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeCompaction {
+    /// Opaque token to prepend to the next request's first user
+    /// message. Anthropic drops every message before the block.
+    pub encrypted_content: String,
+    /// The human-readable summary text. Same content the server
+    /// would use internally.
+    pub summary: String,
+}
+
+/// Build the body for a `pause_after_compaction` request.
+///
+/// Identical to [`build_messages_body`] plus the
+/// `pause_after_compaction: true` field. The header is returned
+/// separately so the caller can construct the request with the
+/// standard `anthropic-version` and the beta header together, and
+/// so a test can assert on the pair without mocking a POST.
+pub fn build_compaction_body(req: &CompletionRequest) -> Value {
+    let mut body = build_messages_body(req);
+    body["pause_after_compaction"] = json!(true);
+    body
+}
+
+/// Parse a `compaction` content block out of a Messages response.
+///
+/// The response shape (from the beta's docs):
+///
+/// ```text
+/// {
+///   "content": [
+///     { "type": "compaction",
+///       "encrypted_content": "…base64…",
+///       "summary": "…" }
+///   ],
+///   …
+/// }
+/// ```
+///
+/// Returns `None` when the response carries no compaction block.
+/// That is not an error — a normal completion has no block, and a
+/// compaction request that the API declined (too small, feature
+/// disabled) also returns a normal response with a text block.
+/// The caller decides whether the absence is a bug.
+pub fn parse_compaction_block(response: &Value) -> Option<NativeCompaction> {
+    let content = response.get("content")?.as_array()?;
+    for block in content {
+        let ty = block.get("type").and_then(|t| t.as_str())?;
+        if ty != "compaction" {
+            continue;
+        }
+        let encrypted_content = block
+            .get("encrypted_content")
+            .and_then(|v| v.as_str())?
+            .to_string();
+        let summary = block
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        return Some(NativeCompaction {
+            encrypted_content,
+            summary,
+        });
+    }
+    None
+}
+
+/// Prepend a `NativeCompaction`'s encrypted block to the first user
+/// message of a request body, in place.
+///
+/// Anthropic's contract: the encrypted block, sent as a
+/// `compaction` content block at the head of the first user turn,
+/// tells the API "everything before this is covered by the summary
+/// — drop it and charge only what follows."
+///
+/// Returns `true` when the block was placed (i.e. the body had at
+/// least one user message), `false` when there was no first user
+/// turn to prepend to. The caller should treat `false` as "this
+/// request cannot use the replay" and either drop the block or
+/// rebuild the request.
+pub fn prepend_compaction_block(body: &mut Value, compaction: &NativeCompaction) -> bool {
+    let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return false;
+    };
+    // Find the first user turn.
+    for msg in messages.iter_mut() {
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        if role != "user" {
+            continue;
+        }
+        let Some(content) = msg.get_mut("content").and_then(|c| c.as_array_mut()) else {
+            continue;
+        };
+        // The encrypted block goes first so the API's "drop
+        // everything before" scan sees it at the head.
+        content.insert(
+            0,
+            json!({
+                "type": "compaction",
+                "encrypted_content": compaction.encrypted_content,
+            }),
+        );
+        return true;
+    }
+    false
+}
+
+#[cfg(test)]
+mod compaction_tests {
+    use super::*;
+    use kod_provider::request::{ModelRef, SystemPrompt};
+    use kod_types::{ChatMessage, MessageId, MessageRole};
+    use time::OffsetDateTime;
+
+    fn user(text: &str) -> ChatMessage {
+        ChatMessage::text(
+            MessageId::new(),
+            MessageRole::User,
+            text,
+            OffsetDateTime::now_utc(),
+        )
+    }
+
+    fn req(messages: Vec<ChatMessage>) -> CompletionRequest {
+        let mut r = CompletionRequest::new(ModelRef::new("anthropic", "claude-sonnet-4-5"));
+        r.system = SystemPrompt::default();
+        r.messages = messages;
+        r
+    }
+
+    #[test]
+    fn the_beta_constant_is_the_documented_value() {
+        assert_eq!(ANTHROPIC_COMPACTION_BETA, "compact-2026-01-12");
+    }
+
+    #[test]
+    fn the_min_trigger_is_the_documented_value() {
+        assert_eq!(ANTHROPIC_COMPACTION_MIN_TRIGGER_TOKENS, 50_000);
+    }
+
+    #[test]
+    fn a_compaction_body_carries_pause_after_compaction_true() {
+        let r = req(vec![user("hello")]);
+        let body = build_compaction_body(&r);
+        assert_eq!(body["pause_after_compaction"], json!(true));
+    }
+
+    #[test]
+    fn a_compaction_body_is_a_messages_body_plus_the_flag() {
+        let r = req(vec![user("hello")]);
+        let base = build_messages_body(&r);
+        let mut expected = base.clone();
+        expected["pause_after_compaction"] = json!(true);
+        assert_eq!(build_compaction_body(&r), expected);
+    }
+
+    #[test]
+    fn parse_compaction_block_extracts_both_fields() {
+        let response = json!({
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                { "type": "compaction",
+                  "encrypted_content": "AAAABBBBCCCC",
+                  "summary": "The session was doing X." }
+            ]
+        });
+        let c = parse_compaction_block(&response).expect("compaction present");
+        assert_eq!(c.encrypted_content, "AAAABBBBCCCC");
+        assert_eq!(c.summary, "The session was doing X.");
+    }
+
+    #[test]
+    fn parse_compaction_block_returns_none_for_a_normal_response() {
+        let response = json!({
+            "content": [ { "type": "text", "text": "hello" } ]
+        });
+        assert!(parse_compaction_block(&response).is_none());
+    }
+
+    #[test]
+    fn parse_compaction_block_returns_none_for_a_missing_content_array() {
+        let response = json!({"id": "msg_1"});
+        assert!(parse_compaction_block(&response).is_none());
+    }
+
+    #[test]
+    fn parse_compaction_block_tolerates_a_missing_summary_field() {
+        // The encrypted content is the load-bearing bit; a missing
+        // summary is a display concern, not a parse failure.
+        let response = json!({
+            "content": [
+                { "type": "compaction", "encrypted_content": "XYZ" }
+            ]
+        });
+        let c = parse_compaction_block(&response).expect("compaction present");
+        assert_eq!(c.encrypted_content, "XYZ");
+        assert_eq!(c.summary, "");
+    }
+
+    #[test]
+    fn prepend_compaction_block_puts_the_block_on_the_first_user_turn() {
+        let r = req(vec![user("hello")]);
+        let mut body = build_messages_body(&r);
+        let c = NativeCompaction {
+            encrypted_content: "ENC".into(),
+            summary: "sum".into(),
+        };
+        assert!(prepend_compaction_block(&mut body, &c));
+        let first = &body["messages"][0]["content"][0];
+        assert_eq!(first["type"], "compaction");
+        assert_eq!(first["encrypted_content"], "ENC");
+        // The original text is still there, after the compaction
+        // block.
+        let second = &body["messages"][0]["content"][1];
+        assert_eq!(second["type"], "text");
+    }
+
+    #[test]
+    fn prepend_compaction_block_skips_a_leading_assistant_turn() {
+        let mut r = req(vec![user("first")]);
+        // Prepend an assistant message so the first entry is not a
+        // user turn.
+        r.messages.insert(
+            0,
+            ChatMessage::text(
+                MessageId::new(),
+                MessageRole::Assistant,
+                "prior",
+                OffsetDateTime::now_utc(),
+            ),
+        );
+        let mut body = build_messages_body(&r);
+        let c = NativeCompaction {
+            encrypted_content: "ENC".into(),
+            summary: "sum".into(),
+        };
+        assert!(prepend_compaction_block(&mut body, &c));
+        // The user turn — now at index 1 — carries the block.
+        let user_turn = &body["messages"][1];
+        assert_eq!(user_turn["role"], "user");
+        assert_eq!(user_turn["content"][0]["type"], "compaction");
+    }
+
+    #[test]
+    fn prepend_compaction_block_returns_false_with_no_user_turn() {
+        let r = req(vec![]);
+        let mut body = build_messages_body(&r);
+        let c = NativeCompaction {
+            encrypted_content: "ENC".into(),
+            summary: "sum".into(),
+        };
+        assert!(!prepend_compaction_block(&mut body, &c));
+    }
+}
