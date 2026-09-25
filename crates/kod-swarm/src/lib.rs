@@ -25,6 +25,7 @@ pub mod completion_report;
 pub mod coordination;
 pub mod file_touch;
 pub mod swarm;
+pub mod work_pool;
 
 pub use agent::{Agent, AgentBuilder, AgentState, Capability, ModelConfig};
 pub use blackboard::{AuthorKind, Blackboard, BlackboardEntry};
