@@ -65,6 +65,7 @@ impl MemorySaveTool {
                 // the policy engine is what gates it, not the
                 // ToolPermissions bitmask.
                 permissions: ToolPermissions::default(),
+                load_mode: Default::default(),
             },
             router,
         }
@@ -152,6 +153,7 @@ impl MemorySearchTool {
                     "additionalProperties": false
                 }),
                 permissions: ToolPermissions::default(),
+                load_mode: Default::default(),
             },
             router,
         }

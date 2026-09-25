@@ -224,6 +224,7 @@ async fn complete_serializes_tools_as_functions() {
             "properties": {"path": {"type": "string"}}
         }),
         permissions: ToolPermissions::default(),
+        load_mode: Default::default(),
     }];
     provider.complete(&req).await.expect("complete");
 }

@@ -86,6 +86,7 @@ impl ToolSearchTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
+                load_mode: Default::default(),
             },
         }
     }
@@ -208,6 +209,7 @@ mod tests {
             parameters_schema: serde_json::json!({"type": "object"}),
             permissions: ToolPermissions::default(),
             trust_level: kod_types::trust::TrustLevel::default(),
+            load_mode: Default::default(),
         }
     }
 

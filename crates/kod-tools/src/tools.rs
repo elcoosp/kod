@@ -188,6 +188,7 @@ impl ReadFileTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
+                load_mode: Default::default(),
             },
         }
     }
@@ -444,6 +445,7 @@ impl WriteFileTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
+                load_mode: Default::default(),
             },
         }
     }
@@ -648,6 +650,7 @@ impl ExecuteCommandTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
+                load_mode: Default::default(),
             },
         }
     }
@@ -1025,6 +1028,7 @@ impl ListFilesTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
+                load_mode: Default::default(),
             },
         }
     }
@@ -1240,6 +1244,7 @@ impl PatchFileTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
+                load_mode: Default::default(),
             },
         }
     }
@@ -1393,6 +1398,7 @@ impl GrepTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
+                load_mode: Default::default(),
             },
         }
     }
@@ -1626,6 +1632,7 @@ impl FileInfoTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
+                load_mode: Default::default(),
             },
         }
     }

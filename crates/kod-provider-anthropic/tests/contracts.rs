@@ -237,6 +237,7 @@ async fn complete_uses_input_schema_not_parameters() {
             "properties": {"path": {"type": "string"}}
         }),
         permissions: ToolPermissions::default(),
+        load_mode: Default::default(),
     }];
     provider.complete(&req).await.expect("complete");
 }

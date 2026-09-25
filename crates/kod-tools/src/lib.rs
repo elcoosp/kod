@@ -114,6 +114,7 @@ mod tests {
                 category: ToolCategory::System,
                 parameters_schema: serde_json::json!({}),
                 permissions: ToolPermissions::default(),
+                load_mode: Default::default(),
             }
         }
 

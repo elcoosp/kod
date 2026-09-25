@@ -64,6 +64,7 @@ impl SearchFilesTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
+                load_mode: Default::default(),
             },
         }
     }

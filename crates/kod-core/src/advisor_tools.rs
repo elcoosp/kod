@@ -165,6 +165,7 @@ impl AdviseTool {
                     "additionalProperties": false
                 }),
                 permissions: ToolPermissions::default(),
+                load_mode: Default::default(),
             },
         }
     }

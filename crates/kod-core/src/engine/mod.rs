@@ -15266,6 +15266,7 @@ mod coverage_tool_inventory_cache {
             parameters_schema: serde_json::json!({}),
             permissions: kod_types::ToolPermissions::default(),
             trust_level: kod_types::trust::TrustLevel::default(),
+            load_mode: Default::default(),
         }
     }
 

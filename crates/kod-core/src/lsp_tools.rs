@@ -70,6 +70,7 @@ impl LspDiagnosticsTool {
                     "additionalProperties": false
                 }),
                 permissions: lsp_permissions(),
+                load_mode: Default::default(),
             },
             manager,
         }
@@ -154,6 +155,7 @@ impl LspDefinitionTool {
                     "additionalProperties": false
                 }),
                 permissions: lsp_permissions(),
+                load_mode: Default::default(),
             },
             manager,
         }
@@ -242,6 +244,7 @@ impl LspReferencesTool {
                     "additionalProperties": false
                 }),
                 permissions: lsp_permissions(),
+                load_mode: Default::default(),
             },
             manager,
         }
@@ -330,6 +333,7 @@ impl LspHoverTool {
                     "additionalProperties": false
                 }),
                 permissions: lsp_permissions(),
+                load_mode: Default::default(),
             },
             manager,
         }

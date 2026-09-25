@@ -311,6 +311,7 @@ impl McpToolAdapter {
                 // pretend to be one and be bypassable by any config
                 // that forgot to set it.
                 permissions: ToolPermissions::default(),
+                load_mode: Default::default(),
             },
             call_timeout_secs: call_timeout_secs.max(1),
         }

@@ -51,6 +51,7 @@ impl PlanTool {
                 }),
                 permissions: ToolPermissions::default(),
                 trust_level: kod_types::trust::TrustLevel::ToolTrusted,
+                load_mode: Default::default(),
             },
         }
     }

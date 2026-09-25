@@ -148,6 +148,7 @@ async fn live_tool_use_round_trip() {
             "additionalProperties": false
         }),
         permissions: ToolPermissions::default(),
+        load_mode: Default::default(),
     }];
     let resp = provider.complete(&req).await.expect("complete");
     let calls = match resp {

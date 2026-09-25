@@ -283,6 +283,7 @@ mod tests {
             parameters_schema: serde_json::json!({}),
             permissions: kod_types::ToolPermissions::default(),
             trust_level: kod_types::trust::TrustLevel::default(),
+            load_mode: Default::default(),
         };
         let tool_a = kod_types::ToolDefinition {
             id: kod_types::ToolId::new(),
@@ -292,6 +293,7 @@ mod tests {
             parameters_schema: serde_json::json!({}),
             permissions: kod_types::ToolPermissions::default(),
             trust_level: kod_types::trust::TrustLevel::default(),
+            load_mode: Default::default(),
         };
         let req = kod_provider::CompletionRequest {
             system: kod_provider::SystemPrompt::new().with("hello".to_string(), true),

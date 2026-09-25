@@ -141,6 +141,7 @@ impl GitStatusTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
+                load_mode: Default::default(),
             },
         }
     }
@@ -273,6 +274,7 @@ impl GitDiffTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
+                load_mode: Default::default(),
             },
         }
     }
@@ -394,6 +396,7 @@ impl GitCommitTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
+                load_mode: Default::default(),
             },
         }
     }
@@ -544,6 +547,7 @@ impl GitBranchTool {
                     allowed_paths: Vec::new(),
                     forbidden_paths: Vec::new(),
                 },
+                load_mode: Default::default(),
             },
         }
     }

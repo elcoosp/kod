@@ -174,6 +174,7 @@ impl TodoTool {
                     "additionalProperties": false
                 }),
                 permissions: ToolPermissions::default(),
+                load_mode: Default::default(),
             },
             list,
             next_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),

@@ -19,6 +19,36 @@ pub struct ToolDefinition {
     /// prompt block and when computing the round's taint.
     #[serde(default = "default_trust")]
     pub trust_level: crate::trust::TrustLevel,
+
+    /// Delta §6: how the tool reaches the model.
+    ///
+    /// `Essential` (the default) puts the tool's schema in the tools
+    /// array on every request. `Discoverable` removes it from the
+    /// array and mounts it behind the `xd://` internal URL instead —
+    /// the model reads `xd://<tool>` for the schema and calls it
+    /// through `write xd://<tool>`. The surface stays small without
+    /// losing any tool.
+    #[serde(default)]
+    pub load_mode: LoadMode,
+}
+
+/// Delta §6: whether a tool's schema is always on the wire or
+/// mounted behind `xd://`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoadMode {
+    /// Always in the tools array. The default — every existing tool
+    /// keeps its behaviour.
+    #[default]
+    Essential,
+    /// Removed from the tools array; reachable through `xd://`.
+    Discoverable,
+}
+
+impl LoadMode {
+    pub fn is_discoverable(self) -> bool {
+        matches!(self, Self::Discoverable)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

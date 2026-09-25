@@ -68,6 +68,7 @@ fn base_definition(name: &str, description: &str, schema: Value) -> ToolDefiniti
         // default permissions can use the tools. The policy engine
         // is what gates them, not the ToolPermissions bitmask.
         permissions: ToolPermissions::default(),
+        load_mode: Default::default(),
     }
 }
 

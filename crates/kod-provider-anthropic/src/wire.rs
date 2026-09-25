@@ -1004,6 +1004,7 @@ mod tests {
                 "properties": {"path": {"type": "string"}}
             }),
             permissions: ToolPermissions::default(),
+            load_mode: Default::default(),
         };
         let arr = tools_array(&[tool]);
         let v = arr.as_array().unwrap();
@@ -1162,6 +1163,7 @@ mod tests {
                 "properties": {"path": {"type": "string"}}
             }),
             permissions: ToolPermissions::default(),
+            load_mode: Default::default(),
         };
         let t1 = mk("alpha");
         let t2 = mk("beta");
@@ -1267,6 +1269,7 @@ mod coverage_wire_builders {
             category: kod_types::ToolCategory::Code,
             parameters_schema: json!({"type": "object"}),
             permissions: kod_types::ToolPermissions::default(),
+            load_mode: Default::default(),
         }
     }
 
