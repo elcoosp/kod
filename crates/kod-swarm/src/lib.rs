@@ -17,6 +17,7 @@
 
 pub mod advisor;
 pub mod agent;
+pub mod agent_registry;
 pub mod brief;
 pub mod brief_assembly;
 pub mod blackboard;
