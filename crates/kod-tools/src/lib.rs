@@ -42,6 +42,7 @@ pub mod check;
 pub mod context;
 pub mod git;
 pub mod internal_url;
+pub mod xd_handler;
 
 /// Re-export so a caller (the engine) can construct a default
 /// minimizer without a direct `kod-minimize` dependency.

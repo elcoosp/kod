@@ -61,6 +61,13 @@ pub struct ResolveContext {
     /// A handler that serves filesystem-adjacent data (a scratch
     /// directory, a project-scoped store) uses it.
     pub working_dir: std::path::PathBuf,
+    /// Delta §6: the caller's tool permissions. The `xd://` handler
+    /// needs these to build a `ToolContext` for the tool it
+    /// dispatches to — a tool the model reaches through `xd://`
+    /// should get exactly the permissions the ordinary path would
+    /// grant it. `None` for the memory and artifact handlers, which
+    /// do not run tools.
+    pub tool_permissions: Option<kod_types::ToolPermissions>,
 }
 
 impl ResolveContext {
@@ -68,7 +75,15 @@ impl ResolveContext {
         Self {
             holder: holder.into(),
             working_dir: working_dir.into(),
+            tool_permissions: None,
         }
+    }
+
+    /// Attach tool permissions. The `xd://` path calls this; every
+    /// other handler ignores the field.
+    pub fn with_tool_permissions(mut self, perms: kod_types::ToolPermissions) -> Self {
+        self.tool_permissions = Some(perms);
+        self
     }
 }
 
