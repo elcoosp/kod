@@ -25,6 +25,7 @@ pub mod decisions;
 pub mod doctor;
 pub mod advisor_tools;
 pub mod engine;
+pub mod speculation;
 pub mod fixture;
 pub mod hooks;
 pub mod jev;
