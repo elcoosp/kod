@@ -1154,6 +1154,7 @@ mod coverage_openai_provider {
             tools: vec![],
             options: Default::default(),
             cache_transcript: true,
+            native_compaction_block: None,
         };
 
         let llm = p.request_from_completion(&req);

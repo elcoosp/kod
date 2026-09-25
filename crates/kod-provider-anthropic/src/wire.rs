@@ -61,6 +61,19 @@ pub fn build_messages_body(req: &CompletionRequest) -> Value {
     if !req.tools.is_empty() {
         body["tools"] = tools_array_with_cache(&req.tools);
     }
+    // Delta §4.4: a stored native compaction block goes onto the
+    // first user message. The API drops every message before the
+    // block, so the server reuses its pre-compaction KV cache for
+    // the summary and only reads what comes after.
+    if let Some(encrypted) = req.native_compaction_block.as_deref()
+        && !encrypted.is_empty()
+    {
+        let compaction = NativeCompaction {
+            encrypted_content: encrypted.to_string(),
+            summary: String::new(),
+        };
+        prepend_compaction_block(&mut body, &compaction);
+    }
     body
 }
 

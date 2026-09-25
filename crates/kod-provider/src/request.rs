@@ -126,6 +126,17 @@ pub struct CompletionRequest {
     ///
     /// Providers without explicit caching ignore it.
     pub cache_transcript: bool,
+    /// Delta §4.4: the opaque token a provider-native compaction
+    /// produced on a previous call. When `Some`, a provider that
+    /// understands it prepends a `compaction` content block to the
+    /// first user message, telling the server to drop everything
+    /// before it and reuse its own KV cache.
+    ///
+    /// `None` on every ordinary request. The engine populates it from
+    /// its per-transcript store, so the block travels with the
+    /// request rather than requiring the provider to hold a
+    /// reference to the engine.
+    pub native_compaction_block: Option<String>,
 }
 
 impl CompletionRequest {
@@ -140,6 +151,7 @@ impl CompletionRequest {
             options: GenerationOptions::default(),
             model,
             cache_transcript: true,
+            native_compaction_block: None,
         }
     }
 

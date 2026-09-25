@@ -187,6 +187,21 @@ pub enum CompactionPlan {
         covers_through: usize,
         text: String,
     },
+    /// A summary produced by provider-native compaction. Same drain
+    /// and replace shape as [`Self::Summary`], plus an opaque
+    /// `encrypted_content` token the provider expects replayed on the
+    /// next request so its server-side KV cache is reused.
+    ///
+    /// Separate from `Summary` rather than a `Option<String>` field
+    /// on it: a plan that carries a native block has different
+    /// downstream behaviour (the wire layer prepends the block),
+    /// and making that a distinct variant means the apply step is
+    /// explicit about which one it is looking at.
+    NativeSummary {
+        covers_through: usize,
+        text: String,
+        encrypted_content: String,
+    },
 }
 
 impl CompactionPlan {
@@ -195,6 +210,7 @@ impl CompactionPlan {
             Self::Shake(p) => p.is_empty(),
             Self::Prune(p) => p.is_empty(),
             Self::Summary { text, .. } => text.trim().is_empty(),
+            Self::NativeSummary { text, .. } => text.trim().is_empty(),
         }
     }
 }
@@ -528,9 +544,10 @@ impl CompactionMethod for RemoteMethod {
                 // step clamps to the live length, so `len - 1` here
                 // means "everything that was sent".
                 let covers_through = ctx.transcript.len().saturating_sub(1);
-                MethodOutcome::Plan(CompactionPlan::Summary {
+                MethodOutcome::Plan(CompactionPlan::NativeSummary {
                     covers_through,
                     text: compaction.summary,
+                    encrypted_content: compaction.encrypted_content,
                 })
             }
             Ok(None) => MethodOutcome::NoChange,

@@ -306,6 +306,7 @@ mod tests {
             options: kod_provider::GenerationOptions::default(),
             model: kod_provider::ModelRef::new("ep", "m"),
             cache_transcript: false,
+            native_compaction_block: None,
         };
         let s = RequestSummary::from_request(&req);
         assert_eq!(s.model, "m");

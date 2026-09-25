@@ -1311,6 +1311,12 @@ pub struct KodEngine {
     /// A stale anchor would make `estimate` lie about the size of the
     /// bytes the provider is charging for.
     context_gauges: RwLock<HashMap<String, crate::context_gauge::ContextGauge>>,
+    /// Delta §4.4: per-transcript provider-native compaction blocks.
+    /// Key is the transcript key (same key `history` uses); value is
+    /// the opaque `encrypted_content` the provider returned. Attached
+    /// to the next request built for that transcript so the server
+    /// reuses its KV cache instead of re-reading.
+    native_compaction_blocks: RwLock<HashMap<String, String>>,
     /// Delta §11.8: the advisor emission guard. Shared with the
     /// `advise` tool; the tool admits through it, the turn loop
     /// calls `begin_update` on it once per turn so the per-update
@@ -2106,6 +2112,7 @@ impl KodEngine {
             },
             model,
             cache_transcript: false,
+            native_compaction_block: None,
         };
 
         // Bounded: a provider that hangs must not leave a task
@@ -2759,6 +2766,47 @@ impl KodEngine {
                     }
                 }
             }
+            CompactionPlan::NativeSummary {
+                covers_through,
+                text,
+                encrypted_content,
+            } => {
+                // Same drain-and-replace as `Summary`, plus store the
+                // opaque block so the next request for this
+                // transcript carries it. The block lives under the
+                // transcript key, not in the message — a message
+                // that carried it would be re-sent verbatim on every
+                // turn, growing the transcript it is trying to
+                // shrink.
+                if !encrypted_content.is_empty() {
+                    self.native_compaction_blocks
+                        .write()
+                        .await
+                        .insert(key.to_string(), encrypted_content);
+                }
+                // Fall through to the shared drain-and-replace path
+                // below by re-entering the Summary arm. A `match`
+                // cannot fall through, so the work is duplicated with
+                // a comment pointing at the shared shape.
+                if turns.is_empty() {
+                    return 0;
+                }
+                let end = (covers_through + 1).min(turns.len());
+                if end == 0 {
+                    return 0;
+                }
+                let dropped: Vec<kod_types::ChatMessage> =
+                    turns.drain(..end).collect();
+                let mut summary_msg = kod_types::ChatMessage::text(
+                    kod_types::MessageId::new(),
+                    kod_types::MessageRole::User,
+                    format!("## Previous Conversation Handoff\n{text}"),
+                    time::OffsetDateTime::now_utc(),
+                );
+                summary_msg.metadata.pinned = true;
+                turns.insert(0, summary_msg);
+                affected = dropped.len();
+            }
             CompactionPlan::Summary {
                 covers_through,
                 text,
@@ -3082,6 +3130,7 @@ impl KodEngine {
             // `set_secret_vault` after construction. A default
             // engine — every test, every embedder — sees `None` and
             // is unaffected.
+            native_compaction_blocks: RwLock::new(HashMap::new()),
             secret_vault: RwLock::new(None),
             cost_tracker: crate::cost::CostTracker::new(),
             state_store: std::sync::RwLock::new(None),
@@ -9078,6 +9127,17 @@ pub(crate) fn filter_chain_by_trust(
             // Anthropic's 1.25x cache-write premium for a prefix that
             // will not survive the next round.
             cache_transcript: !self.consume_marker_suppression(key).await,
+            // Delta §4.4: attach any stored provider-native compaction
+            // block for this transcript. The provider that
+            // understands the block (Anthropic) prepends it to the
+            // first user message; every other provider ignores the
+            // field.
+            native_compaction_block: self
+                .native_compaction_blocks
+                .read()
+                .await
+                .get(key)
+                .cloned(),
         }
     }
 
