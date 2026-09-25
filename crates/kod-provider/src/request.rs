@@ -108,6 +108,20 @@ impl SystemPrompt {
     }
 }
 
+/// Delta §4.5: one rasterized frame attached to a request.
+///
+/// `png_base64` is the base64 body of a PNG with no data-URL prefix
+/// — the wire layer adds the `media_type` field and the base64
+/// framing the provider expects. `marker` is the short text the
+/// engine puts in the transcript where the frame's source used to
+/// be; it is not sent separately — the provider sees the image and
+/// the marker is what the local transcript holds.
+#[derive(Debug, Clone)]
+pub struct ImageFrame {
+    pub png_base64: String,
+    pub media_type: String,
+}
+
 /// A complete, provider-agnostic completion request.
 #[derive(Debug, Clone)]
 pub struct CompletionRequest {
@@ -137,6 +151,14 @@ pub struct CompletionRequest {
     /// request rather than requiring the provider to hold a
     /// reference to the engine.
     pub native_compaction_block: Option<String>,
+    /// Delta §4.5: rasterized frames attached to this request. A
+    /// provider with the `vision` capability emits each as an image
+    /// content block on the first user message; every other provider
+    /// ignores the field.
+    ///
+    /// The engine populates this from its per-transcript frame
+    /// store, the same way `native_compaction_block` travels.
+    pub image_frames: Vec<ImageFrame>,
 }
 
 impl CompletionRequest {
@@ -152,6 +174,7 @@ impl CompletionRequest {
             model,
             cache_transcript: true,
             native_compaction_block: None,
+            image_frames: Vec::new(),
         }
     }
 

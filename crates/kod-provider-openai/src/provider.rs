@@ -1155,6 +1155,7 @@ mod coverage_openai_provider {
             options: Default::default(),
             cache_transcript: true,
             native_compaction_block: None,
+            image_frames: Vec::new(),
         };
 
         let llm = p.request_from_completion(&req);

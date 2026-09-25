@@ -74,7 +74,48 @@ pub fn build_messages_body(req: &CompletionRequest) -> Value {
         };
         prepend_compaction_block(&mut body, &compaction);
     }
+    // Delta §4.5: rasterized frames attach as image content blocks
+    // on the first user message. Same shape as the compaction block:
+    // a content entry with a `type` discriminator.
+    if !req.image_frames.is_empty() {
+        prepend_image_blocks(&mut body, &req.image_frames);
+    }
     body
+}
+
+/// Prepend every frame as an `image` block on the first user
+/// message. Returns `false` when the request has no user message to
+/// attach to (a malformed request the caller will notice elsewhere).
+fn prepend_image_blocks(body: &mut Value, frames: &[kod_provider::request::ImageFrame]) -> bool {
+    let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return false;
+    };
+    for msg in messages.iter_mut() {
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        if role != "user" {
+            continue;
+        }
+        let Some(content) = msg.get_mut("content").and_then(|c| c.as_array_mut()) else {
+            continue;
+        };
+        // Insert at the head in order, so frame[0] ends up first.
+        // `insert(0, ...)` in a loop reverses; iterate in reverse.
+        for frame in frames.iter().rev() {
+            content.insert(
+                0,
+                json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": frame.media_type,
+                        "data": frame.png_base64,
+                    },
+                }),
+            );
+        }
+        return true;
+    }
+    false
 }
 
 /// Convert `SystemPrompt` to the Anthropic `system` array, placing a

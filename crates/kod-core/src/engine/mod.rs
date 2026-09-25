@@ -1338,6 +1338,11 @@ pub struct KodEngine {
     /// case, and the validation step (TOCTOU digest check) means the
     /// read is never *used* unless the file is provably unchanged.
     speculative_reads: RwLock<bool>,
+    /// Delta §4.5: per-transcript rasterized frames. Key is the
+    /// transcript key; value is the ordered list of frames to attach
+    /// on the next request. Cleared on transcript reset for the same
+    /// reason `native_compaction_blocks` is.
+    image_frames: RwLock<HashMap<String, Vec<kod_provider::request::ImageFrame>>>,
     /// Delta §11.8: the advisor emission guard. Shared with the
     /// `advise` tool; the tool admits through it, the turn loop
     /// calls `begin_update` on it once per turn so the per-update
@@ -2134,6 +2139,7 @@ impl KodEngine {
             model,
             cache_transcript: false,
             native_compaction_block: None,
+            image_frames: Vec::new(),
         };
 
         // Bounded: a provider that hangs must not leave a task
@@ -2828,6 +2834,51 @@ impl KodEngine {
                 turns.insert(0, summary_msg);
                 affected = dropped.len();
             }
+            CompactionPlan::Image {
+                covers_through,
+                png_base64,
+                source_lines,
+            } => {
+                // Delta §4.5: store the frame, replace the older half
+                // with a short marker. The frame is attached to every
+                // subsequent request for this transcript, so the
+                // provider sees the image in place of the text it
+                // rasterized.
+                if png_base64.is_empty() {
+                    return 0;
+                }
+                self.image_frames
+                    .write()
+                    .await
+                    .entry(key.to_string())
+                    .or_default()
+                    .push(kod_provider::request::ImageFrame {
+                        png_base64,
+                        media_type: "image/png".to_string(),
+                    });
+                if turns.is_empty() {
+                    return 0;
+                }
+                let end = (covers_through + 1).min(turns.len());
+                if end == 0 {
+                    return 0;
+                }
+                let dropped: Vec<kod_types::ChatMessage> =
+                    turns.drain(..end).collect();
+                let mut marker_msg = kod_types::ChatMessage::text(
+                    kod_types::MessageId::new(),
+                    kod_types::MessageRole::User,
+                    format!(
+                        "## Previous conversation rendered as image frame\n\
+                         ({source_lines} lines rasterized; the image is \
+                         attached to this request.)",
+                    ),
+                    time::OffsetDateTime::now_utc(),
+                );
+                marker_msg.metadata.pinned = true;
+                turns.insert(0, marker_msg);
+                affected = dropped.len();
+            }
             CompactionPlan::Summary {
                 covers_through,
                 text,
@@ -3153,6 +3204,7 @@ impl KodEngine {
             // is unaffected.
             native_compaction_blocks: RwLock::new(HashMap::new()),
             speculative_reads: RwLock::new(true),
+            image_frames: RwLock::new(HashMap::new()),
             secret_vault: RwLock::new(None),
             cost_tracker: crate::cost::CostTracker::new(),
             state_store: std::sync::RwLock::new(None),
@@ -9277,6 +9329,16 @@ pub(crate) fn filter_chain_by_trust(
                 .await
                 .get(key)
                 .cloned(),
+            // Delta §4.5: attach any stored image frames. The
+            // Anthropic wire emits them as image content blocks on
+            // the first user message; other providers ignore them.
+            image_frames: self
+                .image_frames
+                .read()
+                .await
+                .get(key)
+                .cloned()
+                .unwrap_or_default(),
         }
     }
 

@@ -307,6 +307,7 @@ mod tests {
             model: kod_provider::ModelRef::new("ep", "m"),
             cache_transcript: false,
             native_compaction_block: None,
+            image_frames: Vec::new(),
         };
         let s = RequestSummary::from_request(&req);
         assert_eq!(s.model, "m");

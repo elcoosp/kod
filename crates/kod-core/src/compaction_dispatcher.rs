@@ -187,6 +187,21 @@ pub enum CompactionPlan {
         covers_through: usize,
         text: String,
     },
+    /// Delta §4.5: rasterize the older half of the transcript into a
+    /// PNG and attach it as an image on the next request. The
+    /// transcript's older half is *replaced* by a short marker
+    /// message ("rendered as frame; see attachment") so the local
+    /// view shrinks too.
+    ///
+    /// `png_base64` is the base64-encoded PNG (no data-URL prefix —
+    /// the wire layer adds the framing). `source_lines` is the count
+    /// of original lines that went into the frame, for the marker
+    /// text and for telemetry.
+    Image {
+        covers_through: usize,
+        png_base64: String,
+        source_lines: usize,
+    },
     /// A summary produced by provider-native compaction. Same drain
     /// and replace shape as [`Self::Summary`], plus an opaque
     /// `encrypted_content` token the provider expects replayed on the
@@ -211,6 +226,7 @@ impl CompactionPlan {
             Self::Prune(p) => p.is_empty(),
             Self::Summary { text, .. } => text.trim().is_empty(),
             Self::NativeSummary { text, .. } => text.trim().is_empty(),
+            Self::Image { png_base64, .. } => png_base64.trim().is_empty(),
         }
     }
 }
