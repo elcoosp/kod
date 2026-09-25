@@ -184,6 +184,83 @@ pub fn validate(path: &Path, evidence: &Evidence) -> std::io::Result<bool> {
     Ok(digest == evidence.digest)
 }
 
+/// A completed speculative read, ready to consume at dispatch.
+///
+/// Produced by [`read_with_evidence`] and held by the streaming loop
+/// until the round's calls are dispatched. The `text` is what a
+/// successful validation returns; the `evidence` is what the
+/// validator checks against the file on disk.
+#[derive(Debug, Clone)]
+pub struct SpeculativeRead {
+    /// The absolute path the read targeted. Kept so the consumer can
+    /// validate against the same file — a speculation for
+    /// `src/main.rs` must not be consumed by a call asking for
+    /// `src/lib.rs`.
+    pub path: std::path::PathBuf,
+    /// The bytes read, decoded as UTF-8 (lossy).
+    pub text: String,
+    /// The file's identity at read time.
+    pub evidence: Evidence,
+}
+
+/// Extract a complete `"path"` value from tool-call arguments that may
+/// be *partially* streamed.
+///
+/// The streaming loop sees arguments as a growing string; the full
+/// JSON is only valid at the last delta. But a `read_file` call's path
+/// is usually the first thing in the JSON, so a tolerant scan can
+/// find it long before the JSON closes — which is exactly the window
+/// the speculation needs.
+///
+/// Returns `Some(path)` only when the value is fully quoted (a
+/// closing `"` was seen). An incomplete value has no way to be
+/// validated and is not a candidate.
+///
+/// # Handling escapes
+///
+/// A path with `\"` or `\\` in it is deserialized the same way
+/// `serde_json` would: the escape sequence is unescaped, so a spec
+/// for `a\"b` produces the path `a"b`, matching what
+/// `serde_json::from_str` gives once the args complete.
+pub fn extract_path_from_partial(args: &str) -> Option<String> {
+    // Fast path: the args parse cleanly (a one-delta call).
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(args)
+        && let Some(p) = v.get("path").and_then(|p| p.as_str())
+    {
+        return Some(p.to_string());
+    }
+    // Slow path: `"path"` appears with a colon and a quoted value.
+    let idx = args.find("\"path\"")?;
+    let after = &args[idx + 6..];
+    let colon = after.find(':')?;
+    let after_colon = after[colon + 1..].trim_start();
+    let rest = after_colon.strip_prefix('"')?;
+    let mut out = String::new();
+    let mut escaped = false;
+    for c in rest.chars() {
+        if escaped {
+            match c {
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                'r' => out.push('\r'),
+                '"' => out.push('"'),
+                '\\' => out.push('\\'),
+                other => out.push(other),
+            }
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' => escaped = true,
+            '"' => return Some(out),
+            _ => out.push(c),
+        }
+    }
+    // The value's opening quote is present but the closing quote is
+    // not: the path is still streaming. Not a candidate.
+    None
+}
+
 /// The outcome of consuming a speculative read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpecOutcome {
@@ -376,3 +453,77 @@ mod tests {
         assert_eq!(e1.ino, e2.ino);
     }
 }
+
+#[cfg(test)]
+mod partial_json_tests {
+    use super::*;
+
+    #[test]
+    fn complete_json_yields_the_path() {
+        assert_eq!(
+            extract_path_from_partial(r#"{"path":"src/main.rs"}"#),
+            Some("src/main.rs".to_string()),
+        );
+    }
+
+    #[test]
+    fn a_partial_json_with_a_closed_path_yields_the_path() {
+        // The closing brace is missing but the path's quote is closed.
+        assert_eq!(
+            extract_path_from_partial(r#"{"path":"src/main.rs""#),
+            Some("src/main.rs".to_string()),
+        );
+    }
+
+    #[test]
+    fn a_partial_json_with_an_open_path_value_yields_none() {
+        // The path's closing quote has not arrived.
+        assert_eq!(
+            extract_path_from_partial(r#"{"path":"src/mai"#),
+            None,
+        );
+    }
+
+    #[test]
+    fn a_json_with_no_path_yields_none() {
+        assert_eq!(
+            extract_path_from_partial(r#"{"pattern":"src"}"#),
+            None,
+        );
+    }
+
+    #[test]
+    fn an_escaped_quote_in_the_path_is_unescaped() {
+        assert_eq!(
+            extract_path_from_partial(r#"{"path":"a\"b"}"#),
+            Some("a\"b".to_string()),
+        );
+    }
+
+    #[test]
+    fn an_escaped_backslash_is_unescaped() {
+        assert_eq!(
+            extract_path_from_partial(r#"{"path":"a\\b"}"#),
+            Some("a\\b".to_string()),
+        );
+    }
+
+    #[test]
+    fn the_path_can_appear_after_other_keys() {
+        assert_eq!(
+            extract_path_from_partial(
+                r#"{"intent":"read","path":"src/x.rs"}"#,
+            ),
+            Some("src/x.rs".to_string()),
+        );
+    }
+
+    #[test]
+    fn whitespace_around_the_colon_is_tolerated() {
+        assert_eq!(
+            extract_path_from_partial(r#"{"path" : "src/x.rs"}"#),
+            Some("src/x.rs".to_string()),
+        );
+    }
+}
+

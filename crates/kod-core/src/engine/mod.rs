@@ -1076,6 +1076,22 @@ struct PolicyGateResult {
     policy: Option<std::sync::Arc<kod_config::PolicyEngine>>,
 }
 
+/// What one streaming round produced. A struct rather than the tuple
+/// the method used to return: the speculation vector is a fifth
+/// element and five-element tuples are unreadable at the call site.
+///
+/// `speculations` is indexed parallel to `calls` — `speculations[i]`
+/// is the pre-fetched read for `calls[i]`, or `None` when no
+/// speculation was made (the call is not a read, the read failed, or
+/// speculation is disabled).
+struct StreamRoundOutcome {
+    text: String,
+    calls: Vec<ToolCall>,
+    usage: Option<kod_provider::TokenUsage>,
+    retry_suggested: bool,
+    speculations: Vec<Option<crate::speculation::SpeculativeRead>>,
+}
+
 struct ToolRound {
     results: Vec<ToolResult>,
     prompt_block: String,
@@ -1317,6 +1333,11 @@ pub struct KodEngine {
     /// to the next request built for that transcript so the server
     /// reuses its KV cache instead of re-reading.
     native_compaction_blocks: RwLock<HashMap<String, String>>,
+    /// Delta §10: whether speculative reads are admitted. On by
+    /// default — the primitive's cost is one wasted read in the worst
+    /// case, and the validation step (TOCTOU digest check) means the
+    /// read is never *used* unless the file is provably unchanged.
+    speculative_reads: RwLock<bool>,
     /// Delta §11.8: the advisor emission guard. Shared with the
     /// `advise` tool; the tool admits through it, the turn loop
     /// calls `begin_update` on it once per turn so the per-update
@@ -3131,6 +3152,7 @@ impl KodEngine {
             // engine — every test, every embedder — sees `None` and
             // is unaffected.
             native_compaction_blocks: RwLock::new(HashMap::new()),
+            speculative_reads: RwLock::new(true),
             secret_vault: RwLock::new(None),
             cost_tracker: crate::cost::CostTracker::new(),
             state_store: std::sync::RwLock::new(None),
@@ -3858,6 +3880,11 @@ impl KodEngine {
         } else {
             blocks.insert(key.to_string(), encrypted.to_string());
         }
+    }
+
+    /// Delta §10: enable or disable speculative reads. On by default.
+    pub async fn set_speculative_reads(&self, on: bool) {
+        *self.speculative_reads.write().await = on;
     }
 
     /// Delta §4.4: the stored provider-native compaction block for a
@@ -8515,7 +8542,13 @@ pub(crate) fn filter_chain_by_trust(
                 // switching has a target.
                 fallback: round.fallback,
             };
-            let (text, mut calls, usage, off_track) = self
+            let StreamRoundOutcome {
+                text,
+                mut calls,
+                usage,
+                retry_suggested: off_track,
+                speculations,
+            } = self
                 .stream_round(
                     &current_provider,
                     round_for_this.system_text,
@@ -8539,6 +8572,9 @@ pub(crate) fn filter_chain_by_trust(
             // marker so the TUI drops what it displayed.
             if off_track && round_idx == 0 {
                 let _ = chunk_tx.send(stream_reset_marker()).await;
+                // Drop the speculations on the floor: the calls they
+                // were admitted for are being discarded too.
+                drop(speculations);
                 return Ok((String::new(), Vec::new(), Vec::new(), None, true));
             }
             last_usage = match (last_usage, usage) {
@@ -8722,6 +8758,7 @@ pub(crate) fn filter_chain_by_trust(
     }
 
     /// One streaming round: forward text live, assemble tool calls from
+    ///
     /// Round outcome: text, tool calls, usage, and — new for P5.6 —
     /// a `retry_suggested` flag. `true` means Jev judged the round
     /// off-track and the caller may want to try the next endpoint
@@ -8739,12 +8776,7 @@ pub(crate) fn filter_chain_by_trust(
         holder: &str,
         round_trace: Option<&std::sync::Mutex<crate::trace::TurnTraceBuilder>>,
         fallback: Option<&ModelRef>,
-    ) -> Result<(
-        String,
-        Vec<ToolCall>,
-        Option<kod_provider::TokenUsage>,
-        bool,
-    )> {
+    ) -> Result<StreamRoundOutcome> {
         use futures::StreamExt;
         use std::collections::BTreeMap;
 
@@ -8789,6 +8821,19 @@ pub(crate) fn filter_chain_by_trust(
         };
         let mut text = String::new();
         let mut partials: BTreeMap<usize, Partial> = BTreeMap::new();
+        // Delta §10: speculative reads. Keyed by tool-call index; the
+        // value is a JoinHandle that resolves to a completed read.
+        // Admitted lazily as a `read_file` call's `path` argument
+        // completes mid-stream, so the read overlaps the provider's
+        // remaining generation tail.
+        let mut speculation_handles: BTreeMap<usize, tokio::task::JoinHandle<Option<crate::speculation::SpeculativeRead>>> = BTreeMap::new();
+        // Only speculate when the caller has not disabled it. The
+        // engine's `speculative_reads` flag defaults on: the design's
+        // cost analysis is "one wasted read in the worst case".
+        let speculate_enabled = *self.speculative_reads.read().await;
+        let speculate_working_dir = self
+            .working_dir_for(if holder.is_empty() { "session" } else { holder })
+            .await;
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
         let mut chunk_count: usize = 0;
         let mut retry_suggested = false;
@@ -8896,7 +8941,50 @@ pub(crate) fn filter_chain_by_trust(
                     }
                 }
                 StreamChunk::ToolCallDelta { index, arguments } => {
-                    partials.entry(index).or_default().args.push_str(&arguments);
+                    let entry = partials.entry(index).or_default();
+                    entry.args.push_str(&arguments);
+                    // Delta §10: as soon as the args carry a complete
+                    // `"path":"..."` for a `read_file` call and no
+                    // speculation has been admitted for this index
+                    // yet, spawn one. The `path` usually streams
+                    // before the JSON closes, so this fires well
+                    // before the round ends and the read overlaps the
+                    // remaining generation.
+                    if speculate_enabled
+                        && entry.name.as_deref() == Some("read_file")
+                        && !speculation_handles.contains_key(&index)
+                        && let Some(rel) =
+                            crate::speculation::extract_path_from_partial(&entry.args)
+                    {
+                        // Resolve relative to the transcript's working
+                        // dir, matching what `read_file` will do. A
+                        // path that escapes the root is not
+                        // speculatable: resolve_path will refuse it
+                        // and the read would fail anyway.
+                        let abs = if std::path::Path::new(&rel).is_absolute() {
+                            std::path::PathBuf::from(&rel)
+                        } else {
+                            speculate_working_dir.join(&rel)
+                        };
+                        if !abs.exists() {
+                            // Not a candidate — the ordinary tool call
+                            // will produce the "no such file" error.
+                            continue;
+                        }
+                        let handle = tokio::spawn(async move {
+                            match crate::speculation::read_with_evidence(&abs) {
+                                Ok((text, evidence)) => {
+                                    Some(crate::speculation::SpeculativeRead {
+                                        path: abs,
+                                        text,
+                                        evidence,
+                                    })
+                                }
+                                Err(_) => None,
+                            }
+                        });
+                        speculation_handles.insert(index, handle);
+                    }
                 }
                 StreamChunk::Usage(usage) => {
                     last_usage = Some(usage);
@@ -8924,7 +9012,14 @@ pub(crate) fn filter_chain_by_trust(
         }
 
         let mut calls = Vec::with_capacity(partials.len());
-        for (_, p) in partials {
+        // Delta §10: join every speculative read's handle. The calls
+        // vec and the speculations vec are indexed in parallel — the
+        // consumer (`run_tool_calls`) validates the speculation
+        // against the live file before using it and falls back to a
+        // fresh read on any mismatch.
+        let mut speculations: Vec<Option<crate::speculation::SpeculativeRead>> =
+            Vec::with_capacity(partials.len());
+        for (index, p) in partials {
             let Some(name) = p.name else { continue };
             let arguments: serde_json::Value = serde_json::from_str(&p.args)
                 .unwrap_or_else(|_| serde_json::Value::String(p.args.clone()));
@@ -8933,6 +9028,11 @@ pub(crate) fn filter_chain_by_trust(
                 tool_name: name,
                 arguments,
             });
+            let spec = match speculation_handles.remove(&index) {
+                Some(handle) => handle.await.ok().flatten(),
+                None => None,
+            };
+            speculations.push(spec);
         }
         // H-E11: a mid-stream error or an idle timeout still returns
         // everything the loop managed to assemble — the caller sees
@@ -8946,7 +9046,13 @@ pub(crate) fn filter_chain_by_trust(
             // terminal answer.
             return Err(err);
         }
-        Ok((text, calls, last_usage, retry_suggested))
+        Ok(StreamRoundOutcome {
+            text,
+            calls,
+            usage: last_usage,
+            retry_suggested,
+            speculations,
+        })
     }
 
     /// Stream a plain-text summary (tools already ran): forwards chunks live.

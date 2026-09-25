@@ -682,6 +682,37 @@ pub struct ToolContext {
     /// installed its router; the tools then behave exactly as they
     /// did before this field existed.
     pub protocol_router: Option<crate::internal_url::ProtocolRouter>,
+
+    /// Delta §10: a speculative read the engine performed while the
+    /// provider was still streaming the tool call. `ReadFileTool`
+    /// uses the bytes here when the resolved path matches — the
+    /// engine has already validated the file's identity via the
+    /// TOCTOU digest check, so the tool can trust the bytes without
+    /// re-reading.
+    ///
+    /// `None` on every ordinary call.
+    pub prefetched_read: Option<PrefetchedRead>,
+}
+
+/// Delta §10: a read the engine has already performed speculatively.
+///
+/// The engine's streaming loop recognizes a `read_file` call while
+/// the provider is still generating it, reads the file in the
+/// background, and (after TOCTOU validation) puts the result here so
+/// [`ReadFileTool`](crate::tools::ReadFileTool) can use it without
+/// re-reading. `path` is the absolute path the speculation targeted;
+/// the tool only uses the prefetch when its own resolved path
+/// matches byte-for-byte, so a speculation for one file cannot be
+/// consumed by a call for another.
+///
+/// Defined in kod-tools rather than kod-core (where the speculation
+/// primitive lives) because `ToolContext` lives here and cannot
+/// depend on kod-core. The engine bridges the two shapes — it holds
+/// the `SpeculativeRead`, validates it, and constructs this one.
+#[derive(Debug, Clone)]
+pub struct PrefetchedRead {
+    pub path: std::path::PathBuf,
+    pub text: String,
 }
 
 /// Delta §5: offload a raw capture to the engine's artifact store
@@ -756,6 +787,7 @@ impl ToolContext {
             on_artifact_store: None,
             minimizer: None,
             protocol_router: None,
+            prefetched_read: None,
         }
     }
 

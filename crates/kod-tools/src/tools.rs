@@ -284,6 +284,38 @@ impl Tool for ReadFileTool {
             )));
         }
 
+        // Delta §10: use a speculative read when the engine performed
+        // one for exactly this path. The engine validated the file's
+        // identity via the TOCTOU digest check before placing the
+        // bytes here, so the content is trustworthy. Still applies
+        // the size cap and binary probe below, because a caller that
+        // set `prefetched_read` may have read a larger file than the
+        // tool would.
+        if let Some(pf) = context.prefetched_read.as_ref()
+            && pf.path == resolved
+        {
+            let mut buf: Vec<u8> = pf.text.as_bytes().to_vec();
+            let truncated = buf.len() > MAX_READ_BYTES;
+            if truncated {
+                buf.truncate(MAX_READ_BYTES);
+            }
+            let probe_len = buf.len().min(1024);
+            let looks_binary = buf[..probe_len].contains(&0u8);
+            if !looks_binary {
+                let content = String::from_utf8_lossy(&buf).into_owned();
+                return Ok(ToolResult::Success(serde_json::json!({
+                    "path": resolved.display().to_string(),
+                    "content": content,
+                    "size": total_size,
+                    "truncated": truncated,
+                    "source": "speculative-read",
+                })));
+            }
+            // Binary detection fired: fall through to the ordinary
+            // read so the hex-preview branch below produces the
+            // shape the model expects.
+        }
+
         // Read with a hard byte cap instead of `read_to_string`, so a
         // huge file (log, generated lock file, binary) can't exhaust
         // memory before the engine's prompt-side truncation kicks in.
