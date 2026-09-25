@@ -1284,6 +1284,10 @@ pub struct KodEngine {
     /// accounts each turn's usage against it and stops when the
     /// budget is spent.
     goal_runtime: RwLock<crate::goals::GoalRuntime>,
+    /// Delta §11.4: owner-routed, batched delivery of finished-job
+    /// results. A spawned background task enqueues here; the round
+    /// boundary drains it into one steer per owner.
+    async_delivery: std::sync::Arc<parking_lot::Mutex<crate::async_delivery::AsyncDelivery>>,
     /// Transcripts, one per key. `DEFAULT_TRANSCRIPT_KEY` is the
     /// interactive session; a swarm agent uses `swarm:<agent-id>` so
     /// concurrent agents do not interleave their turns.
@@ -2184,6 +2188,9 @@ impl KodEngine {
         let steers = std::sync::Arc::clone(&self.steers);
         let runner = std::sync::Arc::clone(&self.background);
         let working_dir = self.working_dir.clone();
+        // Delta §11.4: the delivery queue the completion closure
+        // enqueues into.
+        let async_delivery = std::sync::Arc::clone(&self.async_delivery);
 
         kod_tools::context::BackgroundSpawnHook::new(
             move |command: &str, stall: Option<u64>, holder: &str| -> Option<String> {
@@ -2248,6 +2255,7 @@ impl KodEngine {
                 // caller, so the task takes a copy.
                 let steers_task = std::sync::Arc::clone(&steers);
                 let runner_task = std::sync::Arc::clone(&runner);
+                let delivery_task = std::sync::Arc::clone(&async_delivery);
                 let id_task = id_str.clone();
 
                 tokio::spawn(async move {
@@ -2307,6 +2315,24 @@ impl KodEngine {
                         Err(e) => format!("could not read exit status: {e}"),
                     };
                     runner_task.complete(job, summary.clone());
+                    // Delta §11.4: enqueue into the batched delivery
+                    // queue *and* push the immediate interrupt. The
+                    // queue batches; the interrupt wakes an idle
+                    // turn. A consumer that only wants one of the two
+                    // can read the other path's behaviour, but both
+                    // firing is the safe default: the queue survives
+                    // a drop, the interrupt wakes a sleeping agent.
+                    let epoch = delivery_task.lock().epoch();
+                    delivery_task.lock().enqueue(
+                        crate::async_delivery::AsyncResult {
+                            job_id: job.0,
+                            owner_id: holder.clone(),
+                            kind: "shell".to_string(),
+                            body: summary.clone(),
+                            artifact: None,
+                            epoch,
+                        },
+                    );
                     push_background_interrupt(
                         &steers_task,
                         &holder,
@@ -3148,6 +3174,9 @@ impl KodEngine {
             cancels: parking_lot::RwLock::new(std::collections::HashMap::new()),
             pause_gate: std::sync::Arc::new(crate::pause_gate::PauseGate::new()),
             goal_runtime: RwLock::new(crate::goals::GoalRuntime::new()),
+            async_delivery: std::sync::Arc::new(parking_lot::Mutex::new(
+                crate::async_delivery::AsyncDelivery::new(),
+            )),
             history: RwLock::new(HashMap::new()),
             observed_usage: RwLock::new(HashMap::new()),
             context_gauges: RwLock::new(HashMap::new()),
@@ -8669,6 +8698,22 @@ pub(crate) fn filter_chain_by_trust(
     ///   shows the steer in the exact position the pre-migration
     ///   path would have placed it, which is what users have learned
     ///   to read.
+    /// Delta §11.4: drain every owner's batched async-result message
+    /// into the transcript's steer queue. Called at a round boundary;
+    /// a no-op when nothing is queued.
+    async fn drain_async_results(&self, holder: &str) {
+        let msg = {
+            let mut d = self.async_delivery.lock();
+            d.drain(holder)
+        };
+        if let Some(m) = msg {
+            let mut q = self.steers.write().await;
+            q.entry(holder.to_string())
+                .or_default()
+                .push(crate::steer::SoftInterrupt::background(m));
+        }
+    }
+
     async fn apply_steers(
         &self,
         pending: &mut String,
