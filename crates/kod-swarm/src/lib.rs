@@ -28,6 +28,7 @@ pub mod file_touch;
 pub mod swarm;
 pub mod work_pool;
 pub mod yield_queue;
+pub mod irc_bus;
 
 pub use agent::{Agent, AgentBuilder, AgentState, Capability, ModelConfig};
 pub use blackboard::{AuthorKind, Blackboard, BlackboardEntry};
