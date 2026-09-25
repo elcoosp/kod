@@ -9447,6 +9447,17 @@ pub(crate) fn filter_chain_by_trust(
         // returns them (which is byte-stable per `registry.rs`'s sort).
         self.note_tool_surface_fingerprint(key, definitions).await;
 
+        // Delta §6: demote Discoverable tools out of the array the
+        // provider sees. They stay registered and reachable through
+        // `read xd://<tool>` / `write xd://<tool>`; the schema just
+        // stops costing prompt budget on every request. A tool whose
+        // load mode is Essential (the default) is unaffected.
+        let definitions: Vec<ToolDefinition> = definitions
+            .iter()
+            .filter(|d| !d.load_mode.is_discoverable())
+            .cloned()
+            .collect();
+
         // Delta §14.1: obfuscate registered secrets in every string
         // about to reach the provider.
         //
