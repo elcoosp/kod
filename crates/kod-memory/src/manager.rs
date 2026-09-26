@@ -624,6 +624,22 @@ impl MemoryManager {
             .map(|(_, e)| e)
             .collect();
 
+        // Delta §12.8: compress tier-3 bodies at retrieval. An entry
+        // past 180 days is rendered as a <= 300-char fragment rather
+        // than its full body — the tier weight already lowers its
+        // score, and this lowers what it costs the prompt. The store
+        // is untouched: the writeback below re-reads each entry, so
+        // the compressed form never lands on disk.
+        let top: Vec<MemoryEntry> = top
+            .into_iter()
+            .map(|mut e| {
+                if crate::tier::tier_at(e.timestamp, now) == crate::tier::Tier::Three {
+                    e.content = crate::tier::compress_body(&e.content);
+                }
+                e
+            })
+            .collect();
+
         // Write back `last_retrieved_at_ms` (design D2.5). Best-effort
         // and batched: one redb write transaction for the top-k, on the
         // retrieval hot path. A failure is logged and the results are
