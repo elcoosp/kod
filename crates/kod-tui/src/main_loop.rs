@@ -3455,6 +3455,20 @@ impl TuiLoop {
                         }
                     }
                 }
+
+                // Delta §9.11 — per-run metadata: stop-reason
+                // histogram, per-tool status counters, coverage, and
+                // cost-unavailable reasons. Distinct from the
+                // session-wide counts above: those aggregate the
+                // whole session, this aggregates the current run.
+                if let Some(engine) = &self.engine {
+                    let report = engine.run_report();
+                    if !report.is_empty() {
+                        msg.push_str("\n");
+                        msg.push_str(&report);
+                    }
+                }
+
                 self.app.push_system_message(msg.trim_end());
             }
             "/git-status" => {
