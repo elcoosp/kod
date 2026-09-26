@@ -551,11 +551,17 @@ impl MemoryManager {
         };
 
         let now = time::OffsetDateTime::now_utc();
+        // Delta §12.8: classify the query's intent and bias the
+        // component weights accordingly.
+        let intent = crate::fusion::classify_intent(query);
+        let weights = crate::fusion::intent_weights(intent);
         let mut scored: Vec<(f32, MemoryEntry)> = all
             .into_iter()
             .map(|entry| {
                 let cos = cosines.get(&entry.id).copied();
-                let s = self.scorer.score(&query_terms, &entry, cos, now);
+                let s = self
+                    .scorer
+                    .score_with_weights(&query_terms, &entry, cos, now, weights);
                 (s, entry)
             })
             .collect();

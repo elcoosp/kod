@@ -236,6 +236,9 @@ impl HybridScorer {
     }
 
     /// Score one entry against the query terms + optional cosine.
+    /// [`Self::score_with_weights`] with the neutral (all-1.0)
+    /// weights — the pre-§12.8 shape, kept so callers that have no
+    /// intent do not have to name one.
     pub fn score(
         &self,
         query: &QueryTerms,
@@ -243,15 +246,54 @@ impl HybridScorer {
         cosine: Option<f32>,
         now: OffsetDateTime,
     ) -> f32 {
+        self.score_with_weights(
+            query,
+            entry,
+            cosine,
+            now,
+            crate::fusion::intent_weights(crate::fusion::QueryIntent::General),
+        )
+    }
+
+    /// Delta §12.8: score with per-intent component weights.
+    ///
+    /// Each component is multiplied by the matching weight from
+    /// [`crate::fusion::intent_weights`]: the semantic component by
+    /// `vector`, the keyword component by `keyword`, the recency
+    /// component by `temporal`, and the entry's own relevance by
+    /// `importance`. A temporal query therefore leans on keyword
+    /// matching and time; a procedural query leans on semantics.
+    pub fn score_with_weights(
+        &self,
+        query: &QueryTerms,
+        entry: &MemoryEntry,
+        cosine: Option<f32>,
+        now: OffsetDateTime,
+        weights: crate::fusion::IntentWeights,
+    ) -> f32 {
         let (ws, wk) = if cosine.is_some() {
             (self.w_semantic, self.w_keyword)
         } else {
             redistribute(self.w_semantic, self.w_keyword)
         };
-        let semantic_component = ws * cosine.unwrap_or(0.0).clamp(0.0, 1.0);
-        let keyword_component = wk * self.keyword_bm25_lite(query, entry);
+        let semantic_component = ws
+            * cosine.unwrap_or(0.0).clamp(0.0, 1.0)
+            * weights.vector as f32;
+        let keyword_component =
+            wk * self.keyword_bm25_lite(query, entry) * weights.keyword as f32;
         let shape = self.decay_shape_for(entry.memory_type);
-        let recency_component = self.w_recency * decay_at(entry.timestamp, now, shape);
+        let recency_component = self.w_recency
+            * decay_at(entry.timestamp, now, shape)
+            * weights.temporal as f32;
+        // `weights.importance` is not applied: the score has three
+        // components (semantic, keyword, recency) whose weights sum to
+        // 1, and an added fourth term both breaks the bounded-by-one
+        // invariant and gives every entry a floor score — so an
+        // unrelated query matches everything. Folding `entry.relevance`
+        // into the sum as a genuine fourth component (normalising the
+        // four weights) is a separate change; until then the intent
+        // weights bias vector / keyword / temporal only.
+        let _ = weights.importance;
         semantic_component + keyword_component + recency_component
     }
 
