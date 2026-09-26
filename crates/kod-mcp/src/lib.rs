@@ -33,6 +33,7 @@
 //! which is the only crate that already depends on both.
 
 pub mod client;
+pub mod http_policy;
 pub mod types;
 
 pub use client::{McpClient, McpError};
