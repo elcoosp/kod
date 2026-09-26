@@ -2324,6 +2324,7 @@ dependencies = [
  "kod-risk",
  "kod-schema-dialect",
  "kod-skills",
+ "kod-stats",
  "kod-swarm",
  "kod-tools",
  "kod-types",

@@ -1295,6 +1295,11 @@ pub struct KodEngine {
     /// Delta §9.11: per-run metadata. Updated once per turn and once
     /// per tool call; read by `/stats`.
     run_collector: std::sync::Arc<parking_lot::Mutex<crate::run_collector::RunCollector>>,
+    /// Delta §13.2: per-request analytics aggregates.
+    stats: std::sync::Arc<parking_lot::Mutex<kod_stats::request::Aggregates>>,
+    /// Delta §13.2: behavioral signals folded over the session's user
+    /// messages.
+    behavioral: std::sync::Arc<parking_lot::Mutex<kod_stats::behavioral::BehavioralSignals>>,
     /// Transcripts, one per key. `DEFAULT_TRANSCRIPT_KEY` is the
     /// interactive session; a swarm agent uses `swarm:<agent-id>` so
     /// concurrent agents do not interleave their turns.
@@ -3195,6 +3200,12 @@ impl KodEngine {
             run_collector: std::sync::Arc::new(parking_lot::Mutex::new(
                 crate::run_collector::RunCollector::new(),
             )),
+            stats: std::sync::Arc::new(parking_lot::Mutex::new(
+                kod_stats::request::Aggregates::new(),
+            )),
+            behavioral: std::sync::Arc::new(parking_lot::Mutex::new(
+                kod_stats::behavioral::BehavioralSignals::default(),
+            )),
             history: RwLock::new(HashMap::new()),
             observed_usage: RwLock::new(HashMap::new()),
             context_gauges: RwLock::new(HashMap::new()),
@@ -4046,6 +4057,16 @@ impl KodEngine {
             .await
             .get(key)
             .cloned()
+    }
+
+    /// Delta §13.2: the session's behavioral-signal totals.
+    pub fn behavioral_signals(&self) -> kod_stats::behavioral::BehavioralSignals {
+        *self.behavioral.lock()
+    }
+
+    /// Delta §13.2: the per-request aggregates.
+    pub fn request_aggregates(&self) -> kod_stats::request::Aggregates {
+        self.stats.lock().clone()
     }
 
     /// Delta §9.11: the run collector's report, for `/stats`.
@@ -7892,6 +7913,13 @@ pub(crate) fn filter_chain_by_trust(
             }
         }
         self.set_current_request(key, input).await;
+        // Delta §13.2: fold this user message's behavioral signals
+        // into the session total.
+        {
+            let s = kod_stats::behavioral::analyze(input);
+            let mut b = self.behavioral.lock();
+            *b = b.merge(&s);
+        }
         // Delta §11.7: offer the todo tool at the start of a task.
         self.maybe_offer_todo_prelude(key, input).await;
         // Tier 1.1 — a fresh user turn clears any prior taint.
