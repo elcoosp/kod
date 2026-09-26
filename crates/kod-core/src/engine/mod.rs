@@ -1306,6 +1306,12 @@ pub struct KodEngine {
     /// it streams. A rule that fires with `interrupt` aborts the
     /// stream so the caller can inject the correction and retry.
     ttsr: RwLock<kod_provider::ttsr::TtsrEngine>,
+    /// Delta §12.6: per-transcript retention cursors. A rolling hash
+    /// over the retained prefix tells the continuous-extraction path
+    /// what is new since the last pass; a rewind or in-place edit
+    /// resets it so the whole transcript is re-sent.
+    retention_cursors:
+        RwLock<HashMap<String, kod_memory::retention::RetentionCursor>>,
     /// Delta §13.2: behavioral signals folded over the session's user
     /// messages.
     behavioral: std::sync::Arc<parking_lot::Mutex<kod_stats::behavioral::BehavioralSignals>>,
@@ -3214,6 +3220,7 @@ impl KodEngine {
             )),
             mental_models: RwLock::new(kod_memory::mental_models::MentalModels::new()),
             ttsr: RwLock::new(kod_provider::ttsr::TtsrEngine::new(Vec::new())),
+            retention_cursors: RwLock::new(HashMap::new()),
             behavioral: std::sync::Arc::new(parking_lot::Mutex::new(
                 kod_stats::behavioral::BehavioralSignals::default(),
             )),
@@ -7918,6 +7925,9 @@ pub(crate) fn filter_chain_by_trust(
             // Delta §11.7: remind the model of open todos at stop.
             self.maybe_emit_todo_completion_reminder(key, &final_text)
                 .await;
+            // Delta §12.6: continuous memory extraction over the new
+            // tail since the last pass.
+            self.maybe_extract_continuously(key).await;
 
             // Delta §9.4 (diagnostic): same classifier call as the
             // streaming path. Non-blocking.
@@ -8301,6 +8311,9 @@ pub(crate) fn filter_chain_by_trust(
             // Delta §11.7: remind the model of open todos at stop.
             self.maybe_emit_todo_completion_reminder(key, &final_text)
                 .await;
+            // Delta §12.6: continuous memory extraction over the new
+            // tail since the last pass.
+            self.maybe_extract_continuously(key).await;
 
             // Delta §9.4 (diagnostic): classify a clean stop with
             // no tool calls. Non-blocking — the reply is delivered
@@ -11901,6 +11914,105 @@ pub(crate) fn filter_chain_by_trust(
             elapsed_ms,
             messages,
         }
+    }
+
+    /// Delta §12.6: continuous memory extraction.
+    ///
+    /// Runs at a turn boundary. The per-transcript retention cursor
+    /// answers "what is new since the last pass"; when the new tail
+    /// passes the cadence floor, the tail is extracted and stored as
+    /// episodic entries. On a cursor reset (a rewind, a branch, an
+    /// in-place edit) nothing is extracted this turn — the cursor now
+    /// covers the whole transcript, and the next pass is incremental
+    /// from there.
+    ///
+    /// Best-effort: every failure logs and returns. A turn must never
+    /// fail because memory extraction did.
+    ///
+    /// # Latency
+    ///
+    /// The extraction is one small model call, run inline. A caller
+    /// that wants it off the turn's critical path spawns it instead;
+    /// backgrounding it needs the engine state cloned into a task and
+    /// is a documented follow-up.
+    async fn maybe_extract_continuously(&self, key: &str) {
+        if !self.router.has_memory() {
+            return;
+        }
+        let config = match kod_config::KodConfig::load_default() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let max_entries = config.memory.extract_max_entries.max(1);
+
+        let transcript: Vec<kod_types::ChatMessage> = {
+            let history = self.history.read().await;
+            history.get(key).cloned().unwrap_or_default()
+        };
+        if transcript.is_empty() {
+            return;
+        }
+
+        // The cursor decides what is new. `advance` mutates the cursor,
+        // so read the old length first to know the new tail's range.
+        let (new_start, new_len, new_count) = {
+            let mut cursors = self.retention_cursors.write().await;
+            let cursor = cursors
+                .entry(key.to_string())
+                .or_default();
+            let old = cursor.retained();
+            match cursor.advance(&transcript) {
+                Some(count) => (old, cursor.retained(), count),
+                None => return,
+            }
+        };
+        // The cadence floor: a two-message tail is not worth a call.
+        if !kod_memory::retention::RetentionCadence::default().is_due(new_count) {
+            return;
+        }
+
+        let chain = self.resolve_chain_for_task("Simple").await;
+        let Some(model_ref) = chain.first() else {
+            return;
+        };
+        let provider = match self.resolve_provider_for_model_ref(model_ref).await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(error = %e, "continuous extraction: no provider");
+                return;
+            }
+        };
+        let tail = &transcript[new_start..new_len];
+        let facts =
+            match kod_memory::extract::extract(provider, model_ref, tail, max_entries).await {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!(error = %e, "continuous extraction: failed");
+                    return;
+                }
+            };
+        if facts.is_empty() {
+            return;
+        }
+        let project_key = Some(crate::router::TaskRouter::project_key_for(&self.working_dir));
+        for fact in &facts {
+            let mut metadata =
+                kod_memory::extract::metadata_for(fact, project_key.clone());
+            metadata.session_id = Some(self.session_id_for_holder(key));
+            if let Err(e) = self
+                .router
+                .store_episodic(&fact.content, metadata)
+                .await
+            {
+                tracing::warn!(error = %e, "continuous extraction: store failed");
+            }
+        }
+        tracing::debug!(
+            key,
+            new_messages = new_count,
+            stored = facts.len(),
+            "continuous extraction pass",
+        );
     }
 
     /// Run the memory extraction pass over the session transcript
