@@ -1302,6 +1302,10 @@ pub struct KodEngine {
     /// so the bytes are stable for the session and the provider's
     /// prefix cache is not invalidated mid-turn.
     mental_models: RwLock<kod_memory::mental_models::MentalModels>,
+    /// Delta §14.3: stream rules matched against the model's output as
+    /// it streams. A rule that fires with `interrupt` aborts the
+    /// stream so the caller can inject the correction and retry.
+    ttsr: RwLock<kod_provider::ttsr::TtsrEngine>,
     /// Delta §13.2: behavioral signals folded over the session's user
     /// messages.
     behavioral: std::sync::Arc<parking_lot::Mutex<kod_stats::behavioral::BehavioralSignals>>,
@@ -3209,6 +3213,7 @@ impl KodEngine {
                 kod_stats::request::Aggregates::new(),
             )),
             mental_models: RwLock::new(kod_memory::mental_models::MentalModels::new()),
+            ttsr: RwLock::new(kod_provider::ttsr::TtsrEngine::new(Vec::new())),
             behavioral: std::sync::Arc::new(parking_lot::Mutex::new(
                 kod_stats::behavioral::BehavioralSignals::default(),
             )),
@@ -4063,6 +4068,24 @@ impl KodEngine {
             .await
             .get(key)
             .cloned()
+    }
+
+    /// Delta §14.3: install the TTSR rules. Replaces any existing set.
+    /// A rule's regex is compiled here; a bad pattern drops that rule.
+    pub async fn set_ttsr_rules(&self, rules: Vec<kod_provider::ttsr::Rule>) {
+        *self.ttsr.write().await = kod_provider::ttsr::TtsrEngine::new(rules);
+    }
+
+    /// Delta §14.3: install the shipped rules (no-TODO-in-diff,
+    /// no-secret-in-prose).
+    pub async fn install_builtin_ttsr_rules(&self) {
+        self.set_ttsr_rules(kod_provider::ttsr::builtin_rules()).await;
+    }
+
+    /// Delta §14.3: advance the TTSR engine's turn counter, so a
+    /// `Gap(n)` rule can refire.
+    pub async fn begin_ttsr_turn(&self) {
+        self.ttsr.write().await.begin_turn();
     }
 
     /// Delta §12.7: seed a mental model. Create-only — a second seed
@@ -9335,6 +9358,32 @@ pub(crate) fn filter_chain_by_trust(
             match item {
                 StreamChunk::Text(t) => {
                     text.push_str(&t);
+                    // Delta §14.3: TTSR rules match the streamed prose.
+                    // A firing rule with `interrupt` aborts the stream
+                    // so the caller injects the correction and retries;
+                    // a non-interrupting hit is logged.
+                    {
+                        let mut engine = self.ttsr.write().await;
+                        let fired = engine.observe_text(&t);
+                        let interrupt = fired.iter().find(|f| f.interrupt).cloned();
+                        if !fired.is_empty() {
+                            for f in &fired {
+                                tracing::debug!(
+                                    rule = %f.id,
+                                    interrupt = f.interrupt,
+                                    "ttsr rule fired",
+                                );
+                            }
+                        }
+                        if let Some(f) = interrupt {
+                            let _ = chunk_tx.send(t).await;
+                            stream_error = Some(KodError::InvalidState(format!(
+                                "ttsr rule `{}` fired: {}",
+                                f.id, f.correction,
+                            )));
+                            break;
+                        }
+                    }
                     let _ = chunk_tx.send(t).await;
                     chunk_count += 1;
                     // Early-termination check (P1.2). The
