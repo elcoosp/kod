@@ -54,6 +54,7 @@ pub mod registry;
 pub mod sandbox;
 pub mod search;
 pub mod todo;
+pub mod todo_tracker;
 pub mod tools;
 pub mod web;
 pub use ask::{AskUserTool, QUESTION_MARKER, QuestionRequest, parse_question, question_marker};
