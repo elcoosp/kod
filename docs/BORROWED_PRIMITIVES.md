@@ -40,31 +40,50 @@ git log to find out. Update this file when the status changes.
 | Guarded job/wave spawn (§11.4) | `BackgroundJobRunner::spawn_guarded`; swarm wave tasks | keeps the `JoinHandle`, maps `JoinError::Panic` to `fail_if_running`; swarm waves wrapped in `catch_unwind` so one agent's panic fails alone | 3 job-guard tests |
 | Run collector (§9.11) | `kod-core/src/run_collector.rs` + engine | per-run stop-reason histogram, per-tool status counters, coverage, cost-unavailable reasons; `/stats` prints it | 13 unit tests |
 
-## Not yet built (each larger than the primitives above)
+## Not yet built — grep-verified
 
-- **Auto-detach of a live foreground child** (§11.4): `execute_command`
-  reports `background_suggested` past 60 s but does not detach;
-  ownership transfer of pipes and pinned read futures is the work.
-- **Memory (§12), partially built.** Verified present in the code, so
-  *not* on this list: §12.1 Weibull forgetting curves
-  (`kod-memory/src/retrieval.rs`: `weibull_shape_for` with the
-  per-type `(k, eta)` table, `Decay::Exponential` fallback, `decay_at`)
-  and §12.4 memory-write redaction (`manager.rs::store_with_metadata`
-  redacts content and tags via `redact_text` before the dedup check).
-  Still absent: §12.2 veracity consolidation (the `superseded_by` and
-  `contradicts` fields exist on `MemoryEntry`; the Bayesian consolidate
-  pass does not), §12.3 sharpshooter decision memory, §12.5 pipeline
-  hygiene, §12.6 retention cadence, §12.7 mental models, §12.8 the
-  smaller borrows (episodic tier degradation, polyphonic RRF, query-
-  intent biasing, MMR).
-- **Catalog metadata, per-request stats, if-bench** (§13).
-- **Capability discovery registry, TTSR, agentic commit, OTLP
-  telemetry, MCP header policy** (§14.2–14.5).
-- **Cleanse loop, plan-mode hardening, worktree isolation GC, prewalk**
-  (§11.9–11.12).
-- **Cold revive session rebuild**: the `SessionInit` entry and its
-  reader are landed; the consumer that rebuilds the tool surface from
-  it is not.
+Every entry below was checked against the tree, not recalled. A
+"done" claim in this file is worth only as much as the check behind
+it; two §12 items were wrongly listed as missing until a grep found
+them.
+
+### Present (verified)
+
+- **§12.1 Weibull forgetting curves** — `kod-memory/src/retrieval.rs`:
+  `weibull_shape_for` (per-type `(k, eta)` table), `Decay::Exponential`
+  fallback, `decay_at`.
+- **§12.4 memory-write redaction** — `manager.rs::store_with_metadata`
+  redacts content and tags via `redact_text` before the dedup check.
+- **§11.4 background *suggestion*** — `execute_command` reports
+  `background_suggested` past 60 s.
+
+### Absent (verified)
+
+- **§11.4 live-child auto-detach** — the suggestion is there; handing
+  off a still-running child (pipes + pinned read futures) is not.
+- **§11.9 cleanse loop** — only a doc-comment reference in
+  `work_pool.rs`; no `cleanse` module.
+- **§11.10 plan-mode hardening**, **§11.11 worktree isolation GC**,
+  **§11.12 prewalk** — absent.
+- **§12.2 veracity consolidation** — `MemoryManager::consolidate` does
+  archival + near-duplicate fusion; the Bayesian confidence update and
+  contradiction resolution are not implemented, though
+  `MemoryEntry.superseded_by` / `.contradicts` fields exist.
+- **§12.3 sharpshooter** (friction-gated decision memory) — absent.
+- **§12.5 memory pipeline hygiene** — absent.
+- **§12.6 retention cadence / rolling hash** — absent.
+- **§12.7 mental models** — absent.
+- **§12.8 smaller memory borrows** (episodic tier degradation,
+  polyphonic RRF, query-intent biasing, MMR) — absent.
+- **§13 catalog metadata, per-request stats, if-bench** — absent; no
+  catalog or stats crate.
+- **§14.2 capability discovery registry** — absent.
+- **§14.3 TTSR** — absent.
+- **§14.4 agentic commit** — absent.
+- **§14.5 OTLP telemetry, MCP header/origin policy** — absent.
+- **Cold-revive surface rebuild** — `SessionInit` and its reader are
+  landed; the consumer that rebuilds a session's tool surface from
+  the entry is not.
 
 ## How to update this file
 
