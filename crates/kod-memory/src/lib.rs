@@ -9,6 +9,7 @@ pub mod embedding;
 pub mod extract;
 pub mod long_term;
 pub mod manager;
+pub mod hygiene;
 pub mod retrieval;
 pub mod short_term;
 pub mod stopwords;
