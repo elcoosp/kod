@@ -561,6 +561,51 @@ impl MemoryManager {
             .collect();
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
+        // Delta §12.8: MMR reranking for diversity. Among the top
+        // candidates by score, pick a relevant-but-diverse subset so
+        // ten near-duplicate entries about the same topic do not fill
+        // the result. Jaccard over word sets is the similarity;
+        // MMR_LAMBDA is the design's 0.7 (favor relevance, penalize
+        // duplicates).
+        let scored: Vec<(f32, MemoryEntry)> = {
+            const RERANK_POOL: usize = 40;
+            let pool: Vec<(f32, MemoryEntry)> =
+                scored.into_iter().take(RERANK_POOL).collect();
+            let contents: std::collections::HashMap<String, String> = pool
+                .iter()
+                .map(|(_, e)| (e.id.as_uuid().to_string(), e.content.clone()))
+                .collect();
+            let candidates: Vec<(String, f64)> = pool
+                .iter()
+                .map(|(s, e)| (e.id.as_uuid().to_string(), *s as f64))
+                .collect();
+            let jaccard = |a: &str, b: &str| -> f64 {
+                let ta: std::collections::HashSet<&str> = a.split_whitespace().collect();
+                let tb: std::collections::HashSet<&str> = b.split_whitespace().collect();
+                let inter = ta.intersection(&tb).count() as f64;
+                let union = ta.union(&tb).count() as f64;
+                if union == 0.0 { 0.0 } else { inter / union }
+            };
+            let reranked = crate::fusion::mmr_rerank(
+                &candidates,
+                |a, b| {
+                    let ca = contents.get(a).map(|s| s.as_str()).unwrap_or("");
+                    let cb = contents.get(b).map(|s| s.as_str()).unwrap_or("");
+                    jaccard(ca, cb)
+                },
+                crate::fusion::MMR_LAMBDA,
+                None,
+            );
+            let by_id: std::collections::HashMap<String, (f32, MemoryEntry)> = pool
+                .into_iter()
+                .map(|(s, e)| (e.id.as_uuid().to_string(), (s, e)))
+                .collect();
+            reranked
+                .into_iter()
+                .filter_map(|(id, _)| by_id.get(&id).cloned())
+                .collect()
+        };
+
         // Apply a minimum relevance threshold so an unrelated query
         // does not return the entire store in a stable-but-meaningless
         // order. 0.15 lets recency+keyword-only entries through but
