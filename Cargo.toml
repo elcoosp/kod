@@ -20,6 +20,7 @@ members = [
     "crates/kod-risk",
     "crates/kod-schema-dialect",
     "crates/kod-minimize",
+    "crates/kod-stats",
 ]
 
 [workspace.package]
