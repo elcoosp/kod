@@ -13,6 +13,7 @@ pub mod hygiene;
 pub mod tier;
 pub mod veracity;
 pub mod sharpshooter;
+pub mod retention;
 pub mod mental_models;
 pub mod fusion;
 pub mod retrieval;
