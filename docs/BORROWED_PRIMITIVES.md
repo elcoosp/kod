@@ -45,8 +45,18 @@ git log to find out. Update this file when the status changes.
 - **Auto-detach of a live foreground child** (§11.4): `execute_command`
   reports `background_suggested` past 60 s but does not detach;
   ownership transfer of pipes and pinned read futures is the work.
-- **Weibull forgetting curves, veracity consolidation, sharpshooter
-  decision memory, memory-write hygiene** (§12).
+- **Memory (§12), partially built.** Verified present in the code, so
+  *not* on this list: §12.1 Weibull forgetting curves
+  (`kod-memory/src/retrieval.rs`: `weibull_shape_for` with the
+  per-type `(k, eta)` table, `Decay::Exponential` fallback, `decay_at`)
+  and §12.4 memory-write redaction (`manager.rs::store_with_metadata`
+  redacts content and tags via `redact_text` before the dedup check).
+  Still absent: §12.2 veracity consolidation (the `superseded_by` and
+  `contradicts` fields exist on `MemoryEntry`; the Bayesian consolidate
+  pass does not), §12.3 sharpshooter decision memory, §12.5 pipeline
+  hygiene, §12.6 retention cadence, §12.7 mental models, §12.8 the
+  smaller borrows (episodic tier degradation, polyphonic RRF, query-
+  intent biasing, MMR).
 - **Catalog metadata, per-request stats, if-bench** (§13).
 - **Capability discovery registry, TTSR, agentic commit, OTLP
   telemetry, MCP header policy** (§14.2–14.5).
