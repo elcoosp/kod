@@ -8018,6 +8018,10 @@ pub(crate) fn filter_chain_by_trust(
         // emission budget. The dedupe history persists — a note
         // admitted last turn is still a duplicate this turn.
         self.advisor_guard.lock().begin_update();
+        // Delta §14.3: advance the TTSR turn counter. A `Gap(n)` rule
+        // refires only when n turns have passed since its last fire,
+        // so this is what makes the gap semantics live.
+        self.begin_ttsr_turn().await;
         self.tool_counts.begin_turn();
         // Tier 1.4 — open a turn trace. Emitted when this call returns.
         let trace_id = self.next_turn_id();
