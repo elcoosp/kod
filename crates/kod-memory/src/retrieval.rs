@@ -294,7 +294,14 @@ impl HybridScorer {
         // four weights) is a separate change; until then the intent
         // weights bias vector / keyword / temporal only.
         let _ = weights.importance;
-        semantic_component + keyword_component + recency_component
+        // Delta §12.8: episodic tier degradation. The tier's weight is
+        // a step function on age (< 30 d: 1.0, >= 30 d: 0.5,
+        // >= 180 d: 0.25) applied to the whole score. It composes with
+        // the continuous recency decay rather than replacing it: the
+        // design keeps both, and the tier is a coarse policy on top.
+        // The weight is <= 1.0, so the bounded-by-one invariant holds.
+        let tier_weight = crate::tier::tier_at(entry.timestamp, now).weight();
+        (semantic_component + keyword_component + recency_component) * tier_weight
     }
 
     /// Term-frequency-saturated keyword score for one entry. Value in
