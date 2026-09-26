@@ -21,6 +21,20 @@ const MAX_READ_BYTES: usize = 256 * 1024;
 /// `yes` or `find /` would otherwise exhaust memory and wedge the pipe.
 const MAX_CMD_OUTPUT_BYTES: usize = 64 * 1024;
 
+/// Delta §11.4: how long a foreground command may run before the
+/// result suggests backgrounding it. The design's default is 60 s;
+/// a command that has produced nothing for a minute is usually
+/// better detached.
+///
+/// This is a *suggestion* threshold, not an auto-detach: the tool
+/// still waits for the command (bounded by its own `timeout_secs`)
+/// and returns the real result. The result carries
+/// `background_suggested: true` so a caller can re-issue with
+/// `run_in_background`. Auto-detaching a live child needs ownership
+/// transfer of its pipes and pinned read futures — a restructuring
+/// that would risk running the command twice if done wrong.
+const BACKGROUND_SUGGEST_AFTER_SECS: u64 = 60;
+
 /// Map a path-level IO error into a message the model can act on.
 ///
 /// The default Display of std::io::Error on a directory read is
@@ -678,6 +692,9 @@ impl Tool for ExecuteCommandTool {
             })?;
 
         context.can_execute_command(command)?;
+        // Delta §11.4: the command's wall time, for the
+        // background-suggestion threshold below.
+        let started = std::time::Instant::now();
 
         // P2-d: a background command hands off to the engine's spawner
         // and returns a job id immediately. The engine owns the spool,
@@ -989,6 +1006,12 @@ impl Tool for ExecuteCommandTool {
             // chatty and the partial output is still representative.
             "timed_out": timed_out,
             "timeout_secs": effective_timeout_secs,
+            // Delta §11.4: a command that ran past the suggest
+            // threshold (and did not time out) is a candidate for
+            // backgrounding. The tool does not detach it — a re-issue
+            // with `run_in_background` does.
+            "background_suggested": !timed_out
+                && started.elapsed().as_secs() >= BACKGROUND_SUGGEST_AFTER_SECS,
         })))
     }
 }
