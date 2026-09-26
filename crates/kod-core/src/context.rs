@@ -61,20 +61,32 @@ impl EngineContext {
             prompt.push_str(&format!("## System\n\n{}\n\n", system));
         }
 
-        // Add memory context
-        if !self.memory_context.working_memory.is_empty() {
-            prompt.push_str("## Current Context\n\n");
-            for entry in &self.memory_context.working_memory {
-                prompt.push_str(&format!("- {}\n", entry.content));
+        // Delta §12.5: recalled memory is prompt scaffolding, not a
+        // fact. Frame the block with the precedence note and tag it
+        // <memories> so the extraction path's `strip_memory_tags`
+        // recognises and drops it if the model's reply — which saw
+        // this block — is later extracted. The precedence note is
+        // what stops a stale "always do X" from outranking the
+        // user's current message.
+        if !self.memory_context.working_memory.is_empty()
+            || !self.memory_context.long_term.is_empty()
+        {
+            let mut body = String::new();
+            if !self.memory_context.working_memory.is_empty() {
+                body.push_str("## Current Context\n\n");
+                for entry in &self.memory_context.working_memory {
+                    body.push_str(&format!("- {}\n", entry.content));
+                }
+                body.push('\n');
             }
-            prompt.push('\n');
-        }
-
-        if !self.memory_context.long_term.is_empty() {
-            prompt.push_str("## User Preferences\n\n");
-            for entry in &self.memory_context.long_term {
-                prompt.push_str(&format!("- {}\n", entry.content));
+            if !self.memory_context.long_term.is_empty() {
+                body.push_str("## User Preferences\n\n");
+                for entry in &self.memory_context.long_term {
+                    body.push_str(&format!("- {}\n", entry.content));
+                }
+                body.push('\n');
             }
+            prompt.push_str(&kod_memory::hygiene::frame_recalled_block(&body));
             prompt.push('\n');
         }
 
@@ -261,6 +273,33 @@ mod coverage_engine_context {
         assert!(p.contains("## Current Context"));
         assert!(p.contains("- first"));
         assert!(p.contains("- second"));
+    }
+
+    #[test]
+    fn to_prompt_frames_recalled_memory_as_a_tagged_block() {
+        // Delta §12.5: the recalled memory must be inside a
+        // <memories> block with the precedence note, so
+        // strip_memory_tags can recognise it and the model is told
+        // not to treat it as instructions.
+        let mut c = EngineContext::new("hi");
+        c.memory_context.working_memory = vec![entry("remembered fact")];
+        let p = c.to_prompt();
+        assert!(p.contains("<memories>"), "got: {p}");
+        assert!(p.contains("</memories>"), "got: {p}");
+        assert!(p.contains("not instructions"), "got: {p}");
+        assert!(p.contains("take precedence"), "got: {p}");
+        assert!(p.contains("remembered fact"), "got: {p}");
+    }
+
+    #[test]
+    fn an_empty_memory_context_is_not_framed() {
+        // No memory entries -> no <memories> block. A regression that
+        // emitted the block anyway would waste tokens on every call
+        // and stamp the precedence note into a memory-less prompt.
+        let c = EngineContext::new("hi");
+        let p = c.to_prompt();
+        assert!(!p.contains("<memories>"), "got: {p}");
+        assert!(!p.contains("not instructions"), "got: {p}");
     }
 
     #[test]

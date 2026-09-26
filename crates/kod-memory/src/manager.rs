@@ -313,6 +313,29 @@ impl MemoryManager {
                 let mut eh = DefaultHasher::new();
                 e.content.hash(&mut eh);
                 if eh.finish() == content_hash && e.memory_type == memory_type {
+                    // Delta §12.2: a re-mention is evidence. Raise the
+                    // fact's confidence with the saturating update and
+                    // persist the raised value. `None` means "use the
+                    // base for how it was learned" — the store path
+                    // does not yet know the source, so it defaults to
+                    // `Stated`'s base.
+                    let current = e.metadata.confidence.unwrap_or_else(|| {
+                        crate::veracity::Veracity::Stated.base_confidence() as f32
+                    });
+                    let raised = crate::veracity::raise_confidence(
+                        current as f64,
+                        crate::veracity::Veracity::Stated.weight(),
+                    ) as f32;
+                    if raised > current + f32::EPSILON {
+                        let mut bumped = e.clone();
+                        bumped.metadata.confidence = Some(raised);
+                        if let Err(err) = self.long_term.store(bumped).await {
+                            tracing::warn!(
+                                error = %err,
+                                "re-mention confidence bump: persist failed"
+                            );
+                        }
+                    }
                     return Ok(e.id);
                 }
             }
@@ -1672,5 +1695,64 @@ mod freshness_tests {
         let dropped = p.revalidate(&store).await;
         assert_eq!(dropped, 0);
         assert_eq!(p.context.long_term.len(), 1);
+    }
+}
+
+
+#[cfg(test)]
+mod confidence_bump_tests {
+    use super::*;
+    use kod_types::MemoryType;
+
+    #[tokio::test]
+    async fn a_re_mention_raises_confidence() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mgr = MemoryManager::new(dir.path().join("m.redb"), 16).expect("open");
+
+        let id1 = mgr
+            .store_with_metadata(
+                MemoryType::LongTerm,
+                "the user prefers tabs over spaces",
+                Default::default(),
+            )
+            .await
+            .expect("first store");
+        let e1 = mgr
+            .get_long_term(&id1)
+            .await
+            .expect("read")
+            .expect("present");
+        assert!(
+            e1.metadata.confidence.is_none(),
+            "first store leaves confidence unset (base is inferred)"
+        );
+
+        let id2 = mgr
+            .store_with_metadata(
+                MemoryType::LongTerm,
+                "the user prefers tabs over spaces",
+                Default::default(),
+            )
+            .await
+            .expect("second store");
+        assert_eq!(
+            id2.as_uuid(),
+            id1.as_uuid(),
+            "an identical content hash must dedup to the same id"
+        );
+
+        let e2 = mgr
+            .get_long_term(&id1)
+            .await
+            .expect("read")
+            .expect("present");
+        let conf = e2
+            .metadata
+            .confidence
+            .expect("a re-mention writes a raised confidence");
+        assert!(
+            conf > 0.5,
+            "expected the raised value above the Stated base of 0.5, got {conf}"
+        );
     }
 }

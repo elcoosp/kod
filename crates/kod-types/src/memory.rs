@@ -66,6 +66,16 @@ pub struct MemoryMetadata {
     /// `kod memory forget` (D2-B5, not in this PR).
     #[serde(default)]
     pub last_retrieved_at_ms: Option<u64>,
+    /// A fact's confidence in `[0, 1]` (borrow from oh-my-pi, delta
+    /// §12.2). `None` means "use the base confidence for how the
+    /// fact was learned" — see `kod_memory::veracity`. A re-mention
+    /// raises the value with the saturating update in
+    /// `veracity::raise_confidence`; the dedup path in
+    /// `MemoryManager::store_with_metadata` writes the raised value
+    /// back. Consolidation reads this to resolve a contradiction by
+    /// picking the higher-confidence side.
+    #[serde(default)]
+    pub confidence: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -211,6 +221,7 @@ mod coverage_memory_type {
                 embedding: Some(vec![0.1, 0.2, 0.3]),
                 project_key: Some("proj".into()),
                 last_retrieved_at_ms: Some(1_700_000_000_000),
+                confidence: Some(0.65),
             },
         
             superseded_by: None,
@@ -227,6 +238,7 @@ mod coverage_memory_type {
             parsed.metadata.last_retrieved_at_ms,
             e.metadata.last_retrieved_at_ms,
         );
+        assert_eq!(parsed.metadata.confidence, e.metadata.confidence);
     }
 
     #[test]

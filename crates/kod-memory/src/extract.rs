@@ -158,10 +158,19 @@ pub async fn extract(
         ..Default::default()
     };
     let reply = provider.generate(&prompt, &opts).await?;
-    let facts = parse_reply(&reply, max_entries);
+    let mut facts = parse_reply(&reply, max_entries);
+    // Delta §12.5: an extracted fact that is itself a placeholder
+    // ("ok", "…", "done") is noise — the model's reply is text, and
+    // a malformed extraction can echo one. Drop anything that fails
+    // `has_substantive_content` so the store only ever receives a
+    // real sentence.
+    let before = facts.len();
+    facts.retain(|f| crate::hygiene::has_substantive_content(&f.content));
+    let dropped = before - facts.len();
     tracing::info!(
         model = %model_ref.display(),
         candidates = facts.len(),
+        dropped,
         "memory extraction produced candidate facts"
     );
     Ok(facts)
