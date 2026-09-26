@@ -1104,6 +1104,10 @@ struct StreamRoundOutcome {
     usage: Option<kod_provider::TokenUsage>,
     retry_suggested: bool,
     speculations: Vec<Option<crate::speculation::SpeculativeRead>>,
+    /// The provider's `stop_reason` for the round, when reported
+    /// (`"end_turn"`, `"max_tokens"`, `"tool_use"`, …). Threaded out
+    /// so the run collector's stop-reason histogram is populated.
+    stop_reason: Option<String>,
 }
 
 struct ToolRound {
@@ -8853,6 +8857,7 @@ pub(crate) fn filter_chain_by_trust(
                 usage,
                 retry_suggested: off_track,
                 speculations,
+                stop_reason,
             } = self
                 .stream_round(
                     &current_provider,
@@ -8883,7 +8888,7 @@ pub(crate) fn filter_chain_by_trust(
                     Some(_) => None,
                 };
                 self.run_collector.lock().observe_turn(
-                    None,
+                    stop_reason.as_deref(),
                     elapsed,
                     cost_unavailable,
                 );
@@ -9147,6 +9152,7 @@ pub(crate) fn filter_chain_by_trust(
             })
         };
         let mut text = String::new();
+        let mut stop_reason_out: Option<String> = None;
         let mut partials: BTreeMap<usize, Partial> = BTreeMap::new();
         // Delta §10: speculative reads. Keyed by tool-call index; the
         // value is a JoinHandle that resolves to a completed read.
@@ -9319,9 +9325,10 @@ pub(crate) fn filter_chain_by_trust(
                 StreamChunk::StopReason(reason) => {
                     // H-P6: captured for the caller; the engine has no
                     // policy on truncation yet (that is a follow-up).
-                    // Log it at debug so a developer reading a trace
-                    // can see the shape of the finish.
+                    // Delta §9.11: also threaded out so the run
+                    // collector's stop-reason histogram is populated.
                     tracing::debug!(reason = %reason, "provider stop_reason");
+                    stop_reason_out = Some(reason);
                 }
                 StreamChunk::Done => break,
             }
@@ -9379,6 +9386,7 @@ pub(crate) fn filter_chain_by_trust(
             usage: last_usage,
             retry_suggested,
             speculations,
+            stop_reason: stop_reason_out,
         })
     }
 
