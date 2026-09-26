@@ -1389,6 +1389,10 @@ pub struct KodEngine {
     /// before the next model call. See `crate::tool_loop_guard` for
     /// the fingerprint rules.
     tool_loop_guards: RwLock<HashMap<String, crate::tool_loop_guard::ToolLoopGuard>>,
+    /// Delta §11.7: per-transcript todo nudge trackers. Counts
+    /// mutating tool calls since the last todo touch, caps mid-run
+    /// nudges, and latches the completion reminder.
+    todo_trackers: RwLock<HashMap<String, kod_tools::todo_tracker::TodoTracker>>,
 
     /// Per-transcript working-directory override (D4-D1). A swarm
     /// agent registers its worktree path here before running; tool
@@ -3198,6 +3202,7 @@ impl KodEngine {
                 kod_swarm::advisor::EmissionGuard::new(),
             )),
             tool_loop_guards: RwLock::new(HashMap::new()),
+            todo_trackers: RwLock::new(HashMap::new()),
             compaction_dispatcher: std::sync::Arc::new(
                 crate::compaction_dispatcher::CompactionDispatcher::new(vec![
                     // The engine's dispatcher fires only after
@@ -8614,6 +8619,11 @@ pub(crate) fn filter_chain_by_trust(
                         messages,
                     )
                     .await;
+                    // Delta §11.7: a mid-run todo reconcile nudge when
+                    // the tracker says the model has drifted from its
+                    // plan.
+                    self.maybe_emit_todo_nudge(round.holder, &calls, messages)
+                        .await;
                     tool_calls.extend(calls);
                     tool_results.extend(section.results.clone());
                     messages.extend(section.messages.iter().cloned());
@@ -8674,6 +8684,11 @@ pub(crate) fn filter_chain_by_trust(
                         messages,
                     )
                     .await;
+                    // Delta §11.7: a mid-run todo reconcile nudge when
+                    // the tracker says the model has drifted from its
+                    // plan.
+                    self.maybe_emit_todo_nudge(round.holder, &calls, messages)
+                        .await;
                     tool_calls.extend(calls);
                     tool_results.extend(section.results.clone());
                     messages.extend(section.messages.iter().cloned());
@@ -8965,6 +8980,8 @@ pub(crate) fn filter_chain_by_trust(
                 messages,
             )
             .await;
+            self.maybe_emit_todo_nudge(round.holder, &calls, messages)
+                .await;
             // Each call finished: hand the TUI its completion live (header
             // + summary + wall time) so the "running …" row fills in now,
             // not when the whole loop returns. Markers travel the same
@@ -9782,6 +9799,44 @@ pub(crate) fn filter_chain_by_trust(
             prompt.push('\n');
         }
         prompt
+    }
+
+    /// Delta §11.7: record a tool round and, when the tracker says a
+    /// mid-run reconcile nudge is due, inject it as a System message.
+    ///
+    /// Mirrors `maybe_emit_loop_corrective`'s shape: per-transcript
+    /// state, a System-message injection, no effect on the round's
+    /// results.
+    async fn maybe_emit_todo_nudge(
+        &self,
+        key: &str,
+        calls: &[kod_types::ToolCall],
+        messages: &mut Vec<kod_types::ChatMessage>,
+    ) {
+        let mut trackers = self.todo_trackers.write().await;
+        let tracker = trackers
+            .entry(key.to_string())
+            .or_insert_with(kod_tools::todo_tracker::TodoTracker::new);
+        for call in calls {
+            let is_todo = call.tool_name == "todo";
+            let is_mutating = matches!(
+                call.tool_name.as_str(),
+                "write_file" | "patch_file" | "execute_command",
+            );
+            tracker.observe_tool(is_mutating, is_todo);
+        }
+        let due = tracker.take_mid_run_nudge();
+        drop(trackers);
+        if !due {
+            return;
+        }
+        let body = "[todo reconcile] You have run many mutating tools                     without updating the todo list. Update it now: mark                     finished items done, add anything you discovered, and                     keep exactly one item in progress.";
+        messages.push(kod_types::ChatMessage::text(
+            kod_types::MessageId::new(),
+            kod_types::MessageRole::System,
+            body,
+            time::OffsetDateTime::now_utc(),
+        ));
     }
 
     /// Execute one round of model-requested tool calls.
