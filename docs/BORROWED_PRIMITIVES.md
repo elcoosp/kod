@@ -85,6 +85,18 @@ them.
   landed; the consumer that rebuilds a session's tool surface from
   the entry is not.
 
+| Memory hygiene (§12.5) | `kod-memory/src/hygiene.rs` + write/recall wiring | `strip_memory_tags` drops a `<memories>` block before it is stored; `frame_recalled_block` wraps recalled entries with a precedence note; `has_substantive_content` rejects placeholder turns | 16 unit tests |
+| Episodic tiers (§12.8) | `kod-memory/src/tier.rs` + score wiring | tier by age (<30d / >=30d / >=180d) with weights 1.0/0.5/0.25 folded into the score; tier-3 bodies compressed to 300 chars at retrieval | 13 unit tests |
+| Veracity primitives (§12.2) | `kod-memory/src/veracity.rs` | `fact_content_id` (cf_ + SHA-256 over length-prefixed SPO), `Veracity` weights, `raise_confidence`, `should_supersede`. Two gaps documented: no NFC, no triple in `ExtractedFact` | 17 unit tests |
+| Sharpshooter admission (§12.3) | `kod-memory/src/sharpshooter.rs` | `prompt_is_eligible` + `evidence_is_grounded` gate a `DecisionDelta`; `Friction` ranks corrective/regression/subtle; `DecisionKind` maps to a target file | 16 unit tests |
+| Retention cursor (§12.6) | `kod-memory/src/retention.rs` | rolling hash chain over the retained prefix; `advance` returns the new-message count or None on a rewrite (in-place edit, rewind, branch); `RetentionCadence` | 12 unit tests |
+| Mental models (§12.7) | `kod-memory/src/mental_models.rs` | create-only seeds; `fill` at a transcript boundary only; `render_block` in id order so the prompt bytes stay stable | 13 unit tests |
+| Behavioral metrics (§13.2) | `kod-stats/src/behavioral.rs` + engine wiring | five lexical signals (negation/repetition/blame/anguish/yelling) folded per user turn | 12 tests |
+| Per-request analytics (§13.2) | `kod-stats/src/request.rs` + engine wiring | `RequestRecord` + `Aggregates`: error rate, cache hit rate, cache savings (can go negative), avg TTFT, tokens/sec | 14 tests |
+| if-bench (§13.3) | `kod-stats/src/if_bench.rs` | scoring half: `action_for_turn`, `apply`, `cat_sound_at`, `depth`, `parse_reported_array` | tests in the crate |
+| MCP HTTP policy (§14.5) | `kod-mcp/src/http_policy.rs` | `Origin` parse + `same_as`; `decide_redirect` refuses a method-changing redirect of a non-GET and drops configured headers cross-origin; reserved-header list; hop cap 5 | 17 tests |
+| Cleanse scheduler (§11.9) | `kod-swarm/src/cleanse.rs` | file-sticky dispatch: one worker per file, batch budget shared across agents, released files re-claimable | 15 tests |
+
 ## How to update this file
 
 Add a row to the wired table when a primitive gains a real caller.
