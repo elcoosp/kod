@@ -36,6 +36,7 @@
 
 use crate::engine::KodEngine;
 use futures::future::join_all;
+use futures::FutureExt;
 use kod_error::{KodError, Result};
 use kod_provider::{GenerationOptions, LlmProvider};
 use kod_swarm::coordination::Task;
@@ -1078,6 +1079,12 @@ impl SwarmRunner {
                         .push(format!("swarm:{id}"));
                 }
                 wave_tasks.push(async move {
+                // Delta §11.4: catch a panic in one agent so
+                // it fails that agent alone, not the whole wave.
+                let id_panic = id.clone();
+                let name_panic = name.clone();
+                let subtask_panic = subtask.clone();
+                let inner = async move {
                 // H-D1: guard the deregistration even on panic.
                 struct DispatchGuard {
                     keys: Arc<
@@ -1341,6 +1348,20 @@ impl SwarmRunner {
                                 .await;
                         }
                     }
+                }
+                };
+                match std::panic::AssertUnwindSafe(inner)
+                    .catch_unwind()
+                    .await
+                {
+                    Ok(v) => v,
+                    Err(_) => (
+                        id_panic,
+                        name_panic,
+                        subtask_panic,
+                        Vec::new(),
+                        Err("agent panicked".to_string()),
+                    ),
                 }
             });
             }
