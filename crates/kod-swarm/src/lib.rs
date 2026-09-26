@@ -25,6 +25,7 @@ pub mod communication;
 pub mod completion_report;
 pub mod coordination;
 pub mod file_touch;
+pub mod cleanse;
 pub mod swarm;
 pub mod work_pool;
 pub mod yield_queue;
