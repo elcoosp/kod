@@ -1297,6 +1297,11 @@ pub struct KodEngine {
     run_collector: std::sync::Arc<parking_lot::Mutex<crate::run_collector::RunCollector>>,
     /// Delta §13.2: per-request analytics aggregates.
     stats: std::sync::Arc<parking_lot::Mutex<kod_stats::request::Aggregates>>,
+    /// Delta §12.7: session-frozen mental models. Rendered at a
+    /// transcript boundary and injected as a cacheable system segment,
+    /// so the bytes are stable for the session and the provider's
+    /// prefix cache is not invalidated mid-turn.
+    mental_models: RwLock<kod_memory::mental_models::MentalModels>,
     /// Delta §13.2: behavioral signals folded over the session's user
     /// messages.
     behavioral: std::sync::Arc<parking_lot::Mutex<kod_stats::behavioral::BehavioralSignals>>,
@@ -3203,6 +3208,7 @@ impl KodEngine {
             stats: std::sync::Arc::new(parking_lot::Mutex::new(
                 kod_stats::request::Aggregates::new(),
             )),
+            mental_models: RwLock::new(kod_memory::mental_models::MentalModels::new()),
             behavioral: std::sync::Arc::new(parking_lot::Mutex::new(
                 kod_stats::behavioral::BehavioralSignals::default(),
             )),
@@ -4057,6 +4063,36 @@ impl KodEngine {
             .await
             .get(key)
             .cloned()
+    }
+
+    /// Delta §12.7: seed a mental model. Create-only — a second seed
+    /// with the same id is refused, so reloading config mid-session
+    /// cannot change a model's definition and move the frozen bytes.
+    pub async fn seed_mental_model(
+        &self,
+        seed: kod_memory::mental_models::MentalModelSeed,
+    ) -> bool {
+        self.mental_models.write().await.seed(seed)
+    }
+
+    /// Delta §12.7: install a model's rendered block. Call only at a
+    /// transcript boundary — the block is part of the cacheable prefix.
+    pub async fn fill_mental_model(&self, id: &str, text: String) {
+        if let Some(m) = self.mental_models.write().await.get_mut(id) {
+            m.fill(text);
+        }
+    }
+
+    /// Delta §12.7: the concatenated model block, for a readout.
+    pub async fn mental_models_block(&self) -> String {
+        self.mental_models.read().await.render_block()
+    }
+
+    /// Delta §12.7: cross a transcript boundary, so a caller can
+    /// re-fill models for a new session. The previous blocks are kept
+    /// until re-filled (a stale-but-stable summary beats an empty one).
+    pub async fn begin_transcript(&self) {
+        self.mental_models.write().await.begin_transcript();
     }
 
     /// Delta §13.2: the session's behavioral-signal totals.
@@ -9690,7 +9726,17 @@ pub(crate) fn filter_chain_by_trust(
         // passing an empty tail still produces a valid segment.
         let grounded_volatile = self.ground_prompt(key, volatile_tail, definitions);
 
+        // Delta §12.7: the session's mental-model block, if any. It
+        // is a cacheable segment because it is frozen for the session —
+        // re-rendering it mid-turn would move the bytes after it and
+        // invalidate the provider's prefix cache. Empty when no model
+        // is seeded, so the default session's prompt is byte-identical
+        // to the pre-§12.7 shape.
+        let mental_block = self.mental_models.read().await.render_block();
         let mut system = SystemPrompt::new();
+        if !mental_block.is_empty() {
+            system = system.with(mental_block, true);
+        }
         if !cacheable.is_empty() {
             system = system.with(cacheable, true);
         }
