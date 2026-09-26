@@ -57,6 +57,13 @@ pub struct ConsolidationReport {
     /// Entries removed by near-duplicate fusion. `0` when no embedder
     /// is installed, or when no cluster exceeded the threshold.
     pub fused: usize,
+    /// Contradictions resolved by confidence (borrow from oh-my-pi,
+    /// delta §12.2). A contradiction between two entries whose
+    /// `confidence` fields are both set and unequal is auto-resolved:
+    /// the lower-confidence entry is marked `superseded_by` the
+    /// higher one. `0` when no contradicting pair carries both
+    /// confidence values, or when the values tie.
+    pub resolved_contradictions: usize,
 }
 
 /// Unified memory manager
@@ -746,7 +753,87 @@ impl MemoryManager {
         // --- Pass 2: fuse near-duplicates. ---
         let fused = self.fuse_duplicates(&remaining).await?;
 
-        Ok(ConsolidationReport { archived, fused })
+        // --- Pass 3: resolve contradictions by confidence (§12.2). ---
+        let resolved_contradictions = self.resolve_contradictions().await?;
+
+        Ok(ConsolidationReport {
+            archived,
+            fused,
+            resolved_contradictions,
+        })
+    }
+
+    /// Auto-resolve contradictions by confidence (borrow from
+    /// oh-my-pi, delta §12.2).
+    ///
+    /// A contradiction between two entries whose `confidence` fields
+    /// are both set and unequal is auto-resolved: the lower-confidence
+    /// entry is marked `superseded_by` the higher one. A tie keeps
+    /// both sides active — a tie has no winner, and the design's
+    /// intent is to surface a genuine disagreement rather than pick
+    /// one by accident. A pair with either confidence unset is left
+    /// alone; an unset confidence means the fact was stored before
+    /// the field existed or by a path that did not know its source.
+    ///
+    /// Returns the number of supersessions performed. Idempotent:
+    /// after the first pass the loser is `is_active() == false`, so a
+    /// second pass skips the pair.
+    async fn resolve_contradictions(&self) -> Result<usize> {
+        let all = self.long_term.get_all().await?;
+        if all.is_empty() {
+            return Ok(0);
+        }
+        // id -> index, so the pair walk does not need to clone the
+        // entries.
+        let idx: std::collections::HashMap<MemoryId, usize> = all
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.id.clone(), i))
+            .collect();
+        // Walk the symmetric `contradicts` graph, deduplicating the
+        // unordered pair so each disagreement is considered once.
+        let mut seen: std::collections::HashSet<(MemoryId, MemoryId)> =
+            std::collections::HashSet::new();
+        let mut resolutions: Vec<(MemoryId, MemoryId)> = Vec::new();
+        for e in &all {
+            for other in &e.contradicts {
+                let (a, b) = if e.id <= *other {
+                    (e.id.clone(), other.clone())
+                } else {
+                    (other.clone(), e.id.clone())
+                };
+                if !seen.insert((a.clone(), b.clone())) {
+                    continue;
+                }
+                let (Some(&ia), Some(&ib)) = (idx.get(&a), idx.get(&b)) else {
+                    continue;
+                };
+                let (ea, eb) = (&all[ia], &all[ib]);
+                if !ea.is_active() || !eb.is_active() {
+                    continue;
+                }
+                let (Some(ca), Some(cb)) = (ea.metadata.confidence, eb.metadata.confidence)
+                else {
+                    continue;
+                };
+                if (ca - cb).abs() < 1e-6 {
+                    continue;
+                }
+                let (loser, winner) = if ca > cb {
+                    (b.clone(), a.clone())
+                } else {
+                    (a.clone(), b.clone())
+                };
+                resolutions.push((loser, winner));
+            }
+        }
+        let mut resolved = 0usize;
+        for (loser, winner) in resolutions {
+            if self.long_term.supersede(&loser, &winner).await.is_ok() {
+                resolved += 1;
+            }
+        }
+        Ok(resolved)
     }
 
     /// Fuse near-duplicate long-term entries (design D2.5).
@@ -1454,6 +1541,7 @@ mod coverage_report_types {
         let a = ConsolidationReport {
             archived: 2,
             fused: 1,
+            ..Default::default()
         };
         let b = a;
         assert_eq!(a, b);
@@ -1753,6 +1841,115 @@ mod confidence_bump_tests {
         assert!(
             conf > 0.5,
             "expected the raised value above the Stated base of 0.5, got {conf}"
+        );
+    }
+}
+
+
+#[cfg(test)]
+mod contradiction_resolution_tests {
+    //! §12.2: a contradiction between two entries whose `confidence`
+    //! fields are both set and unequal is auto-resolved by the
+    //! consolidation pass. The tests exercise the three cases the
+    //! resolver's design distinguishes: a gap (one winner), a tie
+    //! (both stay live), and an unset side (left alone).
+
+    use super::*;
+    use kod_types::MemoryType;
+
+    async fn fixture() -> (tempfile::TempDir, MemoryManager) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mgr = MemoryManager::new(dir.path().join("m.redb"), 16).expect("open");
+        (dir, mgr)
+    }
+
+    async fn set_confidence(mgr: &MemoryManager, id: &MemoryId, c: f32) {
+        let mut e = mgr.get_long_term(id).await.unwrap().unwrap();
+        e.metadata.confidence = Some(c);
+        mgr.long_term.store(e).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_confidence_gap_resolves_a_contradiction() {
+        let (_dir, mgr) = fixture().await;
+        let a = mgr
+            .store(MemoryType::LongTerm, "the config lives in src/config.rs")
+            .await
+            .unwrap();
+        let b = mgr
+            .store(MemoryType::LongTerm, "the config lives in crates/config/lib.rs")
+            .await
+            .unwrap();
+        set_confidence(&mgr, &a, 0.4).await;
+        set_confidence(&mgr, &b, 0.8).await;
+        mgr.long_term.link_contradiction(&a, &b).await.unwrap();
+
+        let report = mgr.consolidate().await.unwrap();
+        assert_eq!(
+            report.resolved_contradictions, 1,
+            "one contradicting pair with a confidence gap resolves to one supersession",
+        );
+
+        let a_after = mgr.get_long_term(&a).await.unwrap().unwrap();
+        assert_eq!(
+            a_after.superseded_by.as_ref().map(|x| x.as_uuid()),
+            Some(b.as_uuid()),
+            "the lower-confidence side must be superseded by the higher",
+        );
+        assert!(!a_after.is_active(), "loser is inactive after resolution");
+        let b_after = mgr.get_long_term(&b).await.unwrap().unwrap();
+        assert!(b_after.is_active(), "winner stays active");
+    }
+
+    #[tokio::test]
+    async fn a_tie_does_not_resolve() {
+        let (_dir, mgr) = fixture().await;
+        let a = mgr.store(MemoryType::LongTerm, "fact alpha").await.unwrap();
+        let b = mgr.store(MemoryType::LongTerm, "fact beta").await.unwrap();
+        set_confidence(&mgr, &a, 0.6).await;
+        set_confidence(&mgr, &b, 0.6).await;
+        mgr.long_term.link_contradiction(&a, &b).await.unwrap();
+
+        let report = mgr.consolidate().await.unwrap();
+        assert_eq!(
+            report.resolved_contradictions, 0,
+            "a tie has no winner to pick",
+        );
+        assert!(mgr.get_long_term(&a).await.unwrap().unwrap().is_active());
+        assert!(mgr.get_long_term(&b).await.unwrap().unwrap().is_active());
+    }
+
+    #[tokio::test]
+    async fn an_unset_confidence_leaves_the_pair_alone() {
+        let (_dir, mgr) = fixture().await;
+        let a = mgr.store(MemoryType::LongTerm, "fact one").await.unwrap();
+        let b = mgr.store(MemoryType::LongTerm, "fact two").await.unwrap();
+        set_confidence(&mgr, &a, 0.9).await;
+        // b keeps the default (None).
+        mgr.long_term.link_contradiction(&a, &b).await.unwrap();
+
+        let report = mgr.consolidate().await.unwrap();
+        assert_eq!(
+            report.resolved_contradictions, 0,
+            "an unset side is not a resolvable contradiction",
+        );
+    }
+
+    #[tokio::test]
+    async fn resolution_is_idempotent() {
+        let (_dir, mgr) = fixture().await;
+        let a = mgr.store(MemoryType::LongTerm, "old truth").await.unwrap();
+        let b = mgr.store(MemoryType::LongTerm, "new truth").await.unwrap();
+        set_confidence(&mgr, &a, 0.2).await;
+        set_confidence(&mgr, &b, 0.9).await;
+        mgr.long_term.link_contradiction(&a, &b).await.unwrap();
+
+        let first = mgr.consolidate().await.unwrap();
+        assert_eq!(first.resolved_contradictions, 1);
+        let second = mgr.consolidate().await.unwrap();
+        assert_eq!(
+            second.resolved_contradictions, 0,
+            "a resolved pair is not re-resolved on the next pass",
         );
     }
 }
