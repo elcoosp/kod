@@ -11,6 +11,7 @@ pub mod request;
 pub mod retry;
 pub mod retry_safety;
 pub mod stream_guard;
+pub mod ttsr;
 pub mod traits;
 pub mod types;
 
