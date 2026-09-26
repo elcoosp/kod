@@ -268,6 +268,11 @@ impl MemoryManager {
         // it. Redaction runs before the dedup check so the dedup
         // comparison is over the form that actually gets stored.
         let content_owned = self.redact_text(content);
+        // Delta §12.5: never store a `<memories>` block. A recalled
+        // block the model saw is prompt scaffolding, not a fact; if
+        // it re-enters the store the next recall nests one block
+        // inside another.
+        let content_owned = crate::hygiene::strip_memory_tags(&content_owned);
         let content: &str = content_owned.as_str();
         metadata.tags = metadata
             .tags

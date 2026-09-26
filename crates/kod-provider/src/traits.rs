@@ -43,6 +43,29 @@ pub struct ModelInfo {
     /// against it.
     #[serde(default)]
     pub efforts: Option<Vec<kod_types::effort::EffortLevel>>,
+    /// Delta §13.1: a capability score, for swarm role routing. `None`
+    /// when the catalog does not carry one.
+    #[serde(default)]
+    pub intelligence: Option<f64>,
+    /// Delta §13.1: tokens per second, for latency-aware selection.
+    #[serde(default)]
+    pub tps: Option<f64>,
+    /// Delta §13.1: the over-threshold pricing tier, when the model
+    /// charges a different rate above a context size (e.g. Gemini
+    /// above 200k tokens).
+    #[serde(default)]
+    pub long_context: Option<LongContextPricing>,
+}
+
+/// Delta §13.1: a model's over-threshold pricing tier.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct LongContextPricing {
+    /// The prompt size (tokens) above which the tier applies.
+    pub input_threshold: usize,
+    /// USD per million input tokens above the threshold.
+    pub input_per_mtok_usd: f64,
+    /// USD per million output tokens above the threshold.
+    pub output_per_mtok_usd: f64,
 }
 
 impl ModelInfo {
@@ -54,6 +77,9 @@ impl ModelInfo {
             input_per_mtok_usd: None,
             output_per_mtok_usd: None,
             efforts: None,
+            intelligence: None,
+            tps: None,
+            long_context: None,
         }
     }
 
@@ -367,6 +393,9 @@ mod tests {
                 EffortLevel::Medium,
                 EffortLevel::High,
             ]),
+            intelligence: None,
+            tps: None,
+            long_context: None,
         };
         let s = serde_json::to_string(&m).unwrap();
         assert!(s.contains("\"efforts\""), "efforts missing from json: {s}");

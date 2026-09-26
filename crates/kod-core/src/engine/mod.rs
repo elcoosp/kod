@@ -15953,6 +15953,9 @@ mod p7_trust_filter_tests {
                 input_per_mtok_usd: None,
                 output_per_mtok_usd: None,
                 efforts: None,
+                intelligence: None,
+                tps: None,
+                long_context: None,
             }],
         );
 
@@ -15984,6 +15987,9 @@ mod p7_trust_filter_tests {
                 input_per_mtok_usd: None,
                 output_per_mtok_usd: None,
                 efforts: None,
+                intelligence: None,
+                tps: None,
+                long_context: None,
             }],
         );
 
