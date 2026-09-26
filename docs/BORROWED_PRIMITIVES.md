@@ -47,6 +47,12 @@ larger than the primitives above.
 - WorkPool / park-revive / IrcBus / YieldQueue (the swarm layer).
 - `xf`-style shell output minimizer.
 
+| Run collector (§9.11) | `kod-core/src/run_collector.rs`; wired in the engine | per-run metadata: stop-reason histogram, per-tool status counters, coverage (available/invoked/unused), cost-unavailable reasons. `/stats` prints it via `run_report()`. The stop reason is threaded through `StreamRoundOutcome` | 13 unit tests; engine wiring at the serial dispatch and the streaming round |
+| Async-result delivery (§11.4) | `kod-core/src/async_delivery.rs`; wired in the engine | owner-routed batched delivery of finished-job results: `INLINE_CAP` per-result truncation with an `agent://` pointer, per-owner batching, session epochs that drop stale results. A background job enqueues; `apply_steers` drains | 12 unit tests; guarded spawn keeps a panicking job from stranding (3 tests) |
+| Guarded job spawn (§11.4) | `BackgroundJobRunner::spawn_guarded` | keeps the `JoinHandle` and maps `JoinError::Panic` to `fail_if_running`, so a panicking background job is recorded as failed rather than stuck `Running` forever. `fail_if_running` makes completion sticky. Same guard on swarm wave tasks (`AssertUnwindSafe` + `catch_unwind`) so one agent's panic fails that agent alone | 3 job-guard tests |
+| Goals runtime (§11.6) | `kod-core/src/goals.rs`; wired into the goal loop | one active objective with a token and wall-clock budget. Delta accounting is `(prompt - cache_read) + output`. A goal over budget flips to `BudgetLimited`, emits one deduped steer, and the loop stops. Public accessors for pause/resume/drop/budget | 18 unit tests; loop wiring in `process_goal_streaming_for` |
+| Todo nudge tracker (§11.7) | `kod-tools/src/todo_tracker.rs`; wired at three engine points | three nudges: a prelude on the first turn of a task, a mid-run reconcile after 12 mutating calls without a todo touch (capped at 2/cycle), and a completion reminder at stop. A todo touch resets the counter, the cap, and the completion latch | 19 unit tests; engine wiring for all three |
+
 ## How to update this file
 
 Add a row to the wired table when a primitive gains a real caller.
