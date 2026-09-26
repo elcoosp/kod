@@ -9449,6 +9449,31 @@ pub(crate) fn filter_chain_by_trust(
                 StreamChunk::ToolCallDelta { index, arguments } => {
                     let entry = partials.entry(index).or_default();
                     entry.args.push_str(&arguments);
+                    // Delta §14.3: TTSR rules also match a tool call's
+                    // streamed arguments. This runs before the
+                    // speculation block below, which may `continue` and
+                    // skip the rest of the arm.
+                    if let Some(name) = entry.name.clone() {
+                        let partial_path = crate::speculation::extract_path_from_partial(&entry.args);
+                        let mut engine = self.ttsr.write().await;
+                        let fired = engine.observe_tool(&name, partial_path.as_deref(), &entry.args);
+                        let interrupt = fired.iter().find(|f| f.interrupt).cloned();
+                        for f in &fired {
+                            tracing::debug!(
+                                rule = %f.id,
+                                tool = %name,
+                                interrupt = f.interrupt,
+                                "ttsr tool rule fired",
+                            );
+                        }
+                        if let Some(f) = interrupt {
+                            stream_error = Some(KodError::InvalidState(format!(
+                                "ttsr rule `{}` fired on `{name}`: {}",
+                                f.id, f.correction,
+                            )));
+                            break;
+                        }
+                    }
                     // Delta §10: as soon as the args carry a complete
                     // `"path":"..."` for a `read_file` call and no
                     // speculation has been admitted for this index
