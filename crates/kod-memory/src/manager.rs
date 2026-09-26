@@ -66,6 +66,70 @@ pub struct ConsolidationReport {
     pub resolved_contradictions: usize,
 }
 
+/// Delta §12.5: cap the query length sent to the embedder. A 100 KB
+/// paste is truncated at a char boundary before it costs the provider
+/// a 100 KB embed request.
+const QUERY_EMBED_MAX_CHARS: usize = 8192;
+
+/// Delta §12.5: cap on the query-embedding LRU. Repeated queries
+/// across a turn reuse the cached vector; 512 covers the working set
+/// a single session generates without holding a meaningful amount of
+/// memory (512 × a few KB per vector).
+const QUERY_EMBED_CACHE_CAP: usize = 512;
+
+/// A bounded insertion-order cache for query embeddings
+/// (borrow from oh-my-pi, delta §12.5).
+///
+/// LRU semantics via a sequence-stamped map: every access re-stamps
+/// the entry, and an insert past the cap evicts the entry with the
+/// lowest stamp. `n <= 512`, so the linear eviction scan is cheaper
+/// than maintaining an intrusive list.
+struct QueryEmbedCache {
+    entries: std::collections::HashMap<String, (u64, Vec<f32>)>,
+    seq: u64,
+    cap: usize,
+}
+
+impl QueryEmbedCache {
+    fn new(cap: usize) -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+            seq: 0,
+            cap,
+        }
+    }
+
+    fn get(&mut self, key: &str) -> Option<Vec<f32>> {
+        self.seq = self.seq.wrapping_add(1);
+        let seq = self.seq;
+        let entry = self.entries.get_mut(key)?;
+        entry.0 = seq;
+        Some(entry.1.clone())
+    }
+
+    fn insert(&mut self, key: String, value: Vec<f32>) {
+        self.seq = self.seq.wrapping_add(1);
+        self.entries.insert(key, (self.seq, value));
+        if self.entries.len() > self.cap {
+            // Evict the entry with the lowest stamp. `cap` is small,
+            // so the scan is cheaper than maintaining an intrusive
+            // recency list.
+            if let Some(k) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, (s, _))| *s)
+                .map(|(k, _)| k.clone())
+            {
+                self.entries.remove(&k);
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
 /// Unified memory manager
 pub struct MemoryManager {
     short_term: ShortTermMemory,
@@ -91,6 +155,14 @@ pub struct MemoryManager {
     /// `MemoryManager::new`); `None` only when a caller explicitly
     /// disables redaction for a test or a legacy-data migration.
     redactor: Option<std::sync::Arc<kod_types::redact::Redactor>>,
+    /// Query-embedding cache (borrow from oh-my-pi, delta §12.5). A
+    /// repeated retrieval — a turn-by-turn agent asking the same
+    /// memory query several times — reuses the query vector instead
+    /// of re-embedding. Bounded to
+    /// [`QUERY_EMBED_CACHE_CAP`]; cleared when the embedder is
+    /// swapped, because vectors from a different model are
+    /// incomparable.
+    query_embed_cache: parking_lot::Mutex<QueryEmbedCache>,
 }
 
 impl MemoryManager {
@@ -111,6 +183,9 @@ impl MemoryManager {
             // heuristic for high-entropy tokens near secret-shaped
             // keywords. See `kod_types::redact`.
             redactor: Some(std::sync::Arc::new(kod_types::redact::Redactor::default())),
+            query_embed_cache: parking_lot::Mutex::new(QueryEmbedCache::new(
+                QUERY_EMBED_CACHE_CAP,
+            )),
         })
     }
 
@@ -128,6 +203,12 @@ impl MemoryManager {
     ) {
         self.embedder = Some(embedder);
         *self.vector_index.write() = None;
+        // A vector from a different model is incomparable; a cached
+        // query vector would silently mismatch the new index.
+        self.query_embed_cache
+            .lock()
+            .entries
+            .clear();
     }
 
     /// The installed embedder's name, if any. `"none"` when none is
@@ -553,14 +634,44 @@ impl MemoryManager {
         // Compute cosine per entry when the index is available and the
         // embedder can produce a query vector. The semantic path is a
         // single embed call for the query, then a top-k search.
+        //
+        // Delta §12.5: the query is capped at
+        // [`QUERY_EMBED_MAX_CHARS`] before it reaches the embedder,
+        // and the vector is held in a bounded cache so a repeated
+        // query across turns reuses it.
         let cosines: std::collections::HashMap<MemoryId, f32> = if semantic_available {
             let embedder = self.embedder.as_ref().unwrap();
-            match embedder
-                .embed(std::slice::from_ref(&query.to_string()))
-                .await
-            {
-                Ok(mut v) if !v.is_empty() => {
-                    let q_vec = v.remove(0);
+            let query_capped: String =
+                kod_types::strutil::truncate_chars(query, QUERY_EMBED_MAX_CHARS)
+                    .to_string();
+            let cached = self.query_embed_cache.lock().get(&query_capped);
+            let q_vec: Option<Vec<f32>> = match cached {
+                Some(v) => Some(v),
+                None => {
+                    match embedder
+                        .embed(std::slice::from_ref(&query_capped))
+                        .await
+                    {
+                        Ok(mut v) if !v.is_empty() => {
+                            let vec = v.remove(0);
+                            self.query_embed_cache
+                                .lock()
+                                .insert(query_capped.clone(), vec.clone());
+                            Some(vec)
+                        }
+                        Ok(_) => None,
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "query embedding failed; keyword+recency only"
+                            );
+                            None
+                        }
+                    }
+                }
+            };
+            match q_vec {
+                Some(q_vec) => {
                     let idx_guard = self.vector_index.read();
                     match idx_guard.as_ref() {
                         Some(idx) => {
@@ -570,11 +681,7 @@ impl MemoryManager {
                         None => Default::default(),
                     }
                 }
-                Ok(_) => Default::default(),
-                Err(e) => {
-                    tracing::warn!(error = %e, "query embedding failed; keyword+recency only");
-                    Default::default()
-                }
+                None => Default::default(),
             }
         } else {
             Default::default()
@@ -1561,6 +1668,37 @@ mod coverage_report_types {
         let m = MemoryManager::new(tmp.path().join("t.redb"), 10).unwrap();
         let r = m.consolidate().await.unwrap();
         assert_eq!(r, ConsolidationReport::default());
+    }
+
+    #[test]
+    fn query_embed_cache_hits_and_misses() {
+        let mut c = QueryEmbedCache::new(4);
+        assert!(c.get("q").is_none());
+        c.insert("q".to_string(), vec![1.0, 2.0]);
+        assert_eq!(c.get("q").as_deref(), Some(&[1.0_f32, 2.0][..]));
+    }
+
+    #[test]
+    fn query_embed_cache_evicts_the_least_recently_used() {
+        let mut c = QueryEmbedCache::new(2);
+        c.insert("a".to_string(), vec![1.0]);
+        c.insert("b".to_string(), vec![2.0]);
+        // Touch `a` so `b` becomes the LRU victim.
+        let _ = c.get("a");
+        c.insert("c".to_string(), vec![3.0]);
+        assert!(c.get("b").is_none(), "b should have been evicted");
+        assert!(c.get("a").is_some());
+        assert!(c.get("c").is_some());
+        assert_eq!(c.len(), 2);
+    }
+
+    #[test]
+    fn query_embed_cache_reinsert_replaces() {
+        let mut c = QueryEmbedCache::new(4);
+        c.insert("k".to_string(), vec![1.0]);
+        c.insert("k".to_string(), vec![9.0]);
+        assert_eq!(c.get("k"), Some(vec![9.0]));
+        assert_eq!(c.len(), 1);
     }
 
     #[test]
