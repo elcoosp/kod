@@ -11,6 +11,7 @@ pub mod long_term;
 pub mod manager;
 pub mod hygiene;
 pub mod tier;
+pub mod mental_models;
 pub mod fusion;
 pub mod retrieval;
 pub mod short_term;
