@@ -10,6 +10,7 @@ pub mod extract;
 pub mod long_term;
 pub mod manager;
 pub mod hygiene;
+pub mod tier;
 pub mod fusion;
 pub mod retrieval;
 pub mod short_term;
