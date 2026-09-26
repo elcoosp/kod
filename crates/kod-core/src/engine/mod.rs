@@ -1288,6 +1288,9 @@ pub struct KodEngine {
     /// results. A spawned background task enqueues here; the round
     /// boundary drains it into one steer per owner.
     async_delivery: std::sync::Arc<parking_lot::Mutex<crate::async_delivery::AsyncDelivery>>,
+    /// Delta §9.11: per-run metadata. Updated once per turn and once
+    /// per tool call; read by `/stats`.
+    run_collector: std::sync::Arc<parking_lot::Mutex<crate::run_collector::RunCollector>>,
     /// Transcripts, one per key. `DEFAULT_TRANSCRIPT_KEY` is the
     /// interactive session; a swarm agent uses `swarm:<agent-id>` so
     /// concurrent agents do not interleave their turns.
@@ -3181,6 +3184,9 @@ impl KodEngine {
             async_delivery: std::sync::Arc::new(parking_lot::Mutex::new(
                 crate::async_delivery::AsyncDelivery::new(),
             )),
+            run_collector: std::sync::Arc::new(parking_lot::Mutex::new(
+                crate::run_collector::RunCollector::new(),
+            )),
             history: RwLock::new(HashMap::new()),
             observed_usage: RwLock::new(HashMap::new()),
             context_gauges: RwLock::new(HashMap::new()),
@@ -4031,6 +4037,19 @@ impl KodEngine {
             .await
             .get(key)
             .cloned()
+    }
+
+    /// Delta §9.11: the run collector's report, for `/stats`.
+    pub fn run_report(&self) -> String {
+        self.run_collector.lock().report()
+    }
+
+    /// Delta §9.11: the run collector, for a caller that wants the
+    /// structured numbers rather than the rendered report.
+    pub fn run_collector(
+        &self,
+    ) -> std::sync::Arc<parking_lot::Mutex<crate::run_collector::RunCollector>> {
+        std::sync::Arc::clone(&self.run_collector)
     }
 
     /// Delta §11.6: the current goal, if any. A UI readout.
@@ -8771,6 +8790,9 @@ pub(crate) fn filter_chain_by_trust(
         let mut current_model_ref: ModelRef = round.model_ref.clone();
         let mut had_tool_results = false;
         for round_idx in 0..MAX_TOOL_ROUNDS {
+            // Delta §9.11: per-round wall time, recorded into the run
+            // collector after the round's outcome is known.
+            let round_started = std::time::Instant::now();
             if self.is_cancelled_for(round.holder) {
                 return Err(KodError::InvalidState("cancelled by user".to_string()));
             }
@@ -8849,6 +8871,23 @@ pub(crate) fn filter_chain_by_trust(
                     round_for_this.fallback,
                 )
                 .await?;
+            // Delta §9.11: record this round's outcome for /stats.
+            // The stop reason is not threaded out of stream_round
+            // today (the provider's StopReason chunk is logged, not
+            // returned), so the turn is recorded with a None reason
+            // and the cost-unavailable signal derived from usage.
+            {
+                let elapsed = round_started.elapsed().as_millis() as u64;
+                let cost_unavailable = match usage.as_ref() {
+                    None => Some(crate::run_collector::CostUnavailable::NoUsage),
+                    Some(_) => None,
+                };
+                self.run_collector.lock().observe_turn(
+                    None,
+                    elapsed,
+                    cost_unavailable,
+                );
+            }
             // P5.6 — on the very first round, an off-track verdict
             // is a hard stop: discard the round's text and signal
             // the caller to try the next endpoint. Emit the reset
@@ -10767,6 +10806,9 @@ pub(crate) fn filter_chain_by_trust(
                     continue;
                 }
                 if let Some(reason) = denied.get(&i) {
+                    self.run_collector
+                        .lock()
+                        .observe_tool(&call.tool_name, crate::run_collector::ToolStatus::Blocked);
                     out.push((Ok(ToolResult::Error(format!("write denied: {reason}"))), 0));
                     continue;
                 }
@@ -10828,6 +10870,19 @@ pub(crate) fn filter_chain_by_trust(
                     .tools
                     .execute_tool(&call.tool_name, &call.arguments, &call_ctx)
                     .await;
+                // Delta §9.11: record the call's status for /stats.
+                {
+                    use crate::run_collector::ToolStatus;
+                    let status = match &res {
+                        Ok(ToolResult::Success(_)) => ToolStatus::Ok,
+                        Ok(ToolResult::Error(_)) => ToolStatus::Error,
+                        Ok(ToolResult::RequiresConfirmation { .. }) => ToolStatus::Skipped,
+                        Err(_) => ToolStatus::Error,
+                    };
+                    self.run_collector
+                        .lock()
+                        .observe_tool(&call.tool_name, status);
+                }
                 out.push((res, start.elapsed().as_millis() as u64));
             }
             out
