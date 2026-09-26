@@ -7804,6 +7804,9 @@ pub(crate) fn filter_chain_by_trust(
                 None => final_text,
             };
             self.remember_turn_for(key, false, &final_text).await;
+            // Delta §11.7: remind the model of open todos at stop.
+            self.maybe_emit_todo_completion_reminder(key, &final_text)
+                .await;
 
             // Delta §9.4 (diagnostic): same classifier call as the
             // streaming path. Non-blocking.
@@ -7889,6 +7892,8 @@ pub(crate) fn filter_chain_by_trust(
             }
         }
         self.set_current_request(key, input).await;
+        // Delta §11.7: offer the todo tool at the start of a task.
+        self.maybe_offer_todo_prelude(key, input).await;
         // Tier 1.1 — a fresh user turn clears any prior taint.
         self.reset_taint();
         // Delta §11.8: a fresh user turn resets the advisor
@@ -8171,6 +8176,9 @@ pub(crate) fn filter_chain_by_trust(
                 None => final_text,
             };
             self.remember_turn_for(key, false, &final_text).await;
+            // Delta §11.7: remind the model of open todos at stop.
+            self.maybe_emit_todo_completion_reminder(key, &final_text)
+                .await;
 
             // Delta §9.4 (diagnostic): classify a clean stop with
             // no tool calls. Non-blocking — the reply is delivered
@@ -9799,6 +9807,91 @@ pub(crate) fn filter_chain_by_trust(
             prompt.push('\n');
         }
         prompt
+    }
+
+    /// Delta §11.7: offer the todo tool at the start of a task.
+    ///
+    /// Injected as a System message into the transcript so the first
+    /// round's request carries it. Offered at most once per
+    /// transcript, and skipped for a question (`?`) or exclamation
+    /// (`!`) prompt, or when todos already exist.
+    async fn maybe_offer_todo_prelude(&self, key: &str, input: &str) {
+        // Only the first turn of a *task*. A transcript with prior
+        // messages is a resumed session or a mid-task turn — the
+        // model already has context and does not need the workflow
+        // explained. This also keeps the prelude out of a seeded or
+        // replayed transcript.
+        let has_history = {
+            let h = self.history.read().await;
+            h.get(key).map(|t| !t.is_empty()).unwrap_or(false)
+        };
+        if has_history {
+            return;
+        }
+        let has_todos = !self.todo_list.read().await.is_empty();
+        let mut trackers = self.todo_trackers.write().await;
+        let tracker = trackers
+            .entry(key.to_string())
+            .or_insert_with(kod_tools::todo_tracker::TodoTracker::new);
+        if !tracker.should_offer_prelude(input, has_todos) {
+            return;
+        }
+        tracker.note_prelude_offered();
+        drop(trackers);
+        let mut hist = self.history.write().await;
+        hist.entry(key.to_string()).or_default().push(
+            kod_types::ChatMessage::text(
+                kod_types::MessageId::new(),
+                kod_types::MessageRole::System,
+                "[todo prelude] For a multi-step task, keep a todo list \
+                 with the `todo` tool: one item in progress at a time, \
+                 mark items done as you finish them, and add items you \
+                 discover as you go. Skip the list for a single-step ask.",
+                time::OffsetDateTime::now_utc(),
+            ),
+        );
+    }
+
+    /// Delta §11.7: remind the model of open todos when it stops.
+    ///
+    /// The reminder is appended to the transcript so the next turn
+    /// sees it. It is not a continuation: the engine does not re-enter
+    /// the loop on its own — the caller decides whether to keep going.
+    /// Skipped when the final line is a question (the model is asking,
+    /// not stopping) or a background job will wake it.
+    async fn maybe_emit_todo_completion_reminder(&self, key: &str, final_text: &str) {
+        let incomplete = kod_tools::todo::in_progress_todo(&self.todo_list).is_some();
+        let last_line_is_question = final_text
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .map(|l| l.trim_end().ends_with('?'))
+            .unwrap_or(false);
+        let async_wakes_pending = self.async_delivery.lock().queued_for(key) > 0;
+        let mut trackers = self.todo_trackers.write().await;
+        let tracker = trackers
+            .entry(key.to_string())
+            .or_insert_with(kod_tools::todo_tracker::TodoTracker::new);
+        if !tracker.completion_reminder_due(
+            incomplete,
+            last_line_is_question,
+            async_wakes_pending,
+        ) {
+            return;
+        }
+        tracker.note_completion_reminder();
+        drop(trackers);
+        let mut hist = self.history.write().await;
+        hist.entry(key.to_string()).or_default().push(
+            kod_types::ChatMessage::text(
+                kod_types::MessageId::new(),
+                kod_types::MessageRole::System,
+                "[todo reminder] The todo list still has an item in \
+                 progress. If the task is finished, mark it done; \
+                 otherwise continue.",
+                time::OffsetDateTime::now_utc(),
+            ),
+        );
     }
 
     /// Delta §11.7: record a tool round and, when the tracker says a
