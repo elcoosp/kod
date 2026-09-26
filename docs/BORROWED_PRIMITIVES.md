@@ -97,6 +97,9 @@ them.
 | MCP HTTP policy (§14.5) | `kod-mcp/src/http_policy.rs` | `Origin` parse + `same_as`; `decide_redirect` refuses a method-changing redirect of a non-GET and drops configured headers cross-origin; reserved-header list; hop cap 5 | 17 tests |
 | Cleanse scheduler (§11.9) | `kod-swarm/src/cleanse.rs` | file-sticky dispatch: one worker per file, batch budget shared across agents, released files re-claimable | 15 tests |
 
+| TTSR stream rules (§14.3) | `kod-provider/src/ttsr.rs` | rules matched against streaming output: `RuleScope` (Text/Thinking/Tool with name+path patterns), `InterruptMode` (Never/ProseOnly/ToolOnly/Always), `RepeatMode` (Once/Gap). A bad regex drops the rule rather than stopping the stream. `builtin_rules()` ships no-TODO-in-diff and no-secret-in-prose | 16 tests |
+| Conventional-commit validation (§14.4) | `kod-stats/src/commit.rs` | `CommitProposal` validated for type/summary/details/paths and type-path consistency (docs->*.md, ci->.github, build->Cargo.toml); `score_change` weights details by importance; `format_message` renders | 22 tests |
+
 ## How to update this file
 
 Add a row to the wired table when a primitive gains a real caller.
