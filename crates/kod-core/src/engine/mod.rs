@@ -6627,6 +6627,37 @@ pub(crate) fn filter_chain_by_trust(
             self.gauge_observe(holder, covers_through, usage).await;
         }
 
+        // Delta §13.2: one RequestRecord per provider call. Rates come
+        // from the endpoint pricing when present; a local endpoint with
+        // no pricing records zero rates, which makes cache_savings_usd
+        // zero rather than a guess.
+        {
+            let (input_rate, cache_read_rate, cache_write_rate) = match pricing {
+                Some(p) => (
+                    p.input_per_mtok_usd,
+                    p.cache_read_per_mtok_usd,
+                    p.cache_write_per_mtok_usd,
+                ),
+                None => (0.0, 0.0, 0.0),
+            };
+            let record = kod_stats::request::RequestRecord {
+                model: model_ref.model.clone(),
+                endpoint: model_ref.endpoint.clone(),
+                duration_ms: 0,
+                ttft_ms: None,
+                stop_reason: None,
+                input_tokens: usage.prompt_tokens as u64,
+                output_tokens: usage.completion_tokens as u64,
+                cache_read_tokens: usage.cache_read_tokens.unwrap_or(0),
+                cache_write_tokens: usage.cache_creation_tokens.unwrap_or(0),
+                input_rate,
+                cache_read_rate,
+                cache_write_rate,
+                error: false,
+            };
+            self.stats.lock().observe(&record);
+        }
+
         // P2-a: record the observed size for the compaction decision.
         // `prompt + completion` is the whole window the provider
         // processed; that is what the next request will roughly
