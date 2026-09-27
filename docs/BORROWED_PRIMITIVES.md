@@ -61,8 +61,19 @@ them.
 
 - **§11.4 live-child auto-detach** — the suggestion is there; handing
   off a still-running child (pipes + pinned read futures) is not.
-- **§11.10 plan-mode hardening**, **§11.11 worktree isolation GC**,
-  **§11.12 prewalk** — absent.
+- **§11.10 plan-mode hardening — remaining kit** — the plan autosave
+  is wired; the model-role switch (a `plan`-role model while plan
+  mode is active), the plan read-compaction protection (keep read
+  results for the plan file + reference path through prune/shake),
+  the plan handoff (inject an approved plan into subagent contexts),
+  the plan-mode subagent clamp (tools limited to read/grep/glob/
+  web_search), and the plan-mode toggle (there is no plan mode yet —
+  the model plans on Complex/MultiStep tasks but the user cannot
+  enter plan mode explicitly) are not implemented.
+- **§11.11 worktree isolation GC** — absent (no
+  `.omp-isolation-owner.json` analogue; the retention logic runs
+  unconditionally at shutdown).
+- **§11.12 prewalk** — absent.
 - **§13 catalog metadata** — no `kod-catalog`; per-request stats and
   if-bench landed as `kod-stats` (see above).
 - **§14.2 capability discovery registry** — absent.
@@ -98,6 +109,9 @@ them.
 | Raw-vs-indexed content projection (§12.5) | `kod-memory/src/manager.rs` (`index_text_for_embedding`) | strips `<memories>` blocks, a leading role prefix on the first non-empty line, and heading `#` markers before the embed call; raw content is stored unchanged | 6 tests in `manager.rs` |
 | Fire-and-forget embeddings (§12.5) | `kod-memory/src/manager.rs` (`spawn_embed`, `flush_embeddings`) + `router::flush_embeddings` + shutdown | `store_with_metadata` persists the entry and spawns the embed task; `flush_embeddings` waits on an in-flight counter with a tokio Notify wakeup; `KodEngine::shutdown` awaits the flush before `close_memory` | engine + manager tests |
 | Post-consolidation refresh (§12.7) | `kod-core/src/engine/mod.rs` (`fill_mental_models`, `refresh_mental_models_after_consolidation`) | re-fills models whose seed trigger is `AfterConsolidation`; the `SessionStart` models are left frozen; a caller that owns the engine invokes it after `router.consolidate_memory()` reports a change | engine tests |
+| Per-TTL cache-write pricing (§13.1) | `kod-provider/src/request.rs` (`ModelPricing::cache_write_1h_per_mtok_usd`, `cost_for_usage`) + `types.rs` (`TokenUsage::cache_creation_1h_tokens`) | the 5-minute and 1-hour write tiers carry separate rates (1.25x and 2x input by default); `cost_for_usage` splits the write count and bills each slice at its rate; a provider that reports one tier sets the subset to `None` and the whole write prices at the base rate | provider + provider-anthropic tests |
+| 1-hour cache-write extraction (§13.1) | `kod-provider-anthropic/src/wire.rs` (`AnthropicStreamState::cache_creation_1h_input_tokens`, `message_start`); `provider.rs` (non-stream extractor) | parses the nested `cache_creation.ephemeral_1h_input_tokens` object Anthropic sends; clamps a mis-reported nested count to the flat total; a reply with no nested object yields `None` | 4 tests in wire.rs + provider.rs |
+| Plan autosave (§11.10) | `kod-core/src/plan.rs` (`slugify`, `autosave_plan`, `plan_dir_for_working_dir`) + engine `autosave_plan_for` called from plan creation | the slug/date file lands under `~/.kod/plans/<fnv1a-of-cwd>/`; O_EXCL with a numeric-suffix retry; per-transcript working dir override honoured for swarm agents | plan.rs tests + engine tests |
 
 | TTSR stream rules (§14.3) | `kod-provider/src/ttsr.rs` | rules matched against streaming output: `RuleScope` (Text/Thinking/Tool with name+path patterns), `InterruptMode` (Never/ProseOnly/ToolOnly/Always), `RepeatMode` (Once/Gap). A bad regex drops the rule rather than stopping the stream. `builtin_rules()` ships no-TODO-in-diff and no-secret-in-prose | 16 tests |
 | Conventional-commit validation (§14.4) | `kod-stats/src/commit.rs` | `CommitProposal` validated for type/summary/details/paths and type-path consistency (docs->*.md, ci->.github, build->Cargo.toml); `score_change` weights details by importance; `format_message` renders | 22 tests |
