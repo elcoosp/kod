@@ -29,21 +29,29 @@
 //!
 //! # What this is NOT
 //!
-//! * Not the extractor. A small model produces [`DecisionDelta`]s;
-//!   this module decides whether they are admissible.
 //! * Not the consolidation. Rewriting `architecture.md` under a line
-//!   ceiling is a separate pass.
+//!   ceiling is a separate pass. The extraction prompt and the JSON
+//!   parse of the model's reply live here; the consolidation pass and
+//!   the file writes live above this module (in the engine).
+
+use serde::{Deserialize, Serialize};
 
 /// What kind of decision a delta records.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DecisionKind {
+    #[serde(rename = "architecture_decision")]
     Architecture,
+    #[serde(rename = "product_decision")]
     Product,
+    #[serde(rename = "style_decision")]
     Style,
+    #[serde(rename = "constraint")]
     Constraint,
     /// An approach that was tried and rejected — worth as much as the
     /// one that was chosen.
+    #[serde(rename = "rejected_approach")]
     RejectedApproach,
+    #[serde(rename = "correction")]
     Correction,
 }
 
@@ -73,7 +81,15 @@ impl DecisionKind {
 }
 
 /// The friction signals: what made the decision earn its place.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+///
+/// `#[serde(default)]` at the container level: a reply that sends
+/// `{}` (or omits any of the three flags) parses to the all-false
+/// default. `#[serde(default)]` on the enclosing `DecisionDelta`
+/// field only fills in a *missing* object; a present-but-empty
+/// object still needs every field unless the struct itself is
+/// defaulted. The model does not always send all three flags.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Friction {
     /// The user had to correct the agent.
     pub corrective: bool,
@@ -105,17 +121,29 @@ impl Friction {
 }
 
 /// One extracted decision.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DecisionDelta {
     pub kind: DecisionKind,
     /// The decision, phrased as a timeless norm (no task state, no
     /// paths).
     pub statement: String,
     /// The alternative that was not chosen, when there was one.
+    ///
+    /// `#[serde(default)]` so a model that omits the field parses; the
+    /// alternative is genuinely optional, and a strict requirement
+    /// would reject well-formed deltas over a field the design calls
+    /// optional.
+    #[serde(default)]
     pub rejected_alternative: Option<String>,
+    #[serde(default)]
     pub rationale: Option<String>,
     /// The exact substring of the user's prompt this came from.
     pub evidence: String,
+    /// The friction flags. `#[serde(default)]` so a reply that omits
+    /// the field — or sends `{}` — parses; the default has no friction
+    /// flagged, and the admission gate treats a no-friction delta as
+    /// admissible but ranked lowest.
+    #[serde(default)]
     pub friction: Friction,
 }
 
@@ -174,6 +202,78 @@ pub fn admit<'a>(delta: &'a DecisionDelta, prompt: &str) -> Option<&'a DecisionD
 pub fn rank_by_friction(mut deltas: Vec<DecisionDelta>) -> Vec<DecisionDelta> {
     deltas.sort_by_key(|d| std::cmp::Reverse(d.friction.rank()));
     deltas
+}
+
+/// The default cap on decisions extracted from a single prompt. A
+/// prompt that "contains" eight decisions almost certainly contains
+/// four decisions and four restatements of the task.
+pub const DEFAULT_MAX_DECISIONS: usize = 4;
+
+/// Build the extraction prompt for one user message.
+///
+/// The prompt asks for a JSON array of decisions, each shaped like a
+/// `DecisionDelta` (see the module doc). The `evidence` field must be
+/// an exact substring of the user's prompt; the prompt tells the
+/// model so explicitly, and the caller checks it before admitting a
+/// delta anyway — the model's compliance is not assumed.
+///
+/// `max_entries` is a hard cap; the reply parser also enforces it so
+/// a verbose model cannot grow the delta queue past the budget.
+pub fn build_prompt(user_prompt: &str, max_entries: usize) -> String {
+    let cap = max_entries.max(1);
+    format!(
+        "You extract durable project decisions from a single user \
+         message. A decision is worth recording only when it carries \
+         friction: the user corrected a mistaken assumption, something \
+         regressed, or a subtlety had to be pointed out. Restating the \
+         task is not a decision.\n\n\
+         Return at most {cap} decision(s) as a JSON array. If there is \
+         no decision, return []. Each element has this shape:\n\n\
+         {{\n  \
+           \"kind\": one of \"architecture_decision\", \"product_decision\", \
+         \"style_decision\", \"constraint\", \"rejected_approach\", \
+         \"correction\",\n  \
+           \"statement\": a timeless normative sentence — no task state, \
+         no file paths,\n  \
+           \"rejected_alternative\": optional, the option not chosen,\n  \
+           \"rationale\": optional, why,\n  \
+           \"evidence\": an EXACT substring of the user message below \
+         that the decision is grounded in,\n  \
+           \"friction\": {{\"corrective\": bool, \"regression\": bool, \
+         \"subtle\": bool}}\n\
+         }}\n\n\
+         The user message:\n\n{user_prompt}\n",
+    )
+}
+
+/// Parse the model's reply into decisions.
+///
+/// The reply is expected to be a JSON array, optionally surrounded by
+/// prose. The parser takes the first `[` through the last `]`, and
+/// deserializes the slice. A bad reply — no array, invalid JSON, wrong
+/// shape — yields an empty vector; a caller treats that as "no
+/// decisions this turn" rather than an error, matching the extraction
+/// path's best-effort contract.
+pub fn parse_reply(reply: &str, max_entries: usize) -> Vec<DecisionDelta> {
+    let Some(start) = reply.find('[') else {
+        return Vec::new();
+    };
+    let Some(end) = reply.rfind(']') else {
+        return Vec::new();
+    };
+    if end <= start {
+        return Vec::new();
+    }
+    let slice = &reply[start..=end];
+    let Ok(mut parsed): Result<Vec<DecisionDelta>, _> = serde_json::from_str(slice) else {
+        return Vec::new();
+    };
+    parsed.truncate(max_entries.max(1));
+    // Drop deltas with an obviously malformed shape before the caller
+    // runs the full admission gate: an empty statement or empty
+    // evidence is never admissible.
+    parsed.retain(|d| !d.statement.trim().is_empty() && !d.evidence.trim().is_empty());
+    parsed
 }
 
 #[cfg(test)]
@@ -319,5 +419,108 @@ mod tests {
     fn kinds_have_the_documented_spelling() {
         assert_eq!(DecisionKind::RejectedApproach.as_str(), "rejected_approach");
         assert_eq!(DecisionKind::Architecture.as_str(), "architecture_decision");
+    }
+
+    // ---- extraction prompt & parse -----------------------------------
+
+    #[test]
+    fn the_prompt_names_the_cap_and_the_shape() {
+        let p = build_prompt("we settled on SQLite not Postgres", 3);
+        assert!(p.contains("at most 3"), "got: {p}");
+        assert!(p.contains("architecture_decision"), "got: {p}");
+        assert!(p.contains("we settled on SQLite not Postgres"), "got: {p}");
+    }
+
+    #[test]
+    fn the_prompt_asks_for_an_exact_evidence_substring() {
+        let p = build_prompt("some prompt", 1);
+        assert!(p.contains("EXACT substring"), "got: {p}");
+    }
+
+    #[test]
+    fn a_well_formed_array_parses() {
+        let reply = r#"[
+            {
+                "kind": "architecture_decision",
+                "statement": "use SQLite, not Postgres",
+                "rejected_alternative": "Postgres",
+                "rationale": "no managed DB on the target",
+                "evidence": "we use SQLite",
+                "friction": {"corrective": false, "regression": false, "subtle": false}
+            }
+        ]"#;
+        let out = parse_reply(reply, 4);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].kind, DecisionKind::Architecture);
+        assert_eq!(out[0].statement, "use SQLite, not Postgres");
+        assert_eq!(out[0].rejected_alternative.as_deref(), Some("Postgres"));
+    }
+
+    #[test]
+    fn surrounding_prose_is_ignored() {
+        let reply = "Sure, here you go:\n\
+            [{\"kind\":\"correction\",\"statement\":\"use cargo check\",\
+             \"evidence\":\"cargo check\",\"friction\":{}}]\n\
+            Done.";
+        let out = parse_reply(reply, 4);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].kind, DecisionKind::Correction);
+    }
+
+    #[test]
+    fn an_empty_array_parses_to_nothing() {
+        assert!(parse_reply("[]", 4).is_empty());
+    }
+
+    #[test]
+    fn a_reply_without_an_array_yields_nothing() {
+        assert!(parse_reply("no decisions here", 4).is_empty());
+        assert!(parse_reply("", 4).is_empty());
+    }
+
+    #[test]
+    fn invalid_json_yields_nothing() {
+        assert!(parse_reply("[not, valid]", 4).is_empty());
+    }
+
+    #[test]
+    fn parse_respects_the_cap() {
+        let reply = r#"[
+            {"kind":"correction","statement":"a","evidence":"e","friction":{}},
+            {"kind":"correction","statement":"b","evidence":"e","friction":{}},
+            {"kind":"correction","statement":"c","evidence":"e","friction":{}}
+        ]"#;
+        assert_eq!(parse_reply(reply, 2).len(), 2);
+    }
+
+    #[test]
+    fn parse_drops_empty_statement_or_evidence() {
+        let reply = r#"[
+            {"kind":"correction","statement":"","evidence":"e","friction":{}},
+            {"kind":"correction","statement":"a","evidence":"","friction":{}},
+            {"kind":"correction","statement":"keep","evidence":"e","friction":{}}
+        ]"#;
+        let out = parse_reply(reply, 4);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].statement, "keep");
+    }
+
+    #[test]
+    fn a_delta_round_trips_through_json() {
+        let d = DecisionDelta {
+            kind: DecisionKind::RejectedApproach,
+            statement: "do not reach for tokio::spawn".to_string(),
+            rejected_alternative: Some("tokio::spawn".to_string()),
+            rationale: Some("the engine owns the task lifecycle".to_string()),
+            evidence: "we don't spawn from the manager".to_string(),
+            friction: Friction { corrective: true, ..Default::default() },
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        let back: DecisionDelta = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.kind, d.kind);
+        assert_eq!(back.friction, d.friction);
+        // The serde rename must serialize the kind as the design's
+        // spelling, not the Rust variant name.
+        assert!(json.contains("rejected_approach"), "got: {json}");
     }
 }
