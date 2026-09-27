@@ -63,12 +63,6 @@ them.
   off a still-running child (pipes + pinned read futures) is not.
 - **§11.10 plan-mode hardening**, **§11.11 worktree isolation GC**,
   **§11.12 prewalk** — absent.
-- **§12.5 background embeddings** — `store_with_metadata` still embeds
-  inline; a `pending_extractions` fire-and-forget queue drained at
-  shutdown is not there.
-- **§12.5 raw-vs-indexed content projection** — the store has one
-  `content` field; there is no separate `embed_text` column that
-  strips role markers before the embed call.
 - **§13 catalog metadata** — no `kod-catalog`; per-request stats and
   if-bench landed as `kod-stats` (see above).
 - **§14.2 capability discovery registry** — absent.
@@ -103,6 +97,8 @@ them.
 | Polyphonic RRF (§12.8) | `kod-memory/src/manager.rs` (`retrieve_long_term_hybrid`) | four voices (vector / fact / importance / temporal) fused by `fusion::reciprocal_rank_fusion`; intent-weighted composite preserved per entry for the MMR relevance term | `retrieval.rs` + `manager.rs` tests |
 | Intent-confidence blend (§12.8) | `kod-memory/src/fusion.rs` (`classify_intent_with_confidence`, `blend_weights`) + manager | the classifier reports its cue count; the manager blends intent weights toward neutral by `min(0.3 + 0.15*matches, 1.0)` | 8 tests in `fusion.rs` |
 | Mental-model bootstrap (§12.7) | `kod-core/src/engine/mod.rs` (`bootstrap_mental_models` called from `start()`) + `render_mental_model_block` | seeds the design's three models (preferences / conventions / decisions), fills each from the store under a soft token cap, and freezes the block into the cacheable prefix | engine tests + `mental_models.rs` |
+| Raw-vs-indexed content projection (§12.5) | `kod-memory/src/manager.rs` (`index_text_for_embedding`) | strips `<memories>` blocks, a leading role prefix on the first non-empty line, and heading `#` markers before the embed call; raw content is stored unchanged | 6 tests in `manager.rs` |
+| Fire-and-forget embeddings (§12.5) | `kod-memory/src/manager.rs` (`spawn_embed`, `flush_embeddings`) + `router::flush_embeddings` + shutdown | `store_with_metadata` persists the entry and spawns the embed task; `flush_embeddings` waits on an in-flight counter with a tokio Notify wakeup; `KodEngine::shutdown` awaits the flush before `close_memory` | engine + manager tests |
 
 | TTSR stream rules (§14.3) | `kod-provider/src/ttsr.rs` | rules matched against streaming output: `RuleScope` (Text/Thinking/Tool with name+path patterns), `InterruptMode` (Never/ProseOnly/ToolOnly/Always), `RepeatMode` (Once/Gap). A bad regex drops the rule rather than stopping the stream. `builtin_rules()` ships no-TODO-in-diff and no-secret-in-prose | 16 tests |
 | Conventional-commit validation (§14.4) | `kod-stats/src/commit.rs` | `CommitProposal` validated for type/summary/details/paths and type-path consistency (docs->*.md, ci->.github, build->Cargo.toml); `score_change` weights details by importance; `format_message` renders | 22 tests |
