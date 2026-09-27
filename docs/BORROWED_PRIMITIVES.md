@@ -61,8 +61,6 @@ them.
 
 - **§11.4 live-child auto-detach** — the suggestion is there; handing
   off a still-running child (pipes + pinned read futures) is not.
-- **§13 catalog metadata** — no `kod-catalog`; per-request stats and
-  if-bench landed as `kod-stats` (see above).
 - **§14.2 capability discovery registry** — absent.
 - **§14.5 OTLP telemetry** — absent.
 - **Cold-revive surface rebuild** — `SessionInit` and its reader are
@@ -105,6 +103,7 @@ them.
 | Plan handoff (§11.10) | `kod-swarm/src/brief.rs` (`ContextBrief.plan_text`, `render_brief` emits a `## Approved plan` section) + `brief_assembly.rs` (`ParentContext.plan_text`) + `swarm_runner` fills it from `engine.plan_for("session")` | every subtask brief carries the parent's approved plan, ordered above the repository map; empty when the parent has no plan | 1 test in brief.rs |
 | Plan-mode toggle + subagent clamp (§11.10) | `kod-core/src/engine/mod.rs` (`plan_mode: HashSet<String>`, `is_in_plan_mode`, `set_plan_mode`; `build_grounded_request` clamps the tool set to read-only tools when the transcript is in plan mode) + TUI `"/plan-mode"` command | a user enters plan mode with `/plan-mode on`; the tool set clamps to `read_file`/`list_files`/`grep`/`file_info`/`web_search`/`tool_search`; the clamp is applied after the Jev hysteresis filter and MCP trim so a mode toggle cannot be overridden by a per-turn classification | TUI test + engine tests |
 | Plan-model role (§11.10) | `kod-config/src/llm.rs` (`RoutingConfig.plan: Option<String>`) + `kod-core/src/engine/mod.rs` (`resolve_chain_for_task` consults the plan endpoint when the default transcript is in plan mode) | a `[llm.routing] plan = "…"` block routes every plan-mode turn to that endpoint; an unknown endpoint falls through to the ordinary chain, matching the by_task safety rule; the switch fires at the turn boundary so a mid-stream toggle cannot swap the model under a stream | config + engine tests |
+| Model catalog (§13.1) | `kod-provider/src/catalog.rs` (`ModelMeta`, `resolve`, `builtin`, `ProviderPriority`, `TimeBasedPricing`) + `kod-core/src/engine/mod.rs` (`pricing_for` and `budget_hint_for` consult the catalog after the configured values miss) | a dozen well-known models with context window, per-TTL pricing, effort ladder, intelligence / tps scores, long-context tier, and peak-window off-peak pricing; `resolve` tolerates dialect drift (prefixes, `-latest`, dashes / underscores / dots); priority ranks first-party > aggregator > gateway | 15 tests in the catalog + engine fallback tests |
 
 | TTSR stream rules (§14.3) | `kod-provider/src/ttsr.rs` | rules matched against streaming output: `RuleScope` (Text/Thinking/Tool with name+path patterns), `InterruptMode` (Never/ProseOnly/ToolOnly/Always), `RepeatMode` (Once/Gap). A bad regex drops the rule rather than stopping the stream. `builtin_rules()` ships no-TODO-in-diff and no-secret-in-prose | 16 tests |
 | Conventional-commit validation (§14.4) | `kod-stats/src/commit.rs` + `kod-cli/commands/admin.rs::run_commit_check` + `kod commit-check` | validator: type / summary / details / paths, type-path consistency; `score_change` weights details; `format_message` renders. CLI: reads `git diff --cached --name-only`, composes a proposal from the flags, prints the message or the rejection reason and exits non-zero on rejection | 22 unit tests + CLI tests |
