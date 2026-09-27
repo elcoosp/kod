@@ -234,6 +234,9 @@ fn simple_glob_match(pattern: &str, text: &str) -> bool {
 }
 
 #[cfg(test)]
+mod tests {
+    use super::*;
+
     #[test]
     fn render_brief_injects_the_plan_when_present() {
         let mut b = ContextBrief {
@@ -253,9 +256,6 @@ fn simple_glob_match(pattern: &str, text: &str) -> bool {
         let out = render_brief(&b);
         assert!(!out.contains("## Approved plan"), "got: {out}");
     }
-
-mod tests {
-    use super::*;
 
     #[test]
     fn empty_brief_roundtrips() {
