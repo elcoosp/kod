@@ -72,10 +72,8 @@ them.
   the entry is not.
 - **Periodic sharpshooter consolidation** — `consolidate_sharpshooter_now`
   is called at `shutdown()`; a periodic tick that reuses the
-  memory-consolidation interval is a follow-up.
-- **`AfterConsolidation` mental-model refresh** — the seeds carry the
-  trigger, but the reload at the next transcript boundary is not
-  wired; the models are frozen for the session.
+  memory-consolidation interval needs an `Arc<Engine>` bound to the
+  task and is a follow-up.
 
 | Memory hygiene (§12.5) | `kod-memory/src/hygiene.rs` + write/recall wiring | `strip_memory_tags` drops a `<memories>` block before it is stored; `frame_recalled_block` wraps recalled entries with a precedence note; `has_substantive_content` rejects placeholder turns | 16 unit tests |
 | Episodic tiers (§12.8) | `kod-memory/src/tier.rs` + score wiring | tier by age (<30d / >=30d / >=180d) with weights 1.0/0.5/0.25 folded into the score; tier-3 bodies compressed to 300 chars at retrieval | 13 unit tests |
@@ -99,6 +97,7 @@ them.
 | Mental-model bootstrap (§12.7) | `kod-core/src/engine/mod.rs` (`bootstrap_mental_models` called from `start()`) + `render_mental_model_block` | seeds the design's three models (preferences / conventions / decisions), fills each from the store under a soft token cap, and freezes the block into the cacheable prefix | engine tests + `mental_models.rs` |
 | Raw-vs-indexed content projection (§12.5) | `kod-memory/src/manager.rs` (`index_text_for_embedding`) | strips `<memories>` blocks, a leading role prefix on the first non-empty line, and heading `#` markers before the embed call; raw content is stored unchanged | 6 tests in `manager.rs` |
 | Fire-and-forget embeddings (§12.5) | `kod-memory/src/manager.rs` (`spawn_embed`, `flush_embeddings`) + `router::flush_embeddings` + shutdown | `store_with_metadata` persists the entry and spawns the embed task; `flush_embeddings` waits on an in-flight counter with a tokio Notify wakeup; `KodEngine::shutdown` awaits the flush before `close_memory` | engine + manager tests |
+| Post-consolidation refresh (§12.7) | `kod-core/src/engine/mod.rs` (`fill_mental_models`, `refresh_mental_models_after_consolidation`) | re-fills models whose seed trigger is `AfterConsolidation`; the `SessionStart` models are left frozen; a caller that owns the engine invokes it after `router.consolidate_memory()` reports a change | engine tests |
 
 | TTSR stream rules (§14.3) | `kod-provider/src/ttsr.rs` | rules matched against streaming output: `RuleScope` (Text/Thinking/Tool with name+path patterns), `InterruptMode` (Never/ProseOnly/ToolOnly/Always), `RepeatMode` (Once/Gap). A bad regex drops the rule rather than stopping the stream. `builtin_rules()` ships no-TODO-in-diff and no-secret-in-prose | 16 tests |
 | Conventional-commit validation (§14.4) | `kod-stats/src/commit.rs` | `CommitProposal` validated for type/summary/details/paths and type-path consistency (docs->*.md, ci->.github, build->Cargo.toml); `score_change` weights details by importance; `format_message` renders | 22 tests |
