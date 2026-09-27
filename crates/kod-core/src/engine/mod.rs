@@ -1457,6 +1457,15 @@ pub struct KodEngine {
     /// first turn of a Complex/MultiStep task, re-rendered in every
     /// subsequent system prompt. Absent when the task is simple.
     plans: RwLock<HashMap<String, crate::plan::Plan>>,
+    /// Delta §11.10: transcripts currently in explicit plan mode. A
+    /// transcript in plan mode restricts the tool set to read-only
+    /// tools (read_file / grep / list_files / file_info / web_search)
+    /// so the model cannot mutate the workspace while planning. The
+    /// user enters and exits plan mode with the TUI/CLI toggle; the
+    /// engine holds no implicit state machine — a plan that was
+    /// auto-generated on a Complex task does not by itself put the
+    /// transcript in plan mode.
+    plan_mode: RwLock<std::collections::HashSet<String>>,
     /// Delta §11.10: per-transcript paths whose `read_file` results
     /// must survive shake and prune. Set by a caller (a future
     /// `plan_update` variant, a user command) when the plan reads a
@@ -3344,6 +3353,7 @@ impl KodEngine {
             summaries_in_flight: std::sync::Arc::new(RwLock::new(std::collections::HashSet::new())),
             transcript_working_dirs: RwLock::new(HashMap::new()),
             plans: RwLock::new(HashMap::new()),
+            plan_mode: RwLock::new(std::collections::HashSet::new()),
             plan_reference_paths: RwLock::new(HashMap::new()),
             decision_logs: RwLock::new(HashMap::new()),
             sharpshooter_deltas: RwLock::new(Vec::new()),
@@ -3743,6 +3753,24 @@ impl KodEngine {
             self.persist_state().await;
         }
         r
+    }
+
+    /// Delta §11.10: whether a transcript is in explicit plan mode.
+    pub async fn is_in_plan_mode(&self, key: &str) -> bool {
+        self.plan_mode.read().await.contains(key)
+    }
+
+    /// Delta §11.10: enter or exit plan mode for a transcript.
+    /// Entering restricts the tool set to read-only tools; exiting
+    /// restores the full set. The plan itself (a `Plan` value) is
+    /// independent and persists across a mode toggle.
+    pub async fn set_plan_mode(&self, key: &str, on: bool) {
+        let mut guard = self.plan_mode.write().await;
+        if on {
+            guard.insert(key.to_string());
+        } else {
+            guard.remove(key);
+        }
     }
 
     /// The plan for a transcript, if one has been created (Tier 2.1).
@@ -7703,6 +7731,36 @@ pub(crate) fn filter_chain_by_trust(
         } else {
             self.filter_mcp_tools_with_jev(key, input, definitions).await
         };
+        // Delta §11.10: plan-mode subagent clamp. A transcript in
+        // plan mode sees only read-only tools. The filter runs after
+        // the Jev hysteresis filter and the MCP trim so it is the
+        // last word — a mode toggle must not be overridable by a
+        // per-turn classification.
+        let mut definitions = definitions;
+        if self.is_in_plan_mode(key).await {
+            definitions.retain(|d| {
+                matches!(
+                    d.name.as_str(),
+                    "read_file" | "list_files" | "grep" | "file_info"
+                        | "web_search" | "tool_search"
+                )
+            });
+        }
+        // Delta §11.10: plan-mode subagent clamp. A transcript in
+        // plan mode sees only read-only tools. The filter runs after
+        // the Jev hysteresis filter and the MCP trim so it is the
+        // last word — a mode toggle must not be overridable by a
+        // per-turn classification.
+        let mut definitions = definitions;
+        if self.is_in_plan_mode(key).await {
+            definitions.retain(|d| {
+                matches!(
+                    d.name.as_str(),
+                    "read_file" | "list_files" | "grep" | "file_info"
+                        | "web_search" | "tool_search"
+                )
+            });
+        }
         let grounded = self.ground_prompt(key, prompt, &definitions);
         Ok((alloc, definitions, grounded))
     }
