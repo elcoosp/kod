@@ -7746,21 +7746,6 @@ pub(crate) fn filter_chain_by_trust(
                 )
             });
         }
-        // Delta §11.10: plan-mode subagent clamp. A transcript in
-        // plan mode sees only read-only tools. The filter runs after
-        // the Jev hysteresis filter and the MCP trim so it is the
-        // last word — a mode toggle must not be overridable by a
-        // per-turn classification.
-        let mut definitions = definitions;
-        if self.is_in_plan_mode(key).await {
-            definitions.retain(|d| {
-                matches!(
-                    d.name.as_str(),
-                    "read_file" | "list_files" | "grep" | "file_info"
-                        | "web_search" | "tool_search"
-                )
-            });
-        }
         let grounded = self.ground_prompt(key, prompt, &definitions);
         Ok((alloc, definitions, grounded))
     }
