@@ -1217,3 +1217,95 @@ pub async fn run_if_bench(
     println!("{}", if pass { "PASS" } else { "FAIL" });
     Ok(())
 }
+
+/// Delta §14.4: validate a proposed commit before writing it.
+///
+/// Reads the staged paths with `git diff --cached --name-only`,
+/// composes a `CommitProposal` from the flags, runs the validator,
+/// and prints either "OK" plus the formatted message or the
+/// rejection reason. Exits 1 on a rejection so a script can gate a
+/// commit on it.
+pub async fn run_commit_check(
+    type_: String,
+    scope: Option<String>,
+    summary: String,
+    details: Vec<String>,
+) -> Result<()> {
+    use kod_stats::commit::{self, CommitProposal, PriorityChange};
+
+    // Read the staged file list. `--name-only` returns paths relative
+    // to the repo root, one per line. A missing git or a non-repo
+    // working dir is reported and the check fails — a commit proposal
+    // with no paths cannot be validated.
+    let cwd = std::env::current_dir()
+        .map_err(|e| kod_error::KodError::Config(format!("could not determine cwd: {e}")))?;
+    let output = std::process::Command::new("git")
+        .args(["diff", "--cached", "--name-only"])
+        .current_dir(&cwd)
+        .output();
+    let paths: Vec<String> = match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect(),
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            eprintln!("git diff --cached failed: {}", err.trim());
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Could not run git: {e} — is git on PATH?");
+            std::process::exit(1);
+        }
+    };
+
+    // Score each detail as a change; a detail that mentions
+    // "security" / "breaking" / "perf" carries weight.
+    let priority_changes: Vec<PriorityChange> = details
+        .iter()
+        .map(|d| PriorityChange {
+            description: d.clone(),
+            score: commit::score_change(d),
+        })
+        .collect();
+
+    let proposal = CommitProposal {
+        r#type: type_.clone(),
+        scope,
+        summary: summary.clone(),
+        details: details.clone(),
+        changed_paths: paths.clone(),
+        priority_changes,
+    };
+
+    match commit::validate(&proposal) {
+        Ok(()) => {
+            println!("ok: {}", commit::TYPES.len());
+            println!();
+            println!("{}", commit::format_message(&proposal));
+            println!();
+            println!("{} path(s) staged.", paths.len());
+            Ok(())
+        }
+        Err(reason) => {
+            eprintln!("rejected: {reason}");
+            eprintln!();
+            eprintln!(
+                "Known types: {}",
+                commit::TYPES.join(", "),
+            );
+            eprintln!(
+                "Rules: summary <= {} chars, <= {} details, at least one path, \
+                 and a type consistent with the paths (docs -> markdown, ci -> \
+                 .github, build -> Cargo.toml).",
+                commit::MAX_SUMMARY_CHARS,
+                commit::MAX_DETAILS,
+            );
+            Err(kod_error::KodError::InvalidParameters {
+                reason: format!("commit-check: {reason}"),
+            })
+        }
+    }
+}

@@ -697,6 +697,24 @@ impl Cli {
                     }
                 })
             }
+            Some(Command::CommitCheck {
+                type_,
+                scope,
+                summary,
+                details,
+            }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async {
+                    crate::commands::run_commit_check(
+                        type_.clone(),
+                        scope.clone(),
+                        summary.clone(),
+                        details.clone(),
+                    )
+                    .await
+                })
+            }
             Some(Command::IfBench {
                 model,
                 turns,
@@ -1250,6 +1268,27 @@ pub enum Command {
     Decisions {
         #[command(subcommand)]
         action: DecisionsAction,
+    },
+
+    /// Delta §14.4: validate a proposed conventional-commit message
+    /// against the staged changes. Reads `git diff --cached
+    /// --name-only` for the path list, composes a CommitProposal from
+    /// the flags, and prints either the formatted message or the
+    /// rejection reason. Exits non-zero on a rejection so a script
+    /// can gate a commit on it.
+    CommitCheck {
+        /// Conventional-commit type (`feat`, `fix`, `docs`, …).
+        #[arg(long = "type")]
+        type_: String,
+        /// Optional scope.
+        #[arg(long)]
+        scope: Option<String>,
+        /// One-line summary.
+        #[arg(long)]
+        summary: String,
+        /// A detail bullet. Repeatable.
+        #[arg(long = "detail")]
+        details: Vec<String>,
     },
 
     /// Delta §13.3: run the if-bench working-memory + instruction-
