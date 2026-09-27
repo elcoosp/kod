@@ -3577,8 +3577,36 @@ impl KodEngine {
         }
         let plan = crate::plan::Plan::new(input, steps);
         let step_count = plan.steps.len();
+        // Delta §11.10: autosave before moving the plan into the
+        // map. The working-dir override for a swarm transcript is
+        // honoured so a subagent's plan lands under its own worktree
+        // — that is the directory a merge reads it from.
+        self.autosave_plan_for(key).await;
         self.set_plan(key, plan).await;
         tracing::info!(steps = step_count, "plan created");
+    }
+
+    /// Delta §11.10: autosave the transcript's plan to
+    /// `~/.kod/plans/<fnv1a-of-canonical-cwd>/`. Returns the path
+    /// written, or `None` when there is no plan or the write failed.
+    ///
+    /// Best-effort by design: an autosave that failed must not fail
+    /// the plan operation. The caller in `maybe_create_plan` ignores
+    /// the return; a `/plan save` command can surface it.
+    pub async fn autosave_plan_for(&self, key: &str) -> Option<std::path::PathBuf> {
+        let plan = self.plans.read().await.get(key).cloned()?;
+        let working_dir = self
+            .transcript_working_dirs
+            .read()
+            .await
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| self.working_dir.clone());
+        let path = crate::plan::autosave_plan(&plan, &working_dir);
+        if let Some(p) = &path {
+            tracing::debug!(path = %p.display(), "plan autosaved");
+        }
+        path
     }
 
     /// Log one memory retrieval event (Tier 2.4). Called once per
