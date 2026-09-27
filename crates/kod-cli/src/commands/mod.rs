@@ -697,6 +697,17 @@ impl Cli {
                     }
                 })
             }
+            Some(Command::IfBench {
+                model,
+                turns,
+                array_size,
+            }) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
+                rt.block_on(async {
+                    crate::commands::run_if_bench(model.clone(), *turns, *array_size).await
+                })
+            }
             Some(Command::Memory { action }) => {
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| KodError::Internal(format!("Failed to create runtime: {}", e)))?;
@@ -1239,6 +1250,22 @@ pub enum Command {
     Decisions {
         #[command(subcommand)]
         action: DecisionsAction,
+    },
+
+    /// Delta §13.3: run the if-bench working-memory + instruction-
+    /// following eval against the default endpoint. Prints the
+    /// per-turn result and the final depth; exits 0 when the depth
+    /// is at least par, 1 otherwise.
+    IfBench {
+        /// Model to use (overrides the config).
+        #[arg(short, long)]
+        model: Option<String>,
+        /// Number of turns (defaults to the design's 24).
+        #[arg(long)]
+        turns: Option<usize>,
+        /// Array size (defaults to the design's 24).
+        #[arg(long)]
+        array_size: Option<usize>,
     },
 
     /// Inspect the structured turn traces written by `KodEngine`

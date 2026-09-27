@@ -1110,3 +1110,110 @@ pub async fn run_jev_stats(log: Option<std::path::PathBuf>) -> Result<()> {
     }
     Ok(())
 }
+
+/// Delta §13.3: run the if-bench eval against the default endpoint.
+///
+/// if-bench measures two separable things with one growing, fully
+/// cacheable conversation: working memory (track an array across
+/// turns) and instruction-following (a cat sound at a rotating
+/// position). The harness lives in `kod_stats::if_bench`; this
+/// function drives it.
+pub async fn run_if_bench(
+    model_override: Option<String>,
+    turns: Option<usize>,
+    array_size: Option<usize>,
+) -> Result<()> {
+    use kod_stats::if_bench::{
+        self, IfBenchConfig, SoundPosition,
+    };
+
+    let config = KodConfig::load_default()?;
+    let (registry, default_model, _routing) =
+        kod_core::build_registry(&config.llm, model_override.as_deref())?;
+    let provider = match registry.resolve(&default_model) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!(
+                "Could not resolve provider for {}: {}",
+                default_model.display(),
+                e
+            );
+            std::process::exit(1);
+        }
+    };
+
+    let cfg = IfBenchConfig {
+        turns: turns.unwrap_or(IfBenchConfig::default().turns),
+        array_size: array_size.unwrap_or(IfBenchConfig::default().array_size),
+        ..IfBenchConfig::default()
+    };
+    println!(
+        "if-bench against {} (turns={}, array_size={}, par={})",
+        default_model.display(),
+        cfg.turns,
+        cfg.array_size,
+        cfg.par,
+    );
+
+    // The driver closure needs to await the provider call. tokio
+    // does not have a "block on async from async" primitive, so
+    // build the whole thing inside a task that owns its own
+    // runtime via a scratch thread is overkill: instead, since the
+    // driver is synchronous and the closure is `FnMut`, we exploit
+    // the fact that we are already inside `run_if_bench`'s own
+    // async context by pre-generating every prompt turn-by-turn.
+    //
+    // Simpler: run the driver on a blocking thread with its own
+    // mini runtime? No — the provider is already inside our runtime
+    // and cannot be shared across a nested `block_on`.
+    //
+    // The clean answer: drive it manually here, one turn at a time,
+    // using the same primitives `drive` uses internally.
+    let initial = if_bench::initial_array(cfg.array_size);
+    let opts = kod_provider::GenerationOptions {
+        max_tokens: Some(cfg.max_tokens),
+        temperature: Some(0.0),
+        ..Default::default()
+    };
+    let mut replies = Vec::with_capacity(cfg.turns);
+    let mut current = initial.clone();
+    for turn in 0..cfg.turns {
+        let prompt = if_bench::prompt_for_turn(turn, &initial);
+        let reply = match provider.generate(&prompt, &opts).await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("turn {turn}: provider error: {e}");
+                replies.push(if_bench::TurnReply {
+                    reported: None,
+                    sound_ok: false,
+                });
+                break;
+            }
+        };
+        let reported = if_bench::parse_reported_array(&reply);
+        let pos = SoundPosition::for_turn(turn);
+        let sound_ok = if_bench::cat_sound_at(&reply, pos);
+        let array_ok = reported.as_deref()
+            == Some(if_bench::apply(&current, if_bench::action_for_turn(turn, current.len())).as_slice());
+        println!(
+            "  turn {turn}: array={} sound={}",
+            if array_ok { "ok" } else { "MISS" },
+            if sound_ok { "ok" } else { "MISS" },
+        );
+        replies.push(if_bench::TurnReply {
+            reported,
+            sound_ok,
+        });
+        // Carry the true expectation forward.
+        current = if_bench::apply(&current, if_bench::action_for_turn(turn, current.len()));
+    }
+    let depth = if_bench::depth(&replies, &initial);
+    println!();
+    println!(
+        "depth: {depth} / {} (par {})",
+        cfg.turns, cfg.par,
+    );
+    let pass = depth >= cfg.par;
+    println!("{}", if pass { "PASS" } else { "FAIL" });
+    Ok(())
+}
