@@ -61,7 +61,13 @@ them.
 
 - **§11.4 live-child auto-detach** — the suggestion is there; handing
   off a still-running child (pipes + pinned read futures) is not.
-- **§14.2 capability discovery registry** — absent.
+- **§14.2 capability discovery — loader wiring** — the registry
+  primitive (`kod-skills/src/capability.rs`) landed with 9 tests; the
+  `load_from_dirs` entry point still takes a plain directory list. A
+  follow-up changes the CLI / TUI call sites to build a
+  `CapabilityRegistry` from `default_sources(home, cwd)` so the
+  foreign directories (`.claude/skills`, `.cursor/skills`,
+  `.gemini/skills`) are read.
 - **§14.5 OTLP telemetry** — absent.
 - **Cold-revive surface rebuild** — `SessionInit` and its reader are
   landed; the consumer that rebuilds a session's tool surface from
@@ -104,6 +110,7 @@ them.
 | Plan-mode toggle + subagent clamp (§11.10) | `kod-core/src/engine/mod.rs` (`plan_mode: HashSet<String>`, `is_in_plan_mode`, `set_plan_mode`; `build_grounded_request` clamps the tool set to read-only tools when the transcript is in plan mode) + TUI `"/plan-mode"` command | a user enters plan mode with `/plan-mode on`; the tool set clamps to `read_file`/`list_files`/`grep`/`file_info`/`web_search`/`tool_search`; the clamp is applied after the Jev hysteresis filter and MCP trim so a mode toggle cannot be overridden by a per-turn classification | TUI test + engine tests |
 | Plan-model role (§11.10) | `kod-config/src/llm.rs` (`RoutingConfig.plan: Option<String>`) + `kod-core/src/engine/mod.rs` (`resolve_chain_for_task` consults the plan endpoint when the default transcript is in plan mode) | a `[llm.routing] plan = "…"` block routes every plan-mode turn to that endpoint; an unknown endpoint falls through to the ordinary chain, matching the by_task safety rule; the switch fires at the turn boundary so a mid-stream toggle cannot swap the model under a stream | config + engine tests |
 | Model catalog (§13.1) | `kod-provider/src/catalog.rs` (`ModelMeta`, `resolve`, `builtin`, `ProviderPriority`, `TimeBasedPricing`) + `kod-core/src/engine/mod.rs` (`pricing_for` and `budget_hint_for` consult the catalog after the configured values miss) | a dozen well-known models with context window, per-TTL pricing, effort ladder, intelligence / tps scores, long-context tier, and peak-window off-peak pricing; `resolve` tolerates dialect drift (prefixes, `-latest`, dashes / underscores / dots); priority ranks first-party > aggregator > gateway | 15 tests in the catalog + engine fallback tests |
+| Capability discovery registry (§14.2) | `kod-skills/src/capability.rs` (`CapabilityRegistry`, `DiscoverySource`, `Band`, `default_sources`) | priority-banded discovery: a higher band wins a duplicate key (project > global > foreign); `discover_with_suppression` removes an item *after* it claims its dedup slot, so a suppressed project skill does not let a lower-band duplicate appear in its place. Loader wiring is a follow-up | 9 tests in the new module |
 
 | TTSR stream rules (§14.3) | `kod-provider/src/ttsr.rs` | rules matched against streaming output: `RuleScope` (Text/Thinking/Tool with name+path patterns), `InterruptMode` (Never/ProseOnly/ToolOnly/Always), `RepeatMode` (Once/Gap). A bad regex drops the rule rather than stopping the stream. `builtin_rules()` ships no-TODO-in-diff and no-secret-in-prose | 16 tests |
 | Conventional-commit validation (§14.4) | `kod-stats/src/commit.rs` + `kod-cli/commands/admin.rs::run_commit_check` + `kod commit-check` | validator: type / summary / details / paths, type-path consistency; `score_change` weights details; `format_message` renders. CLI: reads `git diff --cached --name-only`, composes a proposal from the flags, prints the message or the rejection reason and exits non-zero on rejection | 22 unit tests + CLI tests |
