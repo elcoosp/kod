@@ -451,6 +451,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "show plan: /plan [next | skip | note <text> | clear]",
     },
     SlashCommand {
+        name: "/plan-mode",
+        hint: "toggle plan mode: /plan-mode [on | off]",
+    },
+    SlashCommand {
         name: "/limits",
         hint: "per-tool quotas: /limits [show | reset]",
     },

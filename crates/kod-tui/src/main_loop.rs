@@ -3737,6 +3737,37 @@ impl TuiLoop {
                     }
                 }
             }
+            "/plan-mode" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                match parts.next() {
+                    None | Some("show") => {
+                        let on = engine.is_in_plan_mode("session").await;
+                        self.app.push_system_message(&format!(
+                            "Plan mode: {}",
+                            if on { "on" } else { "off" },
+                        ));
+                    }
+                    Some("on") => {
+                        engine.set_plan_mode("session", true).await;
+                        self.app.push_system_message(
+                            "Plan mode on — the tool set is clamped to read-only tools. \
+                             Run /plan-mode off to restore the full set.",
+                        );
+                    }
+                    Some("off") => {
+                        engine.set_plan_mode("session", false).await;
+                        self.app.push_system_message("Plan mode off.");
+                    }
+                    Some(other) => {
+                        self.app.push_system_message(&format!(
+                            "Unknown /plan-mode sub-command: {other}. Try /plan-mode on, /plan-mode off, or /plan-mode.",
+                        ));
+                    }
+                }
+            }
             "/plan" => {
                 let Some(engine) = &self.engine else {
                     self.app.push_system_message("Engine not initialized.");

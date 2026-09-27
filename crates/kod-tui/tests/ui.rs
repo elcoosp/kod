@@ -182,7 +182,10 @@ fn test_slash_completion_filter_and_accept() {
     assert!(app.show_completions());
     assert_eq!(app.completion_candidates().len(), SLASH_COMMANDS.len());
 
-    app.set_input("/mod".to_string());
+    // `/model` and `/plan-mode` both contain "mod"; filter by "/mode"
+    // is ambiguous. Use a prefix that selects one: "/mode" is still
+    // both, so use the more specific "/model".
+    app.set_input("/model".to_string());
     let candidates = app.completion_candidates();
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].name, "/model");
