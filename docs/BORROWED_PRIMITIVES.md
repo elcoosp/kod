@@ -61,29 +61,27 @@ them.
 
 - **§11.4 live-child auto-detach** — the suggestion is there; handing
   off a still-running child (pipes + pinned read futures) is not.
-- **§11.9 cleanse loop** — only a doc-comment reference in
-  `work_pool.rs`; no `cleanse` module.
 - **§11.10 plan-mode hardening**, **§11.11 worktree isolation GC**,
   **§11.12 prewalk** — absent.
-- **§12.2 veracity consolidation** — `MemoryManager::consolidate` does
-  archival + near-duplicate fusion; the Bayesian confidence update and
-  contradiction resolution are not implemented, though
-  `MemoryEntry.superseded_by` / `.contradicts` fields exist.
-- **§12.3 sharpshooter** (friction-gated decision memory) — absent.
-- **§12.5 memory pipeline hygiene** — absent.
-- **§12.6 retention cadence / rolling hash** — absent.
-- **§12.7 mental models** — absent.
-- **§12.8 smaller memory borrows** (episodic tier degradation,
-  polyphonic RRF, query-intent biasing, MMR) — absent.
-- **§13 catalog metadata, per-request stats, if-bench** — absent; no
-  catalog or stats crate.
+- **§12.5 background embeddings** — `store_with_metadata` still embeds
+  inline; a `pending_extractions` fire-and-forget queue drained at
+  shutdown is not there.
+- **§12.5 raw-vs-indexed content projection** — the store has one
+  `content` field; there is no separate `embed_text` column that
+  strips role markers before the embed call.
+- **§13 catalog metadata** — no `kod-catalog`; per-request stats and
+  if-bench landed as `kod-stats` (see above).
 - **§14.2 capability discovery registry** — absent.
-- **§14.3 TTSR** — absent.
-- **§14.4 agentic commit** — absent.
-- **§14.5 OTLP telemetry, MCP header/origin policy** — absent.
+- **§14.5 OTLP telemetry** — absent.
 - **Cold-revive surface rebuild** — `SessionInit` and its reader are
   landed; the consumer that rebuilds a session's tool surface from
   the entry is not.
+- **Periodic sharpshooter consolidation** — `consolidate_sharpshooter_now`
+  is called at `shutdown()`; a periodic tick that reuses the
+  memory-consolidation interval is a follow-up.
+- **`AfterConsolidation` mental-model refresh** — the seeds carry the
+  trigger, but the reload at the next transcript boundary is not
+  wired; the models are frozen for the session.
 
 | Memory hygiene (§12.5) | `kod-memory/src/hygiene.rs` + write/recall wiring | `strip_memory_tags` drops a `<memories>` block before it is stored; `frame_recalled_block` wraps recalled entries with a precedence note; `has_substantive_content` rejects placeholder turns | 16 unit tests |
 | Episodic tiers (§12.8) | `kod-memory/src/tier.rs` + score wiring | tier by age (<30d / >=30d / >=180d) with weights 1.0/0.5/0.25 folded into the score; tier-3 bodies compressed to 300 chars at retrieval | 13 unit tests |
@@ -96,6 +94,15 @@ them.
 | if-bench (§13.3) | `kod-stats/src/if_bench.rs` | scoring half: `action_for_turn`, `apply`, `cat_sound_at`, `depth`, `parse_reported_array` | tests in the crate |
 | MCP HTTP policy (§14.5) | `kod-mcp/src/http_policy.rs` | `Origin` parse + `same_as`; `decide_redirect` refuses a method-changing redirect of a non-GET and drops configured headers cross-origin; reserved-header list; hop cap 5 | 17 tests |
 | Cleanse scheduler (§11.9) | `kod-swarm/src/cleanse.rs` | file-sticky dispatch: one worker per file, batch budget shared across agents, released files re-claimable | 15 tests |
+| Veracity confidence update (§12.2) | `kod-memory/src/manager.rs` (`store_with_metadata`) | an identical-content re-mention raises the entry's `confidence` via `veracity::raise_confidence` and persists it; `MemoryMetadata.confidence` carries the value | `manager.rs` test `a_re_mention_raises_confidence` |
+| Veracity contradiction resolution (§12.2) | `MemoryManager::consolidate` pass 3 | walks the symmetric `contradicts` graph once per unordered pair; supersedes the lower-confidence side when both carry a `confidence` and they differ; ties and unset sides are left alone. `ConsolidationReport.resolved_contradictions` counts the resolutions | 4 tests in `manager.rs::contradiction_resolution_tests` |
+| Sharpshooter extraction (§12.3) | `kod-memory/src/sharpshooter.rs` + `engine::maybe_extract_decisions` | `build_prompt` / `parse_reply` / `admit` produce and gate a `DecisionDelta`; the engine extracts per user turn at both post-stream sites | `sharpshooter.rs` tests + engine hook |
+| Sharpshooter consolidation (§12.3) | `kod-memory/src/sharpshooter.rs` (`build_consolidation_prompt`, `truncate_to_ceiling`) + `Engine::consolidate_sharpshooter_now` | groups deltas by the target file each `DecisionKind` names; one small-model rewrite per file; result truncated to `FILE_LINE_CEILING` (120 lines) and written under `<working_dir>/.kod/decisions/<file>`; invoked at `shutdown()` | tests for prompt shape + truncation |
+| Query-embed cache + cap (§12.5) | `kod-memory/src/manager.rs` (`QueryEmbedCache`) | bounded LRU on `query_embed_cache`, 512 entries; query capped at 8192 chars before the embed call; cleared when the embedder is swapped | 3 cache unit tests |
+| @-import expansion (§12.8) | `kod-config/src/instructions.rs` (`expand_imports`) | a lone `@path` line in an `AGENTS.md` inlines the referenced file; code-fence aware; depth 5; cycle-safe; best-effort | 9 tests in `instructions.rs` |
+| Polyphonic RRF (§12.8) | `kod-memory/src/manager.rs` (`retrieve_long_term_hybrid`) | four voices (vector / fact / importance / temporal) fused by `fusion::reciprocal_rank_fusion`; intent-weighted composite preserved per entry for the MMR relevance term | `retrieval.rs` + `manager.rs` tests |
+| Intent-confidence blend (§12.8) | `kod-memory/src/fusion.rs` (`classify_intent_with_confidence`, `blend_weights`) + manager | the classifier reports its cue count; the manager blends intent weights toward neutral by `min(0.3 + 0.15*matches, 1.0)` | 8 tests in `fusion.rs` |
+| Mental-model bootstrap (§12.7) | `kod-core/src/engine/mod.rs` (`bootstrap_mental_models` called from `start()`) + `render_mental_model_block` | seeds the design's three models (preferences / conventions / decisions), fills each from the store under a soft token cap, and freezes the block into the cacheable prefix | engine tests + `mental_models.rs` |
 
 | TTSR stream rules (§14.3) | `kod-provider/src/ttsr.rs` | rules matched against streaming output: `RuleScope` (Text/Thinking/Tool with name+path patterns), `InterruptMode` (Never/ProseOnly/ToolOnly/Always), `RepeatMode` (Once/Gap). A bad regex drops the rule rather than stopping the stream. `builtin_rules()` ships no-TODO-in-diff and no-secret-in-prose | 16 tests |
 | Conventional-commit validation (§14.4) | `kod-stats/src/commit.rs` | `CommitProposal` validated for type/summary/details/paths and type-path consistency (docs->*.md, ci->.github, build->Cargo.toml); `score_change` weights details by importance; `format_message` renders | 22 tests |
