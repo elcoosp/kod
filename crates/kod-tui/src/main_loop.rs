@@ -3469,6 +3469,60 @@ impl TuiLoop {
                     }
                 }
 
+                // Delta §13.2 — per-request analytics over the
+                // session, plus behavioral signals folded from the
+                // user's own messages. The request aggregates carry
+                // cache rate and cache savings, which the count above
+                // does not.
+                if let Some(engine) = &self.engine {
+                    let agg = engine.request_aggregates();
+                    if agg.requests > 0 {
+                        msg.push_str("\nPer-request analytics\n");
+                        msg.push_str(&format!("  requests:        {}\n", agg.requests));
+                        if let Some(r) = agg.error_rate() {
+                            msg.push_str(&format!("  error rate:      {:.1}%\n", r * 100.0));
+                        }
+                        if let Some(t) = agg.avg_ttft_ms() {
+                            msg.push_str(&format!("  avg TTFT:        {:.0} ms\n", t));
+                        }
+                        if let Some(r) = agg.cache_rate() {
+                            msg.push_str(&format!("  cache hit rate:  {:.1}%\n", r * 100.0));
+                        }
+                        // Cache savings can go negative: a session
+                        // that wrote a cache it never read back pays
+                        // the write premium without the read discount.
+                        let sign = if agg.total_cache_savings_usd >= 0.0 { "" } else { "-" };
+                        msg.push_str(&format!(
+                            "  cache savings:   {sign}${:.4}\n",
+                            agg.total_cache_savings_usd.abs(),
+                        ));
+                        msg.push_str(&format!(
+                            "  cache tokens:    read {} / written {}\n",
+                            agg.cache_read_tokens, agg.cache_write_tokens,
+                        ));
+                    }
+
+                    let b = engine.behavioral_signals();
+                    if b.any() {
+                        msg.push_str("\nBehavioral signals (user messages)\n");
+                        if b.negation > 0 {
+                            msg.push_str(&format!("  negation:        {}\n", b.negation));
+                        }
+                        if b.repetition > 0 {
+                            msg.push_str(&format!("  repetition:      {}\n", b.repetition));
+                        }
+                        if b.blame > 0 {
+                            msg.push_str(&format!("  blame:           {}\n", b.blame));
+                        }
+                        if b.anguish > 0 {
+                            msg.push_str(&format!("  anguish:         {}\n", b.anguish));
+                        }
+                        if b.yelling > 0 {
+                            msg.push_str(&format!("  yelling:         {}\n", b.yelling));
+                        }
+                    }
+                }
+
                 self.app.push_system_message(msg.trim_end());
             }
             "/git-status" => {
