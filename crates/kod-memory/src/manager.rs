@@ -71,6 +71,82 @@ pub struct ConsolidationReport {
 /// a 100 KB embed request.
 const QUERY_EMBED_MAX_CHARS: usize = 8192;
 
+/// Delta §12.5: project stored content down to the text the embedder
+/// should see. Raw `content` is what the model reads back at recall
+/// time — it carries role markers, `<memories>` blocks, and (in a
+/// future change) any markup a caller wants to keep visible. The
+/// embedder is a *semantic* index: a role marker or a scaffold tag
+/// has no semantic content and biases the vector.
+///
+/// The projection is conservative — it only removes things the store
+/// is known to insert:
+///
+/// * `<memories>…</memories>` blocks: the recall path adds them on
+///   the way *out*; if a caller stored one (see §12.5 hygiene) it is
+///   not a fact and should not be embedded.
+/// * leading role prefixes (`User:`, `Assistant:`, `System:`,
+///   `Tool:`) on the first line: a transcript-derived fact often
+///   carries one, and the role is metadata, not content.
+/// * lines whose only content is a `## Heading` marker: headings are
+///   structure; the entry's meaning is in the body.
+///
+/// Runs before the embed call only. The caller's `content` is what
+/// lands in the store unchanged.
+fn index_text_for_embedding(content: &str) -> String {
+    // Drop any `<memories>` block: reuse the hygiene helper so the
+    // shape matches the write path exactly.
+    let stripped = crate::hygiene::strip_memory_tags(content);
+    let mut out = String::with_capacity(stripped.len());
+    let mut first = true;
+    for line in stripped.lines() {
+        let trimmed = line.trim_start();
+        if first {
+            // Drop a leading role prefix on the first non-empty line
+            // only — a `User:` that appears mid-entry is content.
+            let lowered = trimmed.to_ascii_lowercase();
+            let mut cut = 0usize;
+            for role in ["user:", "assistant:", "system:", "tool:", "agent:"] {
+                if lowered.starts_with(role) {
+                    cut = role.len();
+                    break;
+                }
+            }
+            if cut > 0 {
+                let rest = trimmed[cut..].trim_start();
+                if !rest.is_empty() {
+                    out.push_str(rest);
+                    out.push('\n');
+                    first = false;
+                    continue;
+                }
+            }
+            // An empty line at the start of the content does not end
+            // the "still looking for the first content line" phase.
+            if trimmed.is_empty() {
+                out.push('\n');
+                continue;
+            }
+        }
+        first = false;
+        // Drop a heading-only line (a line whose only non-whitespace
+        // content is a run of `#` plus optional text — we keep the
+        // text, drop the `#` marks so a heading like "## Style"
+        // becomes "Style", still meaningful but not scored on the
+        // markers).
+        if let Some(rest) = trimmed.strip_prefix('#') {
+            let rest = rest.trim_start_matches('#').trim();
+            if !rest.is_empty() {
+                out.push_str(rest);
+                out.push('\n');
+                continue;
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.trim_end().to_string()
+}
+
 /// Delta §12.5: cap on the query-embedding LRU. Repeated queries
 /// across a turn reuse the cached vector; 512 covers the working set
 /// a single session generates without holding a meaningful amount of
@@ -442,7 +518,20 @@ impl MemoryManager {
         if metadata.embedding.is_none()
             && let Some(e) = self.embedder.as_ref()
         {
-            match e.embed(std::slice::from_ref(&content.to_string())).await {
+            // Delta §12.5: embed the projected text, not the raw
+            // content. The raw string is what recall returns; the
+            // projection strips scaffolding that would bias the
+            // vector without adding semantic content.
+            let embed_input = index_text_for_embedding(content);
+            let embed_input = if embed_input.trim().is_empty() {
+                // A projection that produced nothing (a stored fact
+                // that was only a role prefix) falls back to the raw
+                // string so the entry still has a vector.
+                content.to_string()
+            } else {
+                embed_input
+            };
+            match e.embed(std::slice::from_ref(&embed_input)).await {
                 Ok(mut v) if !v.is_empty() => {
                     let vec = v.remove(0);
                     if let Some(idx) = self.vector_index.write().as_mut() {
@@ -647,12 +736,23 @@ impl MemoryManager {
             let query_capped: String =
                 kod_types::strutil::truncate_chars(query, QUERY_EMBED_MAX_CHARS)
                     .to_string();
-            let cached = self.query_embed_cache.lock().get(&query_capped);
+            // Delta §12.5: apply the same projection to the query as
+            // to the stored text so the two vectors are comparable.
+            // A query that leads with `## ` or a role prefix would
+            // otherwise embed slightly differently from the content
+            // it is meant to match.
+            let query_projected = index_text_for_embedding(&query_capped);
+            let query_for_embed = if query_projected.trim().is_empty() {
+                query_capped.clone()
+            } else {
+                query_projected
+            };
+            let cached = self.query_embed_cache.lock().get(&query_for_embed);
             let q_vec: Option<Vec<f32>> = match cached {
                 Some(v) => Some(v),
                 None => {
                     match embedder
-                        .embed(std::slice::from_ref(&query_capped))
+                        .embed(std::slice::from_ref(&query_for_embed))
                         .await
                     {
                         Ok(mut v) if !v.is_empty() => {
@@ -1773,6 +1873,55 @@ mod coverage_report_types {
         assert!(c.get("a").is_some());
         assert!(c.get("c").is_some());
         assert_eq!(c.len(), 2);
+    }
+
+    #[test]
+    fn index_text_drops_a_role_prefix() {
+        assert_eq!(
+            index_text_for_embedding("User: the user prefers tabs"),
+            "the user prefers tabs",
+        );
+        assert_eq!(
+            index_text_for_embedding("assistant:  noted the change"),
+            "noted the change",
+        );
+    }
+
+    #[test]
+    fn index_text_only_strips_a_leading_prefix() {
+        // A `User:` that appears mid-entry is content, not a prefix.
+        let got = index_text_for_embedding("the note says User: this is mid-line");
+        assert!(got.contains("User: this is mid-line"), "got: {got}");
+    }
+
+    #[test]
+    fn index_text_drops_a_memories_block() {
+        let got = index_text_for_embedding("before <memories>scaffold</memories> after");
+        assert!(!got.contains("scaffold"), "got: {got}");
+        assert!(got.contains("before"), "got: {got}");
+        assert!(got.contains("after"), "got: {got}");
+    }
+
+    #[test]
+    fn index_text_unwraps_a_heading_marker() {
+        assert_eq!(
+            index_text_for_embedding("## Style\n\nUse tabs."),
+            "Style\n\nUse tabs.",
+        );
+    }
+
+    #[test]
+    fn index_text_preserves_ordinary_content() {
+        let body = "the user prefers tabs over spaces for indentation";
+        assert_eq!(index_text_for_embedding(body), body);
+    }
+
+    #[test]
+    fn index_text_does_not_touch_a_bare_hashtag() {
+        // A `#` that is not a heading marker (a hashtag or a number
+        // sign in prose) should pass through.
+        let body = "issue #42 was fixed";
+        assert_eq!(index_text_for_embedding(body), body);
     }
 
     #[test]
