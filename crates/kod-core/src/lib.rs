@@ -22,6 +22,7 @@ pub mod config;
 pub mod context;
 pub mod cost;
 pub mod decisions;
+pub mod worktree_isolation_ownership;
 pub mod doctor;
 pub mod advisor_tools;
 pub mod engine;

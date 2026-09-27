@@ -55,6 +55,44 @@ pub struct MergeReport {
     pub failed: Vec<(String, String)>,
 }
 
+/// Delta §11.11: reap worktrees whose owner process is provably dead.
+///
+/// Best-effort: a `git worktree remove --force` that fails is logged
+/// and the worktree is left in place; the next detect() retries. The
+/// reaper never touches a worktree without an ownership marker (a
+/// hand-created worktree, or one from a kod version before the
+/// marker existed).
+fn reap_dead_worktrees(repo: &Path) {
+    let dead = match crate::worktree_isolation_ownership::reap_dead(repo) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::debug!(error = %e, "isolation-ownership reap skipped");
+            return;
+        }
+    };
+    for path in dead {
+        tracing::warn!(
+            path = %path.display(),
+            "reaping worktree whose owner process is dead",
+        );
+        // `git worktree remove --force` removes the directory and
+        // drops the metadata in `.git/worktrees/`. A leftover branch
+        // is not deleted here: the reaper does not know whether the
+        // branch merged, and an unmerged branch is the only copy of
+        // an agent's work. `kod worktree gc` handles the branch case.
+        let _ = run_git_owned(
+            repo,
+            &[
+                "worktree",
+                "remove",
+                "--force",
+                path.to_string_lossy().as_ref(),
+            ],
+            30,
+        );
+    }
+}
+
 /// Manages a set of worktrees for one swarm run.
 pub struct WorktreeManager {
     repo: PathBuf,
@@ -87,6 +125,13 @@ impl WorktreeManager {
             Ok(h) => h.trim().to_string(),
             Err(_) => return Ok(None),
         };
+        // Delta §11.11: before taking ownership of the repo's
+        // worktrees, reap any whose owner process is provably dead.
+        // A crash (SIGKILL, docker stop) leaves worktrees behind
+        // because `Drop` never ran; the marker + start-token is what
+        // distinguishes "the process that wrote this is gone" from
+        // "pid reused by an unrelated process."
+        reap_dead_worktrees(repo);
         Ok(Some(Self {
             repo: repo.to_path_buf(),
             base_commit: head,
@@ -195,6 +240,16 @@ impl WorktreeManager {
                 "worktree {slug:?} exceeds disk cap: {} MB > {} MB",
                 used_mb, self.disk_cap_mb
             )));
+        }
+
+        // Delta §11.11: write the isolation-ownership marker so a
+        // later process can reap this worktree if the current process
+        // dies without running `Drop`.
+        if let Err(e) = crate::worktree_isolation_ownership::write_marker(
+            &path,
+            format!("kod-worktree:{slug}"),
+        ) {
+            tracing::warn!(error = %e, "worktree: ownership marker write failed");
         }
 
         let info = WorktreeInfo { slug, path, branch };
@@ -351,6 +406,10 @@ impl WorktreeManager {
     /// fails, which is worth logging but not worth aborting shutdown.
     pub fn cleanup(&mut self) {
         for info in self.created.drain(..) {
+            // Delta §11.11: remove the ownership marker first, so a
+            // concurrent reaper in another process does not race us
+            // on a worktree that is about to disappear.
+            let _ = crate::worktree_isolation_ownership::remove_marker(&info.path);
             let _ = run_git_owned(
                 &self.repo,
                 &[
