@@ -61,15 +61,13 @@ them.
 
 - **§11.4 live-child auto-detach** — the suggestion is there; handing
   off a still-running child (pipes + pinned read futures) is not.
-- **§11.10 plan-mode hardening — remaining kit** — the plan autosave
-  is wired; the model-role switch (a `plan`-role model while plan
-  mode is active), the plan read-compaction protection (keep read
-  results for the plan file + reference path through prune/shake),
-  the plan handoff (inject an approved plan into subagent contexts),
-  the plan-mode subagent clamp (tools limited to read/grep/glob/
-  web_search), and the plan-mode toggle (there is no plan mode yet —
-  the model plans on Complex/MultiStep tasks but the user cannot
-  enter plan mode explicitly) are not implemented.
+- **§11.10 plan-mode hardening — remaining kit** — the plan autosave,
+  the plan read-compaction protection, and the plan handoff are
+  wired; the model-role switch (a `plan`-role model while plan mode
+  is active), the plan-mode subagent clamp (tools limited to
+  read/grep/glob/web_search), and the plan-mode toggle (there is no
+  plan mode yet — the model plans on Complex/MultiStep tasks but the
+  user cannot enter plan mode explicitly) are not implemented.
 - **§11.12 prewalk** — absent.
 - **§13 catalog metadata** — no `kod-catalog`; per-request stats and
   if-bench landed as `kod-stats` (see above).
@@ -110,6 +108,8 @@ them.
 | 1-hour cache-write extraction (§13.1) | `kod-provider-anthropic/src/wire.rs` (`AnthropicStreamState::cache_creation_1h_input_tokens`, `message_start`); `provider.rs` (non-stream extractor) | parses the nested `cache_creation.ephemeral_1h_input_tokens` object Anthropic sends; clamps a mis-reported nested count to the flat total; a reply with no nested object yields `None` | 4 tests in wire.rs + provider.rs |
 | Isolation ownership (§11.11) | `kod-core/src/worktree_isolation_ownership.rs` + `worktree.rs` (`reap_dead_worktrees` called from `WorktreeManager::detect`; `create` writes the marker; `cleanup` removes it) | each worktree carries `.kod-isolation-owner.json` with a pid + start-token; `reap_dead` returns worktrees whose owner is provably gone; detect() calls `git worktree remove --force` on each; a marker-less or live-owned worktree is skipped | 6 tests in the new module + existing worktree tests |
 | Plan autosave (§11.10) | `kod-core/src/plan.rs` (`slugify`, `autosave_plan`, `plan_dir_for_working_dir`) + engine `autosave_plan_for` called from plan creation | the slug/date file lands under `~/.kod/plans/<fnv1a-of-cwd>/`; O_EXCL with a numeric-suffix retry; per-transcript working dir override honoured for swarm agents | plan.rs tests + engine tests |
+| Plan read-compaction protection (§11.10) | `kod-core/src/shake.rs` + `prune.rs` (`protected_paths` field on `ShakeConfig`/`PruneConfig`); `compaction_dispatcher.rs` (`CompactionContext.protected_paths`); engine `try_mechanical_compaction` fills it per turn | a `read_file` tool result whose call path is in the set is skipped by shake and prune; the model can declare paths via a new `PlanUpdate::ReferencePath { path, drop? }` action | shake/prune + engine + plan tests |
+| Plan handoff (§11.10) | `kod-swarm/src/brief.rs` (`ContextBrief.plan_text`, `render_brief` emits a `## Approved plan` section) + `brief_assembly.rs` (`ParentContext.plan_text`) + `swarm_runner` fills it from `engine.plan_for("session")` | every subtask brief carries the parent's approved plan, ordered above the repository map; empty when the parent has no plan | 1 test in brief.rs |
 
 | TTSR stream rules (§14.3) | `kod-provider/src/ttsr.rs` | rules matched against streaming output: `RuleScope` (Text/Thinking/Tool with name+path patterns), `InterruptMode` (Never/ProseOnly/ToolOnly/Always), `RepeatMode` (Once/Gap). A bad regex drops the rule rather than stopping the stream. `builtin_rules()` ships no-TODO-in-diff and no-secret-in-prose | 16 tests |
 | Conventional-commit validation (§14.4) | `kod-stats/src/commit.rs` | `CommitProposal` validated for type/summary/details/paths and type-path consistency (docs->*.md, ci->.github, build->Cargo.toml); `score_change` weights details by importance; `format_message` renders | 22 tests |
