@@ -3737,6 +3737,32 @@ impl TuiLoop {
                     }
                 }
             }
+            "/prewalk" => {
+                let Some(engine) = &self.engine else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                match parts.next() {
+                    None | Some("show") => match engine.prewalk_state("session").await {
+                        Some(state) => {
+                            self.app.push_system_message(&format!(
+                                "Prewalk state: {state:?}",
+                            ));
+                        }
+                        None => self
+                            .app
+                            .push_system_message("No prewalk armed for this session."),
+                    },
+                    Some(target) => {
+                        engine.arm_prewalk("session", target.to_string()).await;
+                        self.app.push_system_message(&format!(
+                            "Prewalk armed: the model will switch to {target} on \
+                             the first mutating tool call. The nudge is in the \
+                             transcript now.",
+                        ));
+                    }
+                }
+            }
             "/plan-mode" => {
                 let Some(engine) = &self.engine else {
                     self.app.push_system_message("Engine not initialized.");

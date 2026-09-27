@@ -455,6 +455,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "toggle plan mode: /plan-mode [on | off]",
     },
     SlashCommand {
+        name: "/prewalk",
+        hint: "arm a one-way model handoff: /prewalk <endpoint/model>",
+    },
+    SlashCommand {
         name: "/limits",
         hint: "per-tool quotas: /limits [show | reset]",
     },
