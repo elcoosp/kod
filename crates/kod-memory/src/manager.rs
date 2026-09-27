@@ -125,6 +125,9 @@ impl QueryEmbedCache {
         }
     }
 
+    /// Number of cached vectors. Used by the module's tests; kept
+    /// for a future `/debug memory` readout.
+    #[allow(dead_code)]
     fn len(&self) -> usize {
         self.entries.len()
     }

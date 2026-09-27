@@ -246,6 +246,67 @@ pub fn build_prompt(user_prompt: &str, max_entries: usize) -> String {
     )
 }
 
+/// The hard line ceiling per decision file (borrow from oh-my-pi,
+/// delta §12.3). A consolidation pass that produced a longer file
+/// would grow without bound across sessions; the ceiling is what
+/// forces the model to *replace*, not append.
+pub const FILE_LINE_CEILING: usize = 120;
+
+/// Build the consolidation prompt for one decision file.
+///
+/// The prompt carries the current file's text, the deltas (in
+/// friction-ranked order), and the rules that make the output usable:
+/// a timeless normative statement per entry, no task state, no file
+/// paths, and a hard line ceiling.
+pub fn build_consolidation_prompt(existing: &str, deltas: &[DecisionDelta]) -> String {
+    let existing = if existing.trim().is_empty() {
+        "(empty)".to_string()
+    } else {
+        existing.to_string()
+    };
+    // Serialize deltas to JSON so the model sees a stable field
+    // shape. Friction-ranked order is preserved by the caller's
+    // `rank_by_friction` call.
+    let deltas_json =
+        serde_json::to_string_pretty(deltas).unwrap_or_else(|_| "[]".to_string());
+    format!(
+        "You consolidate a project's friction-earned decisions into a \
+         single markdown document. The current document is below \
+         (may be empty). The new decisions to incorporate are in the \
+         JSON array, ordered by friction rank (highest first).\n\n\
+         Rules:\n\
+         - HARD LIMIT: at most {FILE_LINE_CEILING} lines. If the current \
+           document plus the new decisions exceeds this, drop the \
+           least important entries — preserve recent decisions and \
+           decisions with friction.\n\
+         - Preserve existing entries unless a new decision contradicts \
+           one, in which case the newer decision wins.\n\
+         - Group related entries under short headings.\n\
+         - Each entry is a timeless normative sentence: no task state, \
+           no file paths, no code snippets longer than a line.\n\
+         - Return the rewritten document only. No prose, no fences.\n\n\
+         Current document:\n{existing}\n\n\
+         New decisions (JSON):\n{deltas_json}\n",
+    )
+}
+
+/// Truncate a consolidated document to [`FILE_LINE_CEILING`] lines.
+///
+/// The model is *told* the ceiling; this enforces it. A reply that
+/// overruns is cut at the last full line, so a partial sentence never
+/// survives into the file.
+pub fn truncate_to_ceiling(text: &str) -> String {
+    let mut out = String::new();
+    for (i, line) in text.lines().enumerate() {
+        if i >= FILE_LINE_CEILING {
+            break;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.trim_end().to_string()
+}
+
 /// Parse the model's reply into decisions.
 ///
 /// The reply is expected to be a JSON array, optionally surrounded by
@@ -503,6 +564,45 @@ mod tests {
         let out = parse_reply(reply, 4);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].statement, "keep");
+    }
+
+    // ---- consolidation -----------------------------------------------
+
+    #[test]
+    fn the_prompt_names_the_ceiling_and_the_existing_text() {
+        let deltas = vec![DecisionDelta {
+            kind: DecisionKind::Architecture,
+            statement: "use SQLite, not Postgres".to_string(),
+            rejected_alternative: None,
+            rationale: None,
+            evidence: "we use SQLite".to_string(),
+            friction: Friction::default(),
+        }];
+        let p = build_consolidation_prompt("## Conventions\n\n- be terse", &deltas);
+        assert!(p.contains("at most 120 lines"), "got: {p}");
+        assert!(p.contains("be terse"), "got: {p}");
+        assert!(p.contains("use SQLite, not Postgres"), "got: {p}");
+    }
+
+    #[test]
+    fn the_prompt_says_empty_when_there_is_no_existing_text() {
+        let p = build_consolidation_prompt("   \n", &[]);
+        assert!(p.contains("(empty)"), "got: {p}");
+    }
+
+    #[test]
+    fn truncate_drops_lines_past_the_ceiling() {
+        let body: String = (0..200).map(|i| format!("line {i}\n")).collect();
+        let out = truncate_to_ceiling(&body);
+        assert_eq!(out.lines().count(), FILE_LINE_CEILING);
+        assert!(out.contains("line 119"), "got: {out}");
+        assert!(!out.contains("line 120"), "got: {out}");
+    }
+
+    #[test]
+    fn truncate_leaves_a_short_document_alone() {
+        let body = "## A\n\n- one\n- two\n";
+        assert_eq!(truncate_to_ceiling(body), "## A\n\n- one\n- two");
     }
 
     #[test]

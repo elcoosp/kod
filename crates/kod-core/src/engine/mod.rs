@@ -12130,6 +12130,91 @@ pub(crate) fn filter_chain_by_trust(
         self.sharpshooter_deltas.read().await.clone()
     }
 
+    /// Delta §12.3: take the queue, leaving it empty. Used by the
+    /// consolidation pass; a caller that wants a copy uses
+    /// [`Self::sharpshooter_deltas`].
+    async fn sharpshooter_drain(
+        &self,
+    ) -> Vec<kod_memory::sharpshooter::DecisionDelta> {
+        std::mem::take(&mut *self.sharpshooter_deltas.write().await)
+    }
+
+    /// Delta §12.3: the consolidation pass. Drains the delta queue,
+    /// groups by the target file each kind names, and asks the small
+    /// model to rewrite each file. Files live under
+    /// `<working_dir>/.kod/decisions/<file>` so a repo carries its
+    /// own conventions. Enforces [`kod_memory::sharpshooter::FILE_LINE_CEILING`]
+    /// after the model call, so a reply that ignores the prompt's
+    /// limit is still bounded.
+    ///
+    /// Best-effort: a model error on one file logs and continues to
+    /// the next; a write failure does the same. Returns the number
+    /// of files that were rewritten.
+    pub async fn consolidate_sharpshooter_now(&self) -> usize {
+        let drained = self.sharpshooter_drain().await;
+        if drained.is_empty() {
+            return 0;
+        }
+        // Group by the target file each delta kind names. Ranking is
+        // per-group: the model sees its group's deltas highest
+        // friction first.
+        let ranked = kod_memory::sharpshooter::rank_by_friction(drained);
+        let mut groups: std::collections::HashMap<&'static str, Vec<_>> =
+            std::collections::HashMap::new();
+        for d in ranked {
+            groups.entry(d.kind.target_file()).or_default().push(d);
+        }
+
+        let chain = self.resolve_chain_for_task("Simple").await;
+        let Some(model_ref) = chain.first() else {
+            return 0;
+        };
+        let provider = match self.resolve_provider_for_model_ref(model_ref).await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(error = %e, "sharpshooter consolidation: no provider");
+                return 0;
+            }
+        };
+
+        let dir = self.working_dir.join(".kod/decisions");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!(error = %e, "sharpshooter consolidation: mkdir failed");
+            return 0;
+        }
+
+        let opts = kod_provider::GenerationOptions {
+            temperature: Some(0.1),
+            max_tokens: Some(2048),
+            ..Default::default()
+        };
+        let mut written = 0usize;
+        for (file, deltas) in groups {
+            let path = dir.join(file);
+            let existing = std::fs::read_to_string(&path).unwrap_or_default();
+            let prompt =
+                kod_memory::sharpshooter::build_consolidation_prompt(&existing, &deltas);
+            let reply = match provider.generate(&prompt, &opts).await {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(error = %e, file, "sharpshooter: consolidation call failed");
+                    continue;
+                }
+            };
+            let text = kod_memory::sharpshooter::truncate_to_ceiling(&reply);
+            if text.trim().is_empty() {
+                continue;
+            }
+            if let Err(e) = std::fs::write(&path, &text) {
+                tracing::warn!(error = %e, file, "sharpshooter: write failed");
+                continue;
+            }
+            tracing::debug!(file, bytes = text.len(), "sharpshooter: rewrote decisions file");
+            written += 1;
+        }
+        written
+    }
+
     /// Run the memory extraction pass over the session transcript
     /// (D2-B3b). Best-effort: errors leave the store unchanged and
     /// return `Ok(0)`.
