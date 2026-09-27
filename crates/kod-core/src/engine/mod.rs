@@ -4222,14 +4222,40 @@ impl KodEngine {
         for seed in seeds {
             let _ = self.seed_mental_model(seed).await;
         }
+        // Bootstrap fills *every* seeded model, regardless of trigger.
+        self.fill_mental_models(None).await;
+    }
+
+    /// Delta §12.7: fill the mental models whose trigger matches the
+    /// caller's context.
+    ///
+    /// `only_trigger` — `None` fills every model (the bootstrap call);
+    /// `Some(t)` fills only the models whose `seed.trigger == t`. The
+    /// `AfterConsolidation` refresh uses `Some(AfterConsolidation)`,
+    /// leaving the `SessionStart` models frozen.
+    ///
+    /// Best-effort: a store read that fails skips that model; a model
+    /// whose query returns nothing stays unrendered (an empty block is
+    /// not injected into the prompt). The lock is held only for the
+    /// read of the seed, not across the store read or the fill.
+    async fn fill_mental_models(
+        &self,
+        only_trigger: Option<kod_memory::mental_models::RefreshTrigger>,
+    ) {
         let ids = self.mental_models.read().await.ids();
         for id in ids {
-            // Read the model's query and cap outside the fill lock.
-            let (query, cap) = {
+            // Read the model's query, cap, and trigger outside the
+            // fill lock.
+            let (query, cap, trigger) = {
                 let guard = self.mental_models.read().await;
                 let Some(m) = guard.get(&id) else { continue };
-                (m.seed.source_query.clone(), m.seed.max_tokens)
+                (m.seed.source_query.clone(), m.seed.max_tokens, m.seed.trigger)
             };
+            if let Some(want) = only_trigger
+                && trigger != want
+            {
+                continue;
+            }
             let entries = self.router.search_long_term(&query, 40).await;
             if entries.is_empty() {
                 continue;
@@ -4241,6 +4267,29 @@ impl KodEngine {
             self.fill_mental_model(&id, text).await;
             tracing::debug!(id = %id, "mental model filled");
         }
+    }
+
+    /// Delta §12.7: re-fill the models whose seed's trigger is
+    /// `AfterConsolidation`. The design's rule: a memory consolidation
+    /// pass changes what a decision/convention model would contain, so
+    /// reload at the *next* transcript boundary (never mid-turn — the
+    /// block sits in the cacheable prefix and a mid-turn rewrite
+    /// invalidates the provider's prefix cache).
+    ///
+    /// The periodic memory-consolidation task lives on a router clone
+    /// and cannot reach the engine; a caller that owns both — the CLI
+    /// or TUI session loop — invokes this method after running
+    /// `router.consolidate_memory()`. A future change can wire the
+    /// periodic task to call it via a channel; the primitive is what
+    /// this lands.
+    pub async fn refresh_mental_models_after_consolidation(&self) {
+        if !self.router.has_memory() {
+            return;
+        }
+        self.fill_mental_models(Some(
+            kod_memory::mental_models::RefreshTrigger::AfterConsolidation,
+        ))
+        .await;
     }
 
     /// Delta §13.2: the session's behavioral-signal totals.
