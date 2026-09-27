@@ -61,13 +61,6 @@ them.
 
 - **§11.4 live-child auto-detach** — the suggestion is there; handing
   off a still-running child (pipes + pinned read futures) is not.
-- **§11.10 plan-mode hardening — remaining kit** — the plan autosave,
-  the plan read-compaction protection, and the plan handoff are
-  wired; the model-role switch (a `plan`-role model while plan mode
-  is active), the plan-mode subagent clamp (tools limited to
-  read/grep/glob/web_search), and the plan-mode toggle (there is no
-  plan mode yet — the model plans on Complex/MultiStep tasks but the
-  user cannot enter plan mode explicitly) are not implemented.
 - **§11.12 prewalk** — absent.
 - **§13 catalog metadata** — no `kod-catalog`; per-request stats and
   if-bench landed as `kod-stats` (see above).
@@ -110,6 +103,8 @@ them.
 | Plan autosave (§11.10) | `kod-core/src/plan.rs` (`slugify`, `autosave_plan`, `plan_dir_for_working_dir`) + engine `autosave_plan_for` called from plan creation | the slug/date file lands under `~/.kod/plans/<fnv1a-of-cwd>/`; O_EXCL with a numeric-suffix retry; per-transcript working dir override honoured for swarm agents | plan.rs tests + engine tests |
 | Plan read-compaction protection (§11.10) | `kod-core/src/shake.rs` + `prune.rs` (`protected_paths` field on `ShakeConfig`/`PruneConfig`); `compaction_dispatcher.rs` (`CompactionContext.protected_paths`); engine `try_mechanical_compaction` fills it per turn | a `read_file` tool result whose call path is in the set is skipped by shake and prune; the model can declare paths via a new `PlanUpdate::ReferencePath { path, drop? }` action | shake/prune + engine + plan tests |
 | Plan handoff (§11.10) | `kod-swarm/src/brief.rs` (`ContextBrief.plan_text`, `render_brief` emits a `## Approved plan` section) + `brief_assembly.rs` (`ParentContext.plan_text`) + `swarm_runner` fills it from `engine.plan_for("session")` | every subtask brief carries the parent's approved plan, ordered above the repository map; empty when the parent has no plan | 1 test in brief.rs |
+| Plan-mode toggle + subagent clamp (§11.10) | `kod-core/src/engine/mod.rs` (`plan_mode: HashSet<String>`, `is_in_plan_mode`, `set_plan_mode`; `build_grounded_request` clamps the tool set to read-only tools when the transcript is in plan mode) + TUI `"/plan-mode"` command | a user enters plan mode with `/plan-mode on`; the tool set clamps to `read_file`/`list_files`/`grep`/`file_info`/`web_search`/`tool_search`; the clamp is applied after the Jev hysteresis filter and MCP trim so a mode toggle cannot be overridden by a per-turn classification | TUI test + engine tests |
+| Plan-model role (§11.10) | `kod-config/src/llm.rs` (`RoutingConfig.plan: Option<String>`) + `kod-core/src/engine/mod.rs` (`resolve_chain_for_task` consults the plan endpoint when the default transcript is in plan mode) | a `[llm.routing] plan = "…"` block routes every plan-mode turn to that endpoint; an unknown endpoint falls through to the ordinary chain, matching the by_task safety rule; the switch fires at the turn boundary so a mid-stream toggle cannot swap the model under a stream | config + engine tests |
 
 | TTSR stream rules (§14.3) | `kod-provider/src/ttsr.rs` | rules matched against streaming output: `RuleScope` (Text/Thinking/Tool with name+path patterns), `InterruptMode` (Never/ProseOnly/ToolOnly/Always), `RepeatMode` (Once/Gap). A bad regex drops the rule rather than stopping the stream. `builtin_rules()` ships no-TODO-in-diff and no-secret-in-prose | 16 tests |
 | Conventional-commit validation (§14.4) | `kod-stats/src/commit.rs` | `CommitProposal` validated for type/summary/details/paths and type-path consistency (docs->*.md, ci->.github, build->Cargo.toml); `score_change` weights details by importance; `format_message` renders | 22 tests |
