@@ -310,6 +310,7 @@ mod tests {
             cache_transcript: false,
             native_compaction_block: None,
             image_frames: Vec::new(),
+            session_id: None,
         };
         let s = RequestSummary::from_request(&req);
         assert_eq!(s.model, "m");

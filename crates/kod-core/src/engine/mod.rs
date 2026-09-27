@@ -1457,6 +1457,12 @@ pub struct KodEngine {
     /// first turn of a Complex/MultiStep task, re-rendered in every
     /// subsequent system prompt. Absent when the task is simple.
     plans: RwLock<HashMap<String, crate::plan::Plan>>,
+    /// Delta §11.12: per-transcript prewalk state. A prewalk arms
+    /// when the user wants a one-way mid-session model handoff: it
+    /// injects a "plan deliberately" nudge once, and the first
+    /// mutating tool call fires the handoff (switch the model,
+    /// scrub the nudge, push a checklist).
+    prewalks: RwLock<HashMap<String, crate::prewalk::Prewalk>>,
     /// Delta §11.10: transcripts currently in explicit plan mode. A
     /// transcript in plan mode restricts the tool set to read-only
     /// tools (read_file / grep / list_files / file_info / web_search)
@@ -2253,6 +2259,10 @@ impl KodEngine {
             cache_transcript: false,
             native_compaction_block: None,
             image_frames: Vec::new(),
+            // Prewarm the session's own tab: a 1-token turn on the same
+            // tab-bridge session costs nothing and avoids stranding a
+            // throwaway tab on providers with per-session affinity.
+            session_id: Some(self.session_id_for_holder(key).to_prefixed_string()),
         };
 
         // Bounded: a provider that hangs must not leave a task
@@ -3353,6 +3363,7 @@ impl KodEngine {
             summaries_in_flight: std::sync::Arc::new(RwLock::new(std::collections::HashSet::new())),
             transcript_working_dirs: RwLock::new(HashMap::new()),
             plans: RwLock::new(HashMap::new()),
+            prewalks: RwLock::new(HashMap::new()),
             plan_mode: RwLock::new(std::collections::HashSet::new()),
             plan_reference_paths: RwLock::new(HashMap::new()),
             decision_logs: RwLock::new(HashMap::new()),
@@ -3753,6 +3764,109 @@ impl KodEngine {
             self.persist_state().await;
         }
         r
+    }
+
+    /// Delta §11.12: arm a one-way prewalk. Injects the nudge into
+    /// the transcript immediately; the first mutating tool call
+    /// fires the model handoff. Idempotent: a second arm while a
+    /// prewalk is armed is a no-op; a `Done` prewalk can be re-armed
+    /// (a downhill walk).
+    pub async fn arm_prewalk(&self, key: &str, target_model: impl Into<String>) {
+        let target = target_model.into();
+        let mut prewalk = crate::prewalk::Prewalk::arm(target);
+        // Inject the nudge as a user message and note its id, so the
+        // fire step can splice it out by id.
+        let msg_id = kod_types::MessageId::new();
+        let nudge_id = msg_id.as_uuid().to_string();
+        let nudge_msg = kod_types::ChatMessage::text(
+            msg_id,
+            kod_types::MessageRole::User,
+            prewalk.nudge.clone(),
+            time::OffsetDateTime::now_utc(),
+        );
+        prewalk.note_nudge_id(nudge_id);
+        {
+            let mut history = self.history.write().await;
+            history.entry(key.to_string()).or_default().push(nudge_msg);
+        }
+        self.prewalks
+            .write()
+            .await
+            .insert(key.to_string(), prewalk);
+    }
+
+    /// Delta §11.12: whether a transcript has an armed prewalk.
+    pub async fn prewalk_state(&self, key: &str) -> Option<crate::prewalk::PrewalkState> {
+        self.prewalks.read().await.get(key).map(|p| p.state.clone())
+    }
+
+    /// Delta §11.12: check whether `tool_name` should fire the
+    /// armed prewalk, and if so, run the handoff. Called from the
+    /// tool loop after every tool call. Best-effort: a missing
+    /// prewalk, an unarmed one, a read-only tool, or a done one
+    /// each returns immediately.
+    async fn maybe_fire_prewalk(&self, key: &str, tool_name: &str) {
+        if !crate::prewalk::Prewalk::is_mutating_tool(tool_name) {
+            return;
+        }
+        // Take the prewalk out so a racing call does not double-fire.
+        let taken = {
+            let mut g = self.prewalks.write().await;
+            match g.get(key) {
+                Some(p) if p.is_armed() => g.remove(key),
+                _ => None,
+            }
+        };
+        let Some(mut prewalk) = taken else { return };
+
+        // 1. Splice the nudge out of the transcript by id.
+        if let Some(nudge_id) = prewalk.nudge_id.as_deref() {
+            let mut history = self.history.write().await;
+            if let Some(msgs) = history.get_mut(key) {
+                msgs.retain(|m| m.id.as_uuid().to_string() != nudge_id);
+            }
+        }
+        // 2. Switch the ephemeral model. The target is a display
+        // string ("endpoint/model"); split on the first `/`.
+        // A target with no `/` is taken as a model name on the
+        // current endpoint (the caller's shorthand for "switch
+        // models on the same endpoint").
+        let model_ref = {
+            let current = self.current_model.read().await.clone();
+            match prewalk.target_model.split_once('/') {
+                Some((endpoint, model)) => kod_provider::request::ModelRef::new(endpoint, model),
+                None => kod_provider::request::ModelRef::new(
+                    current.endpoint,
+                    prewalk.target_model.clone(),
+                ),
+            }
+        };
+        *self.current_model.write().await = model_ref;
+        // 3. Push the checklist as the next user message.
+        {
+            let mut history = self.history.write().await;
+            history.entry(key.to_string()).or_default().push(
+                kod_types::ChatMessage::text(
+                    kod_types::MessageId::new(),
+                    kod_types::MessageRole::User,
+                    prewalk.checklist.clone(),
+                    time::OffsetDateTime::now_utc(),
+                ),
+            );
+        }
+        prewalk.mark_done();
+        // Keep the done state so a caller can see the switch happened.
+        // (Read target_model before the insert moves prewalk.)
+        let fired_target = prewalk.target_model.clone();
+        self.prewalks
+            .write()
+            .await
+            .insert(key.to_string(), prewalk);
+        tracing::info!(
+            key,
+            target = %fired_target,
+            "prewalk fired: model switched mid-session",
+        );
     }
 
     /// Delta §11.10: whether a transcript is in explicit plan mode.
@@ -10276,6 +10390,10 @@ pub(crate) fn filter_chain_by_trust(
                 .get(key)
                 .cloned()
                 .unwrap_or_default(),
+            // Tab-bridge affinity: stateful tab providers route this
+            // request into the transcript's tab via the OpenAI `user`
+            // field. Stateless providers ignore it.
+            session_id: Some(self.session_id_for_holder(key).to_prefixed_string()),
         }
     }
 
@@ -11665,6 +11783,15 @@ pub(crate) fn filter_chain_by_trust(
                 })
                 .collect()
         };
+
+        // Delta §11.12: after the tool calls, check every call for
+        // the mutating-tool trigger that fires an armed prewalk. The
+        // engine splices the nudge, switches the model, and pushes
+        // the checklist — once per prewalk.
+        for call in calls.iter() {
+            self.maybe_fire_prewalk(effective_holder, &call.tool_name)
+                .await;
+        }
 
         // Post-tool hooks (S10 phase 1).
         self.run_post_hooks(calls, hook_runner.as_ref(), &hook_denied)

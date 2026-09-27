@@ -159,6 +159,14 @@ pub struct CompletionRequest {
     /// The engine populates this from its per-transcript frame
     /// store, the same way `native_compaction_block` travels.
     pub image_frames: Vec<ImageFrame>,
+    /// Tab-bridge affinity: the kod session (transcript) this request
+    /// belongs to. Providers backed by stateful browser tabs send it as
+    /// the OpenAI `user` field so consecutive turns land in the same tab
+    /// instead of allocating (and leaking) one tab per request.
+    ///
+    /// `None` on prewarm/health-check traffic and in tests. Stateless
+    /// providers ignore it.
+    pub session_id: Option<String>,
 }
 
 impl CompletionRequest {
@@ -175,6 +183,7 @@ impl CompletionRequest {
             cache_transcript: true,
             native_compaction_block: None,
             image_frames: Vec::new(),
+            session_id: None,
         }
     }
 

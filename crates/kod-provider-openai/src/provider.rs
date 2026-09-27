@@ -309,8 +309,22 @@ impl OpenAICompatProvider {
             }
         }
 
-        let mut request = LlmRequest::new(self.request_model(&req.options), contents)
-            .with_config(options_to_config(&req.options));
+        let mut config = options_to_config(&req.options);
+        // Tab-bridge affinity: stateful tab backends route consecutive turns
+        // of one kod session into the same tab via the OpenAI `user` field
+        // (their session key). Merged through adk-model's
+        // `config.extensions["openai"]` passthrough, which lands verbatim in
+        // the JSON body. Stateless providers never read it.
+        if let Some(session) = req.session_id.as_deref().filter(|s| !s.is_empty()) {
+            let entry = config
+                .extensions
+                .entry("openai".to_string())
+                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+            if let Some(obj) = entry.as_object_mut() {
+                obj.insert("user".to_string(), serde_json::Value::String(session.to_string()));
+            }
+        }
+        let mut request = LlmRequest::new(self.request_model(&req.options), contents).with_config(config);
         if !req.tools.is_empty() {
             request.tools = tool_declarations(&req.tools);
         }
@@ -1123,6 +1137,44 @@ mod coverage_openai_provider {
     }
 
     #[test]
+    fn session_id_travels_as_openai_user_extension() {
+        // Tab-bridge affinity: req.session_id must land in
+        // config.extensions["openai"]["user"] so adk-model emits it as the
+        // top-level `user` field tab-bridge resolves sessions from.
+        use kod_provider::request::{CompletionRequest, ModelRef, SystemPrompt};
+        let p = OpenAICompatProvider::with_api_key("http://localhost:11434", "m", "not-needed")
+            .unwrap();
+        let mut req = CompletionRequest::new(ModelRef::new("default", "m"));
+        req.system = SystemPrompt::default();
+        req.session_id = Some("session-abc123".to_string());
+        let llm = p.request_from_completion(&req);
+        let cfg = llm.config.expect("config always set");
+        assert_eq!(
+            cfg.extensions
+                .get("openai")
+                .and_then(|v| v.get("user"))
+                .and_then(|v| v.as_str()),
+            Some("session-abc123")
+        );
+    }
+
+    #[test]
+    fn missing_session_id_sets_no_user_extension() {
+        use kod_provider::request::{CompletionRequest, ModelRef, SystemPrompt};
+        let p = OpenAICompatProvider::with_api_key("http://localhost:11434", "m", "not-needed")
+            .unwrap();
+        let mut req = CompletionRequest::new(ModelRef::new("default", "m"));
+        req.system = SystemPrompt::default();
+        let llm = p.request_from_completion(&req);
+        let cfg = llm.config.expect("config always set");
+        assert!(cfg
+            .extensions
+            .get("openai")
+            .and_then(|v| v.get("user"))
+            .is_none());
+    }
+
+    #[test]
     fn native_tool_call_round_trip_uses_wire_shape() {
         // H-P1: an assistant turn with a tool call + a tool result
         // must produce Part::FunctionCall and Part::FunctionResponse
@@ -1160,6 +1212,7 @@ mod coverage_openai_provider {
             cache_transcript: true,
             native_compaction_block: None,
             image_frames: Vec::new(),
+            session_id: None,
         };
 
         let llm = p.request_from_completion(&req);
