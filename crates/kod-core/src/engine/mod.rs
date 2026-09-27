@@ -12521,6 +12521,22 @@ pub(crate) fn filter_chain_by_trust(
             tracing::warn!(error = %e, "shutdown memory extraction failed");
         }
 
+        // 7a. Delta §12.3: consolidate the friction-gated decision
+        //     deltas from this session into the repo's decisions
+        //     files. Runs while the provider is still resolvable
+        //     (7b tears down the memory task; the provider registry
+        //     lives on the engine and is only dropped when the
+        //     engine is), so this is the last chance to make the
+        //     small-model rewrite call. Best-effort — a failed
+        //     consolidation loses the queue but not the shutdown.
+        let consolidated = self.consolidate_sharpshooter_now().await;
+        if consolidated > 0 {
+            tracing::info!(
+                files = consolidated,
+                "sharpshooter consolidation wrote decisions files"
+            );
+        }
+
         // 7b. Stop the consolidation task before any redb close —
         //     it holds a router clone, and `Arc::try_unwrap`
         //     needs the last reference.
