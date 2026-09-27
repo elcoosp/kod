@@ -339,6 +339,38 @@ pub(crate) fn reply_declares_goal_met(text: &str) -> bool {
     stripped.eq_ignore_ascii_case("GOAL MET")
 }
 
+/// Delta §12.7: render a mental model's entries into a stable bullet
+/// block. The block is what gets frozen into the prompt for the
+/// session; the bytes must be deterministic given a set of entries,
+/// so a re-render at the same generation produces the same string.
+///
+/// `max_tokens` is a soft cap: the render stops before adding a line
+/// that would push past `max_tokens * 4` characters (the 4-chars-per-
+/// token heuristic the rest of the codebase uses for prompt budget).
+/// A single entry longer than the cap is dropped, not truncated, so
+/// a half-sentence never enters the frozen block.
+fn render_mental_model_block(
+    entries: &[kod_types::MemoryEntry],
+    max_tokens: usize,
+) -> String {
+    let budget_chars = max_tokens.saturating_mul(4);
+    let mut out = String::new();
+    let mut used = 0usize;
+    for e in entries {
+        let content = e.content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        let line = format!("- {content}\n");
+        if used + line.len() > budget_chars {
+            continue;
+        }
+        used += line.len();
+        out.push_str(&line);
+    }
+    out.trim_end().to_string()
+}
+
 /// Expand `@path` references in `input` into fenced code blocks
 /// containing the referenced file's content.
 ///
@@ -4134,6 +4166,83 @@ impl KodEngine {
         self.mental_models.write().await.begin_transcript();
     }
 
+    /// Delta §12.7: install the default mental-model seeds and fill
+    /// each from the memory store. Called once at `engine.start()`;
+    /// a session that starts with no memory is left untouched.
+    ///
+    /// Seeding is create-only, so a second call (from a test or a
+    /// future re-init path) cannot redefine a model and move the
+    /// frozen bytes. Filling runs from the store's current contents;
+    /// a model whose query returns nothing stays unrendered, so the
+    /// default session's prompt is byte-identical to the pre-§12.7
+    /// shape.
+    ///
+    /// The three seeds the design names, with the token budgets it
+    /// specifies (600 for preferences, 800 for decisions):
+    ///
+    /// * `user_preferences` — how the user wants work done.
+    /// * `project_conventions` — this repo's rules.
+    /// * `project_decisions` — durable choices (the sharpshooter
+    ///   pipeline separately feeds `architecture.md`, but the mental
+    ///   model is a rolling view the model sees every turn).
+    ///
+    /// Best-effort: every failure logs and returns; start() never
+    /// fails because the seeds could not be filled.
+    pub async fn bootstrap_mental_models(&self) {
+        use kod_memory::mental_models::{MentalModelSeed, RefreshTrigger};
+        if !self.router.has_memory() {
+            return;
+        }
+        let seeds = [
+            MentalModelSeed {
+                id: "user_preferences".to_string(),
+                name: "User Preferences".to_string(),
+                source_query: "user preferences coding style conventions".to_string(),
+                scopes: Vec::new(),
+                max_tokens: 600,
+                trigger: RefreshTrigger::SessionStart,
+            },
+            MentalModelSeed {
+                id: "project_conventions".to_string(),
+                name: "Project Conventions".to_string(),
+                source_query: "project conventions".to_string(),
+                scopes: Vec::new(),
+                max_tokens: 800,
+                trigger: RefreshTrigger::AfterConsolidation,
+            },
+            MentalModelSeed {
+                id: "project_decisions".to_string(),
+                name: "Project Decisions".to_string(),
+                source_query: "durable project decision chosen architecture".to_string(),
+                scopes: Vec::new(),
+                max_tokens: 800,
+                trigger: RefreshTrigger::AfterConsolidation,
+            },
+        ];
+        for seed in seeds {
+            let _ = self.seed_mental_model(seed).await;
+        }
+        let ids = self.mental_models.read().await.ids();
+        for id in ids {
+            // Read the model's query and cap outside the fill lock.
+            let (query, cap) = {
+                let guard = self.mental_models.read().await;
+                let Some(m) = guard.get(&id) else { continue };
+                (m.seed.source_query.clone(), m.seed.max_tokens)
+            };
+            let entries = self.router.search_long_term(&query, 40).await;
+            if entries.is_empty() {
+                continue;
+            }
+            let text = render_mental_model_block(&entries, cap);
+            if text.trim().is_empty() {
+                continue;
+            }
+            self.fill_mental_model(&id, text).await;
+            tracing::debug!(id = %id, "mental model filled");
+        }
+    }
+
     /// Delta §13.2: the session's behavioral-signal totals.
     pub fn behavioral_signals(&self) -> kod_stats::behavioral::BehavioralSignals {
         *self.behavioral.lock()
@@ -6977,6 +7086,12 @@ pub(crate) fn filter_chain_by_trust(
         }
 
         *running = true;
+
+        // Delta §12.7: seed and fill the mental models before tools
+        // register — a session that opens with a filled preferences
+        // block gets it into the very first cached prefix. Best-effort
+        // (see the method doc); the seed-and-fill cannot fail start().
+        self.bootstrap_mental_models().await;
 
         // Register the built-in tools once (start runs exactly once —
         // second call errors above). Tools fail closed via ToolContext
