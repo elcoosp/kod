@@ -1238,6 +1238,7 @@ mod coverage_provider_parse {
         }
     }
 
+    #[test]
     fn parse_response_usage_missing_fields_default_to_zero() {
         let v = json!({
             "content": [{"type": "text", "text": "x"}],
