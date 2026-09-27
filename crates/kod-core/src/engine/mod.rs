@@ -6433,6 +6433,14 @@ pub(crate) fn filter_chain_by_trust(
             return (endpoint_window, endpoint_max_out);
         }
 
+        // Tier 2b: the static catalog. More accurate than a
+        // name-family heuristic and covers the well-known models the
+        // heuristic was guessing at; the built-in table is the same
+        // source `pricing_for` falls back to.
+        if let Some(meta) = kod_provider::resolve_model_meta(&model_ref.model) {
+            return (meta.context_window, endpoint_max_out);
+        }
+
         // Tier 3: the model-name family table. More accurate than a
         // default nobody changed, less accurate than a live report.
         if let Some(w) = kod_config::llm::family_context_window(&model_ref.model) {
@@ -6508,10 +6516,37 @@ pub(crate) fn filter_chain_by_trust(
     /// surface) can read the same number the engine uses when it
     /// populates `TaskResponse::pricing`.
     pub async fn pricing_for(&self, model_ref: &ModelRef) -> Option<kod_provider::ModelPricing> {
+        // Tier 1: the endpoint's configured `[pricing]` block, carried
+        // on the registry's capabilities. A user who set a price has
+        // the last word.
         let reg = self.registry.read().await;
-        reg.as_ref()
+        if let Some(p) = reg
+            .as_ref()
             .and_then(|r| r.capabilities(&model_ref.endpoint))
             .and_then(|c| c.pricing)
+        {
+            return Some(p);
+        }
+        drop(reg);
+        // Tier 2: the live catalog (populated by `list_models`).
+        if let Ok(guard) = self.model_catalog.read()
+            && let Some(info) = guard.get(&(
+                model_ref.endpoint.clone(),
+                model_ref.model.clone(),
+            ))
+            && let (Some(i), Some(o)) =
+                (info.input_per_mtok_usd, info.output_per_mtok_usd)
+        {
+            return Some(kod_provider::ModelPricing::new(i, o));
+        }
+        // Tier 3: the static built-in catalog. A rough default for a
+        // well-known model whose endpoint carries no pricing block.
+        // The user's config (`[endpoint.pricing]`) is authoritative
+        // when present; the static table only fills the gap.
+        if let Some(meta) = kod_provider::resolve_model_meta(&model_ref.model) {
+            return Some(meta.pricing.clone());
+        }
+        None
     }
 
     /// Compute the allocation for a prompt of `input.len()` chars
