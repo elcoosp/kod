@@ -306,7 +306,10 @@ impl HybridScorer {
 
     /// Term-frequency-saturated keyword score for one entry. Value in
     /// `[0, 1]` when the query has tokens; `0` when it has none.
-    fn keyword_bm25_lite(&self, query: &QueryTerms, entry: &MemoryEntry) -> f32 {
+    ///
+    /// Public so the polyphonic-fusion path in the manager can build
+    /// the keyword voice without going through the composite score.
+    pub fn keyword_bm25_lite(&self, query: &QueryTerms, entry: &MemoryEntry) -> f32 {
         if query.tokens.is_empty() {
             return 0.0;
         }

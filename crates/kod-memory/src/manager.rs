@@ -695,17 +695,91 @@ impl MemoryManager {
         // component weights accordingly.
         let intent = crate::fusion::classify_intent(query);
         let weights = crate::fusion::intent_weights(intent);
-        let mut scored: Vec<(f32, MemoryEntry)> = all
-            .into_iter()
-            .map(|entry| {
-                let cos = cosines.get(&entry.id).copied();
-                let s = self
-                    .scorer
-                    .score_with_weights(&query_terms, &entry, cos, now, weights);
-                (s, entry)
-            })
-            .collect();
-        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Delta §12.8: polyphonic fusion. Build four ranked voices
+        // — vector (cosine), fact (BM25 keyword), importance (the
+        // entry's own relevance, tier-adjusted), temporal (Weibull
+        // recency) — and fuse them with Reciprocal Rank Fusion. RRF
+        // uses *rank only*, so it does not have to reconcile
+        // cosine's `[-1, 1]` with BM25's unbounded range; the only
+        // requirement is that each voice ranks the same candidates.
+        //
+        // A voice over an empty candidate set (no embedder means the
+        // vector voice has nothing to contribute) is simply absent:
+        // the remaining voices still fuse and rank.
+        let voices: Vec<Vec<String>> = {
+            let vector_voice: Vec<String> = {
+                let mut pairs: Vec<(&MemoryEntry, f32)> = all
+                    .iter()
+                    .filter_map(|e| cosines.get(&e.id).map(|c| (e, *c)))
+                    .collect();
+                pairs.sort_by(|a, b| {
+                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                pairs.into_iter().map(|(e, _)| e.id.as_uuid().to_string()).collect()
+            };
+            let keyword_voice: Vec<String> = {
+                let mut pairs: Vec<(&MemoryEntry, f32)> = all
+                    .iter()
+                    .map(|e| (e, self.scorer.keyword_bm25_lite(&query_terms, e)))
+                    .collect();
+                pairs.sort_by(|a, b| {
+                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                pairs.into_iter().map(|(e, _)| e.id.as_uuid().to_string()).collect()
+            };
+            let importance_voice: Vec<String> = {
+                let mut pairs: Vec<(&MemoryEntry, f32)> = all
+                    .iter()
+                    .map(|e| {
+                        let tw = crate::tier::tier_at(e.timestamp, now).weight();
+                        (e, e.relevance * tw)
+                    })
+                    .collect();
+                pairs.sort_by(|a, b| {
+                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                pairs.into_iter().map(|(e, _)| e.id.as_uuid().to_string()).collect()
+            };
+            let temporal_voice: Vec<String> = {
+                let mut pairs: Vec<(&MemoryEntry, f32)> = all
+                    .iter()
+                    .map(|e| {
+                        let shape = self.scorer.decay_shape_for(e.memory_type);
+                        (e, crate::retrieval::decay_at(e.timestamp, now, shape))
+                    })
+                    .collect();
+                pairs.sort_by(|a, b| {
+                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                pairs.into_iter().map(|(e, _)| e.id.as_uuid().to_string()).collect()
+            };
+            vec![vector_voice, keyword_voice, importance_voice, temporal_voice]
+        };
+        let fused = crate::fusion::reciprocal_rank_fusion(&voices);
+
+        // Preserve each entry's intent-weighted composite score for
+        // the MMR relevance component; the RRF fusion only decides
+        // the *order* the pool is drawn in.
+        let mut base: std::collections::HashMap<String, (f32, MemoryEntry)> =
+            std::collections::HashMap::with_capacity(all.len());
+        for entry in all {
+            let cos = cosines.get(&entry.id).copied();
+            let s = self
+                .scorer
+                .score_with_weights(&query_terms, &entry, cos, now, weights);
+            base.insert(entry.id.as_uuid().to_string(), (s, entry));
+        }
+        // Draw the pool in RRF order, taking each entry's composite
+        // score along for MMR. `base.remove` moves the entry out so
+        // the second pass over `scored` (the MMR block below)
+        // consumes an RRF-ordered vector.
+        let mut scored: Vec<(f32, MemoryEntry)> = Vec::with_capacity(base.len());
+        for (id, _rrf) in &fused {
+            if let Some(pair) = base.remove(id) {
+                scored.push(pair);
+            }
+        }
 
         // Delta §12.8: MMR reranking for diversity. Among the top
         // candidates by score, pick a relevant-but-diverse subset so
