@@ -930,6 +930,18 @@ fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
         let cache_creation = u
             .get("cache_creation_input_tokens")
             .and_then(|n| n.as_u64());
+        // Delta §13.1: Anthropic's newer usage shape nests a
+        // `cache_creation` object with a per-TTL breakdown; the 1-hour
+        // subset bills at 2x input. A reply with only the flat
+        // `cache_creation_input_tokens` key leaves the subset `None`
+        // so cost math prices the whole write at the 5-minute rate.
+        // A mis-reported nested count larger than the flat total is
+        // clamped to the total.
+        let cache_creation_1h = u
+            .get("cache_creation")
+            .and_then(|c| c.get("ephemeral_1h_input_tokens"))
+            .and_then(|n| n.as_u64())
+            .map(|n| n.min(cache_creation.unwrap_or(0)));
         let read_usize = cache_read.unwrap_or(0) as usize;
         let creation_usize = cache_creation.unwrap_or(0) as usize;
         kod_provider::TokenUsage {
@@ -941,7 +953,7 @@ fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
             total_tokens: input + read_usize + creation_usize + output,
             cache_read_tokens: cache_read,
             cache_creation_tokens: cache_creation,
-            cache_creation_1h_tokens: None,
+            cache_creation_1h_tokens: cache_creation_1h,
         }
     });
 

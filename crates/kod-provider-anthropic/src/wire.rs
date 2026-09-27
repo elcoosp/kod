@@ -449,6 +449,13 @@ pub struct AnthropicStreamState {
     /// Tokens written to Anthropic's KV cache this call
     /// (`cache_creation_input_tokens`). Billed at ~1.25x input.
     pub cache_creation_input_tokens: usize,
+    /// Delta §13.1: the subset of `cache_creation_input_tokens`
+    /// written under the 1-hour TTL. Anthropic's newer usage shape
+    /// nests a `cache_creation` object with an
+    /// `ephemeral_1h_input_tokens` field; when only the flat
+    /// `cache_creation_input_tokens` is present this stays 0 and the
+    /// write prices at the 5-minute rate.
+    pub cache_creation_1h_input_tokens: usize,
     /// Blocks observed so far. Used to correlate `content_block_delta`
     /// events (which carry only an index) with the tool name/id
     /// recorded at `content_block_start`.
@@ -509,8 +516,25 @@ pub fn parse_sse_line(
                 let base = get("input_tokens");
                 let cache_read = get("cache_read_input_tokens");
                 let cache_creation = get("cache_creation_input_tokens");
+                // Delta §13.1: Anthropic's newer usage shape nests a
+                // `cache_creation` object with a per-TTL breakdown:
+                // `ephemeral_5m_input_tokens` + `ephemeral_1h_input_tokens`.
+                // The flat `cache_creation_input_tokens` (the old
+                // shape) is the total; the nested count is the 1-hour
+                // subset we bill at 2x. When the nested object is
+                // absent, the 1h subset is 0 and every write prices
+                // at the 5-minute rate. A mis-reported nested count
+                // larger than the flat total is clamped to the total.
+                let creation_1h = u
+                    .get("cache_creation")
+                    .and_then(|c| c.get("ephemeral_1h_input_tokens"))
+                    .and_then(|n| n.as_u64())
+                    .map(|n| n as usize)
+                    .unwrap_or(0)
+                    .min(cache_creation);
                 state.cache_read_input_tokens = cache_read;
                 state.cache_creation_input_tokens = cache_creation;
+                state.cache_creation_1h_input_tokens = creation_1h;
                 state.input_tokens = base + cache_read + cache_creation;
             }
             Vec::new()
@@ -612,7 +636,16 @@ pub fn parse_sse_line(
                     total_tokens: state.input_tokens + out,
                     cache_read_tokens: Some(state.cache_read_input_tokens as u64),
                     cache_creation_tokens: Some(state.cache_creation_input_tokens as u64),
-                    cache_creation_1h_tokens: None,
+                    // Delta §13.1: the 1-hour subset, parsed from the
+                    // nested `cache_creation.ephemeral_1h_input_tokens`
+                    // field. `None` when the provider sent no nested
+                    // breakdown — the whole write prices at the
+                    // 5-minute rate.
+                    cache_creation_1h_tokens: if state.cache_creation_1h_input_tokens > 0 {
+                        Some(state.cache_creation_1h_input_tokens as u64)
+                    } else {
+                        None
+                    },
                 }));
             }
             chunks
