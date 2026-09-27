@@ -3800,12 +3800,44 @@ impl KodEngine {
     /// Returns the human-readable description from `Plan::apply`, or
     /// a message saying no plan exists.
     pub async fn apply_plan_update(&self, key: &str, update: crate::plan::PlanUpdate) -> String {
+        // Delta §11.10: a ReferencePath update changes both the plan's
+        // own list and the engine's protected-path set. The set is
+        // derived from the plan, so a caller reads a single source of
+        // truth. Resolve relative paths against the transcript's
+        // working dir (a swarm agent's worktree, otherwise the
+        // engine root).
         let mut g = self.plans.write().await;
-        match g.get_mut(key) {
+        let out = match g.get_mut(key) {
             Some(p) => p.apply(update),
             None => "No plan exists for this session. A plan is created                      on the first turn of a complex task."
                 .to_string(),
+        };
+        let reference_paths: Option<Vec<String>> =
+            g.get(key).map(|p| p.reference_paths.clone());
+        drop(g);
+
+        if let Some(paths) = reference_paths {
+            let working_dir = self
+                .transcript_working_dirs
+                .read()
+                .await
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| self.working_dir.clone());
+            let resolved: std::collections::HashSet<std::path::PathBuf> = paths
+                .into_iter()
+                .map(|p| {
+                    let pb = std::path::PathBuf::from(&p);
+                    if pb.is_absolute() {
+                        pb
+                    } else {
+                        working_dir.join(pb)
+                    }
+                })
+                .collect();
+            self.set_plan_reference_paths(key, resolved).await;
         }
+        out
     }
 
     /// Record a session-scoped learned allow for a tool call

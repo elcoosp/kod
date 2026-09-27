@@ -53,6 +53,12 @@ pub struct Plan {
     pub created_at_ms: u64,
     #[serde(default)]
     pub jev_confidence: f32,
+    /// Delta §11.10: paths the model declared it needs to keep
+    /// re-reading. Stored as the model wrote them (relative or
+    /// absolute); the engine resolves them against the transcript's
+    /// working dir before use.
+    #[serde(default)]
+    pub reference_paths: Vec<String>,
 }
 
 impl Plan {
@@ -83,6 +89,7 @@ impl Plan {
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0),
             jev_confidence: 0.0,
+            reference_paths: Vec::new(),
         }
     }
 
@@ -322,6 +329,10 @@ pub enum PlanUpdate {
     Remove { step_id: u32 },
     Replace { step_id: u32, text: String },
     SetStatus { step_id: u32, status: PlanStatus },
+    /// Delta §11.10: declare (or withdraw) a path whose `read_file`
+    /// result must survive shake and prune. `path: None` drops the
+    /// declaration; `Some` adds it (idempotent).
+    ReferencePath { path: String, drop: Option<bool> },
 }
 
 impl Plan {
@@ -358,6 +369,18 @@ impl Plan {
                 self.set_status(step_id, status);
                 format!("Step {} now {:?}", step_id + 1, status)
             }
+            PlanUpdate::ReferencePath { path, drop } => {
+                let want_drop = drop.unwrap_or(false);
+                if want_drop {
+                    self.reference_paths.retain(|p| p != &path);
+                    format!("Reference path withdrawn: {path}")
+                } else if self.reference_paths.iter().any(|p| p == &path) {
+                    format!("Reference path already protected: {path}")
+                } else {
+                    self.reference_paths.push(path.clone());
+                    format!("Reference path protected: {path}")
+                }
+            }
         }
     }
 }
@@ -367,6 +390,25 @@ mod tests {
     use super::*;
 
     // ---- §11.10 autosave primitives ---------------------------------
+
+    #[test]
+    fn reference_path_add_and_drop_are_idempotent() {
+        let mut p = Plan::new("g", vec!["s".into()]);
+        let _ = p.apply(PlanUpdate::ReferencePath {
+            path: "src/main.rs".into(),
+            drop: None,
+        });
+        let _ = p.apply(PlanUpdate::ReferencePath {
+            path: "src/main.rs".into(),
+            drop: None,
+        });
+        assert_eq!(p.reference_paths, vec!["src/main.rs".to_string()]);
+        let _ = p.apply(PlanUpdate::ReferencePath {
+            path: "src/main.rs".into(),
+            drop: Some(true),
+        });
+        assert!(p.reference_paths.is_empty());
+    }
 
     #[test]
     fn slugify_drops_punctuation() {
