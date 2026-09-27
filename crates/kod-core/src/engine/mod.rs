@@ -12542,6 +12542,12 @@ pub(crate) fn filter_chain_by_trust(
         //     needs the last reference.
         self.stop_memory_consolidation_task().await;
 
+        // 7c. Delta §12.5: wait for any in-flight background embed
+        //     tasks. A fact written just before shutdown still gets
+        //     its vector; without this, the entry would stay
+        //     FTS-only until the next rebuild.
+        self.router.flush_embeddings().await;
+
         // 8. Explicit redb close (design D0.3). Best-effort: the
         // router is behind an `Arc` and a caller that cloned the
         // engine may still hold a reference. `Arc::try_unwrap`

@@ -513,6 +513,16 @@ impl TaskRouter {
         }
     }
 
+    /// Delta §12.5: wait for every in-flight background embed. Called
+    /// by `KodEngine::shutdown` before `close_memory`, so a fact
+    /// written just before the process exits still gets its vector.
+    /// A no-op when memory is disabled.
+    pub async fn flush_embeddings(&self) {
+        if let Some(manager) = &self.memory_manager {
+            manager.flush_embeddings().await;
+        }
+    }
+
     /// Explicitly close the memory subsystem.
     ///
     /// Consumes the router: the caller (typically `KodEngine::shutdown`)

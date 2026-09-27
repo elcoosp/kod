@@ -221,8 +221,18 @@ pub struct MemoryManager {
     embedder: Option<std::sync::Arc<dyn crate::embedding::EmbeddingClient>>,
     /// In-memory vector index. Built lazily on the first retrieval
     /// that wants semantic scoring. Rebuilt from scratch when the
-    /// embedder is swapped.
-    vector_index: parking_lot::RwLock<Option<crate::vector_index::VectorIndex>>,
+    /// embedder is swapped. Behind an `Arc` so a background embed
+    /// task (delta §12.5) can insert its vector without holding the
+    /// manager.
+    vector_index: std::sync::Arc<parking_lot::RwLock<Option<crate::vector_index::VectorIndex>>>,
+    /// Delta §12.5: fire-and-forget embedding. A store increments
+    /// this counter before spawning its embed task and decrements it
+    /// on completion; [`MemoryManager::flush_embeddings`] waits for
+    /// the counter to reach zero. `embedding_complete` is only the
+    /// wakeup — the counter is the invariant.
+    inflight_embeddings: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Delta §12.5: woken by each completed background embed.
+    embedding_complete: std::sync::Arc<tokio::sync::Notify>,
     /// Tunables for the hybrid scorer.
     scorer: crate::retrieval::HybridScorer,
     /// Redactor applied to memory content and metadata tags before
@@ -254,7 +264,9 @@ impl MemoryManager {
             long_term,
             context_window: 4096, // Default context window
             embedder: None,
-            vector_index: parking_lot::RwLock::new(None),
+            vector_index: std::sync::Arc::new(parking_lot::RwLock::new(None)),
+            inflight_embeddings: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            embedding_complete: std::sync::Arc::new(tokio::sync::Notify::new()),
             scorer: crate::retrieval::HybridScorer::default(),
             // On by default. The builtin rule set covers the vendor
             // keys the design note names (OpenAI, Anthropic, GitHub,
@@ -510,41 +522,12 @@ impl MemoryManager {
 
         let id = MemoryId::new();
 
-        // P0-3: attach the embedding at write time. Without this, the
-        // vector index had nothing to hold and semantic retrieval
-        // never fired even with an embedder configured. Best-effort:
-        // a failed embed leaves the field unset and the entry is
-        // embedded lazily on the next rebuild.
-        if metadata.embedding.is_none()
-            && let Some(e) = self.embedder.as_ref()
-        {
-            // Delta §12.5: embed the projected text, not the raw
-            // content. The raw string is what recall returns; the
-            // projection strips scaffolding that would bias the
-            // vector without adding semantic content.
-            let embed_input = index_text_for_embedding(content);
-            let embed_input = if embed_input.trim().is_empty() {
-                // A projection that produced nothing (a stored fact
-                // that was only a role prefix) falls back to the raw
-                // string so the entry still has a vector.
-                content.to_string()
-            } else {
-                embed_input
-            };
-            match e.embed(std::slice::from_ref(&embed_input)).await {
-                Ok(mut v) if !v.is_empty() => {
-                    let vec = v.remove(0);
-                    if let Some(idx) = self.vector_index.write().as_mut() {
-                        let _ = idx.insert(id.clone(), vec.clone());
-                    }
-                    metadata.embedding = Some(vec);
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::debug!(error = %e, "embedding at store time failed");
-                }
-            }
-        }
+        // Delta §12.5: the embed is deferred to a background task.
+        // The write path returns as soon as the entry is persisted;
+        // the vector is filled in when the provider answers.
+        // `skip_embed` captures the caller's intent before `metadata`
+        // is moved into the entry.
+        let skip_embed = metadata.embedding.is_some() || self.embedder.is_none();
 
         match memory_type {
             MemoryType::ShortTerm => {
@@ -597,7 +580,96 @@ impl MemoryManager {
             }
         }
 
+        // Delta §12.5: fire the background embed now that the entry
+        // is on disk. Computing the embed input here (not inside the
+        // task) so the projected text is exactly what the store
+        // path computed; a task that looked up the entry would have
+        // to re-project, and the projection depends on `content` as
+        // the caller passed it.
+        if !skip_embed {
+            let embed_input = index_text_for_embedding(content);
+            let embed_input = if embed_input.trim().is_empty() {
+                content.to_string()
+            } else {
+                embed_input
+            };
+            self.spawn_embed(id.clone(), embed_input);
+        }
+
         Ok(id)
+    }
+
+    /// Delta §12.5: spawn one background embed task.
+    ///
+    /// The task holds clones of the embedder, the long-term store,
+    /// the in-memory vector index, the in-flight counter, and the
+    /// completion notifier — everything it needs to write the vector
+    /// back without a handle to the manager. A failed embed logs and
+    /// degrades to FTS-only for that entry; a failed persist logs and
+    /// leaves the entry without a vector, which is the same state a
+    /// failed inline embed left.
+    fn spawn_embed(&self, id: MemoryId, text: String) {
+        let Some(embedder) = self.embedder.clone() else {
+            return;
+        };
+        let long_term = self.long_term.clone();
+        let vector_index = std::sync::Arc::clone(&self.vector_index);
+        let inflight = std::sync::Arc::clone(&self.inflight_embeddings);
+        let notify = std::sync::Arc::clone(&self.embedding_complete);
+        inflight.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        tokio::spawn(async move {
+            match embedder.embed(std::slice::from_ref(&text)).await {
+                Ok(mut v) if !v.is_empty() => {
+                    let vec = v.remove(0);
+                    // Persist the vector on the entry.
+                    if let Ok(Some(mut e)) = long_term.get(&id).await {
+                        e.metadata.embedding = Some(vec.clone());
+                        if let Err(err) = long_term.update(e).await {
+                            tracing::warn!(error = %err, "background embed: persist failed");
+                        }
+                    }
+                    // Insert into the in-memory index.
+                    if let Some(idx) = vector_index.write().as_mut() {
+                        let _ = idx.insert(id, vec);
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::debug!(
+                        error = %e,
+                        "background embed failed; entry stays FTS-only",
+                    );
+                }
+            }
+            inflight.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            notify.notify_one();
+        });
+    }
+
+    /// Delta §12.5: wait for every in-flight background embed.
+    ///
+    /// Called at shutdown, after the last store, so a fact written
+    /// just before the process exits still gets its vector. The wait
+    /// is bounded only by the provider's own timeout — a hung embed
+    /// request is the only way this hangs, and the same hang would
+    /// have blocked the inline path it replaces.
+    pub async fn flush_embeddings(&self) {
+        loop {
+            // Arm the notification *before* checking the counter,
+            // so a task that completes between the two is not
+            // missed: `notified()` registers this future with the
+            // Notify, and a following `notify_one` will complete it.
+            let fut = self.embedding_complete.notified();
+            tokio::pin!(fut);
+            if self
+                .inflight_embeddings
+                .load(std::sync::atomic::Ordering::SeqCst)
+                == 0
+            {
+                return;
+            }
+            fut.await;
+        }
     }
 
     /// Get a short-term memory entry
