@@ -274,10 +274,23 @@ pub struct ModelPricing {
     /// field explicitly keeps its value.
     #[serde(default = "default_cache_read_rate")]
     pub cache_read_per_mtok_usd: f64,
-    /// USD per million tokens written to the provider's KV cache.
-    /// Default ratio is 1.25x input (Anthropic's cache-write premium).
+    /// USD per million tokens written to the provider's KV cache
+    /// under the *short* (5-minute) TTL. Default ratio is 1.25x
+    /// input (Anthropic's cache-write premium for the short TTL).
     #[serde(default = "default_cache_write_rate")]
     pub cache_write_per_mtok_usd: f64,
+    /// Delta §13.1: USD per million tokens written under the *long*
+    /// (1-hour) TTL. Anthropic prices the long-TTL write at 2x input,
+    /// so a config that does not override it gets `2 * input`. A
+    /// provider with one TTL leaves the two fields equal.
+    ///
+    /// `#[serde(default)]` makes a config written before this field
+    /// existed load as "no long-TTL tier"; the constructor sets both
+    /// rates from the ratios, and `cost_for_usage` falls back to
+    /// `cache_write_per_mtok_usd` when the usage report does not
+    /// distinguish TTLs.
+    #[serde(default)]
+    pub cache_write_1h_per_mtok_usd: Option<f64>,
     /// How the provider reports cache tokens. Defaults to `Split`
     /// (Anthropic); OpenAI-compatible endpoints override to `Subset`
     /// at provider construction. A config written before this field
@@ -294,6 +307,11 @@ const DEFAULT_CACHE_READ_RATIO: f64 = 0.1;
 /// Default cache-write rate as a fraction of the full input rate.
 /// Anthropic charges 1.25x input to write a cache entry.
 const DEFAULT_CACHE_WRITE_RATIO: f64 = 1.25;
+/// Delta §13.1: the long-TTL cache-write premium, as a fraction of
+/// the full input rate. Anthropic's 1-hour cache tier charges 2x
+/// input; a provider with one tier does not distinguish the two and
+/// the caller can override both fields to the same value.
+const DEFAULT_CACHE_WRITE_1H_RATIO: f64 = 2.0;
 
 // Serde default helpers cannot read sibling fields, so they return
 // the ratios applied to a *nominal* $1.00/M input rate. This is
@@ -317,6 +335,9 @@ impl ModelPricing {
             output_per_mtok_usd,
             cache_read_per_mtok_usd: input_per_mtok_usd * DEFAULT_CACHE_READ_RATIO,
             cache_write_per_mtok_usd: input_per_mtok_usd * DEFAULT_CACHE_WRITE_RATIO,
+            cache_write_1h_per_mtok_usd: Some(
+                input_per_mtok_usd * DEFAULT_CACHE_WRITE_1H_RATIO,
+            ),
             cache_convention: crate::CacheConvention::Split,
         }
     }
@@ -334,6 +355,7 @@ impl ModelPricing {
             output_per_mtok_usd,
             cache_read_per_mtok_usd,
             cache_write_per_mtok_usd,
+            cache_write_1h_per_mtok_usd: None,
             cache_convention: crate::CacheConvention::Split,
         }
     }
@@ -565,6 +587,7 @@ mod cache_convention_tests {
             output_per_mtok_usd: 15.0,
             cache_read_per_mtok_usd: 0.3,
             cache_write_per_mtok_usd: 3.75,
+            cache_write_1h_per_mtok_usd: None,
             cache_convention: crate::CacheConvention::Split,
         };
         let usage = crate::TokenUsage {
@@ -586,6 +609,7 @@ mod cache_convention_tests {
             output_per_mtok_usd: 15.0,
             cache_read_per_mtok_usd: 0.3,
             cache_write_per_mtok_usd: 3.75,
+            cache_write_1h_per_mtok_usd: None,
             cache_convention: crate::CacheConvention::Subset,
         };
         let usage = crate::TokenUsage {
@@ -611,6 +635,7 @@ mod cache_convention_tests {
             output_per_mtok_usd: 0.0,
             cache_read_per_mtok_usd: 1.0,
             cache_write_per_mtok_usd: 12.5,
+            cache_write_1h_per_mtok_usd: None,
             cache_convention: crate::CacheConvention::Split,
         };
         let mut subset = base;
