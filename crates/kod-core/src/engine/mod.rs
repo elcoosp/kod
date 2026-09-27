@@ -1429,6 +1429,14 @@ pub struct KodEngine {
     /// every turn from the classifier; rendered into the prompt after
     /// the plan.
     decision_logs: RwLock<HashMap<String, crate::decisions::DecisionLog>>,
+    /// Delta §12.3: per-session friction-gated decision deltas. Each
+    /// entry has been admitted through the grounding gate (evidence
+    /// is an exact substring of the user prompt it was extracted
+    /// from). The queue is drained by a consolidation pass — a
+    /// follow-up — that ranks by friction and rewrites
+    /// `architecture.md` / `product.md` / `style.md` under a line
+    /// ceiling.
+    sharpshooter_deltas: RwLock<Vec<kod_memory::sharpshooter::DecisionDelta>>,
     /// Per-transcript write set (D4.2). The swarm runner registers
     /// each agent's `expected_writes` under the agent's transcript
     /// key before the agent starts. The engine applies the globs to
@@ -3293,6 +3301,7 @@ impl KodEngine {
             transcript_working_dirs: RwLock::new(HashMap::new()),
             plans: RwLock::new(HashMap::new()),
             decision_logs: RwLock::new(HashMap::new()),
+            sharpshooter_deltas: RwLock::new(Vec::new()),
             transcript_write_globs: RwLock::new(HashMap::new()),
             history_budget: std::sync::atomic::AtomicUsize::new(DEFAULT_HISTORY_CHAR_BUDGET),
             last_prompt: RwLock::new(HashMap::new()),
@@ -7928,6 +7937,10 @@ pub(crate) fn filter_chain_by_trust(
             // Delta §12.6: continuous memory extraction over the new
             // tail since the last pass.
             self.maybe_extract_continuously(key).await;
+            // Delta §12.3: friction-gated decision extraction from
+            // the user prompt for this turn. Best-effort; every
+            // failure logs and returns.
+            self.maybe_extract_decisions(key).await;
 
             // Delta §9.4 (diagnostic): same classifier call as the
             // streaming path. Non-blocking.
@@ -8314,6 +8327,10 @@ pub(crate) fn filter_chain_by_trust(
             // Delta §12.6: continuous memory extraction over the new
             // tail since the last pass.
             self.maybe_extract_continuously(key).await;
+            // Delta §12.3: friction-gated decision extraction from
+            // the user prompt for this turn. Best-effort; every
+            // failure logs and returns.
+            self.maybe_extract_decisions(key).await;
 
             // Delta §9.4 (diagnostic): classify a clean stop with
             // no tool calls. Non-blocking — the reply is delivered
@@ -12013,6 +12030,104 @@ pub(crate) fn filter_chain_by_trust(
             stored = facts.len(),
             "continuous extraction pass",
         );
+    }
+
+    /// Delta §12.3: friction-gated decision extraction.
+    ///
+    /// Runs at a turn boundary, per user prompt. Extracts decisions
+    /// from the *user's* message — the design's "sharpshooter"
+    /// position — and admits them through the grounding gate: an
+    /// extracted `evidence` string must appear verbatim (case
+    /// insensitive) in the prompt it came from. A model that invented
+    /// the evidence has invented the decision; the gate drops it
+    /// before it reaches the queue.
+    ///
+    /// The admitted deltas go into `sharpshooter_deltas`. A follow-up
+    /// consolidation pass ranks them by friction and rewrites
+    /// `architecture.md` / `product.md` / `style.md` under the
+    /// design's 120-line ceiling per file.
+    ///
+    /// Best-effort: every failure logs and returns. A turn must never
+    /// fail because decision extraction did.
+    async fn maybe_extract_decisions(&self, key: &str) {
+        if !self.router.has_memory() {
+            return;
+        }
+        // Find the user prompt for this turn: the last User-role
+        // message in the transcript. The engine records the message
+        // at the start of the turn; a swarm agent's assistant text
+        // never appears here, so this picks the human's words.
+        let user_prompt: String = {
+            let history = self.history.read().await;
+            let Some(h) = history.get(key) else {
+                return;
+            };
+            let mut found = String::new();
+            for m in h.iter().rev() {
+                if matches!(m.role, kod_types::MessageRole::User) {
+                    found = m.content.clone();
+                    break;
+                }
+            }
+            found
+        };
+        if !kod_memory::sharpshooter::prompt_is_eligible(&user_prompt) {
+            return;
+        }
+
+        let max_decisions = kod_memory::sharpshooter::DEFAULT_MAX_DECISIONS;
+
+        let chain = self.resolve_chain_for_task("Simple").await;
+        let Some(model_ref) = chain.first() else {
+            return;
+        };
+        let provider = match self.resolve_provider_for_model_ref(model_ref).await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(error = %e, "sharpshooter: no provider");
+                return;
+            }
+        };
+
+        let prompt = kod_memory::sharpshooter::build_prompt(&user_prompt, max_decisions);
+        let opts = kod_provider::GenerationOptions {
+            temperature: Some(0.1),
+            max_tokens: Some(1024),
+            ..Default::default()
+        };
+        let reply = match provider.generate(&prompt, &opts).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!(error = %e, "sharpshooter: extraction call failed");
+                return;
+            }
+        };
+        let parsed = kod_memory::sharpshooter::parse_reply(&reply, max_decisions);
+        if parsed.is_empty() {
+            return;
+        }
+        // The admission gate runs *after* the parse: parse drops
+        // shape-malformed deltas, admit drops ungrounded ones.
+        let admitted: Vec<kod_memory::sharpshooter::DecisionDelta> = parsed
+            .into_iter()
+            .filter(|d| kod_memory::sharpshooter::admit(d, &user_prompt).is_some())
+            .collect();
+        if admitted.is_empty() {
+            return;
+        }
+        let n = admitted.len();
+        self.sharpshooter_deltas.write().await.extend(admitted);
+        tracing::debug!(key, admitted = n, "sharpshooter: decision deltas admitted");
+    }
+
+    /// Delta §12.3: a snapshot of the admitted decision deltas. Used
+    /// by a follow-up consolidation pass, and by tests. Cloning is
+    /// cheap: the queue holds at most a handful of deltas per
+    /// session.
+    pub async fn sharpshooter_deltas(
+        &self,
+    ) -> Vec<kod_memory::sharpshooter::DecisionDelta> {
+        self.sharpshooter_deltas.read().await.clone()
     }
 
     /// Run the memory extraction pass over the session transcript
