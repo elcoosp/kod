@@ -1211,6 +1211,33 @@ mod coverage_provider_parse {
     }
 
     #[test]
+    fn parse_response_usage_carries_the_one_hour_cache_write_subset() {
+        // Delta §13.1: the response body's usage object nests a
+        // cache_creation object; the 1-hour subset is billed at 2x
+        // input. Verify the extractor reads it into TokenUsage.
+        let v = json!({
+            "content": [{"type": "text", "text": "hi"}],
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 10,
+                "cache_read_input_tokens": 50,
+                "cache_creation_input_tokens": 200,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 120,
+                    "ephemeral_1h_input_tokens": 80
+                }
+            }
+        });
+        match parse_response(&v).unwrap() {
+            GenerationResponse::Text { usage, .. } => {
+                let u = usage.expect("usage present");
+                assert_eq!(u.cache_creation_tokens, Some(200));
+                assert_eq!(u.cache_creation_1h_tokens, Some(80));
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+
     fn parse_response_usage_missing_fields_default_to_zero() {
         let v = json!({
             "content": [{"type": "text", "text": "x"}],

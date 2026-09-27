@@ -708,6 +708,65 @@ mod tests {
     }
 
     #[test]
+    fn sse_message_start_captures_the_one_hour_cache_write_subset() {
+        // Delta §13.1: the newer usage shape nests a cache_creation
+        // object with a per-TTL breakdown. The 1-hour subset bills at
+        // 2x input; the 5-minute subset at 1.25x. The total is still
+        // the flat cache_creation_input_tokens key.
+        let mut st = super::AnthropicStreamState::default();
+        let line = "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\
+                    \"role\":\"assistant\",\"content\":[],\
+                    \"usage\":{\"input_tokens\":100,\
+                    \"cache_read_input_tokens\":50,\
+                    \"cache_creation_input_tokens\":200,\
+                    \"cache_creation\":{\"ephemeral_5m_input_tokens\":120,\
+                    \"ephemeral_1h_input_tokens\":80},\
+                    \"output_tokens\":0}}}";
+        let chunks = super::parse_sse_line(&mut st, line);
+        assert!(chunks.is_empty());
+        assert_eq!(st.cache_creation_input_tokens, 200);
+        assert_eq!(
+            st.cache_creation_1h_input_tokens, 80,
+            "the nested 1h subset must be captured"
+        );
+        assert_eq!(st.input_tokens, 100 + 50 + 200);
+    }
+
+    #[test]
+    fn sse_message_start_without_a_nested_breakdown_leaves_the_subset_zero() {
+        // The old flat shape: no `cache_creation` object. The 1h
+        // subset stays 0, and the Usage chunk emits None.
+        let mut st = super::AnthropicStreamState::default();
+        let line = "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\
+                    \"role\":\"assistant\",\"content\":[],\
+                    \"usage\":{\"input_tokens\":100,\
+                    \"cache_read_input_tokens\":50,\
+                    \"cache_creation_input_tokens\":200,\
+                    \"output_tokens\":0}}}";
+        let _ = super::parse_sse_line(&mut st, line);
+        assert_eq!(st.cache_creation_1h_input_tokens, 0);
+    }
+
+    #[test]
+    fn sse_message_start_clamps_a_mis_reported_nested_count() {
+        // A nested 1h count larger than the flat total is clamped to
+        // the total so a mis-report cannot bill a write for more
+        // than its whole.
+        let mut st = super::AnthropicStreamState::default();
+        let line = "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\
+                    \"role\":\"assistant\",\"content\":[],\
+                    \"usage\":{\"input_tokens\":10,\
+                    \"cache_creation_input_tokens\":100,\
+                    \"cache_creation\":{\"ephemeral_1h_input_tokens\":500},\
+                    \"output_tokens\":0}}}";
+        let _ = super::parse_sse_line(&mut st, line);
+        assert_eq!(
+            st.cache_creation_1h_input_tokens, 100,
+            "nested 500 clamped to flat total 100"
+        );
+    }
+
+    #[test]
     fn sse_content_block_start_text_yields_nothing() {
         let mut st = super::AnthropicStreamState::default();
         let line = "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}";
