@@ -149,6 +149,18 @@ pub struct CompactionContext<'a> {
     /// The provider handle for methods that make an LLM call
     /// (`handoff`, `soft`). `None` when no provider is installed.
     pub provider: Option<ProviderHandle>,
+    /// Delta §11.10: per-turn paths whose `read_file` tool results
+    /// must survive shake and prune. The engine populates it with
+    /// the plan document and any reference file the user is working
+    /// against. Empty when there is no plan (the default); shake and
+    /// prune treat an empty set as "no protection beyond the
+    /// config's own defaults".
+    ///
+    /// Distinct from the `protected_paths` field on `ShakeConfig` /
+    /// `PruneConfig`: that field is the *method's* default and is
+    /// set once at dispatcher construction. This is the per-turn
+    /// value — the plan changes turn to turn, the method does not.
+    pub protected_paths: &'a std::collections::HashSet<std::path::PathBuf>,
 }
 
 /// What a method produced.
@@ -384,9 +396,22 @@ impl CompactionMethod for ShakeMethod {
 
     async fn run(&self, ctx: &CompactionContext<'_>) -> MethodOutcome {
         let estimator = ctx.suffix_tokens_after;
+        // Delta §11.10: merge the per-turn protected paths with the
+        // config's own default set. The config's set is empty today
+        // (the engine puts everything into the context), but a
+        // caller that builds a dispatcher with a fixed protected set
+        // keeps that behaviour here.
+        let merged = if ctx.protected_paths.is_empty() {
+            self.config.clone()
+        } else {
+            let mut c = self.config.clone();
+            c.protected_paths
+                .extend(ctx.protected_paths.iter().cloned());
+            c
+        };
         let plan = plan_shake(
             ctx.transcript,
-            &self.config,
+            &merged,
             |i| estimator(i),
             ctx.prefix_is_warm,
         );
@@ -424,9 +449,19 @@ impl CompactionMethod for PruneMethod {
 
     async fn run(&self, ctx: &CompactionContext<'_>) -> MethodOutcome {
         let estimator = ctx.suffix_tokens_after;
+        // Delta §11.10: merge per-turn protected paths (see the
+        // ShakeMethod note above).
+        let merged = if ctx.protected_paths.is_empty() {
+            self.config.clone()
+        } else {
+            let mut c = self.config.clone();
+            c.protected_paths
+                .extend(ctx.protected_paths.iter().cloned());
+            c
+        };
         let plan = crate::prune::plan_prune(
             ctx.transcript,
-            &self.config,
+            &merged,
             |i| estimator(i),
             ctx.prefix_is_warm,
         );
@@ -925,7 +960,17 @@ mod tests {
         transcript: &'a [ChatMessage],
         estimator: &'a (dyn Fn(usize) -> u64 + Send + Sync),
     ) -> CompactionContext<'a> {
+        // An empty protected-paths set, leaked once so its borrow
+        // outlives the context without pulling a Box through every
+        // call. The set is tiny; a single allocation for the whole
+        // test module is not a concern.
+        static NO_PATHS: std::sync::OnceLock<
+            std::collections::HashSet<std::path::PathBuf>,
+        > = std::sync::OnceLock::new();
+        let no_paths = NO_PATHS
+            .get_or_init(std::collections::HashSet::new);
         CompactionContext {
+            protected_paths: no_paths,
             transcript,
             window_tokens: 200_000,
             suffix_tokens_after: estimator,

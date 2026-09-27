@@ -1457,6 +1457,13 @@ pub struct KodEngine {
     /// first turn of a Complex/MultiStep task, re-rendered in every
     /// subsequent system prompt. Absent when the task is simple.
     plans: RwLock<HashMap<String, crate::plan::Plan>>,
+    /// Delta §11.10: per-transcript paths whose `read_file` results
+    /// must survive shake and prune. Set by a caller (a future
+    /// `plan_update` variant, a user command) when the plan reads a
+    /// document the model needs to keep in context. Empty for a
+    /// transcript with no plan or no declared reference paths.
+    plan_reference_paths:
+        RwLock<HashMap<String, std::collections::HashSet<std::path::PathBuf>>>,
     /// Per-transcript durable decisions (Tier 3.4). Populated on
     /// every turn from the classifier; rendered into the prompt after
     /// the plan.
@@ -2834,12 +2841,17 @@ impl KodEngine {
             }
             None => None,
         };
+        // Delta §11.10: the plan-protected paths. Cloned out of the
+        // RwLock before the lock is dropped — the ctx borrows it for
+        // the duration of the dispatcher call.
+        let protected_paths = self.plan_reference_paths(key).await;
         let ctx = crate::compaction_dispatcher::CompactionContext {
             transcript: turns,
             window_tokens,
             suffix_tokens_after: &estimator,
             prefix_is_warm: false,
             provider: provider_handle,
+            protected_paths: &protected_paths,
         };
         let outcome = self.compaction_dispatcher.compact(&ctx).await;
         // Notices from skipped stubs are dropped here — the engine has
@@ -3332,6 +3344,7 @@ impl KodEngine {
             summaries_in_flight: std::sync::Arc::new(RwLock::new(std::collections::HashSet::new())),
             transcript_working_dirs: RwLock::new(HashMap::new()),
             plans: RwLock::new(HashMap::new()),
+            plan_reference_paths: RwLock::new(HashMap::new()),
             decision_logs: RwLock::new(HashMap::new()),
             sharpshooter_deltas: RwLock::new(Vec::new()),
             transcript_write_globs: RwLock::new(HashMap::new()),
@@ -3746,7 +3759,41 @@ impl KodEngine {
     /// Drop the plan for a transcript.
     pub async fn clear_plan(&self, key: &str) {
         self.plans.write().await.remove(key);
+        self.plan_reference_paths.write().await.remove(key);
         self.persist_state().await;
+    }
+
+    /// Delta §11.10: declare a path whose `read_file` result must
+    /// survive shake and prune for `key`. Replaces the set. Called
+    /// by a caller that wants to protect a plan document, a design
+    /// note, or any file the model needs to keep re-reading.
+    pub async fn set_plan_reference_paths(
+        &self,
+        key: &str,
+        paths: std::collections::HashSet<std::path::PathBuf>,
+    ) {
+        if paths.is_empty() {
+            self.plan_reference_paths.write().await.remove(key);
+        } else {
+            self.plan_reference_paths
+                .write()
+                .await
+                .insert(key.to_string(), paths);
+        }
+    }
+
+    /// The currently-declared reference paths for `key`. Used by the
+    /// mechanical-compaction path.
+    pub async fn plan_reference_paths(
+        &self,
+        key: &str,
+    ) -> std::collections::HashSet<std::path::PathBuf> {
+        self.plan_reference_paths
+            .read()
+            .await
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Apply a `PlanUpdate` to the transcript's plan, if one exists.
