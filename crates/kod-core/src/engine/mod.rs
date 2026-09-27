@@ -1457,6 +1457,12 @@ pub struct KodEngine {
     /// first turn of a Complex/MultiStep task, re-rendered in every
     /// subsequent system prompt. Absent when the task is simple.
     plans: RwLock<HashMap<String, crate::plan::Plan>>,
+    /// Delta §12.3: set by the periodic memory-consolidation task
+    /// when its tick produced a report worth acting on; drained by
+    /// the next turn's `process_for` / streaming path so the
+    /// consolidation runs on the engine side (the periodic task
+    /// holds only a router clone).
+    sharpshooter_due: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Delta §11.12: per-transcript prewalk state. A prewalk arms
     /// when the user wants a one-way mid-session model handoff: it
     /// injects a "plan deliberately" nudge once, and the first
@@ -3364,6 +3370,7 @@ impl KodEngine {
             transcript_working_dirs: RwLock::new(HashMap::new()),
             plans: RwLock::new(HashMap::new()),
             prewalks: RwLock::new(HashMap::new()),
+            sharpshooter_due: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             plan_mode: RwLock::new(std::collections::HashSet::new()),
             plan_reference_paths: RwLock::new(HashMap::new()),
             decision_logs: RwLock::new(HashMap::new()),
@@ -3798,6 +3805,25 @@ impl KodEngine {
     /// Delta §11.12: whether a transcript has an armed prewalk.
     pub async fn prewalk_state(&self, key: &str) -> Option<crate::prewalk::PrewalkState> {
         self.prewalks.read().await.get(key).map(|p| p.state.clone())
+    }
+
+    /// Delta §12.3: if the periodic memory-consolidation task has
+    /// flagged a sharpshooter consolidation, run it now. Called at
+    /// the top of every turn so the work happens on the engine's own
+    /// async context (the periodic task holds only a router clone).
+    async fn drain_due_sharpshooter(&self) {
+        if self
+            .sharpshooter_due
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            let files = self.consolidate_sharpshooter_now().await;
+            if files > 0 {
+                tracing::info!(
+                    files,
+                    "periodic sharpshooter consolidation wrote decisions files",
+                );
+            }
+        }
     }
 
     /// Delta §11.12: check whether `tool_name` should fire the
@@ -7743,6 +7769,11 @@ pub(crate) fn filter_chain_by_trust(
         }
 
         let router = Arc::clone(&self.router);
+        // Delta §12.3: the periodic tick cannot reach the engine, so
+        // it flags the sharpshooter consolidation for the next turn.
+        // The engine's `drain_due_sharpshooter` runs it there, on the
+        // engine's own async context.
+        let sharpshooter_due = std::sync::Arc::clone(&self.sharpshooter_due);
         let handle = tokio::spawn(async move {
             let interval = std::time::Duration::from_secs(interval_secs);
             loop {
@@ -7754,6 +7785,10 @@ pub(crate) fn filter_chain_by_trust(
                             fused = report.fused,
                             "memory consolidation pass",
                         );
+                        // The report moved facts around; the
+                        // sharpshooter's target files should be
+                        // refreshed on the next turn.
+                        sharpshooter_due.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
                     Ok(_) => {
                         tracing::debug!("memory consolidation pass: nothing to do");
@@ -8055,6 +8090,9 @@ pub(crate) fn filter_chain_by_trust(
     }
 
     pub async fn process_for(&self, key: &str, input: &str) -> Result<TaskResponse> {
+        // Delta §12.3: a due sharpshooter consolidation from the
+        // periodic task runs on this turn's engine-side context.
+        self.drain_due_sharpshooter().await;
         // H-E5: the non-streaming path never set `current_request`,
         // so the request-keyed Jev helpers (task classification,
         // quality gate) ran against an empty or stale request. The
