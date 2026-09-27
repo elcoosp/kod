@@ -326,3 +326,232 @@ mod tests {
         assert_eq!(depth(&[], &initial_array(4)), 0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Delta §13.3: the driver.
+//
+// The scoring core above is pure. This is the half that talks to a
+// provider: it composes each turn's prompt, collects the reply, parses
+// it, and folds the replies into a depth. Kept in the same module so
+// the prompt shape and the parser stay in step — a change to what the
+// model is asked must ship alongside a change to how its reply is read.
+//
+// The driver takes a closure `run_turn: Fn(&str) -> Result<String>`
+// rather than a provider trait. That keeps the module free of a
+// provider dependency (kod-stats depends on no other kod crate) and
+// lets a test pass a synchronous closure without a runtime.
+
+/// Compose the prompt for `turn`.
+///
+/// Turn 0 is the setup prompt: it explains the game, gives the initial
+/// array, and asks the model to report the array it would have after
+/// the turn's action. Every subsequent turn says "the array you
+/// reported last turn, after this swap is now …", so the model's own
+/// previous reply is the only state carried.
+///
+/// The cat-sound directive rotates per `SoundPosition::for_turn`.
+pub fn prompt_for_turn(turn: usize, initial: &[char]) -> String {
+    let pos = SoundPosition::for_turn(turn);
+    let sound_clause = match pos {
+        SoundPosition::Start => format!(
+            "Your reply MUST include the word \"{CAT_SOUND}\" on one of the \
+             first lines.",
+        ),
+        SoundPosition::Middle => format!(
+            "Your reply MUST include the word \"{CAT_SOUND}\" near the \
+             middle of the reply.",
+        ),
+        SoundPosition::End => format!(
+            "Your reply MUST include the word \"{CAT_SOUND}\" on one of the \
+             last lines.",
+        ),
+    };
+
+    if turn == 0 {
+        let glyphs: String = initial.iter().collect();
+        format!(
+            "You are playing a memory game. I will give you an array of \
+             single characters, then on each turn I will ask you to apply a \
+             swap and report the new array.\n\n\
+             The initial array is:\n{glyphs}\n\n\
+             Turn 0: swap positions {a} and {b} (0-based). Report the new \
+             array on a single line exactly as:\n\
+             array: <glyphs>\n\n\
+             {sound_clause}",
+            a = action_for_turn(0, initial.len()).0,
+            b = action_for_turn(0, initial.len()).1,
+        )
+    } else {
+        let (a, b) = action_for_turn(turn, initial.len());
+        format!(
+            "Turn {turn}: take the array you reported on the previous turn \
+             and swap positions {a} and {b} (0-based). Report the new array \
+             on a single line exactly as:\n\
+             array: <glyphs>\n\n\
+             {sound_clause}",
+        )
+    }
+}
+
+/// Drive a full run of `config.turns` turns, using `run_turn` to make
+/// the provider call for each prompt.
+///
+/// Returns the per-turn replies and the final depth. A turn whose
+/// provider call errors is recorded as `reported: None, sound_ok:
+/// false` — the run stops at that depth rather than aborting, so a
+/// flaky provider produces a low score instead of no score.
+///
+/// `run_turn` is synchronous: the caller blocks inside it. The runner
+/// in the CLI wraps an async provider by `block_on`-ing inside the
+/// closure.
+pub fn drive<F>(config: &IfBenchConfig, mut run_turn: F) -> (Vec<TurnReply>, usize)
+where
+    F: FnMut(&str) -> Result<String, String>,
+{
+    let initial = initial_array(config.array_size);
+    let mut replies: Vec<TurnReply> = Vec::with_capacity(config.turns);
+    let mut current = initial.clone();
+    for turn in 0..config.turns {
+        let prompt = prompt_for_turn(turn, &initial);
+        let reply = match run_turn(&prompt) {
+            Ok(r) => r,
+            Err(_) => {
+                replies.push(TurnReply {
+                    reported: None,
+                    sound_ok: false,
+                });
+                break;
+            }
+        };
+        let reported = parse_reported_array(&reply);
+        let pos = SoundPosition::for_turn(turn);
+        let sound_ok = cat_sound_at(&reply, pos);
+        replies.push(TurnReply {
+            reported: reported.clone(),
+            sound_ok,
+        });
+        // Update the running expectation so the *next* turn's expected
+        // array is derived from the one the model should have reported,
+        // not from what it actually reported. A wrong answer stops the
+        // run at the next comparison anyway; carrying the true array
+        // forward keeps the depths comparable across models.
+        current = apply(&current, action_for_turn(turn, current.len()));
+    }
+    let d = depth(&replies, &initial);
+    (replies, d)
+}
+
+#[cfg(test)]
+mod driver_tests {
+    use super::*;
+
+    #[test]
+    fn turn_zero_prompt_includes_the_initial_array() {
+        let initial = initial_array(4);
+        let p = prompt_for_turn(0, &initial);
+        assert!(p.contains("abcd"), "got: {p}");
+        assert!(p.contains("array: <glyphs>"), "got: {p}");
+        assert!(p.contains(CAT_SOUND), "got: {p}");
+    }
+
+    #[test]
+    fn a_later_turn_prompt_names_the_swap() {
+        let initial = initial_array(8);
+        let p = prompt_for_turn(3, &initial);
+        // action_for_turn(3, 8) = (3, (21+3) % 8) = (3, 0)
+        assert!(p.contains("swap positions 3 and 0"), "got: {p}");
+        // Turn 3 → Start.
+        assert!(p.contains("first lines"), "got: {p}");
+    }
+
+    #[test]
+    fn the_sound_clause_rotates() {
+        let initial = initial_array(4);
+        let p0 = prompt_for_turn(0, &initial);
+        let p1 = prompt_for_turn(1, &initial);
+        let p2 = prompt_for_turn(2, &initial);
+        assert!(p0.contains("first lines"), "got: {p0}");
+        assert!(p1.contains("middle"), "got: {p1}");
+        assert!(p2.contains("last lines"), "got: {p2}");
+    }
+
+    #[test]
+    fn drive_runs_the_configured_number_of_turns() {
+        let config = IfBenchConfig {
+            turns: 4,
+            array_size: 4,
+            ..Default::default()
+        };
+        // A closure that always answers correctly.
+        let initial = initial_array(4);
+        let mut expected = initial.clone();
+        let expected_seq: Vec<Vec<char>> = (0..4)
+            .map(|t| {
+                expected = apply(&expected, action_for_turn(t, expected.len()));
+                expected.clone()
+            })
+            .collect();
+        // Six-line reply so start / middle / end are each a distinct
+        // non-empty third: with n=6, the thirds are [0,2), [2,4),
+        // [4,6) and each has room for one sound.
+        let mut idx = 0;
+        let (replies, depth) = drive(&config, |_p| {
+            let arr: String = expected_seq[idx].iter().collect();
+            let pos = SoundPosition::for_turn(idx);
+            let sound = match pos {
+                SoundPosition::Start => "meow\nline\nline\nline\nline\narray: ",
+                SoundPosition::Middle => "line\nline\nmeow\nline\nline\narray: ",
+                SoundPosition::End => "line\nline\nline\nline\nmeow\narray: ",
+            };
+            idx += 1;
+            Ok(format!("{sound}{arr}\n"))
+        });
+        assert_eq!(replies.len(), 4);
+        assert_eq!(depth, 4);
+    }
+
+    #[test]
+    fn drive_stops_at_a_provider_error() {
+        let config = IfBenchConfig {
+            turns: 4,
+            array_size: 4,
+            ..Default::default()
+        };
+        let mut calls = 0;
+        let (replies, depth) = drive(&config, |_p| {
+            calls += 1;
+            if calls > 2 {
+                Err("provider down".to_string())
+            } else {
+                Ok("meow\narray: dcba\n".to_string())
+            }
+        });
+        // Two successful calls (both wrong, but the run still records
+        // them), then the error short-circuits the loop.
+        assert_eq!(replies.len(), 3);
+        assert!(replies.last().unwrap().reported.is_none());
+        assert_eq!(depth, 0, "wrong arrays never survive");
+    }
+
+    #[test]
+    fn drive_records_a_dropped_sound_as_a_failure() {
+        let config = IfBenchConfig {
+            turns: 3,
+            array_size: 4,
+            ..Default::default()
+        };
+        // First turn: sound at start (ok) but array wrong.
+        // Second turn: sound at end but array right — the sound will be
+        // tested at the required position, and only the *first* failure
+        // counts.
+        let mut idx = 0;
+        let (_, depth) = drive(&config, |_p| {
+            idx += 1;
+            Ok(match idx {
+                1 => "meow\narray: xxxx\n".to_string(),
+                _ => "line\nline\nmeow\narray: dcba\n".to_string(),
+            })
+        });
+        assert_eq!(depth, 0, "the first wrong array caps the depth");
+    }
+}
