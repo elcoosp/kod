@@ -65,7 +65,7 @@ pub const SUPERSEDED_PLACEHOLDER: &str = "[Superseded by a newer read of this fi
 ///
 /// Defaults are the doc's §3.1 numbers, restated at the workspace's
 /// 4-chars-per-token convention.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct PruneConfig {
     /// Never touch a result whose suffix contains this many tokens.
     /// "Suffix" means everything that comes *after* the result —
@@ -128,6 +128,13 @@ pub struct PruneConfig {
     /// system-prompt edit invalidates the cache), or raise this field
     /// above `protect_tokens` to open the band.
     pub cache_warm_suffix_tokens: u64,
+
+    /// Delta §11.10: the plan-mode read-compaction protection. A
+    /// `read_file` result whose call's path matches an entry here is
+    /// never blanked — the model re-reads its own plan document every
+    /// turn. Empty by default; the engine populates it when a plan
+    /// exists.
+    pub protected_paths: std::collections::HashSet<std::path::PathBuf>,
 }
 
 impl Default for PruneConfig {
@@ -137,6 +144,7 @@ impl Default for PruneConfig {
             minimum_savings: 20_000,
             min_prune_tokens: 50,
             cache_warm_suffix_tokens: 8_000,
+            protected_paths: std::collections::HashSet::new(),
         }
     }
 }
@@ -339,6 +347,13 @@ pub fn plan_prune(
         };
         let path = PathBuf::from(path_str);
 
+        // Delta §11.10: never blank a result for the plan document
+        // or a caller's protected reference path. The engine
+        // populates `protected_paths` when a plan exists.
+        if config.protected_paths.contains(&path) {
+            continue;
+        }
+
         // Is this call superseded? Yes iff the index's newest call for
         // this path is a different call id (i.e. a later read of the
         // same path exists in the transcript).
@@ -417,7 +432,7 @@ pub fn plan_prune(
 /// small distance behind its result, so the practical cost is O(n).
 /// Replacing this with a pre-built `HashMap<&str, &ToolCall>` is a
 /// one-line improvement if a profile ever shows it matters.
-fn find_call_by_result<'a>(
+pub(crate) fn find_call_by_result<'a>(
     transcript: &'a [ChatMessage],
     result: &ChatMessage,
 ) -> Option<&'a kod_types::ToolCall> {

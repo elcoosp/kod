@@ -247,6 +247,15 @@ pub struct ShakeConfig {
     /// from whatever mechanism it invents; until then the set is
     /// empty and the rule is inert.
     pub boundary_ids: HashSet<MessageId>,
+
+    /// Delta §11.10: the plan-mode read-compaction protection. A
+    /// tool-result whose originating `read_file` call targets a path
+    /// in this set is never elided — the model re-reads its own plan
+    /// document and reference file every turn, and dropping those
+    /// reads to save a few tokens costs more than the tokens cost.
+    ///
+    /// Empty by default; the engine populates it when a plan exists.
+    pub protected_paths: HashSet<std::path::PathBuf>,
 }
 
 impl Default for ShakeConfig {
@@ -259,6 +268,7 @@ impl Default for ShakeConfig {
             minimum_savings: 4_000,
             cache_warm_suffix_tokens: 8_000,
             boundary_ids: HashSet::new(),
+            protected_paths: HashSet::new(),
         }
     }
 }
@@ -315,6 +325,22 @@ pub fn plan_shake(
     for (i, msg) in transcript.iter().enumerate() {
         if config.boundary_ids.contains(&msg.id) {
             continue;
+        }
+        // Delta §11.10: keep the plan document and its reference
+        // path. A `read_file` result whose call's path matches an
+        // entry in `protected_paths` is skipped; a `read_file` result
+        // whose originating call cannot be resolved is left alone
+        // (the existing behaviour).
+        if !config.protected_paths.is_empty()
+            && msg.role == MessageRole::Tool
+            && let Some(call) = crate::prune::find_call_by_result(transcript, msg)
+            && call.tool_name == "read_file"
+            && let Some(p) = call.arguments.get("path").and_then(|v| v.as_str())
+        {
+            let pb = std::path::PathBuf::from(p);
+            if config.protected_paths.contains(&pb) {
+                continue;
+            }
         }
 
         // Suffix filters apply per-message, before region scanning:
