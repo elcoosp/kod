@@ -474,6 +474,18 @@ pub struct RoutingConfig {
     /// for swarm role-based routing (A7).
     #[serde(default)]
     pub swarm: std::collections::BTreeMap<String, String>,
+    /// Delta §11.10: the endpoint a transcript routes to while in
+    /// explicit plan mode. `None` means plan mode uses the same
+    /// endpoint as the task classification — the pre-change
+    /// behaviour. Naming an endpoint that is not registered is
+    /// dropped at load time with a warning; the same safety valve the
+    /// `by_task` table uses.
+    ///
+    /// The intent: a cheap/fast model for the planning phase and a
+    /// stronger one for execution; or vice versa — an expensive
+    /// reasoning model while planning, a coding model to execute.
+    #[serde(default)]
+    pub plan: Option<String>,
 }
 
 #[cfg(test)]

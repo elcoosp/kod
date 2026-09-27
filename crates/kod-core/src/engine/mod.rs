@@ -6639,6 +6639,26 @@ pub(crate) fn filter_chain_by_trust(
         };
         let routing = self.routing.read().await.clone();
 
+        // Delta §11.10: a transcript in plan mode routes through the
+        // `[llm.routing].plan` endpoint when one is configured. This
+        // is the plan-model role: a cheap-and-fast model to plan, a
+        // stronger one to execute (or the reverse). A plan-mode turn
+        // whose configured endpoint is not registered falls through
+        // to the ordinary chain, so a typo in the config cannot make
+        // planning unusable.
+        //
+        // The switch is *deferred to the turn boundary* — this method
+        // is called once per turn before any streaming starts, so a
+        // mid-stream `/plan-mode` cannot swap the model under the
+        // current stream. That is the design's rule.
+        if self.is_in_plan_mode(DEFAULT_TRANSCRIPT_KEY).await
+            && let Some(r) = &routing
+            && let Some(endpoint) = &r.plan
+            && let Some(model) = registry.default_model(endpoint)
+        {
+            return vec![ModelRef::new(endpoint.clone(), model)];
+        }
+
         let mut chain: Vec<ModelRef> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
