@@ -995,12 +995,23 @@ impl SwarmRunner {
                 repomap_chars = repomap_text.len(),
                 "P5: parent context built for swarm run",
             );
+            // Delta §11.10: the parent's approved plan, rendered as
+            // markdown, injected into every subagent's brief. Empty
+            // when the parent has no plan. Skipped during plan mode
+            // itself — a draft must not leak to a subagent as if it
+            // were approved; the caller (the swarm command) does not
+            // start a swarm while a plan is in draft.
+            let plan_text = match self.engine.plan_for("session").await {
+                Some(p) => p.render_prompt_block(),
+                None => String::new(),
+            };
             kod_swarm::brief_assembly::ParentContext {
                 decisions,
                 file_summaries,
                 repomap_text,
                 expected_writes,
                 token_budget: 4096,
+                plan_text,
             }
         };
 

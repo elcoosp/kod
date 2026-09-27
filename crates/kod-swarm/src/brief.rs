@@ -28,6 +28,12 @@ pub struct ContextBrief {
     pub expected_writes: Vec<String>,
     #[serde(default)]
     pub token_budget: u32,
+    /// Delta §11.10: the parent's approved plan, rendered as
+    /// markdown. Injected when plan mode had a plan approved and the
+    /// runner is dispatching a wave; skipped during plan mode itself
+    /// so a draft never leaks to a subagent as if it were approved.
+    #[serde(default)]
+    pub plan_text: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +124,16 @@ pub fn render_brief(brief: &ContextBrief) -> String {
             ));
         }
         out.push('\n');
+    }
+
+    if !brief.plan_text.trim().is_empty() {
+        out.push_str("## Approved plan\n\n");
+        out.push_str(
+            "The parent approved this plan before dispatching you. Stay \
+             within it unless you find a concrete reason it is wrong.\n\n",
+        );
+        out.push_str(brief.plan_text.trim());
+        out.push_str("\n\n");
     }
 
     if !brief.repomap_slice.trim().is_empty() {
@@ -218,6 +234,26 @@ fn simple_glob_match(pattern: &str, text: &str) -> bool {
 }
 
 #[cfg(test)]
+    #[test]
+    fn render_brief_injects_the_plan_when_present() {
+        let mut b = ContextBrief {
+            goal: "g".into(),
+            constraints: vec![],
+            relevant_decisions: vec![],
+            file_digests: vec![],
+            repomap_slice: String::new(),
+            expected_writes: vec![],
+            token_budget: 0,
+            plan_text: "## Plan\n\n1. do the thing".into(),
+        };
+        let out = render_brief(&b);
+        assert!(out.contains("## Approved plan"), "got: {out}");
+        assert!(out.contains("do the thing"), "got: {out}");
+        b.plan_text.clear();
+        let out = render_brief(&b);
+        assert!(!out.contains("## Approved plan"), "got: {out}");
+    }
+
 mod tests {
     use super::*;
 
@@ -243,6 +279,7 @@ mod tests {
             repomap_slice: "src/lib.rs: fn main".to_string(),
             expected_writes: vec!["src/**".to_string()],
             token_budget: 4096,
+            plan_text: String::new(),
         };
         let s = serde_json::to_string(&b).unwrap();
         let back: ContextBrief = serde_json::from_str(&s).unwrap();

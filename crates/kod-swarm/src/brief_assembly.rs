@@ -17,6 +17,10 @@ pub struct ParentContext {
     pub repomap_text: String,
     pub expected_writes: Vec<String>,
     pub token_budget: u32,
+    /// Delta §11.10: the parent session's rendered plan, if any.
+    /// Empty when the parent has no plan or the caller deliberately
+    /// withholds it (draft mode).
+    pub plan_text: String,
 }
 
 /// Build a `ContextBrief` for a subtask.
@@ -78,6 +82,7 @@ pub fn assemble_brief(
         repomap_slice: parent.repomap_text.clone(),
         expected_writes: parent.expected_writes.clone(),
         token_budget: parent.token_budget,
+        plan_text: parent.plan_text.clone(),
     }
 }
 
@@ -156,6 +161,7 @@ mod tests {
             repomap_text: "src/lib.rs: fn main".to_string(),
             expected_writes: vec!["src/**".to_string()],
             token_budget: 4096,
+            plan_text: String::new(),
         }
     }
 
