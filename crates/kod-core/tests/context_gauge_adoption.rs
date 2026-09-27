@@ -72,6 +72,7 @@ impl LlmProvider for ReportingProvider {
                 total_tokens: prompt_tokens + 1,
                 cache_read_tokens: None,
                 cache_creation_tokens: None,
+                cache_creation_1h_tokens: None,
             }));
             yield Ok(StreamChunk::Done);
         })

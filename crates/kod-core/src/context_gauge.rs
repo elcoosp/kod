@@ -180,6 +180,7 @@ mod tests {
             total_tokens: prompt + 10,
             cache_read_tokens: None,
             cache_creation_tokens: None,
+            cache_creation_1h_tokens: None,
         }
     }
 
@@ -283,6 +284,7 @@ mod tests {
             total_tokens: 10_100,
             cache_read_tokens: Some(8_000),
             cache_creation_tokens: Some(500),
+            cache_creation_1h_tokens: None,
         };
         g.observe(3, &u);
         assert_eq!(g.anchor(), Some((3, 10_000)));

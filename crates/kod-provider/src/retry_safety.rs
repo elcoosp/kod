@@ -252,6 +252,7 @@ mod tests {
             total_tokens: 10 + completion_tokens,
             cache_read_tokens: None,
             cache_creation_tokens: None,
+            cache_creation_1h_tokens: None,
         }
     }
 

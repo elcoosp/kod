@@ -47,6 +47,7 @@ pub async fn run_fixture_replay(name: &str, strict: bool, first_round_only: bool
                 // can add them.
                 cache_read_tokens: None,
                 cache_creation_tokens: None,
+                cache_creation_1h_tokens: None,
             }),
         })
         .collect();

@@ -375,6 +375,8 @@ impl OpenAICompatProvider {
                     cache_creation_tokens: usage
                         .cache_creation_input_token_count
                         .map(|n| n.max(0) as u64),
+
+                    cache_creation_1h_tokens: None,
                 });
             }
             if let Some(content) = response.content {
@@ -643,6 +645,8 @@ impl OpenAICompatProvider {
                                     cache_creation_tokens: usage
                                         .cache_creation_input_token_count
                                         .map(|n| n.max(0) as u64),
+
+                                    cache_creation_1h_tokens: None,
                                 };
                                 last_usage = Some(u.clone());
                                 let chunk = StreamChunk::Usage(u);
@@ -1239,6 +1243,7 @@ mod tests {
             total_tokens: 10_500,
             cache_read_tokens: Some(8_000),
             cache_creation_tokens: Some(0),
+            cache_creation_1h_tokens: None,
         };
         let pricing = ModelPricing::new(3.0, 15.0)
             .with_cache_convention(CacheConvention::Subset);

@@ -212,6 +212,7 @@ mod tests {
             total_tokens: 1100,
             cache_read_tokens: Some(cache_read as u64),
             cache_creation_tokens: None,
+            cache_creation_1h_tokens: None,
         }
     }
 

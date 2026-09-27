@@ -612,6 +612,7 @@ pub fn parse_sse_line(
                     total_tokens: state.input_tokens + out,
                     cache_read_tokens: Some(state.cache_read_input_tokens as u64),
                     cache_creation_tokens: Some(state.cache_creation_input_tokens as u64),
+                    cache_creation_1h_tokens: None,
                 }));
             }
             chunks

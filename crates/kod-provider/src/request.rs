@@ -381,6 +381,7 @@ impl ModelPricing {
             total_tokens: prompt_tokens.saturating_add(completion_tokens),
             cache_read_tokens: None,
             cache_creation_tokens: None,
+            cache_creation_1h_tokens: None,
         })
     }
 
@@ -405,9 +406,24 @@ impl ModelPricing {
         };
         let read = usage.cache_read_tokens.unwrap_or(0);
         let write = usage.cache_creation_tokens.unwrap_or(0);
+        // Delta §13.1: split the write into the 5-minute tier (the
+        // base `cache_write_per_mtok_usd`) and the 1-hour tier
+        // (`cache_write_1h_per_mtok_usd`, defaulting to 2x input
+        // when the field is absent). A provider that reports one
+        // tier sends `cache_creation_1h_tokens == None` and the
+        // whole write prices at the base rate.
+        let write_1h = usage
+            .cache_creation_1h_tokens
+            .unwrap_or(0)
+            .min(write);
+        let write_5m = write.saturating_sub(write_1h);
+        let write_1h_rate = self
+            .cache_write_1h_per_mtok_usd
+            .unwrap_or(self.cache_write_per_mtok_usd);
         (fresh as f64 / m) * self.input_per_mtok_usd
             + (read as f64 / m) * self.cache_read_per_mtok_usd
-            + (write as f64 / m) * self.cache_write_per_mtok_usd
+            + (write_5m as f64 / m) * self.cache_write_per_mtok_usd
+            + (write_1h as f64 / m) * write_1h_rate
             + (usage.completion_tokens as f64 / m) * self.output_per_mtok_usd
     }
 }
@@ -596,6 +612,7 @@ mod cache_convention_tests {
             total_tokens: 6_000_000,
             cache_read_tokens: Some(5_000_000),
             cache_creation_tokens: Some(0),
+            cache_creation_1h_tokens: None,
         };
         // fresh = 6M - 5M - 0 = 1M → 1M * 3 + 5M * 0.3 = 3 + 1.5 = 4.5
         assert!((pricing.cost_for_usage(&usage) - 4.5).abs() < 1e-9);
@@ -618,6 +635,7 @@ mod cache_convention_tests {
             total_tokens: 6_000_000,
             cache_read_tokens: Some(5_000_000),
             cache_creation_tokens: Some(0),
+            cache_creation_1h_tokens: None,
         };
         // fresh = 6M - 5M = 1M * 3 = 3; read 5M * 0.3 = 1.5; total 4.5
         assert!((pricing.cost_for_usage(&usage) - 4.5).abs() < 1e-9);
@@ -646,6 +664,7 @@ mod cache_convention_tests {
             total_tokens: 1_000_000,
             cache_read_tokens: Some(0),
             cache_creation_tokens: Some(100_000),
+            cache_creation_1h_tokens: None,
         };
         let split_cost = base.cost_for_usage(&usage);
         let subset_cost = subset.cost_for_usage(&usage);

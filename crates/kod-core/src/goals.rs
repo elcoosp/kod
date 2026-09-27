@@ -317,6 +317,7 @@ mod tests {
             total_tokens: prompt + completion,
             cache_read_tokens: Some(cache_read),
             cache_creation_tokens: Some(cache_write),
+            cache_creation_1h_tokens: None,
         }
     }
 

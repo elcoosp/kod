@@ -941,6 +941,7 @@ fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
             total_tokens: input + read_usize + creation_usize + output,
             cache_read_tokens: cache_read,
             cache_creation_tokens: cache_creation,
+            cache_creation_1h_tokens: None,
         }
     });
 

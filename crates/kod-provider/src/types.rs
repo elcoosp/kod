@@ -44,6 +44,14 @@ pub struct TokenUsage {
     /// `cache_creation_input_tokens`). `None` when unreported.
     #[serde(default)]
     pub cache_creation_tokens: Option<u64>,
+    /// Delta §13.1: the subset of `cache_creation_tokens` written
+    /// under the *long* (1-hour) TTL. Anthropic's newer usage shape
+    /// breaks `cache_creation_input_tokens` into a 5-minute and a
+    /// 1-hour portion with different write premiums; a provider that
+    /// reports one tier leaves this `None` and every write is priced
+    /// at `cache_write_per_mtok_usd`.
+    #[serde(default)]
+    pub cache_creation_1h_tokens: Option<u64>,
 }
 
 impl TokenUsage {
@@ -100,6 +108,14 @@ impl TokenUsage {
                 (Some(a), Some(b)) => Some(a.saturating_add(b)),
             },
             cache_creation_tokens: match (self.cache_creation_tokens, other.cache_creation_tokens) {
+                (None, None) => None,
+                (Some(a), None) | (None, Some(a)) => Some(a),
+                (Some(a), Some(b)) => Some(a.saturating_add(b)),
+            },
+            cache_creation_1h_tokens: match (
+                self.cache_creation_1h_tokens,
+                other.cache_creation_1h_tokens,
+            ) {
                 (None, None) => None,
                 (Some(a), None) | (None, Some(a)) => Some(a),
                 (Some(a), Some(b)) => Some(a.saturating_add(b)),
