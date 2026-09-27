@@ -201,6 +201,116 @@ impl Plan {
     }
 }
 
+/// Delta §11.10: cap on the autosave claim loop. A plan whose slug
+/// collides with 1000 existing files is pathological; the cap turns
+/// an unbounded loop into a bounded failure.
+pub const MAX_AUTOSAVE_CANDIDATES: usize = 1000;
+
+/// Delta §11.10: max stem length for an autosaved plan's filename.
+/// A slug longer than this is truncated so the path stays portable
+/// (macOS's 255-byte name limit is the practical ceiling; 32 leaves
+/// room for the date prefix and a numeric suffix).
+pub const MAX_AUTOSAVE_STEM_CHARS: usize = 32;
+
+/// Delta §11.10: the on-disk home for autosaved plans.
+///
+/// `~/.kod/plans/<fnv1a-of-canonical-working-dir>/`. Returns `None`
+/// when the home dir cannot be determined (a stripped container, a
+/// test without HOME) — the caller treats that as "autosave is not
+/// available" and never fails the plan operation for it.
+pub fn plan_dir_for_working_dir(working_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let home = dirs::home_dir()?;
+    let canonical =
+        std::fs::canonicalize(working_dir).unwrap_or_else(|_| working_dir.to_path_buf());
+    // Reuse the checkpoint module's FNV-1a helper so the two systems
+    // hash the working dir the same way. Both live in kod-core.
+    let hash = crate::checkpoint::fnv1a_hex(canonical.to_string_lossy().as_ref());
+    Some(home.join(".kod").join("plans").join(hash))
+}
+
+/// Turn arbitrary text into a filename-safe slug:
+/// lowercase ASCII alnum and `-`, everything else a `-`; collapsed
+/// runs of `-`; leading and trailing `-` stripped; capped at
+/// [`MAX_AUTOSAVE_STEM_CHARS`].
+pub fn slugify(text: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for c in text.chars() {
+        let c = c.to_ascii_lowercase();
+        if c.is_ascii_alphanumeric() {
+            if out.chars().count() >= MAX_AUTOSAVE_STEM_CHARS {
+                break;
+            }
+            out.push(c);
+            last_dash = false;
+        } else if !last_dash && !out.is_empty() {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    // Trim a trailing dash.
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "plan".to_string()
+    } else {
+        out
+    }
+}
+
+/// Delta §11.10: autosave an approved plan to disk.
+///
+/// The destination is `plan_dir_for_working_dir(working_dir)`; the
+/// filename is `plan-<yyyymmdd>-<slug>.md` where `<slug>` is
+/// [`slugify`] of the goal, and a numeric suffix is added on
+/// collision. The claim is made with `create_new(true)` (O_EXCL) so
+/// two concurrent processes cannot both write the same path — a
+/// mismatch retries with the next suffix, up to
+/// [`MAX_AUTOSAVE_CANDIDATES`].
+///
+/// The content is the plan rendered by [`Plan::render_prompt_block`],
+/// which is the exact form a subagent sees. Returns the path written,
+/// or `None` on any I/O error (best-effort: a failed autosave must
+/// not fail the plan operation).
+pub fn autosave_plan(
+    plan: &Plan,
+    working_dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let dir = plan_dir_for_working_dir(working_dir)?;
+    std::fs::create_dir_all(&dir).ok()?;
+    let date = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Iso8601::DATE)
+        .ok()?;
+    let slug = slugify(&plan.goal);
+    for n in 0..MAX_AUTOSAVE_CANDIDATES {
+        let name = if n == 0 {
+            format!("plan-{date}-{slug}.md")
+        } else {
+            format!("plan-{date}-{slug}-{n}.md")
+        };
+        let path = dir.join(name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                use std::io::Write;
+                let body = plan.render_prompt_block();
+                if f.write_all(body.as_bytes()).is_err() {
+                    let _ = std::fs::remove_file(&path);
+                    return None;
+                }
+                return Some(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
 /// The update the model emits via the `plan_update` tool. Only one
 /// variant is active per call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -255,6 +365,57 @@ impl Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- §11.10 autosave primitives ---------------------------------
+
+    #[test]
+    fn slugify_drops_punctuation() {
+        assert_eq!(slugify("Fix the bug!"), "fix-the-bug");
+    }
+
+    #[test]
+    fn slugify_collapses_dashes() {
+        assert_eq!(slugify("a --- b"), "a-b");
+    }
+
+    #[test]
+    fn slugify_trims_leading_and_trailing_dashes() {
+        assert_eq!(slugify("--hello--"), "hello");
+    }
+
+    #[test]
+    fn slugify_falls_back_to_plan_for_empty() {
+        assert_eq!(slugify(""), "plan");
+        assert_eq!(slugify("!!! ???"), "plan");
+    }
+
+    #[test]
+    fn slugify_caps_length() {
+        let long = "a".repeat(200);
+        let s = slugify(&long);
+        assert!(s.chars().count() <= MAX_AUTOSAVE_STEM_CHARS, "got: {s}");
+    }
+
+    #[test]
+    fn autosave_writes_a_markdown_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let plan = Plan::new("fix the parser", vec!["a".into(), "b".into()]);
+        let path = autosave_plan(&plan, dir.path()).expect("autosave");
+        assert!(path.exists());
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("## Plan"), "got: {body}");
+        assert!(body.contains("1. a"), "got: {body}");
+    }
+
+    #[test]
+    fn autosave_avoids_a_collision_by_numbering() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let plan = Plan::new("twice", vec!["a".into()]);
+        let p1 = autosave_plan(&plan, dir.path()).expect("first");
+        let p2 = autosave_plan(&plan, dir.path()).expect("second");
+        assert_ne!(p1, p2, "the second autosave must not clobber the first");
+        assert!(p2.exists());
+    }
 
     #[test]
     fn new_plan_starts_on_first_step() {
