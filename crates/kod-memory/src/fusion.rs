@@ -141,6 +141,25 @@ pub enum QueryIntent {
 /// Order matters: preference beats procedural (a `prefer` query
 /// usually also contains a verb), temporal beats general.
 pub fn classify_intent(query: &str) -> QueryIntent {
+    classify_intent_with_confidence(query).0
+}
+
+/// Classify a query's intent and return the confidence that the
+/// classification is meaningful.
+///
+/// The confidence is `min(0.3 + 0.15 * matches, 1.0)` — the design's
+/// formula. `matches` is the number of distinct cue *categories* that
+/// fired: the question mark or a leading question word (one), each
+/// matched preference word (one per word), each matched temporal
+/// phrase (one per phrase), and the leading imperative verb (one).
+/// A query with no cue returns `(General, 0.3)` — the floor, not
+/// zero, because even an uncued query leans slightly toward its
+/// classification over a uniform prior.
+///
+/// Callers that want the intent only should use [`classify_intent`].
+/// Callers that want to blend the intent weights toward neutral
+/// should use [`blend_weights`] with this confidence.
+pub fn classify_intent_with_confidence(query: &str) -> (QueryIntent, f64) {
     let lower = query.to_ascii_lowercase();
     let trimmed = lower.trim();
     let first_word = trimmed.split_whitespace().next().unwrap_or("");
@@ -157,19 +176,58 @@ pub fn classify_intent(query: &str) -> QueryIntent {
         "implement", "update",
     ];
 
-    if trimmed.ends_with('?') || QUESTION_WORDS.contains(&first_word) {
-        return QueryIntent::Question;
+    let ends_with_q = trimmed.ends_with('?');
+    let leading_q = QUESTION_WORDS.contains(&first_word);
+    let question_cues: u32 = (ends_with_q as u32) + (leading_q as u32);
+    if question_cues > 0 {
+        return (QueryIntent::Question, intent_confidence(question_cues));
     }
-    if PREFERENCE_WORDS.iter().any(|w| lower.contains(w)) {
-        return QueryIntent::Preference;
+
+    let mut pref_hits = 0u32;
+    for w in PREFERENCE_WORDS {
+        if lower.contains(w) {
+            pref_hits += 1;
+        }
     }
-    if TEMPORAL_WORDS.iter().any(|w| lower.contains(w)) {
-        return QueryIntent::Temporal;
+    if pref_hits > 0 {
+        return (QueryIntent::Preference, intent_confidence(pref_hits));
     }
+
+    let mut temp_hits = 0u32;
+    for w in TEMPORAL_WORDS {
+        if lower.contains(w) {
+            temp_hits += 1;
+        }
+    }
+    if temp_hits > 0 {
+        return (QueryIntent::Temporal, intent_confidence(temp_hits));
+    }
+
     if PROCEDURAL_VERBS.contains(&first_word) {
-        return QueryIntent::Procedural;
+        return (QueryIntent::Procedural, intent_confidence(1));
     }
-    QueryIntent::General
+    (QueryIntent::General, intent_confidence(0))
+}
+
+/// Blend intent weights toward neutral (all-1.0) by `confidence`.
+///
+/// The design's rule: an intent classification is a *bias*, not a
+/// hard switch. A query with one weak cue (say a preference word that
+/// could be prose) should not apply the full 1.5× importance weight;
+/// a query that reads clearly as temporal should. Blend:
+/// `w' = 1.0 + confidence * (w - 1.0)`, applied component-wise.
+///
+/// `confidence` in `[0, 1]`; values outside are clamped. `0.0`
+/// returns the neutral weights, `1.0` returns the input unchanged.
+pub fn blend_weights(weights: IntentWeights, confidence: f64) -> IntentWeights {
+    let c = confidence.clamp(0.0, 1.0);
+    let blend = |w: f64| 1.0 + c * (w - 1.0);
+    IntentWeights {
+        vector: blend(weights.vector),
+        keyword: blend(weights.keyword),
+        importance: blend(weights.importance),
+        temporal: blend(weights.temporal),
+    }
 }
 
 /// A weight bias for the four retrieval voices, for one intent.
@@ -443,5 +501,80 @@ mod tests {
     fn confidence_grows_and_caps() {
         assert!((intent_confidence(1) - 0.45).abs() < 1e-9);
         assert!((intent_confidence(100) - 1.0).abs() < 1e-9);
+    }
+
+    // ---- classify_intent_with_confidence / blend_weights -------------
+
+    #[test]
+    fn a_question_mark_and_a_question_word_count_as_two_cues() {
+        let (i, c) = classify_intent_with_confidence("what is this?");
+        assert_eq!(i, QueryIntent::Question);
+        assert!((c - 0.6).abs() < 1e-9, "got {c}");
+    }
+
+    #[test]
+    fn one_cue_yields_confidence_0_45() {
+        let (i, c) = classify_intent_with_confidence("how does it work");
+        assert_eq!(i, QueryIntent::Question);
+        assert!((c - 0.45).abs() < 1e-9, "got {c}");
+    }
+
+    #[test]
+    fn no_cue_yields_the_floor() {
+        let (i, c) = classify_intent_with_confidence("the parser module");
+        assert_eq!(i, QueryIntent::General);
+        assert!((c - 0.3).abs() < 1e-9, "got {c}");
+    }
+
+    #[test]
+    fn multiple_preference_words_raise_confidence() {
+        let (i, c) = classify_intent_with_confidence("prefer always dark mode");
+        assert_eq!(i, QueryIntent::Preference);
+        assert!((c - 0.6).abs() < 1e-9, "got {c}");
+    }
+
+    #[test]
+    fn blend_with_confidence_zero_is_neutral() {
+        let w = IntentWeights {
+            vector: 0.6,
+            keyword: 1.5,
+            importance: 1.5,
+            temporal: 0.9,
+        };
+        let b = blend_weights(w, 0.0);
+        assert_eq!(b.vector, 1.0);
+        assert_eq!(b.keyword, 1.0);
+        assert_eq!(b.importance, 1.0);
+        assert_eq!(b.temporal, 1.0);
+    }
+
+    #[test]
+    fn blend_with_confidence_one_is_identity() {
+        let w = IntentWeights {
+            vector: 0.6,
+            keyword: 1.5,
+            importance: 1.5,
+            temporal: 0.9,
+        };
+        let b = blend_weights(w, 1.0);
+        assert_eq!(b.vector, w.vector);
+        assert_eq!(b.keyword, w.keyword);
+        assert_eq!(b.importance, w.importance);
+        assert_eq!(b.temporal, w.temporal);
+    }
+
+    #[test]
+    fn blend_at_half_is_between_neutral_and_full() {
+        let w = intent_weights(QueryIntent::Temporal);
+        let b = blend_weights(w, 0.5);
+        assert!((b.vector - (1.0 + 0.5 * (w.vector - 1.0))).abs() < 1e-9);
+        assert!((b.keyword - (1.0 + 0.5 * (w.keyword - 1.0))).abs() < 1e-9);
+    }
+
+    #[test]
+    fn blend_clamps_out_of_range_confidence() {
+        let w = intent_weights(QueryIntent::Temporal);
+        assert_eq!(blend_weights(w, -1.0), blend_weights(w, 0.0));
+        assert_eq!(blend_weights(w, 5.0), blend_weights(w, 1.0));
     }
 }

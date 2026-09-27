@@ -691,10 +691,16 @@ impl MemoryManager {
         };
 
         let now = time::OffsetDateTime::now_utc();
-        // Delta §12.8: classify the query's intent and bias the
-        // component weights accordingly.
-        let intent = crate::fusion::classify_intent(query);
-        let weights = crate::fusion::intent_weights(intent);
+        // Delta §12.8: classify the query's intent, then blend the
+        // intent weights toward neutral by the classification's
+        // confidence. A single weak cue (a preference word that could
+        // be prose) applies only a fraction of the bias; a query that
+        // reads clearly as temporal applies most of it.
+        let (intent, confidence) = crate::fusion::classify_intent_with_confidence(query);
+        let weights = crate::fusion::blend_weights(
+            crate::fusion::intent_weights(intent),
+            confidence,
+        );
 
         // Delta §12.8: polyphonic fusion. Build four ranked voices
         // — vector (cosine), fact (BM25 keyword), importance (the
