@@ -1015,6 +1015,14 @@ impl TuiLoop {
                     sequence: 0,
                 });
             }
+            Event::System(_priority, msg) => {
+                // Display-only notices from the engine (phase-change
+                // hints, approval-parse failures). Every System event
+                // lands in the transcript as a `sys` row; priority
+                // ordered them in the queue, it carries no extra
+                // semantics here.
+                self.app.push_system_message(&msg);
+            }
             Event::Error(error) => {
                 self.gen_task = None;
                 self.app.fail_generation(&error);
