@@ -46,23 +46,64 @@ impl ChatWidget {
         !is_first && m.role == MessageRole::User
     }
 
-    /// Split `s` into display rows of at most `width` cells, breaking long
-    /// rows mid-word exactly like `Paragraph` with `Wrap { trim: false }`.
+    /// Split `s` into display rows of at most `width` cells. Wraps at
+    /// word boundaries like the markdown path (`wrap_spans`); a word
+    /// wider than the row (URLs, CJK runs without spaces) hard-breaks
+    /// mid-word exactly like before. Tab characters wrap as spaces.
+    /// Pre-wrapped rows are all ≤ width, so Ratatui's `WordWrapper`
+    /// passes them through unchanged — measurement and paint agree.
     fn wrap_text(s: &str, width: usize) -> Vec<String> {
         let width = width.max(1);
-        let mut rows = Vec::new();
+        let mut rows: Vec<String> = Vec::new();
         for raw in s.split('\n') {
             let mut cur = String::new();
-            let mut cur_w = 0;
-            for ch in raw.chars() {
-                let w = Span::raw(ch.to_string()).width().max(1);
-                if cur_w + w > width && !cur.is_empty() {
-                    rows.push(std::mem::take(&mut cur));
-                    cur_w = 0;
+            let mut cur_w = 0usize;
+            let mut word = String::new();
+            let mut word_w = 0usize;
+            let flush = |cur: &mut String,
+                         cur_w: &mut usize,
+                         word: &mut String,
+                         word_w: &mut usize,
+                         rows: &mut Vec<String>| {
+                let ww = *word_w;
+                if ww == 0 {
+                    return;
                 }
-                cur.push(ch);
-                cur_w += w;
+                // A word wider than the whole row hard-breaks in place.
+                if ww > width {
+                    for ch in word.chars() {
+                        let w = Span::raw(ch.to_string()).width().max(1);
+                        if *cur_w + w > width && !cur.is_empty() {
+                            rows.push(std::mem::take(cur));
+                            *cur_w = 0;
+                        }
+                        cur.push(ch);
+                        *cur_w += w;
+                    }
+                } else {
+                    if *cur_w > 0 && *cur_w + 1 + ww > width {
+                        rows.push(std::mem::take(cur));
+                        *cur_w = 0;
+                    }
+                    if *cur_w > 0 {
+                        cur.push(' ');
+                        *cur_w += 1;
+                    }
+                    cur.push_str(word);
+                    *cur_w += ww;
+                }
+                word.clear();
+                *word_w = 0;
+            };
+            for ch in raw.chars() {
+                if ch == ' ' || ch == '\t' {
+                    flush(&mut cur, &mut cur_w, &mut word, &mut word_w, &mut rows);
+                } else {
+                    word.push(ch);
+                    word_w += Span::raw(ch.to_string()).width().max(1);
+                }
             }
+            flush(&mut cur, &mut cur_w, &mut word, &mut word_w, &mut rows);
             rows.push(cur);
         }
         if rows.is_empty() {
@@ -667,6 +708,20 @@ mod coverage_chat_widget {
     #[test]
     fn wrap_text_handles_empty_input() {
         assert_eq!(ChatWidget::wrap_text("", 10), vec![""]);
+    }
+
+    #[test]
+    fn wrap_text_wraps_at_word_boundaries() {
+        let rows = ChatWidget::wrap_text("hello brave world", 11);
+        assert_eq!(rows, vec!["hello brave", "world"]);
+    }
+
+    #[test]
+    fn wrap_text_keeps_multibyte_width_exact_with_spaces() {
+        // CJK runs without spaces hard-break; with spaces the wrap
+        // respects the space.
+        let rows = ChatWidget::wrap_text("ab cd ef", 5);
+        assert_eq!(rows, vec!["ab cd", "ef"]);
     }
 
     #[test]
