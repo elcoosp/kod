@@ -21,6 +21,7 @@ members = [
     "crates/kod-schema-dialect",
     "crates/kod-minimize",
     "crates/kod-stats",
+    "crates/kod-telemetry",
 ]
 
 [workspace.package]
