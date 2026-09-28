@@ -986,15 +986,11 @@ impl TuiLoop {
                 // flushing before would drop post-tool text above the row.
                 self.app.complete_tool_execution(&tool_name, &result);
                 self.app.flush_streamed_text();
-                // Failures must be unmissable even if the tool row is collapsed
-                // or `t` hid tools — push a red system line as backup.
-                if result.trim_start().starts_with("Error:") {
-                    self.app.push_system_message(&format!(
-                        "Tool `{}` failed: {}",
-                        tool_name,
-                        result.trim()
-                    ));
-                }
+                // Errors are NOT repeated as a system message here. The tool
+                // row is the single error surface: auto-expanded on failure,
+                // styled `✗`, and never hidden by the `t` toggle
+                // (`ChatWidget::render` keeps error rows visible). A second
+                // copy in the transcript is noise, not redundancy.
             }
             Event::ToolCompletedWithDuration(tool_name, result, duration_ms) => {
                 // Live done-marker: same row fill, stamped with wall time.
@@ -1006,13 +1002,8 @@ impl TuiLoop {
                     Some(duration_ms),
                 );
                 self.app.flush_streamed_text();
-                if result.trim_start().starts_with("Error:") {
-                    self.app.push_system_message(&format!(
-                        "Tool `{}` failed: {}",
-                        tool_name,
-                        result.trim()
-                    ));
-                }
+                // (A1: no duplicate system line — the row is the single
+                // error surface, and it stays visible under `t`.)
             }
             Event::AgentMessage(agent_name, message) => {
                 self.app.add_message(crate::app::Message {
