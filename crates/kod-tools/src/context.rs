@@ -574,6 +574,65 @@ impl BackgroundSpawnHook {
     }
 }
 
+/// Delta §11.4: a child the tool has decided to hand off to the
+/// background runner.
+///
+/// `execute_command` runs the child under a wall-clock deadline. When
+/// the deadline fires, one of two things happens: without a hook, the
+/// child is killed (the pre-change behaviour); with a hook, the
+/// still-live child and its pipes are moved into this struct and
+/// handed to [`BackgroundAdoptHook`], which becomes responsible for
+/// draining the pipes, reaping the child, and delivering a
+/// completion notice. The tool returns immediately with a
+/// `background: true` result.
+pub struct DetachedChild {
+    /// The command as the user issued it, for the job list.
+    pub command: String,
+    /// The holder (transcript key) that issued the command.
+    pub holder: String,
+    /// The child, still running.
+    pub child: tokio::process::Child,
+    /// The child's stdout pipe, still open.
+    pub stdout: tokio::process::ChildStdout,
+    /// The child's stderr pipe, still open.
+    pub stderr: tokio::process::ChildStderr,
+    /// Bytes the tool already read from each pipe before handing off.
+    /// The adopter writes these into the spool first, then continues
+    /// reading live.
+    pub prior_stdout: Vec<u8>,
+    pub prior_stderr: Vec<u8>,
+}
+
+/// Delta §11.4: what a [`BackgroundAdoptHook`] does with a
+/// [`DetachedChild`]. Mirrors [`BackgroundSpawnHook`]: the tool does
+/// not know about the engine's job runner, and the engine provides a
+/// closure that does.
+#[derive(Clone)]
+pub struct BackgroundAdoptHook {
+    inner: std::sync::Arc<dyn Fn(DetachedChild) -> Option<String> + Send + Sync>,
+}
+
+impl std::fmt::Debug for BackgroundAdoptHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BackgroundAdoptHook")
+    }
+}
+
+impl BackgroundAdoptHook {
+    pub fn new(
+        f: impl Fn(DetachedChild) -> Option<String> + Send + Sync + 'static,
+    ) -> Self {
+        Self { inner: std::sync::Arc::new(f) }
+    }
+
+    /// Adopt a running child. Returns the job id it registered, or
+    /// `None` when the runner declined (a shutting-down engine, a
+    /// cap reached).
+    pub fn adopt(&self, child: DetachedChild) -> Option<String> {
+        (self.inner)(child)
+    }
+}
+
 #[derive(Clone)]
 pub struct FileTouchHook {
     inner: std::sync::Arc<dyn Fn(&str, &std::path::Path, FileOp, Option<&str>) + Send + Sync>,
@@ -661,6 +720,13 @@ pub struct ToolContext {
     /// P2-d: starts a shell command in the background. `None` outside
     /// an engine that owns a job runner.
     pub on_background_command: Option<BackgroundSpawnHook>,
+
+    /// Delta §11.4: adopts a child that outlived its deadline.
+    /// `None` outside an engine that owns a job runner; the tool
+    /// then falls back to killing the child (the pre-change
+    /// behaviour). `Some` moves the still-running child and its
+    /// pipes into the runner, which delivers a completion notice.
+    pub on_background_adopt: Option<BackgroundAdoptHook>,
 
     /// Delta §5: offload hook for the minimizer. When `Some`, a
     /// rewritten `execute_command` result offloads the raw capture
@@ -784,6 +850,7 @@ impl ToolContext {
         
             on_file_touch: None,
             on_background_command: None,
+            on_background_adopt: None,
             on_artifact_store: None,
             minimizer: None,
             protocol_router: None,
@@ -858,6 +925,15 @@ impl ToolContext {
     /// `execute_command` can honor `run_in_background`.
     pub fn with_background_hook(mut self, hook: BackgroundSpawnHook) -> Self {
         self.on_background_command = Some(hook);
+        self
+    }
+
+    /// Delta §11.4: install the child-adoption hook. The engine sets
+    /// this alongside the spawner so `execute_command` can hand a
+    /// deadline-exceeded child to the background runner instead of
+    /// killing it.
+    pub fn with_background_adopt_hook(mut self, hook: BackgroundAdoptHook) -> Self {
+        self.on_background_adopt = Some(hook);
         self
     }
 
