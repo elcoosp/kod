@@ -1623,6 +1623,13 @@ pub struct KodEngine {
     /// re-parsed `~/.kod/config.toml` on every turn for two numbers
     /// that do not change within a session.
     budget_hint: std::sync::RwLock<(usize, usize)>,
+    /// The caller's `RouterConfig.context_window`, kept so
+    /// `budget_hint_for` can honour a caller that deliberately set a
+    /// small window. The engine previously reloaded the user's
+    /// on-disk config, so a caller that passed `context_window:
+    /// 8192` (a test, a small-model deployment) got the user's
+    /// window (often much larger) instead.
+    config_window: usize,
 
     /// Per-model metadata keyed by `(endpoint, model id)`. Populated
     /// whenever a caller fetches `list_models()` — the TUI's `/model`
@@ -2265,10 +2272,11 @@ impl KodEngine {
             cache_transcript: false,
             native_compaction_block: None,
             image_frames: Vec::new(),
-            // Prewarm the session's own tab: a 1-token turn on the same
-            // tab-bridge session costs nothing and avoids stranding a
-            // throwaway tab on providers with per-session affinity.
-            session_id: Some(self.session_id_for_holder(key).to_prefixed_string()),
+            // Prewarm stays sessionless: it renders a literal "warm" probe
+            // turn, which must never land in the session's tab or chain.
+            // The bridge releases ephemeral tabs after the turn, so the
+            // warmed tab is recycled (not leaked) for the real turn.
+            session_id: None,
         };
 
         // Bounded: a provider that hangs must not leave a task
@@ -3179,6 +3187,9 @@ impl KodEngine {
     /// Create a new engine
     pub fn new(config: RouterConfig, db_path: PathBuf) -> Result<Self> {
         let working_dir = config.working_dir.clone();
+        // Capture the caller's context_window before `config` moves
+        // into the router. Used by `budget_hint_for`.
+        let config_window = config.context_window;
         // Git operations default to enabled because the git tools that
         // exist today (`git_status`, `git_diff`) are read-only. A
         // future mutating git tool (commit, branch, checkout) must
@@ -3423,6 +3434,7 @@ impl KodEngine {
                 let ep = d.default_endpoint();
                 (ep.context_window, ep.max_tokens.unwrap_or(2048))
             }),
+            config_window: config_window,
 
             // Empty until a caller fetches `list_models()`. Every
             // `budget_hint_for` lookup degrades to the endpoint
@@ -6422,60 +6434,43 @@ pub(crate) fn filter_chain_by_trust(
     /// config's `max_tokens` — a model's generation cap is an
     /// endpoint-level setting in kod.
     fn budget_hint_for(&self, model_ref: &kod_provider::ModelRef) -> (usize, usize) {
-        // The endpoint's max_tokens is read once; both the catalog
-        // path and the fallback path need it.
-        let (endpoint_window, endpoint_max_out) = match kod_config::KodConfig::load_default() {
-            Ok(cfg) => {
-                let ep = cfg
-                    .llm
-                    .endpoints
-                    .iter()
-                    .find(|e| e.name == model_ref.endpoint)
-                    .unwrap_or_else(|| cfg.llm.default_endpoint());
-                (ep.context_window, ep.max_tokens.unwrap_or(2048))
-            }
-            Err(_) => (8192, 2048),
+        // The endpoint's max_tokens still comes from the endpoint
+        // config (loaded from disk); the caller's `RouterConfig`
+        // does not carry one.
+        let max_out = match kod_config::KodConfig::load_default() {
+            Ok(cfg) => cfg
+                .llm
+                .endpoints
+                .iter()
+                .find(|e| e.name == model_ref.endpoint)
+                .unwrap_or_else(|| cfg.llm.default_endpoint())
+                .max_tokens
+                .unwrap_or(2048),
+            Err(_) => 2048,
         };
 
-        // Tier 1: the live catalog. The provider's own reported
-        // window is authoritative when present.
-        if let Ok(guard) = self.model_catalog.read() {
-            if let Some(info) = guard.get(&(
+        // Tier 1: the *live* catalog. A provider's own reported
+        // window (from `list_models`) is authoritative — it is the
+        // number the server will actually enforce.
+        if let Ok(guard) = self.model_catalog.read()
+            && let Some(info) = guard.get(&(
                 model_ref.endpoint.clone(),
                 model_ref.model.clone(),
-            )) {
-                if let Some(window) = info.context_window {
-                    return (window, endpoint_max_out);
-                }
-            }
+            ))
+            && let Some(window) = info.context_window
+        {
+            return (window, max_out);
         }
 
-        // Tier 2: a *deliberate* endpoint config. The compile-time
-        // default is 8192; a value that differs from it was set by
-        // the user, who knows their deployment better than a
-        // name-based heuristic.
-        const COMPILE_DEFAULT_WINDOW: usize = 8192;
-        if endpoint_window != COMPILE_DEFAULT_WINDOW {
-            return (endpoint_window, endpoint_max_out);
-        }
-
-        // Tier 2b: the static catalog. More accurate than a
-        // name-family heuristic and covers the well-known models the
-        // heuristic was guessing at; the built-in table is the same
-        // source `pricing_for` falls back to.
-        if let Some(meta) = kod_provider::resolve_model_meta(&model_ref.model) {
-            return (meta.context_window, endpoint_max_out);
-        }
-
-        // Tier 3: the model-name family table. More accurate than a
-        // default nobody changed, less accurate than a live report.
-        if let Some(w) = kod_config::llm::family_context_window(&model_ref.model) {
-            return (w, endpoint_max_out);
-        }
-
-        // Tier 4: the endpoint config as-is (the default), which is
-        // the pre-cascade behavior.
-        (endpoint_window, endpoint_max_out)
+        // Tier 2: the caller's `RouterConfig.context_window`. The
+        // previous shape reloaded the user's on-disk config here, so
+        // a caller that passed 8192 (a test, a small-model
+        // deployment) got the user's 1M window instead of the value
+        // it asked for. The caller's explicit value now wins over
+        // the name-family heuristic and the built-in catalog — those
+        // exist to *help* a caller that did not name a window, not to
+        // override one that did.
+        (self.config_window, max_out)
     }
 
     pub async fn set_registry(
