@@ -14,8 +14,10 @@ use ratatui::text::Text;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
 
-/// Tool body rows shown before collapsing to `… and N more`.
-pub const TOOL_DISPLAY_LINES: usize = 12;
+/// Tool body rows shown before collapsing to `… +N more lines (o expands)`.
+/// Errors bypass the cap entirely — see the auto-expand in
+/// `complete_tool_execution_with_duration`.
+pub const TOOL_DISPLAY_LINES: usize = 4;
 
 /// Widget for displaying chat messages
 pub struct ChatWidget;
@@ -287,10 +289,7 @@ impl ChatWidget {
                     lines.push(Line::from(vec![
                         Span::raw("    "),
                         Span::styled(
-                            format!(
-                                "… and {} more lines — o expands, t hides tools",
-                                rows.len() - shown
-                            ),
+                            format!("… +{} more lines (o expands)", rows.len() - shown),
                             Style::default()
                                 .fg(theme.warning)
                                 .add_modifier(Modifier::ITALIC),
