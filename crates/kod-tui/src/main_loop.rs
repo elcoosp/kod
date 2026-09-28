@@ -2899,10 +2899,16 @@ impl TuiLoop {
                 match role {
                     kod_types::MessageRole::User | kod_types::MessageRole::Assistant => {}
                     _ => {
-                        self.app.push_system_message(
-                            "Only user and assistant messages can be pinned — \
+                        // Differentiate the /pin and /unpin messages: they
+                        // describe different intents, and the D1 dedup
+                        // (consecutive identical system rows collapse)
+                        // would otherwise hide the second command's
+                        // report entirely.
+                        self.app.push_system_message(&format!(
+                            "Only user and assistant messages can be {} — \
                              tool, system, and agent rows are transcript-local.",
-                        );
+                            if pin { "pinned" } else { "unpinned" },
+                        ));
                         return Ok(());
                     }
                 }
