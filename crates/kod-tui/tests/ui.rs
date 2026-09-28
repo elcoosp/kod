@@ -843,13 +843,23 @@ mod header_and_status {
     }
 
     #[test]
-    fn header_shows_the_theme_name_in_brackets() {
+    fn header_omits_the_theme_badge() {
+        // The theme badge was noise (discoverable via `/theme`); C1
+        // removed it. `theme_name()` stays public for the slash command.
         let app = KodApp::new();
         let name = app.theme_name().to_string();
         let text = render_header(&app, 120);
         assert!(
-            text.contains(&format!("[{name}]")),
-            "theme tag [{name}], got: {text}"
+            !text.contains(&format!("[{name}]")),
+            "theme tag must not appear in the header, got: {text}"
+        );
+        assert!(
+            text.contains(" kod "),
+            "the title stays, got: {text}"
+        );
+        assert!(
+            text.contains("ctx "),
+            "the context meter stays, got: {text}"
         );
     }
 
@@ -879,13 +889,17 @@ mod header_and_status {
     }
 
     #[test]
-    fn header_shows_sandbox_off_as_a_plain_badge() {
+    fn header_omits_the_off_sandbox_badge() {
+        // `off` is the quiet default: stating the absence of a sandbox
+        // on every frame is noise. C1 removed the badge. The
+        // `require-missing` and active-backend badges stay visible (see
+        // the sibling tests).
         let mut app = KodApp::new();
         app.set_sandbox_label("off".to_string());
         let text = render_header(&app, 160);
         assert!(
-            text.contains("sandbox:off"),
-            "sandbox-off badge, got: {text}"
+            !text.contains("sandbox:off"),
+            "sandbox-off badge must not appear, got: {text}"
         );
     }
 
