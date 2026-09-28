@@ -2270,6 +2270,7 @@ dependencies = [
  "kod-provider-openai",
  "kod-skills",
  "kod-stats",
+ "kod-telemetry",
  "kod-tools",
  "kod-tui",
  "kod-types",

@@ -23,6 +23,7 @@ kod-provider-openai = { path = "../kod-provider-openai" }
 kod-tools = { path = "../kod-tools" }
 kod-tui = { path = "../kod-tui" }
 kod-stats = { path = "../kod-stats" }
+kod-telemetry = { path = "../kod-telemetry" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-std", "io-util"] }
 dirs.workspace = true
 chrono = { workspace = true }

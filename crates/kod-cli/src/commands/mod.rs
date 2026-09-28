@@ -204,6 +204,19 @@ async fn engine_from_config(
     // Cost caps.
     engine.install_limits(&config.limits);
 
+    // Delta §14.5: OTLP telemetry, env-gated. `from_env` reads
+    // `OTEL_EXPORTER_OTLP_ENDPOINT` (and friends); absent means a
+    // disabled handle and no cost. A caller that sets the endpoint
+    // gets turn-level records exported to their collector.
+    let telemetry = kod_telemetry::Telemetry::from_env();
+    if telemetry.is_enabled() {
+        eprintln!(
+            "kod: OTLP telemetry enabled (service.name={:?})",
+            telemetry.config().service_name,
+        );
+    }
+    engine.set_telemetry(telemetry).await;
+
     // MCP servers, unless the caller asked to skip.
     if opts.install_mcp {
         kod_core::mcp_adapters::install_from_config(&engine, config).await;
