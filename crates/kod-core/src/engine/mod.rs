@@ -1252,6 +1252,26 @@ pub(crate) struct SwarmFileBus {
     pub service: std::sync::Arc<kod_swarm::file_touch::FileTouchService>,
 }
 
+/// Delta §11.2: what a cold-revive surface check found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ColdReviveVerdict {
+    /// The session log carries no `SessionInit` for the holder. A
+    /// caller can fall back to a fresh-surface revive.
+    NoInitEntry,
+    /// The current tool surface matches the persisted fingerprint
+    /// byte-for-byte. Safe to revive.
+    SurfaceMatches,
+    /// The surface drifted: the working dir or the tool set changed
+    /// between the run that wrote the log and the current process.
+    /// `missing` are tools the persisted run had that are gone now;
+    /// `added` are tools the current process has that the log did
+    /// not name. Both sorted for a stable log line.
+    SurfaceDrifted {
+        missing: Vec<String>,
+        added: Vec<String>,
+    },
+}
+
 pub struct KodEngine {
     router: Arc<TaskRouter>,
     /// Named-endpoint map (A4b). When `Some`, `resolve_provider` reads
@@ -7702,25 +7722,7 @@ pub(crate) fn filter_chain_by_trust(
         let model = self.current_model().await;
         let defs = self.tools.get_definitions().await;
         let tool_names: Vec<String> = defs.into_iter().map(|d| d.name).collect();
-        // Fingerprint: the working dir and the sorted tool set. A
-        // config change that adds or removes a tool, or moves the
-        // project, changes the hash — which is exactly the "has the
-        // session's surface drifted" signal a cold revive wants.
-        let mut fingerprint_input = format!("{}\n", self.working_dir.display());
-        let mut sorted = tool_names.clone();
-        sorted.sort();
-        for n in &sorted {
-            fingerprint_input.push_str(n);
-            fingerprint_input.push('\n');
-        }
-        let system_prompt_hash = {
-            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-            for b in fingerprint_input.as_bytes() {
-                h ^= *b as u64;
-                h = h.wrapping_mul(0x0000_0100_0000_01b3);
-            }
-            h
-        };
+        let system_prompt_hash = self.surface_fingerprint(&tool_names).await;
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -7739,6 +7741,62 @@ pub(crate) fn filter_chain_by_trust(
             && let Err(e) = rec.record(&entry)
         {
             tracing::warn!(error = %e, "could not record session_init");
+        }
+    }
+
+    /// Delta §11.2: the surface fingerprint — the working dir plus
+    /// the sorted tool set, FNV-1a-64. Shared by
+    /// `record_session_init` (which writes it) and
+    /// `verify_cold_revive_surface` (which compares against it), so
+    /// the two cannot drift.
+    async fn surface_fingerprint(&self, tool_names: &[String]) -> u64 {
+        let mut input = format!("{}\n", self.working_dir.display());
+        let mut sorted: Vec<&String> = tool_names.iter().collect();
+        sorted.sort();
+        for n in sorted {
+            input.push_str(n);
+            input.push('\n');
+        }
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in input.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        h
+    }
+
+    /// Delta §11.2: the verdict of a cold-revive surface check.
+    pub async fn verify_cold_revive_surface(
+        &self,
+        log_path: &std::path::Path,
+        holder: &str,
+    ) -> ColdReviveVerdict {
+        let Some((_endpoint, _model, tool_names, persisted_hash)) =
+            Self::session_init_from_log(log_path, holder).ok().flatten()
+        else {
+            // No init entry: a log written before the variant existed
+            // or one for a different holder. The caller falls back to
+            // a fresh-surface revive; nothing to compare.
+            return ColdReviveVerdict::NoInitEntry;
+        };
+        let current_names: Vec<String> = self
+            .tools
+            .get_definitions()
+            .await
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        let current_hash = self.surface_fingerprint(&current_names).await;
+        if current_hash == persisted_hash {
+            ColdReviveVerdict::SurfaceMatches
+        } else {
+            let mut missing: Vec<String> =
+                tool_names.iter().filter(|n| !current_names.contains(n)).cloned().collect();
+            let mut added: Vec<String> =
+                current_names.iter().filter(|n| !tool_names.contains(n)).cloned().collect();
+            missing.sort();
+            added.sort();
+            ColdReviveVerdict::SurfaceDrifted { missing, added }
         }
     }
 
