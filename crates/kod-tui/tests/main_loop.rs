@@ -177,13 +177,20 @@ async fn test_slash_skills_lists_or_points_at_dirs() {
 #[tokio::test]
 async fn test_tool_events_surface_in_chat() {
     let mut tui = TuiLoop::new();
-    tui.handle_event(Event::ToolStarted("read".to_string()))
-        .await
-        .unwrap();
+    tui.handle_event(Event::ToolStarted {
+        id: String::new(),
+        name: "read".to_string(),
+    })
+    .await
+    .unwrap();
     assert_eq!(tui.app().current_tool(), Some(&"read".to_string()));
-    tui.handle_event(Event::ToolCompleted("read".to_string(), "ok".to_string()))
-        .await
-        .unwrap();
+    tui.handle_event(Event::ToolCompleted {
+        id: String::new(),
+        header: "read".to_string(),
+        summary: "ok".to_string(),
+    })
+    .await
+    .unwrap();
     assert_eq!(tui.app().current_tool(), None);
     assert!(
         tui.app()

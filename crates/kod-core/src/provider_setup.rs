@@ -133,7 +133,10 @@ fn build_provider(endpoint: &EndpointConfig) -> Result<Arc<dyn kod_provider::Llm
                 endpoint.model.clone(),
                 api_key,
                 endpoint.timeout_secs,
-            )?;
+            )?
+            .with_rate_limit_wait(std::time::Duration::from_secs(
+                endpoint.rate_limit_wait_secs.unwrap_or(0),
+            ));
             Ok(Arc::new(provider))
         }
         ProviderKind::Anthropic => {

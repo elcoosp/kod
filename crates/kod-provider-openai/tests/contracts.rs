@@ -249,3 +249,76 @@ async fn stream_completion_posts_to_chat_completions() {
     // first poll returns.
     while let Some(_chunk) = stream.next().await {}
 }
+
+// ---------------------------------------------------------------------------
+// tab-bridge rate-limit contract (non-streaming twin): a 429 whose body
+// embeds the window text is waited out once and the SAME request re-driven.
+// ---------------------------------------------------------------------------
+
+/// The real tab-bridge 429 shape (`src/facade/errors.ts`), with the window
+/// text shortened so the test sleeps a second instead of twenty minutes.
+fn tab_bridge_429_body(hint: &str) -> String {
+    format!(
+        r#"{{"error":{{"message":"provider reports rate limiting (Messages too frequent); {hint}","type":"tab_bridge_error","code":"rate_limited"}}}}"#
+    )
+}
+
+#[tokio::test]
+async fn rate_limited_complete_waits_out_hint_then_succeeds() {
+    let mock = MockServer::start_async().await;
+    // First-registered mock wins httpmock's matcher, so the 429 answers
+    // until the watcher deletes it, then the success mock takes over.
+    let limited = mock
+        .mock_async(|when, then| {
+            when.method(POST).path("/v1/chat/completions");
+            then.status(429)
+                .header("content-type", "application/json")
+                .body(tab_bridge_429_body("retry after 1 second"));
+        })
+        .await;
+    let ok_endpoint = mock
+        .mock_async(|when, then| {
+            when.method(POST).path("/v1/chat/completions");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(simple_text_response());
+        })
+        .await;
+
+    let provider =
+        provider_for(&mock).with_rate_limit_wait(std::time::Duration::from_secs(5));
+    let req = request_with(vec![user("hi")], SystemPrompt::default());
+
+    // Lift the 429 mock as soon as it has answered once; the provider's
+    // ~1 s hint sleep gives the deletion real time to land first.
+    let complete_fut = async { provider.complete(&req).await };
+    let lift_fut = async {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut hits = 0usize;
+        while hits == 0 && std::time::Instant::now() < deadline {
+            hits = limited.hits_async().await;
+            if hits == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+        if hits > 0 {
+            limited.delete_async().await;
+        }
+        hits
+    };
+    let (resp, limited_hits) = futures::future::join(complete_fut, lift_fut).await;
+    let resp = resp.expect("a waited-out 429 must be re-driven, not fail");
+
+    assert!(
+        limited_hits >= 1,
+        "the 429 mock must answer at least once, got {limited_hits} hits"
+    );
+    match resp {
+        GenerationResponse::Text { content, .. } => assert_eq!(content, "ok"),
+        other => panic!("expected Text, got {other:?}"),
+    }
+    assert!(
+        ok_endpoint.hits_async().await >= 1,
+        "the success mock must have served the retry"
+    );
+}

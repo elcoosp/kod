@@ -872,15 +872,15 @@ impl TuiLoop {
                     self.app.note_session_cost(c);
                 }
             }
-            Event::ToolStarted(tool_name) => {
+            Event::ToolStarted { id, name } => {
                 // Flush text streamed so far as its own bubble first: the
                 // reply before the call belongs above the tool row, the
                 // reply after it below — never one giant bubble.
                 self.app.flush_streamed_text();
-                self.app.start_tool_execution(&tool_name);
+                self.app.start_tool_execution(&id, &name);
             }
-            Event::ToolProgress(display) => {
-                self.app.update_tool_status(&display);
+            Event::ToolProgress { id, display } => {
+                self.app.update_tool_status(&id, &display);
             }
             Event::Thinking => {
                 self.app.begin_thinking();
@@ -981,29 +981,31 @@ impl TuiLoop {
                     self.app.save_session();
                 }
             }
-            Event::ToolCompleted(tool_name, result) => {
+            Event::ToolCompleted { id, header, summary } => {
                 // Tool row first, then whatever streamed during the call:
                 // flushing before would drop post-tool text above the row.
-                self.app.complete_tool_execution(&tool_name, &result);
+                self.app.complete_tool_execution(&id, &header, &summary);
                 self.app.flush_streamed_text();
                 // Errors are NOT repeated as a system message here. The tool
                 // row is the single error surface: auto-expanded on failure,
-                // styled `✗`, and never hidden by the `t` toggle
-                // (`ChatWidget::render` keeps error rows visible). A second
-                // copy in the transcript is noise, not redundancy.
+                // styled ✗, and never hidden by the `t` toggle.
             }
-            Event::ToolCompletedWithDuration(tool_name, result, duration_ms) => {
+            Event::ToolCompletedWithDuration {
+                id,
+                header,
+                summary,
+                duration_ms,
+            } => {
                 // Live done-marker: same row fill, stamped with wall time.
                 // The task-end `ToolCompleted` fallback for this call (if it
                 // arrives) is idempotent and keeps this timed row.
                 self.app.complete_tool_execution_with_duration(
-                    &tool_name,
-                    &result,
+                    &id,
+                    &header,
+                    &summary,
                     Some(duration_ms),
                 );
                 self.app.flush_streamed_text();
-                // (A1: no duplicate system line — the row is the single
-                // error surface, and it stays visible under `t`.)
             }
             Event::AgentMessage(agent_name, message) => {
                 self.app.add_message(crate::app::Message {
@@ -1103,7 +1105,6 @@ impl TuiLoop {
                     self.app.save_session();
                 }
             }
-            _ => {}
         }
 
         Ok(())
@@ -1351,23 +1352,30 @@ impl TuiLoop {
                                 .send(Event::ApprovalBatchRequested { batch_id, items })
                                 .await;
                         }
-                    } else if let Some(tool) = kod_core::engine::parse_tool_start(&chunk) {
+                    } else if let Some((cid, tool)) = kod_core::engine::parse_tool_start(&chunk) {
                         let _ = event_tx_chunks
-                            .send(Event::ToolStarted(tool.to_string()))
+                            .send(Event::ToolStarted {
+                                id: cid.to_string(),
+                                name: tool.to_string(),
+                            })
                             .await;
-                    } else if let Some(progress) = kod_core::engine::parse_tool_args(&chunk) {
+                    } else if let Some((cid, progress)) = kod_core::engine::parse_tool_args(&chunk) {
                         let _ = event_tx_chunks
-                            .send(Event::ToolProgress(progress.to_string()))
+                            .send(Event::ToolProgress {
+                                id: cid.to_string(),
+                                display: progress.to_string(),
+                            })
                             .await;
-                    } else if let Some((header, summary, duration)) =
+                    } else if let Some((cid, header, summary, duration)) =
                         kod_core::engine::parse_tool_done(&chunk)
                     {
                         let _ = event_tx_chunks
-                            .send(Event::ToolCompletedWithDuration(
-                                header.to_string(),
-                                summary.to_string(),
-                                duration,
-                            ))
+                            .send(Event::ToolCompletedWithDuration {
+                                id: cid.to_string(),
+                                header: header.to_string(),
+                                summary: summary.to_string(),
+                                duration_ms: duration,
+                            })
                             .await;
                     } else if kod_core::engine::is_thinking_marker(&chunk) {
                         let _ = event_tx_chunks.send(Event::Thinking).await;
@@ -1450,18 +1458,22 @@ impl TuiLoop {
                     for (i, result) in response.tool_results.iter().enumerate() {
                         let call = calls.get(i).copied();
                         let name = call.map(|c| c.tool_name.as_str()).unwrap_or("tool");
+                        let id = call.and_then(|c| c.id.clone()).unwrap_or_default();
                         // Task-end fallback: the live done-marker normally
                         // completed each row already (with its duration) and
-                        // this rewrite is idempotent there. Shared with the
-                        // engine so headers/summaries match the live ones.
+                        // this rewrite is idempotent there (keyed by call id).
+                        // Shared with the engine so headers/summaries match
+                        // the live ones.
                         let header = match call {
                             Some(c) => {
                                 kod_core::engine::format_tool_header(&c.tool_name, &c.arguments)
                             }
-                            None => format!("[{}]", name),
+                            None => name.to_string(),
                         };
                         let summary = kod_core::engine::summarize_tool_result(name, result);
-                        let _ = event_tx.send(Event::ToolCompleted(header, summary)).await;
+                        let _ = event_tx
+                            .send(Event::ToolCompleted { id, header, summary })
+                            .await;
                     }
                     if !response.skills_used.is_empty() {
                         let _ = event_tx
@@ -6666,16 +6678,17 @@ mod tests {
     #[tokio::test]
     async fn test_tool_progress_refreshes_running_line() {
         let mut tui = TuiLoop::new();
-        tui.handle_event(Event::ToolStarted("execute_command".to_string()))
+        tui.handle_event(Event::ToolStarted { id: String::new(), name: "execute_command".to_string() })
             .await
             .unwrap();
         assert_eq!(
             tui.app().current_tool().map(|s| s.as_str()),
             Some("execute_command")
         );
-        tui.handle_event(Event::ToolProgress(
-            "execute_command cargo test -p kod-tui".to_string(),
-        ))
+        tui.handle_event(Event::ToolProgress {
+            id: String::new(),
+            display: "execute_command cargo test -p kod-tui".to_string(),
+        })
         .await
         .unwrap();
         assert_eq!(
@@ -6911,7 +6924,7 @@ mod tests {
     async fn test_fail_generation_clears_running_tool_line() {
         let mut tui = TuiLoop::new();
         tui.app_mut().begin_generation();
-        tui.handle_event(Event::ToolStarted("execute_command".to_string()))
+        tui.handle_event(Event::ToolStarted { id: String::new(), name: "execute_command".to_string() })
             .await
             .unwrap();
         assert!(tui.app().current_tool().is_some());
@@ -6932,13 +6945,10 @@ mod tests {
     #[tokio::test]
     async fn test_tool_completed_with_header_resolves_running_entry() {
         let mut tui = TuiLoop::new();
-        tui.handle_event(Event::ToolStarted("execute_command".to_string()))
+        tui.handle_event(Event::ToolStarted { id: String::new(), name: "execute_command".to_string() })
             .await
             .unwrap();
-        tui.handle_event(Event::ToolCompleted(
-            "execute_command command=cargo test".to_string(),
-            "ok".to_string(),
-        ))
+        tui.handle_event(Event::ToolCompleted { id: String::new(), header: "execute_command command=cargo test".to_string(), summary: "ok".to_string() })
         .await
         .unwrap();
         assert_eq!(tui.app().current_tool(), None);
@@ -6960,15 +6970,11 @@ mod tests {
     #[tokio::test]
     async fn test_live_done_marker_stamps_duration_and_fallback_keeps_it() {
         let mut tui = TuiLoop::new();
-        tui.handle_event(Event::ToolStarted("execute_command".to_string()))
+        tui.handle_event(Event::ToolStarted { id: String::new(), name: "execute_command".to_string() })
             .await
             .unwrap();
         // Live completion arrives first (pump delivers the done-marker).
-        tui.handle_event(Event::ToolCompletedWithDuration(
-            "execute_command command=cargo test".to_string(),
-            "ok".to_string(),
-            1340,
-        ))
+        tui.handle_event(Event::ToolCompletedWithDuration { id: String::new(), header: "execute_command command=cargo test".to_string(), summary: "ok".to_string(), duration_ms: 1340 })
         .await
         .unwrap();
         let row = tui
@@ -6980,10 +6986,7 @@ mod tests {
             .unwrap();
         assert!(row.content.contains("1.3s"), "got: {}", row.content);
         // Task-end fallback arrives after: it must not strip the duration.
-        tui.handle_event(Event::ToolCompleted(
-            "execute_command command=cargo test".to_string(),
-            "ok".to_string(),
-        ))
+        tui.handle_event(Event::ToolCompleted { id: String::new(), header: "execute_command command=cargo test".to_string(), summary: "ok".to_string() })
         .await
         .unwrap();
         let row = tui
@@ -7007,8 +7010,13 @@ mod tests {
     #[tokio::test]
     async fn test_engine_done_marker_parses_into_duration_event() {
         // The exact chunk the engine sends must survive the pump parsing.
-        let chunk = kod_core::engine::tool_done_marker("read_file path=main.rs", "12 lines", 42);
-        let (h, s, ms) = kod_core::engine::parse_tool_done(&chunk).expect("must parse");
+        let chunk = kod_core::engine::tool_done_marker(
+            "call_a",
+            "read_file path=main.rs",
+            "12 lines",
+            42,
+        );
+        let (_cid, h, s, ms) = kod_core::engine::parse_tool_done(&chunk).expect("must parse");
         assert_eq!((h, s, ms), ("read_file path=main.rs", "12 lines", 42));
     }
 
@@ -7024,16 +7032,13 @@ mod tests {
         tui.handle_event(Event::ResponseChunk("before text ".to_string()))
             .await
             .unwrap();
-        tui.handle_event(Event::ToolStarted("read_file".to_string()))
+        tui.handle_event(Event::ToolStarted { id: String::new(), name: "read_file".to_string() })
             .await
             .unwrap();
         tui.handle_event(Event::ResponseChunk("after text".to_string()))
             .await
             .unwrap();
-        tui.handle_event(Event::ToolCompleted(
-            "read_file path=main.rs".to_string(),
-            "12 lines".to_string(),
-        ))
+        tui.handle_event(Event::ToolCompleted { id: String::new(), header: "read_file path=main.rs".to_string(), summary: "12 lines".to_string() })
         .await
         .unwrap();
         // Engine fallback = concatenation of every round's text.
@@ -7061,7 +7066,7 @@ mod tests {
         tui.handle_event(Event::ResponseChunk("before text ".to_string()))
             .await
             .unwrap();
-        tui.handle_event(Event::ToolStarted("read_file".to_string()))
+        tui.handle_event(Event::ToolStarted { id: String::new(), name: "read_file".to_string() })
             .await
             .unwrap();
         // The pre-tool text must already be its own assistant message —
@@ -7071,10 +7076,7 @@ mod tests {
         assert!(tui.app().messages()[0].content.contains("before text"));
         assert!(tui.app().messages()[1].content.contains("read_file"));
         assert!(tui.app().current_response().is_empty());
-        tui.handle_event(Event::ToolCompleted(
-            "read_file path=main.rs".to_string(),
-            "12 lines".to_string(),
-        ))
+        tui.handle_event(Event::ToolCompleted { id: String::new(), header: "read_file path=main.rs".to_string(), summary: "12 lines".to_string() })
         .await
         .unwrap();
         tui.handle_event(Event::ResponseChunk("after text".to_string()))

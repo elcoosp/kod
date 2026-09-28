@@ -37,6 +37,7 @@ impl Default for LlmConfig {
                 pricing: None,
                 trust: None,
                 effort: None,
+                rate_limit_wait_secs: None,
 }],
             routing: None,
         }
@@ -441,6 +442,16 @@ pub struct EndpointConfig {
     /// is clamped to `standard` at load.
     #[serde(default)]
     pub trust: Option<String>,
+    /// Longest provider-suggested rate-limit window (seconds) that this
+    /// endpoint's retry loops may sleep out inside a single request.
+    ///
+    /// Tab-bridge (stateful browser backend) enforces a ~20-minute
+    /// send-frequency window and answers 429 with `Retry-After` up to
+    /// 1200 s; set `rate_limit_wait_secs = 1500` so kod waits out the
+    /// window and re-drives the turn instead of failing. `None`/0 keeps
+    /// the legacy fail-fast behavior (hint clamped to the backoff cap).
+    #[serde(default)]
+    pub rate_limit_wait_secs: Option<u64>,
 }
 
 fn default_timeout_secs() -> u64 {
@@ -727,6 +738,7 @@ mod tests {
                     pricing: None,
                     trust: None,
                     effort: None,
+                    rate_limit_wait_secs: None,
 },
                 EndpointConfig {
                     name: "local".into(),
@@ -741,6 +753,7 @@ mod tests {
                     pricing: None,
                     trust: None,
                     effort: None,
+                    rate_limit_wait_secs: None,
 },
             ],
             routing: Some(r),
@@ -775,6 +788,7 @@ mod coverage_llm_validate {
             trust: None,
             effort: None,
             pricing: None,
+            rate_limit_wait_secs: None,
         }
 }
 

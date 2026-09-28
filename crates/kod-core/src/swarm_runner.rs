@@ -1230,11 +1230,11 @@ impl SwarmRunner {
                             if let Some(agent) = swarm_for_hb.get_agent(&id_for_hb).await {
                                 agent.record_heartbeat();
                             }
-                            let display = if let Some(tool) =
+                            let display = if let Some((_cid, tool)) =
                                 crate::engine::parse_tool_start(&chunk)
                             {
                                 format!("  [tool: {tool}]\n")
-                            } else if let Some(brief) =
+                            } else if let Some((_cid, brief)) =
                                 crate::engine::parse_tool_args(&chunk)
                             {
                                 format!("  [{brief}]\n")

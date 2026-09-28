@@ -179,13 +179,24 @@ impl KodError {
 
     /// Classify an HTTP error status + body into the closest typed variant.
     pub fn provider_status(status: u16, body: &str) -> Self {
+        Self::provider_status_with_hint(status, body, None)
+    }
+
+    /// Same as [`KodError::provider_status`], but a parsed retry hint
+    /// (from `Retry-After` or a body-text cue) overrides the 30 s
+    /// default on 429.
+    pub fn provider_status_with_hint(
+        status: u16,
+        body: &str,
+        retry_after: Option<std::time::Duration>,
+    ) -> Self {
         let snippet = kod_types::strutil::truncate_chars(body, 300);
         match status {
             401 | 403 => KodError::Provider(format!("auth error {status}: {snippet}")),
             404 => KodError::Provider(format!("not found {status}: {snippet}")),
             408 => KodError::ProviderTimeout { timeout_ms: 0 },
             429 => KodError::RateLimited {
-                retry_after_secs: 30,
+                retry_after_secs: retry_after.map(|d| d.as_secs()).unwrap_or(30),
             },
             500..=599 => KodError::Provider(format!("server error {status}: {snippet}")),
             _ => KodError::Provider(format!("http {status}: {snippet}")),

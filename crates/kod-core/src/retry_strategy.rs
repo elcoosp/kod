@@ -65,7 +65,7 @@ impl TurnFailure {
         }
         if l.contains("rate limit") || l.contains("429") || l.contains("too many requests") {
             return TurnFailure::TransportRateLimit {
-                retry_after_secs: None,
+                retry_after_secs: kod_provider::retry::text_hint_secs(raw),
             };
         }
         if l.contains("timed out") || l.contains("timeout") {
@@ -213,6 +213,20 @@ mod tests {
     fn classify_rate_limit() {
         let f = TurnFailure::classify("HTTP 429 too many requests");
         assert!(matches!(f, TurnFailure::TransportRateLimit { .. }));
+    }
+
+    #[test]
+    fn classify_rate_limit_parses_body_hint() {
+        let f = TurnFailure::classify(
+            "http 429: provider reports rate limiting (Messages too frequent); \
+             wait ~20 minutes before retrying",
+        );
+        match f {
+            TurnFailure::TransportRateLimit { retry_after_secs } => {
+                assert_eq!(retry_after_secs, Some(1200));
+            }
+            other => panic!("expected rate limit, got {other:?}"),
+        }
     }
 
     #[test]

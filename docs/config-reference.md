@@ -11,6 +11,17 @@ also persists to disk so the change survives a restart.
 
 ---
 
+## `[[llm.endpoints]]` — provider endpoints
+
+One table per endpoint. Only the keys relevant to rate-limit handling
+are listed here; the full set lives in `crates/kod-config/src/llm.rs`.
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `rate_limit_wait_secs` | u64 (seconds), optional | `0` | Sleep out provider rate-limit windows up to this long before re-driving a request. Set ~1500 for tab-bridge. Default: 0 (fail fast). |
+
+---
+
 ## `[limits]` — cost and token caps
 
 Refuses a round whose estimated cost would exceed a cap; ends a turn

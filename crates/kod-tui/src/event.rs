@@ -96,16 +96,30 @@ pub enum Event {
     UserInput(String),
     Tick,
     System(EventPriority, String),
-    ToolStarted(String),
-    ToolCompleted(String, String),
+    ToolStarted {
+        /// Provider tool-call id; `""` when unknown (legacy heuristic path).
+        id: String,
+        name: String,
+    },
+    ToolCompleted {
+        id: String,
+        header: String,
+        summary: String,
+    },
     /// Live per-tool completion from the engine's done-marker: same row
     /// fill as `ToolCompleted`, plus wall time for the header
-    /// (`execute_command … · 1.2s`). Arrives the moment the call
-    /// finishes, not at task end.
-    ToolCompletedWithDuration(String, String, u64),
-    /// Live one-line excerpt of what the running tool is doing
-    /// (`execute_command cargo test …`). Refreshes the running indicator.
-    ToolProgress(String),
+    /// (`execute_command … · 1.2s`).
+    ToolCompletedWithDuration {
+        id: String,
+        header: String,
+        summary: String,
+        duration_ms: u64,
+    },
+    /// Live one-line excerpt of what the running tool is doing.
+    ToolProgress {
+        id: String,
+        display: String,
+    },
     /// A running prompt was cancelled (Esc / Ctrl+C / `/cancel`).
     Cancelled,
     /// P5.6 — the engine abandoned the current endpoint mid-stream

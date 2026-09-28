@@ -129,7 +129,7 @@ pub async fn run_chat_remote(socket: Option<std::path::PathBuf>) -> Result<()> {
                     // embedded path surfaces as a short notice so
                     // the user sees activity between two stretches
                     // of text. Keep that parity here.
-                    if let Some(brief) = kod_core::engine::parse_tool_args(data) {
+                    if let Some((_cid, brief)) = kod_core::engine::parse_tool_args(data) {
                         print!("\n[{brief}]\n");
                         let _ = io::stdout().flush();
                         continue;
@@ -386,7 +386,7 @@ pub async fn run_chat(
                 // the two surfaces speak the same vocabulary:
                 // `[execute_command cargo test]`,
                 // `[read_file path=src/main.rs]`.
-                if let Some(brief) = kod_core::engine::parse_tool_args(&chunk) {
+                if let Some((_cid, brief)) = kod_core::engine::parse_tool_args(&chunk) {
                     print!("\n[{brief}]\n");
                     let _ = io::stdout().flush();
                     continue;

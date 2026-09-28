@@ -10,6 +10,11 @@
 //! * a stream that has already committed is delivered on the first
 //!   attempt and never retried.
 //!
+//! Plus the tab-bridge rate-limit pair: a 429 whose body embeds the
+//! window text is slept out exactly once (within the configured
+//! `with_rate_limit_wait` budget) and re-driven; without a budget the
+//! same 429 surfaces after the attempt budget, as before.
+//!
 //! The wire body is what `adk-model 2.2`'s `openai_compatible`
 //! streaming parser consumes: newline-separated `data: <json>` lines
 //! with `choices[0].delta.content`, terminated by a line that reads
@@ -160,7 +165,127 @@ async fn empty_completion_retries_up_to_budget_then_delivers() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. A committed stream is delivered on the first attempt (no retry).
+// 3. tab-bridge rate-limit contract: wait out the window, then re-drive.
+// ---------------------------------------------------------------------------
+
+/// The real tab-bridge 429 shape (`src/facade/errors.ts`), with the window
+/// text shortened to a 1 s hint so the test sleeps a second, not twenty
+/// minutes.
+fn tab_bridge_429_body(hint: &str) -> String {
+    format!(
+        r#"{{"error":{{"message":"provider reports rate limiting (Messages too frequent); {hint}","type":"tab_bridge_error","code":"rate_limited"}}}}"#
+    )
+}
+
+/// tab-bridge contract: 429 whose body embeds the window text, then the
+/// real answer once the window "elapses". With a wait budget >= the hint,
+/// the provider must sleep out the hint (shortened here to 1 s) and
+/// re-drive the SAME request instead of surfacing the error.
+#[tokio::test]
+async fn rate_limited_request_waits_out_hint_then_succeeds() {
+    let mock = MockServer::start_async().await;
+    // First-registered mock wins httpmock's matcher, so the 429 answers
+    // until the watcher below deletes it, then the success mock takes over.
+    let limited = mock
+        .mock_async(|when, then| {
+            when.method(POST).path("/v1/chat/completions");
+            then.status(429)
+                .header("content-type", "application/json")
+                .body(tab_bridge_429_body("retry after 1 second"));
+        })
+        .await;
+    let ok_endpoint = mock
+        .mock_async(|when, then| {
+            when.method(POST).path("/v1/chat/completions");
+            then.status(200)
+                .header("content-type", "text/event-stream")
+                .body(text_sse_body("hi"));
+        })
+        .await;
+
+    let provider =
+        provider_for(&mock).with_rate_limit_wait(std::time::Duration::from_secs(5));
+    let req = request_with(vec![user("hi")], SystemPrompt::default());
+
+    // Lift the 429 mock as soon as it has answered once, concurrently with
+    // the request under test: the provider's hint sleep gives the deletion
+    // ~1 s of real time to land before the retry arrives.
+    let drain_fut = async { drain(&provider, &req).await };
+    let lift_fut = async {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut hits = 0usize;
+        while hits == 0 && std::time::Instant::now() < deadline {
+            hits = limited.hits_async().await;
+            if hits == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+        if hits > 0 {
+            limited.delete_async().await;
+        }
+        hits
+    };
+    let ((oks, err), limited_hits) = futures::future::join(drain_fut, lift_fut).await;
+
+    assert!(
+        limited_hits >= 1,
+        "the 429 mock must answer at least once, got {limited_hits} hits"
+    );
+    assert!(err.is_none(), "a waited-out 429 must re-drive, not fail: {err:?}");
+    let texts: Vec<&str> = oks
+        .iter()
+        .filter_map(|c| match c {
+            StreamChunk::Text(t) => Some(t.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, vec!["hi"], "the retried request must deliver the text");
+    assert!(
+        ok_endpoint.hits_async().await >= 1,
+        "the success mock must have served the retry"
+    );
+}
+
+/// Without a budget (default), a 429 must NOT be slept out: it surfaces
+/// after the attempt budget exactly like before (behavior lock).
+#[tokio::test]
+async fn rate_limit_without_wait_budget_fails_fast_as_before() {
+    let mock = MockServer::start_async().await;
+    let endpoint = mock
+        .mock_async(|when, then| {
+            when.method(POST).path("/v1/chat/completions");
+            then.status(429)
+                .header("content-type", "application/json")
+                .body(tab_bridge_429_body("wait ~20 minutes before retrying"));
+        })
+        .await;
+
+    let provider = provider_for(&mock); // no with_rate_limit_wait
+    let req = request_with(vec![user("hi")], SystemPrompt::default());
+    let started = std::time::Instant::now();
+    let (oks, err) = drain(&provider, &req).await;
+
+    let err = err.expect("a 429 with no wait budget must surface an error");
+    let msg = err.to_string().to_ascii_lowercase();
+    assert!(
+        msg.contains("429") || msg.contains("rate"),
+        "error should carry the rate-limit signal, got: {msg}"
+    );
+    assert!(oks.is_empty(), "no chunk should be delivered on a hard failure");
+    assert!(
+        endpoint.hits_async().await >= 3,
+        "the attempt budget must be exhausted, got {} hits",
+        endpoint.hits_async().await
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "without a budget the window must not be slept out (took {:?})",
+        started.elapsed()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 4. A committed stream is delivered on the first attempt (no retry).
 // ---------------------------------------------------------------------------
 
 #[tokio::test]

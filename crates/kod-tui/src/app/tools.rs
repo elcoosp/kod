@@ -3,6 +3,11 @@
 //! Extracted from `app/mod.rs` (S9). Covers the lifecycle of a single
 //! tool call's rendered row — start / update / complete / fail — plus
 //! the expand/collapse state that decides whether its body is shown.
+//!
+//! Call-id keyed: the engine threads the provider's tool-call id through
+//! every marker (protocol v2); this module registers each live row under
+//! its call id so parallel calls fill *their own* rows. A call with no
+//! provider id (`""`) falls back to the pre-v2 text heuristics.
 
 use super::*;
 
@@ -15,9 +20,43 @@ impl KodApp {
         &self.tool_executions
     }
 
-    pub fn start_tool_execution(&mut self, tool_name: &str) {
+    /// Delta §11.4: number of tool rows still showing the live "running…"
+    /// placeholder. Used by the status strip to render an aggregate when
+    /// more than one call is in flight.
+    pub fn running_tool_count(&self) -> usize {
+        self.messages
+            .iter()
+            .filter(|m| {
+                m.role == MessageRole::Tool
+                    && m.content
+                        .split_once('\n')
+                        .map(|x| x.1)
+                        .unwrap_or("")
+                        .trim()
+                        == Self::LIVE_TOOL_BODY_PLACEHOLDER
+            })
+            .count()
+    }
+
+    pub fn start_tool_execution(&mut self, id: &str, tool_name: &str) {
+        // Repeat start for a call we already finished (duplicated marker,
+        // engine round restart): never spawn a second row, and never
+        // resurrect "running…" state for a settled call.
+        if !id.is_empty() {
+            if self.completed_calls.contains(id) {
+                return;
+            }
+            if let Some(msg_id) = self.tool_rows_by_call.get(id).cloned() {
+                self.refresh_tool_row_header(&msg_id, tool_name);
+                self.current_tool = Some(tool_name.to_string());
+                self.set_phase(GenPhase::ExecutingTool(tool_name.to_string()));
+                return;
+            }
+        }
+
         self.current_tool = Some(tool_name.to_string());
         self.set_phase(GenPhase::ExecutingTool(tool_name.to_string()));
+
         self.tool_executions.push(ToolExecution {
             tool_name: tool_name.to_string(),
             status: ToolStatus::Running,
@@ -27,17 +66,58 @@ impl KodApp {
         // Stream the row live: it lands in position now with a running
         // body, and completion fills that same row in — the call never
         // arrives as a block at task end.
-        self.add_message(Message {
+        let msg = Message {
             id: MessageId::new(),
             role: MessageRole::Tool,
             content: format!("[{tool_name}]\n{}", Self::LIVE_TOOL_BODY_PLACEHOLDER),
             timestamp: Utc::now(),
             metadata: MessageMetadata::default(),
             sequence: 0,
-        });
+        };
+        let msg_id = msg.id.clone();
+        if !id.is_empty() {
+            self.tool_rows_by_call.insert(id.to_string(), msg_id);
+        }
+        self.add_message(msg);
     }
 
-    /// Index of the most recent tool row still awaiting its result.
+    /// Rewrite one registered row's header in place, keeping its body.
+    fn refresh_tool_row_header(&mut self, msg_id: &MessageId, header: &str) {
+        if let Some(m) = self.messages.iter_mut().find(|m| m.id == *msg_id) {
+            let body = m
+                .content
+                .split_once('\n')
+                .map(|x| x.1.to_string())
+                .unwrap_or_else(|| Self::LIVE_TOOL_BODY_PLACEHOLDER.to_string());
+            m.content = format!("[{header}]\n{body}");
+        }
+    }
+
+    /// Whether `m` (a tool row) matches `tool_name` by header text,
+    /// ignoring an optional ` · 1.3s` duration stamp. Used by the
+    /// empty-id legacy path: the engine may rewrite the header with a
+    /// duration (from the live done-marker) and the task-end fallback
+    /// then arrives with the bare name. Without the fuzzy match the
+    /// fallback would mint a second row.
+    fn tool_row_matches_header(m: &Message, tool_name: &str) -> bool {
+        if m.role != MessageRole::Tool {
+            return false;
+        }
+        let first = m.content.lines().next().unwrap_or("").trim();
+        let header = first
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+            .unwrap_or(first);
+        let base = header.split(" \u{00b7} ").next().unwrap_or(header);
+        base == tool_name
+            || base.starts_with(&format!("{tool_name} "))
+            || tool_name.starts_with(&format!("{base} "))
+            || base.contains(tool_name)
+            || tool_name.contains(base)
+    }
+
+    /// Index of the most recent tool row still awaiting its result
+    /// (legacy path for calls whose provider sends no ids).
     fn live_tool_msg(&self) -> Option<usize> {
         self.messages.iter().rposition(|m| {
             if m.role != MessageRole::Tool {
@@ -48,19 +128,41 @@ impl KodApp {
         })
     }
 
+    /// Resolve the row a completion targets: the registered call row
+    /// first, then the newest live placeholder, then (legacy, empty-id
+    /// only) a header-prefix match.
+    fn resolve_tool_row(&mut self, id: &str, tool_name: &str) -> Option<MessageId> {
+        if !id.is_empty()
+            && let Some(msg_id) = self.tool_rows_by_call.remove(id)
+        {
+            return Some(msg_id);
+        }
+        if let Some(i) = self.live_tool_msg() {
+            return Some(self.messages[i].id.clone());
+        }
+        if id.is_empty()
+            && let Some(i) = self.messages.iter().rposition(|m| {
+                m.role == MessageRole::Tool && m.content.starts_with(&format!("[{tool_name}]"))
+            })
+        {
+            return Some(self.messages[i].id.clone());
+        }
+        None
+    }
+
     /// Refresh the live "running …" line with a one-line excerpt of what
     /// the tool is actually doing (`execute_command cargo test …`).
     /// Arrives from the engine after the call's arguments are assembled.
-    pub fn update_tool_status(&mut self, display: &str) {
+    pub fn update_tool_status(&mut self, id: &str, display: &str) {
         let display = display.trim();
         if display.is_empty() {
             return;
         }
         self.current_tool = Some(display.to_string());
         self.set_phase(GenPhase::ExecutingTool(display.to_string()));
-        // Refresh the live row's header too so the streamed row shows what
-        // the call actually does, not just the tool name.
-        if let Some(i) = self.live_tool_msg() {
+        if let Some(msg_id) = self.tool_rows_by_call.get(id).cloned() {
+            self.refresh_tool_row_header(&msg_id, display);
+        } else if let Some(i) = self.live_tool_msg() {
             let body = self.messages[i]
                 .content
                 .split_once('\n')
@@ -71,55 +173,62 @@ impl KodApp {
         }
     }
 
-    pub fn complete_tool_execution(&mut self, tool_name: &str, result: &str) {
-        self.complete_tool_execution_with_duration(tool_name, result, None);
+    pub fn complete_tool_execution(&mut self, id: &str, tool_name: &str, result: &str) {
+        self.complete_tool_execution_with_duration(id, tool_name, result, None);
     }
 
-    /// Fill the live tool row with its result, stamping the header with
-    /// wall time when `duration_ms` is present (`header · 1.2s`).
+    /// Fill the addressed tool row with its result, stamping the header
+    /// with wall time when `duration_ms` is present (`header · 1.2s`).
     ///
-    /// Idempotent: when no `Running` entry matches `tool_name` and a
-    /// finished row for it already exists, this is the task-end fallback
-    /// arriving after the live done-marker — keep the live (timed) row
-    /// instead of rewriting it without the duration.
+    /// Idempotent by call id: the task-end fallback for a call the live
+    /// done-marker already completed is a no-op.
     pub fn complete_tool_execution_with_duration(
         &mut self,
+        id: &str,
         tool_name: &str,
         result: &str,
         duration_ms: Option<u64>,
     ) {
-        // `tool_name` here is usually the rendered header
-        // (`execute_command command=…`), not the plain name stored at
-        // start time — match the running entry by prefix so it actually
-        // resolves instead of lingering as Running forever.
-        let matched_running = if let Some(execution) =
-            self.tool_executions.iter_mut().rev().find(|e| {
-                e.status == ToolStatus::Running
-                    && (e.tool_name == tool_name
-                        || tool_name.starts_with(&format!("{} ", e.tool_name))
-                        || tool_name.contains(&e.tool_name))
-            }) {
-            execution.status = ToolStatus::Completed;
-            execution.result = Some(result.to_string());
-            true
-        } else {
-            false
-        };
-
-        if !matched_running && self.tool_row_completed_like(tool_name) {
+        if !id.is_empty() && self.completed_calls.contains(id) {
             return;
         }
+        // Legacy (no provider id): the live done-marker already filled the
+        // row with a duration and the task-end fallback has no id to
+        // recognize it by. Match by header text instead — a completed row
+        // for the same tool name is the idempotency we want.
+        if id.is_empty()
+            && let Some(i) = self
+                .messages
+                .iter()
+                .rposition(|m| Self::tool_row_matches_header(m, tool_name))
+        {
+            let body = self.messages[i]
+                .content
+                .split_once('\n')
+                .map(|x| x.1)
+                .unwrap_or("")
+                .trim();
+            if !body.is_empty() && body != Self::LIVE_TOOL_BODY_PLACEHOLDER {
+                return;
+            }
+        }
 
+        // Update the ledger entry for the running call so `/stats` reflects
+        // the completion.
+        if let Some(execution) = self.tool_executions.iter_mut().rev().find(|e| {
+            e.status == ToolStatus::Running
+                && (e.tool_name == tool_name
+                    || tool_name.starts_with(&format!("{} ", e.tool_name))
+                    || tool_name.contains(&e.tool_name))
+        }) {
+            execution.status = ToolStatus::Completed;
+            execution.result = Some(result.to_string());
+        }
+
+        let msg_id = self.resolve_tool_row(id, tool_name);
         self.current_tool = None;
         self.set_phase(GenPhase::Summarizing);
 
-        // Header on its own line: the chat widget renders `[header]` as a
-        // `⚙/✗ header` row with the summary body beneath it. Trim blank lines
-        // around the body so the row never opens with an empty line.
-        // When the row streamed live, fill it in place — no reorder, no
-        // duplicate block at task end. Robust: header may have been updated
-        // via ToolProgress, so the live placeholder check may miss — fall
-        // back to matching by header prefix before appending.
         let body = Self::trim_blank_lines(result);
         let is_error = body.trim_start().starts_with("Error:");
         let header = match duration_ms {
@@ -127,75 +236,60 @@ impl KodApp {
             None => tool_name.to_string(),
         };
         let content = format!("[{header}]\n{body}");
-        let msg_id = if let Some(i) = self.live_tool_msg() {
-            self.messages[i].content = content;
-            self.messages[i].id.clone()
-        } else if let Some(i) = self.messages.iter().rposition(|m| {
-            m.role == MessageRole::Tool && m.content.starts_with(&format!("[{}]", tool_name))
-        }) {
-            self.messages[i].content = content;
-            self.messages[i].id.clone()
-        } else if let Some(i) = self.messages.iter().rposition(|m| {
-            // Header was rewritten by ToolProgress — match by tool base name
-            let header = m.content.lines().next().unwrap_or("").trim();
-            let header = header
-                .strip_prefix('[')
-                .and_then(|s| s.strip_suffix(']'))
-                .unwrap_or(header);
-            m.role == MessageRole::Tool && tool_name.contains(header)
-                || header.contains(tool_name.split_whitespace().next().unwrap_or(""))
-        }) {
-            self.messages[i].content = content;
-            self.messages[i].id.clone()
-        } else {
-            let msg = Message {
-                id: MessageId::new(),
-                role: MessageRole::Tool,
-                content,
-                timestamp: Utc::now(),
-                metadata: MessageMetadata::default(),
-                sequence: 0,
-            };
-            let id = msg.id.clone();
-            self.add_message(msg);
-            id
+
+        let msg_id = match msg_id {
+            Some(msg_id) => {
+                if let Some(m) = self.messages.iter_mut().find(|m| m.id == msg_id) {
+                    m.content = content;
+                }
+                msg_id
+            }
+            None => {
+                let msg = Message {
+                    id: MessageId::new(),
+                    role: MessageRole::Tool,
+                    content,
+                    timestamp: Utc::now(),
+                    metadata: MessageMetadata::default(),
+                    sequence: 0,
+                };
+                let msg_id = msg.id.clone();
+                self.add_message(msg);
+                msg_id
+            }
         };
+
+        if !id.is_empty() {
+            self.tool_rows_by_call.remove(id);
+            self.completed_calls.insert(id.to_string());
+        }
         // Errors must be unmistakable: auto-expand so the full message is
-        // visible and never hidden behind the 12-line preview.
+        // visible and never hidden behind the preview cap.
         if is_error {
             self.expanded_tools.insert(msg_id);
         }
     }
 
-    /// True when a finished (non-placeholder) tool row already exists for
-    /// `tool_name`. Used to recognize the task-end fallback arriving after
-    /// a live done-marker completed the row — symmetric with the
-    /// `Running`-entry match above, plus the reverse direction because the
-    /// live row's header carries the `· duration` stamp.
-    fn tool_row_completed_like(&self, tool_name: &str) -> bool {
-        self.messages.iter().any(|m| {
-            if m.role != MessageRole::Tool {
-                return false;
+    pub fn fail_tool_execution(&mut self, id: &str, tool_name: &str, error: &str) {
+        if !id.is_empty() && self.completed_calls.contains(id) {
+            return;
+        }
+        if id.is_empty()
+            && let Some(i) = self
+                .messages
+                .iter()
+                .rposition(|m| Self::tool_row_matches_header(m, tool_name))
+        {
+            let body = self.messages[i]
+                .content
+                .split_once('\n')
+                .map(|x| x.1)
+                .unwrap_or("")
+                .trim();
+            if !body.is_empty() && body != Self::LIVE_TOOL_BODY_PLACEHOLDER {
+                return;
             }
-            let mut parts = m.content.splitn(2, '\n');
-            let first = parts.next().unwrap_or("").trim();
-            let header = first
-                .strip_prefix('[')
-                .and_then(|s| s.strip_suffix(']'))
-                .unwrap_or(first);
-            let body = parts.next().unwrap_or("").trim();
-            if body.is_empty() || body == Self::LIVE_TOOL_BODY_PLACEHOLDER {
-                return false;
-            }
-            header == tool_name
-                || header.starts_with(&format!("{tool_name} "))
-                || tool_name.starts_with(&format!("{header} "))
-                || header.contains(tool_name)
-                || tool_name.contains(header)
-        })
-    }
-
-    pub fn fail_tool_execution(&mut self, tool_name: &str, error: &str) {
+        }
         if let Some(execution) = self.tool_executions.iter_mut().rev().find(|e| {
             e.status == ToolStatus::Running
                 && (e.tool_name == tool_name
@@ -205,27 +299,35 @@ impl KodApp {
             execution.status = ToolStatus::Failed;
             execution.result = Some(error.to_string());
         }
-
         self.current_tool = None;
 
         let body = format!("Error: {}", error.trim());
-        let content = format!("[{}]\n{}", tool_name, body);
-        let msg_id = if let Some(i) = self.live_tool_msg() {
-            self.messages[i].content = content;
-            self.messages[i].id.clone()
-        } else {
-            let msg = Message {
-                id: MessageId::new(),
-                role: MessageRole::Tool,
-                content,
-                timestamp: Utc::now(),
-                metadata: MessageMetadata::default(),
-                sequence: 0,
-            };
-            let id = msg.id.clone();
-            self.add_message(msg);
-            id
+        let content = format!("[{tool_name}]\n{body}");
+        let msg_id = match self.resolve_tool_row(id, tool_name) {
+            Some(msg_id) => {
+                if let Some(m) = self.messages.iter_mut().find(|m| m.id == msg_id) {
+                    m.content = content;
+                }
+                msg_id
+            }
+            None => {
+                let msg = Message {
+                    id: MessageId::new(),
+                    role: MessageRole::Tool,
+                    content,
+                    timestamp: Utc::now(),
+                    metadata: MessageMetadata::default(),
+                    sequence: 0,
+                };
+                let msg_id = msg.id.clone();
+                self.add_message(msg);
+                msg_id
+            }
         };
+        if !id.is_empty() {
+            self.tool_rows_by_call.remove(id);
+            self.completed_calls.insert(id.to_string());
+        }
         // Always expand errors — same rationale as complete_tool_execution.
         self.expanded_tools.insert(msg_id);
     }

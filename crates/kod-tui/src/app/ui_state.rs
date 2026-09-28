@@ -714,14 +714,6 @@ impl KodApp {
         }
     }
 
-    /// Newest running tool for the status bar: (total, done, label).
-    /// Tool rows don't carry step counts, so total/done are 0/0 unless a
-    /// progress display was pushed via `update_tool_status`.
-    pub fn active_tool(&self) -> Option<(usize, usize, String)> {
-        let name = self.current_tool.clone()?;
-        Some((0, 0, name))
-    }
-
     /// Last assistant reply text (for `y` / `/copy`).
     pub fn last_assistant_text(&self) -> Option<&str> {
         self.messages

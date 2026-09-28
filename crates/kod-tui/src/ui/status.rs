@@ -97,7 +97,21 @@ impl StatusWidget {
         //    spinner + phase_label ("thinking…" / "tool: …"). No elapsed
         //    seconds — they were duplicated across header/status and noisy.
         if app.is_generating() {
-            let phase = app.phase_label().unwrap_or_else(|| "thinking…".to_string());
+            // Delta §11.4: when more than one tool row is in flight, an
+            // aggregate beats repeating the newest tool's brief. When a
+            // single tool is running and its row is visible in the chat,
+            // the row already shows the brief; the strip says "working…"
+            // so the two are not duplicates.
+            let running = app.running_tool_count();
+            let phase = if running > 1 {
+                format!("⚙ {running} tools running…")
+            } else if matches!(app.phase(), crate::app::GenPhase::ExecutingTool(_))
+                && app.show_tools()
+            {
+                "working…".to_string()
+            } else {
+                app.phase_label().unwrap_or_else(|| "thinking…".to_string())
+            };
             let mut spans = vec![
                 Span::styled(
                     format!("{} ", app.spinner_frame()),
@@ -107,35 +121,18 @@ impl StatusWidget {
                 ),
                 Span::styled(phase, Style::default().fg(theme.warning)),
             ];
-            // Time-to-first-token appears the moment the model
-            // starts answering. It is a per-turn measurement, so it
-            // disappears when the turn ends — the value is a
-            // latency observation, not a running total.
+            // Time-to-first-token appears the moment the model starts
+            // answering. A per-turn measurement; it disappears when the
+            // turn ends.
             if let Some(ms) = app.ttft_ms() {
                 spans.push(Span::styled(format!(" · ttft {ms}ms"), dim));
             }
-            // Streaming rate. Only appears once the second chunk
-            // lands (a single chunk has no measurable interval); the
-            // value decays toward 0 when the stream stalls, which is
-            // exactly the signal a user staring at a frozen spinner
-            // wants.
+            // Streaming rate. Only appears once the second chunk lands.
             if let Some(rate) = app.tokens_per_sec() {
                 spans.push(Span::styled(format!(" · {:.0} tok/s", rate), dim));
             }
             spans.push(Span::styled(" · Esc cancels", dim));
             Widget::render(Line::from(spans), area, buf);
-            return;
-        }
-
-        if let Some((total, done, label)) = app.active_tool() {
-            Widget::render(
-                Line::from(vec![Span::styled(
-                    format!(" ⚙ {label} {done}/{total} "),
-                    Style::default().fg(theme.tool),
-                )]),
-                area,
-                buf,
-            );
             return;
         }
 

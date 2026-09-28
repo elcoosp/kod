@@ -142,7 +142,7 @@ async fn test_process_streaming_delivers_chunks_and_tool_marker() {
     let mut texts = Vec::new();
     let mut tools = Vec::new();
     while let Some(chunk) = rx.recv().await {
-        if let Some(name) = parse_tool_start(&chunk) {
+        if let Some((_cid, name)) = parse_tool_start(&chunk) {
             tools.push(name.to_string());
         } else {
             texts.push(chunk);
@@ -164,14 +164,19 @@ async fn test_tool_markers_roundtrip_and_brief() {
         format_call_brief, parse_tool_args, parse_tool_start, tool_args_marker, tool_start_marker,
     };
 
-    let m = tool_start_marker("execute_command");
-    assert_eq!(parse_tool_start(&m), Some("execute_command"));
+    let m = tool_start_marker("call_1", "execute_command");
+    assert_eq!(parse_tool_start(&m), Some(("call_1", "execute_command")));
     assert_eq!(parse_tool_start("plain text"), None);
+    // Legacy v1 chunk still parses with an empty id.
+    assert_eq!(
+        parse_tool_start("\0kod-tool:execute_command\0"),
+        Some(("", "execute_command"))
+    );
 
-    let a = tool_args_marker("execute_command cargo test -p kod-tui");
+    let a = tool_args_marker("call_1", "execute_command cargo test -p kod-tui");
     assert_eq!(
         parse_tool_args(&a),
-        Some("execute_command cargo test -p kod-tui")
+        Some(("call_1", "execute_command cargo test -p kod-tui"))
     );
     assert_eq!(parse_tool_args("plain text"), None);
 

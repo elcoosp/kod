@@ -49,6 +49,9 @@ pub struct OpenAICompatProvider {
     /// Disable only when a caller has evidence a legitimate stream
     /// is being misclassified.
     stream_guard_enabled: bool,
+    /// Longest provider-suggested rate-limit window the retry loops may
+    /// sleep out. ZERO (default) = never wait out long windows.
+    rate_limit_wait: std::time::Duration,
 }
 
 impl OpenAICompatProvider {
@@ -102,12 +105,21 @@ impl OpenAICompatProvider {
                 kod_provider::concurrency::ProviderConcurrency::new(0),
             ),
             stream_guard_enabled: true,
+            rate_limit_wait: std::time::Duration::ZERO,
         })
     }
 
     /// Opt in or out of the §9.3 stream stall detector. On by default.
     pub fn with_stream_guard(mut self, enabled: bool) -> Self {
         self.stream_guard_enabled = enabled;
+        self
+    }
+
+    /// Bound how long the retry loops may sleep out a provider-suggested
+    /// rate-limit window. Tab-bridge's send-frequency limit is ~20 min;
+    /// set ~1500 s for such endpoints (see EndpointConfig).
+    pub fn with_rate_limit_wait(mut self, wait: std::time::Duration) -> Self {
+        self.rate_limit_wait = wait;
         self
     }
 
@@ -156,6 +168,7 @@ impl OpenAICompatProvider {
             timeout_secs: self.timeout_secs,
             concurrency: self.concurrency,
             stream_guard_enabled: self.stream_guard_enabled,
+            rate_limit_wait: self.rate_limit_wait,
         })
     }
 
@@ -350,7 +363,10 @@ impl OpenAICompatProvider {
         // retried in lockstep. The shared policy classifies from the
         // typed `KodError` (`is_retryable()`), honours `Retry-After`
         // on a `RateLimited`, and jitters the backoff.
-        let policy = kod_provider::retry::RetryPolicy::default();
+        let policy = kod_provider::retry::RetryPolicy {
+            max_rate_limit_wait: self.rate_limit_wait,
+            ..kod_provider::retry::RetryPolicy::default()
+        };
         kod_provider::retry::with_retry(&policy, || {
             let req = request.clone();
             async move { self.collect_once(&req, stream).await }
@@ -369,7 +385,7 @@ impl OpenAICompatProvider {
             .inner
             .generate_content(request.clone(), stream)
             .await
-            .map_err(adk_err)?;
+            .map_err(adk_err_typed)?;
         let mut text = String::new();
         let mut calls = Vec::new();
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
@@ -636,13 +652,18 @@ impl OpenAICompatProvider {
                             yield Err(adk_err(e));
                             return;
                         }
-                        let err = adk_err(e);
+                        let err = adk_err_typed(e);
                         if attempt < MAX_STREAM_ATTEMPTS {
+                            let delay = rate_limit_delay(&err, self.rate_limit_wait, attempt);
                             tracing::warn!(
                                 attempt,
+                                delay_ms = delay.as_millis() as u64,
                                 error = %err,
                                 "openai-compat stream: pre-commit transport error; retrying",
                             );
+                            if delay > std::time::Duration::ZERO {
+                                tokio::time::sleep(delay).await;
+                            }
                             continue;
                         }
                         yield Err(err);
@@ -788,7 +809,7 @@ impl OpenAICompatProvider {
                             // turn (safe to retry); but a 409-class error
                             // means server-side work is still live.
                             transport_retryable = adk_precommit_retryable(&e);
-                            transport_error = Some(adk_err(e));
+                            transport_error = Some(adk_err_typed(e));
                             break 'read;
                         }
                     }
@@ -800,11 +821,16 @@ impl OpenAICompatProvider {
                         && tracker.is_safe_to_retry()
                         && attempt < MAX_STREAM_ATTEMPTS
                     {
+                        let delay = rate_limit_delay(&err, self.rate_limit_wait, attempt);
                         tracing::warn!(
                             attempt,
+                            delay_ms = delay.as_millis() as u64,
                             error = %err,
                             "openai-compat stream: pre-commit read error; retrying",
                         );
+                        if delay > std::time::Duration::ZERO {
+                            tokio::time::sleep(delay).await;
+                        }
                         continue;
                     }
                     yield Err(err);
@@ -884,6 +910,41 @@ fn resolve_api_key(explicit: Option<String>) -> String {
 
 fn adk_err(e: adk_core::AdkError) -> KodError {
     KodError::Provider(e.to_string())
+}
+
+/// Map an adk error onto the typed KodError taxonomy. adk owns the raw
+/// HTTP response and exposes only `details.upstream_status_code` plus a
+/// formatted message, so: 429 → typed `RateLimited` with a hint parsed
+/// from the message text — tab-bridge's 429 body embeds
+/// "…wait ~20 minutes…", which `text_hint_secs` reads (the numeric
+/// `Retry-After` header itself is unreachable on this path). Everything
+/// else keeps the legacy string mapping.
+fn adk_err_typed(e: adk_core::AdkError) -> KodError {
+    if e.details.upstream_status_code == Some(429) {
+        let text = e.to_string();
+        let secs = kod_provider::retry::text_hint_secs(&text).unwrap_or(1200);
+        return KodError::RateLimited {
+            retry_after_secs: secs,
+        };
+    }
+    adk_err(e)
+}
+
+/// Delay before the next streaming attempt. A typed rate limit within
+/// the wait budget sleeps out its window exactly once (attempt 1 only —
+/// a second window inside one turn fails fast instead of parking the
+/// session again). Other transients get a small linear backoff; the
+/// pre-fix loop retried instantly, hammering a provider that had just
+/// said "slow down".
+fn rate_limit_delay(err: &KodError, wait_budget: std::time::Duration, attempt: u32) -> std::time::Duration {
+    if let KodError::RateLimited { retry_after_secs } = err {
+        let hint = std::time::Duration::from_secs(*retry_after_secs);
+        if hint <= wait_budget && attempt <= 1 {
+            return hint;
+        }
+        return std::time::Duration::ZERO;
+    }
+    std::time::Duration::from_millis(250 * u64::from(attempt))
 }
 
 /// Whether a failed streaming attempt may be retried without colliding with

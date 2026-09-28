@@ -559,7 +559,7 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
     }
 
     // Tool lifecycle.
-    if let Some(name) = crate::engine::parse_tool_start(chunk) {
+    if let Some((_cid, name)) = crate::engine::parse_tool_start(chunk) {
         let tool_call_id = format!("tc-{}", uuid::Uuid::new_v4());
         server
             .last_tool_call_id
@@ -584,7 +584,7 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
             .await;
         return Ok(());
     }
-    if let Some(brief) = crate::engine::parse_tool_args(chunk) {
+    if let Some((_cid, brief)) = crate::engine::parse_tool_args(chunk) {
         if let Some(tool_call_id) = server
             .last_tool_call_id
             .lock()
@@ -609,7 +609,7 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
         }
         return Ok(());
     }
-    if let Some((header, summary, _ms)) = crate::engine::parse_tool_done(chunk) {
+    if let Some((_cid, header, summary, _ms)) = crate::engine::parse_tool_done(chunk) {
         if let Some(tool_call_id) = server
             .last_tool_call_id
             .lock()

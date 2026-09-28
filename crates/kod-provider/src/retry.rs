@@ -30,6 +30,12 @@ pub struct RetryPolicy {
     pub base_delay: Duration,
     pub max_delay: Duration,
     pub jitter_fraction: f64,
+    /// Longest provider-suggested rate-limit window the loop may sleep
+    /// out in full. `ZERO` (default) preserves the legacy behavior: any
+    /// hint is clamped to `max_delay`. A hint at or below this budget is
+    /// slept exactly ONCE per call before the next attempt (a second
+    /// long window fails the call instead of parking it again).
+    pub max_rate_limit_wait: Duration,
     /// Injectable sleep for tests. Production leaves this as `tokio::time::sleep`.
     pub sleep_fn: Arc<SleepFn>,
 }
@@ -41,6 +47,7 @@ impl Default for RetryPolicy {
             base_delay: Duration::from_millis(250),
             max_delay: Duration::from_secs(8),
             jitter_fraction: 0.25,
+            max_rate_limit_wait: Duration::ZERO,
             sleep_fn: Arc::new(|d: Duration| -> SleepFuture { Box::pin(tokio::time::sleep(d)) }),
         }
     }
@@ -54,6 +61,7 @@ impl RetryPolicy {
             base_delay: Duration::ZERO,
             max_delay: Duration::ZERO,
             jitter_fraction: 0.0,
+            max_rate_limit_wait: Duration::ZERO,
             sleep_fn: Arc::new(|_: Duration| -> SleepFuture { Box::pin(async {}) }),
         }
     }
@@ -88,6 +96,7 @@ where
     Fut: Future<Output = Result<T>>,
 {
     let mut attempt = 1u32;
+    let mut long_wait_used = false;
     loop {
         match f().await {
             Ok(v) => return Ok(v),
@@ -96,7 +105,20 @@ where
             Err(e) => {
                 let delay = match &e {
                     KodError::RateLimited { retry_after_secs } => {
-                        Duration::from_secs(*retry_after_secs).min(policy.max_delay)
+                        let hint = Duration::from_secs(*retry_after_secs);
+                        if hint > policy.max_delay
+                            && hint <= policy.max_rate_limit_wait
+                            && !long_wait_used
+                        {
+                            // The provider asked for a long window (e.g. a
+                            // stateful tab backend's ~20-minute send
+                            // frequency limit). Sleep it out exactly once;
+                            // a second such window fails the call.
+                            long_wait_used = true;
+                            hint
+                        } else {
+                            hint.min(policy.max_delay)
+                        }
                     }
                     _ => policy.delay_for(attempt),
                 };
@@ -104,6 +126,7 @@ where
                     attempt,
                     max_attempts = policy.max_attempts,
                     delay_ms = delay.as_millis() as u64,
+                    long_wait = long_wait_used,
                     error = %e,
                     "transient provider error; retrying"
                 );
@@ -174,6 +197,66 @@ mod tests {
         .await;
         assert!(matches!(result, Err(KodError::RateLimited { .. })));
         assert_eq!(calls.load(Ordering::SeqCst), policy.max_attempts);
+    }
+
+    #[tokio::test]
+    async fn long_rate_limit_hint_is_slept_out_once_within_budget() {
+        let sleeps: StdArc<std::sync::Mutex<Vec<Duration>>> =
+            StdArc::new(std::sync::Mutex::new(Vec::new()));
+        let s2 = sleeps.clone();
+        let policy = RetryPolicy {
+            max_rate_limit_wait: Duration::from_secs(1500),
+            sleep_fn: StdArc::new(move |d: Duration| {
+                s2.lock().unwrap().push(d);
+                Box::pin(async {})
+            }),
+            ..RetryPolicy::immediate()
+        };
+        let calls = StdArc::new(AtomicU32::new(0));
+        let c2 = calls.clone();
+        let result: Result<u32> = with_retry(&policy, || {
+            let n = c2.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if n < 2 {
+                    Err(KodError::RateLimited {
+                        retry_after_secs: 1200,
+                    })
+                } else {
+                    Ok(7)
+                }
+            }
+        })
+        .await;
+        assert_eq!(result.unwrap(), 7);
+        let s = sleeps.lock().unwrap();
+        assert_eq!(s[0], Duration::from_secs(1200), "first hint slept in full");
+        assert_eq!(
+            *s.last().unwrap(),
+            Duration::ZERO,
+            "second long hint clamped (budget spent)"
+        );
+    }
+
+    #[tokio::test]
+    async fn zero_budget_keeps_legacy_clamp() {
+        let policy = RetryPolicy::immediate(); // max_rate_limit_wait = ZERO
+        let calls = StdArc::new(AtomicU32::new(0));
+        let c2 = calls.clone();
+        let result: Result<u32> = with_retry(&policy, || {
+            let n = c2.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if n < 2 {
+                    Err(KodError::RateLimited {
+                        retry_after_secs: 1200,
+                    })
+                } else {
+                    Ok(1)
+                }
+            }
+        })
+        .await;
+        assert_eq!(result.unwrap(), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
 
     #[test]
@@ -406,6 +489,14 @@ fn scan_text_hint(body: &str) -> Option<Duration> {
         return Some(Duration::from_secs(secs));
     }
     None
+}
+
+/// Public form of [`scan_text_hint`]: the seconds a provider body text
+/// suggests, when it does. Used by adapters that only see a formatted
+/// error message (adk flattens the HTTP response, so tab-bridge's
+/// `"…wait ~20 minutes…"` body reaches this module as plain text).
+pub fn text_hint_secs(body: &str) -> Option<u64> {
+    scan_text_hint(body).map(|d| d.as_secs())
 }
 
 #[cfg(test)]

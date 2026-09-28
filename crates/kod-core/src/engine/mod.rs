@@ -114,40 +114,51 @@ enum EarlyTermination {
 }
 
 /// Marker prefix for tool-start notices inside the `process_streaming`
-/// chunk channel: `\0kod-tool:<name>\0`. The TUI turns these into its
-/// "running …" indicator instead of chat text (see `parse_tool_start`).
+/// chunk channel: `\0kod-tool:<cid>:<name>\0`. `<cid>` is the provider's
+/// tool-call id (or `""` when the provider sends none) — the TUI keys its
+/// live tool-row registry on it so parallel calls update their own rows
+/// (see `parse_tool_start`).
 pub const TOOL_START_MARKER: &str = "\0kod-tool:";
 
-/// Build a tool-start marker chunk for `name`.
-pub fn tool_start_marker(name: &str) -> String {
-    format!("{TOOL_START_MARKER}{name}\0")
+/// Sanitize a call id for the marker wire format: no `:` (field separator)
+/// and no `\0` (marker terminator) may survive.
+fn clean_call_id(cid: &str) -> String {
+    cid.replace([':', '\0'], "_")
 }
 
-/// If `chunk` is a tool-start marker, return the tool name.
-pub fn parse_tool_start(chunk: &str) -> Option<&str> {
-    chunk.strip_prefix(TOOL_START_MARKER)?.strip_suffix('\0')
+/// Build a tool-start marker chunk for call `cid` carrying `name`.
+pub fn tool_start_marker(cid: &str, name: &str) -> String {
+    format!("{TOOL_START_MARKER}{}:{name}\0", clean_call_id(cid))
+}
+
+/// If `chunk` is a tool-start marker, return `(call_id, tool_name)`.
+/// A legacy v1 chunk (no `cid:` prefix) parses as `("", name)`.
+pub fn parse_tool_start(chunk: &str) -> Option<(&str, &str)> {
+    let rest = chunk.strip_prefix(TOOL_START_MARKER)?.strip_suffix('\0')?;
+    Some(rest.split_once(':').unwrap_or(("", rest)))
 }
 
 /// Marker prefix for tool-argument excerpts inside the
-/// `process_streaming` chunk channel: `\0kod-args:<one-line display>\0`.
+/// `process_streaming` chunk channel: `\0kod-args:<cid>:<one-line display>\0`.
 /// Sent after a streamed call's arguments are assembled but before the
 /// tool executes, so the TUI's "running …" line can show the actual
 /// command/file instead of just the tool name.
 pub const TOOL_ARGS_MARKER: &str = "\0kod-args:";
 
 /// Build a tool-args marker chunk carrying a one-line display string.
-pub fn tool_args_marker(display: &str) -> String {
-    format!("{TOOL_ARGS_MARKER}{display}\0")
+pub fn tool_args_marker(cid: &str, display: &str) -> String {
+    format!("{TOOL_ARGS_MARKER}{}:{display}\0", clean_call_id(cid))
 }
 
-/// If `chunk` is a tool-args marker, return the one-line display string.
-pub fn parse_tool_args(chunk: &str) -> Option<&str> {
-    chunk.strip_prefix(TOOL_ARGS_MARKER)?.strip_suffix('\0')
+/// If `chunk` is a tool-args marker, return `(call_id, display)`.
+pub fn parse_tool_args(chunk: &str) -> Option<(&str, &str)> {
+    let rest = chunk.strip_prefix(TOOL_ARGS_MARKER)?.strip_suffix('\0')?;
+    Some(rest.split_once(':').unwrap_or(("", rest)))
 }
 
 /// Marker prefix for per-tool completion notices inside the
 /// `process_streaming` chunk channel:
-/// `\0kod-done:<header>\0<summary>\0<duration_ms>`.
+/// `\0kod-done:<cid>\0<header>\0<summary>\0<duration_ms>`.
 /// Sent by [`KodEngine::run_streaming_loop`] the moment each tool call
 /// finishes — long before the whole agentic loop returns — so the TUI
 /// can fill the live "running …" row in immediately instead of batching
@@ -156,25 +167,27 @@ pub fn parse_tool_args(chunk: &str) -> Option<&str> {
 pub const TOOL_DONE_MARKER: &str = "\0kod-done:";
 
 /// Build a tool-done marker chunk for one finished call.
-pub fn tool_done_marker(header: &str, summary: &str, duration_ms: u64) -> String {
+pub fn tool_done_marker(cid: &str, header: &str, summary: &str, duration_ms: u64) -> String {
     let clean = |s: &str| s.replace('\0', " ");
     format!(
-        "{TOOL_DONE_MARKER}{}\0{}\0{duration_ms}",
+        "{TOOL_DONE_MARKER}{}\0{}\0{}\0{duration_ms}",
+        clean_call_id(cid),
         clean(header),
         clean(summary)
     )
 }
 
-/// If `chunk` is a tool-done marker, return `(header, summary,
-/// duration_ms)`. A malformed duration degrades to `0` rather than
-/// dropping the completion.
-pub fn parse_tool_done(chunk: &str) -> Option<(&str, &str, u64)> {
+/// If `chunk` is a tool-done marker, return `(call_id, header, summary,
+/// duration_ms)`. A missing or malformed duration degrades to `0` rather
+/// than dropping the completion.
+pub fn parse_tool_done(chunk: &str) -> Option<(&str, &str, &str, u64)> {
     let rest = chunk.strip_prefix(TOOL_DONE_MARKER)?;
-    let mut parts = rest.splitn(3, '\0');
+    let mut parts = rest.splitn(4, '\0');
+    let cid = parts.next()?;
     let header = parts.next()?;
     let summary = parts.next()?;
-    let duration = parts.next()?;
-    Some((header, summary, duration.parse::<u64>().unwrap_or(0)))
+    let duration = parts.next().unwrap_or("0");
+    Some((cid, header, summary, duration.parse::<u64>().unwrap_or(0)))
 }
 
 /// Short human duration for tool rows: `340ms`, `1.2s`, `1m05s`.
@@ -9850,11 +9863,12 @@ pub(crate) fn filter_chain_by_trust(
             // The running indicator now shows what each call actually does
             // (`execute_command cargo test …`), not just the tool name.
             for call in &calls {
+                let cid = call.id.as_deref().unwrap_or("");
                 let _ = chunk_tx
-                    .send(tool_args_marker(&format_call_brief(
-                        &call.tool_name,
-                        &call.arguments,
-                    )))
+                    .send(tool_args_marker(
+                        cid,
+                        &format_call_brief(&call.tool_name, &call.arguments),
+                    ))
                     .await;
             }
             // Delta §14.1: deobfuscate placeholders in every tool
@@ -9906,10 +9920,11 @@ pub(crate) fn filter_chain_by_trust(
                 .iter()
                 .zip(section.results.iter().zip(section.elapsed_ms.iter()))
             {
+                let cid = call.id.as_deref().unwrap_or("");
                 let header = format_tool_header(&call.tool_name, &call.arguments);
                 let summary = summarize_tool_result(&call.tool_name, result);
                 let _ = chunk_tx
-                    .send(tool_done_marker(&header, &summary, *ms))
+                    .send(tool_done_marker(cid, &header, &summary, *ms))
                     .await;
             }
             // Tier 1.5 — record the results we just got into the
@@ -10228,7 +10243,8 @@ pub(crate) fn filter_chain_by_trust(
                     }
                     if entry.name.is_none() {
                         entry.name = Some(name.clone());
-                        let _ = chunk_tx.send(tool_start_marker(&name)).await;
+                        let cid = entry.id.as_deref().unwrap_or("");
+                        let _ = chunk_tx.send(tool_start_marker(cid, &name)).await;
                     }
                 }
                 StreamChunk::ToolCallDelta { index, arguments } => {
@@ -14634,30 +14650,52 @@ mod tests {
     fn test_tool_done_marker_roundtrip() {
         let header = "execute_command command=cargo test";
         let summary = "line1\nline2\nline3";
-        let chunk = tool_done_marker(header, summary, 1340);
-        let (h, s, ms) = parse_tool_done(&chunk).expect("must parse");
-        assert_eq!(h, header);
-        assert_eq!(s, summary);
-        assert_eq!(ms, 1340);
+        let chunk = tool_done_marker("call_1", header, summary, 1340);
+        let (cid, h, s, ms) = parse_tool_done(&chunk).expect("must parse");
+        assert_eq!((cid, h, s, ms), ("call_1", header, summary, 1340));
     }
 
     #[test]
     fn test_tool_done_marker_sanitizes_nul() {
-        let chunk = tool_done_marker("a\0b", "c\0d", 7);
-        let (h, s, ms) = parse_tool_done(&chunk).expect("must parse");
-        assert_eq!((h, s, ms), ("a b", "c d", 7));
+        let chunk = tool_done_marker("c", "a\0b", "c\0d", 7);
+        let (cid, h, s, ms) = parse_tool_done(&chunk).expect("must parse");
+        assert_eq!((cid, h, s, ms), ("c", "a b", "c d", 7));
     }
 
     #[test]
     fn test_tool_done_marker_rejects_other_chunks() {
         assert!(parse_tool_done("plain text").is_none());
-        assert!(parse_tool_done(&tool_start_marker("read_file")).is_none());
-        // Malformed duration degrades to 0 instead of dropping the row.
+        assert!(parse_tool_done(&tool_start_marker("", "read_file")).is_none());
+        // Missing duration on a three-field legacy body degrades to 0; the
+        // cid must not swallow the header.
         let raw = format!("{TOOL_DONE_MARKER}h\0s\0abc");
-        assert_eq!(parse_tool_done(&raw), Some(("h", "s", 0)));
+        assert_eq!(parse_tool_done(&raw), Some(("h", "s", "abc", 0)));
         // Truncated payload is not a completion.
         let raw = format!("{TOOL_DONE_MARKER}only-header");
         assert!(parse_tool_done(&raw).is_none());
+    }
+
+    #[test]
+    fn test_marker_v2_roundtrip_with_call_ids() {
+        let start = tool_start_marker("call_9", "read_file");
+        assert_eq!(parse_tool_start(&start), Some(("call_9", "read_file")));
+        // Legacy v1 chunk (no cid) still parses with an empty id.
+        assert_eq!(parse_tool_start("\0kod-tool:read_file\0"), Some(("", "read_file")));
+        let args = tool_args_marker("call_9", "execute_command cargo test -- --foo:bar");
+        assert_eq!(
+            parse_tool_args(&args),
+            Some(("call_9", "execute_command cargo test -- --foo:bar")),
+            "the first ':' separates the id; colons inside the display survive",
+        );
+        assert_eq!(parse_tool_args(""), None);
+    }
+
+    #[test]
+    fn test_call_id_colons_are_sanitized() {
+        let start = tool_start_marker("we:ird\0id", "read_file");
+        let (cid, name) = parse_tool_start(&start).expect("must parse");
+        assert_eq!(name, "read_file");
+        assert!(!cid.contains(':') && !cid.contains('\0'));
     }
 
     #[test]
@@ -15498,38 +15536,56 @@ mod prop_tests {
     }
 
     proptest! {
-        /// tool_start_marker / parse_tool_start round-trip on NUL-free input.
+        /// tool_start_marker / parse_tool_start round-trip on NUL-free,
+        /// colon-free input (colons in the cid are sanitized by the
+        /// builder, which is what the sanitize test asserts separately).
         #[test]
-        fn prop_tool_start_roundtrip(name in no_nul().prop_filter("non-empty", |s| !s.is_empty())) {
-            let chunk = tool_start_marker(&name);
-            let parsed = parse_tool_start(&chunk)
+        fn prop_tool_start_roundtrip(
+            cid in "[^:\0]{0,64}",
+            name in no_nul().prop_filter("non-empty", |s| !s.is_empty()),
+        ) {
+            let chunk = tool_start_marker(&cid, &name);
+            let (parsed_cid, parsed_name) = parse_tool_start(&chunk)
                 .expect("marker built by tool_start_marker must parse");
-            prop_assert_eq!(parsed, name.as_str());
+            prop_assert_eq!(parsed_cid, cid.as_str());
+            prop_assert_eq!(parsed_name, name.as_str());
         }
 
-        /// tool_args_marker / parse_tool_args round-trip on NUL-free input.
+        /// tool_args_marker / parse_tool_args round-trip on NUL-free,
+        /// colon-free cid input. Colons inside the display survive (the
+        /// parser splits on the *first* colon only).
         #[test]
-        fn prop_tool_args_roundtrip(display in no_nul()) {
-            let chunk = tool_args_marker(&display);
-            let parsed = parse_tool_args(&chunk)
+        fn prop_tool_args_roundtrip(
+            cid in "[^:\0]{0,64}",
+            display in no_nul(),
+        ) {
+            let chunk = tool_args_marker(&cid, &display);
+            let (parsed_cid, parsed_display) = parse_tool_args(&chunk)
                 .expect("marker built by tool_args_marker must parse");
-            prop_assert_eq!(parsed, display.as_str());
+            prop_assert_eq!(parsed_cid, cid.as_str());
+            prop_assert_eq!(parsed_display, display.as_str());
         }
 
         /// tool_done_marker / parse_tool_done round-trip. The builder
-        /// sanitizes NUL to space, so the round-trip target is the
-        /// sanitized form, not the raw inputs.
+        /// sanitizes NUL to space and colons to underscores in the cid,
+        /// so the round-trip target is the sanitized form.
         #[test]
         fn prop_tool_done_roundtrip(
+            cid in ".{0,64}",
             header in ".{0,200}",
             summary in ".{0,500}",
             ms in any::<u64>(),
         ) {
+            let cid_sanitized: String = cid
+                .chars()
+                .map(|ch| if ch == ':' || ch == '\0' { '_' } else { ch })
+                .collect();
             let header_sanitized = header.replace('\0', " ");
             let summary_sanitized = summary.replace('\0', " ");
-            let chunk = tool_done_marker(&header, &summary, ms);
-            let (h, s, m) = parse_tool_done(&chunk)
+            let chunk = tool_done_marker(&cid, &header, &summary, ms);
+            let (c_, h, s, m) = parse_tool_done(&chunk)
                 .expect("marker built by tool_done_marker must parse");
+            prop_assert_eq!(c_, cid_sanitized.as_str());
             prop_assert_eq!(h, header_sanitized.as_str());
             prop_assert_eq!(s, summary_sanitized.as_str());
             prop_assert_eq!(m, ms);
@@ -15540,15 +15596,10 @@ mod prop_tests {
         /// from misreading streamed text as a control frame.
         #[test]
         fn prop_arbitrary_text_is_not_a_done_marker(s in ".{0,400}") {
-            // Only assert that a non-marker does not accidentally parse
-            // as a marker with a mismatched shape. If it parses, the
-            // returned tuple must contain the exact payload.
-            if let Some((h, s_, m)) = parse_tool_done(&s) {
+            if let Some((c_, h, s_, m)) = parse_tool_done(&s) {
                 prop_assert!(s.starts_with(TOOL_DONE_MARKER));
-                prop_assert!(h.len() + s_.len() <= s.len());
-                // Duration must round-trip through u64 parsing, or be
-                // the documented degradation to 0.
-                if let Ok(parsed) = s.splitn(3, '\0').nth(2).unwrap_or("").parse::<u64>() {
+                prop_assert!(c_.len() + h.len() + s_.len() <= s.len());
+                if let Ok(parsed) = s.splitn(4, '\0').nth(3).unwrap_or("").parse::<u64>() {
                     prop_assert_eq!(m, parsed);
                 } else {
                     prop_assert_eq!(m, 0);

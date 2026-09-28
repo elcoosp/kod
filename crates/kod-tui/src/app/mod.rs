@@ -548,6 +548,13 @@ pub struct KodApp {
 
     agents: HashMap<String, AgentInfo>,
     tool_executions: Vec<ToolExecution>,
+    /// Delta §11.4 / TUI call-id threading: live tool rows keyed by
+    /// provider call id. An id of `""` never enters this map — those
+    /// calls use the legacy text-heuristic path.
+    tool_rows_by_call: HashMap<String, MessageId>,
+    /// Call ids whose rows are filled. The task-end `ToolCompleted`
+    /// fallback for such an id is a no-op (no duplicate rows).
+    completed_calls: HashSet<String>,
     current_tool: Option<String>,
 
     current_response: String,
@@ -921,6 +928,8 @@ impl KodApp {
 
             agents: HashMap::new(),
             tool_executions: Vec::new(),
+            tool_rows_by_call: std::collections::HashMap::new(),
+            completed_calls: std::collections::HashSet::new(),
             current_tool: None,
 
             current_response: String::new(),

@@ -112,11 +112,11 @@ fn test_agent_status() {
 fn test_tool_execution() {
     let mut app = KodApp::new();
 
-    app.start_tool_execution("read_file");
+    app.start_tool_execution("", "read_file");
 
     assert_eq!(app.current_tool(), Some(&"read_file".to_string()));
 
-    app.complete_tool_execution("read_file", "File contents...");
+    app.complete_tool_execution("", "read_file", "File contents...");
 
     assert!(
         app.messages()
