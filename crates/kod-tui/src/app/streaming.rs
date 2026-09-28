@@ -277,8 +277,21 @@ impl KodApp {
             // behavior of returning an empty advice string for both.
             ""
         };
-        let mut out = format!("Error: {error}");
-        out.push_str(advice);
+        // Single-line summary of the raw error: provider errors often
+        // carry multi-line JSON/HTML bodies that render as confetti in
+        // the chat. Collapse horizontal whitespace (newlines out
+        // entirely) and cap the length; the full text stays in
+        // `last_error` and the session log.
+        let mut summary: String = error.split_whitespace().collect::<Vec<_>>().join(" ");
+        if summary.chars().count() > 240 {
+            summary = summary.chars().take(240).collect::<String>();
+            summary.push_str(" ...");
+        }
+        let mut out = format!("Error: {summary}");
+        if !advice.is_empty() {
+            out.push('\n');
+            out.push_str(advice.trim());
+        }
         if fail_count >= 2 {
             out.push_str(
                 " (offline mode: generation keeps failing — fix the server, then `/retry`)",
