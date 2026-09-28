@@ -1349,6 +1349,10 @@ pub struct KodEngine {
     run_collector: std::sync::Arc<parking_lot::Mutex<crate::run_collector::RunCollector>>,
     /// Delta §13.2: per-request analytics aggregates.
     stats: std::sync::Arc<parking_lot::Mutex<kod_stats::request::Aggregates>>,
+    /// Delta §14.5: the OTLP telemetry handle. A disabled handle
+    /// (the default) makes every `record_*` a no-op; a caller
+    /// installs an enabled one with `set_telemetry`.
+    telemetry: RwLock<kod_telemetry::Telemetry>,
     /// Delta §12.7: session-frozen mental models. Rendered at a
     /// transcript boundary and injected as a cacheable system segment,
     /// so the bytes are stable for the session and the provider's
@@ -3458,6 +3462,7 @@ impl KodEngine {
             stats: std::sync::Arc::new(parking_lot::Mutex::new(
                 kod_stats::request::Aggregates::new(),
             )),
+            telemetry: RwLock::new(kod_telemetry::Telemetry::disabled()),
             mental_models: RwLock::new(kod_memory::mental_models::MentalModels::new()),
             ttsr: RwLock::new(kod_provider::ttsr::TtsrEngine::new(Vec::new())),
             retention_cursors: RwLock::new(HashMap::new()),
@@ -4729,6 +4734,21 @@ impl KodEngine {
             kod_memory::mental_models::RefreshTrigger::AfterConsolidation,
         ))
         .await;
+    }
+
+    /// Delta §14.5: install the OTLP telemetry handle. A caller
+    /// that wants export calls this with an enabled handle built
+    /// from `Telemetry::from_env`; the default (installed by
+    /// `new()`) is disabled and pays nothing.
+    pub async fn set_telemetry(&self, telemetry: kod_telemetry::Telemetry) {
+        *self.telemetry.write().await = telemetry;
+    }
+
+    /// Delta §14.5: a clone of the current telemetry handle. Cloning
+    /// is an `Arc` bump; a caller that wants to emit an out-of-band
+    /// record uses this.
+    pub async fn telemetry(&self) -> kod_telemetry::Telemetry {
+        self.telemetry.read().await.clone()
     }
 
     /// Delta §13.2: the session's behavioral-signal totals.
@@ -7366,6 +7386,26 @@ pub(crate) fn filter_chain_by_trust(
                 error: false,
             };
             self.stats.lock().observe(&record);
+        }
+
+        // Delta §14.5: mirror the turn completion into OTLP when a
+        // telemetry handle is installed. The `try_read` keeps the
+        // async-turn path from blocking on a writer; a missed record
+        // is not a correctness issue.
+        if let Ok(t) = self.telemetry.try_read() {
+            t.record_turn(kod_telemetry::TurnRecord {
+                system: model_ref.endpoint.clone(),
+                model: model_ref.model.clone(),
+                endpoint: model_ref.endpoint.clone(),
+                prompt_tokens: usage.prompt_tokens as u64,
+                completion_tokens: usage.completion_tokens as u64,
+                cache_read_tokens: usage.cache_read_tokens.unwrap_or(0),
+                cache_creation_tokens: usage.cache_creation_tokens.unwrap_or(0),
+                ttft_ms: None,
+                duration_ms: 0,
+                stop_reason: None,
+                error: false,
+            });
         }
 
         // P2-a: record the observed size for the compaction decision.

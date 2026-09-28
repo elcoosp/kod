@@ -2327,6 +2327,7 @@ dependencies = [
  "kod-skills",
  "kod-stats",
  "kod-swarm",
+ "kod-telemetry",
  "kod-tools",
  "kod-types",
  "libc",
@@ -2537,6 +2538,18 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "kod-telemetry"
+version = "0.1.0"
+dependencies = [
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
