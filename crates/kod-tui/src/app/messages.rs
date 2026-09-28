@@ -140,6 +140,16 @@ impl KodApp {
     }
 
     pub fn push_system_message(&mut self, content: &str) {
+        // Collapse exact consecutive duplicates: repeated engine notices
+        // must not stack identical `sys` rows. Non-consecutive repeats
+        // are legitimate (the same note can matter twice with context in
+        // between) and are kept.
+        if let Some(last) = self.messages.last()
+            && last.role == MessageRole::System
+            && last.content == content
+        {
+            return;
+        }
         self.add_message(Message {
             id: MessageId::new(),
             role: MessageRole::System,
