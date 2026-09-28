@@ -16,7 +16,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 /// Lines of the diff shown in the dialog. Beyond this, a
 /// `… and N more lines` summary is printed — the user can approve,
@@ -55,6 +55,14 @@ impl ApprovalWidget {
         let diff_ctx_style = Style::default().fg(theme.foreground);
         let dim_style = Style::default().fg(theme.dim);
 
+        // Popup geometry is decided up front so every content line can be
+        // truncated to the inner width *before* it is pushed: with
+        // `Wrap { trim: false }` a long line wraps into extra visual rows
+        // and pushes the key legend below the popup bottom. Truncating
+        // first keeps `lines.len()` equal to the visual height.
+        let body_w = 84u16.min(area.width).max(20);
+        let inner_w = body_w.saturating_sub(2) as usize; // 2 border cells
+
         let mut lines: Vec<Line> = Vec::new();
 
         // When the batch has more than one item, list them all at the
@@ -88,11 +96,17 @@ impl ApprovalWidget {
 
         lines.push(Line::from(vec![
             Span::styled("tool:    ", label_style),
-            Span::styled(current.tool_name.clone(), Style::default()),
+            Span::styled(
+                truncate_width(&current.tool_name, inner_w.saturating_sub(9)),
+                Style::default(),
+            ),
         ]));
         lines.push(Line::from(vec![
             Span::styled("summary: ", label_style),
-            Span::styled(current.summary.clone(), Style::default()),
+            Span::styled(
+                truncate_width(&current.summary, inner_w.saturating_sub(9)),
+                Style::default(),
+            ),
         ]));
         lines.push(Line::from(""));
 
@@ -110,7 +124,10 @@ impl ApprovalWidget {
                 } else {
                     diff_ctx_style
                 };
-                lines.push(Line::from(vec![Span::styled(l.to_string(), style)]));
+                lines.push(Line::from(vec![Span::styled(
+                    truncate_width(l, inner_w),
+                    style,
+                )]));
                 shown += 1;
             }
             if total_lines > shown {
@@ -172,7 +189,6 @@ impl ApprovalWidget {
         };
 
         let body_h = (lines.len() as u16 + 2).min(area.height);
-        let body_w = 84u16.min(area.width);
         let x = area.x + area.width.saturating_sub(body_w) / 2;
         let y = area.y + area.height.saturating_sub(body_h) / 2;
         let popup = Rect::new(x, y, body_w, body_h);
@@ -183,10 +199,7 @@ impl ApprovalWidget {
             .title(Span::styled(title_text, title_style));
 
         Clear.render(popup, buf);
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false })
-            .render(popup, buf);
+        Paragraph::new(lines).block(block).render(popup, buf);
     }
 }
 
@@ -194,6 +207,26 @@ impl Default for ApprovalWidget {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Truncate to `max` display cells (not chars), appending `…` when cut.
+/// Wide CJK cells count as 2, so the result never overflows the popup.
+fn truncate_width(s: &str, max: usize) -> String {
+    if Span::raw(s).width() <= max {
+        return s.to_string();
+    }
+    let mut acc = String::new();
+    let mut w = 0usize;
+    for ch in s.chars() {
+        let cw = Span::raw(ch.to_string()).width().max(1);
+        if w + cw > max.saturating_sub(1) {
+            break;
+        }
+        acc.push(ch);
+        w += cw;
+    }
+    acc.push('…');
+    acc
 }
 
 /// Truncate to `max` chars, appending `…` when cut.
