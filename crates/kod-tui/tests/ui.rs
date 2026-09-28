@@ -1000,14 +1000,24 @@ mod header_and_status {
     }
 
     #[test]
-    fn status_error_banner_survives_until_the_next_keypress() {
+    fn status_hides_the_error_banner() {
+        // The status strip sits directly above the input box, so an
+        // error rendered there reads as part of the input. The
+        // transcript already carries the same error via
+        // `friendly_error`; the strip does not repeat it. Assert
+        // `last_error` is set (the API stays) and the strip does
+        // not show it.
         let mut app = KodApp::new();
         app.fail_generation("provider unreachable");
-        assert_eq!(app.last_error(), Some("provider unreachable"));
+        assert_eq!(
+            app.last_error(),
+            Some("provider unreachable"),
+            "last_error must still carry the raw text",
+        );
         let text = render_status(&app, 200);
         assert!(
-            text.contains("provider unreachable"),
-            "error banner, got: {text}"
+            !text.contains("provider unreachable"),
+            "the strip must not repeat the transcript's error, got: {text}"
         );
     }
 

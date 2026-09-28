@@ -69,18 +69,14 @@ impl StatusWidget {
             return;
         }
 
-        // 3. Errors stay visible until the next keypress.
-        if let Some(error) = app.last_error() {
-            Widget::render(
-                Line::from(vec![Span::styled(
-                    format!(" ! {error}"),
-                    Style::default().fg(theme.error),
-                )]),
-                area,
-                buf,
-            );
-            return;
-        }
+        // 3. The error banner used to render here, in the strip that
+        // sits immediately above the input box. Users read it as
+        // part of the input (the same spot), which is not where an
+        // error belongs. The chat transcript already carries the
+        // same error via `KodApp::friendly_error`, so this strip
+        // skips it. `last_error()` is still public: a caller that
+        // wants the raw text (a status overlay, a log surface) can
+        // read it.
 
         // 4. Offline notice with a way back.
         if app.is_offline() {
