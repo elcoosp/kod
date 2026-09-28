@@ -13602,6 +13602,12 @@ pub(crate) fn filter_chain_by_trust(
     pub async fn clear_history_for(&self, key: &str) {
         self.history.write().await.remove(key);
         self.last_prompt.write().await.remove(key);
+        // Delta §12.7: a cleared transcript is a new session for the
+        // mental models. Cross the transcript boundary so
+        // `AfterConsolidation`-triggered models reload at the next
+        // fill; the previous blocks are kept until re-filled (a
+        // stale-but-stable summary beats an empty one).
+        self.mental_models.write().await.begin_transcript();
     }
 
     /// Drop both the transcript and its stored last-prompt for `key`.
