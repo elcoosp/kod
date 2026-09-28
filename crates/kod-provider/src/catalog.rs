@@ -170,12 +170,13 @@ fn normalize(id: &str) -> String {
 /// as of the crate's last edit; a user with a custom rate overrides
 /// via config. `intelligence` is a rough score (0–100) used only for
 /// ordering, not for anything a user sees as a number.
+#[allow(clippy::vec_init_then_push)] // A long table, one entry per block.
 pub fn builtin() -> &'static [ModelMeta] {
     // A `OnceLock` so the vector is built once; the values are
     // constants, so a plain static with lazy init is enough.
     static CATALOG: std::sync::OnceLock<Vec<ModelMeta>> = std::sync::OnceLock::new();
     CATALOG.get_or_init(|| {
-        let mut v = Vec::new();
+        let mut v: Vec<ModelMeta> = Vec::new();
         // Anthropic Claude 4 family.
         v.push(ModelMeta {
             id: "claude-opus-4".into(),
