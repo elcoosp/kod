@@ -25,6 +25,25 @@ impl ChatWidget {
         Self
     }
 
+    /// True when this message is skipped because tools are hidden
+    /// (the `t` toggle). Errors are never hidden — a collapsed `t`
+    /// must not bury failures. Single source for the probe pass, the
+    /// hidden-count, and the final render loop.
+    fn tool_row_hidden(app: &KodApp, m: &Message) -> bool {
+        if app.search_query().is_some() || app.show_tools() || m.role != MessageRole::Tool {
+            return false;
+        }
+        let body = m.content.split_once('\n').map(|x| x.1).unwrap_or("");
+        !body.trim_start().starts_with("Error:")
+    }
+
+    /// True when a dim rule is drawn above this message: a rule marks
+    /// where a user turn begins. Everything inside a turn (tool rows,
+    /// assistant bubbles, system notes) flows unseparated.
+    fn starts_new_turn(_app: &KodApp, m: &Message, is_first: bool) -> bool {
+        !is_first && m.role == MessageRole::User
+    }
+
     /// Split `s` into display rows of at most `width` cells, breaking long
     /// rows mid-word exactly like `Paragraph` with `Wrap { trim: false }`.
     fn wrap_text(s: &str, width: usize) -> Vec<String> {
@@ -383,14 +402,10 @@ impl ChatWidget {
             let mut prev_tail_blank = false;
             let mut probe_rendered = false;
             for (i, m) in ordered.iter().enumerate() {
-                if app.search_query().is_none() && !app.show_tools() && m.role == MessageRole::Tool
-                {
-                    let body = m.content.split_once('\n').map(|x| x.1).unwrap_or("");
-                    if !body.trim_start().starts_with("Error:") {
-                        continue;
-                    }
+                if Self::tool_row_hidden(app, m) {
+                    continue;
                 }
-                if i > 0 && !prev_tail_blank {
+                if Self::starts_new_turn(app, m, i == 0) && !prev_tail_blank {
                     probe_rows += 1;
                 }
                 let (rows, tail_blank) = Self::message_measurement_cached(app, m, narrow_width);
@@ -434,19 +449,13 @@ impl ChatWidget {
         let mut message_line_offsets: std::collections::HashMap<kod_types::MessageId, usize> =
             std::collections::HashMap::new();
         for (i, message) in ordered.iter().enumerate() {
-            if app.search_query().is_none()
-                && !app.show_tools()
-                && message.role == MessageRole::Tool
-            {
-                // Errors are never hidden — a collapsed `t` must not bury failures.
-                let body = message.content.split_once('\n').map(|x| x.1).unwrap_or("");
-                let is_error = body.trim_start().starts_with("Error:");
-                if !is_error {
-                    hidden_tools += 1;
-                    continue;
-                }
+            if Self::tool_row_hidden(app, message) {
+                hidden_tools += 1;
+                continue;
             }
-            if i > 0 && lines.last().map(|l| l.width()).unwrap_or(1) > 0 {
+            if Self::starts_new_turn(app, message, i == 0)
+                && lines.last().map(|l| l.width()).unwrap_or(1) > 0
+            {
                 lines.push(Line::from(vec![Span::styled(
                     "─".repeat(text_width.min(120)),
                     Style::default().fg(theme.dim),
