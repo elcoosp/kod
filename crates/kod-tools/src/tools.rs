@@ -2103,6 +2103,82 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn execute_command_adopts_a_timed_out_child_when_a_hook_is_installed() {
+        use std::sync::Arc;
+        let temp = tempfile::TempDir::new().unwrap();
+        // A channel the hook sends the adopted child's command text
+        // on. The hook itself is a plain closure; this test proves
+        // the tool *hands off* rather than kills.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(1);
+        let sender = Arc::new(tokio::sync::Mutex::new(Some(tx)));
+        let hook = crate::context::BackgroundAdoptHook::new(move |detached| {
+            let sender = Arc::clone(&sender);
+            let command = detached.command.clone();
+            // Reap the adopted child so it does not outlive the test.
+            let mut child = detached.child;
+            tokio::spawn(async move {
+                let _ = child.wait().await;
+            });
+            tokio::spawn(async move {
+                if let Some(tx) = sender.lock().await.take() {
+                    let _ = tx.send(command).await;
+                }
+            });
+            Some("job-1".to_string())
+        });
+        let ctx = ToolContext::new(temp.path())
+            .with_permissions(kod_types::ToolPermissions {
+                execute_commands: true,
+                ..Default::default()
+            })
+            .with_timeout(1)
+            .with_background_adopt_hook(hook);
+        let tool = ExecuteCommandTool::new();
+        let params = serde_json::json!({ "command": "sleep 30" });
+
+        let result = tool.execute(&params, &ctx).await.unwrap();
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["background"], true, "result must report background: {v}");
+                assert_eq!(v["job_id"], "job-1");
+                assert_eq!(v["timed_out"], true);
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+        // The hook received the command text.
+        let got = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("hook must fire within 2s")
+            .expect("channel carries the command");
+        assert_eq!(got, "sleep 30");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn execute_command_kills_a_timed_out_child_when_no_adopter_is_installed() {
+        // The pre-§11.4 behaviour, still the fallback: no hook means
+        // the child is killed, not handed off.
+        let temp = tempfile::TempDir::new().unwrap();
+        let ctx = ToolContext::new(temp.path())
+            .with_permissions(kod_types::ToolPermissions {
+                execute_commands: true,
+                ..Default::default()
+            })
+            .with_timeout(1);
+        let tool = ExecuteCommandTool::new();
+        let params = serde_json::json!({ "command": "sleep 30" });
+        let result = tool.execute(&params, &ctx).await.unwrap();
+        match result {
+            ToolResult::Success(v) => {
+                assert_eq!(v["timed_out"], true, "{v}");
+                assert_ne!(v["background"], true, "no adopter: no background flag: {v}");
+            }
+            other => panic!("expected success, got {:?}", other),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn execute_command_small_output_is_not_truncated() {
         let temp = tempfile::TempDir::new().unwrap();
         let ctx = full_context(temp.path());
