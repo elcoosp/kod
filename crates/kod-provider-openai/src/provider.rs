@@ -397,8 +397,13 @@ impl OpenAICompatProvider {
                 for part in content.parts {
                     match part {
                         Part::Text { text: chunk } => text.push_str(&chunk),
-                        Part::FunctionCall { name, args, .. } => calls.push(ToolCall {
-                            id: None,
+                        // Preserve the server-issued tool-call id: tab-bridge
+                        // (and OpenAI) echo it back on tool results, and the
+                        // bridge's chain hashes include it — dropping it
+                        // makes every replayed transcript hash-mismatch and
+                        // forces a RESET_RESEED on each follow-up turn.
+                        Part::FunctionCall { name, args, id, .. } => calls.push(ToolCall {
+                            id,
                             tool_name: name,
                             arguments: args,
                         }),
@@ -627,6 +632,10 @@ impl OpenAICompatProvider {
                 {
                     Ok(r) => r,
                     Err(e) => {
+                        if !adk_precommit_retryable(&e) {
+                            yield Err(adk_err(e));
+                            return;
+                        }
                         let err = adk_err(e);
                         if attempt < MAX_STREAM_ATTEMPTS {
                             tracing::warn!(
@@ -642,6 +651,12 @@ impl OpenAICompatProvider {
                 };
 
                 let mut transport_error: Option<KodError> = None;
+                // Delta §9.2: whether the transport error that ended
+                // the stream is retryable. A 4xx (a 409-class
+                // session_busy, an auth failure) must surface at once;
+                // a 5xx/429/timeout is safe to retry once nothing has
+                // committed.
+                let mut transport_retryable = true;
                 let mut stall_detector: Option<&'static str> = None;
                 let mut next_tool_index: usize = 0;
 
@@ -768,6 +783,11 @@ impl OpenAICompatProvider {
                             }
                         }
                         Err(e) => {
+                            // A mid-stream HTTP error from a stateful
+                            // backend usually means that backend failed the
+                            // turn (safe to retry); but a 409-class error
+                            // means server-side work is still live.
+                            transport_retryable = adk_precommit_retryable(&e);
                             transport_error = Some(adk_err(e));
                             break 'read;
                         }
@@ -776,7 +796,10 @@ impl OpenAICompatProvider {
 
                 // ---- decide ----
                 if let Some(err) = transport_error {
-                    if tracker.is_safe_to_retry() && attempt < MAX_STREAM_ATTEMPTS {
+                    if transport_retryable
+                        && tracker.is_safe_to_retry()
+                        && attempt < MAX_STREAM_ATTEMPTS
+                    {
                         tracing::warn!(
                             attempt,
                             error = %err,
@@ -861,6 +884,28 @@ fn resolve_api_key(explicit: Option<String>) -> String {
 
 fn adk_err(e: adk_core::AdkError) -> KodError {
     KodError::Provider(e.to_string())
+}
+
+/// Whether a failed streaming attempt may be retried without colliding with
+/// live server-side work. Transport failures, timeouts and 5xx/429 are safe
+/// (nothing is running, or the server already failed the turn). Any 4xx —
+/// notably 409 session_busy from stateful tab backends, meaning *our own
+/// previous attempt is still running* — must surface immediately: retrying
+/// would stack another turn onto the busy session and cascade.
+fn adk_precommit_retryable(e: &adk_core::AdkError) -> bool {
+    use adk_core::ErrorCategory;
+    if let Some(status) = e.details.upstream_status_code {
+        return matches!(status, 408 | 429 | 500 | 502 | 503 | 504 | 529);
+    }
+    !matches!(
+        e.category,
+        ErrorCategory::InvalidInput
+            | ErrorCategory::Unauthorized
+            | ErrorCategory::Forbidden
+            | ErrorCategory::NotFound
+            | ErrorCategory::Unsupported
+            | ErrorCategory::Cancelled
+    )
 }
 
 fn options_to_config(options: &GenerationOptions) -> GenerateContentConfig {
@@ -1134,6 +1179,39 @@ mod coverage_openai_provider {
         let p = OpenAICompatProvider::with_api_key("http://localhost:11434", "m", "not-needed")
             .unwrap();
         assert_eq!(p.name(), "openai-compatible");
+    }
+
+    // ---- adk_precommit_retryable -------------------------------------
+
+    fn adk_err_with_status(status: u16) -> adk_core::AdkError {
+        use adk_core::{ErrorCategory, ErrorComponent};
+        adk_core::AdkError::new(
+            ErrorComponent::Model,
+            ErrorCategory::Internal,
+            "model.openai_compat.api_error",
+            format!("backend API error (HTTP {status})"),
+        )
+        .with_upstream_status(status)
+    }
+
+    #[test]
+    fn conflict_is_not_retried_it_means_our_turn_is_live() {
+        // 409 from a stateful backend (tab-bridge session_busy): retrying
+        // would stack a turn onto our own running one and cascade.
+        assert!(!adk_precommit_retryable(&adk_err_with_status(409)));
+        assert!(!adk_precommit_retryable(&adk_err_with_status(400)));
+        assert!(!adk_precommit_retryable(&adk_err_with_status(401)));
+        assert!(!adk_precommit_retryable(&adk_err_with_status(404)));
+    }
+
+    #[test]
+    fn transient_statuses_stay_retryable() {
+        for status in [408, 429, 500, 502, 503, 504] {
+            assert!(
+                adk_precommit_retryable(&adk_err_with_status(status)),
+                "HTTP {status} must stay retryable"
+            );
+        }
     }
 
     #[test]
