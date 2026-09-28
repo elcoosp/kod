@@ -196,6 +196,10 @@ impl KodApp {
         self.settle_running_tools(ToolStatus::Failed, error);
         self.last_error = Some(error.to_string());
         self.push_system_message(&Self::friendly_error(error, self.fail_count));
+        // Errors live in the chat scroll view — never in a strip above
+        // the input. Pin the viewport so the error is actually visible
+        // even when the user had scrolled up reading history.
+        self.scroll_to_bottom();
     }
 
     /// Turn a raw provider/transport error into something the user can act

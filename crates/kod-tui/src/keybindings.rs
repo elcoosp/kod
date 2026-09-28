@@ -130,6 +130,7 @@ pub fn cheat_sheet() -> &'static [(&'static str, &'static str)] {
         ("←/→, Ctrl+W/U", "move cursor, delete word/line"),
         ("Up/Down", "prompt history (draft kept)"),
         ("PgUp/PgDn, j/k, wheel", "scroll chat"),
+        ("Opt/Shift+drag, m", "select text · toggle select-mode"),
         ("g / G, Home/End", "oldest / newest"),
         ("e", "edit your last message"),
         ("u", "undo a /clear"),

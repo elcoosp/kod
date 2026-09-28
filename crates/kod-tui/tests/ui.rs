@@ -713,6 +713,28 @@ mod widget_overlays {
     }
 
     #[test]
+    fn help_widget_fits_a_classic_80x24_screen() {
+        // Regression: over-long key labels overflowed the 24-cell key
+        // column (glued words like "wheelscroll") and the popup grew
+        // past 24 rows, so on a standard terminal the footer and the
+        // Esc row were cut off. Render at exactly 80x24 and require
+        // every section, the footer, and clean word breaks.
+        let app = KodApp::new();
+        let area = rect(80, 24);
+        let mut buffer = Buffer::empty(area);
+        HelpWidget::new().render(&app, area, &mut buffer);
+        let text = buffer_text(&buffer);
+        for section in ["Modes", "Typing", "Chat", "Session"] {
+            assert!(text.contains(section), "missing {section:?}, got: {text}");
+        }
+        assert!(text.contains("Commands:"), "footer cut off, got: {text}");
+        assert!(text.contains("Esc"), "Esc row cut off, got: {text}");
+        for glued in ["wheelscroll", "quitreconnect"] {
+            assert!(!text.contains(glued), "column overflow {glued:?}, got: {text}");
+        }
+    }
+
+    #[test]
     fn help_widget_centered_clamps_to_area_and_centers_small() {
         let area = rect(40, 20);
         let big = HelpWidget::centered(area, 200, 200);

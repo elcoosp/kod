@@ -52,6 +52,7 @@ impl HelpWidget {
                 "send · Ctrl+J / Shift+Enter newline",
             ),
             Self::row(&key, &normal, "Up/Down, Tab", "history · cycle completions"),
+            Self::row(&key, &normal, "Shift+Up/Down", "scroll chat while typing"),
             Self::row(
                 &key,
                 &normal,
@@ -64,8 +65,14 @@ impl HelpWidget {
             Self::row(
                 &key,
                 &normal,
-                "j/k · g/G · PgUp/PgDn",
-                "scroll (also arrows, wheel)",
+                "wheel · j/k · PgUp/PgDn",
+                "scroll the chat",
+            ),
+            Self::row(
+                &key,
+                &normal,
+                "m · y",
+                "select-mode+drag · copy reply",
             ),
             Self::row(
                 &key,
@@ -74,19 +81,23 @@ impl HelpWidget {
                 "toggle tool outputs · expand newest",
             ),
             Self::row(&key, &normal, "/ then n/N", "search next/prev match"),
-            Self::row(&key, &normal, "y", "copy last assistant reply"),
             Self::row(&key, &normal, "u", "undo a /clear"),
-            Line::from(""),
             Line::from(vec![Span::styled("Session", title)]),
             Self::row(
                 &key,
                 &normal,
-                "/retry · /theme · /model · /quit",
-                "reconnect · switch theme · switch model · quit",
+                "/retry · /theme",
+                "reconnect · switch theme",
+            ),
+            Self::row(
+                &key,
+                &normal,
+                "/model · /quit",
+                "switch model · quit",
             ),
             Self::row(&key, &normal, "Esc", "cancel generation · close this help"),
             Line::from(vec![Span::styled(
-                "Full command list: type / and Tab-complete · mouse wheel scrolls · Option/Shift+drag selects text",
+                "Commands: type / + Tab · `m` select-mode · `y` copy reply",
                 dim,
             )]),
         ];

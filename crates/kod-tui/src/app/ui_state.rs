@@ -405,9 +405,17 @@ impl KodApp {
         self.fail_count = 0;
     }
 
-    /// Raw last error for the status bar (chat holds the friendly version).
+    /// Raw last error. Kept for callers that want the unadorned text
+    /// (logs, overlays); it is never rendered near the input — the
+    /// user-facing error lives in the chat scroll view (see
+    /// `fail_generation`).
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
+    }
+
+    /// Clear the stored raw error. The transcript keeps its copy.
+    pub fn clear_last_error(&mut self) {
+        self.last_error = None;
     }
 
     /// Active theme name (`dark` / `light`).
@@ -698,7 +706,11 @@ impl KodApp {
             // `/ search` used to sit here, but the search key is `f`
             // (SearchPrefix); `/` opens the command slot. Name the
             // actual key so the hint is not a small lie.
-            "i type · / command · j/k scroll · t tools · f search · ? help · q quit".to_string()
+            // Kept ≤80 cells: on a standard 80-column terminal the
+            // status strip is a single Line and anything past the
+            // edge is truncated (which once ate `q quit`). Count
+            // before adding segments here.
+            "i type · / command · j/k scroll · f search · m mouse · ? help · q quit".to_string()
         }
     }
 

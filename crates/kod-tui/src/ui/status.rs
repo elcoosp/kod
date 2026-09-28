@@ -1,7 +1,10 @@
 //! Bottom status line — the "what now?" strip.
 //!
-//! Priority order: confirmation prompts > search mode > error banner >
+//! Priority order: confirmation prompts > search mode >
 //! offline notice > generation progress > tool activity > key hints.
+//!
+//! Errors are deliberately NOT shown here: they live in the chat
+//! scroll view, never in a strip above the input box.
 
 use crate::app::KodApp;
 use ratatui::buffer::Buffer;
@@ -69,14 +72,11 @@ impl StatusWidget {
             return;
         }
 
-        // 3. The error banner used to render here, in the strip that
-        // sits immediately above the input box. Users read it as
-        // part of the input (the same spot), which is not where an
-        // error belongs. The chat transcript already carries the
-        // same error via `KodApp::friendly_error`, so this strip
-        // skips it. `last_error()` is still public: a caller that
-        // wants the raw text (a status overlay, a log surface) can
-        // read it.
+        // 3. No error banner here. Errors live only in the chat
+        // scroll view (`fail_generation` pushes the friendly text as
+        // a system message and pins the viewport to the bottom), so
+        // nothing ever paints over or crowds the input box.
+        // `last_error()` stays public for non-visual callers.
 
         // 4. Offline notice with a way back.
         if app.is_offline() {

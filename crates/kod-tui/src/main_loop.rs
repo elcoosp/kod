@@ -66,7 +66,9 @@ pub struct TuiLoop {
     /// the `m` key can toggle it without querying the terminal
     /// (crossterm has no "is capture enabled?" query on all
     /// platforms) and so `restore_terminal` can send the right
-    /// disable-or-nothing command on exit.
+    /// disable-or-nothing command on exit. Defaults to ON so the
+    /// wheel scrolls the chat; `m` switches to select-mode (capture
+    /// off, native drag-select works, wheel goes to the terminal).
     mouse_captured: bool,
 }
 
@@ -187,12 +189,16 @@ impl TuiLoop {
         let restore = (|| -> Result<()> {
             crossterm::terminal::enable_raw_mode()
                 .map_err(|e| KodError::Internal(format!("could not re-enable raw mode: {e}")))?;
-            execute!(
-                std::io::stdout(),
-                crossterm::terminal::EnterAlternateScreen,
-                crossterm::event::EnableMouseCapture,
-            )
-            .map_err(|e| KodError::Internal(format!("could not re-enter alternate screen: {e}")))?;
+            execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen,)
+                .map_err(|e| KodError::Internal(format!("could not re-enter alternate screen: {e}")))?;
+            // Restore mouse mode as it was: a user who dropped to
+            // select-mode (capture off) to copy text gets it back
+            // after returning from $EDITOR.
+            if self.mouse_captured {
+                execute!(std::io::stdout(), crossterm::event::EnableMouseCapture,).map_err(|e| {
+                    KodError::Internal(format!("could not restore mouse capture: {e}"))
+                })?;
+            }
             if let Some(terminal) = &mut self.terminal {
                 let _ = terminal.clear();
                 let _ = terminal.hide_cursor();
@@ -488,9 +494,14 @@ impl TuiLoop {
         crossterm::terminal::enable_raw_mode()
             .map_err(|e| KodError::Internal(format!("Failed to enable raw mode: {}", e)))?;
 
-        // Mouse capture always on: wheel scrolls reliably and text
-        // selection still works by holding Option (macOS) or Shift while
-        // dragging. No `/mouse` toggle — one mode, no surprise.
+        // Mouse capture ON by default: the wheel scrolls the chat
+        // (with capture off the wheel never reaches the app, so on
+        // short screens there is no way to scroll while typing).
+        // Trade-off: with capture on, native drag-select needs
+        // Option (macOS) / Shift (elsewhere) held, or press `m` for
+        // select-mode (capture off, drag-select works, wheel goes to
+        // the terminal). `y` / `/copy` copies the last reply with no
+        // selection needed.
         crossterm::execute!(
             std::io::stdout(),
             crossterm::terminal::EnterAlternateScreen,
@@ -658,6 +669,14 @@ impl TuiLoop {
                     // The input box grows with multiline content (clamped).
                     let input_height: u16 = self.app.input_height_rows();
 
+                    // NOTE: errors are NOT given a layout row here. They
+                    // live only in the chat scroll view (see
+                    // `fail_generation`, which pushes the friendly error
+                    // as a system message and pins the viewport to the
+                    // bottom). A dedicated error strip directly above
+                    // the input reads as part of the input and — on
+                    // short terminals — steals the input's space, so it
+                    // was removed.
                     let rows = if popup_height > 0 {
                         vec![
                             Constraint::Length(1),
@@ -5456,10 +5475,14 @@ impl TuiLoop {
                 }
             }
             KeyCode::Char('m') => {
-                // Toggle terminal mouse capture. The default is on
-                // — wheel scroll and click work out of the box —
-                // but a user who wants to select text natively
-                // (without holding Option/Shift) needs it off.
+                // Toggle terminal mouse capture. ON (default): the
+                // wheel scrolls the chat; hold Option (macOS) / Shift
+                // (elsewhere) to drag-select. OFF (select-mode):
+                // native drag-select/copy works, but the wheel goes to
+                // the terminal — scroll with j/k, PgUp/PgDn, or
+                // Shift+↑/↓ instead. Keyboard scroll works in both
+                // modes; `y` / `/copy` copies the last reply without
+                // any selection.
                 self.mouse_captured = !self.mouse_captured;
                 use crossterm::execute;
                 let result = if self.mouse_captured {
@@ -5469,10 +5492,14 @@ impl TuiLoop {
                 };
                 match result {
                     Ok(()) => {
-                        let state = if self.mouse_captured { "on" } else { "off" };
+                        let hint = if self.mouse_captured {
+                            "Mouse mode on: wheel scrolls the chat; hold Option (macOS) or Shift to select text."
+                        } else {
+                            "Select-mode: drag to select + copy; scroll with j/k, PgUp/PgDn, or Shift+↑/↓ (`m` switches back)."
+                        };
                         self.app.push_system_message(&format!(
-                            "Mouse capture {state}. \
-                             With capture on, hold Option (macOS) or Shift to select text."
+                            "Mouse capture {}. {hint}",
+                            if self.mouse_captured { "on" } else { "off" }
                         ));
                     }
                     Err(e) => {
@@ -5503,6 +5530,8 @@ impl TuiLoop {
             }
             KeyCode::Escape => {
                 // Do NOT quit unconditionally — only back out of live states.
+                // Errors live in the chat scroll view, so there is no
+                // error banner to dismiss here.
                 if self.app.is_generating() {
                     self.cancel_generation();
                 } else if self.app.show_help() {
