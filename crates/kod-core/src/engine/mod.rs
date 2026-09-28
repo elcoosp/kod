@@ -6737,7 +6737,7 @@ pub(crate) fn filter_chain_by_trust(
         // The user's config (`[endpoint.pricing]`) is authoritative
         // when present; the static table only fills the gap.
         if let Some(meta) = kod_provider::resolve_model_meta(&model_ref.model) {
-            return Some(meta.pricing.clone());
+            return Some(meta.pricing);
         }
         None
     }

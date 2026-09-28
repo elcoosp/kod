@@ -412,7 +412,7 @@ mod tests {
                 }
             }
         });
-        let (out, applied) = sanitize(&schema, &spec);
+        let (out, _applied) = sanitize(&schema, &spec);
         let inner = out["properties"]["outer"]["properties"]["inner"].clone();
         assert!(inner.get("const").is_none(), "the nested const was rewritten");
         assert_eq!(inner.get("enum"), Some(&json!([1])));
