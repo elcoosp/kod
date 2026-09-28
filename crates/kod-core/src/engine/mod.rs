@@ -7487,6 +7487,15 @@ pub(crate) fn filter_chain_by_trust(
         // (see the method doc); the seed-and-fill cannot fail start().
         self.bootstrap_mental_models().await;
 
+        // Delta §14.3: install the shipped stream rules. They were
+        // plumbed end to end (prose and tool args observed on every
+        // streamed chunk) but nothing ever called the installer, so
+        // the engine ran with an empty rule set. The two builtins
+        // are once-per-session and scoped tightly (a bare `TODO`
+        // written by edit/write/patch, a credential-shaped string in
+        // the model's own prose).
+        self.install_builtin_ttsr_rules().await;
+
         // Register the built-in tools once (start runs exactly once —
         // second call errors above). Tools fail closed via ToolContext
         // permissions unless explicitly granted in `new()`.
