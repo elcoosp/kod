@@ -59,8 +59,6 @@ them.
 
 ### Absent (verified)
 
-- **§11.4 live-child auto-detach** — the suggestion is there; handing
-  off a still-running child (pipes + pinned read futures) is not.
 - **§14.5 OTLP telemetry** — absent.
 
 | Memory hygiene (§12.5) | `kod-memory/src/hygiene.rs` + write/recall wiring | `strip_memory_tags` drops a `<memories>` block before it is stored; `frame_recalled_block` wraps recalled entries with a precedence note; `has_substantive_content` rejects placeholder turns | 16 unit tests |
@@ -74,6 +72,7 @@ them.
 | if-bench (§13.3) | `kod-stats/src/if_bench.rs` + `kod-cli/commands/admin.rs::run_if_bench` | full: scoring primitives plus `prompt_for_turn` / `drive` (the driver half); `kod if-bench` runs the eval against the default endpoint and prints the per-turn result and the depth against `par` | tests in `if_bench` (driver + scoring) |
 | MCP HTTP policy (§14.5) | `kod-mcp/src/http_policy.rs` | `Origin` parse + `same_as`; `decide_redirect` refuses a method-changing redirect of a non-GET and drops configured headers cross-origin; reserved-header list; hop cap 5 | 17 tests |
 | Cleanse scheduler (§11.9) | `kod-swarm/src/cleanse.rs` | file-sticky dispatch: one worker per file, batch budget shared across agents, released files re-claimable | 15 tests |
+| Live-child auto-detach (§11.4) | `kod-tools/src/context.rs` (`DetachedChild`, `BackgroundAdoptHook`, `ToolContext::on_background_adopt`) + `kod-tools/src/tools.rs` (incremental read loop, adoption branch) + `kod-core/src/engine/mod.rs` (`build_background_adopt_hook`) | a foreground command that outlives its `timeout_secs` is handed to the background runner (child + both pipes + bytes already read) instead of killed; the runner drains the pipes, reaps the child, and delivers a completion notice. `kill_on_drop(true)` reaps a handed-off child if the adopter is dropped. No hook = the pre-change kill path | 2 tests in `tools.rs` |
 | Veracity confidence update (§12.2) | `kod-memory/src/manager.rs` (`store_with_metadata`) | an identical-content re-mention raises the entry's `confidence` via `veracity::raise_confidence` and persists it; `MemoryMetadata.confidence` carries the value | `manager.rs` test `a_re_mention_raises_confidence` |
 | Veracity contradiction resolution (§12.2) | `MemoryManager::consolidate` pass 3 | walks the symmetric `contradicts` graph once per unordered pair; supersedes the lower-confidence side when both carry a `confidence` and they differ; ties and unset sides are left alone. `ConsolidationReport.resolved_contradictions` counts the resolutions | 4 tests in `manager.rs::contradiction_resolution_tests` |
 | Sharpshooter extraction (§12.3) | `kod-memory/src/sharpshooter.rs` + `engine::maybe_extract_decisions` | `build_prompt` / `parse_reply` / `admit` produce and gate a `DecisionDelta`; the engine extracts per user turn at both post-stream sites | `sharpshooter.rs` tests + engine hook |
