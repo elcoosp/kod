@@ -647,6 +647,10 @@ pub struct KodApp {
     /// Last generation error, kept visible in the status bar until the next
     /// prompt starts. Chat also gets the friendly (actionable) version.
     last_error: Option<String>,
+    /// The taint banner last pushed, so a round that stays tainted does
+    /// not re-announce itself on every completed turn. `None` when the
+    /// round is clean or the banner has not been shown yet.
+    last_taint_note: Option<String>,
 
     /// Live swarm-agent views, keyed by agent id. Cleared at the
     /// start of each swarm run; a running agent appends its chunks to
@@ -963,6 +967,7 @@ impl KodApp {
             theme: Theme::dark(),
             show_help: false,
             last_error: None,
+            last_taint_note: None,
 
             swarm_agents: std::collections::HashMap::new(),
             swarm_agent_order: Vec::new(),

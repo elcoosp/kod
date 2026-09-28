@@ -792,14 +792,24 @@ impl TuiLoop {
                 self.gen_task = None;
                 self.app.finish_response(&text);
 
-                // Tier 1.1 — surface a tainted round in one line.
+                // Tier 1.1 — surface a tainted round in one line, once
+                // per round. Re-announcing on every turn of a long round
+                // turned the banner into wallpaper.
                 if let Some(engine) = self.engine.clone() {
                     let t = engine.taint_level();
                     if t.is_tainting() {
-                        self.app.push_system_message(&format!(
+                        let note = format!(
                             "⛨ round tainted by {} — high-impact tools will ask. /trust show",
                             t.as_str(),
-                        ));
+                        );
+                        if self.app.last_taint_note() != Some(note.as_str()) {
+                            self.app.set_last_taint_note(Some(note.clone()));
+                            self.app.push_system_message(&note);
+                        }
+                    } else {
+                        // Round is clean again (/trust clear, new round):
+                        // re-arm the banner for the next taint.
+                        self.app.set_last_taint_note(None);
                     }
                 }
                 // Notify only for turns longer than 30 seconds — a
@@ -1472,14 +1482,9 @@ impl TuiLoop {
                             .send(Event::ToolCompleted { id, header, summary })
                             .await;
                     }
-                    if !response.skills_used.is_empty() {
-                        let _ = event_tx
-                            .send(Event::AgentMessage(
-                                "skills".to_string(),
-                                format!("used: {}", response.skills_used.join(", ")),
-                            ))
-                            .await;
-                    }
+                    // Skills used this turn are visible through their own
+                    // tool rows and /skills; no transcript row for the
+                    // inventory.
                     let text = response.text.unwrap_or_default();
                     if let Some(usage) = response.usage {
                         let total = if usage.total_tokens > 0 {

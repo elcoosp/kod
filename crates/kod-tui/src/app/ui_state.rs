@@ -405,6 +405,19 @@ impl KodApp {
         self.fail_count = 0;
     }
 
+    /// The taint banner last pushed (see `last_taint_note`). `None`
+    /// when the round is clean or no banner has been shown.
+    pub fn last_taint_note(&self) -> Option<&str> {
+        self.last_taint_note.as_deref()
+    }
+
+    /// Set (or clear) the taint-banner guard. Called by the
+    /// `ResponseComplete` arm; kept here so the field stays private to
+    /// the app module.
+    pub fn set_last_taint_note(&mut self, note: Option<String>) {
+        self.last_taint_note = note;
+    }
+
     /// Raw last error. Kept for callers that want the unadorned text
     /// (logs, overlays); it is never rendered near the input — the
     /// user-facing error lives in the chat scroll view (see
