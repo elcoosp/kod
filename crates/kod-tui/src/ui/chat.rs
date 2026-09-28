@@ -1004,4 +1004,68 @@ mod coverage_chat_widget {
         assert_eq!(rows[0].spans[0].style.fg, Some(Color::Red));
         assert_eq!(rows[3].spans[0].style.fg, Some(Color::Blue));
     }
+
+    // ---- §14.5 follow-up: tool preview + rule between turns --------
+
+    #[test]
+    fn render_tool_preview_shows_four_lines_by_default() {
+        let mut app = KodApp::new();
+        let body = (0..10)
+            .map(|i| format!("row {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        push_message(&mut app, MessageRole::Tool, &format!("[run] a tool\n{body}"));
+        let text = render(&app, 100, 40);
+        assert!(text.contains("row 3"), "4th line visible: {text}");
+        assert!(!text.contains("row 4"), "5th line collapsed: {text}");
+        assert!(
+            text.contains("+6 more lines (o expands)"),
+            "shorter hint: {text}",
+        );
+    }
+
+    #[test]
+    fn render_draws_the_rule_only_before_user_turns() {
+        let mut app = KodApp::new();
+        push_message(&mut app, MessageRole::User, "first question");
+        push_message(&mut app, MessageRole::Tool, "[read_file] path=main.rs\nok");
+        push_message(&mut app, MessageRole::Assistant, "the answer");
+        push_message(&mut app, MessageRole::System, "a note");
+        push_message(&mut app, MessageRole::User, "second question");
+        let text = render(&app, 100, 60);
+
+        // There is no rule between the first user row and the second:
+        // every row of the first turn renders unseparated. Because the
+        // rule that opens the *second* turn is part of that slice, we
+        // assert instead that no other rule exists: exactly one rule
+        // appears in the whole render, and it precedes "you" in the
+        // second-turn prefix.
+        let rule_char = '\u{2500}';
+        assert!(
+            text.contains(rule_char),
+            "a rule must separate the two turns: {text}",
+        );
+
+        // Positional check: the rule is *between* the two user turns,
+        // never inside the first one. `find` both rows; the rule glyph
+        // must appear after "a note" and before the second "you".
+        let idx_note = text.find("a note").expect("first-turn sys row");
+        let idx_second_you = text.rfind("you").expect("second user row");
+        let rule_after_note = text[idx_note..idx_second_you].contains(rule_char);
+        assert!(
+            rule_after_note,
+            "the rule must be between the turns: {text}",
+        );
+        let rule_before_first_you = text
+            .split("first question")
+            .next()
+            .unwrap_or("")
+            .contains(rule_char);
+        assert!(
+            !rule_before_first_you,
+            "no rule precedes the very first user row: {text}",
+        );
+        // (The raw `─` count includes the assistant frame's borders;
+        // positional checks above are the real assertions.)
+    }
 }

@@ -7163,6 +7163,215 @@ mod tests {
 /// The `"Engine not initialized"` pattern is copied from the
 /// existing tests in the sibling module, which is the canonical
 /// no-engine response.
+    #[tokio::test]
+    async fn tool_error_is_displayed_once_not_duplicated_as_a_system_line() {
+        let mut tui = TuiLoop::new();
+        tui.handle_event(Event::ToolStarted {
+            id: String::new(),
+            name: "execute_command".to_string(),
+        })
+        .await
+        .unwrap();
+        tui.handle_event(Event::ToolCompleted {
+            id: String::new(),
+            header: "execute_command cargo check".to_string(),
+            summary: "Error: exit status 1".to_string(),
+        })
+        .await
+        .unwrap();
+        let rows_with_error = tui
+            .app()
+            .messages()
+            .iter()
+            .filter(|m| m.content.contains("exit status 1"))
+            .count();
+        assert_eq!(rows_with_error, 1, "one row carries the error, not two");
+        assert!(
+            tui.app().messages().iter().all(|m| {
+                !m.content.starts_with("Tool `execute_command` failed")
+            }),
+            "the legacy duplicate system line must be gone",
+        );
+    }
+
+    #[tokio::test]
+    async fn system_events_reach_the_transcript_instead_of_vanishing() {
+        let mut tui = TuiLoop::new();
+        tui.handle_event(Event::System(
+            crate::event::EventPriority::Normal,
+            "(phase changed: setup → implementation. Consider /handoff.)".to_string(),
+        ))
+        .await
+        .unwrap();
+        assert!(
+            tui.app()
+                .messages()
+                .iter()
+                .any(|m| m.content.contains("phase changed: setup → implementation")),
+            "Event::System must land in the transcript",
+        );
+    }
+
+    #[tokio::test]
+    async fn parallel_tool_calls_fill_their_own_rows() {
+        let mut tui = TuiLoop::new();
+        tui.handle_event(Event::ToolStarted {
+            id: "call_a".into(),
+            name: "read_file".into(),
+        })
+        .await
+        .unwrap();
+        tui.handle_event(Event::ToolStarted {
+            id: "call_b".into(),
+            name: "read_file".into(),
+        })
+        .await
+        .unwrap();
+        tui.handle_event(Event::ToolProgress {
+            id: "call_a".into(),
+            display: "read_file path=a.rs".into(),
+        })
+        .await
+        .unwrap();
+        tui.handle_event(Event::ToolProgress {
+            id: "call_b".into(),
+            display: "read_file path=b.rs".into(),
+        })
+        .await
+        .unwrap();
+        tui.handle_event(Event::ToolCompletedWithDuration {
+            id: "call_b".into(),
+            header: "read_file path=b.rs".into(),
+            summary: "b body".into(),
+            duration_ms: 5,
+        })
+        .await
+        .unwrap();
+        tui.handle_event(Event::ToolCompletedWithDuration {
+            id: "call_a".into(),
+            header: "read_file path=a.rs".into(),
+            summary: "a body".into(),
+            duration_ms: 7,
+        })
+        .await
+        .unwrap();
+
+        let tools: Vec<&str> = tui
+            .app()
+            .messages()
+            .iter()
+            .filter(|m| m.role == kod_types::MessageRole::Tool)
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(tools.len(), 2, "two calls, two rows: {tools:?}");
+        let a = tools.iter().find(|t| t.contains("path=a.rs")).unwrap();
+        let b = tools.iter().find(|t| t.contains("path=b.rs")).unwrap();
+        assert!(a.contains("a body"), "row a carries result a: {a}");
+        assert!(b.contains("b body"), "row b carries result b: {b}");
+        assert!(a.contains("· 7ms"), "durations land on their own row: {a}");
+        assert!(b.contains("· 5ms"), "durations land on their own row: {b}");
+    }
+
+    #[tokio::test]
+    async fn task_end_fallback_after_live_done_marker_is_a_noop() {
+        let mut tui = TuiLoop::new();
+        tui.handle_event(Event::ToolStarted {
+            id: "call_a".into(),
+            name: "read_file".into(),
+        })
+        .await
+        .unwrap();
+        tui.handle_event(Event::ToolCompletedWithDuration {
+            id: "call_a".into(),
+            header: "read_file path=a.rs".into(),
+            summary: "live".into(),
+            duration_ms: 9,
+        })
+        .await
+        .unwrap();
+        // Task-end fallback arrives with the same id; it must not touch
+        // the timed live row nor append a duplicate.
+        tui.handle_event(Event::ToolCompleted {
+            id: "call_a".into(),
+            header: "read_file path=a.rs".into(),
+            summary: "fallback".into(),
+        })
+        .await
+        .unwrap();
+
+        let tools: Vec<&str> = tui
+            .app()
+            .messages()
+            .iter()
+            .filter(|m| m.role == kod_types::MessageRole::Tool)
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(tools.len(), 1, "no duplicate row: {tools:?}");
+        assert!(
+            tools[0].contains("live"),
+            "the timed live row is kept: {tools:?}",
+        );
+        assert!(!tools[0].contains("fallback"));
+    }
+
+    #[tokio::test]
+    async fn legacy_no_id_calls_still_complete_through_the_heuristic_path() {
+        let mut tui = TuiLoop::new();
+        tui.handle_event(Event::ToolStarted {
+            id: String::new(),
+            name: "read_file".into(),
+        })
+        .await
+        .unwrap();
+        tui.handle_event(Event::ToolCompleted {
+            id: String::new(),
+            header: "read_file".into(),
+            summary: "ok".into(),
+        })
+        .await
+        .unwrap();
+        let tools: Vec<&str> = tui
+            .app()
+            .messages()
+            .iter()
+            .filter(|m| m.role == kod_types::MessageRole::Tool)
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(tools.len(), 1);
+        assert!(tools[0].contains("ok"));
+    }
+
+    #[tokio::test]
+    async fn turn_completion_pushes_no_duration_row() {
+        let mut tui = TuiLoop::new();
+        tui.handle_event(Event::ResponseComplete("the answer".into()))
+            .await
+            .unwrap();
+        assert!(tui
+            .app()
+            .messages()
+            .iter()
+            .all(|m| !m.content.contains("turn took")));
+    }
+
+    #[tokio::test]
+    async fn taint_banner_guard_tracks_the_last_note() {
+        // The `ResponseComplete` arm requires an engine to read a taint
+        // level; with a bare `TuiLoop::new()` the arm's guard block is
+        // skipped. Exercise the guard mechanism through its accessors,
+        // which is what the arm uses.
+        let mut tui = TuiLoop::new();
+        assert!(tui.app().last_taint_note().is_none());
+        tui.app_mut()
+            .set_last_taint_note(Some("⛨ round tainted by untrusted-read".to_string()));
+        assert_eq!(
+            tui.app().last_taint_note(),
+            Some("⛨ round tainted by untrusted-read"),
+        );
+        tui.app_mut().set_last_taint_note(None);
+        assert!(tui.app().last_taint_note().is_none());
+    }
+
 #[cfg(test)]
 mod coverage_slash_dispatch {
     use super::*;

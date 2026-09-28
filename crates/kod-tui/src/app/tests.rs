@@ -1667,4 +1667,103 @@ mod coverage_split_hunks {
         };
         assert!(sel.current().is_none());
     }
+
+    // ---- §14.5 follow-up: friendly_error hygiene ---------------------
+
+    #[test]
+    fn friendly_error_advice_never_contains_double_spaces() {
+        let samples = [
+            "model `qwen99` not found",
+            "this prompt exceeds the maximum context length",
+            "invalid tool_call: json parse failed",
+            "connection refused (os error 111)",
+            "401 unauthorized",
+            "404 not found",
+            "request timed out",
+            "something entirely unknown",
+        ];
+        for s in samples {
+            let out = KodApp::friendly_error(s, 0);
+            // The advice text is deliberately single-spaced after A2. A
+            // run of two spaces means a source-line-wrap artifact
+            // leaked into a literal.
+            assert!(
+                !out.contains("  "),
+                "advice for {s:?} carries a space run: {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn friendly_error_collapses_multiline_provider_dumps() {
+        let raw = "HTTP 500\n{\n  \"error\": {\n    \"message\": \"boom\"\n  }\n}";
+        let out = KodApp::friendly_error(raw, 0);
+        // No advice branch fires for a 500, so the output is the single
+        // collapsed summary line.
+        assert_eq!(out.lines().count(), 1, "one line, got: {out:?}");
+        assert!(
+            !out.contains("\n"),
+            "newlines are collapsed away, got: {out:?}"
+        );
+        assert!(out.starts_with("Error: HTTP 500"), "got: {out:?}");
+    }
+
+    // ---- §14.5 follow-up: fail_generation hygiene ---------------------
+
+    #[test]
+    fn fail_generation_keeps_the_partial_streamed_answer() {
+        let mut app = KodApp::new();
+        app.begin_generation();
+        app.start_response_stream();
+        app.add_response_chunk("half a repl");
+        app.fail_generation("connection reset");
+        let texts: Vec<&str> = app.messages().iter().map(|m| m.content.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains("half a repl")
+                && t.contains("(error - partial answer)")),
+            "partial answer must survive the failure: {texts:?}",
+        );
+    }
+
+    #[test]
+    fn fail_generation_never_copies_the_raw_error_into_tool_rows() {
+        let mut app = KodApp::new();
+        app.begin_generation();
+        app.start_tool_execution("", "execute_command");
+        app.fail_generation("HTTP 500 {\"error\":{\"message\":\"boom\"}}");
+        let raw_in_tool_row = app
+            .messages()
+            .iter()
+            .any(|m| m.role == kod_types::MessageRole::Tool && m.content.contains("HTTP 500"));
+        assert!(
+            !raw_in_tool_row,
+            "tool rows carry the pointer note, not the raw dump",
+        );
+    }
+
+    // ---- §14.5 follow-up: push_system_message dedup -------------------
+
+    #[test]
+    fn consecutive_identical_system_rows_collapse() {
+        let mut app = KodApp::new();
+        app.push_system_message("restored 12 messages");
+        app.push_system_message("restored 12 messages");
+        assert_eq!(
+            app.messages()
+                .iter()
+                .filter(|m| m.content == "restored 12 messages")
+                .count(),
+            1,
+        );
+        // A different message in between re-arms the guard.
+        app.push_system_message("other");
+        app.push_system_message("restored 12 messages");
+        assert_eq!(
+            app.messages()
+                .iter()
+                .filter(|m| m.content == "restored 12 messages")
+                .count(),
+            2,
+        );
+    }
 }

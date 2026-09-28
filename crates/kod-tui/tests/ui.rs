@@ -1081,3 +1081,41 @@ mod header_and_status {
         );
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// §14.5 follow-up: approval popup geometry
+// ---------------------------------------------------------------------------
+
+#[test]
+fn approval_popup_legend_survives_a_wide_diff() {
+    use kod_tui::app::{KodApp, PendingApproval, PendingApprovalBatch};
+    use kod_tui::ui::ApprovalWidget;
+
+    let mut app = KodApp::new();
+    let long_line = format!("+{}", "x".repeat(300));
+    app.set_pending_batch(PendingApprovalBatch {
+        batch_id: 1,
+        current: 0,
+        items: vec![PendingApproval {
+            id: 1,
+            tool_name: "write_file".to_string(),
+            summary: "rewrite everything".to_string(),
+            diff: Some(long_line),
+            arguments: serde_json::json!({}),
+        }],
+    });
+    let area = ratatui::layout::Rect::new(0, 0, 100, 30);
+    let mut buffer = ratatui::buffer::Buffer::empty(area);
+    ApprovalWidget::new().render(&app, area, &mut buffer);
+    let text: String = buffer
+        .content()
+        .iter()
+        .map(|c| c.symbol().to_string())
+        .collect();
+    assert!(
+        text.contains("approve"),
+        "y-approve legend must be visible, not clipped: {text}"
+    );
+    assert!(text.contains("deny"), "deny legend must be visible: {text}");
+}
