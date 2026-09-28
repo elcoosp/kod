@@ -89,6 +89,16 @@ impl KodApp {
     }
 
     /// `≈ ctx 12.4k/128k · 10%` — human-readable session position.
+    /// Short header figures: `12.4k` / `128k`. Same `format_k` as
+    /// `context_label` (which stays for `/context` and `/whoami`).
+    pub fn context_tokens_k(&self) -> String {
+        Self::format_k(self.context_tokens)
+    }
+
+    pub fn context_limit_k(&self) -> String {
+        Self::format_k(self.context_limit)
+    }
+
     /// `context_tokens` is an approximation (chars/4) until the provider
     /// returns real `usage` — prefix with ≈ so the header never implies precision.
     pub fn context_label(&self) -> String {

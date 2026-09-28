@@ -40,90 +40,37 @@ impl HeaderWidget {
             ));
         }
 
-        // Context meter with a near-limit warning (rough estimate).
+        // Context meter: one figure, colored only when it matters. The
+        // old label carried a trailing percentage duplicating the k/k
+        // fraction, and a separate "ctx nearly full" badge said in
+        // words what the red color already says.
         let usage = app.context_usage();
         let ctx_style = if usage > 0.85 {
             Style::default()
                 .fg(theme.error)
                 .add_modifier(Modifier::BOLD)
-        } else {
+        } else if usage > 0.70 {
             Style::default().fg(theme.warning)
+        } else {
+            dim
         };
         spans.push(Span::styled(
-            format!(" {} ", app.context_label()),
+            format!(" ctx ≈{}/{} ", app.context_tokens_k(), app.context_limit_k()),
             ctx_style,
         ));
-        if usage > 0.85 {
-            spans.push(Span::styled("ctx nearly full ", ctx_style));
-        }
 
-        spans.push(Span::styled(
-            format!(" {} ", app.accounting_label()),
-            Style::default().fg(theme.dim),
-        ));
-
-        // USD cost, when the endpoint carries a `[pricing]` block.
-        // Not shown at all when pricing is not configured — a fake
-        // `$0.0000` on an endpoint whose pricing we do not know is
-        // worse than showing nothing, because it teaches the user
-        // that the figure is meaningless.
+        // USD cost, when the endpoint carries a `[pricing]` block. Not
+        // shown at all when pricing is not configured — a fake
+        // `$0.0000` teaches the user that the figure is meaningless.
         if app.cost_known() {
-            let usd = app.session_cost_usd();
-            let formatted = format_cost(usd);
             spans.push(Span::styled(
-                format!(" {formatted} "),
-                Style::default().fg(theme.dim),
+                format!(" {} ", format_cost(app.session_cost_usd())),
+                dim,
             ));
         }
 
-        spans.push(Span::styled(
-            format!("[{}]", app.theme_name()),
-            Style::default().fg(theme.dim),
-        ));
-
-        // Sandbox badge (design D3.3 / AD-10). Rendered when the
-        // engine knows its effective backend. `off` is the honest
-        // "no sandbox active" state (Auto with no primitive, or
-        // Disabled) — showing it is what makes a missing primitive
-        // visible rather than a silent assumption of protection.
-        let sandbox = app.sandbox_label();
-        if !sandbox.is_empty() {
-            let (style, label) = match sandbox {
-                "off" => (Style::default().fg(theme.dim), " sandbox:off ".to_string()),
-                "require-missing" => (
-                    Style::default()
-                        .fg(theme.error)
-                        .add_modifier(Modifier::BOLD),
-                    " sandbox:require-missing ".to_string(),
-                ),
-                other => (
-                    Style::default().fg(theme.user).add_modifier(Modifier::BOLD),
-                    format!(" sandbox:{other} "),
-                ),
-            };
-            spans.push(Span::styled(label, style));
-        }
-
-        // Network indicator: visible whenever the effective network
-        // access is enabled. The default is off (llm.network_access =
-        // false), so this is a positive signal — a user who enabled
-        // web_fetch sees the badge and is reminded of the wider blast
-        // radius.
-        if app.network_access_enabled() {
-            spans.push(Span::styled(
-                " net:on ",
-                Style::default()
-                    .fg(theme.warning)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
-
-        // Show the active goal text, not a fake counter. The previous
-        // header rendered `◉ 0/1` whenever a goal was set — the goal
-        // loop runs turns inside `process_goal_streaming` and the TUI
-        // has no visibility into them, so the `0/1` never changed.
-        // Rendering the actual goal text is useful (a glance tells you
-        // what the session is working toward) and honest.
+        // The active goal identifies the work; it renders before the
+        // state badges so narrow terminals clip the badges first.
         if let Some(goal) = app.goal() {
             const MAX_GOAL_DISPLAY_CHARS: usize = 40;
             let shown = if goal.chars().count() > MAX_GOAL_DISPLAY_CHARS {
@@ -136,6 +83,39 @@ impl HeaderWidget {
                 format!(" ◉ {shown}"),
                 Style::default().fg(Color::Magenta),
             ));
+        }
+
+        // Network indicator: visible whenever the effective network
+        // access is enabled. Default is off, so this marks a wider
+        // blast radius — it stays.
+        if app.network_access_enabled() {
+            spans.push(Span::styled(
+                " net:on ",
+                Style::default()
+                    .fg(theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+
+        // Sandbox badge: `off` is rendered as nothing (an absence of a
+        // sandbox is the quiet default); `require-missing` and an
+        // active backend (bwrap/landlock/...) stay visible.
+        let sandbox = app.sandbox_label();
+        if !sandbox.is_empty() && sandbox != "off" {
+            let (style, label) = if sandbox == "require-missing" {
+                (
+                    Style::default()
+                        .fg(theme.error)
+                        .add_modifier(Modifier::BOLD),
+                    " sandbox:require-missing ".to_string(),
+                )
+            } else {
+                (
+                    Style::default().fg(theme.user).add_modifier(Modifier::BOLD),
+                    format!(" sandbox:{sandbox} "),
+                )
+            };
+            spans.push(Span::styled(label, style));
         }
 
         let line = Line::from(spans);
