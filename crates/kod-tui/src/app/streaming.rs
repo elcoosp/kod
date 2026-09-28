@@ -186,6 +186,10 @@ impl KodApp {
         // Same rationale as cancel_generation: settle the flag so the
         // next turn does not inherit "real usage seen" from this one.
         self.turn_has_real_usage = false;
+        // Keep whatever streamed before the failure — same contract as
+        // cancel_generation. Watching half a reply vanish is worse than
+        // seeing it marked partial.
+        let partial = Self::trim_blank_lines(&self.current_response);
         self.is_streaming = false;
         self.current_response.clear();
         self.generating = false;
@@ -193,7 +197,21 @@ impl KodApp {
         self.first_chunk_at = None;
         self.set_phase(GenPhase::Idle);
         self.fail_count += 1;
-        self.settle_running_tools(ToolStatus::Failed, error);
+        // Running rows get a one-line pointer, not the raw error: the
+        // friendly message below is the single detailed source.
+        self.settle_running_tools(ToolStatus::Failed, "failed - see the error below");
+        if !partial.is_empty() {
+            self.note_usage(partial.len());
+            self.add_message(Message {
+                id: MessageId::new(),
+                role: MessageRole::Assistant,
+                content: format!("{partial}\n(error - partial answer)"),
+                timestamp: Utc::now(),
+                metadata: Default::default(),
+                sequence: 0,
+            });
+            self.stream_flushed_bubble = true;
+        }
         self.last_error = Some(error.to_string());
         self.push_system_message(&Self::friendly_error(error, self.fail_count));
         // Errors live in the chat scroll view — never in a strip above
