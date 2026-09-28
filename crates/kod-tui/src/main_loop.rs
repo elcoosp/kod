@@ -803,16 +803,13 @@ impl TuiLoop {
                     }
                 }
                 // Notify only for turns longer than 30 seconds — a
-                // quick exchange does not deserve a bell.
-                if let Some(elapsed) = self
-                    .app
-                    .notify_turn_complete(std::time::Duration::from_secs(30))
-                {
-                    self.app.push_system_message(&format!(
-                        "(turn took {}s — press any key to focus)",
-                        elapsed.as_secs(),
-                    ));
-                }
+                // quick exchange does not deserve a bell. The bell and
+                // the OSC 9 desktop notification fire inside
+                // `notify_turn_complete`; nothing is pushed into the
+                // transcript (the old "(turn took Ns …)" row was noise
+                // the bell already covers).
+                self.app
+                    .notify_turn_complete(std::time::Duration::from_secs(30));
                 // Snapshot the transcript after every completed turn.
                 // The doc on KodApp::save_session has always claimed
                 // "called on quit / after each assistant reply", but
