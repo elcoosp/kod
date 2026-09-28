@@ -223,6 +223,52 @@ pub async fn load_from_dirs(dirs: &[std::path::PathBuf]) -> Result<Vec<kod_types
     Ok(by_name.into_values().collect())
 }
 
+/// Delta §14.2: load skills through a `CapabilityRegistry` rather
+/// than a plain directory list.
+///
+/// The registry deduplicates by key with band priority (project >
+/// global > foreign) before this function sees anything, so the
+/// shadowing rule the design names (a kod skill beats a foreign one
+/// in the same scope; a project skill beats a global one of the same
+/// name) is enforced by the registry, not by directory order.
+///
+/// `extension` is `Some("md")` for the skill use case. A discovered
+/// path whose parse fails is logged and skipped — one bad file in a
+/// foreign directory must not break the whole load.
+pub async fn load_via_registry(
+    registry: &crate::capability::CapabilityRegistry,
+    extension: Option<&str>,
+) -> Result<Vec<kod_types::Skill>> {
+    let discovered = registry.discover(extension);
+    if discovered.is_empty() {
+        return Ok(Vec::new());
+    }
+    let parser = SkillParser::new();
+    let mut out: Vec<kod_types::Skill> = Vec::with_capacity(discovered.len());
+    for d in discovered {
+        match parser.parse_file(&d.path) {
+            Ok(skill) => {
+                tracing::debug!(
+                    path = %d.path.display(),
+                    name = %skill.metadata.name,
+                    source = %d.source,
+                    "loaded skill via registry",
+                );
+                out.push(skill);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = %d.path.display(),
+                    source = %d.source,
+                    error = %e,
+                    "skipping skill that failed to parse",
+                );
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Handle a watch event (reload or remove skill)
 async fn handle_watch_event(
     event: WatchEvent,
@@ -324,6 +370,56 @@ mod coverage_multi_dir_loading {
             ),
         )
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn load_via_registry_finds_a_foreign_skill() {
+        use crate::capability::{Band, CapabilityRegistry, DiscoverySource};
+        let tmp = TempDir::new().unwrap();
+        let foreign = tmp.path().join("claude");
+        write_skill(&foreign, "foreign-skill", "BODY");
+        let mut reg = CapabilityRegistry::new();
+        reg.add(DiscoverySource::new(&foreign, "claude", Band::Foreign));
+        let skills = load_via_registry(&reg, Some("md")).await.unwrap();
+        assert_eq!(skills.len(), 1, "expected one skill");
+        assert_eq!(skills[0].metadata.name, "foreign-skill");
+    }
+
+    #[tokio::test]
+    async fn load_via_registry_a_kod_project_skill_beats_a_foreign_one_of_the_same_name() {
+        use crate::capability::{Band, CapabilityRegistry, DiscoverySource};
+        let tmp = TempDir::new().unwrap();
+        let foreign = tmp.path().join("claude");
+        let project = tmp.path().join("kod-project");
+        write_skill(&foreign, "shared", "FOREIGN");
+        write_skill(&project, "shared", "PROJECT");
+        let mut reg = CapabilityRegistry::new();
+        reg.add(DiscoverySource::new(&foreign, "claude", Band::Foreign));
+        reg.add(DiscoverySource::new(&project, "kod-project", Band::Project));
+        let skills = load_via_registry(&reg, Some("md")).await.unwrap();
+        assert_eq!(skills.len(), 1, "the two sources must deduplicate");
+        assert!(
+            skills[0].instructions.contains("PROJECT"),
+            "the project source must win: {}",
+            skills[0].instructions,
+        );
+    }
+
+    #[tokio::test]
+    async fn load_via_registry_skips_a_malformed_file_in_one_source() {
+        use crate::capability::{Band, CapabilityRegistry, DiscoverySource};
+        let tmp = TempDir::new().unwrap();
+        let bad = tmp.path().join("bad");
+        let good = tmp.path().join("good");
+        std::fs::create_dir_all(&bad).unwrap();
+        std::fs::write(bad.join("broken.md"), "not a skill").unwrap();
+        write_skill(&good, "good", "BODY");
+        let mut reg = CapabilityRegistry::new();
+        reg.add(DiscoverySource::new(&bad, "bad", Band::Foreign));
+        reg.add(DiscoverySource::new(&good, "good", Band::Project));
+        let skills = load_via_registry(&reg, Some("md")).await.unwrap();
+        assert_eq!(skills.len(), 1, "the good skill survives");
+        assert_eq!(skills[0].metadata.name, "good");
     }
 
     #[tokio::test]
