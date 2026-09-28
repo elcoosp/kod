@@ -220,20 +220,20 @@ impl KodApp {
             // The most common first-run mistake: config or `/model <name>`
             // names a model the server has never pulled. The fix is one
             // command, so name it.
-            " The model named in the config or `/model` is not on the server.              Pull it first (e.g. `ollama pull codellama:13b`), or run `/model <name>`              with a model the server already has."
+            " The model named in the config or `/model` is not on the server. Pull it first (e.g. `ollama pull codellama:13b`), or run `/model <name>` with a model the server already has."
         } else if lower.contains("context length")
             || lower.contains("context window")
             || lower.contains("too many tokens")
             || lower.contains("maximum context")
             || lower.contains("exceeds the maximum")
         {
-            " The prompt exceeded the model's context window. Run `/compact` to trim              the session, or start a fresh chat with `/clear`."
+            " The prompt exceeded the model's context window. Run `/compact` to trim the session, or start a fresh chat with `/clear`."
         } else if (lower.contains("json") && lower.contains("parse"))
             || lower.contains("invalid tool")
             || lower.contains("malformed function")
             || lower.contains("tool_call")
         {
-            " The model returned a tool call that could not be parsed. Retrying              usually helps — if it persists, the model may not support tool calling              at all (try a larger or newer model, or a codellama/qwen2.5-coder build)."
+            " The model returned a tool call that could not be parsed. Retrying usually helps — if it persists, the model may not support tool calling at all (try a larger or newer model, or a codellama/qwen2.5-coder build)."
         } else if lower.contains("connection refused")
             || lower.contains("connection reset")
             || lower.contains("failed to connect")
