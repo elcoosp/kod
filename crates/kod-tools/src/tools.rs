@@ -75,19 +75,25 @@ fn describe_path_error(path: &std::path::Path, err: &std::io::Error) -> String {
 
 /// Read up to `cap` bytes from an async reader. Returns the bytes read
 /// and whether the source had more (reading hit the cap).
-async fn read_capped<R>(reader: &mut R, cap: usize) -> std::io::Result<(Vec<u8>, bool)>
+/// Delta §11.4: read up to `cap` bytes total into `buf`, one chunk
+/// at a time. Returns the number of bytes read this call; `0` means
+/// EOF (or the cap is already reached). The incremental shape lets
+/// `execute_command` keep the pipe owned by the tool across the
+/// read loop, so it can hand the whole thing to the background
+/// runner on a timeout.
+async fn read_some<R>(reader: &mut R, buf: &mut Vec<u8>, cap: usize) -> std::io::Result<usize>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
     use tokio::io::AsyncReadExt;
-    let mut buf: Vec<u8> = Vec::with_capacity(cap.min(8192));
-    let mut limited = reader.take(cap as u64 + 1);
-    limited.read_to_end(&mut buf).await?;
-    let truncated = buf.len() > cap;
-    if truncated {
-        buf.truncate(cap);
+    if buf.len() >= cap {
+        return Ok(0);
     }
-    Ok((buf, truncated))
+    let remaining = cap - buf.len();
+    let mut chunk = vec![0u8; remaining.min(4096)];
+    let n = reader.read(&mut chunk).await?;
+    buf.extend_from_slice(&chunk[..n]);
+    Ok(n)
 }
 
 /// Read a file's contents
@@ -830,7 +836,13 @@ impl Tool for ExecuteCommandTool {
         spawn
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            .stderr(std::process::Stdio::piped())
+            // Delta §11.4: if the child is handed to the background
+            // runner (a timeout adoption) and that task is later
+            // dropped — a cancelled adopter, a panic — the OS
+            // reaps the child instead of leaking it. A no-op on the
+            // normal path, which always calls `child.wait()`.
+            .kill_on_drop(true);
 
         let mut child = spawn.spawn().map_err(KodError::Io)?;
 
@@ -854,13 +866,17 @@ impl Tool for ExecuteCommandTool {
         //
         // Bounded by context.timeout_secs so a command that produces no
         // output but never exits (sleep 9999) is still terminated.
-        let stdout_fut = read_capped(&mut stdout, MAX_CMD_OUTPUT_BYTES);
-        let stderr_fut = read_capped(&mut stderr, MAX_CMD_OUTPUT_BYTES);
-        tokio::pin!(stdout_fut);
-        tokio::pin!(stderr_fut);
-
-        let mut stdout_res: Option<std::io::Result<(Vec<u8>, bool)>> = None;
-        let mut stderr_res: Option<std::io::Result<(Vec<u8>, bool)>> = None;
+        // Delta §11.4: read incrementally so a still-running child can
+        // be handed to the background runner when the deadline fires.
+        // The pre-change shape wrapped each pipe in a `read_capped`
+        // future that owned the pipe for the whole run, which left
+        // nothing to hand off.
+        let mut stdout_buf: Vec<u8> = Vec::with_capacity(8192);
+        let mut stderr_buf: Vec<u8> = Vec::with_capacity(8192);
+        let mut stdout_eof = false;
+        let mut stderr_eof = false;
+        let mut stdout_capped = false;
+        let mut stderr_capped = false;
 
         let effective_timeout_secs = context.timeout_secs.max(1);
         let timeout = tokio::time::sleep(std::time::Duration::from_secs(effective_timeout_secs));
@@ -868,57 +884,122 @@ impl Tool for ExecuteCommandTool {
         let mut timed_out = false;
 
         loop {
-            if stdout_res.is_some() && stderr_res.is_some() {
+            let stdout_done = stdout_eof || stdout_capped;
+            let stderr_done = stderr_eof || stderr_capped;
+            if (stdout_done && stderr_done) || timed_out {
                 break;
             }
-            // The two read arms are gated only on "this read has not
-            // finished yet" — NOT on `!timed_out`. The previous code
-            // included `!timed_out` in every read guard, so the
-            // moment the timeout arm fired (set `timed_out = true`,
-            // killed the child), the next loop iteration reached
-            // `tokio::select!` with all three arms disabled and no
-            // `else` — which panics with "all branches are disabled
-            // and there is no else branch".
-            //
-            // The panic fired on the exact case the timeout exists
-            // for: a command that produces no output and never exits
-            // (e.g. `sleep 9999`). The runaway-output test used `yes`
-            // and never hit it, because a read arm always completed
-            // before the timeout had a chance to fire.
-            //
-            // With the reads polled after a timeout: the child is
-            // dead, its death closes the pipe write ends, and each
-            // read returns whatever bytes were buffered followed by
-            // EOF. The timeout arm keeps `!timed_out` so the sleep
-            // fires exactly once.
             tokio::select! {
-                r = &mut stdout_fut, if stdout_res.is_none() => {
-                    let over_cap = matches!(&r, Ok((_, true)));
-                    stdout_res = Some(r);
-                    if over_cap && stderr_res.is_none() {
-                        let _ = child.start_kill();
+                r = read_some(&mut stdout, &mut stdout_buf, MAX_CMD_OUTPUT_BYTES),
+                    if !stdout_done => {
+                    match r {
+                        Ok(0) => stdout_eof = true,
+                        Ok(_) => {
+                            if stdout_buf.len() >= MAX_CMD_OUTPUT_BYTES {
+                                stdout_capped = true;
+                                let _ = child.start_kill();
+                            }
+                        }
+                        Err(_) => stdout_eof = true,
                     }
                 }
-                r = &mut stderr_fut, if stderr_res.is_none() => {
-                    let over_cap = matches!(&r, Ok((_, true)));
-                    stderr_res = Some(r);
-                    if over_cap && stdout_res.is_none() {
-                        let _ = child.start_kill();
+                r = read_some(&mut stderr, &mut stderr_buf, MAX_CMD_OUTPUT_BYTES),
+                    if !stderr_done => {
+                    match r {
+                        Ok(0) => stderr_eof = true,
+                        Ok(_) => {
+                            if stderr_buf.len() >= MAX_CMD_OUTPUT_BYTES {
+                                stderr_capped = true;
+                                let _ = child.start_kill();
+                            }
+                        }
+                        Err(_) => stderr_eof = true,
                     }
                 }
                 _ = &mut timeout, if !timed_out => {
                     timed_out = true;
-                    let _ = child.start_kill();
                 }
             }
         }
 
-        let (stdout_bytes, stdout_truncated) = stdout_res
-            .expect("loop exits only when stdout_res is set")
-            .map_err(KodError::Io)?;
-        let (stderr_bytes, stderr_truncated) = stderr_res
-            .expect("loop exits only when stderr_res is set")
-            .map_err(KodError::Io)?;
+        // Delta §11.4: the child outlived its deadline. When the
+        // engine installed an adoption hook and the child is still
+        // alive, hand the running child and its pipes to the
+        // background runner instead of killing. The runner takes
+        // ownership: it drains both pipes, reaps the child, and
+        // delivers a completion notice. The tool returns immediately
+        // with a background result.
+        //
+        // Two reasons to fall through to the kill path: the engine
+        // has no hook (a unit test, an embedder), or the child
+        // already exited at the deadline (the streams carry its
+        // final bytes; the ordinary path reaps it).
+        if timed_out
+            && !stdout_capped
+            && !stderr_capped
+            && let Some(hook) = &context.on_background_adopt
+            && matches!(child.try_wait(), Ok(None))
+        {
+            let detached = crate::context::DetachedChild {
+                command: command.to_string(),
+                holder: context.holder.clone(),
+                child,
+                stdout,
+                stderr,
+                prior_stdout: stdout_buf,
+                prior_stderr: stderr_buf,
+            };
+            let job_id = hook.adopt(detached);
+            return Ok(ToolResult::Success(serde_json::json!({
+                "stdout": "",
+                "stderr": "",
+                "exit_code": null,
+                "exit_signal": null,
+                "stdout_truncated": false,
+                "stderr_truncated": false,
+                "stdout_minimized_by": null,
+                "stdout_artifact": null,
+                "timed_out": true,
+                "timeout_secs": effective_timeout_secs,
+                "background": true,
+                "job_id": job_id,
+                "note": "the command outlived its deadline and was handed \
+                         to the background runner; its output goes to a \
+                         spool file and a completion notice will arrive.",
+            })));
+        }
+
+        // Kill if the deadline or an output cap fired (and adoption
+        // did not). Then drain whatever both pipes already buffered
+        // so the reads hit EOF and `child.wait()` reaps cleanly.
+        if timed_out || stdout_capped || stderr_capped {
+            let _ = child.start_kill();
+            while !stdout_eof || !stderr_eof {
+                tokio::select! {
+                    r = read_some(&mut stdout, &mut stdout_buf, MAX_CMD_OUTPUT_BYTES),
+                        if !stdout_eof => {
+                        match r {
+                            Ok(0) => stdout_eof = true,
+                            Ok(_) => {}
+                            Err(_) => stdout_eof = true,
+                        }
+                    }
+                    r = read_some(&mut stderr, &mut stderr_buf, MAX_CMD_OUTPUT_BYTES),
+                        if !stderr_eof => {
+                        match r {
+                            Ok(0) => stderr_eof = true,
+                            Ok(_) => {}
+                            Err(_) => stderr_eof = true,
+                        }
+                    }
+                }
+            }
+        }
+
+        let stdout_bytes = stdout_buf;
+        let stderr_bytes = stderr_buf;
+        let stdout_truncated = stdout_capped;
+        let stderr_truncated = stderr_capped;
 
         let status = child.wait().await.map_err(KodError::Io)?;
 
