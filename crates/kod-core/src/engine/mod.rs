@@ -12010,6 +12010,24 @@ pub(crate) fn filter_chain_by_trust(
                     self.run_collector
                         .lock()
                         .observe_tool(&call.tool_name, status);
+                    // Delta §14.5: mirror into OTLP when a handle is
+                    // installed. `try_read` keeps the tool loop from
+                    // blocking on a writer.
+                    if let Ok(t) = self.telemetry.try_read() {
+                        t.record_tool(kod_telemetry::ToolRecord {
+                            name: call.tool_name.clone(),
+                            status: match status {
+                                crate::run_collector::ToolStatus::Ok => "ok",
+                                crate::run_collector::ToolStatus::Error => "error",
+                                crate::run_collector::ToolStatus::Skipped => "skipped",
+                                crate::run_collector::ToolStatus::Blocked => "blocked",
+                                crate::run_collector::ToolStatus::Timeout => "timeout",
+                                crate::run_collector::ToolStatus::Aborted => "aborted",
+                            }
+                            .to_string(),
+                            duration_ms: start.elapsed().as_millis() as u64,
+                        });
+                    }
                 }
                 out.push((res, start.elapsed().as_millis() as u64));
             }
