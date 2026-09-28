@@ -493,9 +493,28 @@ impl KodConfig {
         let cwd = std::env::current_dir().map_err(|e| {
             KodError::Config(format!("Could not determine working directory: {}", e))
         })?;
+        // Delta §14.2: include the common foreign skill directories
+        // so a user who already curates `.claude/skills` (or
+        // `.cursor/skills`) does not have to copy into kod's own tree.
+        // The order is lowest-priority first: `load_from_dirs`
+        // shadows by name, so a project directory beats a global one
+        // of the same scope, and a kod-native directory beats a
+        // foreign directory in the same scope.
         Ok(vec![
+            // Foreign globals (lowest priority overall).
+            home.join(".claude").join("skills"),
+            home.join(".cursor").join("skills"),
+            home.join(".gemini").join("skills"),
+            home.join(".codex").join("skills"),
+            // kod / agents globals.
             home.join(".kod").join("skills"),
             home.join(".agents").join("skills"),
+            // Foreign project.
+            cwd.join(".claude").join("skills"),
+            cwd.join(".cursor").join("skills"),
+            cwd.join(".gemini").join("skills"),
+            cwd.join(".codex").join("skills"),
+            // kod / agents project (highest priority).
             cwd.join(".kod").join("skills"),
             cwd.join(".agents").join("skills"),
         ])
