@@ -56,6 +56,7 @@ pub mod search;
 pub mod todo;
 pub mod todo_tracker;
 pub mod tools;
+pub mod walk_cache;
 pub mod web;
 pub use ask::{AskUserTool, QUESTION_MARKER, QuestionRequest, parse_question, question_marker};
 pub use check::CheckTool;
