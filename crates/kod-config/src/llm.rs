@@ -41,6 +41,11 @@ pub struct LlmConfig {
     /// (on, except on tab-bridge endpoints).
     #[serde(default)]
     pub prewarm: PrewarmMode,
+    /// Delta section 9.7: per-failure-class fallback chains.
+    /// `[llm.retry.fallback_chains]` in TOML. Empty (the default)
+    /// preserves the flat `routing.fallback` behavior.
+    #[serde(default)]
+    pub retry: crate::retry::RetryConfig,
 }
 
 impl Default for LlmConfig {
@@ -65,6 +70,7 @@ impl Default for LlmConfig {
             }],
             routing: None,
             prewarm: PrewarmMode::Auto,
+            retry: crate::retry::RetryConfig::default(),
         }
     }
 }
