@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use walkdir::WalkDir;
 
 /// Loader that manages skills in memory with hot reload support
 pub struct SkillLoader {
@@ -44,7 +43,22 @@ impl SkillLoader {
         Ok(skills)
     }
 
-    /// Scan directory recursively for .md files
+    /// Scan the skills directory for skill files — **one level deep**.
+    ///
+    /// A skill is a single file at the top of the skills directory
+    /// (`<skills_dir>/<name>.md`) or a package directory whose
+    /// entrypoint is a `SKILL.md` (`<skills_dir>/<name>/SKILL.md`).
+    /// Everything else under a package directory — `references/*.md`,
+    /// `examples/*.md`, `README.md`, `CLAUDE.md` — is a resource the
+    /// skill may point a reader at, **not** a skill in its own right.
+    ///
+    /// The pre-fix shape walked the whole tree with `WalkDir` and
+    /// parsed every `.md`; a curated skill collection (a Claude- or
+    /// Codex-style directory of packages) then flooded the log at
+    /// startup with `Missing YAML front matter` warnings for each
+    /// resource file. The fix is the walk: only the top level is
+    /// consulted, and only one level of subdirectory — enough to
+    /// reach a `SKILL.md`, never enough to reach `references/`.
     async fn scan_directory(&self) -> Result<Vec<Skill>> {
         if !self.skills_dir.exists() {
             return Err(KodError::SkillParseError {
@@ -53,22 +67,28 @@ impl SkillLoader {
             });
         }
 
-        let mut skills = Vec::new();
-
-        for entry in WalkDir::new(&self.skills_dir)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-        {
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        let read = std::fs::read_dir(&self.skills_dir).map_err(KodError::Io)?;
+        for entry in read.filter_map(|e| e.ok()) {
             let path = entry.path();
-
-            // Only process .md files
-            if path.extension().and_then(|s| s.to_str()) != Some("md") {
-                continue;
+            if path.is_file() {
+                // A flat skill file at the top level of the directory.
+                if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                    candidates.push(path);
+                }
+            } else if path.is_dir() {
+                // A skill package: only `SKILL.md` is a skill file;
+                // `references/`, `examples/`, `scripts/` are resources.
+                let skill_md = path.join("SKILL.md");
+                if skill_md.is_file() {
+                    candidates.push(skill_md);
+                }
             }
+        }
 
-            match self.parser.parse_file(path) {
+        let mut skills = Vec::new();
+        for path in candidates {
+            match self.parser.parse_file(&path) {
                 Ok(skill) => {
                     tracing::debug!(
                         path = %path.display(),
@@ -78,7 +98,10 @@ impl SkillLoader {
                     skills.push(skill);
                 }
                 Err(e) => {
-                    // Log error but continue loading other skills
+                    // A malformed *candidate* — a top-level `.md` with no
+                    // front matter, or a `SKILL.md` that failed to parse
+                    // — is worth a warning: the user meant this file to
+                    // be a skill. Resource files never reach this branch.
                     tracing::warn!(
                         path = %path.display(),
                         error = %e,
