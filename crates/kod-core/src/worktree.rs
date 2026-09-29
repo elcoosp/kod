@@ -286,24 +286,41 @@ impl WorktreeManager {
         self.ensure_gitignored()?;
         std::fs::create_dir_all(self.repo.join(".kod").join("worktrees")).map_err(KodError::Io)?;
 
-        // Capture uncommitted work *before* adding the worktree. An
-        // empty output means the tree is clean and there is nothing
-        // to carry; skip the apply.
+        // Capture uncommitted work *before* adding the worktree.
         //
-        // `--include-untracked`: a new file the user has not
-        // `git add`ed is exactly the work that must survive the
-        // relocation. Without this flag `stash create` captures
-        // only tracked modifications.
+        // Tracked modifications: `git stash create` writes a dangling
+        // stash-structured commit and returns its SHA. It does NOT
+        // mutate the working tree — the user's editor and index
+        // survive the command. Empty output means the tracked side
+        // is clean.
+        //
+        // Untracked files: `stash create` does not capture them
+        // (`--include-untracked` exists only on `stash push` /
+        // `stash save`; `stash create` takes a message only). A new
+        // file the user has not `git add`ed is exactly the work
+        // that must survive, so we enumerate with
+        // `git ls-files --others --exclude-standard` and copy each
+        // into the worktree by hand. Stateless: no stash ref is
+        // written, no working tree is mutated.
         let carry_sha: Option<String> = if clean_source {
             None
         } else {
-            let out = run_git(
-                &self.repo,
-                &["stash", "create", "--include-untracked"],
-                self.git_timeout_secs,
-            )?;
+            let out = run_git(&self.repo, &["stash", "create"], self.git_timeout_secs)?;
             let sha = out.trim().to_string();
             if sha.is_empty() { None } else { Some(sha) }
+        };
+        let untracked: Vec<std::path::PathBuf> = if clean_source {
+            Vec::new()
+        } else {
+            let out = run_git(
+                &self.repo,
+                &["ls-files", "--others", "--exclude-standard"],
+                self.git_timeout_secs,
+            )?;
+            out.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| self.repo.join(l))
+                .collect()
         };
 
         // Add the worktree from HEAD. On failure, no cleanup needed.
@@ -323,9 +340,39 @@ impl WorktreeManager {
             KodError::Internal(format!("git worktree add {branch} {}: {e}", path.display()))
         })?;
 
-        // Apply the carried stash inside the new worktree. A failure
-        // here means the worktree was created but the carry could not
-        // land; roll back so the caller sees one clean error.
+        // Copy untracked files across *before* the stash apply, so
+        // an untracked path that happens to collide with a tracked
+        // one (an `add`ed-but-uncommitted file) is not clobbered.
+        // Best-effort per file: a copy failure is logged and does
+        // not roll back — a partial carry is better than losing
+        // the relocation entirely.
+        for src_file in &untracked {
+            let rel = src_file.strip_prefix(&self.repo).unwrap_or(src_file);
+            let dst = path.join(rel);
+            if let Some(parent) = dst.parent()
+                && let Err(e) = std::fs::create_dir_all(parent)
+            {
+                tracing::warn!(
+                    path = %parent.display(),
+                    error = %e,
+                    "session worktree: could not create parent for untracked file",
+                );
+                continue;
+            }
+            if let Err(e) = std::fs::copy(src_file, &dst) {
+                tracing::warn!(
+                    from = %src_file.display(),
+                    to = %dst.display(),
+                    error = %e,
+                    "session worktree: could not carry untracked file",
+                );
+            }
+        }
+
+        // Apply the tracked changes inside the new worktree. A
+        // failure here means the worktree was created but the carry
+        // could not land; roll back so the caller sees one clean
+        // error.
         if let Some(sha) = &carry_sha {
             if let Err(e) = run_git(&path, &["stash", "apply", sha], self.git_timeout_secs) {
                 let _ = run_git_owned(
