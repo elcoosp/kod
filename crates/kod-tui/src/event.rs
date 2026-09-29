@@ -189,6 +189,15 @@ pub enum Event {
     /// decision mining). Carries the short label the spinner shows
     /// until the next text / tool / thinking / turn signal.
     Activity(String),
+    /// Per-round provider usage (prompt + completion of the latest
+    /// round). The context meter replaces its figure with this — the
+    /// last round's prompt is the true window snapshot, while the
+    /// turn's merged total sums history once per round and would
+    /// overstate it. Later markers supersede earlier ones.
+    WindowUsage {
+        prompt_tokens: usize,
+        completion_tokens: usize,
+    },
     /// The provider rate-limited the turn; the engine is sleeping out
     /// the retry window. Carries the bounded-wait system line plus the
     /// window in seconds so the spinner can count down live; the two
@@ -200,13 +209,10 @@ pub enum Event {
     /// into a single message.
     TurnBoundary(u32),
     ResponseComplete(String),
-    /// Real token usage from the provider (prompt+completion total).
-    /// Drives the context meter; replaced under compaction.
-    TokenUsage(usize),
     /// Per-call usage breakdown for the session-accounting counters.
-    /// Separate from `TokenUsage` because the two track different
-    /// things: the meter is a window snapshot, this is a running total
-    /// that only grows.
+    /// A running total that only grows (correctly merged across
+    /// rounds). Separate from the meter: `WindowUsage` carries the
+    /// window snapshot, this carries the spend.
     ///
     /// `cost_usd` is the dollar cost of this one call, computed by
     /// the dispatcher from `TaskResponse::pricing`. `None` when the
