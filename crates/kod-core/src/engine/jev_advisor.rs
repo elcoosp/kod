@@ -683,6 +683,11 @@ impl KodEngine {
         let Some(jev) = self.jev_client() else {
             return input.to_string();
         };
+        // The verdict is a network round-trip; tell the visible turn
+        // what it is waiting on instead of a generic "thinking…".
+        if let Some(tx) = chunk_tx {
+            let _ = tx.send(crate::engine::activity_marker("checking request…")).await;
+        }
         let state = crate::jev::build_state(input, &[]);
         let pairs = [(
             "is_ambiguous".to_string(),
