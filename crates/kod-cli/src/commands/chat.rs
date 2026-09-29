@@ -531,10 +531,20 @@ pub async fn run_chat(
                     let _ = io::stdout().flush();
                     continue;
                 }
+                // Auxiliary engine work (Jev verdict, memory fact
+                // extraction): one line, same vocabulary as the TUI
+                // spinner, so a slow post-stream tail is not silence.
+                if let Some(label) = kod_core::engine::parse_activity_marker(&chunk) {
+                    print!("\n[{label}]\n");
+                    let _ = io::stdout().flush();
+                    continue;
+                }
 
                 if kod_core::engine::parse_tool_start(&chunk).is_some()
                     || kod_core::engine::parse_tool_done(&chunk).is_some()
                     || kod_core::engine::is_thinking_marker(&chunk)
+                    || kod_core::engine::parse_turn_marker(&chunk).is_some()
+                    || kod_core::engine::parse_activity_marker(&chunk).is_some()
                 {
                     continue;
                 }
