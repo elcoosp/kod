@@ -64,6 +64,10 @@ define_id!(MemoryId, "mem");
 define_id!(ToolId, "tool");
 define_id!(TaskId, "task");
 define_id!(SessionId, "session");
+// WS-A: stable per-engine background session for tab-bridge backends.
+// Rendered `bg-<uuid>` — distinct from `SessionId` so a background id
+// can never collide with (or be mistaken for) a real conversation.
+define_id!(BackgroundSessionId, "bg");
 
 #[cfg(test)]
 mod tests {
