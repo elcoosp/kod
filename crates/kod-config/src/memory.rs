@@ -52,6 +52,18 @@ pub enum EmbeddingEndpoint {
     OpenAI,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ExtractionMode {
+    /// No extraction at all — continuous and shutdown passes are silent.
+    Off,
+    /// Extract on the turn cadence (`extraction_every_n_turns`).
+    #[default]
+    Continuous,
+    /// Skip continuous extraction; only `extract_on_shutdown` runs.
+    Shutdown,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MemoryConfig {
@@ -84,6 +96,23 @@ pub struct MemoryConfig {
     pub extract_on_shutdown: bool,
     /// Cap on the number of facts extracted per session.
     pub extract_max_entries: usize,
+
+    // ---- continuous-extraction cadence (WS-B) ----
+    /// Extraction policy: `off` disables every pass, `continuous`
+    /// extracts on the turn cadence, `shutdown` keeps only the
+    /// `extract_on_shutdown` pass. Default `continuous`.
+    pub extraction_mode: ExtractionMode,
+    /// Run a continuous extraction every N new user turns. Was dead
+    /// code (never consulted); now enforced. Default 5.
+    pub extraction_every_n_turns: usize,
+    /// Minimum new-message count worth an extraction. Default 4.
+    pub extraction_min_messages: usize,
+    /// Gate for the sharpshooter decision extractor (per eligible
+    /// user prompt). Default true.
+    pub decisions_enabled: bool,
+    /// Run sharpshooter extraction every N eligible user prompts.
+    /// Default 1 (every eligible turn, as before).
+    pub decisions_every_n_turns: usize,
 }
 
 impl Default for MemoryConfig {
@@ -101,6 +130,11 @@ impl Default for MemoryConfig {
             embedding_api_key_env: None,
             extract_on_shutdown: false,
             extract_max_entries: 12,
+            extraction_mode: ExtractionMode::Continuous,
+            extraction_every_n_turns: 5,
+            extraction_min_messages: 4,
+            decisions_enabled: true,
+            decisions_every_n_turns: 1,
         }
     }
 }
@@ -225,5 +259,35 @@ mod coverage_embedding_serde {
             toml::from_str("extract_on_shutdown = true\nextract_max_entries = 25").unwrap();
         assert!(c.extract_on_shutdown);
         assert_eq!(c.extract_max_entries, 25);
+    }
+
+    #[test]
+    fn extraction_cadence_defaults_match_documented_behavior() {
+        let c = MemoryConfig::default();
+        assert_eq!(c.extraction_mode, ExtractionMode::Continuous);
+        assert_eq!(c.extraction_every_n_turns, 5);
+        assert_eq!(c.extraction_min_messages, 4);
+        assert!(c.decisions_enabled);
+        assert_eq!(c.decisions_every_n_turns, 1);
+    }
+
+    #[test]
+    fn extraction_cadence_round_trip() {
+        let c: MemoryConfig = toml::from_str(
+            "extraction_mode = \"off\"\n\
+             extraction_every_n_turns = 1\n\
+             extraction_min_messages = 2\n\
+             decisions_enabled = false\n\
+             decisions_every_n_turns = 3",
+        )
+        .unwrap();
+        assert_eq!(c.extraction_mode, ExtractionMode::Off);
+        assert_eq!(c.extraction_every_n_turns, 1);
+        assert_eq!(c.extraction_min_messages, 2);
+        assert!(!c.decisions_enabled);
+        assert_eq!(c.decisions_every_n_turns, 3);
+
+        let c: MemoryConfig = toml::from_str("extraction_mode = \"shutdown\"").unwrap();
+        assert_eq!(c.extraction_mode, ExtractionMode::Shutdown);
     }
 }
