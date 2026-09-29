@@ -214,6 +214,8 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
                 || kod_core::engine::parse_tool_done(&chunk).is_some()
                 || kod_core::engine::parse_tool_approval(&chunk).is_some()
                 || kod_core::engine::parse_question(&chunk).is_some()
+                || kod_core::engine::parse_turn_marker(&chunk).is_some()
+                || kod_core::engine::parse_activity_marker(&chunk).is_some()
                 || kod_core::engine::is_thinking_marker(&chunk)
             {
                 continue;
