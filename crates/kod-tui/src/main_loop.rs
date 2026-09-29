@@ -7265,6 +7265,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_finished_turn_records_friendly_duration_for_header() {
+        // The header's `took …` figure: recorded on completion (no
+        // transcript row — `turn_completion_pushes_no_duration_row`
+        // still holds), cleared when the next turn begins.
+        let mut tui = TuiLoop::new();
+        assert!(!tui.app().has_last_turn_duration());
+        assert!(tui.app().last_turn_label().is_empty());
+        tui.app_mut().begin_generation();
+        tui.handle_event(Event::ResponseChunk("hi".to_string()))
+            .await
+            .unwrap();
+        tui.handle_event(Event::ResponseComplete("hi".to_string()))
+            .await
+            .unwrap();
+        assert!(tui.app().has_last_turn_duration());
+        assert!(!tui.app().last_turn_label().is_empty());
+        tui.app_mut().begin_generation();
+        assert!(!tui.app().has_last_turn_duration());
+    }
+
+    #[tokio::test]
     async fn test_task_end_does_not_reprint_flushed_text_as_giant_bubble() {
         // Screenshot repro: text streams, a tool runs, more text streams,
         // then the task ends with ToolCompleted + ResponseComplete carrying
