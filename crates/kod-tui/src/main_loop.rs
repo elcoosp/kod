@@ -863,6 +863,13 @@ impl TuiLoop {
             Event::ResponseChunk(chunk) => {
                 self.app.add_response_chunk(&chunk);
             }
+            Event::Activity(label) => {
+                self.app.begin_activity(&label);
+            }
+            Event::RateLimited(message) => {
+                self.app.begin_rate_limit_wait();
+                self.app.push_system_message(&message);
+            }
             Event::TurnBoundary(turn) => {
                 // Goal-loop turn boundary: flush the finished turn as
                 // its own assistant bubble, then open the next turn with
@@ -1480,18 +1487,24 @@ impl TuiLoop {
                     {
                         // H-RL1 — the engine is sleeping out a provider
                         // rate-limit window and will re-drive the turn.
-                        // A system row makes the wait visibly bounded
-                        // instead of a frozen spinner.
+                        // One event carries both the bounded-wait system
+                        // row and the spinner phase, so the two can never
+                        // disagree ("connecting…" during a 20-minute wait).
                         let _ = event_tx_chunks
-                            .send(Event::System(
-                                crate::event::EventPriority::Normal,
-                                format!(
-                                    "Rate limited by the provider — waiting {} before automatic retry (attempt {attempt}/{max}) · Esc cancels",
-                                    kod_core::engine::format_duration_ms(
-                                        secs.saturating_mul(1000)
-                                    ),
+                            .send(Event::RateLimited(format!(
+                                "Rate limited by the provider — waiting {} before automatic retry (attempt {attempt}/{max}) · Esc cancels",
+                                kod_core::engine::format_duration_ms(
+                                    secs.saturating_mul(1000)
                                 ),
-                            ))
+                            )))
+                            .await;
+                    } else if let Some(label) = kod_core::engine::parse_activity_marker(&chunk) {
+                        // Auxiliary engine work (Jev verdict, memory fact
+                        // extraction, decision mining): show what the turn
+                        // is actually doing. Not prose — kept out of the
+                        // classifier buffer entirely.
+                        let _ = event_tx_chunks
+                            .send(Event::Activity(label.to_string()))
                             .await;
                     } else if let Some(turn) = kod_core::engine::parse_turn_marker(&chunk) {
                         // Goal-loop turn boundary: close the previous
@@ -7185,6 +7198,62 @@ mod tests {
         assert!(bodies[0].contains("turn one text"), "got: {bodies:?}");
         assert!(bodies[1].contains("—— turn 2 ——"), "got: {bodies:?}");
         assert!(bodies[2].contains("turn two text"), "got: {bodies:?}");
+    }
+
+    #[tokio::test]
+    async fn test_activity_marker_drives_spinner_phase() {
+        // Auxiliary engine work (Jev verdict, memory fact extraction)
+        // must show what the turn is actually doing, not a stale
+        // "thinking…". The marker is a signal, never prose: no bubble.
+        let mut tui = TuiLoop::new();
+        tui.app_mut().begin_generation();
+        assert_eq!(tui.app().phase_label().as_deref(), Some("connecting…"));
+        tui.handle_event(Event::Activity("saving memories…".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(
+            tui.app().phase_label().as_deref(),
+            Some("saving memories…")
+        );
+        assert!(tui.app().current_response().is_empty());
+        // Fresh model text supersedes the auxiliary phase.
+        tui.handle_event(Event::ResponseChunk("hello".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(tui.app().phase_label().as_deref(), Some("thinking…"));
+    }
+
+    #[tokio::test]
+    async fn test_rate_limited_phase_replaces_connecting_during_wait() {
+        // Sleeping out a provider rate-limit window showed
+        // "connecting…" — the phase never knew about the wait. The
+        // bounded-wait row and the spinner now come from one event.
+        let mut tui = TuiLoop::new();
+        tui.app_mut().begin_generation();
+        tui.handle_event(Event::RateLimited(
+            "Rate limited by the provider — waiting 20m00s before automatic retry (attempt 1/2) · Esc cancels".to_string(),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            tui.app().phase_label().as_deref(),
+            Some("rate-limited — waiting…")
+        );
+        let bodies: Vec<&str> = tui
+            .app()
+            .messages()
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect();
+        assert!(
+            bodies.iter().any(|m| m.contains("Rate limited by the provider")),
+            "wait line must stay in the transcript, got: {bodies:?}"
+        );
+        // The retry landing restores the generating phase.
+        tui.handle_event(Event::ResponseChunk("resumed".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(tui.app().phase_label().as_deref(), Some("thinking…"));
     }
 
     #[tokio::test]
