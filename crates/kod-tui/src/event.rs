@@ -185,6 +185,11 @@ pub enum Event {
     SwarmError(String),
     AgentMessage(String, String),
     ResponseChunk(String),
+    /// Goal-loop turn boundary: the engine finished turn N-1 and is
+    /// starting turn N. The main loop flushes the previous turn's text
+    /// as its own bubble and opens a new one — turns must never merge
+    /// into a single message.
+    TurnBoundary(u32),
     ResponseComplete(String),
     /// Real token usage from the provider (prompt+completion total).
     /// Drives the context meter; replaced under compaction.
