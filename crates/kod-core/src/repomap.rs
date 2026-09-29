@@ -488,9 +488,9 @@ fn scan(content: &str, patterns: &[(&'static str, &Regex)]) -> Vec<Symbol> {
     out.truncate(200);
     out
 }
-
 fn extract_rust(content: &str) -> Vec<Symbol> {
     static FN: OnceLock<Regex> = OnceLock::new();
+
     static STRUCT: OnceLock<Regex> = OnceLock::new();
     static ENUM: OnceLock<Regex> = OnceLock::new();
     static TRAIT: OnceLock<Regex> = OnceLock::new();
@@ -525,6 +525,42 @@ fn extract_rust(content: &str) -> Vec<Symbol> {
             ("const", c),
         ],
     )
+    .into_iter()
+    // Test fns (`#[test]`, `#[tokio::test]`, …) are noise in the
+    // map: the model needs the production surface, not the test
+    // suite. Non-test items are untouched.
+    .filter(|sym| !(sym.kind == "fn" && has_test_attribute(content, sym.line)))
+    .collect()
+}
+
+/// True when the item on 1-based `symbol_line` carries a test
+/// attribute (`#[test]`, `#[tokio::test(...)]`, …) on the lines
+/// directly above it. Walks up over the attribute block, skipping
+/// blank lines and `//` comments; any other code line stops the
+/// scan so a distant `#[test]` cannot leak onto an unrelated item.
+fn has_test_attribute(content: &str, symbol_line: usize) -> bool {
+    let lines: Vec<&str> = content.lines().collect();
+    if symbol_line == 0 || symbol_line > lines.len() {
+        return false;
+    }
+    // Walk upward from the line directly above the symbol.
+    let mut i = (symbol_line - 1) as isize - 1;
+    while i >= 0 {
+        let trimmed = lines[i as usize].trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            i -= 1;
+            continue;
+        }
+        if trimmed.starts_with("#[") {
+            if trimmed.contains("test") {
+                return true;
+            }
+            i -= 1;
+            continue;
+        }
+        break;
+    }
+    false
 }
 
 fn extract_python(content: &str) -> Vec<Symbol> {
@@ -630,6 +666,36 @@ impl Engine {
         assert!(names.contains(&"Engine"), "got: {:?}", names);
         assert!(names.contains(&"State"), "got: {:?}", names);
         assert!(names.contains(&"run"), "got: {:?}", names);
+    }
+
+    #[test]
+    fn extract_rust_skips_test_fns() {
+        let src = r#"
+pub fn production() {}
+
+#[test]
+fn unit_test() {}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn async_test() {}
+
+#[allow(dead_code)]
+#[test]
+fn attributed_test() {}
+
+pub struct Engine;
+"#;
+        let symbols = extract_rust(src);
+        let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"production"), "got: {:?}", names);
+        assert!(names.contains(&"Engine"), "got: {:?}", names);
+        assert!(!names.contains(&"unit_test"), "got: {:?}", names);
+        assert!(!names.contains(&"async_test"), "got: {:?}", names);
+        assert!(
+            !names.contains(&"attributed_test"),
+            "got: {:?}",
+            names
+        );
     }
 
     /// Regression target for D5-L4: the repomap sorts by PageRank, not
