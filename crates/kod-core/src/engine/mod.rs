@@ -374,6 +374,21 @@ mod rate_limit_marker_tests {
         assert_eq!(parse_activity_marker(&turn_marker(2)), None);
         assert_eq!(parse_activity_marker(&rate_limit_wait_marker(60, 1, 1)), None);
     }
+
+    #[test]
+    fn usage_marker_round_trips() {
+        let chunk = usage_marker(12_000, 340);
+        assert_eq!(parse_usage_marker(&chunk), Some((12_000, 340)));
+    }
+
+    #[test]
+    fn usage_marker_rejects_prose_and_malformed_tails() {
+        assert_eq!(parse_usage_marker("12000,340"), None);
+        assert_eq!(parse_usage_marker(THINKING_MARKER), None);
+        assert_eq!(parse_usage_marker(&turn_marker(2)), None);
+        assert_eq!(parse_usage_marker("\0kod-usage:abc,1\0"), None);
+        assert_eq!(parse_usage_marker("\0kod-usage:12\0"), None);
+    }
 }
 
 /// Marker prefix for an interactive question on the streaming chunk
