@@ -863,6 +863,14 @@ impl TuiLoop {
             Event::ResponseChunk(chunk) => {
                 self.app.add_response_chunk(&chunk);
             }
+            Event::TurnBoundary(turn) => {
+                // Goal-loop turn boundary: flush the finished turn as
+                // its own assistant bubble, then open the next turn with
+                // a visible separator — never one merged message.
+                self.app.flush_streamed_text();
+                self.app
+                    .push_system_message(&format!("—— turn {turn} ——"));
+            }
             Event::StreamReset => {
                 self.app.drop_response_stream();
             }
@@ -1485,6 +1493,18 @@ impl TuiLoop {
                                 ),
                             ))
                             .await;
+                    } else if let Some(turn) = kod_core::engine::parse_turn_marker(&chunk) {
+                        // Goal-loop turn boundary: close the previous
+                        // turn's bubble before any of the new turn's text
+                        // arrives, so turns render as separate messages.
+                        // The prose classifier state resets with the
+                        // bubble — turn N starts from a clean slate.
+                        let _ = event_tx_chunks.send(Event::TurnBoundary(turn)).await;
+                        accumulated.clear();
+                        chunk_count = 0;
+                        is_reasoning = false;
+                        reasoning_since = None;
+                        disabled_for_turn = false;
                     } else if kod_core::engine::is_thinking_marker(&chunk) {
                         let _ = event_tx_chunks.send(Event::Thinking).await;
                     } else if kod_core::engine::is_stream_reset_marker(&chunk) {
@@ -7133,6 +7153,38 @@ mod tests {
         );
         let (_cid, h, s, ms) = kod_core::engine::parse_tool_done(&chunk).expect("must parse");
         assert_eq!((h, s, ms), ("read_file path=main.rs", "12 lines", 42));
+    }
+
+    #[tokio::test]
+    async fn test_turn_boundary_splits_goal_turns_into_own_bubbles() {
+        // Goal-loop regression: each turn's text arrived as a plain
+        // `—— turn N ——` prose chunk, so every turn accumulated into one
+        // giant assistant bubble. The engine now sends a control marker
+        // that the pump translates to TurnBoundary, and the handler
+        // flushes the finished turn before opening the next.
+        assert_eq!(kod_core::engine::parse_turn_marker(&kod_core::engine::turn_marker(3)), Some(3));
+        let mut tui = TuiLoop::new();
+        tui.app_mut().begin_generation();
+        tui.handle_event(Event::ResponseChunk("turn one text".to_string()))
+            .await
+            .unwrap();
+        tui.handle_event(Event::TurnBoundary(2)).await.unwrap();
+        tui.handle_event(Event::ResponseChunk("turn two text".to_string()))
+            .await
+            .unwrap();
+        tui.handle_event(Event::ResponseComplete("".to_string()))
+            .await
+            .unwrap();
+        let bodies: Vec<&str> = tui
+            .app()
+            .messages()
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(bodies.len(), 3, "turn/system/turn, got: {bodies:?}");
+        assert!(bodies[0].contains("turn one text"), "got: {bodies:?}");
+        assert!(bodies[1].contains("—— turn 2 ——"), "got: {bodies:?}");
+        assert!(bodies[2].contains("turn two text"), "got: {bodies:?}");
     }
 
     #[tokio::test]
