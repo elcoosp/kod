@@ -25,14 +25,45 @@
 
 use kod_types::{ChatMessage, MessageRole};
 
-/// Fraction of the budget at which a background summary begins. Below
-/// this the transcript is fine; the summary lands on a later turn.
-pub const SOFT_THRESHOLD: f64 = 0.80;
-
 /// Fraction at which the current turn compacts before it runs. The
 /// summary call has no time to return, so the emergency path is used
 /// unless a background summary is already available.
 pub const HARD_THRESHOLD: f64 = 0.95;
+
+/// Floor on the lead band, in tokens. A window smaller than
+/// `MIN_LEAD_BAND * 160 / 19` arms at `HARD_THRESHOLD * window -
+/// MIN_LEAD_BAND`, i.e. earlier than the raw formula would suggest.
+/// The floor exists so a tiny window does not arm a summary so early
+/// that it is stale by the time the threshold is crossed.
+pub const MIN_LEAD_BAND: u64 = 8_192;
+
+/// Cap on the lead band, in tokens. The band is how much of the
+/// transcript the armed summary misses before the hard threshold
+/// triggers apply; the cap bounds that miss so a very large window
+/// does not start the summary hundreds of thousands of tokens before
+/// it is useful.
+pub const MAX_LEAD_BAND: u64 = 32_000;
+
+/// The lead band's width, in tokens, for a given window (delta §4.2).
+///
+/// `clamp(0.125 * HARD_THRESHOLD * window, MIN_LEAD_BAND,
+/// MAX_LEAD_BAND)` — the design's formula, with `threshold` bound to
+/// the hard threshold because that is the point the lead is *from*.
+/// `0.125 * 0.95 = 0.11875 = 19/160`, so the arithmetic is exact in
+/// integers.
+pub fn lead_band_tokens(window_tokens: u64) -> u64 {
+    (window_tokens.saturating_mul(19) / 160).clamp(MIN_LEAD_BAND, MAX_LEAD_BAND)
+}
+
+/// The absolute token count at which the background summary arms
+/// (delta §4.2): `HARD_THRESHOLD * window - lead_band_tokens(window)`.
+/// Below this, do nothing. At or above it (and below the hard
+/// threshold), start the background summary. At or above the hard
+/// threshold, compact the current turn.
+pub fn arm_threshold_tokens(window_tokens: u64) -> u64 {
+    let hard = window_tokens.saturating_mul(95) / 100;
+    hard.saturating_sub(lead_band_tokens(window_tokens))
+}
 
 /// Turns kept verbatim at the tail. The recent exchange is what the
 /// current turn is actually reasoning about; compacting it away is
@@ -67,10 +98,15 @@ pub fn decide(used_tokens: u64, budget_tokens: u64) -> Action {
         // caller learns the real number.
         return Action::None;
     }
-    let ratio = used_tokens as f64 / budget_tokens as f64;
-    if ratio >= HARD_THRESHOLD {
-        Action::CompactNow
-    } else if ratio >= SOFT_THRESHOLD {
+    let hard = budget_tokens.saturating_mul(95) / 100;
+    if used_tokens >= hard {
+        return Action::CompactNow;
+    }
+    // Delta §4.2: the arm point scales with the window. The fixed
+    // 0.80 of the pre-change code is replaced by `hard - lead_band`:
+    // a small window arms earlier proportionally (floor dominates),
+    // a large one later proportionally (cap dominates).
+    if used_tokens >= arm_threshold_tokens(budget_tokens) {
         Action::StartBackground
     } else {
         Action::None
@@ -205,18 +241,6 @@ mod tests {
     }
 
     #[test]
-    fn decide_below_soft_is_none() {
-        assert_eq!(decide(100, 1000), Action::None);
-        assert_eq!(decide(799, 1000), Action::None);
-    }
-
-    #[test]
-    fn decide_at_soft_is_background() {
-        assert_eq!(decide(800, 1000), Action::StartBackground);
-        assert_eq!(decide(949, 1000), Action::StartBackground);
-    }
-
-    #[test]
     fn decide_at_hard_is_compact_now() {
         assert_eq!(decide(950, 1000), Action::CompactNow);
         assert_eq!(decide(1000, 1000), Action::CompactNow);
@@ -336,6 +360,57 @@ mod tests {
             .collect();
         let s = emergency_summary(&dropped, 100_000);
         assert!(s.contains("and 10 more"), "got: {s}");
+    }
+
+    // ---- Delta 4.2 lead band --------------------------------------
+
+    #[test]
+    fn lead_band_scales_with_window_inside_its_bounds() {
+        // 200k x 19/160 = 23_750, inside [8_192, 32_000].
+        assert_eq!(lead_band_tokens(200_000), 23_750);
+        // 32k x 19/160 = 3_800, clamped up to the floor.
+        assert_eq!(lead_band_tokens(32_000), MIN_LEAD_BAND);
+        // 1M x 19/160 = 118_750, clamped down to the cap.
+        assert_eq!(lead_band_tokens(1_000_000), MAX_LEAD_BAND);
+    }
+
+    #[test]
+    fn arm_threshold_is_hard_minus_lead() {
+        // 200k: hard = 190_000, lead = 23_750, arm = 166_250.
+        assert_eq!(arm_threshold_tokens(200_000), 166_250);
+        // 32k: hard = 30_400, lead clamped to 8_192, arm = 22_208.
+        assert_eq!(arm_threshold_tokens(32_000), 22_208);
+        // 1M: hard = 950_000, lead capped at 32_000, arm = 918_000.
+        assert_eq!(arm_threshold_tokens(1_000_000), 918_000);
+    }
+
+    #[test]
+    fn decide_arms_in_the_lead_band_and_compacts_at_hard() {
+        // 200k window.
+        assert_eq!(decide(166_249, 200_000), Action::None);
+        assert_eq!(decide(166_250, 200_000), Action::StartBackground);
+        assert_eq!(decide(189_999, 200_000), Action::StartBackground);
+        assert_eq!(decide(190_000, 200_000), Action::CompactNow);
+    }
+
+    #[test]
+    fn decide_arms_earlier_on_small_windows() {
+        // The floor pulls the arm point up (as a fraction of the
+        // window) on a 32k context — this is the 'prevent tiny-window
+        // churn' branch of the design.
+        assert_eq!(decide(22_207, 32_000), Action::None);
+        assert_eq!(decide(22_208, 32_000), Action::StartBackground);
+    }
+
+    #[test]
+    fn decide_arms_later_on_very_large_windows() {
+        // The cap keeps the lead bounded, so on a 1M context the arm
+        // point is 91.8% rather than the 88.125% the raw formula
+        // would give — the armed summary misses at most 32k tokens
+        // before apply.
+        assert_eq!(decide(917_999, 1_000_000), Action::None);
+        assert_eq!(decide(918_000, 1_000_000), Action::StartBackground);
+        assert_eq!(decide(950_000, 1_000_000), Action::CompactNow);
     }
 
     #[test]
