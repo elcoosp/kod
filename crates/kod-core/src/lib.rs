@@ -13,6 +13,7 @@ pub mod cache_journal;
 pub mod cache_tracker;
 pub mod context_engine;
 pub mod context_gauge;
+pub mod deferred_diagnostics;
 pub mod background;
 pub mod endpoint_health;
 pub mod sensitivity;
