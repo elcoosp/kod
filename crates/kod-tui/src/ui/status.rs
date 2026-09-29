@@ -94,8 +94,10 @@ impl StatusWidget {
         }
 
         // 5. Live progress beats idle hints. Single source of truth:
-        //    spinner + phase_label ("thinking…" / "tool: …"). No elapsed
-        //    seconds — they were duplicated across header/status and noisy.
+        //    spinner + phase_label + live elapsed ("thinking… · 12s").
+        //    The elapsed lives only here — the header carries the
+        //    *finished* turn's figure (`took …`), so the two never
+        //    duplicate.
         if app.is_generating() {
             // Delta §11.4: when more than one tool row is in flight, an
             // aggregate beats repeating the newest tool's brief. When a
@@ -121,6 +123,13 @@ impl StatusWidget {
                 ),
                 Span::styled(phase, Style::default().fg(theme.warning)),
             ];
+            // Live wall-clock of the running turn. Empty when the turn
+            // never started the spinner (e.g. a swarm drive that sets
+            // `generating` directly) — then no span, not a dangling `·`.
+            let elapsed = app.elapsed_label();
+            if !elapsed.is_empty() {
+                spans.push(Span::styled(format!(" · {elapsed}"), dim));
+            }
             // Time-to-first-token appears the moment the model starts
             // answering. A per-turn measurement; it disappears when the
             // turn ends.
