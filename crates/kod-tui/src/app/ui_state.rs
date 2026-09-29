@@ -28,8 +28,34 @@ impl KodApp {
                 format!("tool: {short}")
             }
             GenPhase::Summarizing => "thinking…".to_string(),
+            // Engine-reported auxiliary work — show what the turn is
+            // actually doing instead of a stale "thinking…".
+            GenPhase::Activity(l) => l.chars().take(40).collect::<String>(),
+            GenPhase::RateLimited => "rate-limited — waiting…".to_string(),
         };
         Some(label)
+    }
+
+    /// Enter an engine-reported auxiliary phase (Jev verdict, memory
+    /// fact extraction, decision mining). Overwritten by the next
+    /// text / tool / thinking / turn signal; a no-op when idle so a
+    /// stray marker can never light the spinner on its own.
+    pub fn begin_activity(&mut self, label: &str) {
+        if self.generating {
+            let label = label.trim();
+            if !label.is_empty() {
+                self.set_phase(GenPhase::Activity(label.to_string()));
+            }
+        }
+    }
+
+    /// Enter the rate-limit wait: the provider refused the turn and
+    /// the engine is sleeping out the retry window. Replaces the
+    /// misleading "connecting…" the spinner showed while waiting.
+    pub fn begin_rate_limit_wait(&mut self) {
+        if self.generating {
+            self.set_phase(GenPhase::RateLimited);
+        }
     }
 
     /// Enter the post-tool thinking phase (tool result reinjected, LLM
