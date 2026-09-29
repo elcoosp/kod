@@ -208,6 +208,26 @@ pub fn format_duration_ms(ms: u64) -> String {
     }
 }
 
+/// Marker for goal-loop turn boundaries on the streaming chunk
+/// channel: `\0kod-turn:<n>\0`. Sent by `process_goal_streaming_for`
+/// before each turn after the first so consumers can close the previous
+/// turn's bubble and open a new one. A `\0`-prefixed control chunk —
+/// never model prose — so consumers that only render plain text
+/// (ACP, CLI pumps) must translate it to `—— turn N ——` or skip it,
+/// never print it raw.
+pub const TURN_MARKER: &str = "\0kod-turn:";
+
+/// Build a turn-boundary marker chunk for goal-loop turn `n`.
+pub fn turn_marker(turn: u32) -> String {
+    format!("{TURN_MARKER}{turn}\0")
+}
+
+/// If `chunk` is a turn-boundary marker, return the turn number.
+pub fn parse_turn_marker(chunk: &str) -> Option<u32> {
+    let rest = chunk.strip_prefix(TURN_MARKER)?.strip_suffix('\0')?;
+    rest.parse::<u32>().ok()
+}
+
 /// Marker for the post-tool thinking phase: tool result was reinjected
 /// and the LLM is reasoning again. The TUI switches from "tool: …" back
 /// to "thinking…" so a slow reinjection doesn't look like a stuck tool.
@@ -9527,7 +9547,7 @@ pub(crate) fn filter_chain_by_trust(
     /// [`MAX_GOAL_TURNS`] passes run, or [`KodEngine::request_cancel`]
     /// fires. Steer notes queued via [`KodEngine::steer`] are injected
     /// every turn. Each turn's text streams live; turns are separated by
-    /// a `—— turn N ——` marker chunk so the TUI can render progress.
+    /// a turn-marker chunk (see [`turn_marker`]) so the TUI can render progress.
     pub async fn process_goal_streaming(
         &self,
         input: &str,
@@ -9647,7 +9667,7 @@ pub(crate) fn filter_chain_by_trust(
                 // Delta §9.8: the pause gate's model-call boundary.
                 self.pause_gate.wait_if_paused().await;
                 if turn > 1 {
-                    let _ = chunk_tx.send(format!("\n\n—— turn {turn} ——\n")).await;
+                    let _ = chunk_tx.send(turn_marker(turn as u32)).await;
                     let nudge = "Continue working toward the goal above. If it is now fully reached, reply with GOAL MET plus a short summary instead of calling more tools.";
                     pending.push_str(&format!("\n\n{nudge}\n"));
                     // The nudge is what tells the model to *continue*;
