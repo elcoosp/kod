@@ -172,6 +172,11 @@ fn atomic_write(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
+    } else {
+        // Delta §7.7: a successful write invalidates the walker
+        // cache. A subsequent `list_files`/`grep` in the same turn
+        // must see the file that was just created.
+        crate::walk_cache::invalidate_all();
     }
     result
 }
@@ -606,6 +611,10 @@ impl Tool for WriteFileTool {
             if let Err(e) = write!(file, "{}", content) {
                 return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
             }
+            // Delta §7.7: a successful append changes the tree for
+            // the walker too (a new file may have been created by
+            // `OpenOptions::create(true)` above).
+            crate::walk_cache::invalidate_all();
         } else if let Err(e) = atomic_write(&resolved, content.as_bytes()) {
             return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
         }
@@ -1279,28 +1288,35 @@ fn truncate_entry(s: &str, max: usize) -> String {
 /// Used by `list_files` and `grep` so ignored build output (`target/`,
 /// `node_modules/`, …) never bloats tool results.
 pub(crate) fn gitaware_walk(root: &std::path::Path, recursive: bool) -> Vec<std::path::PathBuf> {
-    let mut builder = ignore::WalkBuilder::new(root);
-    builder
-        .hidden(false)
-        .git_ignore(true)
-        .ignore(true)
-        .git_global(true)
-        .git_exclude(true)
-        // Honor .gitignore files even outside a git checkout: the tool's
-        // contract is filesystem-based, not repo-based.
-        .require_git(false)
-        .filter_entry(|e| e.file_name().to_str().is_some_and(|n| n != ".git"));
-    if !recursive {
-        builder.max_depth(Some(1));
-    }
-    builder
-        .build()
-        .filter_map(|e| e.ok())
-        .map(|e| e.into_path())
-        // The walker yields the root itself as its first entry — callers
-        // want the root's children, not the root.
-        .filter(|p| p != root)
-        .collect()
+    // Delta §7.7: a repeat walk of the same `(root, recursive)` in
+    // the same turn reuses the first result. Invalidation is on
+    // every write (see `atomic_write`) and on a short TTL inside
+    // the cache itself, so a change to the tree is observed within
+    // one turn without the caller re-walking.
+    crate::walk_cache::global().get_or_walk(root, recursive, || {
+        let mut builder = ignore::WalkBuilder::new(root);
+        builder
+            .hidden(false)
+            .git_ignore(true)
+            .ignore(true)
+            .git_global(true)
+            .git_exclude(true)
+            // Honor .gitignore files even outside a git checkout: the
+            // tool's contract is filesystem-based, not repo-based.
+            .require_git(false)
+            .filter_entry(|e| e.file_name().to_str().is_some_and(|n| n != ".git"));
+        if !recursive {
+            builder.max_depth(Some(1));
+        }
+        builder
+            .build()
+            .filter_map(|e| e.ok())
+            .map(|e| e.into_path())
+            // The walker yields the root itself as its first entry —
+            // callers want the root's children, not the root.
+            .filter(|p| p != root)
+            .collect()
+    })
 }
 
 /// Apply a unified diff to an existing file.
