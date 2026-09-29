@@ -204,6 +204,11 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
                 let _ = std::io::stdout().flush();
                 continue;
             }
+            if let Some(turn) = kod_core::engine::parse_turn_marker(&chunk) {
+                println!("\n—— turn {turn} ——");
+                let _ = std::io::stdout().flush();
+                continue;
+            }
             if kod_core::engine::parse_tool_start(&chunk).is_some()
                 || kod_core::engine::parse_tool_args(&chunk).is_some()
                 || kod_core::engine::parse_tool_done(&chunk).is_some()
