@@ -414,23 +414,54 @@ pub(crate) fn cap_rendered_result(
 /// determine if the GOAL MET criteria are satisfied", stopping the
 /// loop with a false success and hiding the model's actual progress.
 ///
-/// Anchor on the last non-empty line instead. Trim and strip the same
+/// Anchor on the first or last non-empty line instead. Trim and strip the same
 /// decorations a model often adds (`**GOAL MET**`, `GOAL MET.`,
 /// `— GOAL MET`, `> GOAL MET`), then compare case-insensitively to
 /// `GOAL MET`. A reply that only mentions the phrase mid-paragraph is
 /// not a completion signal.
 pub(crate) fn reply_declares_goal_met(text: &str) -> bool {
-    let last_line = text.lines().rev().map(|l| l.trim()).find(|l| !l.is_empty());
-    let Some(line) = last_line else {
+    // Collect non-empty trimmed lines. The contract says "end your reply
+    // with GOAL MET", but DeepSeek-web via tab-bridge emits it as the
+    // FIRST line (`GOAL MET\n## Summary…` — the bridge's shape log
+    // collapses the newline, showing `GOAL MET ## Summary…`). Accept
+    // either end so both forms stop the loop. Middle lines are ignored
+    // so a mere mention mid-paragraph is not a completion signal.
+    let lines: Vec<&str> = text
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    if lines.is_empty() {
         return false;
-    };
+    }
+    let candidates = [lines[0], lines[lines.len() - 1]];
+    candidates.iter().any(|l| line_is_goal_marker(l))
+}
+
+/// Single-line GOAL MET check shared by the first/last-line scan.
+fn line_is_goal_marker(line: &str) -> bool {
     // Strip surrounding emphasis and leading quote / list markers.
     let stripped: String = line
         .trim_matches(|c: char| c.is_whitespace() || c == '*' || c == '`' || c == '>' || c == '-')
         .trim_start_matches(|c: char| c.is_whitespace() || c == '—' || c == ':')
         .trim_end_matches(|c: char| c.is_whitespace() || c == '.' || c == '!' || c == ':')
         .to_string();
-    stripped.eq_ignore_ascii_case("GOAL MET")
+    if stripped.eq_ignore_ascii_case("GOAL MET") {
+        return true;
+    }
+    // Same-line summary form: `GOAL MET ## Summary…`, `GOAL MET - done`,
+    // `GOAL MET: summary`. Require a structural separator after the
+    // marker so `GOAL MET is what I'd say if done` still returns false.
+    if stripped.len() > 8 {
+        let (head, tail) = stripped.split_at(8);
+        if head.eq_ignore_ascii_case("GOAL MET") {
+            let sep = tail.trim_start().chars().next().unwrap_or(' ');
+            if matches!(sep, '#' | '-' | '—' | ':' | '.' | '!' | '(') {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Delta §12.7: render a mental model's entries into a stable bullet
@@ -14866,12 +14897,19 @@ mod tests {
         assert!(reply_declares_goal_met("…\n— GOAL MET"));
         // Trailing blank lines after the marker are fine.
         assert!(reply_declares_goal_met("GOAL MET\n\n"));
+        // DeepSeek-web via tab-bridge leads with the marker, then the
+        // summary (`GOAL MET\n## Summary…` — shape logs show it as
+        // `GOAL MET ## Summary…`). First line counts too.
+        assert!(reply_declares_goal_met("GOAL MET\n## Summary\nDone."));
+        assert!(reply_declares_goal_met("GOAL MET ## Summary: done"));
+        assert!(reply_declares_goal_met("GOAL MET: done"));
 
         // A false promise does NOT declare success.
         assert!(!reply_declares_goal_met(
             "I have not reached GOAL MET yet, but I'm close."
         ));
-        // The phrase on a non-final line is not a signal.
+        // A mid-sentence mention on the first line is not a signal —
+        // only a standalone marker (or marker + separator + summary).
         assert!(!reply_declares_goal_met(
             "GOAL MET is what I'd say if done.\nBut I need one more turn."
         ));
