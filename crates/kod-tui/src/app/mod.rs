@@ -505,6 +505,13 @@ pub enum GenPhase {
     Generating,
     ExecutingTool(String),
     Summarizing,
+    /// Auxiliary engine work that stalls the visible turn without the
+    /// model thinking: Jev verdicts, memory fact extraction, decision
+    /// mining. Carries the engine's short label (`saving memories…`).
+    Activity(String),
+    /// The provider rate-limited the turn and the engine is sleeping
+    /// out the retry window before re-driving it.
+    RateLimited,
 }
 
 /// Destructive action awaiting a yes/no answer.
@@ -636,6 +643,12 @@ pub struct KodApp {
 
     /// Current generation phase + when it started (elapsed display).
     phase: GenPhase,
+    /// Deadline of the in-flight rate-limit wait, for the spinner's
+    /// live countdown. Set by `begin_rate_limit_wait`, cleared on
+    /// every turn boundary (generation start / finish / fail /
+    /// cancel / stream drop). Read only by the `RateLimited` phase
+    /// label, so a stale value can never surface elsewhere.
+    rate_limit_deadline: Option<Instant>,
     /// Last prompt sent (powers `/retry` after a failure).
     last_prompt: Option<String>,
     /// Consecutive generation failures (offline indicator + backoff hint).
