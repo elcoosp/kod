@@ -15,7 +15,10 @@ reqwest = { workspace = true }
 futures = { workspace = true }
 async-stream = { workspace = true }
 adk-core = "2.2"
-adk-model = { version = "2.2", features = ["openai"] }
+# `default-features = false`: adk-model's default feature is `gemini`,
+# which kod-provider-openai does not use. Without this, every build
+# compiles adk-gemini and pulls reqwest 0.12 into the graph twice.
+adk-model = { version = "2.2", default-features = false, features = ["openai"] }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
 kod-provider = { path = "../kod-provider" }

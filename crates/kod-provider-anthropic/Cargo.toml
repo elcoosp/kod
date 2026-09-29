@@ -15,7 +15,10 @@ reqwest = { workspace = true, features = ["stream"] }
 futures = { workspace = true }
 async-stream = { workspace = true }
 adk-core = "2.2"
-adk-model = { version = "2.2", features = ["anthropic"] }
+# `default-features = false`: adk-model's default feature is `gemini`,
+# which kod-provider-anthropic does not use. See the sibling note in
+# kod-provider-openai.
+adk-model = { version = "2.2", default-features = false, features = ["anthropic"] }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
 kod-provider = { path = "../kod-provider" }

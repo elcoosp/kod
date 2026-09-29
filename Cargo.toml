@@ -272,12 +272,20 @@ codegen-units = 1
 
 [profile.dev]
 # Local code compiles at opt-level 0: codegen is 2-3x faster and
-# test runs don't need the optimizer. Debug info is reduced to line
-# tables (debug = 1) instead of full DWARF; that alone cuts link
-# time substantially on macOS's ld64.
+# test runs don't need the optimizer. Debug info is line-tables-only
+# (instead of full DWARF); that alone cuts link time substantially on
+# macOS's ld64 and shrinks target/debug. `split-debuginfo = "unpacked"`
+# stops the linker copying DWARF into every binary. Use
+# `--profile debugging` when you actually want a debugger.
 opt-level = 0
-debug = 1
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
 incremental = true
+
+# Full debuginfo when you need a debugger.
+[profile.debugging]
+inherits = "dev"
+debug = true
 
 # Dependencies stay optimized. They are compiled once and cached,
 # so opt-level 1 on them costs nothing per iteration but keeps
