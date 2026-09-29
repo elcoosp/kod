@@ -7,6 +7,7 @@ pub mod app;
 pub mod clipboard;
 pub mod components;
 pub mod event;
+pub mod highlight;
 pub mod keybindings;
 pub mod main_loop;
 pub mod markdown;

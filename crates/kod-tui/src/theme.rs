@@ -32,7 +32,7 @@ impl Theme {
             name: "dark".to_string(),
             background: Color::Reset,
             foreground: Color::White,
-            assistant: Color::Cyan,
+            assistant: Color::White,
             user: Color::Green,
             system: Color::Yellow,
             tool: Color::Magenta,
@@ -50,7 +50,7 @@ impl Theme {
             name: "light".to_string(),
             background: Color::White,
             foreground: Color::Black,
-            assistant: Color::Blue,
+            assistant: Color::Black,
             user: Color::Green,
             system: Color::Yellow,
             tool: Color::Magenta,
@@ -181,8 +181,20 @@ mod tests {
     #[test]
     fn dark_is_default_palette() {
         let t = Theme::dark();
-        assert_eq!(t.assistant, Color::Cyan);
+        assert_eq!(t.assistant, Color::White);
         assert_eq!(t.name, "dark");
+    }
+
+    #[test]
+    fn assistant_prose_uses_terminal_text_not_accent() {
+        let d = Theme::dark();
+        let l = Theme::light();
+        assert_eq!(d.assistant, Color::White);
+        assert_eq!(d.assistant, d.foreground);
+        assert_eq!(l.assistant, Color::Black);
+        assert_eq!(l.assistant, l.foreground);
+        assert_ne!(d.assistant, d.accent);
+        assert_ne!(l.assistant, l.accent);
     }
 
     #[test]

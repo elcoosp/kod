@@ -6,6 +6,8 @@
 //! so live text never restyles or jumps when the response completes.
 
 use crate::app::{KodApp, Message};
+use crate::highlight;
+use crate::theme::Theme;
 use kod_types::MessageRole;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -313,24 +315,32 @@ impl ChatWidget {
                 Span::styled(header.to_string(), tool_style),
             ])];
             if !rest.is_empty() || !rest_raw.is_empty() {
-                let rows: Vec<String> = Self::wrap_text(&rest, width.saturating_sub(4).max(1));
-                let expanded = app.is_tool_expanded(&message.id);
-                let shown = if expanded {
-                    rows.len()
+                // `write_file` / `patch_file` / `git_diff` bodies carry a
+                // unified diff after a one-line lead (path or scope). Those
+                // rows get `+`/`-`/`@@` colours and code tokens; everything
+                // else wraps as plain text. Error bodies are red text.
+                let inner = width.saturating_sub(4).max(1);
+                let rows: Vec<Line<'static>> = if is_error {
+                    Self::wrap_text(&rest, inner)
+                        .into_iter()
+                        .map(|r| Line::from(Span::styled(r, body_style)))
+                        .collect()
                 } else {
-                    rows.len().min(TOOL_DISPLAY_LINES)
+                    Self::body_rows(&rest, inner, body_style, theme)
                 };
-                for row in rows.iter().take(shown) {
-                    lines.push(Line::from(vec![
-                        Span::raw("    "),
-                        Span::styled(row.clone(), body_style),
-                    ]));
+                let total = rows.len();
+                let expanded = app.is_tool_expanded(&message.id);
+                let shown = if expanded { total } else { total.min(TOOL_DISPLAY_LINES) };
+                for row in rows.into_iter().take(shown) {
+                    let mut spans = vec![Span::raw("    ")];
+                    spans.extend(row.spans);
+                    lines.push(Line::from(spans));
                 }
-                if rows.len() > shown {
+                if total > shown {
                     lines.push(Line::from(vec![
                         Span::raw("    "),
                         Span::styled(
-                            format!("… +{} more lines (o expands)", rows.len() - shown),
+                            format!("… +{} more lines (o expands)", total - shown),
                             Style::default()
                                 .fg(theme.warning)
                                 .add_modifier(Modifier::ITALIC),
@@ -357,10 +367,39 @@ impl ChatWidget {
             prefix.to_string(),
             style.add_modifier(Modifier::BOLD),
         )])];
-        for row in Self::wrap_text(&message.content, width.saturating_sub(2).max(1)) {
-            lines.push(Line::from(vec![Span::raw("  "), Span::styled(row, style)]));
+        // `/diff` output is a system message with a prose lead and a patch;
+        // it gets the same diff colouring as a tool row.
+        for row in Self::body_rows(&message.content, width.saturating_sub(2).max(1), style, theme) {
+            let mut spans = vec![Span::raw("  ")];
+            spans.extend(row.spans);
+            lines.push(Line::from(spans));
         }
         Self::apply_search(app, lines)
+    }
+
+    /// Rows for a body that may hold a unified diff: the diff's rows get
+    /// `+`/`-`/`@@` colours and code tokens, everything else wraps in
+    /// `base`. Every row is at most `width` so the measuring `Paragraph`
+    /// never re-wraps it.
+    fn body_rows(body: &str, width: usize, base: Style, theme: &Theme) -> Vec<Line<'static>> {
+        if let Some(d) = highlight::DiffBody::parse(body) {
+            let mut rows: Vec<Line<'static>> = Vec::new();
+            for l in &d.lead {
+                for w in Self::wrap_text(l, width) {
+                    rows.push(Line::from(Span::styled(w, base)));
+                }
+            }
+            for spans in highlight::diff_rows(&d.lines, d.syntax, width, theme) {
+                rows.push(Line::from(spans));
+            }
+            if !rows.is_empty() {
+                return rows;
+            }
+        }
+        Self::wrap_text(body, width)
+            .into_iter()
+            .map(|r| Line::from(Span::styled(r, base)))
+            .collect()
     }
 
     /// Tint search hits across finished lines (no-op without a query).
@@ -838,6 +877,90 @@ mod coverage_chat_widget {
         );
         let text = render(&app, 100, 40);
         assert!(text.contains("✗"), "error icon: {text}");
+    }
+
+    fn row_spans<'t>(lines: &[Line<'t>], needle: &str) -> Vec<Span<'t>> {
+        lines
+            .iter()
+            .find(|l| {
+                let t: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+                t.contains(needle)
+            })
+            .map(|l| l.spans.clone())
+            .unwrap_or_else(|| panic!("no row containing {needle:?}"))
+    }
+
+    #[test]
+    fn write_file_row_colours_its_diff() {
+        let mut app = KodApp::new();
+        push_message(
+            &mut app,
+            MessageRole::Tool,
+            "[write_file · 12ms]\nsrc/main.rs:\n@@ -1 +1,2 @@\n let a = 1;\n+let b = 2;\n-let c = 3;",
+        );
+        let t = app.theme().clone();
+        let id = app.messages().last().unwrap().id.clone();
+        assert!(app.toggle_tool_expanded(&id));
+        let msg = app.messages().last().unwrap();
+        let lines = ChatWidget::message_lines(&app, msg, 100);
+        let lead = row_spans(&lines, "src/main.rs:");
+        assert_eq!(lead[0].style.fg, None);
+        assert_eq!(lead[1].style.fg, Some(Color::Gray));
+        let added = row_spans(&lines, "+let b = 2;");
+        assert_eq!(added[1].style.fg, Some(t.user));
+        assert!(added.iter().any(|s| matches!(s.style.fg, Some(c) if c != t.user)));
+        let removed = row_spans(&lines, "-let c = 3;");
+        assert_eq!(removed[1].style.fg, Some(t.error));
+        assert_ne!(added[1].style.bg, removed[1].style.bg);
+    }
+
+    #[test]
+    fn git_diff_row_is_coloured_too() {
+        let mut app = KodApp::new();
+        push_message(
+            &mut app,
+            MessageRole::Tool,
+            "[git_diff] git diff (unstaged):\ndiff --git a/a.rs b/a.rs\nindex 1..2 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new",
+        );
+        let t = app.theme().clone();
+        let id = app.messages().last().unwrap().id.clone();
+        assert!(app.toggle_tool_expanded(&id));
+        let msg = app.messages().last().unwrap();
+        let lines = ChatWidget::message_lines(&app, msg, 100);
+        assert_eq!(row_spans(&lines, "@@ -1 +1 @@")[1].style.fg, Some(t.accent));
+        assert_eq!(row_spans(&lines, "+new")[1].style.fg, Some(t.user));
+        assert_eq!(row_spans(&lines, "index 1..2")[1].style.fg, Some(t.dim));
+    }
+
+    #[test]
+    fn system_message_diff_is_coloured() {
+        let mut app = KodApp::new();
+        push_message(
+            &mut app,
+            MessageRole::System,
+            "Most recent file change (cp-1 · /tmp/main.rs)\n\n--- a/main.rs\n+++ b/main.rs\n@@ -1 +1 @@\n-old\n+new",
+        );
+        let t = app.theme().clone();
+        let msg = app.messages().last().unwrap();
+        let lines = ChatWidget::message_lines(&app, msg, 100);
+        assert_eq!(row_spans(&lines, "Most recent")[1].style.fg, Some(t.system));
+        assert_eq!(row_spans(&lines, "+new")[1].style.fg, Some(t.user));
+        assert_eq!(row_spans(&lines, "-old")[1].style.fg, Some(t.error));
+    }
+
+    #[test]
+    fn non_diff_tool_body_wraps_as_before() {
+        let mut app = KodApp::new();
+        push_message(
+            &mut app,
+            MessageRole::Tool,
+            "[read_file] src/main.rs · 2 lines\nfn main() {}\nfn other() {}",
+        );
+        let msg = app.messages().last().unwrap();
+        let lines = ChatWidget::message_lines(&app, msg, 100);
+        let body = row_spans(&lines, "fn main() {}");
+        assert_eq!(body[1].style.fg, Some(Color::Gray));
+        assert_eq!(body[1].style.bg, None);
     }
 
     #[test]

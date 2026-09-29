@@ -1044,6 +1044,37 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
         return format!("{}:\n{}", path, body);
     }
 
+    // git_diff: the patch itself, not the JSON envelope around it. The TUI
+    // colours the row as a diff, and an escaped JSON string is not one.
+    if name == "git_diff"
+        && let Some(diff) = v.get("diff").and_then(|d| d.as_str())
+    {
+        let mut scope = vec![
+            if v.get("staged").and_then(|s| s.as_bool()).unwrap_or(false) {
+                "staged"
+            } else {
+                "unstaged"
+            },
+        ];
+        if v.get("stat").and_then(|s| s.as_bool()).unwrap_or(false) {
+            scope.push("--stat");
+        }
+        let path = v.get("path").and_then(|p| p.as_str()).map(shorten_path);
+        if let Some(p) = path.as_deref() {
+            scope.push(p);
+        }
+        if diff.trim().is_empty() {
+            return format!("git diff ({}): no changes", scope.join(" "));
+        }
+        let body = cap_lines(diff.trim_end(), TOOL_DIFF_LINES);
+        let trunc = if v.get("truncated").and_then(|t| t.as_bool()).unwrap_or(false) {
+            "\n… [truncated at the tool's 64 KB cap — narrow with `path` or `stat`]"
+        } else {
+            ""
+        };
+        return format!("git diff ({}):\n{body}{trunc}", scope.join(" "));
+    }
+
     // Binary read_file: no text preview, just a name-and-size line.
     // The model sees the hex preview through the tool-result feedback
     // block; the chat row is a one-liner.
@@ -16018,6 +16049,48 @@ mod tests {
         assert!(read.contains("4 lines"), "got: {read}");
         assert!(read.contains("one\ntwo\nthree"), "got: {read}");
         assert!(!read.contains("four"), "got: {read}");
+    }
+
+    #[test]
+    fn git_diff_summary_renders_the_patch_not_json() {
+        let v = serde_json::json!({
+            "staged": false,
+            "stat": false,
+            "path": serde_json::Value::Null,
+            "empty": false,
+            "truncated": false,
+            "diff": "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1 +1,2 @@\n fn main() {}\n+fn extra() {}\n",
+        });
+        let out = summarize_tool_result("git_diff", &ToolResult::Success(v));
+        assert!(out.starts_with("git diff (unstaged):\n"), "got: {out}");
+        assert!(out.contains("+fn extra() {}"), "got: {out}");
+        assert!(!out.contains("\\n"), "escaped JSON leaked: {out}");
+    }
+
+    #[test]
+    fn git_diff_summary_names_scope_and_clean_tree() {
+        let staged = summarize_tool_result(
+            "git_diff",
+            &ToolResult::Success(serde_json::json!({
+                "staged": true,
+                "stat": true,
+                "path": "/repo/src/lib.rs",
+                "diff": "@@ -1 +1 @@\n-a\n+b\n",
+            })),
+        );
+        assert!(staged.starts_with("git diff (staged --stat "), "got: {staged}");
+        let clean = summarize_tool_result(
+            "git_diff",
+            &ToolResult::Success(serde_json::json!({
+                "staged": false,
+                "stat": false,
+                "path": serde_json::Value::Null,
+                "empty": true,
+                "truncated": false,
+                "diff": "",
+            })),
+        );
+        assert_eq!(clean, "git diff (unstaged): no changes");
     }
 
     #[test]

@@ -24,10 +24,6 @@
 //!
 //! # What it does not do
 //!
-//! - No syntax highlighting inside code blocks. The `code` theme
-//!   token colours the whole block; per-token highlighting needs
-//!   syntect's language grammars, which is a follow-up if the block
-//!   colouring is not enough.
 //! - No links. A URL in the model's answer renders as plain text;
 //!   the terminal usually auto-links it anyway, and rendering a
 //!   clickable anchor in a raw terminal is a per-emulator problem.
@@ -38,6 +34,12 @@
 //!   real columns needs column-width negotiation that this module
 //!   deliberately does not own.
 //!
+//! # Code blocks
+//!
+//! A fence's language picks the grammar (`crate::highlight`), so
+//! ` ```rust ` renders with per-token colours; a `diff` fence renders
+//! as a unified diff. Unknown languages keep the flat `code` colour.
+//!
 //! # Output
 //!
 //! [`render`] returns `Vec<Line<'static>>` — every string is owned,
@@ -47,8 +49,9 @@
 //! a rounded border); the width passed to `render` is the *inner*
 //! width, after any border or indent the caller adds.
 
+use crate::highlight;
 use crate::theme::Theme;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 /// Parse the markdown source and render it as styled lines, each
@@ -222,7 +225,10 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 
 #[derive(Debug, Clone)]
 enum Block {
-    Code { lines: Vec<String> },
+    Code {
+        lang: Option<String>,
+        lines: Vec<String>,
+    },
     Header { level: u8, text: String },
     Bullet { text: String },
     Numbered { num: usize, text: String },
@@ -235,12 +241,14 @@ fn parse(markdown: &str) -> Vec<Block> {
     let mut blocks: Vec<Block> = Vec::new();
     let mut para = String::new();
     let mut in_code = false;
+    let mut code_lang: Option<String> = None;
     let mut code_lines: Vec<String> = Vec::new();
 
     for raw in markdown.split('\n') {
         if in_code {
             if raw.trim_start().starts_with("```") {
                 blocks.push(Block::Code {
+                    lang: code_lang.take(),
                     lines: std::mem::take(&mut code_lines),
                 });
                 in_code = false;
@@ -252,9 +260,11 @@ fn parse(markdown: &str) -> Vec<Block> {
 
         let trimmed = raw.trim_start();
 
-        if trimmed.starts_with("```") {
+        if let Some(info) = trimmed.strip_prefix("```") {
             flush_para(&mut blocks, &mut para);
             in_code = true;
+            let info = info.trim();
+            code_lang = if info.is_empty() { None } else { Some(info.to_string()) };
             continue;
         }
 
@@ -333,7 +343,10 @@ fn parse(markdown: &str) -> Vec<Block> {
         // not silently dropped. This is a live-streaming case as
         // much as a malformed-input case — the renderer runs on
         // partial content while the model is still writing.
-        blocks.push(Block::Code { lines: code_lines });
+        blocks.push(Block::Code {
+            lang: code_lang.take(),
+            lines: code_lines,
+        });
     }
     flush_para(&mut blocks, &mut para);
     blocks
@@ -448,34 +461,17 @@ fn render_block(block: &Block, width: usize, theme: &Theme, out: &mut Vec<Line<'
             out.extend(wrap_spans(spans, width));
         }
 
-        Block::Code { lines } => {
-            let fg = theme.code;
-            let bg = Style::default().bg(Color::Rgb(28, 30, 38));
-            let style = Style::default().fg(fg).patch(bg);
-            for line in lines {
-                // Code does not wrap: an identifier broken mid-token
-                // is unreadable. Truncate at the width instead, with
-                // a trailing ellipsis when the line was cut.
-                let truncated: String = if display_width(line) > width.saturating_sub(1) {
-                    let mut take = width.saturating_sub(2);
-                    let mut acc = String::new();
-                    for ch in line.chars() {
-                        if take == 0 {
-                            break;
-                        }
-                        acc.push(ch);
-                        let w = char_width(ch);
-                        if w > take {
-                            break;
-                        }
-                        take -= w;
-                    }
-                    format!("{acc}…")
-                } else {
-                    line.clone()
-                };
-                let padded = format!(" {truncated}");
-                out.push(Line::from(Span::styled(padded, style)));
+        Block::Code { lang, lines } => {
+            // The fence language picks the grammar; `diff` renders as a
+            // diff. The renderer owns the one-column pad so the block
+            // background stays continuous, so rows get one column less.
+            let src: Vec<&str> = lines.iter().map(String::as_str).collect();
+            let pad = highlight::code_style(theme);
+            let rows = highlight::code_rows(&src, lang.as_deref(), width.saturating_sub(1), theme);
+            for row in rows {
+                let mut spans = vec![Span::styled(" ", pad)];
+                spans.extend(row);
+                out.push(Line::from(spans));
             }
         }
     }
@@ -760,10 +756,6 @@ fn char_width(c: char) -> usize {
     if c.is_control() { 0 } else { 1 }
 }
 
-fn display_width(s: &str) -> usize {
-    s.chars().map(char_width).sum()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -878,6 +870,57 @@ mod tests {
         let text = rendered_text(&out);
         assert!(text.contains("…"), "expected truncation marker: {text}");
         assert!(!text.contains(&"x".repeat(200)));
+    }
+
+    fn fgs(line: &Line<'static>) -> Vec<Option<ratatui::style::Color>> {
+        line.spans.iter().map(|s| s.style.fg).collect()
+    }
+
+    fn distinct(line: &Line<'static>) -> usize {
+        let mut seen: Vec<Option<ratatui::style::Color>> = Vec::new();
+        for f in fgs(line) {
+            if !seen.contains(&f) {
+                seen.push(f);
+            }
+        }
+        seen.len()
+    }
+
+    #[test]
+    fn paragraph_text_uses_the_assistant_colour() {
+        let t = theme();
+        assert_eq!(t.assistant, ratatui::style::Color::White);
+        let out = render("hello world", 40, &t);
+        assert_eq!(out[0].spans[0].style.fg, Some(t.assistant));
+    }
+
+    #[test]
+    fn fenced_rust_block_is_highlighted_per_token() {
+        let out = render("```rust\nfn main() { let x = \"s\"; } // c\n```", 60, &theme());
+        assert_eq!(out.len(), 1);
+        assert_eq!(rendered_text(&out), " fn main() { let x = \"s\"; } // c");
+        assert!(distinct(&out[0]) >= 4, "{:?}", fgs(&out[0]));
+        assert!(out[0].spans.iter().all(|s| s.style.bg == Some(crate::highlight::CODE_BG)));
+    }
+
+    #[test]
+    fn unknown_and_bare_fences_stay_flat() {
+        for src in ["```nope\ntext\n```", "```\ntext\n```"] {
+            let out = render(src, 40, &theme());
+            assert_eq!(rendered_text(&out), " text");
+            assert_eq!(out[0].spans.len(), 2, "pad + one flat span");
+            assert_eq!(out[0].spans[1].style.fg, Some(theme().code));
+        }
+    }
+
+    #[test]
+    fn diff_fence_is_coloured_by_role() {
+        let t = theme();
+        let out = render("```diff\n@@ -1 +1 @@\n-old\n+new\n```", 40, &t);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].spans[1].style.fg, Some(t.accent));
+        assert_eq!(out[1].spans[1].style.fg, Some(t.error));
+        assert_eq!(out[2].spans[1].style.fg, Some(t.user));
     }
 
     #[test]
