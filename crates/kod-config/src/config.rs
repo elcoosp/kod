@@ -131,23 +131,41 @@ pub struct KodConfig {
 ///   compiler-only feedback loop (fast on a project with no language
 ///   server); `auto_diagnostics = false` disables both.
 ///
-/// - `settle_ms` — how long the diagnostics pass waits for the server
-///   to publish its list after a `didSave` before accepting an empty
-///   answer as final. 1500 ms is the design's default; a slow
-///   rust-analyzer on a large workspace may need more, a snappy
-///   workspace is fine with less.
+/// - `settle_ms` — how long the *inline* diagnostics pass waits for
+///   the server to publish its list after a write before accepting an
+///   empty answer as final. The inline pass runs on the write's own
+///   turn and the model is waiting on it, so the default is short
+///   (500 ms, the design's value). A slower answer is not lost: see
+///   `deferred_settle_ms`.
+///
+/// - `deferred_settle_ms` — the design's "keep fetching up to 12 s".
+///   When the inline wait produces nothing, a background task keeps
+///   watching the server for up to this long. Any late diagnostics
+///   are queued and prepended to the next turn's prompt block as a
+///   `## LSP diagnostics (late)` section. `0` disables the deferred
+///   pass; `deferred_enabled = false` is the same but clearer.
+///
+/// - `deferred_enabled` — the master switch for the deferred pass.
+///   `false` makes the write path pure inline: it waits `settle_ms`,
+///   emits whatever it saw (possibly nothing), and moves on. The
+///   default is on — the deferred pass is what plugs a slow
+///   rust-analyzer's late answer into the model's next turn.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LspConfig {
     pub auto_diagnostics: bool,
     pub settle_ms: u64,
+    pub deferred_settle_ms: u64,
+    pub deferred_enabled: bool,
 }
 
 impl Default for LspConfig {
     fn default() -> Self {
         Self {
             auto_diagnostics: true,
-            settle_ms: 1500,
+            settle_ms: 500,
+            deferred_settle_ms: 12_000,
+            deferred_enabled: true,
         }
     }
 }
@@ -732,10 +750,13 @@ mod tests {
     fn lsp_section_defaults_when_absent() {
         // A config.toml with no `[lsp]` block still parses and gets
         // the documented defaults: auto_diagnostics = true,
-        // settle_ms = 1500.
+        // settle_ms = 500 (short inline wait), deferred_settle_ms =
+        // 12000, deferred_enabled = true.
         let cfg: KodConfig = toml::from_str("").unwrap();
         assert!(cfg.lsp.auto_diagnostics);
-        assert_eq!(cfg.lsp.settle_ms, 1_500);
+        assert_eq!(cfg.lsp.settle_ms, 500);
+        assert_eq!(cfg.lsp.deferred_settle_ms, 12_000);
+        assert!(cfg.lsp.deferred_enabled);
     }
 
     #[test]
@@ -745,11 +766,15 @@ mod tests {
             [lsp]
             auto_diagnostics = false
             settle_ms = 400
+            deferred_settle_ms = 8000
+            deferred_enabled = false
             "#,
         )
         .unwrap();
         assert!(!cfg.lsp.auto_diagnostics);
         assert_eq!(cfg.lsp.settle_ms, 400);
+        assert_eq!(cfg.lsp.deferred_settle_ms, 8_000);
+        assert!(!cfg.lsp.deferred_enabled);
     }
 
     #[test]
