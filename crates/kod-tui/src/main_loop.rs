@@ -866,8 +866,8 @@ impl TuiLoop {
             Event::Activity(label) => {
                 self.app.begin_activity(&label);
             }
-            Event::RateLimited(message) => {
-                self.app.begin_rate_limit_wait();
+            Event::RateLimited { message, wait_secs } => {
+                self.app.begin_rate_limit_wait(wait_secs);
                 self.app.push_system_message(&message);
             }
             Event::TurnBoundary(turn) => {
@@ -1491,12 +1491,15 @@ impl TuiLoop {
                         // row and the spinner phase, so the two can never
                         // disagree ("connecting…" during a 20-minute wait).
                         let _ = event_tx_chunks
-                            .send(Event::RateLimited(format!(
-                                "Rate limited by the provider — waiting {} before automatic retry (attempt {attempt}/{max}) · Esc cancels",
-                                kod_core::engine::format_duration_ms(
-                                    secs.saturating_mul(1000)
+                            .send(Event::RateLimited {
+                                message: format!(
+                                    "Rate limited by the provider — waiting {} before automatic retry (attempt {attempt}/{max}) · Esc cancels",
+                                    kod_core::engine::format_duration_ms(
+                                        secs.saturating_mul(1000)
+                                    ),
                                 ),
-                            )))
+                                wait_secs: secs,
+                            })
                             .await;
                     } else if let Some(label) = kod_core::engine::parse_activity_marker(&chunk) {
                         // Auxiliary engine work (Jev verdict, memory fact
@@ -7230,14 +7233,19 @@ mod tests {
         // bounded-wait row and the spinner now come from one event.
         let mut tui = TuiLoop::new();
         tui.app_mut().begin_generation();
-        tui.handle_event(Event::RateLimited(
-            "Rate limited by the provider — waiting 20m00s before automatic retry (attempt 1/2) · Esc cancels".to_string(),
-        ))
+        tui.handle_event(Event::RateLimited {
+            message: "Rate limited by the provider — waiting 1m30s before automatic retry (attempt 1/2) · Esc cancels".to_string(),
+            wait_secs: 90,
+        })
         .await
         .unwrap();
-        assert_eq!(
-            tui.app().phase_label().as_deref(),
-            Some("rate-limited — waiting…")
+        // Live countdown, not a static "waiting…": a long silent
+        // wait must read as alive. (90 s reads "1m29s" — a few ms
+        // elapse before the label renders — so match the minute.)
+        let label = tui.app().phase_label().unwrap_or_default();
+        assert!(
+            label.starts_with("rate-limited — retry in 1m"),
+            "countdown label, got: {label}"
         );
         let bodies: Vec<&str> = tui
             .app()
