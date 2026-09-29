@@ -228,6 +228,27 @@ pub fn parse_turn_marker(chunk: &str) -> Option<u32> {
     rest.parse::<u32>().ok()
 }
 
+/// Marker for auxiliary-work notices on the streaming chunk channel:
+/// `\0kod-activity:<label>\0`. Sent around synchronous helper work
+/// that stalls the visible turn — Jev verdicts, memory fact
+/// extraction, decision mining — so consumers can show what the turn
+/// is actually doing instead of a stale "thinking…". A `\0`-prefixed
+/// control chunk: text-only consumers skip it, the TUI renders the
+/// label as its spinner phase, and any later text / tool / thinking /
+/// turn chunk supersedes it.
+pub const ACTIVITY_MARKER: &str = "\0kod-activity:";
+
+/// Build an activity marker chunk carrying a short lowercase label
+/// (`saving memories…`). The label is sanitized (no `\0`).
+pub fn activity_marker(label: &str) -> String {
+    format!("{ACTIVITY_MARKER}{}\0", label.replace('\0', " "))
+}
+
+/// If `chunk` is an activity marker, return its label.
+pub fn parse_activity_marker(chunk: &str) -> Option<&str> {
+    chunk.strip_prefix(ACTIVITY_MARKER)?.strip_suffix('\0')
+}
+
 /// Marker for the post-tool thinking phase: tool result was reinjected
 /// and the LLM is reasoning again. The TUI switches from "tool: …" back
 /// to "thinking…" so a slow reinjection doesn't look like a stuck tool.
@@ -312,6 +333,20 @@ mod rate_limit_marker_tests {
             parse_rate_limit_wait(&format!("{TOOL_ARGS_MARKER}c1:ls\0")),
             None
         );
+    }
+
+    #[test]
+    fn activity_marker_round_trips() {
+        let chunk = activity_marker("saving memories…");
+        assert_eq!(parse_activity_marker(&chunk), Some("saving memories…"));
+    }
+
+    #[test]
+    fn activity_marker_rejects_prose_and_other_markers() {
+        assert_eq!(parse_activity_marker("saving memories…"), None);
+        assert_eq!(parse_activity_marker(THINKING_MARKER), None);
+        assert_eq!(parse_activity_marker(&turn_marker(2)), None);
+        assert_eq!(parse_activity_marker(&rate_limit_wait_marker(60, 1, 1)), None);
     }
 }
 
@@ -9456,7 +9491,9 @@ pub(crate) fn filter_chain_by_trust(
             // P5.4 — response quality gate. Non-blocking: the
             // reply is delivered unchanged; only an advisory is
             // appended when Jev is confident the reply missed
-            // the request.
+            // the request. A Jev round-trip stalls the visible turn,
+            // so announce it instead of a stale "thinking…".
+            let _ = chunk_tx.send(activity_marker("reviewing reply…")).await;
             let request_text = self.current_request(key).await.unwrap_or_default();
             let final_text = match self
                 .check_response_quality_with_jev(key, &request_text, &final_text)
@@ -9470,11 +9507,17 @@ pub(crate) fn filter_chain_by_trust(
             self.maybe_emit_todo_completion_reminder(key, &final_text)
                 .await;
             // Delta §12.6: continuous memory extraction over the new
-            // tail since the last pass.
+            // tail since the last pass — fact creation, not thinking.
+            let _ = chunk_tx.send(activity_marker("saving memories…")).await;
             self.maybe_extract_continuously(key).await;
             // Delta §12.3: friction-gated decision extraction from
             // the user prompt for this turn. Best-effort; every
             // failure logs and returns.
+            // Tier 3.4 (below): durable decisions — two more Jev
+            // calls. One marker covers both decision passes.
+            let _ = chunk_tx
+                .send(activity_marker("extracting decisions…"))
+                .await;
             self.maybe_extract_decisions(key).await;
 
             // Delta §9.4 (diagnostic): classify a clean stop with
@@ -9482,6 +9525,7 @@ pub(crate) fn filter_chain_by_trust(
             // unchanged; only a log line records the verdict.
             // Wired here after `remember_turn_for` so the classifier
             // sees the same `final_text` the caller will receive.
+            let _ = chunk_tx.send(activity_marker("reviewing turn…")).await;
             self.diagnose_unexpected_stop(
                 key,
                 &request_text,
@@ -9492,6 +9536,7 @@ pub(crate) fn filter_chain_by_trust(
 
             // Tier 3.4 — extract durable decisions from this turn.
             // Two Jev calls, gated; no-op when Jev is disabled.
+            // (Announced by the "extracting decisions…" marker above.)
             let _ = self
                 .extract_decisions_with_jev(key, trace_id, input, &final_text)
                 .await;
