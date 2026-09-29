@@ -52,6 +52,17 @@ pub struct OpenAICompatProvider {
     /// Longest provider-suggested rate-limit window the retry loops may
     /// sleep out. ZERO (default) = never wait out long windows.
     rate_limit_wait: std::time::Duration,
+    /// WS-A: stable per-engine background session, stamped onto
+    /// sessionless requests when the endpoint is a tab bridge. Set via
+    /// [`Self::with_default_session`] / [`LlmProvider::set_default_session`];
+    /// `None` (default) preserves legacy sessionless behavior.
+    /// Interior mutability: the engine installs its id after the
+    /// registry is built, through `Arc<dyn LlmProvider>`.
+    default_session: Arc<std::sync::RwLock<Option<String>>>,
+    /// WS-A: serializes background-class requests against each other
+    /// so kod itself never overlaps two turns on the background
+    /// session (the bridge 409s overlap instead of queueing).
+    bg_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl OpenAICompatProvider {
@@ -106,6 +117,8 @@ impl OpenAICompatProvider {
             ),
             stream_guard_enabled: true,
             rate_limit_wait: std::time::Duration::ZERO,
+            default_session: Arc::new(std::sync::RwLock::new(None)),
+            bg_gate: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 
@@ -120,6 +133,15 @@ impl OpenAICompatProvider {
     /// set ~1500 s for such endpoints (see EndpointConfig).
     pub fn with_rate_limit_wait(mut self, wait: std::time::Duration) -> Self {
         self.rate_limit_wait = wait;
+        self
+    }
+
+    /// WS-A: stamp sessionless requests with `session` (the engine's
+    /// stable background id) instead of leaving them anonymous. Only
+    /// applied when the endpoint is a tab bridge (see provider_setup);
+    /// explicit `session_id`s always win.
+    pub fn with_default_session(self, session: impl Into<String>) -> Self {
+        *self.default_session.write().expect("default_session lock") = Some(session.into());
         self
     }
 
@@ -169,6 +191,8 @@ impl OpenAICompatProvider {
             concurrency: self.concurrency,
             stream_guard_enabled: self.stream_guard_enabled,
             rate_limit_wait: self.rate_limit_wait,
+            default_session: self.default_session,
+            bg_gate: self.bg_gate,
         })
     }
 
@@ -192,15 +216,25 @@ impl OpenAICompatProvider {
         options: &GenerationOptions,
         tools: &[ToolDefinition],
     ) -> LlmRequest {
-        let mut request = LlmRequest::new(
-            self.request_model(options),
-            vec![Content::new("user").with_text(prompt)],
-        )
-        .with_config(options_to_config(options));
+        let mut config = options_to_config(options);
+        // WS-A: the legacy text path carries no session; stamp the
+        // background session when one is installed (tab-bridge
+        // endpoints only — `None` everywhere else).
+        if let Some(session) = self.default_session_string() {
+            stamp_openai_user(&mut config, &session);
+        }
+        let mut request =
+            LlmRequest::new(self.request_model(options), vec![Content::new("user").with_text(prompt)])
+                .with_config(config);
         if !tools.is_empty() {
             request.tools = tool_declarations(tools);
         }
         request
+    }
+
+    /// The installed background session id, if any.
+    fn default_session_string(&self) -> Option<String> {
+        self.default_session.read().ok().and_then(|g| g.clone())
     }
 
     /// Build an `adk-model` `LlmRequest` from a structured
@@ -328,14 +362,20 @@ impl OpenAICompatProvider {
         // (their session key). Merged through adk-model's
         // `config.extensions["openai"]` passthrough, which lands verbatim in
         // the JSON body. Stateless providers never read it.
-        if let Some(session) = req.session_id.as_deref().filter(|s| !s.is_empty()) {
-            let entry = config
-                .extensions
-                .entry("openai".to_string())
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-            if let Some(obj) = entry.as_object_mut() {
-                obj.insert("user".to_string(), serde_json::Value::String(session.to_string()));
-            }
+        //
+        // WS-A: an explicit session id wins; when it is absent (prewarm,
+        // judges, and every other background caller that builds a
+        // `CompletionRequest` without one) the installed background
+        // session applies, so background traffic shares one stable
+        // bridge session instead of minting `anon-*` per request.
+        let session: Option<String> = req
+            .session_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| self.default_session_string());
+        if let Some(session) = session {
+            stamp_openai_user(&mut config, &session);
         }
         let mut request = LlmRequest::new(self.request_model(&req.options), contents).with_config(config);
         if !req.tools.is_empty() {
@@ -372,6 +412,42 @@ impl OpenAICompatProvider {
             async move { self.collect_once(&req, stream).await }
         })
         .await
+    }
+
+    /// WS-A: background-class collection. Holds the background gate
+    /// across the whole attempt sequence so kod never overlaps two
+    /// turns on the shared background session, and treats `409
+    /// session_busy` (a prewarm-abandoned turn still running) as
+    /// retryable with short backoff — background only. Main turns
+    /// (`background = false`) go straight through with today's
+    /// fail-fast semantics.
+    async fn collect_bg(
+        &self,
+        request: LlmRequest,
+        stream: bool,
+        background: bool,
+    ) -> Result<(String, Vec<ToolCall>, Option<kod_provider::TokenUsage>)> {
+        if !background {
+            return self.collect(request, stream).await;
+        }
+        let _gate = self.bg_gate.lock().await;
+        let mut attempt = 0usize;
+        loop {
+            match self.collect(request.clone(), stream).await {
+                Ok(out) => return Ok(out),
+                Err(e) if is_session_busy(&e) && attempt < BG_BUSY_BACKOFF.len() => {
+                    let wait = BG_BUSY_BACKOFF[attempt];
+                    attempt += 1;
+                    tracing::debug!(
+                        wait_secs = wait,
+                        attempt,
+                        "background turn hit 409 session_busy; backing off",
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     /// One attempt of the request. Split out so `collect` can retry
@@ -438,6 +514,18 @@ impl LlmProvider for OpenAICompatProvider {
         "openai-compatible"
     }
 
+    /// WS-A: install (or clear) the stable background session stamped
+    /// onto sessionless requests for tab-bridge endpoints.
+    fn set_default_session(&self, session: Option<String>) {
+        if let Ok(mut g) = self.default_session.write() {
+            *g = session;
+        }
+    }
+
+    fn default_session(&self) -> Option<String> {
+        self.default_session_string()
+    }
+
     async fn list_models(&self) -> Result<Vec<kod_provider::ModelInfo>> {
         let url = format!("{}/models", self.base_url);
         let response = self
@@ -491,7 +579,10 @@ impl LlmProvider for OpenAICompatProvider {
 
     async fn generate(&self, prompt: &str, options: &GenerationOptions) -> Result<String> {
         let request = self.text_request(prompt, options, &[]);
-        let (text, _, _) = self.collect(request, false).await?;
+        // The text path is sessionless by construction: when a
+        // background session is installed this is background traffic.
+        let background = self.default_session_string().is_some();
+        let (text, _, _) = self.collect_bg(request, false, background).await?;
         Ok(text)
     }
 
@@ -499,8 +590,13 @@ impl LlmProvider for OpenAICompatProvider {
     /// `CompletionRequest` (multi-role messages, tool calls with ids,
     /// tool results linked by `tool_call_id`, system prompt).
     async fn complete(&self, req: &CompletionRequest) -> Result<GenerationResponse> {
+        // Background iff no explicit session (prewarm, judges) while a
+        // background session is installed. Main turns always carry an
+        // explicit session and keep fail-fast semantics.
+        let background =
+            req.session_id.is_none() && self.default_session_string().is_some();
         let request = self.request_from_completion(req);
-        let (text, calls, usage) = self.collect(request, false).await?;
+        let (text, calls, usage) = self.collect_bg(request, false, background).await?;
         if calls.is_empty() {
             Ok(GenerationResponse::Text {
                 content: text,
@@ -524,7 +620,8 @@ impl LlmProvider for OpenAICompatProvider {
         options: &GenerationOptions,
     ) -> Result<GenerationResponse> {
         let request = self.text_request(prompt, options, tools);
-        let (text, calls, usage) = self.collect(request, false).await?;
+        let background = self.default_session_string().is_some();
+        let (text, calls, usage) = self.collect_bg(request, false, background).await?;
         if calls.is_empty() {
             Ok(GenerationResponse::Text {
                 content: text,
@@ -1016,6 +1113,34 @@ fn options_to_config(options: &GenerationOptions) -> GenerateContentConfig {
     }
 }
 
+/// Stamp the tab-bridge session key as the OpenAI `user` field.
+fn stamp_openai_user(config: &mut GenerateContentConfig, session: &str) {
+    let entry = config
+        .extensions
+        .entry("openai".to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if let Some(obj) = entry.as_object_mut() {
+        obj.insert(
+            "user".to_string(),
+            serde_json::Value::String(session.to_string()),
+        );
+    }
+}
+
+/// WS-A: whether `err` is the bridge's `409 session_busy` — our own
+/// background turn still running on the shared session. Scoped to the
+/// background-only retry path with capped attempts; main turns keep
+/// fail-fast semantics (see `adk_precommit_retryable`).
+fn is_session_busy(err: &kod_error::KodError) -> bool {
+    match err {
+        kod_error::KodError::Provider(msg) => msg.contains("409"),
+        _ => false,
+    }
+}
+
+/// WS-A background backoff schedule: 2 s, then 8 s (2 attempts).
+const BG_BUSY_BACKOFF: [u64; 2] = [2, 8];
+
 /// Convert kod tool definitions to adk tool declarations keyed by tool name.
 fn tool_declarations(tools: &[ToolDefinition]) -> HashMap<String, serde_json::Value> {
     tools
@@ -1300,6 +1425,68 @@ mod coverage_openai_provider {
         assert!(!adk_precommit_retryable(&adk_err_with_status(400)));
         assert!(!adk_precommit_retryable(&adk_err_with_status(401)));
         assert!(!adk_precommit_retryable(&adk_err_with_status(404)));
+    }
+
+    // ---- WS-A background session -------------------------------------
+
+    fn user_of(llm: &adk_core::LlmRequest) -> Option<&str> {
+        let cfg = llm.config.as_ref().expect("config always set");
+        cfg.extensions
+            .get("openai")
+            .and_then(|v| v.get("user"))
+            .and_then(|v| v.as_str())
+    }
+
+    #[test]
+    fn text_request_stamps_default_session_when_set() {
+        use kod_provider::request::{CompletionRequest, ModelRef, SystemPrompt};
+        let p = OpenAICompatProvider::with_api_key("http://localhost:11434", "m", "not-needed")
+            .unwrap()
+            .with_default_session("bg-abc123");
+        // text_request (the legacy generate path) carries it…
+        let opts = GenerationOptions::default();
+        let llm = p.text_request("hello", &opts, &[]);
+        assert_eq!(user_of(&llm), Some("bg-abc123"));
+        // …and complete() without an explicit session falls back to it.
+        let req = CompletionRequest::new(ModelRef::new("default", "m"));
+        let llm = p.request_from_completion(&req);
+        assert_eq!(user_of(&llm), Some("bg-abc123"));
+        let _ = SystemPrompt::default();
+    }
+
+    #[test]
+    fn text_request_is_sessionless_without_default_session() {
+        let p = OpenAICompatProvider::with_api_key("http://localhost:11434", "m", "not-needed")
+            .unwrap();
+        let opts = GenerationOptions::default();
+        let llm = p.text_request("hello", &opts, &[]);
+        assert_eq!(user_of(&llm), None);
+    }
+
+    #[test]
+    fn explicit_session_id_wins_over_default_session() {
+        use kod_provider::request::{CompletionRequest, ModelRef, SystemPrompt};
+        let p = OpenAICompatProvider::with_api_key("http://localhost:11434", "m", "not-needed")
+            .unwrap()
+            .with_default_session("bg-abc123");
+        let mut req = CompletionRequest::new(ModelRef::new("default", "m"));
+        req.system = SystemPrompt::default();
+        req.session_id = Some("session-main456".to_string());
+        let llm = p.request_from_completion(&req);
+        assert_eq!(user_of(&llm), Some("session-main456"));
+    }
+
+    #[test]
+    fn session_busy_detector_matches_409_provider_errors() {
+        assert!(is_session_busy(&kod_error::KodError::Provider(
+            "tab error: turn-error:submit-failed 409 session_busy".to_string()
+        )));
+        assert!(!is_session_busy(&kod_error::KodError::Provider(
+            "tab error: timeout".to_string()
+        )));
+        assert!(!is_session_busy(&kod_error::KodError::RateLimited {
+            retry_after_secs: 5
+        }));
     }
 
     #[test]
