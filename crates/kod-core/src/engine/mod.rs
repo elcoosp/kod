@@ -1462,6 +1462,11 @@ pub struct KodEngine {
     /// resets it so the whole transcript is re-sent.
     retention_cursors:
         RwLock<HashMap<String, kod_memory::retention::RetentionCursor>>,
+    /// WS-B: per-transcript count of eligible user prompts seen since
+    /// the last sharpshooter extraction. Mirrors the retention cursor:
+    /// the decision extractor gets its own cadence counter so
+    /// `decisions_every_n_turns` is enforceable per transcript.
+    decisions_cursors: RwLock<HashMap<String, usize>>,
     /// Delta §13.2: behavioral signals folded over the session's user
     /// messages.
     behavioral: std::sync::Arc<parking_lot::Mutex<kod_stats::behavioral::BehavioralSignals>>,
@@ -1903,6 +1908,12 @@ pub struct KodEngine {
 
     /// is preferred when present.
     session_id: kod_types::SessionId,
+    /// WS-A: one stable background session per engine, minted next to
+    /// the transcript session id. Stamped onto every background LLM
+    /// request when the active endpoint is a tab bridge, so the
+    /// bridge keeps exactly one background chat session (one
+    /// background tab) instead of a throwaway `anon-*` per request.
+    background_session_id: kod_types::BackgroundSessionId,
 
     swarm_coordinator_id: kod_types::AgentId,
     /// The session's todo list. Shared across swarm agents and across
@@ -2337,7 +2348,41 @@ impl KodEngine {
         })
     }
 
+    /// WS-C: whether the default endpoint is a tab bridge. The TUI
+    /// and [`Self::prewarm`] consult this for the prewarm policy, and
+    /// WS-A consults it for background-session stamping. Approximation:
+    /// prewarm and background traffic both resolve through the default
+    /// chain, so the default endpoint is the honest "active endpoint".
+    async fn tab_bridge_active(&self) -> bool {
+        match kod_config::KodConfig::load_default() {
+            Ok(c) => c.llm.default_endpoint().tab_bridge,
+            Err(_) => false,
+        }
+    }
+
+    /// WS-C: whether the keystroke prewarm probe may run. `auto`
+    /// (default) disables it on tab-bridge endpoints, where the probe
+    /// would warm the wrong tab.
+    pub async fn prewarm_enabled(&self) -> bool {
+        let (mode, tab_bridge) = match kod_config::KodConfig::load_default() {
+            Ok(c) => (c.llm.prewarm, c.llm.default_endpoint().tab_bridge),
+            // An unreadable config must not change runtime behavior.
+            Err(_) => return true,
+        };
+        match mode {
+            kod_config::llm::PrewarmMode::On => true,
+            kod_config::llm::PrewarmMode::Off => false,
+            kod_config::llm::PrewarmMode::Auto => !tab_bridge,
+        }
+    }
+
     pub async fn prewarm(&self, key: &str) {
+        // WS-C: policy gate first (defense in depth — the TUI checks
+        // `prewarm_enabled` before spawning, but direct callers land
+        // here too).
+        if !self.prewarm_enabled().await {
+            return;
+        }
         // Latch first, so a burst of keystrokes does not queue a burst
         // of requests behind the first one.
         {
@@ -2399,14 +2444,19 @@ impl KodEngine {
             image_frames: Vec::new(),
             // Prewarm stays sessionless: it renders a literal "warm" probe
             // turn, which must never land in the session's tab or chain.
-            // The bridge releases ephemeral tabs after the turn, so the
-            // warmed tab is recycled (not leaked) for the real turn.
+            // (On a tab backend it mints a throwaway anon session on some
+            // other tab — pure cost, no benefit — which is why
+            // `prewarm = "auto"` disables the probe there. The bridge
+            // releases the ephemeral tab after the turn, so when the
+            // probe does run it is recycled, not leaked.)
             session_id: None,
         };
 
         // Bounded: a provider that hangs must not leave a task
         // parked forever. Five seconds is longer than a warm cache
-        // read and shorter than a user's typing.
+        // read and shorter than a user's typing. Note the timeout only
+        // abandons kod's wait: on a bridge backend the turn keeps
+        // running server-side and holds its tab to completion.
         let _ = tokio::time::timeout(
             std::time::Duration::from_secs(5),
             provider.complete(&req),
@@ -3665,6 +3715,7 @@ impl KodEngine {
             mental_models: RwLock::new(kod_memory::mental_models::MentalModels::new()),
             ttsr: RwLock::new(kod_provider::ttsr::TtsrEngine::new(Vec::new())),
             retention_cursors: RwLock::new(HashMap::new()),
+            decisions_cursors: RwLock::new(HashMap::new()),
             behavioral: std::sync::Arc::new(parking_lot::Mutex::new(
                 kod_stats::behavioral::BehavioralSignals::default(),
             )),
@@ -3819,6 +3870,7 @@ impl KodEngine {
             blackboard: kod_swarm::Blackboard::new(),
             blackboard_viewers: RwLock::new(std::collections::HashSet::new()),
             session_id: kod_types::SessionId::new(),
+            background_session_id: kod_types::BackgroundSessionId::new(),
 
             swarm_coordinator_id: kod_types::AgentId::new(),
             todo_list: kod_tools::new_todo_list(),
@@ -6854,6 +6906,14 @@ pub(crate) fn filter_chain_by_trust(
         routing: Option<kod_config::RoutingConfig>,
     ) {
         *self.registry.write().await = Some(registry);
+        // WS-A: when the active endpoint is a tab bridge, install the
+        // engine's stable background session on every provider in the
+        // registry, so all background traffic (extraction,
+        // sharpshooter, compaction, judges, prewarm) shares one bridge
+        // session — one background tab — instead of minting `anon-*`
+        // per request. Main turns always carry an explicit session id,
+        // which takes precedence over this default.
+        self.install_background_session().await;
         // Cache the effective model's (window, max_out) before the
         // move into `current_model`. `budget_hint_for` consults the
         // per-model catalog when populated, then the endpoint config,
@@ -6878,6 +6938,36 @@ pub(crate) fn filter_chain_by_trust(
         }
         *self.current_model.write().await = default_model;
         *self.routing.write().await = routing;
+    }
+
+    /// WS-A: install [`Self::background_session_id`] as the default
+    /// session on every provider in the registry, when (and only
+    /// when) the active endpoint is a tab bridge. Idempotent: called
+    /// from [`Self::set_registry`], and providers ignore it on
+    /// non-tab endpoints (the default trait impl is a no-op and
+    /// `OpenAICompatProvider` only stamps when asked).
+    async fn install_background_session(&self) {
+        if !self.tab_bridge_active().await {
+            return;
+        }
+        let bg = self.background_session_id.to_prefixed_string();
+        let registry = self.registry.read().await.clone();
+        let Some(registry) = registry.as_ref() else {
+            return;
+        };
+        for name in registry.names() {
+            let model = registry
+                .default_model(&name)
+                .unwrap_or_default();
+            let model_ref = ModelRef::new(name.clone(), model);
+            match registry.resolve(&model_ref) {
+                Ok(provider) => provider.set_default_session(Some(bg.clone())),
+                Err(e) => {
+                    tracing::debug!(endpoint = %name, error = %e, "background session: resolve failed");
+                }
+            }
+        }
+        tracing::info!(session = %bg, "background session installed for tab-bridge endpoint");
     }
 
     /// Switch the current (endpoint, model). This is the TUI's
@@ -10934,7 +11024,7 @@ pub(crate) fn filter_chain_by_trust(
             }
         };
 
-        CompletionRequest {
+        let mut req = CompletionRequest {
             system,
             messages,
             tools: definitions.to_vec(),
@@ -10973,7 +11063,25 @@ pub(crate) fn filter_chain_by_trust(
             // request into the transcript's tab via the OpenAI `user`
             // field. Stateless providers ignore it.
             session_id: Some(self.session_id_for_holder(key).to_prefixed_string()),
+        };
+        // Delta §9.10: trim the frame vec to the provider's per-request
+        // budget before any provider serializes it. A dropped frame is
+        // counted by the report; today the engine logs at debug because
+        // the drop is expected (an old frame that no longer fits) and a
+        // per-turn warn would be noise.
+        let report = req.apply_image_budget(
+            &kod_provider::image_budget::ImageBudgetPolicy::default(),
+        );
+        if report.any_dropped() {
+            tracing::debug!(
+                holder = key,
+                dropped_undecodable = report.dropped_undecodable,
+                dropped_oversize = report.dropped_oversize,
+                dropped_over_cap = report.dropped_over_cap,
+                "image budget dropped frames before serialization",
+            );
         }
+        req
     }
 
     /// Append the environment + tool inventory grounding to a router prompt.
@@ -13018,7 +13126,19 @@ pub(crate) fn filter_chain_by_trust(
             Ok(c) => c,
             Err(_) => return,
         };
+        // WS-B: extraction is a policy choice. `off` silences every
+        // pass here; `shutdown` keeps only the shutdown pass.
+        if !matches!(
+            config.memory.extraction_mode,
+            kod_config::memory::ExtractionMode::Continuous
+        ) {
+            return;
+        }
         let max_entries = config.memory.extract_max_entries.max(1);
+        let cadence = kod_memory::retention::RetentionCadence {
+            every_n_turns: config.memory.extraction_every_n_turns.max(1),
+            min_new_messages: config.memory.extraction_min_messages,
+        };
 
         let transcript: Vec<kod_types::ChatMessage> = {
             let history = self.history.read().await;
@@ -13041,8 +13161,15 @@ pub(crate) fn filter_chain_by_trust(
                 None => return,
             }
         };
-        // The cadence floor: a two-message tail is not worth a call.
-        if !kod_memory::retention::RetentionCadence::default().is_due(new_count) {
+        // The cadence floor: both the user-turn count and the
+        // message count must pass. A tool-using turn appends several
+        // messages per single user turn, so the message floor alone
+        // fired on effectively every turn (the old dead-code bug).
+        let new_user_turns = transcript[new_start..new_len]
+            .iter()
+            .filter(|m| matches!(m.role, kod_types::MessageRole::User))
+            .count();
+        if !cadence.is_due(new_count, new_user_turns) {
             return;
         }
 
@@ -13070,22 +13197,31 @@ pub(crate) fn filter_chain_by_trust(
             return;
         }
         let project_key = Some(crate::router::TaskRouter::project_key_for(&self.working_dir));
+        let mut stored = 0usize;
         for fact in &facts {
             let mut metadata =
                 kod_memory::extract::metadata_for(fact, project_key.clone());
             metadata.session_id = Some(self.session_id_for_holder(key));
-            if let Err(e) = self
+            match self
                 .router
                 .store_episodic(&fact.content, metadata)
                 .await
             {
-                tracing::warn!(error = %e, "continuous extraction: store failed");
+                Ok(_) => stored += 1,
+                Err(e) => {
+                    tracing::warn!(error = %e, "continuous extraction: store failed");
+                }
             }
         }
-        tracing::debug!(
+        // WS-B visibility: one info line per extraction so operators
+        // can see fact collection working (`kod memory list` shows the
+        // stored entries).
+        tracing::info!(
             key,
             new_messages = new_count,
-            stored = facts.len(),
+            new_user_turns,
+            stored,
+            total = facts.len(),
             "continuous extraction pass",
         );
     }
@@ -13132,6 +13268,27 @@ pub(crate) fn filter_chain_by_trust(
         if !kod_memory::sharpshooter::prompt_is_eligible(&user_prompt) {
             return;
         }
+        // WS-B: the decision extractor is gated and cadenced per
+        // transcript, mirroring the retention cursor. Ineligible
+        // prompts never touch the counter.
+        let decisions_every_n_turns = match kod_config::KodConfig::load_default() {
+            Ok(c) => {
+                if !c.memory.decisions_enabled {
+                    return;
+                }
+                c.memory.decisions_every_n_turns.max(1)
+            }
+            Err(_) => 1,
+        };
+        {
+            let mut cursors = self.decisions_cursors.write().await;
+            let seen = cursors.entry(key.to_string()).or_insert(0);
+            *seen += 1;
+            if *seen < decisions_every_n_turns {
+                return;
+            }
+            *seen = 0;
+        }
 
         let max_decisions = kod_memory::sharpshooter::DEFAULT_MAX_DECISIONS;
 
@@ -13175,7 +13332,7 @@ pub(crate) fn filter_chain_by_trust(
         }
         let n = admitted.len();
         self.sharpshooter_deltas.write().await.extend(admitted);
-        tracing::debug!(key, admitted = n, "sharpshooter: decision deltas admitted");
+        tracing::info!(key, admitted = n, "sharpshooter: decision deltas admitted");
     }
 
     /// Delta §12.3: a snapshot of the admitted decision deltas. Used
