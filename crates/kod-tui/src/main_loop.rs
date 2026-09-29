@@ -5902,6 +5902,13 @@ impl TuiLoop {
                     && let Some(engine) = self.engine.clone()
                 {
                     tokio::spawn(async move {
+                        // WS-C: `prewarm = "auto"` (default) disables the
+                        // probe on tab-bridge endpoints, where it would
+                        // warm the wrong tab. Check before spawning so a
+                        // disabled policy costs no task at all.
+                        if !engine.prewarm_enabled().await {
+                            return;
+                        }
                         // `DEFAULT_TRANSCRIPT_KEY` is crate-private in
                         // kod-core; its value is the empty string.
                         engine.prewarm("").await;
