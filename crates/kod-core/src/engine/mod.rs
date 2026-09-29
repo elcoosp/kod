@@ -249,6 +249,32 @@ pub fn parse_activity_marker(chunk: &str) -> Option<&str> {
     chunk.strip_prefix(ACTIVITY_MARKER)?.strip_suffix('\0')
 }
 
+/// Marker for per-round usage on the streaming chunk channel:
+/// `\0kod-usage:<prompt>,<completion>\0`. Sent after every round
+/// that reports provider usage, so consumers can track the live
+/// context-window snapshot. A `\0`-prefixed control chunk: skipped
+/// by text-only consumers, never printed raw.
+///
+/// Why per-round, not the merged turn total: the turn's merged
+/// `TokenUsage` sums prompt tokens across rounds, and every round
+/// re-sends the full history — the sum is a multiple of the actual
+/// window contents. The LAST round's prompt + completion is the
+/// true snapshot, and later markers supersede earlier ones.
+pub const USAGE_MARKER: &str = "\0kod-usage:";
+
+/// Build a usage marker chunk for one round's provider numbers.
+pub fn usage_marker(prompt_tokens: usize, completion_tokens: usize) -> String {
+    format!("{USAGE_MARKER}{prompt_tokens},{completion_tokens}\0")
+}
+
+/// If `chunk` is a usage marker, return `(prompt, completion)`.
+/// Malformed numbers degrade to `None` rather than a wrong meter.
+pub fn parse_usage_marker(chunk: &str) -> Option<(usize, usize)> {
+    let rest = chunk.strip_prefix(USAGE_MARKER)?.strip_suffix('\0')?;
+    let (p, c) = rest.split_once(',')?;
+    Some((p.parse::<usize>().ok()?, c.parse::<usize>().ok()?))
+}
+
 /// Marker for the post-tool thinking phase: tool result was reinjected
 /// and the LLM is reasoning again. The TUI switches from "tool: …" back
 /// to "thinking…" so a slow reinjection doesn't look like a stuck tool.
@@ -1587,6 +1613,13 @@ pub struct KodEngine {
     /// resets it so the whole transcript is re-sent.
     retention_cursors:
         RwLock<HashMap<String, kod_memory::retention::RetentionCursor>>,
+    /// Delta §7.2: late LSP diagnostics a background pass queued
+    /// since the last turn. Drained at the start of `prepare_turn`
+    /// and appended to the system prompt under
+    /// `## LSP diagnostics (late)`. `Arc` so the spawned watcher can
+    /// hold it independently of `self`.
+    deferred_diagnostics:
+        std::sync::Arc<crate::deferred_diagnostics::DeferredDiagnostics>,
     /// WS-B: per-transcript count of eligible user prompts seen since
     /// the last sharpshooter extraction. Mirrors the retention cursor:
     /// the decision extractor gets its own cadence counter so
@@ -3089,6 +3122,31 @@ impl KodEngine {
                 .await?;
             plan.render_text()
         };
+        // Delta 7.2: append any late LSP diagnostics a deferred
+        // background pass queued since the last turn. A slow
+        // language server's answer was not lost — it arrives with
+        // the turn after the write that triggered it. Capped at 20
+        // entries so a large error set does not dominate the prompt.
+        let system_text = {
+            let late = self.deferred_diagnostics.take(key);
+            if late.is_empty() {
+                system_text
+            } else {
+                let mut s = system_text;
+                s.push_str("\n\n## LSP diagnostics (late)\n\n");
+                s.push_str(&format!(
+                    "{} diagnostic(s) arrived after the previous write:\n\n",
+                    late.len(),
+                ));
+                for d in late.iter().take(20) {
+                    s.push_str(&format!(
+                        "{}:{}:{} {} {}\n",
+                        d.file, d.line, d.column, d.severity, d.message,
+                    ));
+                }
+                s
+            }
+        };
         let initial_messages: Vec<kod_types::ChatMessage> = {
             let guard = self.history.read().await;
             guard.get(key).cloned().unwrap_or_default()
@@ -3840,6 +3898,9 @@ impl KodEngine {
             mental_models: RwLock::new(kod_memory::mental_models::MentalModels::new()),
             ttsr: RwLock::new(kod_provider::ttsr::TtsrEngine::new(Vec::new())),
             retention_cursors: RwLock::new(HashMap::new()),
+            deferred_diagnostics: std::sync::Arc::new(
+                crate::deferred_diagnostics::DeferredDiagnostics::new(),
+            ),
             decisions_cursors: RwLock::new(HashMap::new()),
             behavioral: std::sync::Arc::new(parking_lot::Mutex::new(
                 kod_stats::behavioral::BehavioralSignals::default(),
@@ -10328,6 +10389,16 @@ pub(crate) fn filter_chain_by_trust(
                 drop(speculations);
                 return Ok((String::new(), Vec::new(), Vec::new(), None, true));
             }
+            // Live window snapshot for the meter: this round's
+            // provider numbers supersede the previous round's. (The
+            // merged total below is for session accounting and cost —
+            // it sums history once per round and must never drive the
+            // context meter. See USAGE_MARKER.)
+            if let Some(u) = usage.as_ref() {
+                let _ = chunk_tx
+                    .send(usage_marker(u.prompt_tokens, u.completion_tokens))
+                    .await;
+            }
             last_usage = match (last_usage, usage) {
                 (Some(prev), Some(next)) => Some(prev.merge(&next)),
                 (Some(prev), None) => Some(prev),
@@ -12919,6 +12990,72 @@ pub(crate) fn filter_chain_by_trust(
                     let lsp_diags = self
                         .lsp_diagnostics(path, content, std::time::Duration::from_millis(settle_ms))
                         .await;
+                    // Delta 7.2: when the short inline wait came up
+                    // empty, a slow server's answer is not lost — a
+                    // background pass keeps watching for
+                    // deferred_settle_ms and queues anything it sees.
+                    // prepare_turn drains the queue into the next
+                    // turn's prompt. Guarded by an mtime check so a
+                    // rewrite during the wait does not queue stale
+                    // diagnostics.
+                    if lsp_diags.is_empty() {
+                        let (deferred_enabled, deferred_ms) =
+                            kod_config::KodConfig::load_default()
+                                .ok()
+                                .map(|c| (c.lsp.deferred_enabled, c.lsp.deferred_settle_ms))
+                                .unwrap_or((true, 12_000));
+                        if deferred_enabled && deferred_ms > 0 {
+                            let mtime_at_spawn = std::fs::metadata(path)
+                                .and_then(|m| m.modified())
+                                .ok();
+                            let mgr = std::sync::Arc::clone(&self.lsp_manager);
+                            let q = std::sync::Arc::clone(&self.deferred_diagnostics);
+                            let holder_owned = effective_holder.to_string();
+                            let path_owned = path.clone();
+                            let content_owned = content.to_string();
+                            tokio::spawn(async move {
+                                let later = mgr
+                                    .diagnostics(
+                                        &path_owned,
+                                        &content_owned,
+                                        std::time::Duration::from_millis(deferred_ms),
+                                    )
+                                    .await;
+                                if later.is_empty() {
+                                    return;
+                                }
+                                let now_mtime = std::fs::metadata(&path_owned)
+                                    .and_then(|m| m.modified())
+                                    .ok();
+                                if now_mtime != mtime_at_spawn {
+                                    tracing::debug!(
+                                        path = %path_owned.display(),
+                                        "deferred LSP: file changed during wait; discarding",
+                                    );
+                                    return;
+                                }
+                                let converted: Vec<kod_tools::check::Diagnostic> = later
+                                    .iter()
+                                    .map(|d| kod_tools::check::Diagnostic {
+                                        file: d.file.clone(),
+                                        line: d.line,
+                                        column: d.column,
+                                        severity: d.severity.clone(),
+                                        code: d.code.clone(),
+                                        message: d.message.clone(),
+                                    })
+                                    .collect();
+                                let added = q.push(&holder_owned, &converted);
+                                if added > 0 {
+                                    tracing::info!(
+                                        holder = %holder_owned,
+                                        added,
+                                        "deferred LSP diagnostics queued",
+                                    );
+                                }
+                            });
+                        }
+                    }
                     if !lsp_diags.is_empty() {
                         diags = lsp_diags
                             .iter()
