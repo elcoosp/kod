@@ -31,7 +31,25 @@ impl KodApp {
             // Engine-reported auxiliary work — show what the turn is
             // actually doing instead of a stale "thinking…".
             GenPhase::Activity(l) => l.chars().take(40).collect::<String>(),
-            GenPhase::RateLimited => "rate-limited — waiting…".to_string(),
+            // Live countdown from the wait deadline the marker
+            // carried: a 20-minute silent wait looks identical to a
+            // stuck one without it.
+            GenPhase::RateLimited => match self.rate_limit_deadline {
+                Some(deadline) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        "rate-limited — retrying…".to_string()
+                    } else {
+                        format!(
+                            "rate-limited — retry in {}…",
+                            kod_core::engine::format_duration_ms(
+                                remaining.as_millis().min(u128::from(u64::MAX)) as u64
+                            )
+                        )
+                    }
+                }
+                None => "rate-limited — waiting…".to_string(),
+            },
         };
         Some(label)
     }
@@ -52,8 +70,11 @@ impl KodApp {
     /// Enter the rate-limit wait: the provider refused the turn and
     /// the engine is sleeping out the retry window. Replaces the
     /// misleading "connecting…" the spinner showed while waiting.
-    pub fn begin_rate_limit_wait(&mut self) {
+    /// Records the deadline so the spinner counts down live.
+    pub fn begin_rate_limit_wait(&mut self, wait_secs: u64) {
         if self.generating {
+            self.rate_limit_deadline =
+                Some(Instant::now() + std::time::Duration::from_secs(wait_secs));
             self.set_phase(GenPhase::RateLimited);
         }
     }
