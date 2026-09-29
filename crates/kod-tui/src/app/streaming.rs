@@ -89,6 +89,10 @@ impl KodApp {
         // New turn: no real usage seen yet, so the char estimate
         // contributes until (or unless) the provider reports a total.
         self.turn_has_real_usage = false;
+        // A previous turn's rate-limit deadline must not leak into the
+        // countdown of this one (it only renders under RateLimited,
+        // but stale state is stale state).
+        self.rate_limit_deadline = None;
         // Reset the streaming-rate state (see `tokens_per_sec`).
         self.last_chunk_at = None;
         self.streamed_chars_this_turn = 0;
@@ -111,6 +115,7 @@ impl KodApp {
         self.first_chunk_at = None;
         self.last_chunk_at = None;
         self.streamed_chars_this_turn = 0;
+        self.rate_limit_deadline = None;
         self.set_phase(GenPhase::Connecting);
     }
 
@@ -158,6 +163,7 @@ impl KodApp {
         self.generating = false;
         self.spinner_started = None;
         self.first_chunk_at = None;
+        self.rate_limit_deadline = None;
         self.set_phase(GenPhase::Idle);
         self.fail_count = 0;
     }
@@ -203,6 +209,7 @@ impl KodApp {
         self.generating = false;
         self.spinner_started = None;
         self.first_chunk_at = None;
+        self.rate_limit_deadline = None;
         self.set_phase(GenPhase::Idle);
         self.fail_count += 1;
         // Running rows get a one-line pointer, not the raw error: the
@@ -322,6 +329,7 @@ impl KodApp {
         self.generating = false;
         self.spinner_started = None;
         self.first_chunk_at = None;
+        self.rate_limit_deadline = None;
         self.set_phase(GenPhase::Idle);
         self.settle_running_tools(ToolStatus::Failed, "cancelled");
         if !partial.is_empty() {
