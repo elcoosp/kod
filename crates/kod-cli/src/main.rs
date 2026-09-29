@@ -11,10 +11,12 @@
 //! terminal.
 //!
 //! `RUST_LOG` controls the level filter, defaulting to `warn`. The
-//! TUI takes over the terminal after this runs, so anything below
-//! `warn` will interleave with the alternate screen — a user who
-//! wants trace output in a TUI session should redirect stderr to a
-//! file (`kod tui 2>tui.log`) rather than read it off the screen.
+//! writer is session-safe: while a CLI subcommand runs, output goes
+//! to stderr as before (config-parse warnings must reach the user);
+//! once the TUI enters the alternate screen, output goes to
+//! `~/.kod/session.log` instead — a raw write onto the live frame
+//! garbles the TUI and the diff-based redraw never repairs it. Point
+//! users who want verbose TUI logs at that file (or `RUST_LOG=debug`).
 
 use clap::Parser;
 use kod_cli::commands::Cli;
@@ -27,9 +29,16 @@ fn main() -> kod_error::Result<()> {
     // not.
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("warn"));
+    // Session-safe writer: stderr until the TUI owns the terminal,
+    // then `~/.kod/session.log`. A raw stderr write while the
+    // alternate screen is active garbles the ratatui frame (the line
+    // lands at the live cursor and the diff-based redraw never
+    // repairs the cells), so log output must leave the terminal for
+    // the lifetime of the TUI session.
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
-        .with_writer(std::io::stderr)
+        .with_writer(kod_cli::logging::SessionSafeWriter::default())
+        .with_ansi(false)
         .with_target(false)
         .try_init();
 

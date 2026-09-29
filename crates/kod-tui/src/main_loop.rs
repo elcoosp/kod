@@ -489,6 +489,56 @@ impl TuiLoop {
         self.event_handler.next_event().await
     }
 
+    /// Drop the buffer diff state so the next `draw` repaints every
+    /// cell. Use after anything could have written to the terminal
+    /// behind ratatui's back (an external raw write, a resize) or when
+    /// the bottom of the transcript changed abruptly (an error row).
+    fn force_repaint(&mut self) {
+        if let Some(terminal) = self.terminal.as_mut() {
+            let _ = terminal.clear();
+        }
+    }
+
+    /// Print `text` to the real terminal without garbling the TUI.
+    ///
+    /// Suspends the alternate screen + raw mode, writes to normal
+    /// scrollback, then re-enters the TUI and forces a full repaint.
+    /// `/raw` and `/export-html -` use this instead of a bare
+    /// `println!` — a raw write while the TUI owns the terminal lands
+    /// at the live cursor, interleaves with the frame diff, and pushes
+    /// transcript rows over the input box; the diff-based redraw never
+    /// repairs the damage.
+    fn suspend_and_print(&mut self, text: &str) -> Result<()> {
+        use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+
+        if self.terminal.is_none() {
+            // No TUI on the terminal (tests, headless call): plain
+            // printing is safe and keeps stdout semantics.
+            println!("\n{text}\n"); // tripwire:allow — TUI not active
+            return Ok(());
+        }
+
+        terminal::disable_raw_mode()
+            .map_err(|e| KodError::Internal(format!("Failed to disable raw mode: {e}")))?;
+        crossterm::execute!(std::io::stdout(), LeaveAlternateScreen)
+            .map_err(|e| KodError::Internal(format!("Failed to leave alternate screen: {e}")))?;
+
+        println!("\n{text}\n"); // tripwire:allow — TUI already suspended
+
+        terminal::enable_raw_mode()
+            .map_err(|e| KodError::Internal(format!("Failed to enable raw mode: {e}")))?;
+        crossterm::execute!(std::io::stdout(), EnterAlternateScreen)
+            .map_err(|e| KodError::Internal(format!("Failed to enter alternate screen: {e}")))?;
+        self.force_repaint();
+        if let Some(terminal) = self.terminal.as_mut() {
+            // Re-entering the alternate screen can reset cursor
+            // visibility on some terminals; the input box draws its own
+            // block caret, so keep the hardware cursor hidden.
+            let _ = terminal.hide_cursor();
+        }
+        Ok(())
+    }
+
     /// Initialize terminal
     pub async fn init_terminal(&mut self) -> Result<()> {
         crossterm::terminal::enable_raw_mode()
@@ -526,6 +576,12 @@ impl TuiLoop {
 
         self.terminal = Some(terminal);
 
+        // The TUI now owns the terminal: raw stdout/stderr writes would
+        // land at the live cursor and garble the frame (and the
+        // diff-based redraw never repairs them). Flip the shared flag
+        // so the tracing subscriber routes to ~/.kod/session.log.
+        kod_types::term::set_tui_active(true);
+
         self.event_handler.start_input_loop().await;
 
         Ok(())
@@ -533,6 +589,11 @@ impl TuiLoop {
 
     /// Restore terminal
     pub async fn restore_terminal(&mut self) -> Result<()> {
+        // Release terminal ownership first: even if a later step here
+        // errors, the subscriber must never keep writing to a file
+        // while the user's shell expects the terminal.
+        kod_types::term::set_tui_active(false);
+
         self.event_handler.stop();
 
         if let Some(terminal) = &mut self.terminal {
@@ -567,7 +628,10 @@ impl TuiLoop {
             let default_hook = default_hook.clone();
             Box::new(move |info| {
                 // Best-effort terminal restore so the user isn't left
-                // staring at a frozen raw-mode screen.
+                // staring at a frozen raw-mode screen. The ownership
+                // flag goes first so post-panic logging lands on the
+                // restored terminal, not in the session log.
+                kod_types::term::set_tui_active(false);
                 let _ = crossterm::execute!(
                     std::io::stdout(),
                     crossterm::terminal::LeaveAlternateScreen,
@@ -781,6 +845,11 @@ impl TuiLoop {
             }
             Event::Resize(w, h) => {
                 tracing::debug!("Terminal resized to {}x{}", w, h);
+                // ratatui rebuilds the buffer for the new size, but
+                // stale cells from the old frame can survive the
+                // diff-based redraw. Force a full repaint so a resize
+                // never leaves ghosts.
+                self.force_repaint();
             }
             Event::ResponseChunk(chunk) => {
                 self.app.add_response_chunk(&chunk);
@@ -1035,6 +1104,10 @@ impl TuiLoop {
             Event::Error(error) => {
                 self.gen_task = None;
                 self.app.fail_generation(&error);
+                // The error row abruptly changed the bottom of the
+                // transcript; repaint on a clean frame so no stale
+                // cells survive the diff redraw.
+                self.force_repaint();
                 // A failed turn appends a system message and settles
                 // any running tool rows. Persist so a restart resumes
                 // from the recorded error rather than the state
@@ -1108,6 +1181,7 @@ impl TuiLoop {
             Event::SwarmError(e) => {
                 self.gen_task = None;
                 self.app.fail_generation(&e);
+                self.force_repaint();
                 if self.persist_history {
                     self.app.save_session();
                 }
@@ -3182,9 +3256,9 @@ impl TuiLoop {
                 let text = self.app.last_assistant_text().map(|s| s.to_string());
                 match text {
                     Some(t) => {
-                        println!();
-                        println!("{}", t);
-                        println!();
+                        // Suspend-print-resume: a bare `println!` while
+                        // the TUI owns the terminal garbles the frame.
+                        self.suspend_and_print(&t)?;
                         self.app.push_system_message(
                             "(raw reply printed to stdout — select with your terminal)",
                         );
@@ -4737,11 +4811,10 @@ impl TuiLoop {
                 let path = match arg {
                     Some(p) if p != "-" => std::path::PathBuf::from(p),
                     Some(_) => {
-                        // `-` means stdout; print the whole thing.
-                        // Nothing else to do — return.
-                        println!();
-                        println!("{}", html);
-                        println!();
+                        // `-` means stdout; print the whole thing —
+                        // through the suspend-print-resume path so the
+                        // frame is not garbled. Nothing else to do.
+                        self.suspend_and_print(&html)?;
                         self.app
                             .push_system_message("Exported session HTML to stdout.");
                         return Ok(());

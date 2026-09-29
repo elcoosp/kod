@@ -6,6 +6,7 @@ pub mod secret_placeholder;
 pub mod secret_sources;
 pub mod skill;
 pub mod strutil;
+pub mod term;
 pub mod tool;
 pub mod trust;
 

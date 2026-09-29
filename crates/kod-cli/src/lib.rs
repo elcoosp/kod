@@ -3,6 +3,7 @@
 //! Provides command-line entry point and command definitions.
 
 pub mod commands;
+pub mod logging;
 
 // `doctor` lives in `kod-core` because both `kod-cli` and `kod-tui`
 // need it, and a direct dependency between the two interface crates
