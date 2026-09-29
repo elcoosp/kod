@@ -958,8 +958,11 @@ impl TuiLoop {
                     });
                 }
             }
-            Event::TokenUsage(total) => {
-                self.app.note_real_usage(total);
+            Event::WindowUsage {
+                prompt_tokens,
+                completion_tokens,
+            } => {
+                self.app.note_window_usage(prompt_tokens, completion_tokens);
             }
             Event::SessionUsage {
                 prompt_tokens,
@@ -1521,6 +1524,18 @@ impl TuiLoop {
                         is_reasoning = false;
                         reasoning_since = None;
                         disabled_for_turn = false;
+                    } else if let Some((prompt, completion)) =
+                        kod_core::engine::parse_usage_marker(&chunk)
+                    {
+                        // Per-round provider usage: the live window
+                        // snapshot. Not prose — kept out of the
+                        // classifier buffer entirely.
+                        let _ = event_tx_chunks
+                            .send(Event::WindowUsage {
+                                prompt_tokens: prompt,
+                                completion_tokens: completion,
+                            })
+                            .await;
                     } else if kod_core::engine::is_thinking_marker(&chunk) {
                         let _ = event_tx_chunks.send(Event::Thinking).await;
                     } else if kod_core::engine::is_stream_reset_marker(&chunk) {
@@ -1624,11 +1639,12 @@ impl TuiLoop {
                     // inventory.
                     let text = response.text.unwrap_or_default();
                     if let Some(usage) = response.usage {
-                        let total = if usage.total_tokens > 0 {
-                            usage.total_tokens
-                        } else {
-                            usage.prompt_tokens + usage.completion_tokens
-                        };
+                        // Session accounting and cost keep the merged
+                        // turn total (every round moved tokens). The
+                        // context meter does NOT come from here: the
+                        // merged total re-counts history once per round,
+                        // so the per-round WindowUsage markers that
+                        // streamed live are the meter's source.
                         // Compute the call's USD cost from the
                         // pricing the response carries. `None` when
                         // the endpoint has no `[pricing]` block, in
@@ -1645,7 +1661,6 @@ impl TuiLoop {
                                 cost_usd,
                             })
                             .await;
-                        let _ = event_tx.send(Event::TokenUsage(total)).await;
                     }
                     let _ = event_tx.send(Event::ResponseComplete(text)).await;
                 }
