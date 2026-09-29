@@ -975,6 +975,7 @@ impl KodApp {
             expanded_tools: HashSet::new(),
             show_tools: true,
             phase: GenPhase::Idle,
+            rate_limit_deadline: None,
             last_prompt: None,
             fail_count: 0,
             theme: Theme::dark(),
