@@ -93,6 +93,9 @@ impl KodApp {
         // countdown of this one (it only renders under RateLimited,
         // but stale state is stale state).
         self.rate_limit_deadline = None;
+        // A new turn is starting: the header's "last turn" figure now
+        // refers to a turn that is over. It is re-recorded on finish.
+        self.last_turn_duration = None;
         // Reset the streaming-rate state (see `tokens_per_sec`).
         self.last_chunk_at = None;
         self.streamed_chars_this_turn = 0;
@@ -161,6 +164,7 @@ impl KodApp {
         self.is_streaming = false;
         self.current_response.clear();
         self.generating = false;
+        self.record_turn_duration();
         self.spinner_started = None;
         self.first_chunk_at = None;
         self.rate_limit_deadline = None;
@@ -207,6 +211,7 @@ impl KodApp {
         self.is_streaming = false;
         self.current_response.clear();
         self.generating = false;
+        self.record_turn_duration();
         self.spinner_started = None;
         self.first_chunk_at = None;
         self.rate_limit_deadline = None;
@@ -327,6 +332,7 @@ impl KodApp {
         self.is_streaming = false;
         self.current_response.clear();
         self.generating = false;
+        self.record_turn_duration();
         self.spinner_started = None;
         self.first_chunk_at = None;
         self.rate_limit_deadline = None;
