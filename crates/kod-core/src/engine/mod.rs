@@ -737,7 +737,39 @@ fn append_round_text(buf: &mut String, text: &str) {
 
 /// One-line brief for a tool call: `execute_command cargo test …`,
 /// `read_file path=…`. Used for the live "running" indicator.
-pub fn format_call_brief(name: &str, args: &serde_json::Value) -> String {
+/// The model-declared reason for a tool call, from the top-level
+/// `intent` arg the registry injects into every tool schema
+/// (`kod_tools::registry::inject_intent_field`). Surfaced in the
+/// running line and the completed row so the UI shows *why* the
+/// model called, not just what with. Collapsed to one line and
+/// capped so headers and the spinner stay one-liners. `None` when
+/// the model sent no usable intent.
+pub fn tool_intent(args: &serde_json::Value) -> Option<String> {
+    let raw = args.get("intent")?.as_str()?;
+    let one_line: String = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one_line.is_empty() {
+        return None;
+    }
+    const CAP: usize = 80;
+    if one_line.len() > CAP {
+        Some(format!("{}…", truncate_chars(&one_line, CAP)))
+    } else {
+        Some(one_line)
+    }
+}
+
+/// Suffix a formatted tool display with the model's intent, when it
+/// sent one. Appended — never prepended: row matching
+/// (`tool_row_matches_header`, the execution ledger) keys on the
+/// header *starting* with the tool name.
+fn append_intent(base: &str, args: &serde_json::Value) -> String {
+    match tool_intent(args) {
+        Some(intent) => format!("{base} — {intent}"),
+        None => base.to_string(),
+    }
+}
+
+fn format_call_brief_base(name: &str, args: &serde_json::Value) -> String {
     if name == "execute_command" {
         if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
             // Multi-line shell snippets read as their first line only.
@@ -785,6 +817,13 @@ pub fn format_call_brief(name: &str, args: &serde_json::Value) -> String {
         raw
     };
     format!("{name} {short}")
+}
+
+/// One-line "what + why" for the running indicator: the argument
+/// excerpt plus the model's declared intent, when it sent one
+/// (`execute_command cargo test — verify the fix`).
+pub fn format_call_brief(name: &str, args: &serde_json::Value) -> String {
+    append_intent(&format_call_brief_base(name, args), args)
 }
 
 /// Default generation options captured from `LlmConfig`.
@@ -848,7 +887,7 @@ pub fn format_tool_header(name: &str, args: &serde_json::Value) -> String {
             parts.push("recursive".to_string());
         }
     }
-    parts.join(" ")
+    append_intent(&parts.join(" "), args)
 }
 
 /// Keep the tail of a long path: `/a/b/c` → `…/b/c`.
@@ -15909,8 +15948,7 @@ mod tests {
         );
         assert_eq!(ok, "hi");
         let hdr = format_tool_header("read_file", &serde_json::json!({"path": "/a/b/c/main.rs"}));
-        assert!(hdr.starts_with("read_file path="), "got: {hdr}");
-        // read_file success stays compact: path + size + preview, not a dump.
+        assert!(hdr.starts_with("read_file path="), "got: {hdr}");        // read_file success stays compact: path + size + preview, not a dump.
         let read = summarize_tool_result(
             "read_file",
             &ToolResult::Success(
@@ -15920,6 +15958,45 @@ mod tests {
         assert!(read.contains("4 lines"), "got: {read}");
         assert!(read.contains("one\ntwo\nthree"), "got: {read}");
         assert!(!read.contains("four"), "got: {read}");
+    }
+
+    #[test]
+    fn test_tool_intent_surfaces_in_brief_and_header() {
+        // The model-declared `intent` arg must reach the UI: the
+        // running line and the completed row show *why*, not just
+        // what. Appended — row matching keys on the tool name first.
+        let args = serde_json::json!({"path": "src/main.rs", "intent": "check the config"});
+        let brief = format_call_brief("read_file", &args);
+        assert!(brief.starts_with("read_file path="), "got: {brief}");
+        assert!(brief.ends_with("— check the config"), "got: {brief}");
+        let hdr = format_tool_header("read_file", &args);
+        assert!(hdr.starts_with("read_file path="), "got: {hdr}");
+        assert!(hdr.ends_with("— check the config"), "got: {hdr}");
+        // No intent: byte-identical to before.
+        let plain = serde_json::json!({"path": "src/main.rs"});
+        assert_eq!(
+            format_call_brief("read_file", &plain),
+            "read_file path=src/main.rs"
+        );
+        assert!(!format_tool_header("read_file", &plain).contains('—'));
+        // Empty / blank / non-string intents are not intents.
+        for bad in [
+            serde_json::json!({"intent": ""}),
+            serde_json::json!({"intent": "   "}),
+            serde_json::json!({"intent": 42}),
+            serde_json::json!({}),
+        ] {
+            assert_eq!(tool_intent(&bad), None, "got: {bad}");
+        }
+        // Multi-line intent collapses to one line; long intent caps.
+        assert_eq!(
+            tool_intent(&serde_json::json!({"intent": "why\n  this\tcall"})),
+            Some("why this call".to_string())
+        );
+        let long = "x".repeat(200);
+        let capped = tool_intent(&serde_json::json!({"intent": long})).unwrap();
+        assert!(capped.ends_with('…') && capped.len() <= 84, "got: {capped}");
+        assert!(!format_call_brief("read_file", &serde_json::json!({"intent": "why\nthis"})).contains('\n'));
     }
 
     /// A round containing a mutating tool must run serially in caller
