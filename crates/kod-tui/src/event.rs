@@ -190,9 +190,10 @@ pub enum Event {
     /// until the next text / tool / thinking / turn signal.
     Activity(String),
     /// The provider rate-limited the turn; the engine is sleeping out
-    /// the retry window. Carries the bounded-wait system line; the
-    /// spinner switches to the rate-limited phase alongside it.
-    RateLimited(String),
+    /// the retry window. Carries the bounded-wait system line plus the
+    /// window in seconds so the spinner can count down live; the two
+    /// come from one event so they can never disagree.
+    RateLimited { message: String, wait_secs: u64 },
     /// Goal-loop turn boundary: the engine finished turn N-1 and is
     /// starting turn N. The main loop flushes the previous turn's text
     /// as its own bubble and opens a new one — turns must never merge
