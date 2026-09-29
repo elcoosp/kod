@@ -183,10 +183,15 @@ impl Default for RetentionCadence {
 }
 
 impl RetentionCadence {
-    /// Whether `new_messages` new messages since the last extraction
-    /// are worth extracting now.
-    pub fn is_due(&self, new_messages: usize) -> bool {
-        new_messages >= self.min_new_messages
+    /// Whether the new tail since the last extraction is worth
+    /// extracting now. Both floors must pass: `every_n_turns` counts
+    /// new *user* turns (assistant/tool traffic alone must not drive
+    /// extraction), `min_new_messages` guards tiny tails.
+    ///
+    /// (Fix: `every_n_turns` used to be dead — `is_due` only checked
+    /// the message floor, so any tool-using turn fired extraction.)
+    pub fn is_due(&self, new_messages: usize, new_user_turns: usize) -> bool {
+        new_user_turns >= self.every_n_turns && new_messages >= self.min_new_messages
     }
 }
 
@@ -317,13 +322,17 @@ mod tests {
     #[test]
     fn a_small_tail_is_not_due() {
         let c = RetentionCadence::default();
-        assert!(!c.is_due(3));
+        // Too few messages, even with enough turns.
+        assert!(!c.is_due(3, 5));
+        // Enough messages, but too few user turns (the old dead-code bug
+        // fired here: any tool-using turn reached 4 messages in 1 turn).
+        assert!(!c.is_due(20, 4));
     }
 
     #[test]
     fn a_large_tail_is_due() {
         let c = RetentionCadence::default();
-        assert!(c.is_due(4));
-        assert!(c.is_due(20));
+        assert!(c.is_due(4, 5));
+        assert!(c.is_due(20, 7));
     }
 }
