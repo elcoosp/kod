@@ -5,6 +5,7 @@
 pub mod catalog;
 pub mod concurrency;
 pub mod native_compaction;
+pub mod image_budget;
 pub mod judgment;
 pub mod registry;
 pub mod replay;
