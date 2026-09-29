@@ -35,6 +35,7 @@
 
 use kod_config::McpConfig;
 use kod_error::{KodError, Result};
+use kod_mcp::tool_cache;
 use kod_mcp::{McpClient, McpToolDef};
 use kod_tools::{Tool, ToolContext};
 use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
@@ -122,6 +123,27 @@ impl McpHost {
                 }
                 continue;
             }
+            // Delta §7.7: try the on-disk `tools/list` cache first.
+            // A hit short-circuits the spawn entirely — the whole
+            // point of the cache. The adapter's `ensure_started` still
+            // spawns lazily on the first actual tool call.
+            let key = tool_cache::cache_key(&spec.command, &spec.args, &spec.env);
+            if let Some(defs) = tool_cache::read(&key, tool_cache::DEFAULT_TTL) {
+                tracing::info!(
+                    server = %name,
+                    tools = defs.len(),
+                    "MCP: tools/list served from cache (no spawn)"
+                );
+                for def in defs {
+                    out.push(Box::new(McpToolAdapter::new(
+                        self.clone(),
+                        name.clone(),
+                        def,
+                        spec.call_timeout_secs,
+                    )));
+                }
+                continue;
+            }
             let client = match self.ensure_started(name).await {
                 Ok(c) => c,
                 Err(e) => {
@@ -149,6 +171,16 @@ impl McpHost {
                 tools = defs.len(),
                 "MCP: server ready"
             );
+            // Write the fresh list to the cache. A failure here is
+            // not fatal to the startup (the caller already has the
+            // defs); log at debug and carry on.
+            if let Err(e) = tool_cache::write(&key, &defs) {
+                tracing::debug!(
+                    server = %name,
+                    error = %e,
+                    "MCP: could not write tools/list cache",
+                );
+            }
             for def in defs {
                 out.push(Box::new(McpToolAdapter::new(
                     self.clone(),
