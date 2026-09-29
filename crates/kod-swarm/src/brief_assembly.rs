@@ -47,10 +47,7 @@ pub fn assemble_brief(
             (score, d)
         })
         .collect();
-    scored.sort_by(|a, b| {
-        b.0.partial_cmp(&a.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     let relevant_decisions: Vec<String> = scored
         .into_iter()
         .take(MAX_DECISIONS)

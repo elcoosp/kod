@@ -147,7 +147,7 @@ fn benchmark_memory_operations(c: &mut Criterion) {
                 timestamp: OffsetDateTime::now_utc(),
                 relevance: 1.0,
                 metadata: Default::default(),
-            
+
                 superseded_by: None,
                 contradicts: Vec::new(),
             };
@@ -166,7 +166,7 @@ fn benchmark_memory_operations(c: &mut Criterion) {
                 timestamp: OffsetDateTime::now_utc(),
                 relevance: 1.0,
                 metadata: Default::default(),
-            
+
                 superseded_by: None,
                 contradicts: Vec::new(),
             };

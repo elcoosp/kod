@@ -17,12 +17,8 @@
 //! unchanged for every embedder and unit test that did not opt in.
 
 use kod_tools::context::ArtifactStoreHook;
-use kod_tools::internal_url::{
-    ArtifactHandler, ProtocolHandler, ProtocolRouter, ResolveContext,
-};
-use kod_tools::{
-    ExecuteCommandTool, ReadFileTool, Tool, ToolContext, ToolResult,
-};
+use kod_tools::internal_url::{ArtifactHandler, ProtocolHandler, ProtocolRouter, ResolveContext};
+use kod_tools::{ExecuteCommandTool, ReadFileTool, Tool, ToolContext, ToolResult};
 use std::sync::Arc;
 
 /// Make a temp git repo with a known `git status` shape. Returns
@@ -59,19 +55,17 @@ fn make_context_with_minimizer(
     working_dir: &std::path::Path,
     handler: Arc<ArtifactHandler>,
 ) -> ToolContext {
-    let router = ProtocolRouter::new()
-        .register(Arc::clone(&handler) as Arc<dyn ProtocolHandler>);
+    let router = ProtocolRouter::new().register(Arc::clone(&handler) as Arc<dyn ProtocolHandler>);
     let store: ArtifactStoreHook = {
         let handler = Arc::clone(&handler);
         ArtifactStoreHook::new(move |id, text, mime| {
             let handler = Arc::clone(&handler);
             Box::pin(async move {
-                handler
-                    .store(id, text, mime)
-                    .await
-                    .map_err(|e| kod_error::KodError::InvalidParameters {
+                handler.store(id, text, mime).await.map_err(|e| {
+                    kod_error::KodError::InvalidParameters {
                         reason: format!("artifact store: {e}"),
-                    })
+                    }
+                })
             })
         })
     };
@@ -175,11 +169,7 @@ async fn git_status_is_minimized_and_raw_offloads_to_an_artifact() {
     );
 
     // The handler's store is shared: exactly one artifact.
-    assert_eq!(
-        handler.len().await,
-        1,
-        "one command produced one artifact",
-    );
+    assert_eq!(handler.len().await, 1, "one command produced one artifact",);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -209,7 +199,10 @@ async fn a_minimizer_less_context_returns_the_raw_output_and_null_fields() {
     );
     // The stdout is still there and it is the raw output.
     assert!(
-        v["stdout"].as_str().unwrap_or_default().contains("On branch main"),
+        v["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("On branch main"),
         "raw stdout must be present; result = {v}",
     );
 }
@@ -243,11 +236,7 @@ async fn a_piped_command_is_not_minimized_even_with_a_minimizer_installed() {
         v["stdout_artifact"].is_null(),
         "no rewrite means no offload; result = {v}",
     );
-    assert_eq!(
-        handler.len().await,
-        0,
-        "no rewrite means no artifact",
-    );
+    assert_eq!(handler.len().await, 0, "no rewrite means no artifact",);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -288,8 +277,12 @@ async fn the_same_command_twice_produces_the_same_artifact_id() {
     let r1 = tool.execute(&params, &ctx).await.unwrap();
     let r2 = tool.execute(&params, &ctx).await.unwrap();
 
-    let ToolResult::Success(v1) = r1 else { panic!("r1") };
-    let ToolResult::Success(v2) = r2 else { panic!("r2") };
+    let ToolResult::Success(v1) = r1 else {
+        panic!("r1")
+    };
+    let ToolResult::Success(v2) = r2 else {
+        panic!("r2")
+    };
 
     let u1 = v1["stdout_artifact"].as_str().unwrap();
     let u2 = v2["stdout_artifact"].as_str().unwrap();

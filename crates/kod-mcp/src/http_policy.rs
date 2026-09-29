@@ -87,9 +87,7 @@ impl Origin {
 pub enum RedirectDecision {
     /// Follow to the target. `attach_configured_headers` is false when
     /// the target is cross-origin.
-    Follow {
-        attach_configured_headers: bool,
-    },
+    Follow { attach_configured_headers: bool },
     /// Refuse the redirect; the caller surfaces the response.
     Refuse { reason: &'static str },
 }
@@ -99,12 +97,7 @@ pub enum RedirectDecision {
 /// `from` is the URL that produced the response, `to` is the `Location`
 /// header, `status` is the response status, and `method` is the method
 /// of the original request.
-pub fn decide_redirect(
-    from: &str,
-    to: &str,
-    status: u16,
-    method: Method,
-) -> RedirectDecision {
+pub fn decide_redirect(from: &str, to: &str, status: u16, method: Method) -> RedirectDecision {
     // Only the redirect statuses the spec defines are followed.
     let method_preserving = matches!(status, 307 | 308);
     let method_changing = matches!(status, 301 | 302 | 303);
@@ -202,7 +195,12 @@ mod tests {
             307,
             Method::Get,
         );
-        assert_eq!(d, RedirectDecision::Follow { attach_configured_headers: true });
+        assert_eq!(
+            d,
+            RedirectDecision::Follow {
+                attach_configured_headers: true
+            }
+        );
     }
 
     #[test]
@@ -213,7 +211,12 @@ mod tests {
             307,
             Method::Get,
         );
-        assert_eq!(d, RedirectDecision::Follow { attach_configured_headers: false });
+        assert_eq!(
+            d,
+            RedirectDecision::Follow {
+                attach_configured_headers: false
+            }
+        );
     }
 
     #[test]
@@ -224,7 +227,12 @@ mod tests {
             308,
             Method::Other,
         );
-        assert_eq!(d, RedirectDecision::Follow { attach_configured_headers: false });
+        assert_eq!(
+            d,
+            RedirectDecision::Follow {
+                attach_configured_headers: false
+            }
+        );
     }
 
     #[test]
@@ -246,7 +254,12 @@ mod tests {
             301,
             Method::Get,
         );
-        assert_eq!(d, RedirectDecision::Follow { attach_configured_headers: true });
+        assert_eq!(
+            d,
+            RedirectDecision::Follow {
+                attach_configured_headers: true
+            }
+        );
     }
 
     #[test]

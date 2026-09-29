@@ -179,7 +179,10 @@ impl Tool for BatchTool {
                         "error": e,
                     }));
                 }
-                Ok(ToolResult::RequiresConfirmation { description, callback_id }) => {
+                Ok(ToolResult::RequiresConfirmation {
+                    description,
+                    callback_id,
+                }) => {
                     // A sub-call that needs approval cannot be approved
                     // interactively from inside a batch; surface it so
                     // the model can re-issue that one call on its own.

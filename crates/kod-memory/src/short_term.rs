@@ -187,7 +187,7 @@ mod tests {
             timestamp: OffsetDateTime::now_utc(),
             relevance: 1.0,
             metadata: Default::default(),
-        
+
             superseded_by: None,
             contradicts: Vec::new(),
         }
@@ -284,7 +284,7 @@ mod coverage_short_term_accessors {
             timestamp: OffsetDateTime::now_utc(),
             relevance: 1.0,
             metadata: Default::default(),
-        
+
             superseded_by: None,
             contradicts: Vec::new(),
         }

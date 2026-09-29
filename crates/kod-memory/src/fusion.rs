@@ -167,13 +167,27 @@ pub fn classify_intent_with_confidence(query: &str) -> (QueryIntent, f64) {
     const QUESTION_WORDS: &[&str] = &[
         "what", "why", "how", "when", "where", "who", "which", "does", "do", "is", "are",
     ];
-    const PREFERENCE_WORDS: &[&str] =
-        &["prefer", "always", "never", "convention", "style"];
-    const TEMPORAL_WORDS: &[&str] =
-        &["when", "last time", "yesterday", "recently", "earlier", "before"];
+    const PREFERENCE_WORDS: &[&str] = &["prefer", "always", "never", "convention", "style"];
+    const TEMPORAL_WORDS: &[&str] = &[
+        "when",
+        "last time",
+        "yesterday",
+        "recently",
+        "earlier",
+        "before",
+    ];
     const PROCEDURAL_VERBS: &[&str] = &[
-        "add", "fix", "write", "create", "remove", "delete", "refactor", "rename", "move",
-        "implement", "update",
+        "add",
+        "fix",
+        "write",
+        "create",
+        "remove",
+        "delete",
+        "refactor",
+        "rename",
+        "move",
+        "implement",
+        "update",
     ];
 
     let ends_with_q = trimmed.ends_with('?');
@@ -345,11 +359,7 @@ mod tests {
     // ---- MMR ---------------------------------------------------------
 
     fn jaccard(a: &str, b: &str) -> f64 {
-        if a == b {
-            1.0
-        } else {
-            0.0
-        }
+        if a == b { 1.0 } else { 0.0 }
     }
 
     #[test]

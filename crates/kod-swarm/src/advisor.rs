@@ -299,12 +299,7 @@ impl EmissionGuard {
             return Admission::Accept;
         }
         // Budget full. Find the minimum.
-        let Some((idx, &min)) = self
-            .pending
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, s)| **s)
-        else {
+        let Some((idx, &min)) = self.pending.iter().enumerate().min_by_key(|(_, s)| **s) else {
             // Budget limit is zero: no slot can be created.
             return Admission::RejectBudget;
         };
@@ -619,10 +614,7 @@ mod tests {
         // `"Stop the loop."` and `"stop the loop!"` normalize to the
         // same key.
         let mut g = EmissionGuard::new();
-        assert!(
-            g.admit(&a("Stop the loop.", Severity::Concern))
-                .accepted(),
-        );
+        assert!(g.admit(&a("Stop the loop.", Severity::Concern)).accepted(),);
         assert_eq!(
             g.admit(&a("stop the loop!", Severity::Concern)),
             Admission::RejectDuplicate,
@@ -789,7 +781,10 @@ mod tests {
     #[test]
     fn a_blocker_while_streaming_is_a_steer() {
         let d = route(
-            &a("stop — you are about to delete the wrong file", Severity::Blocker),
+            &a(
+                "stop — you are about to delete the wrong file",
+                Severity::Blocker,
+            ),
             PrimaryState::Streaming,
         );
         assert_eq!(d, Delivery::Steer);

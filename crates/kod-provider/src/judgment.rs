@@ -125,18 +125,14 @@ impl Question {
     /// The question's id.
     pub fn id(&self) -> &str {
         match self {
-            Self::YesNo { id, .. }
-            | Self::Choice { id, .. }
-            | Self::Score { id, .. } => id,
+            Self::YesNo { id, .. } | Self::Choice { id, .. } | Self::Score { id, .. } => id,
         }
     }
 
     /// The question text, as shown to the model.
     pub fn text(&self) -> &str {
         match self {
-            Self::YesNo { text, .. }
-            | Self::Choice { text, .. }
-            | Self::Score { text, .. } => text,
+            Self::YesNo { text, .. } | Self::Choice { text, .. } | Self::Score { text, .. } => text,
         }
     }
 
@@ -147,12 +143,8 @@ impl Question {
     pub fn labels(&self) -> Vec<&str> {
         match self {
             Self::YesNo { .. } => vec!["yes", "no"],
-            Self::Choice { criteria, .. } => {
-                criteria.iter().map(|(l, _)| l.as_str()).collect()
-            }
-            Self::Score { levels, .. } => {
-                levels.iter().map(|(l, _)| l.as_str()).collect()
-            }
+            Self::Choice { criteria, .. } => criteria.iter().map(|(l, _)| l.as_str()).collect(),
+            Self::Score { levels, .. } => levels.iter().map(|(l, _)| l.as_str()).collect(),
         }
     }
 
@@ -413,7 +405,9 @@ pub fn parse_response(text: &str, questions: &[Question]) -> Answers {
 
     let mut out = Answers::default();
     for line in text.lines() {
-        let Some(colon) = line.find(':') else { continue };
+        let Some(colon) = line.find(':') else {
+            continue;
+        };
         let id = line[..colon].trim();
         let rest = line[colon + 1..].trim();
         let Some(q) = by_id.get(id) else { continue };
@@ -548,11 +542,7 @@ pub struct JudgmentClient {
 }
 
 impl JudgmentClient {
-    pub fn new(
-        provider: Arc<dyn LlmProvider>,
-        model: ModelRef,
-        options: JudgmentOptions,
-    ) -> Self {
+    pub fn new(provider: Arc<dyn LlmProvider>, model: ModelRef, options: JudgmentOptions) -> Self {
         Self {
             provider,
             model,
@@ -714,11 +704,7 @@ mod tests {
         async fn list_models(&self) -> KodResult<Vec<crate::ModelInfo>> {
             Ok(vec![])
         }
-        async fn generate(
-            &self,
-            _prompt: &str,
-            _options: &GenerationOptions,
-        ) -> KodResult<String> {
+        async fn generate(&self, _prompt: &str, _options: &GenerationOptions) -> KodResult<String> {
             Ok(String::new())
         }
         async fn generate_with_tools(
@@ -736,15 +722,11 @@ mod tests {
             &self,
             _p: &str,
             _o: &GenerationOptions,
-        ) -> std::pin::Pin<
-            Box<dyn futures::Stream<Item = KodResult<crate::StreamChunk>> + Send + '_>,
-        > {
+        ) -> std::pin::Pin<Box<dyn futures::Stream<Item = KodResult<crate::StreamChunk>> + Send + '_>>
+        {
             Box::pin(futures::stream::empty())
         }
-        async fn complete(
-            &self,
-            req: &CompletionRequest,
-        ) -> KodResult<GenerationResponse> {
+        async fn complete(&self, req: &CompletionRequest) -> KodResult<GenerationResponse> {
             self.system_prompts
                 .lock()
                 .unwrap()
@@ -912,14 +894,8 @@ mod tests {
         // as a whole word, so a reply of `xhigh` parses as `xhigh`
         // (not `high`) and a reply of `high` parses as `high`.
         let qs = vec![score_effort("e")];
-        assert_eq!(
-            parse_response("e: xhigh", &qs).get("e"),
-            Some("xhigh"),
-        );
-        assert_eq!(
-            parse_response("e: high", &qs).get("e"),
-            Some("high"),
-        );
+        assert_eq!(parse_response("e: xhigh", &qs).get("e"), Some("xhigh"),);
+        assert_eq!(parse_response("e: high", &qs).get("e"), Some("high"),);
     }
 
     #[test]
@@ -1019,9 +995,7 @@ mod tests {
 
     #[tokio::test]
     async fn ask_returns_the_parsed_answers_on_a_clean_reply() {
-        let provider = Arc::new(ScriptedJudge::new(vec![
-            "stuck: no\ndir: a\n".to_string(),
-        ]));
+        let provider = Arc::new(ScriptedJudge::new(vec!["stuck: no\ndir: a\n".to_string()]));
         let client = JudgmentClient::new(
             provider,
             ModelRef::new("judge", "test"),
@@ -1054,9 +1028,7 @@ mod tests {
     async fn ask_gives_up_after_the_retry_budget() {
         // Every reply omits the second question. The retry budget is
         // 1 by default, so 2 total attempts, then Unparseable.
-        let provider = Arc::new(ScriptedJudge::new(vec![
-            "stuck: yes\n".to_string(),
-        ]));
+        let provider = Arc::new(ScriptedJudge::new(vec!["stuck: yes\n".to_string()]));
         let client = JudgmentClient::new(
             provider,
             ModelRef::new("judge", "test"),
@@ -1094,8 +1066,8 @@ mod tests {
         // the *user* message. This is what lets the provider cache
         // the system prefix across the two attempts.
         let provider = Arc::new(ScriptedJudge::new(vec![
-            "stuck: yes\n".to_string(),           // misses `dir`
-            "stuck: yes\ndir: d\n".to_string(),   // answers both
+            "stuck: yes\n".to_string(),         // misses `dir`
+            "stuck: yes\ndir: d\n".to_string(), // answers both
         ]));
         let captured = provider.clone();
         let client = JudgmentClient::new(
@@ -1125,11 +1097,7 @@ mod tests {
             async fn list_models(&self) -> KodResult<Vec<crate::ModelInfo>> {
                 Ok(vec![])
             }
-            async fn generate(
-                &self,
-                _p: &str,
-                _o: &GenerationOptions,
-            ) -> KodResult<String> {
+            async fn generate(&self, _p: &str, _o: &GenerationOptions) -> KodResult<String> {
                 Ok(String::new())
             }
             async fn generate_with_tools(
@@ -1145,18 +1113,11 @@ mod tests {
                 _p: &str,
                 _o: &GenerationOptions,
             ) -> std::pin::Pin<
-                Box<
-                    dyn futures::Stream<Item = KodResult<crate::StreamChunk>>
-                        + Send
-                        + '_,
-                >,
+                Box<dyn futures::Stream<Item = KodResult<crate::StreamChunk>> + Send + '_>,
             > {
                 Box::pin(futures::stream::empty())
             }
-            async fn complete(
-                &self,
-                _req: &CompletionRequest,
-            ) -> KodResult<GenerationResponse> {
+            async fn complete(&self, _req: &CompletionRequest) -> KodResult<GenerationResponse> {
                 Err(KodError::Provider("simulated failure".into()))
             }
         }
@@ -1185,11 +1146,7 @@ mod tests {
             async fn list_models(&self) -> KodResult<Vec<crate::ModelInfo>> {
                 Ok(vec![])
             }
-            async fn generate(
-                &self,
-                _p: &str,
-                _o: &GenerationOptions,
-            ) -> KodResult<String> {
+            async fn generate(&self, _p: &str, _o: &GenerationOptions) -> KodResult<String> {
                 Ok(String::new())
             }
             async fn generate_with_tools(
@@ -1208,18 +1165,11 @@ mod tests {
                 _p: &str,
                 _o: &GenerationOptions,
             ) -> std::pin::Pin<
-                Box<
-                    dyn futures::Stream<Item = KodResult<crate::StreamChunk>>
-                        + Send
-                        + '_,
-                >,
+                Box<dyn futures::Stream<Item = KodResult<crate::StreamChunk>> + Send + '_>,
             > {
                 Box::pin(futures::stream::empty())
             }
-            async fn complete(
-                &self,
-                req: &CompletionRequest,
-            ) -> KodResult<GenerationResponse> {
+            async fn complete(&self, req: &CompletionRequest) -> KodResult<GenerationResponse> {
                 self.captured.lock().unwrap().push(req.options.clone());
                 Ok(GenerationResponse::Text {
                     content: "q: yes\n".to_string(),

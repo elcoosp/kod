@@ -92,8 +92,8 @@ impl IsolationOwnership {
 /// Write the marker for `id` at the worktree root.
 pub fn write_marker(worktree: &Path, id: impl Into<String>) -> Result<()> {
     let marker = IsolationOwnership::for_current_process(id);
-    let body = serde_json::to_vec_pretty(&marker)
-        .map_err(|e| KodError::Serialization(e.to_string()))?;
+    let body =
+        serde_json::to_vec_pretty(&marker).map_err(|e| KodError::Serialization(e.to_string()))?;
     let path = worktree.join(MARKER_FILENAME);
     std::fs::write(&path, body).map_err(KodError::Io)?;
     Ok(())

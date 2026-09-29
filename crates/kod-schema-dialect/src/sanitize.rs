@@ -26,12 +26,19 @@ pub enum KeywordRole {
 /// Classify a keyword by the role of its value.
 pub fn role_of(keyword: &str) -> KeywordRole {
     match keyword {
-        "items" | "additionalProperties" | "not" | "if" | "then" | "else"
-        | "propertyNames" | "contains" | "unevaluatedItems" | "unevaluatedProperties" => {
-            KeywordRole::Subschema
+        "items"
+        | "additionalProperties"
+        | "not"
+        | "if"
+        | "then"
+        | "else"
+        | "propertyNames"
+        | "contains"
+        | "unevaluatedItems"
+        | "unevaluatedProperties" => KeywordRole::Subschema,
+        "properties" | "patternProperties" | "$defs" | "definitions" | "dependentSchemas" => {
+            KeywordRole::SubschemaMap
         }
-        "properties" | "patternProperties" | "$defs" | "definitions"
-        | "dependentSchemas" => KeywordRole::SubschemaMap,
         "allOf" | "anyOf" | "oneOf" | "prefixItems" => KeywordRole::SubschemaArray,
         "enum" | "const" | "default" | "examples" => KeywordRole::Data,
         _ => KeywordRole::Unknown,
@@ -43,7 +50,11 @@ pub fn role_of(keyword: &str) -> KeywordRole {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppliedTransform {
     /// A keyword was renamed: `(from, to)`, at this JSON path.
-    Renamed { path: String, from: String, to: String },
+    Renamed {
+        path: String,
+        from: String,
+        to: String,
+    },
     /// A keyword was removed because the provider does not support it.
     Removed { path: String, keyword: String },
     /// `required` entries naming properties that do not exist were
@@ -81,16 +92,54 @@ pub struct DialectSpec {
 /// compared against this, so a typo in a spec is a test failure, not a
 /// silently-unsupported keyword.
 pub const ALL_KEYWORDS: &[&str] = &[
-    "type", "properties", "required", "items", "additionalProperties",
-    "enum", "const", "default", "description", "title", "$defs",
-    "definitions", "allOf", "anyOf", "oneOf", "not", "if", "then",
-    "else", "format", "pattern", "minimum", "maximum", "minLength",
-    "maxLength", "minItems", "maxItems", "uniqueItems", "prefixItems",
-    "patternProperties", "propertyNames", "dependentSchemas",
-    "dependentRequired", "contains", "minContains", "maxContains",
-    "unevaluatedItems", "unevaluatedProperties", "examples", "multipleOf",
-    "exclusiveMinimum", "exclusiveMaximum", "minProperties",
-    "maxProperties", "$ref", "$schema", "$id", "additionalItems",
+    "type",
+    "properties",
+    "required",
+    "items",
+    "additionalProperties",
+    "enum",
+    "const",
+    "default",
+    "description",
+    "title",
+    "$defs",
+    "definitions",
+    "allOf",
+    "anyOf",
+    "oneOf",
+    "not",
+    "if",
+    "then",
+    "else",
+    "format",
+    "pattern",
+    "minimum",
+    "maximum",
+    "minLength",
+    "maxLength",
+    "minItems",
+    "maxItems",
+    "uniqueItems",
+    "prefixItems",
+    "patternProperties",
+    "propertyNames",
+    "dependentSchemas",
+    "dependentRequired",
+    "contains",
+    "minContains",
+    "maxContains",
+    "unevaluatedItems",
+    "unevaluatedProperties",
+    "examples",
+    "multipleOf",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "minProperties",
+    "maxProperties",
+    "$ref",
+    "$schema",
+    "$id",
+    "additionalItems",
 ];
 
 /// The spec for a known provider.
@@ -106,13 +155,36 @@ pub fn spec_for_provider(provider: &str) -> DialectSpec {
             // Anthropic's tool input schemas accept most of JSON
             // Schema draft 2020-12.
             supported: &[
-                "type", "properties", "required", "items",
-                "additionalProperties", "enum", "default", "description",
-                "title", "anyOf", "allOf", "oneOf", "not", "format",
-                "pattern", "minimum", "maximum", "minLength", "maxLength",
-                "minItems", "maxItems", "uniqueItems", "multipleOf",
-                "exclusiveMinimum", "exclusiveMaximum", "minProperties",
-                "maxProperties", "$ref", "$defs", "const",
+                "type",
+                "properties",
+                "required",
+                "items",
+                "additionalProperties",
+                "enum",
+                "default",
+                "description",
+                "title",
+                "anyOf",
+                "allOf",
+                "oneOf",
+                "not",
+                "format",
+                "pattern",
+                "minimum",
+                "maximum",
+                "minLength",
+                "maxLength",
+                "minItems",
+                "maxItems",
+                "uniqueItems",
+                "multipleOf",
+                "exclusiveMinimum",
+                "exclusiveMaximum",
+                "minProperties",
+                "maxProperties",
+                "$ref",
+                "$defs",
+                "const",
             ],
             renames: &[],
             const_to_enum: false,
@@ -125,12 +197,31 @@ pub fn spec_for_provider(provider: &str) -> DialectSpec {
             // on some gateways. `$ref`-heavy schemas from MCP servers
             // are the common tripwire.
             supported: &[
-                "type", "properties", "required", "items",
-                "additionalProperties", "enum", "default", "description",
-                "title", "anyOf", "allOf", "not", "format", "pattern",
-                "minimum", "maximum", "minLength", "maxLength", "minItems",
-                "maxItems", "uniqueItems", "multipleOf",
-                "exclusiveMinimum", "exclusiveMaximum", "minProperties",
+                "type",
+                "properties",
+                "required",
+                "items",
+                "additionalProperties",
+                "enum",
+                "default",
+                "description",
+                "title",
+                "anyOf",
+                "allOf",
+                "not",
+                "format",
+                "pattern",
+                "minimum",
+                "maximum",
+                "minLength",
+                "maxLength",
+                "minItems",
+                "maxItems",
+                "uniqueItems",
+                "multipleOf",
+                "exclusiveMinimum",
+                "exclusiveMaximum",
+                "minProperties",
                 "maxProperties",
             ],
             renames: &[("oneOf", "anyOf")],
@@ -182,7 +273,9 @@ fn sanitize_in_place(
     if spec.const_to_enum
         && let Some(c) = obj.remove("const")
     {
-        applied.push(AppliedTransform::ConstToEnum { path: path.to_string() });
+        applied.push(AppliedTransform::ConstToEnum {
+            path: path.to_string(),
+        });
         obj.insert("enum".to_string(), Value::Array(vec![c]));
     }
 
@@ -199,10 +292,7 @@ fn sanitize_in_place(
         if !dangling.is_empty() {
             let kept: Vec<Value> = req
                 .iter()
-                .filter(|r| {
-                    r.as_str()
-                        .is_some_and(|name| props.contains_key(name))
-                })
+                .filter(|r| r.as_str().is_some_and(|name| props.contains_key(name)))
                 .cloned()
                 .collect();
             obj.insert("required".to_string(), Value::Array(kept));
@@ -250,10 +340,7 @@ fn sanitize_in_place(
         }
         // Structural keywords are the schema; dropping them changes
         // meaning. `$defs` is dropped only when empty.
-        let safe = matches!(
-            role_of(&key),
-            KeywordRole::Data | KeywordRole::Unknown
-        );
+        let safe = matches!(role_of(&key), KeywordRole::Data | KeywordRole::Unknown);
         if safe {
             obj.remove(&key);
             applied.push(AppliedTransform::Removed {
@@ -344,7 +431,10 @@ mod tests {
             "$defs": {"x": {"type": "string"}}
         });
         let (out, _) = sanitize(&schema, &spec);
-        assert!(out.get("$defs").is_some(), "$defs is structural and survives");
+        assert!(
+            out.get("$defs").is_some(),
+            "$defs is structural and survives"
+        );
     }
 
     #[test]
@@ -369,7 +459,11 @@ mod tests {
         let (out, applied) = sanitize(&schema, &spec);
         assert_eq!(out.get("enum"), Some(&json!(["fixed"])));
         assert!(out.get("const").is_none());
-        assert!(applied.iter().any(|a| matches!(a, AppliedTransform::ConstToEnum { .. })));
+        assert!(
+            applied
+                .iter()
+                .any(|a| matches!(a, AppliedTransform::ConstToEnum { .. }))
+        );
     }
 
     #[test]
@@ -414,7 +508,10 @@ mod tests {
         });
         let (out, _applied) = sanitize(&schema, &spec);
         let inner = out["properties"]["outer"]["properties"]["inner"].clone();
-        assert!(inner.get("const").is_none(), "the nested const was rewritten");
+        assert!(
+            inner.get("const").is_none(),
+            "the nested const was rewritten"
+        );
         assert_eq!(inner.get("enum"), Some(&json!([1])));
     }
 
@@ -476,6 +573,9 @@ mod tests {
         let schema = json!({"const": "x"});
         let before = schema.clone();
         let _ = sanitize(&schema, &spec);
-        assert_eq!(schema, before, "sanitize takes &Value and returns a new one");
+        assert_eq!(
+            schema, before,
+            "sanitize takes &Value and returns a new one"
+        );
     }
 }

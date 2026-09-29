@@ -70,10 +70,7 @@ pub fn turn_payload(cfg: &TelemetryConfig, r: &TurnRecord) -> Value {
     attrs.push(string_attr("gen_ai.request.model", &r.model));
     attrs.push(string_attr("gen_ai.endpoint", &r.endpoint));
     attrs.push(int_attr("gen_ai.usage.input_tokens", r.prompt_tokens));
-    attrs.push(int_attr(
-        "gen_ai.usage.output_tokens",
-        r.completion_tokens,
-    ));
+    attrs.push(int_attr("gen_ai.usage.output_tokens", r.completion_tokens));
     attrs.push(int_attr(
         "gen_ai.usage.cache_read_tokens",
         r.cache_read_tokens,
@@ -192,10 +189,7 @@ mod tests {
             get("gen_ai.usage.cache_read_tokens").unwrap()["intValue"],
             "100",
         );
-        assert_eq!(
-            get("kod.turn.duration_ms").unwrap()["intValue"],
-            "1500",
-        );
+        assert_eq!(get("kod.turn.duration_ms").unwrap()["intValue"], "1500",);
     }
 
     #[test]
@@ -248,9 +242,18 @@ mod tests {
             .unwrap()
             .clone();
         let get = |k: &str| attrs.iter().find(|a| a["key"] == k).cloned();
-        assert_eq!(get("gen_ai.tool.name").unwrap()["value"]["stringValue"], "read_file");
-        assert_eq!(get("kod.tool.status").unwrap()["value"]["stringValue"], "ok");
-        assert_eq!(get("kod.tool.duration_ms").unwrap()["value"]["intValue"], "12");
+        assert_eq!(
+            get("gen_ai.tool.name").unwrap()["value"]["stringValue"],
+            "read_file"
+        );
+        assert_eq!(
+            get("kod.tool.status").unwrap()["value"]["stringValue"],
+            "ok"
+        );
+        assert_eq!(
+            get("kod.tool.duration_ms").unwrap()["value"]["intValue"],
+            "12"
+        );
     }
 
     #[test]
@@ -271,11 +274,7 @@ mod tests {
         // round-trip proves the value is well-formed.
         let t = serde_json::to_string(&turn_payload(&cfg(), &turn())).unwrap();
         assert!(t.contains("resourceLogs"));
-        let tool = serde_json::to_string(&tool_payload(
-            &cfg(),
-            &ToolRecord::default(),
-        ))
-        .unwrap();
+        let tool = serde_json::to_string(&tool_payload(&cfg(), &ToolRecord::default())).unwrap();
         assert!(tool.contains("resourceLogs"));
     }
 }

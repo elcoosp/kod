@@ -6,8 +6,8 @@
 //! background job whose completion nobody is told about is just a
 //! process leak.
 
-use kod_core::router::RouterConfig;
 use kod_core::KodEngine;
+use kod_core::router::RouterConfig;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -45,9 +45,10 @@ async fn a_background_command_delivers_an_interrupt_on_completion() {
     for _ in 0..200 {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         let steers = engine.pending_steers_for("session").await;
-        if steers.iter().any(|s| {
-            matches!(s.source, kod_core::steer::InterruptSource::BackgroundTask)
-        }) {
+        if steers
+            .iter()
+            .any(|s| matches!(s.source, kod_core::steer::InterruptSource::BackgroundTask))
+        {
             delivered = true;
             break;
         }

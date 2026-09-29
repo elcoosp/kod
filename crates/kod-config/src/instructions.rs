@@ -93,20 +93,38 @@ pub fn parse_agents_md(src: &str, from: &Path) -> Vec<InstructionSection> {
         if let Some(rest) = trimmed.strip_prefix(":::") {
             let rest = rest.trim();
             if rest.is_empty() {
-                flush(&mut out, current_when.clone(), current_name.clone(), &mut buf, from);
+                flush(
+                    &mut out,
+                    current_when.clone(),
+                    current_name.clone(),
+                    &mut buf,
+                    from,
+                );
                 current_when = When::Always;
                 in_fence = false;
                 continue;
             }
             if let Some(cond) = rest.strip_prefix("when").map(str::trim) {
-                flush(&mut out, current_when.clone(), current_name.clone(), &mut buf, from);
+                flush(
+                    &mut out,
+                    current_when.clone(),
+                    current_name.clone(),
+                    &mut buf,
+                    from,
+                );
                 current_when = parse_condition(cond);
                 in_fence = true;
             }
             continue;
         }
         if !in_fence && let Some(name) = trimmed.strip_prefix("## ") {
-            flush(&mut out, current_when.clone(), current_name.clone(), &mut buf, from);
+            flush(
+                &mut out,
+                current_when.clone(),
+                current_name.clone(),
+                &mut buf,
+                from,
+            );
             current_when = When::Always;
             current_name = Some(name.trim().to_string());
             continue;
@@ -221,9 +239,7 @@ fn expand_imports_rec(
                 && !rest.chars().any(char::is_whitespace)
                 && depth + 1 <= MAX_IMPORT_DEPTH
             {
-                if let Some(expanded) =
-                    try_expand_import(rest, base_dir, depth + 1, visited)
-                {
+                if let Some(expanded) = try_expand_import(rest, base_dir, depth + 1, visited) {
                     out.push_str(&expanded);
                     if !expanded.ends_with('\n') {
                         out.push('\n');
@@ -362,7 +378,9 @@ fn guard_matches(when: &When, task: Option<&str>, paths: &[PathBuf], langs: &[&s
         When::Always => true,
         When::TaskType(t) => task.map(|x| x.eq_ignore_ascii_case(t)).unwrap_or(false),
         When::Lang(l) => langs.iter().any(|x| x.eq_ignore_ascii_case(l)),
-        When::Path(glob) => paths.iter().any(|p| simple_glob_match(glob, &p.to_string_lossy())),
+        When::Path(glob) => paths
+            .iter()
+            .any(|p| simple_glob_match(glob, &p.to_string_lossy())),
     }
 }
 
@@ -439,7 +457,10 @@ mod tests {
 
     #[test]
     fn task_fence_guards_a_block() {
-        let s = parse_agents_md("::: when task=Debugging\nPrefer tracing.\n:::\n", Path::new("a"));
+        let s = parse_agents_md(
+            "::: when task=Debugging\nPrefer tracing.\n:::\n",
+            Path::new("a"),
+        );
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].when, When::TaskType("Debugging".into()));
     }
@@ -472,8 +493,16 @@ mod tests {
     fn render_filters_by_path() {
         let s = parse_agents_md("::: when path=crates/web/**\nWeb.\n:::\n", Path::new("a"));
         let chain = InstructionChain { sections: s };
-        assert!(chain.render(None, &[p("crates/web/src/lib.rs")], &[]).contains("Web"));
-        assert!(chain.render(None, &[p("crates/core/lib.rs")], &[]).is_empty());
+        assert!(
+            chain
+                .render(None, &[p("crates/web/src/lib.rs")], &[])
+                .contains("Web")
+        );
+        assert!(
+            chain
+                .render(None, &[p("crates/core/lib.rs")], &[])
+                .is_empty()
+        );
     }
 
     #[test]
@@ -506,7 +535,10 @@ mod tests {
     #[test]
     fn glob_double_star_matches_across_segments() {
         assert!(simple_glob_match("crates/web/**", "crates/web/src/lib.rs"));
-        assert!(simple_glob_match("crates/**/src/*.rs", "crates/web/src/a.rs"));
+        assert!(simple_glob_match(
+            "crates/**/src/*.rs",
+            "crates/web/src/a.rs"
+        ));
         assert!(!simple_glob_match("crates/web/**", "crates/core/lib.rs"));
     }
 
@@ -557,11 +589,7 @@ mod tests {
         let dir = unique_dir("fence");
         std::fs::write(dir.join("other.md"), "SHOULD NOT APPEAR\n").unwrap();
         let main = dir.join("AGENTS.md");
-        std::fs::write(
-            &main,
-            "Intro.\n```\n@other.md\n```\nOutro.\n",
-        )
-        .unwrap();
+        std::fs::write(&main, "Intro.\n```\n@other.md\n```\nOutro.\n").unwrap();
         let src = std::fs::read_to_string(&main).unwrap();
         let out = expand_imports(&src, &main);
         assert!(!out.contains("SHOULD NOT APPEAR"), "got: {out}");

@@ -129,10 +129,16 @@ mod tests {
     #[test]
     fn isolation_round_trips_each_variant() {
         for variant in [Isolation::Shared, Isolation::Worktree, Isolation::Auto] {
-            let c = SwarmConfig { isolation: variant, ..SwarmConfig::default() };
+            let c = SwarmConfig {
+                isolation: variant,
+                ..SwarmConfig::default()
+            };
             let toml_str = toml::to_string(&c).unwrap();
             let parsed: SwarmConfig = toml::from_str(&toml_str).unwrap();
-            assert_eq!(parsed.isolation, variant, "round trip failed for {variant:?}");
+            assert_eq!(
+                parsed.isolation, variant,
+                "round trip failed for {variant:?}"
+            );
         }
     }
 

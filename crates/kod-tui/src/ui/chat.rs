@@ -1014,7 +1014,11 @@ mod coverage_chat_widget {
             .map(|i| format!("row {i}"))
             .collect::<Vec<_>>()
             .join("\n");
-        push_message(&mut app, MessageRole::Tool, &format!("[run] a tool\n{body}"));
+        push_message(
+            &mut app,
+            MessageRole::Tool,
+            &format!("[run] a tool\n{body}"),
+        );
         let text = render(&app, 100, 40);
         assert!(text.contains("row 3"), "4th line visible: {text}");
         assert!(!text.contains("row 4"), "5th line collapsed: {text}");

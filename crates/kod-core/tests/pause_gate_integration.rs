@@ -6,13 +6,13 @@
 
 use async_trait::async_trait;
 use futures::Stream;
-use kod_core::router::RouterConfig;
 use kod_core::KodEngine;
+use kod_core::router::RouterConfig;
 use kod_error::Result;
 use kod_provider::request::CompletionRequest;
 use kod_provider::{
-    GenerationOptions, GenerationResponse, LlmProvider, ModelRef,
-    ProviderCapabilities, ProviderRegistry, StreamChunk,
+    GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderCapabilities,
+    ProviderRegistry, StreamChunk,
 };
 use kod_types::ToolDefinition;
 use std::pin::Pin;
@@ -110,9 +110,7 @@ async fn a_paused_engine_does_not_complete_a_turn_until_resumed() {
 
     // Drain the chunk receiver in the background so the send does not
     // block if any chunk slips through before the pause check fires.
-    let drain = tokio::spawn(async move {
-        while rx.recv().await.is_some() {}
-    });
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
 
     // Wait long enough for the process to have reached the pause
     // check (prepare_turn_for runs in tens of ms). If the wiring is
@@ -158,9 +156,7 @@ async fn an_unpaused_engine_completes_normally() {
     engine.start().await.unwrap();
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
-    let drain = tokio::spawn(async move {
-        while rx.recv().await.is_some() {}
-    });
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
     let start = std::time::Instant::now();
     let _ = engine.process_streaming("hi", &tx).await;
     drop(tx);

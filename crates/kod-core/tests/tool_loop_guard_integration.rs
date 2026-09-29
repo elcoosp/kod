@@ -7,18 +7,18 @@
 
 use async_trait::async_trait;
 use futures::Stream;
-use kod_core::router::RouterConfig;
 use kod_core::KodEngine;
+use kod_core::router::RouterConfig;
 use kod_error::Result;
 use kod_provider::request::CompletionRequest;
 use kod_provider::{
-    GenerationOptions, GenerationResponse, LlmProvider, ModelRef,
-    ProviderCapabilities, ProviderRegistry, StreamChunk,
+    GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderCapabilities,
+    ProviderRegistry, StreamChunk,
 };
 use kod_types::{ToolCall, ToolDefinition};
 use std::pin::Pin;
-use std::sync::Mutex;
 use std::sync::Arc;
+use std::sync::Mutex;
 use tempfile::TempDir;
 
 /// Records every `complete()` call's `messages` field, and issues a
@@ -133,9 +133,7 @@ async fn the_corrective_reaches_the_provider_after_three_identical_rounds() {
     engine.start().await.unwrap();
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
-    let drain = tokio::spawn(async move {
-        while rx.recv().await.is_some() {}
-    });
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
     let _ = engine.process_streaming("loop test", &tx).await;
     drop(tx);
     let _ = drain.await;
@@ -275,9 +273,7 @@ async fn no_corrective_when_the_rounds_differ() {
     engine.start().await.unwrap();
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
-    let drain = tokio::spawn(async move {
-        while rx.recv().await.is_some() {}
-    });
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
     let _ = engine.process_streaming("diff test", &tx).await;
     drop(tx);
     let _ = drain.await;

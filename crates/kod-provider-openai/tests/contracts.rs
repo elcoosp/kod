@@ -285,8 +285,7 @@ async fn rate_limited_complete_waits_out_hint_then_succeeds() {
         })
         .await;
 
-    let provider =
-        provider_for(&mock).with_rate_limit_wait(std::time::Duration::from_secs(5));
+    let provider = provider_for(&mock).with_rate_limit_wait(std::time::Duration::from_secs(5));
     let req = request_with(vec![user("hi")], SystemPrompt::default());
 
     // Lift the 429 mock as soon as it has answered once; the provider's

@@ -171,9 +171,7 @@ impl ShakePlan {
     pub fn estimated_savings_bytes(&self) -> u64 {
         self.actions
             .iter()
-            .map(|a| {
-                (a.range.len() as u64).saturating_sub(a.placeholder.len() as u64)
-            })
+            .map(|a| (a.range.len() as u64).saturating_sub(a.placeholder.len() as u64))
             .sum()
     }
 
@@ -422,9 +420,7 @@ pub fn plan_shake(
     // Whole-plan savings gate.
     let total_freed: u64 = candidates
         .iter()
-        .map(|(_, a)| {
-            (a.range.len() as u64).saturating_sub(a.placeholder.len() as u64)
-        })
+        .map(|(_, a)| (a.range.len() as u64).saturating_sub(a.placeholder.len() as u64))
         .sum();
     if total_freed / 4 < config.minimum_savings {
         return ShakePlan::default();
@@ -435,9 +431,8 @@ pub fn plan_shake(
     // index. A caller that walks the plan in order and splices each
     // message from the end backwards does not need to re-sort or
     // re-index.
-    candidates.sort_by(|(ia, a), (ib, b)| {
-        ia.cmp(ib).then_with(|| b.range.start.cmp(&a.range.start))
-    });
+    candidates
+        .sort_by(|(ia, a), (ib, b)| ia.cmp(ib).then_with(|| b.range.start.cmp(&a.range.start)));
 
     ShakePlan {
         actions: candidates.into_iter().map(|(_, a)| a).collect(),
@@ -502,7 +497,10 @@ fn find_fences(content: &str) -> Vec<Region> {
                 if marker_len >= 3 {
                     // Info string: everything from the end of the
                     // marker to the end of the line, trimmed.
-                    let info_end = content[k..].find('\n').map(|n| k + n).unwrap_or(bytes.len());
+                    let info_end = content[k..]
+                        .find('\n')
+                        .map(|n| k + n)
+                        .unwrap_or(bytes.len());
                     let info = content[k..info_end].trim().to_string();
                     opened = Some((ch, marker_len, info));
                 }
@@ -592,7 +590,10 @@ fn find_fence_closer(
                 k += 1;
             }
             if k - j >= marker_len {
-                let line_end = content[k..].find('\n').map(|n| k + n).unwrap_or(bytes.len());
+                let line_end = content[k..]
+                    .find('\n')
+                    .map(|n| k + n)
+                    .unwrap_or(bytes.len());
                 if content[k..line_end].trim().is_empty() {
                     let end = if line_end < bytes.len() {
                         line_end + 1
@@ -742,7 +743,9 @@ fn find_close_tag(content: &str, from: usize, name: &str) -> Option<usize> {
 
 /// Whether `pos` falls inside any of the given ranges.
 fn in_any_range(pos: usize, ranges: &[Region]) -> bool {
-    ranges.iter().any(|r| r.range.start <= pos && pos < r.range.end)
+    ranges
+        .iter()
+        .any(|r| r.range.start <= pos && pos < r.range.end)
 }
 
 #[cfg(test)]
@@ -804,7 +807,10 @@ mod tests {
         let fences = find_fences(content);
         assert_eq!(fences.len(), 1);
         let r = &fences[0];
-        assert_eq!(&content[r.range.start..r.range.end], "```rust\nfn main() {}\n```\n");
+        assert_eq!(
+            &content[r.range.start..r.range.end],
+            "```rust\nfn main() {}\n```\n"
+        );
         match &r.kind {
             RegionKind::Fence { language } => assert_eq!(language.as_deref(), Some("rust")),
             other => panic!("expected fence, got {other:?}"),
@@ -850,7 +856,10 @@ mod tests {
         let fences = find_fences(content);
         assert_eq!(fences.len(), 1);
         let r = &fences[0];
-        assert!(r.range.end >= content.len() - 2, "fence should span to the end");
+        assert!(
+            r.range.end >= content.len() - 2,
+            "fence should span to the end"
+        );
     }
 
     #[test]
@@ -884,8 +893,7 @@ mod tests {
         //   ```             literal content, not a closer (3 < 4)
         //   fenced body
         //   ```             literal content
-        let content =
-            "````\ncontent\n```\nmore content\nend\n```\nfenced body\n```\n";
+        let content = "````\ncontent\n```\nmore content\nend\n```\nfenced body\n```\n";
         let fences = find_fences(content);
         assert!(
             fences.is_empty(),
@@ -1000,7 +1008,8 @@ mod tests {
         // The doc's "overlap is containment": a fence that contains an
         // XML block produces one region, not two. The implementation
         // achieves this by masking, not by overlap detection.
-        let content = "before\n```\n<advisory>\nbody\n</advisory>\n```\nafter\n<context>\nx\n</context>\n";
+        let content =
+            "before\n```\n<advisory>\nbody\n</advisory>\n```\nafter\n<context>\nx\n</context>\n";
         let regions = scan_regions(content);
         // One fence + one trailing XML block.
         assert_eq!(regions.len(), 2, "got: {regions:?}");
@@ -1187,8 +1196,7 @@ mod tests {
         // A splice that walks the plan in order must hit the later
         // fence first, so an earlier byte offset stays valid.
         let big = "x".repeat(2_000);
-        let content =
-            format!("first\n```\n{big}\n```\nmid\n```\n{big}\n```\nend");
+        let content = format!("first\n```\n{big}\n```\nmid\n```\n{big}\n```\nend");
         let log = vec![user(&content)];
         let plan = plan_shake(&log, &ungated(), big_suffix(), false);
         assert_eq!(plan.len(), 2);
@@ -1206,7 +1214,10 @@ mod tests {
     fn savings_are_bytes_elided_minus_placeholder() {
         let a = ShakeAction {
             message_id: MessageId::new(),
-            range: ByteRange { start: 0, end: 1_000 },
+            range: ByteRange {
+                start: 0,
+                end: 1_000,
+            },
             kind: RegionKind::ToolBody,
             placeholder: "x".repeat(100),
         };

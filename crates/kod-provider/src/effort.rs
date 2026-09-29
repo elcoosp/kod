@@ -37,7 +37,6 @@ mod tests {
         assert_eq!(scaled_idle_timeout(base, EffortLevel::Medium), base);
     }
 
-
     #[test]
     fn higher_effort_gets_more_time() {
         let base = Duration::from_secs(180);
@@ -53,9 +52,11 @@ mod tests {
     fn lower_effort_fails_faster() {
         let base = Duration::from_secs(180);
         let none = scaled_idle_timeout(base, EffortLevel::None);
-        assert!(none < base, "a no-reasoning request should not wait out a thinking timeout");
+        assert!(
+            none < base,
+            "a no-reasoning request should not wait out a thinking timeout"
+        );
     }
-
 
     #[test]
     fn multipliers_are_monotone() {
@@ -81,9 +82,9 @@ mod tests {
     #[test]
     fn a_zero_base_stays_zero() {
         // A caller that disabled the timeout meant it.
-        assert_eq!(scaled_idle_timeout(Duration::ZERO, EffortLevel::Max), Duration::ZERO);
+        assert_eq!(
+            scaled_idle_timeout(Duration::ZERO, EffortLevel::Max),
+            Duration::ZERO
+        );
     }
-
-
-
 }

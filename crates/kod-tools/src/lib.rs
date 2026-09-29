@@ -37,12 +37,12 @@ pub mod aliases;
 pub mod ask;
 pub mod bash_interceptor;
 pub mod batch;
-pub mod tool_search;
-pub mod relevance;
 pub mod check;
 pub mod context;
 pub mod git;
 pub mod internal_url;
+pub mod relevance;
+pub mod tool_search;
 pub mod xd_handler;
 
 /// Re-export so a caller (the engine) can construct a default
@@ -63,7 +63,10 @@ pub use ask::{AskUserTool, QUESTION_MARKER, QuestionRequest, parse_question, que
 pub use check::CheckTool;
 pub use git::{GitBranchTool, GitCommitTool, GitDiffTool, GitStatusTool};
 pub use search::SearchFilesTool;
-pub use todo::{ ConfidenceState, TodoItem, TodoList, TodoStatus, TodoTool, in_progress_todo, new_list as new_todo_list, note_evidence };
+pub use todo::{
+    ConfidenceState, TodoItem, TodoList, TodoStatus, TodoTool, in_progress_todo,
+    new_list as new_todo_list, note_evidence,
+};
 pub use tools::{
     ExecuteCommandTool, FileInfoTool, GrepTool, ListFilesTool, PatchFileTool, ReadFileTool,
     WriteFileTool,

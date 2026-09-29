@@ -96,9 +96,7 @@ impl AnthropicProvider {
             api_key,
             client,
             timeout_secs,
-            concurrency: Arc::new(
-                kod_provider::concurrency::ProviderConcurrency::new(0),
-            ),
+            concurrency: Arc::new(kod_provider::concurrency::ProviderConcurrency::new(0)),
             stream_guard_enabled: true,
             rate_limit_wait: std::time::Duration::ZERO,
         })
@@ -213,17 +211,16 @@ impl AnthropicProvider {
             max_rate_limit_wait: self.rate_limit_wait,
             ..kod_provider::retry::RetryPolicy::default()
         };
-        let mut responses =
-            kod_provider::retry::with_retry(&policy, || {
-                let req = request.clone();
-                async move {
-                    self.inner
-                        .generate_content(req, stream)
-                        .await
-                        .map_err(adk_err)
-                }
-            })
-            .await?;
+        let mut responses = kod_provider::retry::with_retry(&policy, || {
+            let req = request.clone();
+            async move {
+                self.inner
+                    .generate_content(req, stream)
+                    .await
+                    .map_err(adk_err)
+            }
+        })
+        .await?;
         let mut text = String::new();
         let mut calls = Vec::new();
         let mut last_usage: Option<kod_provider::TokenUsage> = None;
@@ -787,7 +784,6 @@ impl LlmProvider for AnthropicProvider {
             }
         })
     }
-
 }
 
 impl AnthropicProvider {

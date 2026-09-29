@@ -22,7 +22,11 @@ use std::sync::OnceLock;
 pub enum InvalidationCause {
     /// The tool definitions array differs from the previous request.
     /// Expected on a late MCP registration; unexpected otherwise.
-    ToolSurfaceChanged { previous_fingerprint: u64, current_fingerprint: u64, reason: String },
+    ToolSurfaceChanged {
+        previous_fingerprint: u64,
+        current_fingerprint: u64,
+        reason: String,
+    },
     /// `compact_history_for` removed messages.
     Compaction { removed: usize },
     /// The current model reference changed.
@@ -61,7 +65,9 @@ impl JournalWriter {
             .append(true)
             .open(path)
             .ok()?;
-        Some(Self { file: Mutex::new(file) })
+        Some(Self {
+            file: Mutex::new(file),
+        })
     }
 }
 
@@ -91,8 +97,12 @@ pub fn record(cause: InvalidationCause) {
 /// on any error so a caller can print "no recorded invalidations"
 /// rather than failing the debug view.
 pub fn recent(n: usize) -> Vec<serde_json::Value> {
-    let Some(path) = journal_path() else { return Vec::new() };
-    let Ok(raw) = std::fs::read_to_string(&path) else { return Vec::new() };
+    let Some(path) = journal_path() else {
+        return Vec::new();
+    };
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
     let mut out: Vec<serde_json::Value> = raw
         .lines()
         .filter(|l| !l.trim().is_empty())

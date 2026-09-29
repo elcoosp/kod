@@ -294,7 +294,10 @@ fn intercept_cat(args: &[&str]) -> Option<Intercept> {
         return None;
     };
     let extra = if files.len() > 1 {
-        format!(" (`cat` got {} paths — one `read_file` call per file)", files.len())
+        format!(
+            " (`cat` got {} paths — one `read_file` call per file)",
+            files.len()
+        )
     } else {
         String::new()
     };
@@ -459,11 +462,7 @@ mod tests {
         let i = intercept("grep pattern 'my file.txt'").unwrap();
         // The tokenizer strips the outer quotes; the message quotes
         // the result with `{:?}`.
-        assert!(
-            i.message.contains("my file.txt"),
-            "got: {}",
-            i.message,
-        );
+        assert!(i.message.contains("my file.txt"), "got: {}", i.message,);
     }
 
     #[test]

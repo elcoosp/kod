@@ -36,22 +36,48 @@ impl BehavioralSignals {
 }
 
 const NEGATION_CUES: &[&str] = &[
-    "no,", "no.", "nope", "nah", "wrong", "that's not", "that is not",
-    "not what i", "incorrect",
+    "no,",
+    "no.",
+    "nope",
+    "nah",
+    "wrong",
+    "that's not",
+    "that is not",
+    "not what i",
+    "incorrect",
 ];
 
 const REPETITION_CUES: &[&str] = &[
-    "i meant", "i said", "i asked", "still doesn't", "still does not",
-    "still not", "again:", "as i said", "like i said",
+    "i meant",
+    "i said",
+    "i asked",
+    "still doesn't",
+    "still does not",
+    "still not",
+    "again:",
+    "as i said",
+    "like i said",
 ];
 
 const BLAME_CUES: &[&str] = &[
-    "you didn't", "you did not", "why did you", "why didn't you",
-    "you should have", "you were supposed to", "you broke",
+    "you didn't",
+    "you did not",
+    "why did you",
+    "why didn't you",
+    "you should have",
+    "you were supposed to",
+    "you broke",
 ];
 
 const ANGUISH_CUES: &[&str] = &[
-    "ffs", "damn", "ugh", "argh", "wtf", "come on", "seriously?", "why is this",
+    "ffs",
+    "damn",
+    "ugh",
+    "argh",
+    "wtf",
+    "come on",
+    "seriously?",
+    "why is this",
 ];
 
 fn count_cues(lower: &str, cues: &[&str]) -> u32 {
@@ -86,7 +112,13 @@ pub fn analyze(text: &str) -> BehavioralSignals {
     let blame = count_cues(&lower, BLAME_CUES);
     let anguish = count_cues(&lower, ANGUISH_CUES);
     let yelling = text.lines().filter(|l| is_yelling(l)).count() as u32;
-    BehavioralSignals { negation, repetition, blame, anguish, yelling }
+    BehavioralSignals {
+        negation,
+        repetition,
+        blame,
+        anguish,
+        yelling,
+    }
 }
 
 #[cfg(test)]
@@ -143,10 +175,20 @@ mod tests {
 
     #[test]
     fn merging_sums_every_field() {
-        let a = BehavioralSignals { negation: 1, ..Default::default() };
-        let b = BehavioralSignals { repetition: 2, yelling: 1, ..Default::default() };
+        let a = BehavioralSignals {
+            negation: 1,
+            ..Default::default()
+        };
+        let b = BehavioralSignals {
+            repetition: 2,
+            yelling: 1,
+            ..Default::default()
+        };
         let m = a.merge(&b);
-        assert_eq!((m.negation, m.repetition, m.yelling, m.total()), (1, 2, 1, 4));
+        assert_eq!(
+            (m.negation, m.repetition, m.yelling, m.total()),
+            (1, 2, 1, 4)
+        );
     }
 
     #[test]

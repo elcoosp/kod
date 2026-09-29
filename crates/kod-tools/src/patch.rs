@@ -193,10 +193,7 @@ pub fn parse_unified_diff(patch: &str) -> Result<Vec<Hunk>> {
         // panic.
         let Some((tag, text)) = line.split_at_checked(1) else {
             return Err(KodError::InvalidParameters {
-                reason: format!(
-                    "diff line does not start on a char boundary: {:?}",
-                    line,
-                ),
+                reason: format!("diff line does not start on a char boundary: {:?}", line,),
             });
         };
         let text = text.to_string();
@@ -291,8 +288,8 @@ mod tests {
         // The fix returns `Err`, matching the crate's contract that a
         // malformed patch is a `Result::Err`, never a panic.
         let bytes: &[u8] = &[
-            36, 36, 10, 10, 64, 64, 48, 11, 57, 10, 10, 195, 191, 0, 43, 10, 10, 10, 10, 10,
-            10, 0, 0,
+            36, 36, 10, 10, 64, 64, 48, 11, 57, 10, 10, 195, 191, 0, 43, 10, 10, 10, 10, 10, 10, 0,
+            0,
         ];
         let patch = std::str::from_utf8(bytes).unwrap();
         let _ = parse_unified_diff(patch);

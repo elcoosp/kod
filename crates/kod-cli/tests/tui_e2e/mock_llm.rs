@@ -243,7 +243,6 @@ fn chunk_json(role: Option<&str>, content: Option<&str>, finish: Option<&str>) -
     serde_json::to_string(&value).expect("chunk json")
 }
 
-
 /// Log every incoming request before routing.
 ///
 /// `from_fn` middleware has signature `Fn(Request, Next) -> Response`.

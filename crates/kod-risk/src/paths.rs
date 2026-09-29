@@ -111,9 +111,7 @@ pub fn expand_lexical(raw: &str, home: &Path) -> (String, bool) {
             // `$NAME` — read the identifier.
             let start = i + 1;
             let mut end = start;
-            while end < bytes.len()
-                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
-            {
+            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
                 end += 1;
             }
             let name = &rest[start..end];
@@ -206,20 +204,13 @@ pub fn classify(raw: &str, ctx: &RiskContext) -> (PathDanger, String) {
 
     // Device nodes: writing to a raw disk device destroys the
     // filesystem on it.
-    if s.starts_with("/dev/") && s != "/dev/null" && s != "/dev/stdout" && s != "/dev/stderr"
-    {
-        return (
-            PathDanger::Catastrophic,
-            format!("raw device node: {raw}"),
-        );
+    if s.starts_with("/dev/") && s != "/dev/null" && s != "/dev/stdout" && s != "/dev/stderr" {
+        return (PathDanger::Catastrophic, format!("raw device node: {raw}"));
     }
 
     // Credential stores, recursive.
     if in_credential_store(&normalized, &ctx.home_dir) {
-        return (
-            PathDanger::Catastrophic,
-            format!("credential store: {raw}"),
-        );
+        return (PathDanger::Catastrophic, format!("credential store: {raw}"));
     }
 
     // The home directory itself.
@@ -234,10 +225,7 @@ pub fn classify(raw: &str, ctx: &RiskContext) -> (PathDanger, String) {
     // the recursive set is too.
     for d in SYSTEM_EXACT {
         if s == *d {
-            return (
-                PathDanger::Catastrophic,
-                format!("system root: {raw}"),
-            );
+            return (PathDanger::Catastrophic, format!("system root: {raw}"));
         }
     }
     for d in SYSTEM_RECURSIVE {
@@ -326,10 +314,7 @@ mod tests {
     #[test]
     fn etc_exact_is_catastrophic_and_below_it_too() {
         assert_eq!(classify("/etc", &ctx()).0, PathDanger::Catastrophic);
-        assert_eq!(
-            classify("/etc/hosts", &ctx()).0,
-            PathDanger::Catastrophic,
-        );
+        assert_eq!(classify("/etc/hosts", &ctx()).0, PathDanger::Catastrophic,);
     }
 
     #[test]
@@ -356,18 +341,12 @@ mod tests {
 
     #[test]
     fn home_directory_itself_is_catastrophic() {
-        assert_eq!(
-            classify("/Users/dev", &ctx()).0,
-            PathDanger::Catastrophic,
-        );
+        assert_eq!(classify("/Users/dev", &ctx()).0, PathDanger::Catastrophic,);
     }
 
     #[test]
     fn working_dir_and_scratch_are_safe() {
-        assert_eq!(
-            classify("/work/proj/src/x.rs", &ctx()).0,
-            PathDanger::Safe,
-        );
+        assert_eq!(classify("/work/proj/src/x.rs", &ctx()).0, PathDanger::Safe,);
         assert_eq!(classify("/tmp/build.log", &ctx()).0, PathDanger::Safe);
     }
 
@@ -381,10 +360,7 @@ mod tests {
 
     #[test]
     fn device_node_is_catastrophic() {
-        assert_eq!(
-            classify("/dev/sda", &ctx()).0,
-            PathDanger::Catastrophic,
-        );
+        assert_eq!(classify("/dev/sda", &ctx()).0, PathDanger::Catastrophic,);
         assert_ne!(classify("/dev/null", &ctx()).0, PathDanger::Catastrophic);
     }
 
@@ -393,9 +369,6 @@ mod tests {
         // `~/.ssh/../../..` normalizes to `/Users`, not the store,
         // but the *operation* still targets the store's parent —
         // which is the home dir, caught by its own rule.
-        assert_eq!(
-            classify("~/.ssh/../..", &ctx()).0,
-            PathDanger::Catastrophic,
-        );
+        assert_eq!(classify("~/.ssh/../..", &ctx()).0, PathDanger::Catastrophic,);
     }
 }

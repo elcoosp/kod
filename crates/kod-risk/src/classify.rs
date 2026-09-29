@@ -8,8 +8,8 @@
 //! home directory is Catastrophic, and the name `rm` alone tells you
 //! neither.
 
-use crate::paths::{PathDanger, RiskContext};
 use crate::paths::classify as classify_path;
+use crate::paths::{PathDanger, RiskContext};
 
 /// How dangerous a command is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -337,8 +337,7 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
                     // destroys whatever was there, so it is at least
                     // a Confirm — the model may have meant to append
                     // or to edit.
-                    let (expanded, _) =
-                        crate::paths::expand_lexical(&target, &ctx.home_dir);
+                    let (expanded, _) = crate::paths::expand_lexical(&target, &ctx.home_dir);
                     let in_scratch =
                         crate::paths::normalize(&expanded).starts_with(&ctx.scratch_dir);
                     let level = match danger {
@@ -416,8 +415,7 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
         if prog_base == "xargs" && pipe_fed {
             findings.push(RiskFinding {
                 level: RiskLevel::Confirm,
-                reason: "xargs in a pipe: the affected set is decided at runtime"
-                    .to_string(),
+                reason: "xargs in a pipe: the affected set is decided at runtime".to_string(),
                 target: "xargs".to_string(),
             });
         }
@@ -433,10 +431,7 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
 }
 
 fn is_safe_sink(path: &str) -> bool {
-    matches!(
-        path,
-        "/dev/null" | "/dev/stdout" | "/dev/stderr"
-    )
+    matches!(path, "/dev/null" | "/dev/stdout" | "/dev/stderr")
 }
 
 #[cfg(test)]
@@ -480,7 +475,11 @@ mod tests {
     fn sudo_is_unwrapped() {
         // `sudo rm` must classify as `rm`, not as an unknown wrapper.
         let a = assess("sudo rm /work/proj/x", &ctx());
-        assert!(a.level.runs_immediately(), "sudo should unwrap: {:?}", a.level);
+        assert!(
+            a.level.runs_immediately(),
+            "sudo should unwrap: {:?}",
+            a.level
+        );
     }
 
     #[test]
@@ -540,10 +539,8 @@ mod tests {
         assert!(!Justification("ok".into()).is_substantive());
         assert!(!Justification("short".into()).is_substantive());
         assert!(
-            Justification(
-                "removing the stale build cache under the project target dir".into()
-            )
-            .is_substantive()
+            Justification("removing the stale build cache under the project target dir".into())
+                .is_substantive()
         );
     }
 }

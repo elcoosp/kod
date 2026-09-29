@@ -75,7 +75,10 @@ impl DeferredDiagnostics {
         if diags.is_empty() {
             return 0;
         }
-        let mut g = self.by_holder.lock().expect("deferred_diagnostics poisoned");
+        let mut g = self
+            .by_holder
+            .lock()
+            .expect("deferred_diagnostics poisoned");
         let entry = g.entry(holder.to_string()).or_default();
         let existing: std::collections::HashSet<_> = entry.iter().map(key).collect();
         let before = entry.len();
@@ -91,7 +94,10 @@ impl DeferredDiagnostics {
     /// transcript's queue. Called by the prompt builder at the start
     /// of a turn.
     pub fn take(&self, holder: &str) -> Vec<Diagnostic> {
-        let mut g = self.by_holder.lock().expect("deferred_diagnostics poisoned");
+        let mut g = self
+            .by_holder
+            .lock()
+            .expect("deferred_diagnostics poisoned");
         g.remove(holder).unwrap_or_default()
     }
 

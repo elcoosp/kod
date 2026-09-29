@@ -10,13 +10,13 @@
 
 use async_trait::async_trait;
 use futures::Stream;
-use kod_core::router::RouterConfig;
 use kod_core::KodEngine;
+use kod_core::router::RouterConfig;
 use kod_error::Result;
 use kod_provider::request::CompletionRequest;
 use kod_provider::{
-    GenerationOptions, GenerationResponse, LlmProvider, ModelRef,
-    ProviderCapabilities, ProviderRegistry, StreamChunk, TokenUsage,
+    GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderCapabilities,
+    ProviderRegistry, StreamChunk, TokenUsage,
 };
 use kod_types::ToolDefinition;
 use std::pin::Pin;
@@ -121,9 +121,7 @@ async fn the_anchor_reports_the_providers_own_number() {
 
     // Drive one turn. The provider reports prompt_tokens = 5,000.
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
-    let drain = tokio::spawn(async move {
-        while rx.recv().await.is_some() {}
-    });
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
     let _ = engine.process_streaming("hello", &tx).await;
     drop(tx);
     let _ = drain.await;
@@ -178,9 +176,7 @@ async fn compaction_fires_off_the_anchored_number() {
 
     // One turn to establish the anchor.
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
-    let drain = tokio::spawn(async move {
-        while rx.recv().await.is_some() {}
-    });
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
     let _ = engine.process_streaming("hello", &tx).await;
     drop(tx);
     let _ = drain.await;

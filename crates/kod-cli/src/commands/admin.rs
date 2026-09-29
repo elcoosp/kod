@@ -1123,9 +1123,7 @@ pub async fn run_if_bench(
     turns: Option<usize>,
     array_size: Option<usize>,
 ) -> Result<()> {
-    use kod_stats::if_bench::{
-        self, IfBenchConfig, SoundPosition,
-    };
+    use kod_stats::if_bench::{self, IfBenchConfig, SoundPosition};
 
     let config = KodConfig::load_default()?;
     let (registry, default_model, _routing) =
@@ -1194,25 +1192,22 @@ pub async fn run_if_bench(
         let pos = SoundPosition::for_turn(turn);
         let sound_ok = if_bench::cat_sound_at(&reply, pos);
         let array_ok = reported.as_deref()
-            == Some(if_bench::apply(&current, if_bench::action_for_turn(turn, current.len())).as_slice());
+            == Some(
+                if_bench::apply(&current, if_bench::action_for_turn(turn, current.len()))
+                    .as_slice(),
+            );
         println!(
             "  turn {turn}: array={} sound={}",
             if array_ok { "ok" } else { "MISS" },
             if sound_ok { "ok" } else { "MISS" },
         );
-        replies.push(if_bench::TurnReply {
-            reported,
-            sound_ok,
-        });
+        replies.push(if_bench::TurnReply { reported, sound_ok });
         // Carry the true expectation forward.
         current = if_bench::apply(&current, if_bench::action_for_turn(turn, current.len()));
     }
     let depth = if_bench::depth(&replies, &initial);
     println!();
-    println!(
-        "depth: {depth} / {} (par {})",
-        cfg.turns, cfg.par,
-    );
+    println!("depth: {depth} / {} (par {})", cfg.turns, cfg.par,);
     let pass = depth >= cfg.par;
     println!("{}", if pass { "PASS" } else { "FAIL" });
     Ok(())
@@ -1292,10 +1287,7 @@ pub async fn run_commit_check(
         Err(reason) => {
             eprintln!("rejected: {reason}");
             eprintln!();
-            eprintln!(
-                "Known types: {}",
-                commit::TYPES.join(", "),
-            );
+            eprintln!("Known types: {}", commit::TYPES.join(", "),);
             eprintln!(
                 "Rules: summary <= {} chars, <= {} details, at least one path, \
                  and a type consistent with the paths (docs -> markdown, ci -> \

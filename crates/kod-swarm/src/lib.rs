@@ -18,18 +18,18 @@
 pub mod advisor;
 pub mod agent;
 pub mod agent_registry;
+pub mod blackboard;
 pub mod brief;
 pub mod brief_assembly;
-pub mod blackboard;
+pub mod cleanse;
 pub mod communication;
 pub mod completion_report;
 pub mod coordination;
 pub mod file_touch;
-pub mod cleanse;
+pub mod irc_bus;
 pub mod swarm;
 pub mod work_pool;
 pub mod yield_queue;
-pub mod irc_bus;
 
 pub use agent::{Agent, AgentBuilder, AgentState, Capability, ModelConfig};
 pub use blackboard::{AuthorKind, Blackboard, BlackboardEntry};

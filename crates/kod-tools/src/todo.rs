@@ -70,7 +70,6 @@ pub enum TodoStatus {
     Cancelled,
 }
 
-
 /// How much the harness trusts a completed todo.
 ///
 /// The model cannot set this. A todo that the model marks `completed`
@@ -182,7 +181,6 @@ impl TodoTool {
     }
 }
 
-
 /// Record harness-observed evidence bearing on a todo.
 ///
 /// Free function, not a method: the caller holds the `Arc<TodoList>`
@@ -198,12 +196,7 @@ impl TodoTool {
 /// Returns `true` when a matching todo was found and updated, so a
 /// caller can log "this evidence landed" versus "the todo was already
 /// gone."
-pub fn note_evidence(
-    list: &TodoList,
-    todo_id: u64,
-    note: String,
-    raise: ConfidenceState,
-) -> bool {
+pub fn note_evidence(list: &TodoList, todo_id: u64, note: String, raise: ConfidenceState) -> bool {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -219,7 +212,10 @@ pub fn note_evidence(
     for item in guard.iter_mut() {
         if item.id == todo_id {
             item.confidence = item.confidence.raise_to(raise);
-            item.evidence.push(Evidence { note, at_ms: now_ms });
+            item.evidence.push(Evidence {
+                note,
+                at_ms: now_ms,
+            });
             return true;
         }
     }
@@ -343,9 +339,8 @@ impl Tool for TodoTool {
                             .blocked_by
                             .iter()
                             .filter(|bid| {
-                                !all.iter().any(|it| {
-                                    it.id == **bid && it.status == TodoStatus::Completed
-                                })
+                                !all.iter()
+                                    .any(|it| it.id == **bid && it.status == TodoStatus::Completed)
                             })
                             .copied()
                             .collect();
@@ -733,7 +728,6 @@ mod coverage_todo_lifecycle {
     }
 }
 
-
 #[cfg(test)]
 mod semantic_todo_tests {
     use super::*;
@@ -770,7 +764,10 @@ mod semantic_todo_tests {
         match r {
             ToolResult::Error(msg) => {
                 assert!(msg.contains("blocked by"), "got: {msg}");
-                assert!(msg.contains(&dep.to_string()), "message must name the blocker: {msg}");
+                assert!(
+                    msg.contains(&dep.to_string()),
+                    "message must name the blocker: {msg}"
+                );
             }
             other => panic!("expected refusal, got {other:?}"),
         }

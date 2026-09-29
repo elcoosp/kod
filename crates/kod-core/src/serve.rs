@@ -120,7 +120,6 @@ pub const PROTOCOL_METHODS: &[&str] = &[
     "swarm",
 ];
 
-
 /// The newest protocol version this server speaks. A client asking
 /// for a version above this is running ahead of the server; one below
 /// `MIN` is behind it. Both get a named error rather than a confusing
@@ -486,11 +485,7 @@ async fn handle_connection(
                 // the server's gets `compatible: false` and can
                 // disconnect with a clear reason instead of failing on
                 // the first real request.
-                let client_min = req
-                    .params
-                    .get("min")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(1) as u8;
+                let client_min = req.params.get("min").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
                 let client_max = req
                     .params
                     .get("max")
@@ -693,14 +688,14 @@ async fn handle_connection(
             }
             other => {
                 write_error(
-                &out_tx,
-                &req.id,
-                &format!(
-                    "unknown method: {other} (server speaks protocol \
+                    &out_tx,
+                    &req.id,
+                    &format!(
+                        "unknown method: {other} (server speaks protocol \
                      {MIN_PROTOCOL_VERSION}..={MAX_PROTOCOL_VERSION})",
-                ),
-            )
-            .await?;
+                    ),
+                )
+                .await?;
             }
         }
     }
@@ -1295,8 +1290,7 @@ mod version_tests {
     fn a_missing_version_parses_as_none() {
         // An older client predates the field; every v1 method works
         // without it, so the gate lets it through.
-        let req: Request =
-            serde_json::from_str(r#"{"id":"1","method":"list_models"}"#).unwrap();
+        let req: Request = serde_json::from_str(r#"{"id":"1","method":"list_models"}"#).unwrap();
         assert!(req.v.is_none());
     }
 

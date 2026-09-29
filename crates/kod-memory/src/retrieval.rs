@@ -276,15 +276,11 @@ impl HybridScorer {
         } else {
             redistribute(self.w_semantic, self.w_keyword)
         };
-        let semantic_component = ws
-            * cosine.unwrap_or(0.0).clamp(0.0, 1.0)
-            * weights.vector as f32;
-        let keyword_component =
-            wk * self.keyword_bm25_lite(query, entry) * weights.keyword as f32;
+        let semantic_component = ws * cosine.unwrap_or(0.0).clamp(0.0, 1.0) * weights.vector as f32;
+        let keyword_component = wk * self.keyword_bm25_lite(query, entry) * weights.keyword as f32;
         let shape = self.decay_shape_for(entry.memory_type);
-        let recency_component = self.w_recency
-            * decay_at(entry.timestamp, now, shape)
-            * weights.temporal as f32;
+        let recency_component =
+            self.w_recency * decay_at(entry.timestamp, now, shape) * weights.temporal as f32;
         // `weights.importance` is not applied: the score has three
         // components (semantic, keyword, recency) whose weights sum to
         // 1, and an added fourth term both breaks the bounded-by-one
@@ -370,7 +366,7 @@ mod tests {
             timestamp: OffsetDateTime::now_utc() - Duration::days(age_days),
             relevance: 1.0,
             metadata: Default::default(),
-        
+
             superseded_by: None,
             contradicts: Vec::new(),
         }
@@ -520,7 +516,11 @@ mod tests {
         // For every type, `decay(t1) >= decay(t2)` when `t1 <= t2`.
         // A shape that violated this would make the scorer prefer
         // an older entry over a fresher one under identical content.
-        for t in [MemoryType::LongTerm, MemoryType::Episodic, MemoryType::ShortTerm] {
+        for t in [
+            MemoryType::LongTerm,
+            MemoryType::Episodic,
+            MemoryType::ShortTerm,
+        ] {
             let shape = weibull_shape_for(t);
             let mut prev = 1.0f32;
             for i in 0..100 {
@@ -540,7 +540,11 @@ mod tests {
         // The table is a pure function of the type. Two calls return
         // identical shapes; a regression that returned a randomised
         // `k` would make recall scores non-reproducible.
-        for t in [MemoryType::LongTerm, MemoryType::Episodic, MemoryType::ShortTerm] {
+        for t in [
+            MemoryType::LongTerm,
+            MemoryType::Episodic,
+            MemoryType::ShortTerm,
+        ] {
             let a = weibull_shape_for(t);
             let b = weibull_shape_for(t);
             assert_eq!(a.eta_hours, b.eta_hours);
@@ -641,7 +645,7 @@ mod tests {
             timestamp: old,
             relevance: 1.0,
             metadata: Default::default(),
-        
+
             superseded_by: None,
             contradicts: Vec::new(),
         };
@@ -680,7 +684,7 @@ mod coverage_scoring_composition {
             timestamp: OffsetDateTime::now_utc() - Duration::days(age_days),
             relevance: 1.0,
             metadata: Default::default(),
-        
+
             superseded_by: None,
             contradicts: Vec::new(),
         }

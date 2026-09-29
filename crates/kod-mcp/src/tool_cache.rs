@@ -70,8 +70,7 @@ pub fn cache_key(command: &str, args: &[String], env: &BTreeMap<String, String>)
     // The `unwrap_or_default` on failure is harmless — an empty string
     // hashes to a valid, unique key; a spec that fails to serialize
     // cannot be spawned anyway.
-    let json =
-        serde_json::to_string(&Canonical { command, args, env }).unwrap_or_default();
+    let json = serde_json::to_string(&Canonical { command, args, env }).unwrap_or_default();
     let mut h = Sha256::new();
     h.update(json.as_bytes());
     hex(&h.finalize())
@@ -124,8 +123,7 @@ pub fn read_from(dir: &Path, key: &str, ttl: Duration) -> Option<Vec<McpToolDef>
 
 /// Write a tool list under `key`. Creates the cache dir on demand.
 pub fn write(key: &str, tools: &[McpToolDef]) -> io::Result<()> {
-    let dir = cache_dir()
-        .ok_or_else(|| io::Error::other("no platform cache dir"))?;
+    let dir = cache_dir().ok_or_else(|| io::Error::other("no platform cache dir"))?;
     write_to(&dir, key, tools)
 }
 

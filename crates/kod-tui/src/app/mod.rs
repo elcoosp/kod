@@ -1136,36 +1136,28 @@ fn fuzzy_match(name: &str, query: &str) -> bool {
 }
 
 /// Approval dialog state.
-impl KodApp {
-}
+impl KodApp {}
 
 /// Notification-bell toggle.
-impl KodApp {
-}
+impl KodApp {}
 
 /// Auto-compaction toggle.
-impl KodApp {
-}
+impl KodApp {}
 
 /// Mid-session system prompt override.
-impl KodApp {
-}
+impl KodApp {}
 
 /// Whole-transcript replacement (`/load`).
-impl KodApp {
-}
+impl KodApp {}
 
 /// Fork helpers (`/fork`).
-impl KodApp {
-}
+impl KodApp {}
 
 /// Reset transient UI state without touching chat or memory.
-impl KodApp {
-}
+impl KodApp {}
 
 /// HTML export helpers (`/export-html`).
-impl KodApp {
-}
+impl KodApp {}
 
 /// Minimal HTML escape. Covers `&`, `<`, `>`, `"`, and `'`.
 fn html_escape(s: &str) -> String {
@@ -1184,20 +1176,16 @@ fn html_escape(s: &str) -> String {
 }
 
 /// File-attachment state.
-impl KodApp {
-}
+impl KodApp {}
 
 /// Question-dialog state, alongside the approval dialog.
-impl KodApp {
-}
+impl KodApp {}
 
 /// Turn-completion notification.
-impl KodApp {
-}
+impl KodApp {}
 
 /// Session-editing helpers used by /regenerate, /delete, /export.
-impl KodApp {
-}
+impl KodApp {}
 
 impl Default for KodApp {
     fn default() -> Self {
@@ -1207,8 +1195,7 @@ impl Default for KodApp {
 
 // Widget-support accessors: thin views over state so the ui/ modules stay
 // rendering-only (theme, phase, search, confirm, clipboard helpers).
-impl KodApp {
-}
+impl KodApp {}
 
 #[cfg(test)]
 mod tests;

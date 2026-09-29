@@ -285,10 +285,7 @@ mod tests {
             async move { g.wait_if_paused().await }
         });
         let early = tokio::time::timeout(Duration::from_millis(50), handle).await;
-        assert!(
-            early.is_err(),
-            "re-paused gate must park a fresh waiter",
-        );
+        assert!(early.is_err(), "re-paused gate must park a fresh waiter",);
     }
 
     #[tokio::test]

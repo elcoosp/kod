@@ -361,9 +361,7 @@ pub fn resolve(id: &str) -> Option<&'static ModelMeta> {
     let mut best: Option<(&ModelMeta, usize)> = None;
     for m in catalog {
         let n = normalize(&m.id);
-        if want.starts_with(&n)
-            && (want.len() == n.len() || want.as_bytes()[n.len()] == b'-')
-        {
+        if want.starts_with(&n) && (want.len() == n.len() || want.as_bytes()[n.len()] == b'-') {
             let len = n.len();
             if best.map(|(_, l)| len > l).unwrap_or(true) {
                 best = Some((m, len));

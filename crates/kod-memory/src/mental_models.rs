@@ -192,7 +192,9 @@ impl MentalModels {
     pub fn render_block(&self) -> String {
         let mut out = String::new();
         for id in self.ids() {
-            let Some(m) = self.models.get(&id) else { continue };
+            let Some(m) = self.models.get(&id) else {
+                continue;
+            };
             let Some(text) = m.block() else { continue };
             if text.trim().is_empty() {
                 continue;
@@ -250,7 +252,9 @@ mod tests {
     fn filling_sets_the_block_and_bumps_the_generation() {
         let mut m = MentalModels::new();
         m.seed(seed("prefs", "P"));
-        m.get_mut("prefs").unwrap().fill("tabs over spaces".to_string());
+        m.get_mut("prefs")
+            .unwrap()
+            .fill("tabs over spaces".to_string());
         assert_eq!(m.get("prefs").unwrap().generation, 1);
         assert!(m.get("prefs").unwrap().is_rendered());
     }

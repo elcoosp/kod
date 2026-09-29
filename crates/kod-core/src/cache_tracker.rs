@@ -28,7 +28,11 @@ pub struct CacheViolation {
 
 impl std::fmt::Display for CacheViolation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "cache violation at message {}: {}", self.turn, self.reason)
+        write!(
+            f,
+            "cache violation at message {}: {}",
+            self.turn, self.reason
+        )
     }
 }
 
@@ -234,7 +238,10 @@ mod tests {
         t.reset();
         assert_eq!(t.observed(), 0);
         // After a reset, a totally different transcript is fine.
-        assert!(t.observe(&[msg(MessageRole::Assistant, "different")]).is_ok());
+        assert!(
+            t.observe(&[msg(MessageRole::Assistant, "different")])
+                .is_ok()
+        );
     }
 
     #[test]

@@ -84,7 +84,11 @@ fn render_one(r: &AsyncResult) -> String {
         Some(url) => format!("\n[full result: {url}]"),
         None => "\n[full result truncated — no artifact was written]".to_string(),
     };
-    format!("{header}\n{preview}\n…[{} chars elided]{}", r.body.len() - PREVIEW, pointer)
+    format!(
+        "{header}\n{preview}\n…[{} chars elided]{}",
+        r.body.len() - PREVIEW,
+        pointer
+    )
 }
 
 /// The delivery queue.
@@ -230,7 +234,10 @@ mod tests {
         d.enqueue(result("session", 1, &big));
         let msg = d.drain("session").unwrap();
         assert!(msg.contains("elided"), "got: {} chars", msg.len());
-        assert!(msg.len() < big.len(), "the batch must be shorter than the raw");
+        assert!(
+            msg.len() < big.len(),
+            "the batch must be shorter than the raw"
+        );
     }
 
     #[test]

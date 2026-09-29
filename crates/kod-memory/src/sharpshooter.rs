@@ -70,9 +70,7 @@ impl DecisionKind {
     /// The file a decision of this kind belongs in.
     pub fn target_file(self) -> &'static str {
         match self {
-            Self::Architecture | Self::Constraint | Self::RejectedApproach => {
-                "architecture.md"
-            }
+            Self::Architecture | Self::Constraint | Self::RejectedApproach => "architecture.md",
             Self::Product => "product.md",
             Self::Style => "style.md",
             Self::Correction => "architecture.md",
@@ -267,8 +265,7 @@ pub fn build_consolidation_prompt(existing: &str, deltas: &[DecisionDelta]) -> S
     // Serialize deltas to JSON so the model sees a stable field
     // shape. Friction-ranked order is preserved by the caller's
     // `rank_by_friction` call.
-    let deltas_json =
-        serde_json::to_string_pretty(deltas).unwrap_or_else(|_| "[]".to_string());
+    let deltas_json = serde_json::to_string_pretty(deltas).unwrap_or_else(|_| "[]".to_string());
     format!(
         "You consolidate a project's friction-earned decisions into a \
          single markdown document. The current document is below \
@@ -348,7 +345,10 @@ mod tests {
             rejected_alternative: Some("Postgres".to_string()),
             rationale: Some("no managed DB on the target".to_string()),
             evidence: evidence.to_string(),
-            friction: Friction { corrective: true, ..Default::default() },
+            friction: Friction {
+                corrective: true,
+                ..Default::default()
+            },
         }
     }
 
@@ -436,9 +436,18 @@ mod tests {
 
     #[test]
     fn regression_outranks_corrective_outranks_subtle() {
-        let r = Friction { regression: true, ..Default::default() };
-        let c = Friction { corrective: true, ..Default::default() };
-        let s = Friction { subtle: true, ..Default::default() };
+        let r = Friction {
+            regression: true,
+            ..Default::default()
+        };
+        let c = Friction {
+            corrective: true,
+            ..Default::default()
+        };
+        let s = Friction {
+            subtle: true,
+            ..Default::default()
+        };
         assert!(r.rank() > c.rank());
         assert!(c.rank() > s.rank());
         assert!(s.rank() > Friction::default().rank());
@@ -446,9 +455,27 @@ mod tests {
 
     #[test]
     fn any_is_true_for_each_flag() {
-        assert!(Friction { corrective: true, ..Default::default() }.any());
-        assert!(Friction { regression: true, ..Default::default() }.any());
-        assert!(Friction { subtle: true, ..Default::default() }.any());
+        assert!(
+            Friction {
+                corrective: true,
+                ..Default::default()
+            }
+            .any()
+        );
+        assert!(
+            Friction {
+                regression: true,
+                ..Default::default()
+            }
+            .any()
+        );
+        assert!(
+            Friction {
+                subtle: true,
+                ..Default::default()
+            }
+            .any()
+        );
     }
 
     // ---- ranking -----------------------------------------------------
@@ -456,9 +483,15 @@ mod tests {
     #[test]
     fn rank_by_friction_orders_highest_first() {
         let mut a = delta("a");
-        a.friction = Friction { subtle: true, ..Default::default() };
+        a.friction = Friction {
+            subtle: true,
+            ..Default::default()
+        };
         let mut b = delta("b");
-        b.friction = Friction { regression: true, ..Default::default() };
+        b.friction = Friction {
+            regression: true,
+            ..Default::default()
+        };
         let mut c = delta("c");
         c.friction = Friction::default();
         let ranked = rank_by_friction(vec![a, b, c]);
@@ -613,7 +646,10 @@ mod tests {
             rejected_alternative: Some("tokio::spawn".to_string()),
             rationale: Some("the engine owns the task lifecycle".to_string()),
             evidence: "we don't spawn from the manager".to_string(),
-            friction: Friction { corrective: true, ..Default::default() },
+            friction: Friction {
+                corrective: true,
+                ..Default::default()
+            },
         };
         let json = serde_json::to_string(&d).unwrap();
         let back: DecisionDelta = serde_json::from_str(&json).unwrap();

@@ -241,11 +241,7 @@ impl SupersedeIndex {
                 if call.tool_name != "read_file" {
                     continue;
                 }
-                let Some(path) = call
-                    .arguments
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                else {
+                let Some(path) = call.arguments.get("path").and_then(|v| v.as_str()) else {
                     // A malformed call (no `path`). Ignoring it is the
                     // safe reading: the index's job is to identify
                     // *superseded* reads, and a read we cannot key on
@@ -785,10 +781,7 @@ mod tests {
             tool_result("c2", "fresh"),
         ];
         let plan = plan_prune(&log, &cfg, const_suffix(100_000), false);
-        assert!(
-            plan.is_empty(),
-            "one candidate cannot clear the gate alone",
-        );
+        assert!(plan.is_empty(), "one candidate cannot clear the gate alone",);
     }
 
     #[test]

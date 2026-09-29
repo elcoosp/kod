@@ -550,9 +550,7 @@ pub enum FileOp {
 /// The hook is the seam.
 #[derive(Clone)]
 pub struct BackgroundSpawnHook {
-    inner: std::sync::Arc<
-        dyn Fn(&str, Option<u64>, &str) -> Option<String> + Send + Sync,
-    >,
+    inner: std::sync::Arc<dyn Fn(&str, Option<u64>, &str) -> Option<String> + Send + Sync>,
 }
 
 impl std::fmt::Debug for BackgroundSpawnHook {
@@ -565,7 +563,9 @@ impl BackgroundSpawnHook {
     pub fn new(
         f: impl Fn(&str, Option<u64>, &str) -> Option<String> + Send + Sync + 'static,
     ) -> Self {
-        Self { inner: std::sync::Arc::new(f) }
+        Self {
+            inner: std::sync::Arc::new(f),
+        }
     }
 
     /// `(command, stall_wake_seconds, holder)` → job id, or `None`.
@@ -619,10 +619,10 @@ impl std::fmt::Debug for BackgroundAdoptHook {
 }
 
 impl BackgroundAdoptHook {
-    pub fn new(
-        f: impl Fn(DetachedChild) -> Option<String> + Send + Sync + 'static,
-    ) -> Self {
-        Self { inner: std::sync::Arc::new(f) }
+    pub fn new(f: impl Fn(DetachedChild) -> Option<String> + Send + Sync + 'static) -> Self {
+        Self {
+            inner: std::sync::Arc::new(f),
+        }
     }
 
     /// Adopt a running child. Returns the job id it registered, or
@@ -645,8 +645,12 @@ impl std::fmt::Debug for FileTouchHook {
 }
 
 impl FileTouchHook {
-    pub fn new(f: impl Fn(&str, &std::path::Path, FileOp, Option<&str>) + Send + Sync + 'static) -> Self {
-        Self { inner: std::sync::Arc::new(f) }
+    pub fn new(
+        f: impl Fn(&str, &std::path::Path, FileOp, Option<&str>) + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            inner: std::sync::Arc::new(f),
+        }
     }
     pub fn call(&self, holder: &str, path: &std::path::Path, op: FileOp, intent: Option<&str>) {
         (self.inner)(holder, path, op, intent)
@@ -811,9 +815,7 @@ impl ArtifactStoreHook {
                 String,
                 String,
             )
-                -> std::pin::Pin<
-                    Box<dyn std::future::Future<Output = Result<String>> + Send>,
-                >
+                -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>>
             + Send
             + Sync
             + 'static,
@@ -847,7 +849,7 @@ impl ToolContext {
             redactor: None,
             allowed_domains: Vec::new(),
             allowed_write_globs: None,
-        
+
             on_file_touch: None,
             on_background_command: None,
             on_background_adopt: None,
@@ -887,10 +889,7 @@ impl ToolContext {
     /// `write_file` will dispatch to a handler when the path carries
     /// a scheme the router knows. The engine calls this once when it
     /// derives a per-call context.
-    pub fn with_protocol_router(
-        mut self,
-        router: crate::internal_url::ProtocolRouter,
-    ) -> Self {
+    pub fn with_protocol_router(mut self, router: crate::internal_url::ProtocolRouter) -> Self {
         self.protocol_router = Some(router);
         self
     }

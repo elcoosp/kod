@@ -83,9 +83,7 @@ use tokio::sync::Notify;
 /// could break). Recovering the guard and proceeding is preferable
 /// to propagating the poison as a cascade of panics that would take
 /// the whole provider stack down over a problem that does not exist.
-fn lock_recover(
-    m: &Mutex<State>,
-) -> std::sync::MutexGuard<'_, State> {
+fn lock_recover(m: &Mutex<State>) -> std::sync::MutexGuard<'_, State> {
     match m.lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
@@ -356,10 +354,7 @@ mod tests {
             }
         });
         let early = timeout(Duration::from_millis(60), waiter).await;
-        assert!(
-            early.is_err(),
-            "acquire must park while cap is reached",
-        );
+        assert!(early.is_err(), "acquire must park while cap is reached",);
     }
 
     #[tokio::test]

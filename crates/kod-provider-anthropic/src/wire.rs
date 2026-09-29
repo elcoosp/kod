@@ -510,9 +510,8 @@ pub fn parse_sse_line(
             // input window; the split is retained in the two cache
             // fields for cost math.
             if let Some(u) = v.get("message").and_then(|m| m.get("usage")) {
-                let get = |k: &str| -> usize {
-                    u.get(k).and_then(|n| n.as_u64()).unwrap_or(0) as usize
-                };
+                let get =
+                    |k: &str| -> usize { u.get(k).and_then(|n| n.as_u64()).unwrap_or(0) as usize };
                 let base = get("input_tokens");
                 let cache_read = get("cache_read_input_tokens");
                 let cache_creation = get("cache_creation_input_tokens");
@@ -1173,19 +1172,34 @@ mod tests {
         // The sliding window: on a request with three assistant turns,
         // the second-to-last and last each carry a marker; the first
         // does not.
-        let msgs = [user("u1"), assistant("a1"), user("u2"),
-                    assistant("a2"), user("u3"), assistant("a3")];
+        let msgs = [
+            user("u1"),
+            assistant("a1"),
+            user("u2"),
+            assistant("a2"),
+            user("u3"),
+            assistant("a3"),
+        ];
         let arr = messages_array_with_cache(&msgs, true);
         let entries = arr.as_array().unwrap();
         let marked: Vec<usize> = entries
             .iter()
             .enumerate()
-            .filter(|(_, m)| m["role"] == json!("assistant")
-                && m["content"].as_array().unwrap().iter()
-                    .any(|b| b.get("cache_control").is_some()))
+            .filter(|(_, m)| {
+                m["role"] == json!("assistant")
+                    && m["content"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|b| b.get("cache_control").is_some())
+            })
             .map(|(i, _)| i)
             .collect();
-        assert_eq!(marked.len(), 2, "expected 2 assistant markers, got {marked:?}");
+        assert_eq!(
+            marked.len(),
+            2,
+            "expected 2 assistant markers, got {marked:?}"
+        );
         // Marked entries are the 4th and 6th (a2 and a3), not a1.
         assert!(marked.contains(&3));
         assert!(marked.contains(&5));
@@ -1209,17 +1223,23 @@ mod tests {
         let arr = messages_array_with_cache(&[user("hi"), assistant("ok"), tool_msg], true);
         let entries = arr.as_array().unwrap();
         // The assistant entry carries the only marker.
-        let assistant_idx = entries.iter().position(|m| m["role"] == json!("assistant"))
+        let assistant_idx = entries
+            .iter()
+            .position(|m| m["role"] == json!("assistant"))
             .expect("assistant entry present");
         let blocks = entries[assistant_idx]["content"].as_array().unwrap();
         assert_eq!(blocks.last().unwrap()["cache_control"]["type"], "ephemeral");
         // No marker on the merged user entry.
         for (i, m) in entries.iter().enumerate() {
-            if m["role"] == json!("assistant") { continue; }
+            if m["role"] == json!("assistant") {
+                continue;
+            }
             if let Some(blocks) = m["content"].as_array() {
                 for b in blocks {
-                    assert!(b.get("cache_control").is_none(),
-                        "non-assistant entry {i} carries a marker: {b}");
+                    assert!(
+                        b.get("cache_control").is_none(),
+                        "non-assistant entry {i} carries a marker: {b}"
+                    );
                 }
             }
         }
@@ -1235,7 +1255,9 @@ mod tests {
         for m in arr.as_array().unwrap() {
             if let Some(blocks) = m["content"].as_array() {
                 for b in blocks {
-                    if b.get("cache_control").is_some() { markers += 1; }
+                    if b.get("cache_control").is_some() {
+                        markers += 1;
+                    }
                 }
             }
         }
@@ -1262,7 +1284,10 @@ mod tests {
         let t2 = mk("beta");
         let arr = tools_array_with_cache(&[t1, t2]);
         let entries = arr.as_array().unwrap();
-        assert!(entries[0].get("cache_control").is_none(), "first tool unmarked");
+        assert!(
+            entries[0].get("cache_control").is_none(),
+            "first tool unmarked"
+        );
         assert_eq!(entries[1]["cache_control"]["type"], "ephemeral");
     }
 
@@ -1271,7 +1296,6 @@ mod tests {
         let arr = tools_array_with_cache(&[]);
         assert!(arr.as_array().unwrap().is_empty());
     }
-
 
     #[test]
     fn transcript_breakpoint_suppressed_when_flag_is_false() {

@@ -61,10 +61,7 @@ pub fn classify(cmd: &str) -> CommandPlan {
     // A here-doc, subshell, or brace compound: return Unsupported.
     // These shapes are not handled by the minimizer, and a rewrite
     // would be inventing content.
-    if trimmed.contains("<<")
-        || trimmed.starts_with('(')
-        || trimmed.starts_with('{')
-    {
+    if trimmed.contains("<<") || trimmed.starts_with('(') || trimmed.starts_with('{') {
         return CommandPlan::Unsupported;
     }
 

@@ -315,10 +315,8 @@ impl McpToolAdapter {
         // once here, at admission, against the strictest dialect
         // (OpenAI's): the result is valid for the lenient one too, so
         // a single rewrite serves every endpoint the tool reaches.
-        let (schema, dialect_changes) = kod_schema_dialect::sanitize(
-            &schema,
-            &kod_schema_dialect::spec_for_provider("openai"),
-        );
+        let (schema, dialect_changes) =
+            kod_schema_dialect::sanitize(&schema, &kod_schema_dialect::spec_for_provider("openai"));
         if !dialect_changes.is_empty() {
             tracing::debug!(
                 tool = %full_name,

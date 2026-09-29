@@ -78,11 +78,10 @@ fn cargo_json(text: &str) -> String {
         if v.get("reason").and_then(|r| r.as_str()) != Some("compiler-message") {
             continue;
         }
-        let Some(msg) = v.get("message") else { continue };
-        let level = msg
-            .get("level")
-            .and_then(|l| l.as_str())
-            .unwrap_or("error");
+        let Some(msg) = v.get("message") else {
+            continue;
+        };
+        let level = msg.get("level").and_then(|l| l.as_str()).unwrap_or("error");
         // The first span's file/line/col is the primary location.
         let location = msg
             .get("spans")
@@ -90,7 +89,11 @@ fn cargo_json(text: &str) -> String {
             .and_then(|spans| {
                 spans
                     .iter()
-                    .find(|s| s.get("is_primary").and_then(|p| p.as_bool()).unwrap_or(false))
+                    .find(|s| {
+                        s.get("is_primary")
+                            .and_then(|p| p.as_bool())
+                            .unwrap_or(false)
+                    })
                     .or_else(|| spans.first())
             })
             .and_then(|span| {
@@ -121,7 +124,11 @@ fn cargo_json(text: &str) -> String {
         out.push('\n');
         saw_diagnostic = true;
     }
-    if saw_diagnostic { out } else { text.to_string() }
+    if saw_diagnostic {
+        out
+    } else {
+        text.to_string()
+    }
 }
 
 /// `pytest --json-report` → failure summaries.
@@ -165,10 +172,7 @@ fn pytest_json(text: &str) -> String {
             _ => {}
         }
     }
-    out.push_str(&format!(
-        "{} failed, {} passed\n",
-        failed, passed,
-    ));
+    out.push_str(&format!("{} failed, {} passed\n", failed, passed,));
     out
 }
 
@@ -206,7 +210,10 @@ mod tests {
         let line = r#"{"reason":"compiler-message","message":{"level":"error","message":"aborting due to 1 previous error","spans":[]}}"#;
         let out = cargo_json(line);
         assert!(out.contains("error: aborting"), "got: {out}");
-        assert!(!out.contains("-->"), "no location for a span-less diagnostic");
+        assert!(
+            !out.contains("-->"),
+            "no location for a span-less diagnostic"
+        );
     }
 
     #[test]

@@ -148,7 +148,10 @@ impl TtsrEngine {
                 _ => None,
             };
             let path_regex = match &rule.scope {
-                RuleScope::Tool { path_pattern: Some(p), .. } => match Regex::new(p) {
+                RuleScope::Tool {
+                    path_pattern: Some(p),
+                    ..
+                } => match Regex::new(p) {
                     Ok(r) => Some(r),
                     Err(e) => {
                         tracing::warn!(rule = %rule.id, error = %e, "ttsr: bad path pattern; rule dropped");
@@ -166,7 +169,10 @@ impl TtsrEngine {
                 fires: 0,
             });
         }
-        Self { rules: compiled, turn: 0 }
+        Self {
+            rules: compiled,
+            turn: 0,
+        }
     }
 
     /// Advance to the next turn.
@@ -189,7 +195,12 @@ impl TtsrEngine {
     /// `tool_name` and `path` are the caller's best extraction from the
     /// partial arguments; a `None` path means the caller could not
     /// extract one yet, and a rule with a `path_pattern` does not fire.
-    pub fn observe_tool(&mut self, tool_name: &str, path: Option<&str>, text: &str) -> Vec<FiredRule> {
+    pub fn observe_tool(
+        &mut self,
+        tool_name: &str,
+        path: Option<&str>,
+        text: &str,
+    ) -> Vec<FiredRule> {
         self.observe(text, MatchSite::Tool, Some(tool_name), path)
     }
 
@@ -297,8 +308,7 @@ pub fn builtin_rules() -> Vec<Rule> {
         },
         Rule {
             id: "no-secret-shaped-prose".to_string(),
-            pattern: r"(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{36,}|AKIA[0-9A-Z]{16})"
-                .to_string(),
+            pattern: r"(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{36,}|AKIA[0-9A-Z]{16})".to_string(),
             correction: "Do not write a credential-shaped string in your reply. \
                          Refer to the secret by name, not by value."
                 .to_string(),
@@ -313,7 +323,13 @@ pub fn builtin_rules() -> Vec<Rule> {
 mod tests {
     use super::*;
 
-    fn rule(id: &str, pattern: &str, scope: RuleScope, interrupt: InterruptMode, repeat: RepeatMode) -> Rule {
+    fn rule(
+        id: &str,
+        pattern: &str,
+        scope: RuleScope,
+        interrupt: InterruptMode,
+        repeat: RepeatMode,
+    ) -> Rule {
         Rule {
             id: id.to_string(),
             pattern: pattern.to_string(),
@@ -428,7 +444,10 @@ mod tests {
         )]);
         let fired = e.observe_tool("edit", None, "TODO");
         assert_eq!(fired.len(), 1);
-        assert!(!fired[0].interrupt, "prose-only must not interrupt a tool match");
+        assert!(
+            !fired[0].interrupt,
+            "prose-only must not interrupt a tool match"
+        );
     }
 
     #[test]
@@ -510,8 +529,20 @@ mod tests {
     #[test]
     fn multiple_rules_all_fire() {
         let mut e = TtsrEngine::new(vec![
-            rule("a", "TODO", RuleScope::Text, InterruptMode::Always, RepeatMode::Once),
-            rule("b", "FIXME", RuleScope::Text, InterruptMode::Always, RepeatMode::Once),
+            rule(
+                "a",
+                "TODO",
+                RuleScope::Text,
+                InterruptMode::Always,
+                RepeatMode::Once,
+            ),
+            rule(
+                "b",
+                "FIXME",
+                RuleScope::Text,
+                InterruptMode::Always,
+                RepeatMode::Once,
+            ),
         ]);
         let fired = e.observe_text("TODO and FIXME");
         assert_eq!(fired.len(), 2);

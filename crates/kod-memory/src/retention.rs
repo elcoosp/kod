@@ -202,12 +202,7 @@ mod tests {
     use time::OffsetDateTime;
 
     fn msg(role: MessageRole, content: &str) -> ChatMessage {
-        ChatMessage::text(
-            MessageId::new(),
-            role,
-            content,
-            OffsetDateTime::now_utc(),
-        )
+        ChatMessage::text(MessageId::new(), role, content, OffsetDateTime::now_utc())
     }
 
     fn transcript() -> Vec<ChatMessage> {

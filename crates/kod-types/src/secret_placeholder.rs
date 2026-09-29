@@ -196,8 +196,8 @@ impl SecretVault {
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .encode(vault.inner.key);
+                let encoded =
+                    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(vault.inner.key);
                 write_key_file(path, encoded.as_bytes())?;
                 Ok(vault)
             }
@@ -269,11 +269,7 @@ impl SecretVault {
 
     /// How many secrets are registered.
     pub fn len(&self) -> usize {
-        self.inner
-            .forward
-            .read()
-            .map(|g| g.len())
-            .unwrap_or(0)
+        self.inner.forward.read().map(|g| g.len()).unwrap_or(0)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -469,10 +465,7 @@ mod tests {
     fn different_keys_produce_different_placeholders() {
         let v1 = SecretVault::with_key([1u8; 32]);
         let v2 = SecretVault::with_key([2u8; 32]);
-        assert_ne!(
-            v1.placeholder_for("sk-abc"),
-            v2.placeholder_for("sk-abc"),
-        );
+        assert_ne!(v1.placeholder_for("sk-abc"), v2.placeholder_for("sk-abc"),);
     }
 
     #[test]
@@ -625,10 +618,7 @@ mod tests {
         let v1 = SecretVault::load_or_create(&path).unwrap();
         let v2 = SecretVault::load_or_create(&path).unwrap();
         // Same key file -> same placeholders.
-        assert_eq!(
-            v1.placeholder_for("sk-abc"),
-            v2.placeholder_for("sk-abc"),
-        );
+        assert_eq!(v1.placeholder_for("sk-abc"), v2.placeholder_for("sk-abc"),);
     }
 
     #[test]

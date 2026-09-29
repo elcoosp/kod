@@ -53,8 +53,7 @@ pub struct PriorityChange {
 
 /// The commit types the validator recognizes.
 pub const TYPES: &[&str] = &[
-    "feat", "fix", "docs", "style", "refactor", "perf", "test", "build",
-    "ci", "chore", "revert",
+    "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
 ];
 
 /// The summary length cap.
@@ -244,14 +243,20 @@ mod tests {
             p.r#type = t.to_string();
             // A path-agnostic type accepts anything; docs/ci/build
             // have a path rule, so give each one a path it accepts.
-            p.changed_paths = vec![match *t {
-                "docs" => "README.md",
-                "ci" => ".github/workflows/ci.yml",
-                "build" => "Cargo.toml",
-                _ => "src/lib.rs",
-            }
-            .to_string()];
-            assert!(validate(&p).is_ok(), "type {t} should be valid: {:?}", validate(&p));
+            p.changed_paths = vec![
+                match *t {
+                    "docs" => "README.md",
+                    "ci" => ".github/workflows/ci.yml",
+                    "build" => "Cargo.toml",
+                    _ => "src/lib.rs",
+                }
+                .to_string(),
+            ];
+            assert!(
+                validate(&p).is_ok(),
+                "type {t} should be valid: {:?}",
+                validate(&p)
+            );
         }
     }
 
@@ -295,7 +300,10 @@ mod tests {
         let mut p = proposal();
         p.r#type = "docs".to_string();
         p.changed_paths = vec!["src/widget.rs".to_string()];
-        assert!(matches!(validate(&p), Err(RejectReason::TypePathMismatch { .. })));
+        assert!(matches!(
+            validate(&p),
+            Err(RejectReason::TypePathMismatch { .. })
+        ));
     }
 
     #[test]
@@ -328,7 +336,10 @@ mod tests {
         let mut p = proposal();
         p.r#type = "ci".to_string();
         p.changed_paths = vec!["src/main.rs".to_string()];
-        assert!(matches!(validate(&p), Err(RejectReason::TypePathMismatch { .. })));
+        assert!(matches!(
+            validate(&p),
+            Err(RejectReason::TypePathMismatch { .. })
+        ));
     }
 
     #[test]

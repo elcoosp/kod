@@ -98,7 +98,7 @@ mod tests {
             timestamp: OffsetDateTime::now_utc(),
             relevance: 0.9,
             metadata: MemoryMetadata::default(),
-        
+
             superseded_by: None,
             contradicts: Vec::new(),
         };
@@ -223,7 +223,7 @@ mod coverage_memory_type {
                 last_retrieved_at_ms: Some(1_700_000_000_000),
                 confidence: Some(0.65),
             },
-        
+
             superseded_by: None,
             contradicts: Vec::new(),
         };

@@ -62,18 +62,8 @@ impl HelpWidget {
             Self::row(&key, &normal, "Ctrl+Left/Right", "jump by word"),
             Line::from(""),
             Line::from(vec![Span::styled("Chat", title)]),
-            Self::row(
-                &key,
-                &normal,
-                "wheel · j/k · PgUp/PgDn",
-                "scroll the chat",
-            ),
-            Self::row(
-                &key,
-                &normal,
-                "m · y",
-                "select-mode+drag · copy reply",
-            ),
+            Self::row(&key, &normal, "wheel · j/k · PgUp/PgDn", "scroll the chat"),
+            Self::row(&key, &normal, "m · y", "select-mode+drag · copy reply"),
             Self::row(
                 &key,
                 &normal,
@@ -83,18 +73,8 @@ impl HelpWidget {
             Self::row(&key, &normal, "/ then n/N", "search next/prev match"),
             Self::row(&key, &normal, "u", "undo a /clear"),
             Line::from(vec![Span::styled("Session", title)]),
-            Self::row(
-                &key,
-                &normal,
-                "/retry · /theme",
-                "reconnect · switch theme",
-            ),
-            Self::row(
-                &key,
-                &normal,
-                "/model · /quit",
-                "switch model · quit",
-            ),
+            Self::row(&key, &normal, "/retry · /theme", "reconnect · switch theme"),
+            Self::row(&key, &normal, "/model · /quit", "switch model · quit"),
             Self::row(&key, &normal, "Esc", "cancel generation · close this help"),
             Line::from(vec![Span::styled(
                 "Commands: type / + Tab · `m` select-mode · `y` copy reply",

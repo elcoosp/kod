@@ -13,13 +13,13 @@
 
 use async_trait::async_trait;
 use futures::Stream;
-use kod_core::router::RouterConfig;
 use kod_core::KodEngine;
+use kod_core::router::RouterConfig;
 use kod_error::Result;
 use kod_provider::request::CompletionRequest;
 use kod_provider::{
-    GenerationOptions, GenerationResponse, LlmProvider, ProviderCapabilities,
-    ProviderRegistry, StreamChunk,
+    GenerationOptions, GenerationResponse, LlmProvider, ProviderCapabilities, ProviderRegistry,
+    StreamChunk,
 };
 use kod_types::ToolDefinition;
 use std::pin::Pin;
@@ -116,7 +116,11 @@ async fn handoff_is_used_when_mechanical_rungs_cannot_reduce() {
         "",
     );
     engine
-        .set_registry(Arc::new(reg), kod_provider::ModelRef::new("default", ""), None)
+        .set_registry(
+            Arc::new(reg),
+            kod_provider::ModelRef::new("default", ""),
+            None,
+        )
         .await;
     engine.start().await.unwrap();
 
@@ -164,9 +168,9 @@ async fn handoff_is_used_when_mechanical_rungs_cannot_reduce() {
     // And the summary landed: the older half of the transcript was
     // replaced with a message carrying the handoff sections.
     let post = engine.history_for("").await;
-    let has_handoff_summary = post.iter().any(|t| {
-        t.content.contains("## Objective") && t.content.contains("## Current state")
-    });
+    let has_handoff_summary = post
+        .iter()
+        .any(|t| t.content.contains("## Objective") && t.content.contains("## Current state"));
     assert!(
         has_handoff_summary,
         "the handoff summary was not stored; post-turn contents: {:?}",

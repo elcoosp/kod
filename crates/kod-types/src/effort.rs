@@ -100,7 +100,12 @@ mod tests {
             EffortLevel::Max,
         ];
         for pair in levels.windows(2) {
-            assert!(pair[0] < pair[1], "{:?} must sort before {:?}", pair[0], pair[1]);
+            assert!(
+                pair[0] < pair[1],
+                "{:?} must sort before {:?}",
+                pair[0],
+                pair[1]
+            );
         }
     }
 

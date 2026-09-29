@@ -89,7 +89,7 @@ impl LlmConfig {
         self.endpoints.first().unwrap_or_else(|| {
             FALLBACK.get_or_init(|| LlmConfig::default().endpoints.into_iter().next().unwrap())
         })
-}
+    }
 
     /// Mutable variant. When the endpoints vec is empty, a default
     /// endpoint is pushed first so the caller has something to mutate.
@@ -98,7 +98,7 @@ impl LlmConfig {
             self.endpoints = LlmConfig::default().endpoints;
         }
         &mut self.endpoints[0]
-}
+    }
 
     /// Clamp out-of-range or nonsensical values on every endpoint.
     /// Called by `KodConfig::load_default()` after deserialization.
@@ -583,15 +583,13 @@ context_window = 8192
 
     #[test]
     fn effort_can_be_the_auto_sentinel() {
-        let cfg: EndpointConfig =
-            toml::from_str(&minimal_toml(r#"effort = "auto""#)).unwrap();
+        let cfg: EndpointConfig = toml::from_str(&minimal_toml(r#"effort = "auto""#)).unwrap();
         assert_eq!(cfg.effort.as_deref(), Some("auto"));
     }
 
     #[test]
     fn effort_can_be_a_fixed_level() {
-        let cfg: EndpointConfig =
-            toml::from_str(&minimal_toml(r#"effort = "high""#)).unwrap();
+        let cfg: EndpointConfig = toml::from_str(&minimal_toml(r#"effort = "high""#)).unwrap();
         assert_eq!(cfg.effort.as_deref(), Some("high"));
     }
 }
@@ -795,7 +793,7 @@ mod tests {
                     effort: None,
                     rate_limit_wait_secs: None,
                     tab_bridge: false,
-},
+                },
                 EndpointConfig {
                     name: "local".into(),
                     provider: ProviderKind::OpenAICompatible,
@@ -811,7 +809,7 @@ mod tests {
                     effort: None,
                     rate_limit_wait_secs: None,
                     tab_bridge: false,
-},
+                },
             ],
             routing: Some(r),
             ..LlmConfig::default()
@@ -885,7 +883,7 @@ mod coverage_llm_validate {
             rate_limit_wait_secs: None,
             tab_bridge: false,
         }
-}
+    }
 
     #[test]
     fn validate_does_not_change_an_already_valid_config() {

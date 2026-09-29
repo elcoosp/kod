@@ -1719,8 +1719,9 @@ mod coverage_split_hunks {
         app.fail_generation("connection reset");
         let texts: Vec<&str> = app.messages().iter().map(|m| m.content.as_str()).collect();
         assert!(
-            texts.iter().any(|t| t.contains("half a repl")
-                && t.contains("(error - partial answer)")),
+            texts
+                .iter()
+                .any(|t| t.contains("half a repl") && t.contains("(error - partial answer)")),
             "partial answer must survive the failure: {texts:?}",
         );
     }

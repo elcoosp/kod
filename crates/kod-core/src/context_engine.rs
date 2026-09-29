@@ -231,12 +231,7 @@ impl FidelityCache {
     }
 
     /// Store a fidelity decision. Called after a miss.
-    pub fn insert(
-        &mut self,
-        id: kod_types::MessageId,
-        content_hash: u64,
-        fidelity: Fidelity,
-    ) {
+    pub fn insert(&mut self, id: kod_types::MessageId, content_hash: u64, fidelity: Fidelity) {
         self.entries.insert(id, (content_hash, fidelity));
     }
 
@@ -252,7 +247,6 @@ impl FidelityCache {
         self.entries.retain(|id, _| keep.contains(id));
     }
 }
-
 
 /// Render a transcript through the fidelity pipeline.
 ///
@@ -599,8 +593,14 @@ mod tests {
         // produce identical output. This pins that the cache does
         // not accidentally corrupt the render.
         let turns = vec![
-            scored_msg(kod_types::MessageRole::User, "older user turn about widgets"),
-            scored_msg(kod_types::MessageRole::User, "newer user turn about gadgets"),
+            scored_msg(
+                kod_types::MessageRole::User,
+                "older user turn about widgets",
+            ),
+            scored_msg(
+                kod_types::MessageRole::User,
+                "newer user turn about gadgets",
+            ),
         ];
         let query = Query::from_text("user turn about widgets gadgets");
         let mut cache = FidelityCache::new();

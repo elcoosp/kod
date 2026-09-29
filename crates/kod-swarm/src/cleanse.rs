@@ -163,12 +163,7 @@ impl CleanseScheduler {
             .pending
             .keys()
             .filter(|f| {
-                !claimed.contains(f)
-                    && self
-                        .owned
-                        .get(*f)
-                        .map(|o| o.released)
-                        .unwrap_or(true)
+                !claimed.contains(f) && self.owned.get(*f).map(|o| o.released).unwrap_or(true)
             })
             .cloned()
             .collect();
@@ -252,7 +247,10 @@ mod tests {
     use super::*;
 
     fn diag(line: u32) -> Diagnostic {
-        Diagnostic { line, message: format!("lint at {line}") }
+        Diagnostic {
+            line,
+            message: format!("lint at {line}"),
+        }
     }
 
     #[test]

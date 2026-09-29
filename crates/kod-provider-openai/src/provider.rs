@@ -112,9 +112,7 @@ impl OpenAICompatProvider {
             api_key,
             client,
             timeout_secs,
-            concurrency: Arc::new(
-                kod_provider::concurrency::ProviderConcurrency::new(0),
-            ),
+            concurrency: Arc::new(kod_provider::concurrency::ProviderConcurrency::new(0)),
             stream_guard_enabled: true,
             rate_limit_wait: std::time::Duration::ZERO,
             default_session: Arc::new(std::sync::RwLock::new(None)),
@@ -223,9 +221,11 @@ impl OpenAICompatProvider {
         if let Some(session) = self.default_session_string() {
             stamp_openai_user(&mut config, &session);
         }
-        let mut request =
-            LlmRequest::new(self.request_model(options), vec![Content::new("user").with_text(prompt)])
-                .with_config(config);
+        let mut request = LlmRequest::new(
+            self.request_model(options),
+            vec![Content::new("user").with_text(prompt)],
+        )
+        .with_config(config);
         if !tools.is_empty() {
             request.tools = tool_declarations(tools);
         }
@@ -377,7 +377,8 @@ impl OpenAICompatProvider {
         if let Some(session) = session {
             stamp_openai_user(&mut config, &session);
         }
-        let mut request = LlmRequest::new(self.request_model(&req.options), contents).with_config(config);
+        let mut request =
+            LlmRequest::new(self.request_model(&req.options), contents).with_config(config);
         if !req.tools.is_empty() {
             request.tools = tool_declarations(&req.tools);
         }
@@ -475,9 +476,7 @@ impl OpenAICompatProvider {
                     // Subset convention: `prompt_token_count` already
                     // includes cached tokens; the cache field is the
                     // *subset* served from cache.
-                    cache_read_tokens: usage
-                        .cache_read_input_token_count
-                        .map(|n| n.max(0) as u64),
+                    cache_read_tokens: usage.cache_read_input_token_count.map(|n| n.max(0) as u64),
                     cache_creation_tokens: usage
                         .cache_creation_input_token_count
                         .map(|n| n.max(0) as u64),
@@ -571,7 +570,11 @@ impl LlmProvider for OpenAICompatProvider {
             .map(|models| {
                 models
                     .iter()
-                    .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(kod_provider::ModelInfo::bare))
+                    .filter_map(|m| {
+                        m.get("id")
+                            .and_then(|id| id.as_str())
+                            .map(kod_provider::ModelInfo::bare)
+                    })
                     .collect()
             })
             .unwrap_or_default())
@@ -593,8 +596,7 @@ impl LlmProvider for OpenAICompatProvider {
         // Background iff no explicit session (prewarm, judges) while a
         // background session is installed. Main turns always carry an
         // explicit session and keep fail-fast semantics.
-        let background =
-            req.session_id.is_none() && self.default_session_string().is_some();
+        let background = req.session_id.is_none() && self.default_session_string().is_some();
         let request = self.request_from_completion(req);
         let (text, calls, usage) = self.collect_bg(request, false, background).await?;
         if calls.is_empty() {
@@ -1530,11 +1532,12 @@ mod coverage_openai_provider {
         req.system = SystemPrompt::default();
         let llm = p.request_from_completion(&req);
         let cfg = llm.config.expect("config always set");
-        assert!(cfg
-            .extensions
-            .get("openai")
-            .and_then(|v| v.get("user"))
-            .is_none());
+        assert!(
+            cfg.extensions
+                .get("openai")
+                .and_then(|v| v.get("user"))
+                .is_none()
+        );
     }
 
     #[test]
@@ -1625,11 +1628,8 @@ mod tests {
         // the engine knows cache-read tokens are possible and does not gate
         // transcript breakpoints on this provider.
         use kod_provider::PromptCacheKind;
-        let provider = OpenAICompatProvider::new(
-            "http://localhost:11434/v1",
-            "test-model",
-        )
-        .expect("constructing an OpenAI-compatible provider must succeed");
+        let provider = OpenAICompatProvider::new("http://localhost:11434/v1", "test-model")
+            .expect("constructing an OpenAI-compatible provider must succeed");
         let caps = provider.capabilities();
         assert_eq!(
             caps.prompt_cache,
@@ -1649,9 +1649,9 @@ mod tests {
         // billing. This pins that the cost math honours it — a
         // regression that reverted to Split would over-bill every
         // cached turn at the full input rate.
-        use kod_provider::request::ModelPricing;
         use kod_provider::CacheConvention;
         use kod_provider::TokenUsage;
+        use kod_provider::request::ModelPricing;
 
         let usage = TokenUsage {
             prompt_tokens: 10_000,
@@ -1661,8 +1661,7 @@ mod tests {
             cache_creation_tokens: Some(0),
             cache_creation_1h_tokens: None,
         };
-        let pricing = ModelPricing::new(3.0, 15.0)
-            .with_cache_convention(CacheConvention::Subset);
+        let pricing = ModelPricing::new(3.0, 15.0).with_cache_convention(CacheConvention::Subset);
         let cost = pricing.cost_for_usage(&usage);
         // fresh = 10k - 8k = 2k → 0.006
         // read  = 8k → 0.0024

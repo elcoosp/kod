@@ -241,7 +241,7 @@ impl LongTermMemory {
     }
 
     /// Count entries without materialising them.
-/// Mark `old` as replaced by `new`.
+    /// Mark `old` as replaced by `new`.
     ///
     /// The old entry stays on disk — deleting it loses the audit
     /// trail of what was believed before — but stops appearing in
@@ -412,7 +412,7 @@ mod tests {
             timestamp: time::OffsetDateTime::now_utc(),
             relevance: 1.0,
             metadata: Default::default(),
-        
+
             superseded_by: None,
             contradicts: Vec::new(),
         };
@@ -462,7 +462,7 @@ mod tests {
                     timestamp: time::OffsetDateTime::now_utc(),
                     relevance: 1.0,
                     metadata: Default::default(),
-                
+
                     superseded_by: None,
                     contradicts: Vec::new(),
                 };
@@ -497,7 +497,7 @@ mod coverage_store_batch {
             timestamp: time::OffsetDateTime::now_utc(),
             relevance: 1.0,
             metadata: Default::default(),
-        
+
             superseded_by: None,
             contradicts: Vec::new(),
         }
@@ -561,7 +561,7 @@ mod coverage_store_batch {
 #[cfg(test)]
 mod supersession_tests {
     use super::*;
-    use kod_types::{MemoryEntry, MemoryId, MemoryType, MemoryMetadata};
+    use kod_types::{MemoryEntry, MemoryId, MemoryMetadata, MemoryType};
     use time::OffsetDateTime;
 
     fn entry(content: &str) -> MemoryEntry {

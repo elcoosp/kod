@@ -10,13 +10,13 @@
 
 use async_trait::async_trait;
 use futures::Stream;
-use kod_core::router::RouterConfig;
 use kod_core::KodEngine;
+use kod_core::router::RouterConfig;
 use kod_error::Result;
 use kod_provider::request::CompletionRequest;
 use kod_provider::{
-    GenerationOptions, GenerationResponse, LlmProvider, ModelRef,
-    ProviderCapabilities, ProviderRegistry, StreamChunk,
+    GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderCapabilities,
+    ProviderRegistry, StreamChunk,
 };
 use kod_types::{ToolCall, ToolDefinition};
 use std::pin::Pin;
@@ -102,9 +102,7 @@ fn fixture_config(dir: &std::path::Path) -> RouterConfig {
     }
 }
 
-async fn engine_with(
-    provider: Arc<RecordingProvider>,
-) -> (Arc<KodEngine>, TempDir) {
+async fn engine_with(provider: Arc<RecordingProvider>) -> (Arc<KodEngine>, TempDir) {
     let tmp = TempDir::new().unwrap();
     let cfg = fixture_config(tmp.path());
     let engine = Arc::new(KodEngine::new(cfg, tmp.path().join("s.kod")).unwrap());
@@ -165,9 +163,9 @@ async fn a_secret_in_the_user_message_is_obfuscated_before_the_provider_sees_it(
     // And at least one message must carry the placeholder, proving
     // the substitution actually ran (as opposed to the secret having
     // been dropped).
-    let saw_placeholder = requests.iter().any(|r| {
-        r.messages.iter().any(|m| m.content.contains(&placeholder))
-    });
+    let saw_placeholder = requests
+        .iter()
+        .any(|r| r.messages.iter().any(|m| m.content.contains(&placeholder)));
     assert!(
         saw_placeholder,
         "no message carried the placeholder {placeholder:?}; \
@@ -182,13 +180,13 @@ async fn without_a_vault_the_raw_secret_reaches_the_provider() {
     let (provider, seen) = RecordingProvider::new();
     let (engine, _tmp) = engine_with(Arc::new(provider)).await;
     // No `set_secret_vault` call.
-    let _ = engine
-        .process("the key is super-secret-value-1234")
-        .await;
+    let _ = engine.process("the key is super-secret-value-1234").await;
     let requests = seen.lock().unwrap();
-    let saw_raw = requests
-        .iter()
-        .any(|r| r.messages.iter().any(|m| m.content.contains("super-secret-value-1234")));
+    let saw_raw = requests.iter().any(|r| {
+        r.messages
+            .iter()
+            .any(|m| m.content.contains("super-secret-value-1234"))
+    });
     assert!(
         saw_raw,
         "a vault-less engine must send raw bytes (the pre-§14.1 shape)",

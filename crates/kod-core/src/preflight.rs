@@ -42,9 +42,7 @@ impl PreflightSample {
             && total > 0
             && (free as f64 / total as f64) < 0.10
         {
-            out.push(format!(
-                "less than 10% RAM free ({free} of {total} bytes)",
-            ));
+            out.push(format!("less than 10% RAM free ({free} of {total} bytes)",));
         }
         if let Some(swap) = self.swap_used_bytes
             && swap > 2 * 1024 * 1024 * 1024
@@ -122,10 +120,7 @@ pub fn sample() -> PreflightSample {
     {
         use std::process::Command;
         if let Ok(out) = Command::new("sysctl").args(["-n", "hw.memsize"]).output() {
-            s.total_ram_bytes = String::from_utf8_lossy(&out.stdout)
-                .trim()
-                .parse()
-                .ok();
+            s.total_ram_bytes = String::from_utf8_lossy(&out.stdout).trim().parse().ok();
         }
         if let Ok(out) = Command::new("sysctl").args(["-n", "vm.loadavg"]).output() {
             s.load_1m = parse_loadavg(&String::from_utf8_lossy(&out.stdout));
@@ -181,7 +176,8 @@ SwapFree:        4000000 kB
 
     #[test]
     fn pmset_reads_percent_and_power_source() {
-        let on_batt = "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=123) 43%; discharging;";
+        let on_batt =
+            "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=123) 43%; discharging;";
         assert_eq!(parse_pmset(on_batt), (Some(43), true));
 
         let on_ac = "Now drawing from 'AC Power'\n -InternalBattery-0 (id=123) 100%; charged;";

@@ -107,7 +107,10 @@ pub fn parse(text: &str) -> CompletionReport {
 
     // The open tag's own line carries the status attribute.
     let after_open = &text[open_at..];
-    let open_line_end = after_open.find('>').map(|i| i + 1).unwrap_or(after_open.len());
+    let open_line_end = after_open
+        .find('>')
+        .map(|i| i + 1)
+        .unwrap_or(after_open.len());
     let open_line = &after_open[..open_line_end];
     let status = extract_status(open_line);
 
@@ -297,7 +300,8 @@ summary: three of the four tests pass
 
     #[test]
     fn empty_validation_line_is_treated_as_absent() {
-        let text = "<completion-report status=done>\nsummary: ok\nvalidation:\n</completion-report>";
+        let text =
+            "<completion-report status=done>\nsummary: ok\nvalidation:\n</completion-report>";
         assert!(parse(text).validation.is_none());
     }
 

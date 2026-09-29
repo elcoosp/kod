@@ -7,19 +7,19 @@
 pub mod context;
 pub mod embedding;
 pub mod extract;
+pub mod fusion;
+pub mod hygiene;
 pub mod long_term;
 pub mod manager;
-pub mod hygiene;
-pub mod tier;
-pub mod veracity;
-pub mod sharpshooter;
-pub mod retention;
 pub mod mental_models;
-pub mod fusion;
+pub mod retention;
 pub mod retrieval;
+pub mod sharpshooter;
 pub mod short_term;
 pub mod stopwords;
+pub mod tier;
 pub mod vector_index;
+pub mod veracity;
 
 pub use embedding::{EmbeddingClient, NoEmbedder, OllamaEmbedder, OpenAIEmbedder};
 pub use extract::{ExtractedFact, FactKind, extract};

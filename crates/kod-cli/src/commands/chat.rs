@@ -515,8 +515,7 @@ pub async fn run_chat(
                 // H-RL1: the engine is sleeping out a rate-limit window
                 // and will re-drive the request. Show one line, never
                 // the raw marker.
-                if let Some((secs, attempt, max)) =
-                    kod_core::engine::parse_rate_limit_wait(&chunk)
+                if let Some((secs, attempt, max)) = kod_core::engine::parse_rate_limit_wait(&chunk)
                 {
                     println!(
                         "\nRate limited by the provider — waiting {} before automatic retry (attempt {attempt}/{max})…",

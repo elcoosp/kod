@@ -691,11 +691,7 @@ pub struct Engine;
         assert!(names.contains(&"Engine"), "got: {:?}", names);
         assert!(!names.contains(&"unit_test"), "got: {:?}", names);
         assert!(!names.contains(&"async_test"), "got: {:?}", names);
-        assert!(
-            !names.contains(&"attributed_test"),
-            "got: {:?}",
-            names
-        );
+        assert!(!names.contains(&"attributed_test"), "got: {:?}", names);
     }
 
     /// Regression target for D5-L4: the repomap sorts by PageRank, not
@@ -898,7 +894,9 @@ pub struct Engine;
 
     #[test]
     fn a_nonexistent_dir_is_not_a_repo() {
-        assert!(!looks_like_a_repo(Path::new("/this/path/does/not/exist/nor/should/it")));
+        assert!(!looks_like_a_repo(Path::new(
+            "/this/path/does/not/exist/nor/should/it"
+        )));
     }
 
     #[test]

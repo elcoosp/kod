@@ -730,7 +730,10 @@ mod widget_overlays {
         assert!(text.contains("Commands:"), "footer cut off, got: {text}");
         assert!(text.contains("Esc"), "Esc row cut off, got: {text}");
         for glued in ["wheelscroll", "quitreconnect"] {
-            assert!(!text.contains(glued), "column overflow {glued:?}, got: {text}");
+            assert!(
+                !text.contains(glued),
+                "column overflow {glued:?}, got: {text}"
+            );
         }
     }
 
@@ -853,10 +856,7 @@ mod header_and_status {
             !text.contains(&format!("[{name}]")),
             "theme tag must not appear in the header, got: {text}"
         );
-        assert!(
-            text.contains(" kod "),
-            "the title stays, got: {text}"
-        );
+        assert!(text.contains(" kod "), "the title stays, got: {text}");
         assert!(
             text.contains("ctx "),
             "the context meter stays, got: {text}"
@@ -1081,7 +1081,6 @@ mod header_and_status {
         );
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // §14.5 follow-up: approval popup geometry

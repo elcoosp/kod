@@ -208,11 +208,7 @@ mod tests {
             max_frames: 1,
             max_bytes_per_frame: 32,
         };
-        let mut frames = vec![
-            frame("junk"),
-            frame(&valid_png()),
-            frame(&oversize_png()),
-        ];
+        let mut frames = vec![frame("junk"), frame(&valid_png()), frame(&oversize_png())];
         let report = apply_image_budget(&mut frames, &policy);
         assert!(report.any_dropped());
         assert_eq!(report.dropped_undecodable, 1);

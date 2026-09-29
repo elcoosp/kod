@@ -456,7 +456,10 @@ pub fn read_session(path: &Path) -> Result<Vec<SessionEntry>> {
 /// A cold revive reads this to rebuild a session's tool surface. A
 /// log written before the variant existed returns `None` — the
 /// caller then falls back to rebuilding from config.
-pub fn session_init_for(path: &Path, holder: &str) -> Result<Option<(String, String, Vec<String>, u64)>> {
+pub fn session_init_for(
+    path: &Path,
+    holder: &str,
+) -> Result<Option<(String, String, Vec<String>, u64)>> {
     let entries = read_session(path)?;
     let mut found = None;
     for e in entries {
@@ -490,7 +493,6 @@ pub fn default_session_path() -> Option<PathBuf> {
             .join(format!("{ts}.jsonl")),
     )
 }
-
 
 /// Which shape a rehydrated transcript takes.
 ///
@@ -529,10 +531,7 @@ pub enum RehydrationMode {
 /// `timestamp_ms`; a value that cannot be represented as an
 /// `OffsetDateTime` falls back to the Unix epoch rather than
 /// dropping the turn.
-pub fn rehydrate_turns(
-    entries: &[SessionEntry],
-    holder: &str,
-) -> Vec<kod_types::ChatMessage> {
+pub fn rehydrate_turns(entries: &[SessionEntry], holder: &str) -> Vec<kod_types::ChatMessage> {
     use kod_types::{ChatMessage, MessageId, MessageRole};
 
     let mut out: Vec<ChatMessage> = Vec::new();
@@ -552,10 +551,9 @@ pub fn rehydrate_turns(
             continue;
         }
 
-        let ts = time::OffsetDateTime::from_unix_timestamp_nanos(
-            (*timestamp_ms as i128) * 1_000_000,
-        )
-        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+        let ts =
+            time::OffsetDateTime::from_unix_timestamp_nanos((*timestamp_ms as i128) * 1_000_000)
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
 
         // A stable call id ties the assistant tool-call message to
         // the tool-result message that answers it. Log entries do not
@@ -579,12 +577,7 @@ pub fn rehydrate_turns(
         out.push(assistant);
 
         let content = render_result_text(result);
-        let mut tool_msg = ChatMessage::text(
-            MessageId::new(),
-            MessageRole::Tool,
-            content,
-            ts,
-        );
+        let mut tool_msg = ChatMessage::text(MessageId::new(), MessageRole::Tool, content, ts);
         tool_msg.tool_call_id = Some(call_id);
         out.push(tool_msg);
     }
@@ -611,7 +604,6 @@ fn render_result_text(result: &serde_json::Value) -> String {
     }
     serde_json::to_string(result).unwrap_or_default()
 }
-
 
 /// Rebuild a transcript from a session log as **prose** messages.
 ///
@@ -648,10 +640,9 @@ pub fn rehydrate_prose_turns(
             continue;
         }
 
-        let ts = time::OffsetDateTime::from_unix_timestamp_nanos(
-            (*timestamp_ms as i128) * 1_000_000,
-        )
-        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+        let ts =
+            time::OffsetDateTime::from_unix_timestamp_nanos((*timestamp_ms as i128) * 1_000_000)
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
 
         let args = serde_json::to_string(arguments).unwrap_or_default();
         let body = format!(

@@ -21,7 +21,6 @@ use std::io::Stdout;
 use std::sync::Arc;
 use std::time::Duration;
 
-
 /// Main TUI application loop
 pub struct TuiLoop {
     app: KodApp,
@@ -189,15 +188,16 @@ impl TuiLoop {
         let restore = (|| -> Result<()> {
             crossterm::terminal::enable_raw_mode()
                 .map_err(|e| KodError::Internal(format!("could not re-enable raw mode: {e}")))?;
-            execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen,)
-                .map_err(|e| KodError::Internal(format!("could not re-enter alternate screen: {e}")))?;
+            execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen,).map_err(
+                |e| KodError::Internal(format!("could not re-enter alternate screen: {e}")),
+            )?;
             // Restore mouse mode as it was: a user who dropped to
             // select-mode (capture off) to copy text gets it back
             // after returning from $EDITOR.
             if self.mouse_captured {
-                execute!(std::io::stdout(), crossterm::event::EnableMouseCapture,).map_err(|e| {
-                    KodError::Internal(format!("could not restore mouse capture: {e}"))
-                })?;
+                execute!(std::io::stdout(), crossterm::event::EnableMouseCapture,).map_err(
+                    |e| KodError::Internal(format!("could not restore mouse capture: {e}")),
+                )?;
             }
             if let Some(terminal) = &mut self.terminal {
                 let _ = terminal.clear();
@@ -875,8 +875,7 @@ impl TuiLoop {
                 // its own assistant bubble, then open the next turn with
                 // a visible separator — never one merged message.
                 self.app.flush_streamed_text();
-                self.app
-                    .push_system_message(&format!("—— turn {turn} ——"));
+                self.app.push_system_message(&format!("—— turn {turn} ——"));
             }
             Event::StreamReset => {
                 self.app.drop_response_stream();
@@ -1084,7 +1083,11 @@ impl TuiLoop {
                     self.app.save_session();
                 }
             }
-            Event::ToolCompleted { id, header, summary } => {
+            Event::ToolCompleted {
+                id,
+                header,
+                summary,
+            } => {
                 // Tool row first, then whatever streamed during the call:
                 // flushing before would drop post-tool text above the row.
                 self.app.complete_tool_execution(&id, &header, &summary);
@@ -1467,7 +1470,8 @@ impl TuiLoop {
                                 name: tool.to_string(),
                             })
                             .await;
-                    } else if let Some((cid, progress)) = kod_core::engine::parse_tool_args(&chunk) {
+                    } else if let Some((cid, progress)) = kod_core::engine::parse_tool_args(&chunk)
+                    {
                         let _ = event_tx_chunks
                             .send(Event::ToolProgress {
                                 id: cid.to_string(),
@@ -1631,7 +1635,11 @@ impl TuiLoop {
                         };
                         let summary = kod_core::engine::summarize_tool_result(name, result);
                         let _ = event_tx
-                            .send(Event::ToolCompleted { id, header, summary })
+                            .send(Event::ToolCompleted {
+                                id,
+                                header,
+                                summary,
+                            })
                             .await;
                     }
                     // Skills used this turn are visible through their own
@@ -1683,7 +1691,6 @@ impl TuiLoop {
     /// `dispatch_prompt`: a spawned task runs the runner, its events
     /// flow through the event channel, and Esc / Ctrl+C aborts the task
     /// via `gen_task`.
-
 
     async fn dispatch_swarm(&mut self, goal: String) -> Result<()> {
         self.dispatch_swarm_with(goal, None).await
@@ -1803,10 +1810,7 @@ impl TuiLoop {
                                 branch,
                             ),
                         ),
-                        kod_core::SwarmEvent::BoundaryViolation {
-                            agent_name,
-                            paths,
-                        } => {
+                        kod_core::SwarmEvent::BoundaryViolation { agent_name, paths } => {
                             // P5: a subagent wrote outside its
                             // declared globs. Surface it through the
                             // same AgentMessage channel the other
@@ -1820,9 +1824,7 @@ impl TuiLoop {
                                 .join(", ");
                             Event::AgentMessage(
                                 "swarm".to_string(),
-                                format!(
-                                    "⚠ {agent_name} wrote outside its declared scope: {list}",
-                                ),
+                                format!("⚠ {agent_name} wrote outside its declared scope: {list}",),
                             )
                         }
                         kod_core::SwarmEvent::WorktreesMerged {
@@ -1864,18 +1866,11 @@ impl TuiLoop {
                                 resp.per_agent
                                     .iter()
                                     .find(|r| r.subtask == st.name)
-                                    .map(|r| {
-                                        kod_core::overnight::build_task_card(
-                                            st, r, &[], None,
-                                        )
-                                    })
+                                    .map(|r| kod_core::overnight::build_task_card(st, r, &[], None))
                             })
                             .collect();
-                        let report = kod_core::overnight::render_report(
-                            &m.mission,
-                            &cards,
-                            &resp.merged,
-                        );
+                        let report =
+                            kod_core::overnight::render_report(&m.mission, &cards, &resp.merged);
                         let _ = std::fs::create_dir_all(&m.artifacts_dir);
                         let path = m.artifacts_dir.join("report.md");
                         let msg = match std::fs::write(&path, &report) {
@@ -2367,10 +2362,7 @@ impl TuiLoop {
                         // Artifacts go under the working directory, so
                         // a run's report travels with the repo it ran
                         // against.
-                        let artifacts = engine
-                            .working_dir()
-                            .join(".kod")
-                            .join("overnight");
+                        let artifacts = engine.working_dir().join(".kod").join("overnight");
                         let manifest = kod_core::overnight::OvernightManifest::starting_now(
                             goal.to_string(),
                             d,
@@ -3681,7 +3673,11 @@ impl TuiLoop {
                         // Cache savings can go negative: a session
                         // that wrote a cache it never read back pays
                         // the write premium without the read discount.
-                        let sign = if agg.total_cache_savings_usd >= 0.0 { "" } else { "-" };
+                        let sign = if agg.total_cache_savings_usd >= 0.0 {
+                            ""
+                        } else {
+                            "-"
+                        };
                         msg.push_str(&format!(
                             "  cache savings:   {sign}${:.4}\n",
                             agg.total_cache_savings_usd.abs(),
@@ -3935,9 +3931,8 @@ impl TuiLoop {
                 match parts.next() {
                     None | Some("show") => match engine.prewalk_state("session").await {
                         Some(state) => {
-                            self.app.push_system_message(&format!(
-                                "Prewalk state: {state:?}",
-                            ));
+                            self.app
+                                .push_system_message(&format!("Prewalk state: {state:?}",));
                         }
                         None => self
                             .app
@@ -4144,9 +4139,8 @@ impl TuiLoop {
                     .find(|m| m.role == kod_types::MessageRole::Assistant)
                     .map(|m| m.content.clone());
                 let Some(text) = last_assistant else {
-                    self.app.push_system_message(
-                        "No assistant turn to review yet.",
-                    );
+                    self.app
+                        .push_system_message("No assistant turn to review yet.");
                     return Ok(());
                 };
                 // Use a monotonic id derived from the app's own
@@ -4187,20 +4181,14 @@ impl TuiLoop {
                 if !snapshot.is_empty() {
                     msg.push_str("  endpoint             cached tokens  last used\n");
                     for (ep, tokens, turn) in &snapshot {
-                        msg.push_str(&format!(
-                            "  {:<20} {:>13}  {}\n",
-                            ep, tokens, turn
-                        ));
+                        msg.push_str(&format!("  {:<20} {:>13}  {}\n", ep, tokens, turn));
                     }
                 }
                 if !unhealthy.is_empty() {
                     msg.push_str("\n  Unhealthy (circuit open):\n");
                     for (ep, fails, err) in &unhealthy {
                         let e = err.as_deref().unwrap_or("(no error)");
-                        msg.push_str(&format!(
-                            "  {:<20} {} fails  {}\n",
-                            ep, fails, e
-                        ));
+                        msg.push_str(&format!("  {:<20} {} fails  {}\n", ep, fails, e));
                     }
                 }
                 self.app.push_system_message(msg.trim_end());
@@ -6641,7 +6629,7 @@ mod tests {
     /// adding a command to the autocomplete without documenting it
     /// fails this test. The previous SLASH_HELP was missing `/debug`
     /// for several commits — this pins the invariant.
-    
+
     /// The idle hint line must name `f` as the search key, matching the
     /// default keybinding, and must not claim `/` starts a search.
     #[tokio::test]
@@ -6844,9 +6832,12 @@ mod tests {
     #[tokio::test]
     async fn test_tool_progress_refreshes_running_line() {
         let mut tui = TuiLoop::new();
-        tui.handle_event(Event::ToolStarted { id: String::new(), name: "execute_command".to_string() })
-            .await
-            .unwrap();
+        tui.handle_event(Event::ToolStarted {
+            id: String::new(),
+            name: "execute_command".to_string(),
+        })
+        .await
+        .unwrap();
         assert_eq!(
             tui.app().current_tool().map(|s| s.as_str()),
             Some("execute_command")
@@ -7090,9 +7081,12 @@ mod tests {
     async fn test_fail_generation_clears_running_tool_line() {
         let mut tui = TuiLoop::new();
         tui.app_mut().begin_generation();
-        tui.handle_event(Event::ToolStarted { id: String::new(), name: "execute_command".to_string() })
-            .await
-            .unwrap();
+        tui.handle_event(Event::ToolStarted {
+            id: String::new(),
+            name: "execute_command".to_string(),
+        })
+        .await
+        .unwrap();
         assert!(tui.app().current_tool().is_some());
         tui.handle_event(Event::Error("boom".to_string()))
             .await
@@ -7111,10 +7105,17 @@ mod tests {
     #[tokio::test]
     async fn test_tool_completed_with_header_resolves_running_entry() {
         let mut tui = TuiLoop::new();
-        tui.handle_event(Event::ToolStarted { id: String::new(), name: "execute_command".to_string() })
-            .await
-            .unwrap();
-        tui.handle_event(Event::ToolCompleted { id: String::new(), header: "execute_command command=cargo test".to_string(), summary: "ok".to_string() })
+        tui.handle_event(Event::ToolStarted {
+            id: String::new(),
+            name: "execute_command".to_string(),
+        })
+        .await
+        .unwrap();
+        tui.handle_event(Event::ToolCompleted {
+            id: String::new(),
+            header: "execute_command command=cargo test".to_string(),
+            summary: "ok".to_string(),
+        })
         .await
         .unwrap();
         assert_eq!(tui.app().current_tool(), None);
@@ -7136,11 +7137,19 @@ mod tests {
     #[tokio::test]
     async fn test_live_done_marker_stamps_duration_and_fallback_keeps_it() {
         let mut tui = TuiLoop::new();
-        tui.handle_event(Event::ToolStarted { id: String::new(), name: "execute_command".to_string() })
-            .await
-            .unwrap();
+        tui.handle_event(Event::ToolStarted {
+            id: String::new(),
+            name: "execute_command".to_string(),
+        })
+        .await
+        .unwrap();
         // Live completion arrives first (pump delivers the done-marker).
-        tui.handle_event(Event::ToolCompletedWithDuration { id: String::new(), header: "execute_command command=cargo test".to_string(), summary: "ok".to_string(), duration_ms: 1340 })
+        tui.handle_event(Event::ToolCompletedWithDuration {
+            id: String::new(),
+            header: "execute_command command=cargo test".to_string(),
+            summary: "ok".to_string(),
+            duration_ms: 1340,
+        })
         .await
         .unwrap();
         let row = tui
@@ -7152,7 +7161,11 @@ mod tests {
             .unwrap();
         assert!(row.content.contains("1.3s"), "got: {}", row.content);
         // Task-end fallback arrives after: it must not strip the duration.
-        tui.handle_event(Event::ToolCompleted { id: String::new(), header: "execute_command command=cargo test".to_string(), summary: "ok".to_string() })
+        tui.handle_event(Event::ToolCompleted {
+            id: String::new(),
+            header: "execute_command command=cargo test".to_string(),
+            summary: "ok".to_string(),
+        })
         .await
         .unwrap();
         let row = tui
@@ -7176,12 +7189,8 @@ mod tests {
     #[tokio::test]
     async fn test_engine_done_marker_parses_into_duration_event() {
         // The exact chunk the engine sends must survive the pump parsing.
-        let chunk = kod_core::engine::tool_done_marker(
-            "call_a",
-            "read_file path=main.rs",
-            "12 lines",
-            42,
-        );
+        let chunk =
+            kod_core::engine::tool_done_marker("call_a", "read_file path=main.rs", "12 lines", 42);
         let (_cid, h, s, ms) = kod_core::engine::parse_tool_done(&chunk).expect("must parse");
         assert_eq!((h, s, ms), ("read_file path=main.rs", "12 lines", 42));
     }
@@ -7193,7 +7202,10 @@ mod tests {
         // giant assistant bubble. The engine now sends a control marker
         // that the pump translates to TurnBoundary, and the handler
         // flushes the finished turn before opening the next.
-        assert_eq!(kod_core::engine::parse_turn_marker(&kod_core::engine::turn_marker(3)), Some(3));
+        assert_eq!(
+            kod_core::engine::parse_turn_marker(&kod_core::engine::turn_marker(3)),
+            Some(3)
+        );
         let mut tui = TuiLoop::new();
         tui.app_mut().begin_generation();
         tui.handle_event(Event::ResponseChunk("turn one text".to_string()))
@@ -7229,10 +7241,7 @@ mod tests {
         tui.handle_event(Event::Activity("saving memories…".to_string()))
             .await
             .unwrap();
-        assert_eq!(
-            tui.app().phase_label().as_deref(),
-            Some("saving memories…")
-        );
+        assert_eq!(tui.app().phase_label().as_deref(), Some("saving memories…"));
         assert!(tui.app().current_response().is_empty());
         // Fresh model text supersedes the auxiliary phase.
         tui.handle_event(Event::ResponseChunk("hello".to_string()))
@@ -7269,7 +7278,9 @@ mod tests {
             .map(|m| m.content.as_str())
             .collect();
         assert!(
-            bodies.iter().any(|m| m.contains("Rate limited by the provider")),
+            bodies
+                .iter()
+                .any(|m| m.contains("Rate limited by the provider")),
             "wait line must stay in the transcript, got: {bodies:?}"
         );
         // The retry landing restores the generating phase.
@@ -7342,13 +7353,20 @@ mod tests {
         tui.handle_event(Event::ResponseChunk("before text ".to_string()))
             .await
             .unwrap();
-        tui.handle_event(Event::ToolStarted { id: String::new(), name: "read_file".to_string() })
-            .await
-            .unwrap();
+        tui.handle_event(Event::ToolStarted {
+            id: String::new(),
+            name: "read_file".to_string(),
+        })
+        .await
+        .unwrap();
         tui.handle_event(Event::ResponseChunk("after text".to_string()))
             .await
             .unwrap();
-        tui.handle_event(Event::ToolCompleted { id: String::new(), header: "read_file path=main.rs".to_string(), summary: "12 lines".to_string() })
+        tui.handle_event(Event::ToolCompleted {
+            id: String::new(),
+            header: "read_file path=main.rs".to_string(),
+            summary: "12 lines".to_string(),
+        })
         .await
         .unwrap();
         // Engine fallback = concatenation of every round's text.
@@ -7376,9 +7394,12 @@ mod tests {
         tui.handle_event(Event::ResponseChunk("before text ".to_string()))
             .await
             .unwrap();
-        tui.handle_event(Event::ToolStarted { id: String::new(), name: "read_file".to_string() })
-            .await
-            .unwrap();
+        tui.handle_event(Event::ToolStarted {
+            id: String::new(),
+            name: "read_file".to_string(),
+        })
+        .await
+        .unwrap();
         // The pre-tool text must already be its own assistant message —
         // not merged into whatever streams after the call — and the tool
         // row streams live right below it.
@@ -7386,7 +7407,11 @@ mod tests {
         assert!(tui.app().messages()[0].content.contains("before text"));
         assert!(tui.app().messages()[1].content.contains("read_file"));
         assert!(tui.app().current_response().is_empty());
-        tui.handle_event(Event::ToolCompleted { id: String::new(), header: "read_file path=main.rs".to_string(), summary: "12 lines".to_string() })
+        tui.handle_event(Event::ToolCompleted {
+            id: String::new(),
+            header: "read_file path=main.rs".to_string(),
+            summary: "12 lines".to_string(),
+        })
         .await
         .unwrap();
         tui.handle_event(Event::ResponseChunk("after text".to_string()))
@@ -7417,8 +7442,14 @@ mod tests {
 
     #[test]
     fn hours_and_minutes_parse() {
-        assert_eq!(parse_overnight_duration("30m"), Some(Duration::from_secs(1800)));
-        assert_eq!(parse_overnight_duration("2h"), Some(Duration::from_secs(7200)));
+        assert_eq!(
+            parse_overnight_duration("30m"),
+            Some(Duration::from_secs(1800))
+        );
+        assert_eq!(
+            parse_overnight_duration("2h"),
+            Some(Duration::from_secs(7200))
+        );
         assert_eq!(
             parse_overnight_duration("1h30m"),
             Some(Duration::from_secs(5400)),
@@ -7427,7 +7458,10 @@ mod tests {
 
     #[test]
     fn case_and_whitespace_are_tolerated() {
-        assert_eq!(parse_overnight_duration(" 2H "), Some(Duration::from_secs(7200)));
+        assert_eq!(
+            parse_overnight_duration(" 2H "),
+            Some(Duration::from_secs(7200))
+        );
     }
 
     #[test]
@@ -7465,214 +7499,216 @@ mod tests {
 /// The `"Engine not initialized"` pattern is copied from the
 /// existing tests in the sibling module, which is the canonical
 /// no-engine response.
-    #[tokio::test]
-    async fn tool_error_is_displayed_once_not_duplicated_as_a_system_line() {
-        let mut tui = TuiLoop::new();
-        tui.handle_event(Event::ToolStarted {
-            id: String::new(),
-            name: "execute_command".to_string(),
-        })
-        .await
-        .unwrap();
-        tui.handle_event(Event::ToolCompleted {
-            id: String::new(),
-            header: "execute_command cargo check".to_string(),
-            summary: "Error: exit status 1".to_string(),
-        })
-        .await
-        .unwrap();
-        let rows_with_error = tui
-            .app()
+#[tokio::test]
+async fn tool_error_is_displayed_once_not_duplicated_as_a_system_line() {
+    let mut tui = TuiLoop::new();
+    tui.handle_event(Event::ToolStarted {
+        id: String::new(),
+        name: "execute_command".to_string(),
+    })
+    .await
+    .unwrap();
+    tui.handle_event(Event::ToolCompleted {
+        id: String::new(),
+        header: "execute_command cargo check".to_string(),
+        summary: "Error: exit status 1".to_string(),
+    })
+    .await
+    .unwrap();
+    let rows_with_error = tui
+        .app()
+        .messages()
+        .iter()
+        .filter(|m| m.content.contains("exit status 1"))
+        .count();
+    assert_eq!(rows_with_error, 1, "one row carries the error, not two");
+    assert!(
+        tui.app()
             .messages()
             .iter()
-            .filter(|m| m.content.contains("exit status 1"))
-            .count();
-        assert_eq!(rows_with_error, 1, "one row carries the error, not two");
-        assert!(
-            tui.app().messages().iter().all(|m| {
-                !m.content.starts_with("Tool `execute_command` failed")
-            }),
-            "the legacy duplicate system line must be gone",
-        );
-    }
+            .all(|m| { !m.content.starts_with("Tool `execute_command` failed") }),
+        "the legacy duplicate system line must be gone",
+    );
+}
 
-    #[tokio::test]
-    async fn system_events_reach_the_transcript_instead_of_vanishing() {
-        let mut tui = TuiLoop::new();
-        tui.handle_event(Event::System(
-            crate::event::EventPriority::Normal,
-            "(phase changed: setup → implementation. Consider /handoff.)".to_string(),
-        ))
-        .await
-        .unwrap();
-        assert!(
-            tui.app()
-                .messages()
-                .iter()
-                .any(|m| m.content.contains("phase changed: setup → implementation")),
-            "Event::System must land in the transcript",
-        );
-    }
-
-    #[tokio::test]
-    async fn parallel_tool_calls_fill_their_own_rows() {
-        let mut tui = TuiLoop::new();
-        tui.handle_event(Event::ToolStarted {
-            id: "call_a".into(),
-            name: "read_file".into(),
-        })
-        .await
-        .unwrap();
-        tui.handle_event(Event::ToolStarted {
-            id: "call_b".into(),
-            name: "read_file".into(),
-        })
-        .await
-        .unwrap();
-        tui.handle_event(Event::ToolProgress {
-            id: "call_a".into(),
-            display: "read_file path=a.rs".into(),
-        })
-        .await
-        .unwrap();
-        tui.handle_event(Event::ToolProgress {
-            id: "call_b".into(),
-            display: "read_file path=b.rs".into(),
-        })
-        .await
-        .unwrap();
-        tui.handle_event(Event::ToolCompletedWithDuration {
-            id: "call_b".into(),
-            header: "read_file path=b.rs".into(),
-            summary: "b body".into(),
-            duration_ms: 5,
-        })
-        .await
-        .unwrap();
-        tui.handle_event(Event::ToolCompletedWithDuration {
-            id: "call_a".into(),
-            header: "read_file path=a.rs".into(),
-            summary: "a body".into(),
-            duration_ms: 7,
-        })
-        .await
-        .unwrap();
-
-        let tools: Vec<&str> = tui
-            .app()
+#[tokio::test]
+async fn system_events_reach_the_transcript_instead_of_vanishing() {
+    let mut tui = TuiLoop::new();
+    tui.handle_event(Event::System(
+        crate::event::EventPriority::Normal,
+        "(phase changed: setup → implementation. Consider /handoff.)".to_string(),
+    ))
+    .await
+    .unwrap();
+    assert!(
+        tui.app()
             .messages()
             .iter()
-            .filter(|m| m.role == kod_types::MessageRole::Tool)
-            .map(|m| m.content.as_str())
-            .collect();
-        assert_eq!(tools.len(), 2, "two calls, two rows: {tools:?}");
-        let a = tools.iter().find(|t| t.contains("path=a.rs")).unwrap();
-        let b = tools.iter().find(|t| t.contains("path=b.rs")).unwrap();
-        assert!(a.contains("a body"), "row a carries result a: {a}");
-        assert!(b.contains("b body"), "row b carries result b: {b}");
-        assert!(a.contains("· 7ms"), "durations land on their own row: {a}");
-        assert!(b.contains("· 5ms"), "durations land on their own row: {b}");
-    }
+            .any(|m| m.content.contains("phase changed: setup → implementation")),
+        "Event::System must land in the transcript",
+    );
+}
 
-    #[tokio::test]
-    async fn task_end_fallback_after_live_done_marker_is_a_noop() {
-        let mut tui = TuiLoop::new();
-        tui.handle_event(Event::ToolStarted {
-            id: "call_a".into(),
-            name: "read_file".into(),
-        })
-        .await
-        .unwrap();
-        tui.handle_event(Event::ToolCompletedWithDuration {
-            id: "call_a".into(),
-            header: "read_file path=a.rs".into(),
-            summary: "live".into(),
-            duration_ms: 9,
-        })
-        .await
-        .unwrap();
-        // Task-end fallback arrives with the same id; it must not touch
-        // the timed live row nor append a duplicate.
-        tui.handle_event(Event::ToolCompleted {
-            id: "call_a".into(),
-            header: "read_file path=a.rs".into(),
-            summary: "fallback".into(),
-        })
-        .await
-        .unwrap();
+#[tokio::test]
+async fn parallel_tool_calls_fill_their_own_rows() {
+    let mut tui = TuiLoop::new();
+    tui.handle_event(Event::ToolStarted {
+        id: "call_a".into(),
+        name: "read_file".into(),
+    })
+    .await
+    .unwrap();
+    tui.handle_event(Event::ToolStarted {
+        id: "call_b".into(),
+        name: "read_file".into(),
+    })
+    .await
+    .unwrap();
+    tui.handle_event(Event::ToolProgress {
+        id: "call_a".into(),
+        display: "read_file path=a.rs".into(),
+    })
+    .await
+    .unwrap();
+    tui.handle_event(Event::ToolProgress {
+        id: "call_b".into(),
+        display: "read_file path=b.rs".into(),
+    })
+    .await
+    .unwrap();
+    tui.handle_event(Event::ToolCompletedWithDuration {
+        id: "call_b".into(),
+        header: "read_file path=b.rs".into(),
+        summary: "b body".into(),
+        duration_ms: 5,
+    })
+    .await
+    .unwrap();
+    tui.handle_event(Event::ToolCompletedWithDuration {
+        id: "call_a".into(),
+        header: "read_file path=a.rs".into(),
+        summary: "a body".into(),
+        duration_ms: 7,
+    })
+    .await
+    .unwrap();
 
-        let tools: Vec<&str> = tui
-            .app()
+    let tools: Vec<&str> = tui
+        .app()
+        .messages()
+        .iter()
+        .filter(|m| m.role == kod_types::MessageRole::Tool)
+        .map(|m| m.content.as_str())
+        .collect();
+    assert_eq!(tools.len(), 2, "two calls, two rows: {tools:?}");
+    let a = tools.iter().find(|t| t.contains("path=a.rs")).unwrap();
+    let b = tools.iter().find(|t| t.contains("path=b.rs")).unwrap();
+    assert!(a.contains("a body"), "row a carries result a: {a}");
+    assert!(b.contains("b body"), "row b carries result b: {b}");
+    assert!(a.contains("· 7ms"), "durations land on their own row: {a}");
+    assert!(b.contains("· 5ms"), "durations land on their own row: {b}");
+}
+
+#[tokio::test]
+async fn task_end_fallback_after_live_done_marker_is_a_noop() {
+    let mut tui = TuiLoop::new();
+    tui.handle_event(Event::ToolStarted {
+        id: "call_a".into(),
+        name: "read_file".into(),
+    })
+    .await
+    .unwrap();
+    tui.handle_event(Event::ToolCompletedWithDuration {
+        id: "call_a".into(),
+        header: "read_file path=a.rs".into(),
+        summary: "live".into(),
+        duration_ms: 9,
+    })
+    .await
+    .unwrap();
+    // Task-end fallback arrives with the same id; it must not touch
+    // the timed live row nor append a duplicate.
+    tui.handle_event(Event::ToolCompleted {
+        id: "call_a".into(),
+        header: "read_file path=a.rs".into(),
+        summary: "fallback".into(),
+    })
+    .await
+    .unwrap();
+
+    let tools: Vec<&str> = tui
+        .app()
+        .messages()
+        .iter()
+        .filter(|m| m.role == kod_types::MessageRole::Tool)
+        .map(|m| m.content.as_str())
+        .collect();
+    assert_eq!(tools.len(), 1, "no duplicate row: {tools:?}");
+    assert!(
+        tools[0].contains("live"),
+        "the timed live row is kept: {tools:?}",
+    );
+    assert!(!tools[0].contains("fallback"));
+}
+
+#[tokio::test]
+async fn legacy_no_id_calls_still_complete_through_the_heuristic_path() {
+    let mut tui = TuiLoop::new();
+    tui.handle_event(Event::ToolStarted {
+        id: String::new(),
+        name: "read_file".into(),
+    })
+    .await
+    .unwrap();
+    tui.handle_event(Event::ToolCompleted {
+        id: String::new(),
+        header: "read_file".into(),
+        summary: "ok".into(),
+    })
+    .await
+    .unwrap();
+    let tools: Vec<&str> = tui
+        .app()
+        .messages()
+        .iter()
+        .filter(|m| m.role == kod_types::MessageRole::Tool)
+        .map(|m| m.content.as_str())
+        .collect();
+    assert_eq!(tools.len(), 1);
+    assert!(tools[0].contains("ok"));
+}
+
+#[tokio::test]
+async fn turn_completion_pushes_no_duration_row() {
+    let mut tui = TuiLoop::new();
+    tui.handle_event(Event::ResponseComplete("the answer".into()))
+        .await
+        .unwrap();
+    assert!(
+        tui.app()
             .messages()
             .iter()
-            .filter(|m| m.role == kod_types::MessageRole::Tool)
-            .map(|m| m.content.as_str())
-            .collect();
-        assert_eq!(tools.len(), 1, "no duplicate row: {tools:?}");
-        assert!(
-            tools[0].contains("live"),
-            "the timed live row is kept: {tools:?}",
-        );
-        assert!(!tools[0].contains("fallback"));
-    }
+            .all(|m| !m.content.contains("turn took"))
+    );
+}
 
-    #[tokio::test]
-    async fn legacy_no_id_calls_still_complete_through_the_heuristic_path() {
-        let mut tui = TuiLoop::new();
-        tui.handle_event(Event::ToolStarted {
-            id: String::new(),
-            name: "read_file".into(),
-        })
-        .await
-        .unwrap();
-        tui.handle_event(Event::ToolCompleted {
-            id: String::new(),
-            header: "read_file".into(),
-            summary: "ok".into(),
-        })
-        .await
-        .unwrap();
-        let tools: Vec<&str> = tui
-            .app()
-            .messages()
-            .iter()
-            .filter(|m| m.role == kod_types::MessageRole::Tool)
-            .map(|m| m.content.as_str())
-            .collect();
-        assert_eq!(tools.len(), 1);
-        assert!(tools[0].contains("ok"));
-    }
-
-    #[tokio::test]
-    async fn turn_completion_pushes_no_duration_row() {
-        let mut tui = TuiLoop::new();
-        tui.handle_event(Event::ResponseComplete("the answer".into()))
-            .await
-            .unwrap();
-        assert!(tui
-            .app()
-            .messages()
-            .iter()
-            .all(|m| !m.content.contains("turn took")));
-    }
-
-    #[tokio::test]
-    async fn taint_banner_guard_tracks_the_last_note() {
-        // The `ResponseComplete` arm requires an engine to read a taint
-        // level; with a bare `TuiLoop::new()` the arm's guard block is
-        // skipped. Exercise the guard mechanism through its accessors,
-        // which is what the arm uses.
-        let mut tui = TuiLoop::new();
-        assert!(tui.app().last_taint_note().is_none());
-        tui.app_mut()
-            .set_last_taint_note(Some("⛨ round tainted by untrusted-read".to_string()));
-        assert_eq!(
-            tui.app().last_taint_note(),
-            Some("⛨ round tainted by untrusted-read"),
-        );
-        tui.app_mut().set_last_taint_note(None);
-        assert!(tui.app().last_taint_note().is_none());
-    }
+#[tokio::test]
+async fn taint_banner_guard_tracks_the_last_note() {
+    // The `ResponseComplete` arm requires an engine to read a taint
+    // level; with a bare `TuiLoop::new()` the arm's guard block is
+    // skipped. Exercise the guard mechanism through its accessors,
+    // which is what the arm uses.
+    let mut tui = TuiLoop::new();
+    assert!(tui.app().last_taint_note().is_none());
+    tui.app_mut()
+        .set_last_taint_note(Some("⛨ round tainted by untrusted-read".to_string()));
+    assert_eq!(
+        tui.app().last_taint_note(),
+        Some("⛨ round tainted by untrusted-read"),
+    );
+    tui.app_mut().set_last_taint_note(None);
+    assert!(tui.app().last_taint_note().is_none());
+}
 
 #[cfg(test)]
 mod coverage_slash_dispatch {

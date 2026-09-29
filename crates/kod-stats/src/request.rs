@@ -32,8 +32,7 @@ pub struct RequestRecord {
 impl RequestRecord {
     /// USD saved by cache reads minus the write premium.
     pub fn cache_savings_usd(&self) -> f64 {
-        let read_saved = (self.input_rate - self.cache_read_rate)
-            * (self.cache_read_tokens as f64)
+        let read_saved = (self.input_rate - self.cache_read_rate) * (self.cache_read_tokens as f64)
             / 1_000_000.0;
         let write_premium = (self.cache_write_rate - self.input_rate)
             * (self.cache_write_tokens as f64)
@@ -195,7 +194,15 @@ mod tests {
         let mut a = Aggregates::new();
         a.observe(&record());
         a.observe(&record());
-        assert_eq!((a.requests, a.input_tokens, a.output_tokens, a.total_duration_ms), (2, 2000, 200, 2000));
+        assert_eq!(
+            (
+                a.requests,
+                a.input_tokens,
+                a.output_tokens,
+                a.total_duration_ms
+            ),
+            (2, 2000, 200, 2000)
+        );
     }
 
     #[test]

@@ -324,10 +324,7 @@ mod tests {
         r.complete(id, "ok".to_string());
         assert_eq!(r.running_count(), 0);
         let snap = r.snapshot();
-        assert!(matches!(
-            snap[0].1.status,
-            JobStatus::Completed { .. }
-        ));
+        assert!(matches!(snap[0].1.status, JobStatus::Completed { .. }));
     }
 
     #[test]
@@ -399,10 +396,13 @@ mod guard_tests {
     async fn a_panicking_job_is_marked_failed() {
         let runner = Arc::new(BackgroundJobRunner::new(4));
         let id = runner.allocate_id();
-        runner.register(id, JobKind::Shell {
-            command: "boom".to_string(),
-            spool: std::path::PathBuf::from("/tmp/boom.log"),
-        });
+        runner.register(
+            id,
+            JobKind::Shell {
+                command: "boom".to_string(),
+                spool: std::path::PathBuf::from("/tmp/boom.log"),
+            },
+        );
 
         runner.spawn_guarded(id, async {
             panic!("simulated task panic");
@@ -418,7 +418,10 @@ mod guard_tests {
                 return; // success
             }
         }
-        panic!("job was never marked failed; snapshot: {:?}", runner.snapshot());
+        panic!(
+            "job was never marked failed; snapshot: {:?}",
+            runner.snapshot()
+        );
     }
 
     #[tokio::test]
@@ -426,10 +429,13 @@ mod guard_tests {
         // The watcher must not overwrite a legitimate completion.
         let runner = Arc::new(BackgroundJobRunner::new(4));
         let id = runner.allocate_id();
-        runner.register(id, JobKind::Shell {
-            command: "ok".to_string(),
-            spool: std::path::PathBuf::from("/tmp/ok.log"),
-        });
+        runner.register(
+            id,
+            JobKind::Shell {
+                command: "ok".to_string(),
+                spool: std::path::PathBuf::from("/tmp/ok.log"),
+            },
+        );
 
         let r2 = Arc::clone(&runner);
         runner.spawn_guarded(id, async move {
@@ -451,10 +457,13 @@ mod guard_tests {
     async fn a_clean_job_stays_running_until_it_completes_itself() {
         let runner = Arc::new(BackgroundJobRunner::new(4));
         let id = runner.allocate_id();
-        runner.register(id, JobKind::Shell {
-            command: "clean".to_string(),
-            spool: std::path::PathBuf::from("/tmp/clean.log"),
-        });
+        runner.register(
+            id,
+            JobKind::Shell {
+                command: "clean".to_string(),
+                spool: std::path::PathBuf::from("/tmp/clean.log"),
+            },
+        );
 
         let r2 = Arc::clone(&runner);
         runner.spawn_guarded(id, async move {

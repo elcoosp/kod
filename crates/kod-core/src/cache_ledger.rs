@@ -38,8 +38,8 @@
 
 use std::collections::HashMap;
 
-use kod_provider::request::ModelPricing;
 use kod_provider::TokenUsage;
+use kod_provider::request::ModelPricing;
 
 /// Per-endpoint cache state. One entry per endpoint name (not per
 /// `ModelRef` — a `/model` switch on the same endpoint keeps the
@@ -92,10 +92,7 @@ impl CacheLedger {
         head_fingerprint: u64,
         usage: &TokenUsage,
     ) {
-        let state = self
-            .states
-            .entry(endpoint.to_string())
-            .or_default();
+        let state = self.states.entry(endpoint.to_string()).or_default();
         state.head_fingerprint = head_fingerprint;
         state.cached_tokens = usage.cache_read_tokens.unwrap_or(0);
         state.last_used_turn = turn;

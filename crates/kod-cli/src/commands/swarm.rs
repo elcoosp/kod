@@ -260,10 +260,7 @@ pub async fn run_swarm(
                         branch,
                     );
                 }
-                SwarmEvent::BoundaryViolation {
-                    agent_name,
-                    paths,
-                } => {
+                SwarmEvent::BoundaryViolation { agent_name, paths } => {
                     // P5: a subagent wrote outside its declared
                     // scope. Printed to stderr so a `kod swarm 2>&1`
                     // pipe keeps the informational stream on stdout.

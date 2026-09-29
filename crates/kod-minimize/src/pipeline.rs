@@ -149,10 +149,7 @@ pub enum PipelineError {
     /// A stage could not be run. `stage` is the kind as a string
     /// (`"replace"`, `"keep_lines"`); `reason` names the specific
     /// failure (a bad regex, an empty pattern list).
-    Stage {
-        stage: &'static str,
-        reason: String,
-    },
+    Stage { stage: &'static str, reason: String },
 }
 
 impl std::fmt::Display for PipelineError {
@@ -338,11 +335,7 @@ mod tests {
 
     #[test]
     fn head_lines_keeps_the_first_n() {
-        let s = run(
-            &[Stage::HeadLines { n: 2 }],
-            "a\nb\nc\nd",
-        )
-        .unwrap();
+        let s = run(&[Stage::HeadLines { n: 2 }], "a\nb\nc\nd").unwrap();
         assert_eq!(s, "a\nb");
     }
 
@@ -454,7 +447,13 @@ mod tests {
             "text",
         )
         .unwrap_err();
-        assert!(matches!(e, PipelineError::Stage { stage: "replace", .. }));
+        assert!(matches!(
+            e,
+            PipelineError::Stage {
+                stage: "replace",
+                ..
+            }
+        ));
     }
 
     #[test]

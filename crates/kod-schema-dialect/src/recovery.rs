@@ -105,7 +105,9 @@ fn contains_word(text: &str, word: &str) -> bool {
 /// Turn a rejection into a retry decision.
 pub fn plan_retry(rejection: &Rejection) -> RetryPlan {
     match &rejection.keyword {
-        Some(kw) => RetryPlan::RetryWithoutConstruct { keyword: kw.clone() },
+        Some(kw) => RetryPlan::RetryWithoutConstruct {
+            keyword: kw.clone(),
+        },
         None => RetryPlan::GiveUp,
     }
 }
@@ -123,7 +125,9 @@ mod tests {
         assert_eq!(r.keyword.as_deref(), Some("const"));
         assert_eq!(
             plan_retry(&r),
-            RetryPlan::RetryWithoutConstruct { keyword: "const".into() },
+            RetryPlan::RetryWithoutConstruct {
+                keyword: "const".into()
+            },
         );
     }
 

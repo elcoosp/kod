@@ -261,7 +261,10 @@ mod tests {
 
     #[test]
     fn safe_cutoff_fewer_than_keep_is_zero() {
-        let turns = vec![msg(MessageRole::User, "a"), msg(MessageRole::Assistant, "b")];
+        let turns = vec![
+            msg(MessageRole::User, "a"),
+            msg(MessageRole::Assistant, "b"),
+        ];
         assert_eq!(safe_cutoff(&turns, 10), Some(0));
     }
 
@@ -334,10 +337,7 @@ mod tests {
 
     #[test]
     fn emergency_summary_counts_and_names() {
-        let dropped = vec![
-            assistant_with_call("c1"),
-            tool_result("c1"),
-        ];
+        let dropped = vec![assistant_with_call("c1"), tool_result("c1")];
         let s = emergency_summary(&dropped, 100_000);
         assert!(s.contains("2 messages dropped"));
         assert!(s.contains("read_file"));

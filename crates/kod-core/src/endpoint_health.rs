@@ -139,7 +139,9 @@ impl EndpointHealth {
     /// Last recorded error for an endpoint, for a `/cache` surface
     /// or an audit line.
     pub fn last_error(&self, endpoint: &str) -> Option<&str> {
-        self.states.get(endpoint).and_then(|s| s.last_error.as_deref())
+        self.states
+            .get(endpoint)
+            .and_then(|s| s.last_error.as_deref())
     }
 
     /// Snapshot of the failing endpoints, for a `/cache` or
@@ -149,7 +151,13 @@ impl EndpointHealth {
         self.states
             .iter()
             .filter(|(_, s)| s.cooldown_until.map(|u| u > now).unwrap_or(false))
-            .map(|(name, s)| (name.clone(), s.consecutive_failures, s.last_error.as_deref()))
+            .map(|(name, s)| {
+                (
+                    name.clone(),
+                    s.consecutive_failures,
+                    s.last_error.as_deref(),
+                )
+            })
             .collect()
     }
 }

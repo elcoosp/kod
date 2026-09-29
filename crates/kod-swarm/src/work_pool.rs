@@ -390,10 +390,7 @@ pub fn build_batch_output_schema(items: &[WorkItem]) -> serde_json::Value {
 
 /// Verify a worker's structured response against a batch's schema:
 /// every item id must be a key in the response object.
-pub fn yield_contract_satisfied(
-    response: &serde_json::Value,
-    items: &[WorkItem],
-) -> bool {
+pub fn yield_contract_satisfied(response: &serde_json::Value, items: &[WorkItem]) -> bool {
     let Some(obj) = response.as_object() else {
         return false;
     };
@@ -652,8 +649,14 @@ mod tests {
     #[test]
     fn yield_contract_fails_on_a_non_object_response() {
         let items = vec![item("a")];
-        assert!(!yield_contract_satisfied(&serde_json::json!("nope"), &items));
-        assert!(!yield_contract_satisfied(&serde_json::json!([1, 2]), &items));
+        assert!(!yield_contract_satisfied(
+            &serde_json::json!("nope"),
+            &items
+        ));
+        assert!(!yield_contract_satisfied(
+            &serde_json::json!([1, 2]),
+            &items
+        ));
     }
 
     #[test]
@@ -661,6 +664,9 @@ mod tests {
         let mut pool = WorkPool::new(3, 10);
         pool.record_spawned("zeta", 8192);
         pool.record_spawned("alpha", 8192);
-        assert_eq!(pool.slot_ids(), vec!["alpha".to_string(), "zeta".to_string()]);
+        assert_eq!(
+            pool.slot_ids(),
+            vec!["alpha".to_string(), "zeta".to_string()]
+        );
     }
 }

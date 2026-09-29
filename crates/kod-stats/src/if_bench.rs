@@ -87,9 +87,7 @@ pub const CAT_SOUND: &str = "meow";
 
 /// The initial array: the glyphs `a..` repeated to `n`.
 pub fn initial_array(n: usize) -> Vec<char> {
-    (0..n)
-        .map(|i| (b'a' + (i % 26) as u8) as char)
-        .collect()
+    (0..n).map(|i| (b'a' + (i % 26) as u8) as char).collect()
 }
 
 /// The swap the harness applies on `turn` (0-based).
@@ -144,7 +142,9 @@ pub fn cat_sound_at(text: &str, position: SoundPosition) -> bool {
         return false;
     }
     let n = lines.len();
-    let idx = lines.iter().position(|l| l.to_lowercase().contains(CAT_SOUND));
+    let idx = lines
+        .iter()
+        .position(|l| l.to_lowercase().contains(CAT_SOUND));
     let Some(idx) = idx else { return false };
     match position {
         SoundPosition::Start => idx < n.div_ceil(3),
@@ -247,7 +247,10 @@ mod tests {
     #[test]
     fn parse_reported_array_reads_the_line() {
         let text = "some prose\narray: abcdef\nmore prose";
-        assert_eq!(parse_reported_array(text), Some(vec!['a', 'b', 'c', 'd', 'e', 'f']));
+        assert_eq!(
+            parse_reported_array(text),
+            Some(vec!['a', 'b', 'c', 'd', 'e', 'f'])
+        );
     }
 
     #[test]
@@ -282,7 +285,11 @@ mod tests {
     #[test]
     fn cat_sound_absent_is_never_ok() {
         let text = "line\nline\nline";
-        for p in [SoundPosition::Start, SoundPosition::Middle, SoundPosition::End] {
+        for p in [
+            SoundPosition::Start,
+            SoundPosition::Middle,
+            SoundPosition::End,
+        ] {
             assert!(!cat_sound_at(text, p), "{p:?}");
         }
     }
@@ -293,8 +300,14 @@ mod tests {
         let expected0 = apply(&initial, action_for_turn(0, 4)); // swap(0,3)
         let expected1 = apply(&expected0, action_for_turn(1, 4)); // swap(1,2)
         let replies = vec![
-            TurnReply { reported: Some(expected0.clone()), sound_ok: true },
-            TurnReply { reported: Some(expected1), sound_ok: true },
+            TurnReply {
+                reported: Some(expected0.clone()),
+                sound_ok: true,
+            },
+            TurnReply {
+                reported: Some(expected1),
+                sound_ok: true,
+            },
         ];
         assert_eq!(depth(&replies, &initial), 2);
     }
@@ -303,8 +316,14 @@ mod tests {
     fn depth_stops_at_the_first_wrong_array() {
         let initial = vec!['a', 'b', 'c', 'd'];
         let replies = vec![
-            TurnReply { reported: Some(vec!['x', 'y']), sound_ok: true },
-            TurnReply { reported: None, sound_ok: true },
+            TurnReply {
+                reported: Some(vec!['x', 'y']),
+                sound_ok: true,
+            },
+            TurnReply {
+                reported: None,
+                sound_ok: true,
+            },
         ];
         assert_eq!(depth(&replies, &initial), 0);
     }
@@ -315,8 +334,14 @@ mod tests {
         let expected0 = apply(&initial, action_for_turn(0, 4));
         let expected1 = apply(&expected0, action_for_turn(1, 4));
         let replies = vec![
-            TurnReply { reported: Some(expected0), sound_ok: true },
-            TurnReply { reported: Some(expected1), sound_ok: false },
+            TurnReply {
+                reported: Some(expected0),
+                sound_ok: true,
+            },
+            TurnReply {
+                reported: Some(expected1),
+                sound_ok: false,
+            },
         ];
         assert_eq!(depth(&replies, &initial), 1);
     }

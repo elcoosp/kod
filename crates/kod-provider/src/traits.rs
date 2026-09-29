@@ -9,7 +9,6 @@ use kod_types::ToolDefinition;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 
-
 /// Metadata about one model a provider can serve.
 ///
 /// [`LlmProvider::list_models`] returns these so callers can allocate
@@ -90,11 +89,15 @@ impl ModelInfo {
 }
 
 impl From<String> for ModelInfo {
-    fn from(id: String) -> Self { Self::bare(id) }
+    fn from(id: String) -> Self {
+        Self::bare(id)
+    }
 }
 
 impl From<&str> for ModelInfo {
-    fn from(id: &str) -> Self { Self::bare(id) }
+    fn from(id: &str) -> Self {
+        Self::bare(id)
+    }
 }
 
 impl std::fmt::Display for ModelInfo {

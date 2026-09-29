@@ -20,7 +20,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::swarm_runner::{AgentResult, AgentOutcome, Subtask};
+use crate::swarm_runner::{AgentOutcome, AgentResult, Subtask};
 
 /// Where an overnight run is in its life.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,12 +181,7 @@ pub fn build_task_card(
                 CardStatus::Done,
             )
         }
-        AgentOutcome::Failed(err) => (
-            err.clone(),
-            None,
-            Vec::new(),
-            CardStatus::Failed,
-        ),
+        AgentOutcome::Failed(err) => (err.clone(), None, Vec::new(), CardStatus::Failed),
     };
 
     TaskCard {
@@ -208,14 +203,14 @@ pub fn build_task_card(
 /// hold it, and a template engine would be one more dependency for a
 /// document whose shape is fixed.
 pub fn render_report(mission: &str, cards: &[TaskCard], merged: &str) -> String {
-    let done = cards.iter().filter(|c| c.status == CardStatus::Done).count();
+    let done = cards
+        .iter()
+        .filter(|c| c.status == CardStatus::Done)
+        .count();
     let failed = cards.len() - done;
 
     let mut out = format!("# Overnight: {mission}\n\n");
-    out.push_str(&format!(
-        "{done} of {} subtasks completed",
-        cards.len(),
-    ));
+    out.push_str(&format!("{done} of {} subtasks completed", cards.len(),));
     if failed > 0 {
         out.push_str(&format!(", {failed} failed"));
     }
@@ -315,12 +310,7 @@ mod tests {
     #[test]
     fn the_manifest_margin_is_capped_at_half_an_hour() {
         let now = time::OffsetDateTime::UNIX_EPOCH;
-        let m = OvernightManifest::for_duration(
-            "x",
-            time::Duration::hours(8),
-            "/tmp",
-            now,
-        );
+        let m = OvernightManifest::for_duration("x", time::Duration::hours(8), "/tmp", now);
         // 8 hours / 4 = 2 hours, capped at 30 minutes.
         let margin = m.target_wake_at - m.handoff_ready_at;
         assert_eq!(margin, time::Duration::minutes(30));
@@ -329,12 +319,7 @@ mod tests {
     #[test]
     fn the_manifest_margin_is_a_quarter_for_short_runs() {
         let now = time::OffsetDateTime::UNIX_EPOCH;
-        let m = OvernightManifest::for_duration(
-            "x",
-            time::Duration::minutes(40),
-            "/tmp",
-            now,
-        );
+        let m = OvernightManifest::for_duration("x", time::Duration::minutes(40), "/tmp", now);
         // 40 minutes / 4 = 10 minutes, under the cap.
         let margin = m.target_wake_at - m.handoff_ready_at;
         assert_eq!(margin, time::Duration::minutes(10));
@@ -343,12 +328,7 @@ mod tests {
     #[test]
     fn the_phase_moves_with_the_clock() {
         let now = time::OffsetDateTime::UNIX_EPOCH;
-        let m = OvernightManifest::for_duration(
-            "x",
-            time::Duration::hours(2),
-            "/tmp",
-            now,
-        );
+        let m = OvernightManifest::for_duration("x", time::Duration::hours(2), "/tmp", now);
         // Before the handoff point.
         assert_eq!(m.phase_at(now, false), Phase::Running);
         // At the handoff point.
@@ -363,12 +343,7 @@ mod tests {
     fn a_card_carries_the_report_fields() {
         let st = subtask("parse");
         let r = success("agent-1", "wrote the parser");
-        let card = build_task_card(
-            &st,
-            &r,
-            &["src/parse.rs".to_string()],
-            Some("confirm"),
-        );
+        let card = build_task_card(&st, &r, &["src/parse.rs".to_string()], Some("confirm"));
         assert_eq!(card.name, "parse");
         assert_eq!(card.summary, "wrote the parser");
         assert_eq!(card.validation.as_deref(), Some("cargo check (clean)"));

@@ -203,8 +203,7 @@ async fn rate_limited_request_waits_out_hint_then_succeeds() {
         })
         .await;
 
-    let provider =
-        provider_for(&mock).with_rate_limit_wait(std::time::Duration::from_secs(5));
+    let provider = provider_for(&mock).with_rate_limit_wait(std::time::Duration::from_secs(5));
     let req = request_with(vec![user("hi")], SystemPrompt::default());
 
     // Lift the 429 mock as soon as it has answered once, concurrently with
@@ -231,7 +230,10 @@ async fn rate_limited_request_waits_out_hint_then_succeeds() {
         limited_hits >= 1,
         "the 429 mock must answer at least once, got {limited_hits} hits"
     );
-    assert!(err.is_none(), "a waited-out 429 must re-drive, not fail: {err:?}");
+    assert!(
+        err.is_none(),
+        "a waited-out 429 must re-drive, not fail: {err:?}"
+    );
     let texts: Vec<&str> = oks
         .iter()
         .filter_map(|c| match c {
@@ -239,7 +241,11 @@ async fn rate_limited_request_waits_out_hint_then_succeeds() {
             _ => None,
         })
         .collect();
-    assert_eq!(texts, vec!["hi"], "the retried request must deliver the text");
+    assert_eq!(
+        texts,
+        vec!["hi"],
+        "the retried request must deliver the text"
+    );
     assert!(
         ok_endpoint.hits_async().await >= 1,
         "the success mock must have served the retry"
@@ -271,7 +277,10 @@ async fn rate_limit_without_wait_budget_fails_fast_as_before() {
         msg.contains("429") || msg.contains("rate"),
         "error should carry the rate-limit signal, got: {msg}"
     );
-    assert!(oks.is_empty(), "no chunk should be delivered on a hard failure");
+    assert!(
+        oks.is_empty(),
+        "no chunk should be delivered on a hard failure"
+    );
     assert!(
         endpoint.hits_async().await >= 3,
         "the attempt budget must be exhausted, got {} hits",

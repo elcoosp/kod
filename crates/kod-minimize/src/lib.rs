@@ -57,8 +57,8 @@
 //!   by an explicit `max_lines` stage in a def. The pipeline never
 //!   silently drops content.
 
-pub mod pipeline;
 pub mod native;
+pub mod pipeline;
 pub mod plan;
 
 use pipeline::{Def, PipelineError};
@@ -251,23 +251,14 @@ impl std::fmt::Debug for Minimizer {
 /// `(filename, contents)` — the filename is only used in the warn log
 /// when a def fails to parse.
 pub const BUILTIN_DEFS: &[(&str, &str)] = &[
-    (
-        "git-status.toml",
-        include_str!("../defs/git-status.toml"),
-    ),
+    ("git-status.toml", include_str!("../defs/git-status.toml")),
     ("git-log.toml", include_str!("../defs/git-log.toml")),
-    (
-        "cargo-check.toml",
-        include_str!("../defs/cargo-check.toml"),
-    ),
+    ("cargo-check.toml", include_str!("../defs/cargo-check.toml")),
     (
         "cargo-check-json.toml",
         include_str!("../defs/cargo-check-json.toml"),
     ),
-    (
-        "cargo-test.toml",
-        include_str!("../defs/cargo-test.toml"),
-    ),
+    ("cargo-test.toml", include_str!("../defs/cargo-test.toml")),
     ("pytest.toml", include_str!("../defs/pytest.toml")),
 ];
 
@@ -423,8 +414,7 @@ mod def_tests {
     #[test]
     fn every_builtin_def_parses() {
         for (name, text) in BUILTIN_DEFS {
-            Def::from_toml(text)
-                .unwrap_or_else(|e| panic!("def {name} does not parse: {e}"));
+            Def::from_toml(text).unwrap_or_else(|e| panic!("def {name} does not parse: {e}"));
         }
     }
 
@@ -491,7 +481,11 @@ failures:
                    FAILED test_foo.py::test_x - assert 1 == 2\n";
         let r = m.minimize("pytest", raw, 1);
         assert_eq!(r.filter.as_deref(), Some("pytest"));
-        assert!(r.text.contains("FAILED test_foo.py::test_x"), "got: {}", r.text);
+        assert!(
+            r.text.contains("FAILED test_foo.py::test_x"),
+            "got: {}",
+            r.text
+        );
         assert!(!r.text.contains("collected"), "got: {}", r.text);
     }
 

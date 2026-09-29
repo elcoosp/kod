@@ -125,11 +125,7 @@ impl Telemetry {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "kod".to_string());
-        let headers = parse_headers(
-            std::env::var("OTEL_EXPORTER_OTLP_HEADERS")
-                .ok()
-                .as_deref(),
-        );
+        let headers = parse_headers(std::env::var("OTEL_EXPORTER_OTLP_HEADERS").ok().as_deref());
         let base = base.trim_end_matches('/');
         let logs_url = logs_override.unwrap_or_else(|| format!("{base}/v1/logs"));
         // Validate the URL now: a bad shape disables rather than

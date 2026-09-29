@@ -372,7 +372,10 @@ mod rate_limit_marker_tests {
         assert_eq!(parse_activity_marker("saving memories…"), None);
         assert_eq!(parse_activity_marker(THINKING_MARKER), None);
         assert_eq!(parse_activity_marker(&turn_marker(2)), None);
-        assert_eq!(parse_activity_marker(&rate_limit_wait_marker(60, 1, 1)), None);
+        assert_eq!(
+            parse_activity_marker(&rate_limit_wait_marker(60, 1, 1)),
+            None
+        );
     }
 
     #[test]
@@ -570,10 +573,7 @@ fn line_is_goal_marker(line: &str) -> bool {
 /// token heuristic the rest of the codebase uses for prompt budget).
 /// A single entry longer than the cap is dropped, not truncated, so
 /// a half-sentence never enters the frozen block.
-fn render_mental_model_block(
-    entries: &[kod_types::MemoryEntry],
-    max_tokens: usize,
-) -> String {
+fn render_mental_model_block(entries: &[kod_types::MemoryEntry], max_tokens: usize) -> String {
     let budget_chars = max_tokens.saturating_mul(4);
     let mut out = String::new();
     let mut used = 0usize;
@@ -956,9 +956,7 @@ fn shorten_path(path: &str) -> String {
 
 /// Push a background notice onto a transcript's steer queue.
 async fn push_background_interrupt(
-    steers: &std::sync::Arc<
-        tokio::sync::RwLock<HashMap<String, Vec<crate::steer::SoftInterrupt>>>,
-    >,
+    steers: &std::sync::Arc<tokio::sync::RwLock<HashMap<String, Vec<crate::steer::SoftInterrupt>>>>,
     holder: &str,
     content: String,
 ) {
@@ -1571,14 +1569,14 @@ pub struct KodEngine {
     /// (D4-D4, AD-11). `steer("note")` writes to the default key;
     /// `steer_for(key, note)` targets one agent. The loops drain only
     /// their own key.
-        /// Arc-shared so a spawned background watcher can deliver an
+    /// Arc-shared so a spawned background watcher can deliver an
     /// interrupt without holding a reference to the engine.
     steers: std::sync::Arc<RwLock<HashMap<String, Vec<crate::steer::SoftInterrupt>>>>,
     /// Set by [`KodEngine::request_cancel`]; loops check it between
     /// rounds. Keyed by transcript (D4-D4): a cancel for
     /// `swarm:{agent-id}` stops only that agent, not the whole swarm.
     /// The default key `""` is the interactive session.
-        /// Per-transcript cancel state: `key → (fire_epoch, fired)`.
+    /// Per-transcript cancel state: `key → (fire_epoch, fired)`.
     ///
     /// The epoch exists because `clear_cancel_for` is called on a
     /// retry path (the swarm runner clears before reusing a
@@ -1626,15 +1624,13 @@ pub struct KodEngine {
     /// over the retained prefix tells the continuous-extraction path
     /// what is new since the last pass; a rewind or in-place edit
     /// resets it so the whole transcript is re-sent.
-    retention_cursors:
-        RwLock<HashMap<String, kod_memory::retention::RetentionCursor>>,
+    retention_cursors: RwLock<HashMap<String, kod_memory::retention::RetentionCursor>>,
     /// Delta §7.2: late LSP diagnostics a background pass queued
     /// since the last turn. Drained at the start of `prepare_turn`
     /// and appended to the system prompt under
     /// `## LSP diagnostics (late)`. `Arc` so the spawned watcher can
     /// hold it independently of `self`.
-    deferred_diagnostics:
-        std::sync::Arc<crate::deferred_diagnostics::DeferredDiagnostics>,
+    deferred_diagnostics: std::sync::Arc<crate::deferred_diagnostics::DeferredDiagnostics>,
     /// WS-B: per-transcript count of eligible user prompts seen since
     /// the last sharpshooter extraction. Mirrors the retention cursor:
     /// the decision extractor gets its own cadence counter so
@@ -1689,8 +1685,7 @@ pub struct KodEngine {
     /// `maybe_compact_for` before the summary path so a mechanical
     /// reduction (shake / prune) can avoid a model call entirely.
     /// The doc's rule: reduction before summarization.
-    compaction_dispatcher:
-        std::sync::Arc<crate::compaction_dispatcher::CompactionDispatcher>,
+    compaction_dispatcher: std::sync::Arc<crate::compaction_dispatcher::CompactionDispatcher>,
 
     /// Delta §2.4: a per-transcript anchor on the provider's own last
     /// settled usage, plus the message index that usage covered. The
@@ -1779,8 +1774,7 @@ pub struct KodEngine {
     /// `plan_update` variant, a user command) when the plan reads a
     /// document the model needs to keep in context. Empty for a
     /// transcript with no plan or no declared reference paths.
-    plan_reference_paths:
-        RwLock<HashMap<String, std::collections::HashSet<std::path::PathBuf>>>,
+    plan_reference_paths: RwLock<HashMap<String, std::collections::HashSet<std::path::PathBuf>>>,
     /// Per-transcript durable decisions (Tier 3.4). Populated on
     /// every turn from the classifier; rendered into the prompt after
     /// the plan.
@@ -1936,7 +1930,8 @@ pub struct KodEngine {
     /// model's reported context window rather than the endpoint's
     /// default. Empty until some caller populates it; every lookup
     /// degrades to the endpoint config on a miss.
-    model_catalog: std::sync::RwLock<std::collections::HashMap<(String, String), kod_provider::ModelInfo>>,
+    model_catalog:
+        std::sync::RwLock<std::collections::HashMap<(String, String), kod_provider::ModelInfo>>,
     /// Circuit breaker for endpoint health (hygiene 3.2). A
     /// chronically failing endpoint is skipped in the chain for a
     /// cooldown instead of being retried as primary every turn.
@@ -2436,7 +2431,6 @@ impl KodEngine {
         });
     }
 
-
     /// Build the hook `execute_command` calls when the model sets
     /// `run_in_background` (P2-d).
     ///
@@ -2630,11 +2624,8 @@ impl KodEngine {
         // read and shorter than a user's typing. Note the timeout only
         // abandons kod's wait: on a bridge backend the turn keeps
         // running server-side and holds its tab to completion.
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            provider.complete(&req),
-        )
-        .await;
+        let _ =
+            tokio::time::timeout(std::time::Duration::from_secs(5), provider.complete(&req)).await;
     }
 
     /// Clear the prewarm latch so the next keystroke of a new turn
@@ -2918,16 +2909,16 @@ impl KodEngine {
                 };
                 runner_task.complete(job, summary.clone());
                 let epoch = delivery_task.lock().epoch();
-                delivery_task.lock().enqueue(
-                    crate::async_delivery::AsyncResult {
+                delivery_task
+                    .lock()
+                    .enqueue(crate::async_delivery::AsyncResult {
                         job_id: job.0,
                         owner_id: holder.clone(),
                         kind: "shell".to_string(),
                         body: summary.clone(),
                         artifact: None,
                         epoch,
-                    },
-                );
+                    });
                 push_background_interrupt(
                     &steers_task,
                     &holder,
@@ -2949,11 +2940,7 @@ impl KodEngine {
     async fn maybe_compact_for(&self, key: &str) -> usize {
         // Budget from the cached window; the `0` case (no registry
         // installed) makes `decide` return `None` and nothing runs.
-        let (window, _max_out) = self
-            .budget_hint
-            .read()
-            .map(|g| *g)
-            .unwrap_or((0, 0));
+        let (window, _max_out) = self.budget_hint.read().map(|g| *g).unwrap_or((0, 0));
         if window == 0 {
             return 0;
         }
@@ -2996,9 +2983,7 @@ impl KodEngine {
         // call entirely. Only when the mechanical rungs find nothing
         // (or fall short) does the summary path run.
         if let Some(plan) = self.try_mechanical_compaction(key, window as u64).await {
-            let affected = self
-                .apply_compaction_plan(key, plan, window as u64)
-                .await;
+            let affected = self.apply_compaction_plan(key, plan, window as u64).await;
             if affected > 0 {
                 tracing::info!(
                     holder = key,
@@ -3035,7 +3020,8 @@ impl KodEngine {
             // Queue a background summary for the block that *would*
             // be dropped. It lands in `pending_summaries` for the turn
             // that later crosses the hard threshold.
-            self.spawn_compaction_summary(key, dropped_for_summary).await;
+            self.spawn_compaction_summary(key, dropped_for_summary)
+                .await;
             return 0;
         }
 
@@ -3049,10 +3035,9 @@ impl KodEngine {
         };
         // Recompute against the live transcript; it may have grown
         // since the read-guard pass above.
-        let Some(cut) = crate::compaction::safe_cutoff(
-            turns,
-            crate::compaction::RECENT_TURNS_TO_KEEP,
-        ) else {
+        let Some(cut) =
+            crate::compaction::safe_cutoff(turns, crate::compaction::RECENT_TURNS_TO_KEEP)
+        else {
             return 0;
         };
         if cut == 0 {
@@ -3097,8 +3082,7 @@ impl KodEngine {
         let response = self
             .classify_and_filter(key, input, retrieval_log_turn_id)
             .await?;
-        let (task_type, refined_skills) =
-            self.refine_classification(key, input, &response).await;
+        let (task_type, refined_skills) = self.refine_classification(key, input, &response).await;
         if create_plan {
             let options_for_plan = self.generation_defaults.read().await.to_options();
             if let Ok(provider) = self
@@ -3202,10 +3186,7 @@ impl KodEngine {
     /// hash. The tools are sorted by name here even though the
     /// registry already sorts them, because the ledger must be
     /// robust to a caller that hands it an unsorted list.
-    fn cache_head_fingerprint(
-        system_text: &str,
-        definitions: &[kod_types::ToolDefinition],
-    ) -> u64 {
+    fn cache_head_fingerprint(system_text: &str, definitions: &[kod_types::ToolDefinition]) -> u64 {
         const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
         const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
         let mut h = FNV_OFFSET;
@@ -3282,11 +3263,7 @@ impl KodEngine {
     /// `None` when no settled call has been observed for this
     /// transcript yet (the first turn of a session) or when the
     /// anchor was cleared by a compaction / forget / model switch.
-    pub async fn context_tokens_for(
-        &self,
-        holder: &str,
-        tail_estimate: u64,
-    ) -> Option<u64> {
+    pub async fn context_tokens_for(&self, holder: &str, tail_estimate: u64) -> Option<u64> {
         self.context_gauges
             .read()
             .await
@@ -3441,10 +3418,7 @@ impl KodEngine {
         // on a plan that is already a no-op. Summary-family plans are
         // not: a summarizer asked to reduce a transcript can, in the
         // worst case, produce a summary longer than what it replaces.
-        let current_tokens: u64 = turns
-            .iter()
-            .map(|m| (m.content.len() / 4) as u64)
-            .sum();
+        let current_tokens: u64 = turns.iter().map(|m| (m.content.len() / 4) as u64).sum();
         let reserve = crate::compaction_dispatcher::resolve_reserve(window_tokens);
 
         // Snapshot the id → index map once. Message ids are unique
@@ -3541,8 +3515,7 @@ impl KodEngine {
                         .await
                         .insert(key.to_string(), encrypted_content);
                 }
-                let dropped: Vec<kod_types::ChatMessage> =
-                    turns.drain(..end).collect();
+                let dropped: Vec<kod_types::ChatMessage> = turns.drain(..end).collect();
                 let mut summary_msg = kod_types::ChatMessage::text(
                     kod_types::MessageId::new(),
                     kod_types::MessageRole::User,
@@ -3610,8 +3583,7 @@ impl KodEngine {
                         png_base64,
                         media_type: "image/png".to_string(),
                     });
-                let dropped: Vec<kod_types::ChatMessage> =
-                    turns.drain(..end).collect();
+                let dropped: Vec<kod_types::ChatMessage> = turns.drain(..end).collect();
                 let mut marker_msg = kod_types::ChatMessage::text(
                     kod_types::MessageId::new(),
                     kod_types::MessageRole::User,
@@ -3674,8 +3646,7 @@ impl KodEngine {
                     );
                     return 0;
                 }
-                let dropped: Vec<kod_types::ChatMessage> =
-                    turns.drain(..end).collect();
+                let dropped: Vec<kod_types::ChatMessage> = turns.drain(..end).collect();
                 let mut summary_msg = kod_types::ChatMessage::text(
                     kod_types::MessageId::new(),
                     kod_types::MessageRole::User,
@@ -3820,29 +3791,26 @@ impl KodEngine {
         // the base `tool_context` so every derived per-call context
         // sees the same handler.
         let artifact_handler = Arc::new(kod_tools::ArtifactHandler::new());
-        let protocol_router = kod_tools::ProtocolRouter::new().register(
-            Arc::clone(&artifact_handler) as Arc<dyn kod_tools::ProtocolHandler>,
-        );
+        let protocol_router = kod_tools::ProtocolRouter::new()
+            .register(Arc::clone(&artifact_handler) as Arc<dyn kod_tools::ProtocolHandler>);
         // Delta §7.5: `memory://search/<query>` delegates to the
         // router's long-term retrieval. Registered unconditionally —
         // when memory is disabled the handler returns a clear
         // "memory is disabled" error, which is more useful to the
         // model than a "unknown scheme" one.
-        let memory_handler = Arc::new(crate::memory_handler::MemoryHandler::new(
-            Arc::clone(&router_for_handler),
-        ));
-        let protocol_router = protocol_router.register(
-            memory_handler as Arc<dyn kod_tools::ProtocolHandler>,
-        );
+        let memory_handler = Arc::new(crate::memory_handler::MemoryHandler::new(Arc::clone(
+            &router_for_handler,
+        )));
+        let protocol_router =
+            protocol_router.register(memory_handler as Arc<dyn kod_tools::ProtocolHandler>);
         // Delta §6: the `xd://` scheme mounts discoverable tools. It
         // shares the engine's registry, so a tool demoted from the
         // tools array is still reachable through read/write.
-        let xd_handler = Arc::new(kod_tools::xd_handler::XdHandler::new(
-            Arc::clone(&tools_for_router),
-        ));
-        let protocol_router = protocol_router.register(
-            xd_handler as Arc<dyn kod_tools::ProtocolHandler>,
-        );
+        let xd_handler = Arc::new(kod_tools::xd_handler::XdHandler::new(Arc::clone(
+            &tools_for_router,
+        )));
+        let protocol_router =
+            protocol_router.register(xd_handler as Arc<dyn kod_tools::ProtocolHandler>);
         // Delta §5: the minimizer + the artifact-store hook. The
         // hook captures the `Arc<ArtifactHandler>` directly, so it
         // does not need a reference to the engine (which would be a
@@ -3854,29 +3822,27 @@ impl KodEngine {
                 move |id: String, text: String, mime: String| {
                     let handler = Arc::clone(&handler);
                     Box::pin(async move {
-                        handler
-                            .store(id, text, mime)
-                            .await
-                            .map_err(|e| KodError::InvalidParameters {
+                        handler.store(id, text, mime).await.map_err(|e| {
+                            KodError::InvalidParameters {
                                 reason: format!("artifact store: {e}"),
-                            })
+                            }
+                        })
                     })
                 },
             )
         };
-        let tool_context =
-            ToolContext::new(working_dir.clone())
-                .with_permissions(ToolPermissions {
-                    read_files: true,
-                    write_files: true,
-                    execute_commands: true,
-                    network_access: false,
-                    git_access: kod_types::GitAccess::Write,
-                    allowed_paths: Vec::new(),
-                    forbidden_paths: Vec::new(),
-                })
-                .with_protocol_router(protocol_router)
-                .with_minimizer(minimizer, artifact_store_hook);
+        let tool_context = ToolContext::new(working_dir.clone())
+            .with_permissions(ToolPermissions {
+                read_files: true,
+                write_files: true,
+                execute_commands: true,
+                network_access: false,
+                git_access: kod_types::GitAccess::Write,
+                allowed_paths: Vec::new(),
+                forbidden_paths: Vec::new(),
+            })
+            .with_protocol_router(protocol_router)
+            .with_minimizer(minimizer, artifact_store_hook);
         let lock_table = Arc::new(PathLockTable::new());
         // Snapshots are best-effort: a session without a home directory
         // still runs, it just cannot roll back. The manager is
@@ -4029,7 +3995,9 @@ impl KodEngine {
             cache_ledger: std::sync::Mutex::new(crate::cache_ledger::CacheLedger::new()),
             current_sensitivity: RwLock::new(crate::sensitivity::Sensitivity::Public),
             endpoint_trust: RwLock::new(std::collections::HashMap::new()),
-            endpoint_health: std::sync::Mutex::new(crate::endpoint_health::EndpointHealth::default()),
+            endpoint_health: std::sync::Mutex::new(
+                crate::endpoint_health::EndpointHealth::default(),
+            ),
             rate_limit_wait_budget_secs: std::sync::atomic::AtomicU64::new(
                 kod_config::DEFAULT_RATE_LIMIT_WAIT_SECS,
             ),
@@ -4420,10 +4388,7 @@ impl KodEngine {
             let mut history = self.history.write().await;
             history.entry(key.to_string()).or_default().push(nudge_msg);
         }
-        self.prewalks
-            .write()
-            .await
-            .insert(key.to_string(), prewalk);
+        self.prewalks.write().await.insert(key.to_string(), prewalk);
     }
 
     /// Delta §11.12: whether a transcript has an armed prewalk.
@@ -4495,23 +4460,21 @@ impl KodEngine {
         // 3. Push the checklist as the next user message.
         {
             let mut history = self.history.write().await;
-            history.entry(key.to_string()).or_default().push(
-                kod_types::ChatMessage::text(
+            history
+                .entry(key.to_string())
+                .or_default()
+                .push(kod_types::ChatMessage::text(
                     kod_types::MessageId::new(),
                     kod_types::MessageRole::User,
                     prewalk.checklist.clone(),
                     time::OffsetDateTime::now_utc(),
-                ),
-            );
+                ));
         }
         prewalk.mark_done();
         // Keep the done state so a caller can see the switch happened.
         // (Read target_model before the insert moves prewalk.)
         let fired_target = prewalk.target_model.clone();
-        self.prewalks
-            .write()
-            .await
-            .insert(key.to_string(), prewalk);
+        self.prewalks.write().await.insert(key.to_string(), prewalk);
         tracing::info!(
             key,
             target = %fired_target,
@@ -4604,8 +4567,7 @@ impl KodEngine {
             None => "No plan exists for this session. A plan is created                      on the first turn of a complex task."
                 .to_string(),
         };
-        let reference_paths: Option<Vec<String>> =
-            g.get(key).map(|p| p.reference_paths.clone());
+        let reference_paths: Option<Vec<String>> = g.get(key).map(|p| p.reference_paths.clone());
         drop(g);
 
         if let Some(paths) = reference_paths {
@@ -4911,9 +4873,7 @@ impl KodEngine {
     /// a caller that has already installed a vault replaces it.
     pub async fn install_default_secret_vault(&self) -> std::io::Result<()> {
         let Some(home) = dirs::home_dir() else {
-            tracing::debug!(
-                "no home directory; secret placeholders are disabled",
-            );
+            tracing::debug!("no home directory; secret placeholders are disabled",);
             return Ok(());
         };
         let path = home.join(".kod").join("secret-placeholder.key");
@@ -4932,8 +4892,7 @@ impl KodEngine {
         // per-process, so a variable that appears later in the
         // process's lifetime is not picked up — an acceptable
         // trade for not touching `std::env` on every turn.
-        let discovered =
-            kod_types::secret_sources::scan_env(|| std::env::vars().collect());
+        let discovered = kod_types::secret_sources::scan_env(|| std::env::vars().collect());
         let count = kod_types::secret_sources::register_discovered(&vault, discovered);
         tracing::debug!(
             count,
@@ -5010,11 +4969,7 @@ impl KodEngine {
     /// Delta §4.4: the stored provider-native compaction block for a
     /// transcript, if any.
     pub async fn native_compaction_block(&self, key: &str) -> Option<String> {
-        self.native_compaction_blocks
-            .read()
-            .await
-            .get(key)
-            .cloned()
+        self.native_compaction_blocks.read().await.get(key).cloned()
     }
 
     /// Delta §14.3: install the TTSR rules. Replaces any existing set.
@@ -5026,7 +4981,8 @@ impl KodEngine {
     /// Delta §14.3: install the shipped rules (no-TODO-in-diff,
     /// no-secret-in-prose).
     pub async fn install_builtin_ttsr_rules(&self) {
-        self.set_ttsr_rules(kod_provider::ttsr::builtin_rules()).await;
+        self.set_ttsr_rules(kod_provider::ttsr::builtin_rules())
+            .await;
     }
 
     /// Delta §14.3: advance the TTSR engine's turn counter, so a
@@ -5148,7 +5104,11 @@ impl KodEngine {
             let (query, cap, trigger) = {
                 let guard = self.mental_models.read().await;
                 let Some(m) = guard.get(&id) else { continue };
-                (m.seed.source_query.clone(), m.seed.max_tokens, m.seed.trigger)
+                (
+                    m.seed.source_query.clone(),
+                    m.seed.max_tokens,
+                    m.seed.trigger,
+                )
             };
             if let Some(want) = only_trigger
                 && trigger != want
@@ -5290,7 +5250,10 @@ impl KodEngine {
             Some(v) => std::sync::Arc::clone(v),
             None => return 0,
         };
-        fn walk(v: &mut serde_json::Value, vault: &kod_types::secret_placeholder::SecretVault) -> usize {
+        fn walk(
+            v: &mut serde_json::Value,
+            vault: &kod_types::secret_placeholder::SecretVault,
+        ) -> usize {
             let mut n = 0;
             match v {
                 serde_json::Value::String(s) => {
@@ -5783,10 +5746,7 @@ impl KodEngine {
     /// currently-warm endpoint's name.
     pub fn cache_snapshot(&self) -> (Vec<(String, u64, u64)>, Option<String>) {
         match self.cache_ledger.lock() {
-            Ok(l) => (
-                l.snapshot(),
-                l.sticky_endpoint().map(str::to_string),
-            ),
+            Ok(l) => (l.snapshot(), l.sticky_endpoint().map(str::to_string)),
             Err(_) => (Vec::new(), None),
         }
     }
@@ -5839,7 +5799,9 @@ impl KodEngine {
         let mut paths: Vec<std::path::PathBuf> = Vec::new();
         for tok in input.split_whitespace() {
             if let Some(rest) = tok.strip_prefix('@') {
-                let p = rest.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-');
+                let p = rest.trim_matches(|c: char| {
+                    !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-'
+                });
                 if !p.is_empty() {
                     paths.push(std::path::PathBuf::from(p));
                 }
@@ -5859,7 +5821,11 @@ impl KodEngine {
             Some(p) => p.read_protection().clone(),
             None => kod_config::ReadProtection::default(),
         };
-        let s = crate::sensitivity::classify(&paths, |p| protected.matches(p), |p| protected.matches(p));
+        let s = crate::sensitivity::classify(
+            &paths,
+            |p| protected.matches(p),
+            |p| protected.matches(p),
+        );
         *self.current_sensitivity.write().await = s;
     }
 
@@ -6998,37 +6964,36 @@ impl KodEngine {
     /// no routing decision has been made yet — usually the config's
     /// `default` endpoint, or the first endpoint of a v2 config.
 
-
-/// P7: drop endpoints whose declared trust tier does not clear
-/// `sensitivity`'s requirement.
-///
-/// Pure and deterministic — the caller supplies the chain, the map
-/// of endpoint name → trust tier, and the sensitivity. The empty
-/// result means every endpoint failed the requirement; the caller
-/// decides whether to fall back to the unfiltered chain (the engine
-/// does, and logs a warning) or to refuse the turn. That decision
-/// is deliberately not made here so the policy lives in one place.
-///
-/// `Sensitivity::Public` has no requirement, so the input is
-/// returned unchanged in that case.
-pub(crate) fn filter_chain_by_trust(
-    chain: &[kod_provider::ModelRef],
-    trust_map: &std::collections::HashMap<String, String>,
-    sensitivity: crate::sensitivity::Sensitivity,
-) -> Vec<kod_provider::ModelRef> {
-    let req = crate::sensitivity::TrustRequirement::for_sensitivity(sensitivity);
-    if req.0.is_none() {
-        return chain.to_vec();
+    /// P7: drop endpoints whose declared trust tier does not clear
+    /// `sensitivity`'s requirement.
+    ///
+    /// Pure and deterministic — the caller supplies the chain, the map
+    /// of endpoint name → trust tier, and the sensitivity. The empty
+    /// result means every endpoint failed the requirement; the caller
+    /// decides whether to fall back to the unfiltered chain (the engine
+    /// does, and logs a warning) or to refuse the turn. That decision
+    /// is deliberately not made here so the policy lives in one place.
+    ///
+    /// `Sensitivity::Public` has no requirement, so the input is
+    /// returned unchanged in that case.
+    pub(crate) fn filter_chain_by_trust(
+        chain: &[kod_provider::ModelRef],
+        trust_map: &std::collections::HashMap<String, String>,
+        sensitivity: crate::sensitivity::Sensitivity,
+    ) -> Vec<kod_provider::ModelRef> {
+        let req = crate::sensitivity::TrustRequirement::for_sensitivity(sensitivity);
+        if req.0.is_none() {
+            return chain.to_vec();
+        }
+        chain
+            .iter()
+            .filter(|m| {
+                let tier = trust_map.get(&m.endpoint).map(String::as_str);
+                req.satisfied_by(tier)
+            })
+            .cloned()
+            .collect()
     }
-    chain
-        .iter()
-        .filter(|m| {
-            let tier = trust_map.get(&m.endpoint).map(String::as_str);
-            req.satisfied_by(tier)
-        })
-        .cloned()
-        .collect()
-}
 
     /// Record per-model metadata for an endpoint.
     ///
@@ -7037,17 +7002,10 @@ pub(crate) fn filter_chain_by_trust(
     /// (endpoint, model) key replaces the previous value. Callers
     /// that never call this see the endpoint config's window, which
     /// is the pre-change behavior.
-    pub fn record_model_catalog(
-        &self,
-        endpoint: &str,
-        models: &[kod_provider::ModelInfo],
-    ) {
+    pub fn record_model_catalog(&self, endpoint: &str, models: &[kod_provider::ModelInfo]) {
         if let Ok(mut guard) = self.model_catalog.write() {
             for m in models {
-                guard.insert(
-                    (endpoint.to_string(), m.id.clone()),
-                    m.clone(),
-                );
+                guard.insert((endpoint.to_string(), m.id.clone()), m.clone());
             }
         }
     }
@@ -7080,10 +7038,7 @@ pub(crate) fn filter_chain_by_trust(
         // window (from `list_models`) is authoritative — it is the
         // number the server will actually enforce.
         if let Ok(guard) = self.model_catalog.read()
-            && let Some(info) = guard.get(&(
-                model_ref.endpoint.clone(),
-                model_ref.model.clone(),
-            ))
+            && let Some(info) = guard.get(&(model_ref.endpoint.clone(), model_ref.model.clone()))
             && let Some(window) = info.context_window
         {
             return (window, max_out);
@@ -7157,9 +7112,7 @@ pub(crate) fn filter_chain_by_trust(
             return;
         };
         for name in registry.names() {
-            let model = registry
-                .default_model(&name)
-                .unwrap_or_default();
+            let model = registry.default_model(&name).unwrap_or_default();
             let model_ref = ModelRef::new(name.clone(), model);
             match registry.resolve(&model_ref) {
                 Ok(provider) => provider.set_default_session(Some(bg.clone())),
@@ -7216,12 +7169,8 @@ pub(crate) fn filter_chain_by_trust(
         drop(reg);
         // Tier 2: the live catalog (populated by `list_models`).
         if let Ok(guard) = self.model_catalog.read()
-            && let Some(info) = guard.get(&(
-                model_ref.endpoint.clone(),
-                model_ref.model.clone(),
-            ))
-            && let (Some(i), Some(o)) =
-                (info.input_per_mtok_usd, info.output_per_mtok_usd)
+            && let Some(info) = guard.get(&(model_ref.endpoint.clone(), model_ref.model.clone()))
+            && let (Some(i), Some(o)) = (info.input_per_mtok_usd, info.output_per_mtok_usd)
         {
             return Some(kod_provider::ModelPricing::new(i, o));
         }
@@ -7247,10 +7196,7 @@ pub(crate) fn filter_chain_by_trust(
         // Hygiene: read the cached (window, max_out). `set_registry`
         // populates it from the effective endpoint; a caller that
         // never installed a registry sees the built-in default.
-        let (window, max_out) = *self
-            .budget_hint
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
+        let (window, max_out) = *self.budget_hint.read().unwrap_or_else(|e| e.into_inner());
         let budget = crate::budget::PromptBudget::from_tokens(window, max_out);
         // H-E3: subtract the parts the engine appends outside the four
         // budgeted sections — the environment/tool-use trailer, the
@@ -7418,12 +7364,14 @@ pub(crate) fn filter_chain_by_trust(
                 .cache_ledger
                 .lock()
                 .ok()
-                .map(|l| l.switch_penalty_usd(
-                    &preferred.endpoint,
-                    head_fingerprint,
-                    &p,
-                    transcript_tokens,
-                ))
+                .map(|l| {
+                    l.switch_penalty_usd(
+                        &preferred.endpoint,
+                        head_fingerprint,
+                        &p,
+                        transcript_tokens,
+                    )
+                })
                 .unwrap_or(0.0),
             // No pricing → cannot estimate; treat as zero penalty so
             // the classification's choice is honoured (local
@@ -7451,7 +7399,10 @@ pub(crate) fn filter_chain_by_trust(
             .cache_ledger
             .lock()
             .ok()
-            .map(|l| l.gate(&preferred.endpoint, &sticky, per_turn_saving, penalty).to_string())
+            .map(|l| {
+                l.gate(&preferred.endpoint, &sticky, per_turn_saving, penalty)
+                    .to_string()
+            })
             .unwrap_or_else(|| preferred.endpoint.clone());
         if chosen == sticky {
             // Hop declined; move the warm endpoint to the front of
@@ -7622,13 +7573,9 @@ pub(crate) fn filter_chain_by_trust(
     /// for a provider that does not report a ladder — the classifier
     /// has only one label to pick, so the answer is deterministically
     /// `Medium`.
-    fn supported_efforts_for(
-        &self,
-        model_ref: &ModelRef,
-    ) -> Vec<kod_types::effort::EffortLevel> {
+    fn supported_efforts_for(&self, model_ref: &ModelRef) -> Vec<kod_types::effort::EffortLevel> {
         if let Ok(guard) = self.model_catalog.read()
-            && let Some(info) = guard
-                .get(&(model_ref.endpoint.clone(), model_ref.model.clone()))
+            && let Some(info) = guard.get(&(model_ref.endpoint.clone(), model_ref.model.clone()))
             && let Some(ladder) = info.efforts.as_ref()
             && !ladder.is_empty()
         {
@@ -7905,9 +7852,7 @@ pub(crate) fn filter_chain_by_trust(
         // `prompt + completion` is the whole window the provider
         // processed; that is what the next request will roughly
         // repeat before new turns are appended.
-        let observed = usage
-            .prompt_tokens
-            .saturating_add(usage.completion_tokens) as u64;
+        let observed = usage.prompt_tokens.saturating_add(usage.completion_tokens) as u64;
         self.observed_usage
             .write()
             .await
@@ -8464,10 +8409,16 @@ pub(crate) fn filter_chain_by_trust(
         if current_hash == persisted_hash {
             ColdReviveVerdict::SurfaceMatches
         } else {
-            let mut missing: Vec<String> =
-                tool_names.iter().filter(|n| !current_names.contains(n)).cloned().collect();
-            let mut added: Vec<String> =
-                current_names.iter().filter(|n| !tool_names.contains(n)).cloned().collect();
+            let mut missing: Vec<String> = tool_names
+                .iter()
+                .filter(|n| !current_names.contains(n))
+                .cloned()
+                .collect();
+            let mut added: Vec<String> = current_names
+                .iter()
+                .filter(|n| !tool_names.contains(n))
+                .cloned()
+                .collect();
             missing.sort();
             added.sort();
             ColdReviveVerdict::SurfaceDrifted { missing, added }
@@ -8660,7 +8611,8 @@ pub(crate) fn filter_chain_by_trust(
         let definitions = if has_tool_search {
             definitions
         } else {
-            self.filter_mcp_tools_with_jev(key, input, definitions).await
+            self.filter_mcp_tools_with_jev(key, input, definitions)
+                .await
         };
         // Delta §11.10: plan-mode subagent clamp. A transcript in
         // plan mode sees only read-only tools. The filter runs after
@@ -8672,8 +8624,12 @@ pub(crate) fn filter_chain_by_trust(
             definitions.retain(|d| {
                 matches!(
                     d.name.as_str(),
-                    "read_file" | "list_files" | "grep" | "file_info"
-                        | "web_search" | "tool_search"
+                    "read_file"
+                        | "list_files"
+                        | "grep"
+                        | "file_info"
+                        | "web_search"
+                        | "tool_search"
                 )
             });
         }
@@ -8735,7 +8691,6 @@ pub(crate) fn filter_chain_by_trust(
         }
         Ok(response)
     }
-
 
     /// §7.3: drop memory entries injected within the TTL window.
     ///
@@ -9125,7 +9080,8 @@ pub(crate) fn filter_chain_by_trust(
                 // call actually served so the ledger knows which
                 // endpoint is warm for which prefix.
                 let head_fp = Self::cache_head_fingerprint(&system_text, &definitions);
-                self.record_cost_with_head(key, m, u, pricing, head_fp).await;
+                self.record_cost_with_head(key, m, u, pricing, head_fp)
+                    .await;
                 // Hygiene 3.2: a successful call clears the breaker.
                 if let Ok(mut h) = self.endpoint_health.lock() {
                     h.record_success(&m.endpoint);
@@ -9152,10 +9108,7 @@ pub(crate) fn filter_chain_by_trust(
                     // never trained on.
                     let calls: Vec<_> = tool_calls.iter().collect();
                     for (i, r) in tool_results.iter().enumerate() {
-                        let name = calls
-                            .get(i)
-                            .map(|c| c.tool_name.as_str())
-                            .unwrap_or("tool");
+                        let name = calls.get(i).map(|c| c.tool_name.as_str()).unwrap_or("tool");
                         summary_prompt.push_str(&format!(
                             "\n### Result {}\n{}\n",
                             i + 1,
@@ -9217,13 +9170,8 @@ pub(crate) fn filter_chain_by_trust(
 
             // Delta §9.4 (diagnostic): same classifier call as the
             // streaming path. Non-blocking.
-            self.diagnose_unexpected_stop(
-                key,
-                &request_text,
-                &final_text,
-                tool_calls.len(),
-            )
-            .await;
+            self.diagnose_unexpected_stop(key, &request_text, &final_text, tool_calls.len())
+                .await;
 
             return Ok(TaskResponse {
                 task_type: response.task_type,
@@ -9350,9 +9298,7 @@ pub(crate) fn filter_chain_by_trust(
             // the first turn — the streaming loop relies on the model
             // reaching for tools itself. The goal path is the third
             // caller and the last to migrate.
-            let prep = self
-                .prepare_turn(key, input, Some(trace_id), false)
-                .await?;
+            let prep = self.prepare_turn(key, input, Some(trace_id), false).await?;
             let TurnPreparation {
                 response,
                 task_type,
@@ -9373,10 +9319,7 @@ pub(crate) fn filter_chain_by_trust(
             // configured.
             {
                 let primary = self.current_model.read().await.clone();
-                if let Some(level) = self
-                    .resolve_turn_effort(input, &primary, effort)
-                    .await
-                {
+                if let Some(level) = self.resolve_turn_effort(input, &primary, effort).await {
                     options.effort = Some(level);
                 }
             }
@@ -9545,7 +9488,8 @@ pub(crate) fn filter_chain_by_trust(
                 // call actually served so the ledger knows which
                 // endpoint is warm for which prefix.
                 let head_fp = Self::cache_head_fingerprint(&system_text, &definitions);
-                self.record_cost_with_head(key, m, u, pricing, head_fp).await;
+                self.record_cost_with_head(key, m, u, pricing, head_fp)
+                    .await;
                 // Hygiene 3.2: a successful call clears the breaker.
                 if let Ok(mut h) = self.endpoint_health.lock() {
                     h.record_success(&m.endpoint);
@@ -9567,10 +9511,7 @@ pub(crate) fn filter_chain_by_trust(
                     // never trained on.
                     let calls: Vec<_> = tool_calls.iter().collect();
                     for (i, r) in tool_results.iter().enumerate() {
-                        let name = calls
-                            .get(i)
-                            .map(|c| c.tool_name.as_str())
-                            .unwrap_or("tool");
+                        let name = calls.get(i).map(|c| c.tool_name.as_str()).unwrap_or("tool");
                         summary_prompt.push_str(&format!(
                             "\n### Result {}\n{}\n",
                             i + 1,
@@ -9641,13 +9582,8 @@ pub(crate) fn filter_chain_by_trust(
             // Wired here after `remember_turn_for` so the classifier
             // sees the same `final_text` the caller will receive.
             let _ = chunk_tx.send(activity_marker("reviewing turn…")).await;
-            self.diagnose_unexpected_stop(
-                key,
-                &request_text,
-                &final_text,
-                tool_calls.len(),
-            )
-            .await;
+            self.diagnose_unexpected_stop(key, &request_text, &final_text, tool_calls.len())
+                .await;
 
             // Tier 3.4 — extract durable decisions from this turn.
             // Two Jev calls, gated; no-op when Jev is disabled.
@@ -10051,14 +9987,16 @@ pub(crate) fn filter_chain_by_trust(
             // vision capability or no result crosses the threshold.
             self.inline_image_tool_results(messages).await;
 
-            let req = self.build_grounded_request(
-                round.holder,
-                round.system_text,
-                messages.clone(),
-                round.definitions,
-                round.options,
-                round.model_ref,
-            ).await;
+            let req = self
+                .build_grounded_request(
+                    round.holder,
+                    round.system_text,
+                    messages.clone(),
+                    round.definitions,
+                    round.options,
+                    round.model_ref,
+                )
+                .await;
             match provider.complete(&req).await? {
                 GenerationResponse::Text { content, usage } => {
                     last_usage = match (last_usage, usage) {
@@ -10469,13 +10407,8 @@ pub(crate) fn filter_chain_by_trust(
             // corrective is a request-shaped System message; the TUI
             // does not see it (only `messages` is affected), and the
             // next round's provider call is the one that reads it.
-            self.maybe_emit_loop_corrective(
-                round.holder,
-                &calls,
-                &section.results,
-                messages,
-            )
-            .await;
+            self.maybe_emit_loop_corrective(round.holder, &calls, &section.results, messages)
+                .await;
             self.maybe_emit_todo_nudge(round.holder, &calls, messages)
                 .await;
             // Each call finished: hand the TUI its completion live (header
@@ -10576,14 +10509,16 @@ pub(crate) fn filter_chain_by_trust(
         futures::stream::BoxStream<'static, Result<kod_provider::StreamChunk>>,
     )> {
         let provider = self.resolve_provider_for_model_ref(fallback).await.ok()?;
-        let req = self.build_grounded_request(
-            "",
-            system_text,
-            messages.to_vec(),
-            definitions,
-            options,
-            fallback,
-        ).await;
+        let req = self
+            .build_grounded_request(
+                "",
+                system_text,
+                messages.to_vec(),
+                definitions,
+                options,
+                fallback,
+            )
+            .await;
         // Box the stream so it can be returned across the await
         // boundary. The request must be owned by the stream's
         // closure because `stream_completion` borrows it.
@@ -10639,14 +10574,16 @@ pub(crate) fn filter_chain_by_trust(
         // provider that has not overridden it still produces chunks in
         // the right order. Both concrete providers in this workspace
         // override it with real SSE.
-        let req = self.build_grounded_request(
-            holder,
-            system_text,
-            messages.to_vec(),
-            definitions,
-            options,
-            model_ref,
-        ).await;
+        let req = self
+            .build_grounded_request(
+                holder,
+                system_text,
+                messages.to_vec(),
+                definitions,
+                options,
+                model_ref,
+            )
+            .await;
         // P5.6 — wrap the concrete stream in an `async_stream` that
         // owns its provider and request. `stream_completion` borrows
         // both, so its return type carries a lifetime; the wrapper
@@ -10673,7 +10610,10 @@ pub(crate) fn filter_chain_by_trust(
         // Admitted lazily as a `read_file` call's `path` argument
         // completes mid-stream, so the read overlaps the provider's
         // remaining generation tail.
-        let mut speculation_handles: BTreeMap<usize, tokio::task::JoinHandle<Option<crate::speculation::SpeculativeRead>>> = BTreeMap::new();
+        let mut speculation_handles: BTreeMap<
+            usize,
+            tokio::task::JoinHandle<Option<crate::speculation::SpeculativeRead>>,
+        > = BTreeMap::new();
         // Only speculate when the caller has not disabled it. The
         // engine's `speculative_reads` flag defaults on: the design's
         // cost analysis is "one wasted read in the worst case".
@@ -10822,9 +10762,11 @@ pub(crate) fn filter_chain_by_trust(
                     // speculation block below, which may `continue` and
                     // skip the rest of the arm.
                     if let Some(name) = entry.name.clone() {
-                        let partial_path = crate::speculation::extract_path_from_partial(&entry.args);
+                        let partial_path =
+                            crate::speculation::extract_path_from_partial(&entry.args);
                         let mut engine = self.ttsr.write().await;
-                        let fired = engine.observe_tool(&name, partial_path.as_deref(), &entry.args);
+                        let fired =
+                            engine.observe_tool(&name, partial_path.as_deref(), &entry.args);
                         let interrupt = fired.iter().find(|f| f.interrupt).cloned();
                         for f in &fired {
                             tracing::debug!(
@@ -10872,13 +10814,11 @@ pub(crate) fn filter_chain_by_trust(
                         }
                         let handle = tokio::spawn(async move {
                             match crate::speculation::read_with_evidence(&abs) {
-                                Ok((text, evidence)) => {
-                                    Some(crate::speculation::SpeculativeRead {
-                                        path: abs,
-                                        text,
-                                        evidence,
-                                    })
-                                }
+                                Ok((text, evidence)) => Some(crate::speculation::SpeculativeRead {
+                                    path: abs,
+                                    text,
+                                    evidence,
+                                }),
                                 Err(_) => None,
                             }
                         });
@@ -11044,10 +10984,7 @@ pub(crate) fn filter_chain_by_trust(
                     crate::cache_journal::InvalidationCause::ToolSurfaceChanged {
                         previous_fingerprint: prev,
                         current_fingerprint: fingerprint,
-                        reason: format!(
-                            "{} definitions on this request",
-                            definitions.len()
-                        ),
+                        reason: format!("{} definitions on this request", definitions.len()),
                     },
                 );
             }
@@ -11264,12 +11201,7 @@ pub(crate) fn filter_chain_by_trust(
             // understands the block (Anthropic) prepends it to the
             // first user message; every other provider ignores the
             // field.
-            native_compaction_block: self
-                .native_compaction_blocks
-                .read()
-                .await
-                .get(key)
-                .cloned(),
+            native_compaction_block: self.native_compaction_blocks.read().await.get(key).cloned(),
             // Delta §4.5: attach any stored image frames. The
             // Anthropic wire emits them as image content blocks on
             // the first user message; other providers ignore them.
@@ -11290,9 +11222,8 @@ pub(crate) fn filter_chain_by_trust(
         // counted by the report; today the engine logs at debug because
         // the drop is expected (an old frame that no longer fits) and a
         // per-turn warn would be noise.
-        let report = req.apply_image_budget(
-            &kod_provider::image_budget::ImageBudgetPolicy::default(),
-        );
+        let report =
+            req.apply_image_budget(&kod_provider::image_budget::ImageBudgetPolicy::default());
         if report.any_dropped() {
             tracing::debug!(
                 holder = key,
@@ -11412,8 +11343,9 @@ pub(crate) fn filter_chain_by_trust(
         tracker.note_prelude_offered();
         drop(trackers);
         let mut hist = self.history.write().await;
-        hist.entry(key.to_string()).or_default().push(
-            kod_types::ChatMessage::text(
+        hist.entry(key.to_string())
+            .or_default()
+            .push(kod_types::ChatMessage::text(
                 kod_types::MessageId::new(),
                 kod_types::MessageRole::System,
                 "[todo prelude] For a multi-step task, keep a todo list \
@@ -11421,8 +11353,7 @@ pub(crate) fn filter_chain_by_trust(
                  mark items done as you finish them, and add items you \
                  discover as you go. Skip the list for a single-step ask.",
                 time::OffsetDateTime::now_utc(),
-            ),
-        );
+            ));
     }
 
     /// Delta §11.7: remind the model of open todos when it stops.
@@ -11445,26 +11376,23 @@ pub(crate) fn filter_chain_by_trust(
         let tracker = trackers
             .entry(key.to_string())
             .or_insert_with(kod_tools::todo_tracker::TodoTracker::new);
-        if !tracker.completion_reminder_due(
-            incomplete,
-            last_line_is_question,
-            async_wakes_pending,
-        ) {
+        if !tracker.completion_reminder_due(incomplete, last_line_is_question, async_wakes_pending)
+        {
             return;
         }
         tracker.note_completion_reminder();
         drop(trackers);
         let mut hist = self.history.write().await;
-        hist.entry(key.to_string()).or_default().push(
-            kod_types::ChatMessage::text(
+        hist.entry(key.to_string())
+            .or_default()
+            .push(kod_types::ChatMessage::text(
                 kod_types::MessageId::new(),
                 kod_types::MessageRole::System,
                 "[todo reminder] The todo list still has an item in \
                  progress. If the task is finished, mark it done; \
                  otherwise continue.",
                 time::OffsetDateTime::now_utc(),
-            ),
-        );
+            ));
     }
 
     /// Delta §11.7: record a tool round and, when the tracker says a
@@ -12281,7 +12209,8 @@ pub(crate) fn filter_chain_by_trust(
         // sites (and any caller without a streaming round behind it)
         // keep the pre-§10 signature. The streaming loop uses the
         // 4-arg form directly.
-        self.run_tool_calls_with_speculations(calls, holder, chunk_tx, &[]).await
+        self.run_tool_calls_with_speculations(calls, holder, chunk_tx, &[])
+            .await
     }
 
     /// Delta §10: `run_tool_calls` plus the speculative reads the
@@ -12341,10 +12270,7 @@ pub(crate) fn filter_chain_by_trust(
         if effective_holder != "session"
             && let Some(sfb) = self.swarm_file_bus.read().await.clone()
         {
-            tool_context.on_file_touch = Some(Self::build_swarm_file_hook(
-                sfb.bus,
-                sfb.service,
-            ));
+            tool_context.on_file_touch = Some(Self::build_swarm_file_hook(sfb.bus, sfb.service));
         }
 
         // Any mutating tool in the round forces the serial path so
@@ -12891,14 +12817,10 @@ pub(crate) fn filter_chain_by_trust(
                 matches!(c.tool_name.as_str(), "write_file" | "patch_file")
                     && matches!(r, kod_types::ToolResult::Success(_))
             });
-            if wrote
-                && let Some(todo_id) = kod_tools::todo::in_progress_todo(&self.todo_list)
-            {
+            if wrote && let Some(todo_id) = kod_tools::todo::in_progress_todo(&self.todo_list) {
                 let files: Vec<&str> = calls
                     .iter()
-                    .filter(|c| {
-                        matches!(c.tool_name.as_str(), "write_file" | "patch_file")
-                    })
+                    .filter(|c| matches!(c.tool_name.as_str(), "write_file" | "patch_file"))
                     .filter_map(|c| c.arguments.get("path").and_then(|p| p.as_str()))
                     .collect();
                 let note = if files.is_empty() {
@@ -13014,15 +12936,13 @@ pub(crate) fn filter_chain_by_trust(
                     // rewrite during the wait does not queue stale
                     // diagnostics.
                     if lsp_diags.is_empty() {
-                        let (deferred_enabled, deferred_ms) =
-                            kod_config::KodConfig::load_default()
-                                .ok()
-                                .map(|c| (c.lsp.deferred_enabled, c.lsp.deferred_settle_ms))
-                                .unwrap_or((true, 12_000));
+                        let (deferred_enabled, deferred_ms) = kod_config::KodConfig::load_default()
+                            .ok()
+                            .map(|c| (c.lsp.deferred_enabled, c.lsp.deferred_settle_ms))
+                            .unwrap_or((true, 12_000));
                         if deferred_enabled && deferred_ms > 0 {
-                            let mtime_at_spawn = std::fs::metadata(path)
-                                .and_then(|m| m.modified())
-                                .ok();
+                            let mtime_at_spawn =
+                                std::fs::metadata(path).and_then(|m| m.modified()).ok();
                             let mgr = std::sync::Arc::clone(&self.lsp_manager);
                             let q = std::sync::Arc::clone(&self.deferred_diagnostics);
                             let holder_owned = effective_holder.to_string();
@@ -13439,9 +13359,7 @@ pub(crate) fn filter_chain_by_trust(
         // so read the old length first to know the new tail's range.
         let (new_start, new_len, new_count) = {
             let mut cursors = self.retention_cursors.write().await;
-            let cursor = cursors
-                .entry(key.to_string())
-                .or_default();
+            let cursor = cursors.entry(key.to_string()).or_default();
             let old = cursor.retained();
             match cursor.advance(&transcript) {
                 Some(count) => (old, cursor.retained(), count),
@@ -13472,28 +13390,25 @@ pub(crate) fn filter_chain_by_trust(
             }
         };
         let tail = &transcript[new_start..new_len];
-        let facts =
-            match kod_memory::extract::extract(provider, model_ref, tail, max_entries).await {
-                Ok(f) => f,
-                Err(e) => {
-                    tracing::warn!(error = %e, "continuous extraction: failed");
-                    return;
-                }
-            };
+        let facts = match kod_memory::extract::extract(provider, model_ref, tail, max_entries).await
+        {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::warn!(error = %e, "continuous extraction: failed");
+                return;
+            }
+        };
         if facts.is_empty() {
             return;
         }
-        let project_key = Some(crate::router::TaskRouter::project_key_for(&self.working_dir));
+        let project_key = Some(crate::router::TaskRouter::project_key_for(
+            &self.working_dir,
+        ));
         let mut stored = 0usize;
         for fact in &facts {
-            let mut metadata =
-                kod_memory::extract::metadata_for(fact, project_key.clone());
+            let mut metadata = kod_memory::extract::metadata_for(fact, project_key.clone());
             metadata.session_id = Some(self.session_id_for_holder(key));
-            match self
-                .router
-                .store_episodic(&fact.content, metadata)
-                .await
-            {
+            match self.router.store_episodic(&fact.content, metadata).await {
                 Ok(_) => stored += 1,
                 Err(e) => {
                     tracing::warn!(error = %e, "continuous extraction: store failed");
@@ -13626,18 +13541,14 @@ pub(crate) fn filter_chain_by_trust(
     /// by a follow-up consolidation pass, and by tests. Cloning is
     /// cheap: the queue holds at most a handful of deltas per
     /// session.
-    pub async fn sharpshooter_deltas(
-        &self,
-    ) -> Vec<kod_memory::sharpshooter::DecisionDelta> {
+    pub async fn sharpshooter_deltas(&self) -> Vec<kod_memory::sharpshooter::DecisionDelta> {
         self.sharpshooter_deltas.read().await.clone()
     }
 
     /// Delta §12.3: take the queue, leaving it empty. Used by the
     /// consolidation pass; a caller that wants a copy uses
     /// [`Self::sharpshooter_deltas`].
-    async fn sharpshooter_drain(
-        &self,
-    ) -> Vec<kod_memory::sharpshooter::DecisionDelta> {
+    async fn sharpshooter_drain(&self) -> Vec<kod_memory::sharpshooter::DecisionDelta> {
         std::mem::take(&mut *self.sharpshooter_deltas.write().await)
     }
 
@@ -13694,8 +13605,7 @@ pub(crate) fn filter_chain_by_trust(
         for (file, deltas) in groups {
             let path = dir.join(file);
             let existing = std::fs::read_to_string(&path).unwrap_or_default();
-            let prompt =
-                kod_memory::sharpshooter::build_consolidation_prompt(&existing, &deltas);
+            let prompt = kod_memory::sharpshooter::build_consolidation_prompt(&existing, &deltas);
             let reply = match provider.generate(&prompt, &opts).await {
                 Ok(r) => r,
                 Err(e) => {
@@ -13711,7 +13621,11 @@ pub(crate) fn filter_chain_by_trust(
                 tracing::warn!(error = %e, file, "sharpshooter: write failed");
                 continue;
             }
-            tracing::debug!(file, bytes = text.len(), "sharpshooter: rewrote decisions file");
+            tracing::debug!(
+                file,
+                bytes = text.len(),
+                "sharpshooter: rewrote decisions file"
+            );
             written += 1;
         }
         written
@@ -14145,14 +14059,12 @@ pub(crate) fn filter_chain_by_trust(
     fn rate_limit_hint_within_budget(&self, err: &KodError) -> Option<std::time::Duration> {
         let hint_secs = match err {
             KodError::RateLimited { retry_after_secs } => *retry_after_secs,
-            other => {
-                match crate::retry_strategy::TurnFailure::classify(&other.to_string()) {
-                    crate::retry_strategy::TurnFailure::TransportRateLimit {
-                        retry_after_secs,
-                    } => retry_after_secs?,
-                    _ => return None,
+            other => match crate::retry_strategy::TurnFailure::classify(&other.to_string()) {
+                crate::retry_strategy::TurnFailure::TransportRateLimit { retry_after_secs } => {
+                    retry_after_secs?
                 }
-            }
+                _ => return None,
+            },
         };
         if hint_secs == 0 {
             return None;
@@ -14236,11 +14148,7 @@ pub(crate) fn filter_chain_by_trust(
     /// An empty body is dropped — an interrupt with no content would
     /// render a bare header into the transcript, which is noise the
     /// model has to read past.
-    pub async fn steer_interrupt_for(
-        &self,
-        key: &str,
-        interrupt: crate::steer::SoftInterrupt,
-    ) {
+    pub async fn steer_interrupt_for(&self, key: &str, interrupt: crate::steer::SoftInterrupt) {
         if interrupt.content.trim().is_empty() {
             return;
         }
@@ -14383,8 +14291,7 @@ pub(crate) fn filter_chain_by_trust(
         // which is the previous FIFO-equivalent behavior.
         let query_text = self.current_request(key).await.unwrap_or_default();
         let query = crate::context_engine::Query::from_text(&query_text);
-        let scorer = crate::context_engine::LexicalScorer::new()
-            .with_tail(10); // P2: recent-10 stay Full; older score by relevance
+        let scorer = crate::context_engine::LexicalScorer::new().with_tail(10); // P2: recent-10 stay Full; older score by relevance
 
         let mut cache_guard = self.fidelity_cache.write().await;
         let cache = cache_guard
@@ -14392,11 +14299,7 @@ pub(crate) fn filter_chain_by_trust(
             .or_insert_with(crate::context_engine::FidelityCache::new);
 
         let (out, consult) = crate::context_engine::render_scored(
-            turns,
-            query,
-            &scorer,
-            cache,
-            budget,
+            turns, query, &scorer, cache, budget,
             true, // skip tool rows and empty tool-call assistants
         );
 
@@ -14817,7 +14720,7 @@ mod tests {
             Ok(kod_types::ToolResult::Error(e)) => {
                 assert!(!e.contains("policy denied"), "read_file must not be denied")
             }
-            Ok(_) => {} // a real read succeeded
+            Ok(_) => {}  // a real read succeeded
             Err(_) => {} // the tool errored before running
         }
     }
@@ -14842,14 +14745,16 @@ mod tests {
         engine.start().await.unwrap();
 
         let system_text = "identity bits\n\n## Stable prefix (cacheable)\n\nrepo map bits\n\n## Volatile suffix (not cached)\n\nvolatile bits\n\n## Conversation so far\n\nUser: hi\n\n## User Request\n\nhi";
-        let req = engine.build_grounded_request(
-            "session",
-            system_text,
-            Vec::new(),
-            &[],
-            &GenerationOptions::default(),
-            &ModelRef::new("test", "test-model"),
-        ).await;
+        let req = engine
+            .build_grounded_request(
+                "session",
+                system_text,
+                Vec::new(),
+                &[],
+                &GenerationOptions::default(),
+                &ModelRef::new("test", "test-model"),
+            )
+            .await;
         assert_eq!(
             req.system.segments.len(),
             2,
@@ -15486,7 +15391,10 @@ mod tests {
         let start = tool_start_marker("call_9", "read_file");
         assert_eq!(parse_tool_start(&start), Some(("call_9", "read_file")));
         // Legacy v1 chunk (no cid) still parses with an empty id.
-        assert_eq!(parse_tool_start("\0kod-tool:read_file\0"), Some(("", "read_file")));
+        assert_eq!(
+            parse_tool_start("\0kod-tool:read_file\0"),
+            Some(("", "read_file"))
+        );
         let args = tool_args_marker("call_9", "execute_command cargo test -- --foo:bar");
         assert_eq!(
             parse_tool_args(&args),
@@ -16100,7 +16008,7 @@ mod tests {
         );
         assert_eq!(ok, "hi");
         let hdr = format_tool_header("read_file", &serde_json::json!({"path": "/a/b/c/main.rs"}));
-        assert!(hdr.starts_with("read_file path="), "got: {hdr}");        // read_file success stays compact: path + size + preview, not a dump.
+        assert!(hdr.starts_with("read_file path="), "got: {hdr}"); // read_file success stays compact: path + size + preview, not a dump.
         let read = summarize_tool_result(
             "read_file",
             &ToolResult::Success(
@@ -16148,7 +16056,10 @@ mod tests {
         let long = "x".repeat(200);
         let capped = tool_intent(&serde_json::json!({"intent": long})).unwrap();
         assert!(capped.ends_with('…') && capped.len() <= 84, "got: {capped}");
-        assert!(!format_call_brief("read_file", &serde_json::json!({"intent": "why\nthis"})).contains('\n'));
+        assert!(
+            !format_call_brief("read_file", &serde_json::json!({"intent": "why\nthis"}))
+                .contains('\n')
+        );
     }
 
     /// A round containing a mutating tool must run serially in caller
@@ -17883,17 +17794,9 @@ impl KodEngine {
     ///
     /// Returns the number of messages appended. A missing or empty
     /// log yields `Ok(0)` and leaves history untouched.
-    pub async fn rehydrate_from_log_for(
-        &self,
-        key: &str,
-        path: &std::path::Path,
-    ) -> Result<usize> {
-        self.rehydrate_from_log_with(
-            key,
-            path,
-            crate::session_log::RehydrationMode::Prose,
-        )
-        .await
+    pub async fn rehydrate_from_log_for(&self, key: &str, path: &std::path::Path) -> Result<usize> {
+        self.rehydrate_from_log_with(key, path, crate::session_log::RehydrationMode::Prose)
+            .await
     }
 
     /// Rehydrate with an explicit mode. `rehydrate_from_log_for` is
@@ -17921,7 +17824,6 @@ impl KodEngine {
         guard.entry(key.to_string()).or_default().extend(messages);
         Ok(count)
     }
-
 }
 
 #[cfg(test)]
@@ -17947,11 +17849,8 @@ mod rehydrate_integration_tests {
     async fn rehydrate_from_log_for_appends_prose_turns() {
         let temp = TempDir::new().unwrap();
         let log_path = temp.path().join("session.jsonl");
-        let engine = KodEngine::new(
-            fixture_config(temp.path()),
-            temp.path().join("test.redb"),
-        )
-        .unwrap();
+        let engine =
+            KodEngine::new(fixture_config(temp.path()), temp.path().join("test.redb")).unwrap();
         engine.start().await.unwrap();
 
         // Two tool calls recorded against holder "session".
@@ -17971,10 +17870,7 @@ mod rehydrate_integration_tests {
         recorder.flush().unwrap();
         drop(recorder);
 
-        let count = engine
-            .rehydrate_from_log_for("", &log_path)
-            .await
-            .unwrap();
+        let count = engine.rehydrate_from_log_for("", &log_path).await.unwrap();
         assert_eq!(count, 2, "two tool calls => two prose messages");
 
         // The prose must be visible to render_history. This is the
@@ -18001,11 +17897,8 @@ mod rehydrate_integration_tests {
     async fn rehydrate_from_log_for_ignores_other_holders() {
         let temp = TempDir::new().unwrap();
         let log_path = temp.path().join("session.jsonl");
-        let engine = KodEngine::new(
-            fixture_config(temp.path()),
-            temp.path().join("test.redb"),
-        )
-        .unwrap();
+        let engine =
+            KodEngine::new(fixture_config(temp.path()), temp.path().join("test.redb")).unwrap();
         engine.start().await.unwrap();
 
         let recorder = SessionRecorder::open(log_path.clone()).unwrap();
@@ -18022,10 +17915,7 @@ mod rehydrate_integration_tests {
         recorder.flush().unwrap();
         drop(recorder);
 
-        let count = engine
-            .rehydrate_from_log_for("", &log_path)
-            .await
-            .unwrap();
+        let count = engine.rehydrate_from_log_for("", &log_path).await.unwrap();
         assert_eq!(count, 0, "entries for another holder must be ignored");
 
         let rendered = engine.render_history().await;
@@ -18037,11 +17927,8 @@ mod rehydrate_integration_tests {
     #[tokio::test]
     async fn rehydrate_from_log_for_on_missing_file_is_a_no_op() {
         let temp = TempDir::new().unwrap();
-        let engine = KodEngine::new(
-            fixture_config(temp.path()),
-            temp.path().join("test.redb"),
-        )
-        .unwrap();
+        let engine =
+            KodEngine::new(fixture_config(temp.path()), temp.path().join("test.redb")).unwrap();
         engine.start().await.unwrap();
 
         let missing = temp.path().join("does-not-exist.jsonl");
@@ -18220,7 +18107,9 @@ mod swarm_file_hook_tests {
         hook.call(
             "swarm:agent-1",
             std::path::Path::new("/tmp/f.rs"),
-            kod_tools::context::FileOp::Write, None);
+            kod_tools::context::FileOp::Write,
+            None,
+        );
 
         // Service recorded it.
         assert!(service.has_touched("swarm:agent-1", &std::path::PathBuf::from("/tmp/f.rs")));
@@ -18246,11 +18135,15 @@ mod swarm_file_hook_tests {
         hook.call(
             "swarm:first",
             std::path::Path::new("/a.rs"),
-            kod_tools::context::FileOp::Read, None);
+            kod_tools::context::FileOp::Read,
+            None,
+        );
         hook.call(
             "swarm:second",
             std::path::Path::new("/b.rs"),
-            kod_tools::context::FileOp::Write, None);
+            kod_tools::context::FileOp::Write,
+            None,
+        );
 
         assert!(service.has_touched("swarm:first", &std::path::PathBuf::from("/a.rs")));
         assert!(service.has_touched("swarm:second", &std::path::PathBuf::from("/b.rs")));
@@ -18267,11 +18160,24 @@ mod swarm_file_hook_tests {
         let service = std::sync::Arc::new(FileTouchService::new());
         let hook = KodEngine::build_swarm_file_hook(bus, service.clone());
 
-        hook.call("reader", std::path::Path::new("/f.rs"), kod_tools::context::FileOp::Read, None);
-        hook.call("writer", std::path::Path::new("/f.rs"), kod_tools::context::FileOp::Write, None);
+        hook.call(
+            "reader",
+            std::path::Path::new("/f.rs"),
+            kod_tools::context::FileOp::Read,
+            None,
+        );
+        hook.call(
+            "writer",
+            std::path::Path::new("/f.rs"),
+            kod_tools::context::FileOp::Write,
+            None,
+        );
 
         let writer_view = service.conflicts_for(&std::path::PathBuf::from("/f.rs"), "writer");
-        assert!(writer_view.is_empty(), "reader is not a conflict for writer");
+        assert!(
+            writer_view.is_empty(),
+            "reader is not a conflict for writer"
+        );
 
         let reader_view = service.conflicts_for(&std::path::PathBuf::from("/f.rs"), "reader");
         assert_eq!(reader_view.len(), 1);

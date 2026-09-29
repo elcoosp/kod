@@ -28,11 +28,7 @@ impl KodApp {
             .iter()
             .filter(|m| {
                 m.role == MessageRole::Tool
-                    && m.content
-                        .split_once('\n')
-                        .map(|x| x.1)
-                        .unwrap_or("")
-                        .trim()
+                    && m.content.split_once('\n').map(|x| x.1).unwrap_or("").trim()
                         == Self::LIVE_TOOL_BODY_PLACEHOLDER
             })
             .count()

@@ -202,7 +202,10 @@ pub enum Event {
     /// the retry window. Carries the bounded-wait system line plus the
     /// window in seconds so the spinner can count down live; the two
     /// come from one event so they can never disagree.
-    RateLimited { message: String, wait_secs: u64 },
+    RateLimited {
+        message: String,
+        wait_secs: u64,
+    },
     /// Goal-loop turn boundary: the engine finished turn N-1 and is
     /// starting turn N. The main loop flushes the previous turn's text
     /// as its own bubble and opens a new one — turns must never merge
@@ -279,7 +282,6 @@ impl Event {
         !matches!(self, Event::ResponseChunk(_))
     }
 }
-
 
 /// A cheap clonable handle for pushing events onto the priority queue
 /// from tasks that cannot hold `&EventHandler`. See `start_input_loop`
@@ -465,7 +467,8 @@ impl EventHandler {
                                         _ => None,
                                     };
                                     if let Some(code) = mapped {
-                                        priority_tx.send_priority(Event::Key(code), EventPriority::High);
+                                        priority_tx
+                                            .send_priority(Event::Key(code), EventPriority::High);
                                         continue;
                                     }
                                 }
@@ -473,7 +476,10 @@ impl EventHandler {
                                 if key.modifiers.contains(KeyModifiers::SHIFT)
                                     && matches!(key.code, CrosstermKeyCode::Enter)
                                 {
-                                    priority_tx.send_priority(Event::Key(KeyCode::ShiftEnter), EventPriority::High);
+                                    priority_tx.send_priority(
+                                        Event::Key(KeyCode::ShiftEnter),
+                                        EventPriority::High,
+                                    );
                                     continue;
                                 }
                                 // Shift+↑/↓ scrolls (laptop keyboards often
@@ -482,18 +488,25 @@ impl EventHandler {
                                 if key.modifiers.contains(KeyModifiers::SHIFT) {
                                     match key.code {
                                         CrosstermKeyCode::Up => {
-                                            priority_tx.send_priority(Event::Key(KeyCode::PageUp), EventPriority::High);
+                                            priority_tx.send_priority(
+                                                Event::Key(KeyCode::PageUp),
+                                                EventPriority::High,
+                                            );
                                             continue;
                                         }
                                         CrosstermKeyCode::Down => {
-                                            priority_tx.send_priority(Event::Key(KeyCode::PageDown), EventPriority::High);
+                                            priority_tx.send_priority(
+                                                Event::Key(KeyCode::PageDown),
+                                                EventPriority::High,
+                                            );
                                             continue;
                                         }
                                         _ => {}
                                     }
                                 }
                                 let key_code: KeyCode = key.code.into();
-                                priority_tx.send_priority(Event::Key(key_code), EventPriority::High);
+                                priority_tx
+                                    .send_priority(Event::Key(key_code), EventPriority::High);
                             }
                         }
                         CrosstermEvent::Paste(text) => {

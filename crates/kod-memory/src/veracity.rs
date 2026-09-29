@@ -166,7 +166,12 @@ mod tests {
 
     #[test]
     fn stated_is_the_strongest() {
-        for v in [Veracity::Inferred, Veracity::Imported, Veracity::Unknown, Veracity::Tool] {
+        for v in [
+            Veracity::Inferred,
+            Veracity::Imported,
+            Veracity::Unknown,
+            Veracity::Tool,
+        ] {
             assert!(v.weight() < Veracity::Stated.weight());
         }
     }
@@ -211,7 +216,10 @@ mod tests {
 
     #[test]
     fn base_confidence_fn_matches_the_enum() {
-        assert_eq!(base_confidence(Veracity::Stated), Veracity::Stated.base_confidence());
+        assert_eq!(
+            base_confidence(Veracity::Stated),
+            Veracity::Stated.base_confidence()
+        );
     }
 
     #[test]

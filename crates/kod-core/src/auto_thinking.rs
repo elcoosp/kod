@@ -132,20 +132,16 @@ impl AutoThinking {
         supported: &[EffortLevel],
     ) -> Result<EffortLevel, JudgmentError> {
         let raw = match self.mode {
-            ClassifierMode::FullLadder => {
-                match self.classify_full_ladder(input, supported).await {
-                    Ok(l) => l,
-                    Err(JudgmentError::Unparseable { .. }) => EffortLevel::Medium,
-                    Err(e) => return Err(e),
-                }
-            }
-            ClassifierMode::ThreeBucket => {
-                match self.classify_three_bucket(input).await {
-                    Ok(l) => l,
-                    Err(JudgmentError::Unparseable { .. }) => EffortLevel::Medium,
-                    Err(e) => return Err(e),
-                }
-            }
+            ClassifierMode::FullLadder => match self.classify_full_ladder(input, supported).await {
+                Ok(l) => l,
+                Err(JudgmentError::Unparseable { .. }) => EffortLevel::Medium,
+                Err(e) => return Err(e),
+            },
+            ClassifierMode::ThreeBucket => match self.classify_three_bucket(input).await {
+                Ok(l) => l,
+                Err(JudgmentError::Unparseable { .. }) => EffortLevel::Medium,
+                Err(e) => return Err(e),
+            },
         };
         let clamped = clamp_to_supported(raw, supported);
         Ok(ceiling_for_auto(clamped, supported))
@@ -181,10 +177,7 @@ impl AutoThinking {
         ))
     }
 
-    async fn classify_three_bucket(
-        &self,
-        input: &str,
-    ) -> Result<EffortLevel, JudgmentError> {
+    async fn classify_three_bucket(&self, input: &str) -> Result<EffortLevel, JudgmentError> {
         let question = Question::Choice {
             id: "bucket".to_string(),
             text: "How much reasoning effort does this request need?".to_string(),
@@ -224,16 +217,10 @@ impl AutoThinking {
 fn ladder_criterion(level: EffortLevel) -> &'static str {
     match level {
         EffortLevel::None => "no reasoning wanted — a direct factual answer",
-        EffortLevel::Minimal => {
-            "almost none — a short chain on a known problem"
-        }
+        EffortLevel::Minimal => "almost none — a short chain on a known problem",
         EffortLevel::Low => "a rename, a typo, a one-line edit",
-        EffortLevel::Medium => {
-            "a small feature, a targeted fix, or a short lookup"
-        }
-        EffortLevel::High => {
-            "a multi-file change, a design decision, or a debugging session"
-        }
+        EffortLevel::Medium => "a small feature, a targeted fix, or a short lookup",
+        EffortLevel::High => "a multi-file change, a design decision, or a debugging session",
         EffortLevel::Xhigh => {
             "a hard problem where correctness matters more than latency — \
              a bug with no reproduction, an irreversible operation, or a \
@@ -306,8 +293,7 @@ mod tests {
     use kod_provider::judgment::JudgmentOptions;
     use kod_provider::request::CompletionRequest;
     use kod_provider::{
-        GenerationOptions, GenerationResponse, LlmProvider, ModelInfo, ModelRef,
-        StreamChunk,
+        GenerationOptions, GenerationResponse, LlmProvider, ModelInfo, ModelRef, StreamChunk,
     };
     use kod_types::ToolDefinition;
     use std::pin::Pin;
@@ -319,7 +305,9 @@ mod tests {
 
     impl FixedJudge {
         fn new(reply: impl Into<String>) -> Self {
-            Self { reply: reply.into() }
+            Self {
+                reply: reply.into(),
+            }
         }
     }
 
@@ -331,11 +319,7 @@ mod tests {
         async fn list_models(&self) -> KodResult<Vec<ModelInfo>> {
             Ok(vec![])
         }
-        async fn generate(
-            &self,
-            _p: &str,
-            _o: &GenerationOptions,
-        ) -> KodResult<String> {
+        async fn generate(&self, _p: &str, _o: &GenerationOptions) -> KodResult<String> {
             Ok(String::new())
         }
         async fn generate_with_tools(
@@ -353,14 +337,10 @@ mod tests {
             &self,
             _p: &str,
             _o: &GenerationOptions,
-        ) -> Pin<Box<dyn futures::Stream<Item = KodResult<StreamChunk>> + Send + '_>>
-        {
+        ) -> Pin<Box<dyn futures::Stream<Item = KodResult<StreamChunk>> + Send + '_>> {
             Box::pin(futures::stream::empty())
         }
-        async fn complete(
-            &self,
-            _req: &CompletionRequest,
-        ) -> KodResult<GenerationResponse> {
+        async fn complete(&self, _req: &CompletionRequest) -> KodResult<GenerationResponse> {
             Ok(GenerationResponse::Text {
                 content: self.reply.clone(),
                 usage: None,
@@ -590,11 +570,7 @@ mod tests {
     #[tokio::test]
     async fn three_bucket_moderate_maps_to_medium() {
         let c = classifier("bucket: moderate\n", ClassifierMode::ThreeBucket);
-        let supported = [
-            EffortLevel::Low,
-            EffortLevel::Medium,
-            EffortLevel::High,
-        ];
+        let supported = [EffortLevel::Low, EffortLevel::Medium, EffortLevel::High];
         let e = c.classify("fix the bug", &supported).await.unwrap();
         assert_eq!(e, EffortLevel::Medium);
     }
@@ -667,11 +643,7 @@ mod tests {
             async fn list_models(&self) -> KodResult<Vec<ModelInfo>> {
                 Ok(vec![])
             }
-            async fn generate(
-                &self,
-                _p: &str,
-                _o: &GenerationOptions,
-            ) -> KodResult<String> {
+            async fn generate(&self, _p: &str, _o: &GenerationOptions) -> KodResult<String> {
                 Ok(String::new())
             }
             async fn generate_with_tools(
@@ -686,19 +658,11 @@ mod tests {
                 &self,
                 _p: &str,
                 _o: &GenerationOptions,
-            ) -> Pin<
-                Box<
-                    dyn futures::Stream<Item = KodResult<StreamChunk>>
-                        + Send
-                        + '_,
-                >,
-            > {
+            ) -> Pin<Box<dyn futures::Stream<Item = KodResult<StreamChunk>> + Send + '_>>
+            {
                 Box::pin(futures::stream::empty())
             }
-            async fn complete(
-                &self,
-                _req: &CompletionRequest,
-            ) -> KodResult<GenerationResponse> {
+            async fn complete(&self, _req: &CompletionRequest) -> KodResult<GenerationResponse> {
                 Err(KodError::Provider("simulated".into()))
             }
         }

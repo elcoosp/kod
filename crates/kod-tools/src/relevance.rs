@@ -84,7 +84,9 @@ impl RipgrepBackend {
     /// Construct with an explicit `rg` path, for a test or a caller
     /// that knows where it is.
     pub fn with_rg(path: impl Into<PathBuf>) -> Self {
-        Self { rg: Some(path.into()) }
+        Self {
+            rg: Some(path.into()),
+        }
     }
 
     pub fn has_rg(&self) -> bool {
@@ -328,7 +330,12 @@ pub fn heatmap_truncate(results: SearchResults, query: &str, cap_lines: usize) -
 
     let mut out = String::new();
     for h in &kept {
-        out.push_str(&format!("{}:{}: {}\n", h.path.display(), h.line_number, h.line));
+        out.push_str(&format!(
+            "{}:{}: {}\n",
+            h.path.display(),
+            h.line_number,
+            h.line
+        ));
     }
     if dropped > 0 {
         out.push_str(&format!(
@@ -349,7 +356,12 @@ pub fn heatmap_truncate(results: SearchResults, query: &str, cap_lines: usize) -
 fn mechanical_truncate(hits: &[SearchHit], cap_lines: usize) -> String {
     let mut out = String::new();
     for h in hits.iter().take(cap_lines) {
-        out.push_str(&format!("{}:{}: {}\n", h.path.display(), h.line_number, h.line));
+        out.push_str(&format!(
+            "{}:{}: {}\n",
+            h.path.display(),
+            h.line_number,
+            h.line
+        ));
     }
     if hits.len() > cap_lines {
         out.push_str(&format!("... {} more matches\n", hits.len() - cap_lines));
@@ -359,7 +371,10 @@ fn mechanical_truncate(hits: &[SearchHit], cap_lines: usize) -> String {
 
 fn tokenize(q: &str) -> Vec<String> {
     q.split_whitespace()
-        .map(|s| s.trim_matches(|c: char| !c.is_alphanumeric() && c != '_').to_lowercase())
+        .map(|s| {
+            s.trim_matches(|c: char| !c.is_alphanumeric() && c != '_')
+                .to_lowercase()
+        })
         .filter(|s| s.len() >= 2)
         .collect()
 }

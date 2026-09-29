@@ -68,16 +68,28 @@ pub struct SoftInterrupt {
 
 impl SoftInterrupt {
     pub fn user(content: impl Into<String>) -> Self {
-        Self { content: content.into(), source: InterruptSource::User }
+        Self {
+            content: content.into(),
+            source: InterruptSource::User,
+        }
     }
     pub fn system(content: impl Into<String>) -> Self {
-        Self { content: content.into(), source: InterruptSource::System }
+        Self {
+            content: content.into(),
+            source: InterruptSource::System,
+        }
     }
     pub fn background(content: impl Into<String>) -> Self {
-        Self { content: content.into(), source: InterruptSource::BackgroundTask }
+        Self {
+            content: content.into(),
+            source: InterruptSource::BackgroundTask,
+        }
     }
     pub fn swarm(content: impl Into<String>) -> Self {
-        Self { content: content.into(), source: InterruptSource::Swarm }
+        Self {
+            content: content.into(),
+            source: InterruptSource::Swarm,
+        }
     }
 
     /// The full text injected into the conversation.

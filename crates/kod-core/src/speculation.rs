@@ -267,10 +267,7 @@ pub enum SpecOutcome {
     /// The evidence validated and the read is usable. Carries the
     /// text and the digest (the digest is useful for a
     /// file-touch record that wants to store what was read).
-    Committed {
-        text: String,
-        digest: [u8; 32],
-    },
+    Committed { text: String, digest: [u8; 32] },
     /// The evidence no longer describes the file. The caller must
     /// re-read from scratch — the speculative read's bytes are
     /// discarded, not returned.
@@ -478,18 +475,12 @@ mod partial_json_tests {
     #[test]
     fn a_partial_json_with_an_open_path_value_yields_none() {
         // The path's closing quote has not arrived.
-        assert_eq!(
-            extract_path_from_partial(r#"{"path":"src/mai"#),
-            None,
-        );
+        assert_eq!(extract_path_from_partial(r#"{"path":"src/mai"#), None,);
     }
 
     #[test]
     fn a_json_with_no_path_yields_none() {
-        assert_eq!(
-            extract_path_from_partial(r#"{"pattern":"src"}"#),
-            None,
-        );
+        assert_eq!(extract_path_from_partial(r#"{"pattern":"src"}"#), None,);
     }
 
     #[test]
@@ -511,9 +502,7 @@ mod partial_json_tests {
     #[test]
     fn the_path_can_appear_after_other_keys() {
         assert_eq!(
-            extract_path_from_partial(
-                r#"{"intent":"read","path":"src/x.rs"}"#,
-            ),
+            extract_path_from_partial(r#"{"intent":"read","path":"src/x.rs"}"#,),
             Some("src/x.rs".to_string()),
         );
     }
@@ -526,4 +515,3 @@ mod partial_json_tests {
         );
     }
 }
-

@@ -77,19 +77,12 @@ pub fn build_registry(
             // this wrong over-bills every cached turn at the full input
             // rate.
             let conv = match endpoint.provider {
-                kod_config::ProviderKind::OpenAICompatible => {
-                    kod_provider::CacheConvention::Subset
-                }
-                kod_config::ProviderKind::Anthropic => {
-                    kod_provider::CacheConvention::Split
-                }
+                kod_config::ProviderKind::OpenAICompatible => kod_provider::CacheConvention::Subset,
+                kod_config::ProviderKind::Anthropic => kod_provider::CacheConvention::Split,
             };
             caps.pricing = Some(
-                kod_provider::ModelPricing::new(
-                    p.input_per_mtok_usd,
-                    p.output_per_mtok_usd,
-                )
-                .with_cache_convention(conv),
+                kod_provider::ModelPricing::new(p.input_per_mtok_usd, p.output_per_mtok_usd)
+                    .with_cache_convention(conv),
             );
         }
         registry.insert(

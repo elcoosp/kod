@@ -209,7 +209,11 @@ fn simple_glob_match(pattern: &str, text: &str) -> bool {
     fn go(p: &[char], t: &[char]) -> bool {
         if p.len() >= 2 && p[0] == '*' && p[1] == '*' {
             let rest = &p[2..];
-            let rest = if rest.first() == Some(&'/') { &rest[1..] } else { rest };
+            let rest = if rest.first() == Some(&'/') {
+                &rest[1..]
+            } else {
+                rest
+            };
             for i in 0..=t.len() {
                 if go(rest, &t[i..]) {
                     return true;
@@ -319,10 +323,7 @@ mod tests {
             ..Default::default()
         };
         let report = SubagentReport {
-            files_touched: vec![
-                PathBuf::from("src/lib.rs"),
-                PathBuf::from("docs/README.md"),
-            ],
+            files_touched: vec![PathBuf::from("src/lib.rs"), PathBuf::from("docs/README.md")],
             ..Default::default()
         };
         let v = report.boundary_violations(&brief);

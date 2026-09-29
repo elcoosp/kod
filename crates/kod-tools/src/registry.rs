@@ -194,4 +194,3 @@ pub fn inject_intent_field(schema: &mut serde_json::Value) {
         })
     });
 }
-

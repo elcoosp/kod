@@ -186,7 +186,11 @@ mod tests {
     fn a_long_body_is_capped() {
         let body = "word ".repeat(200);
         let c = compress_body(&body);
-        assert!(c.chars().count() <= TIER3_MAX_CHARS + 1, "got {} chars", c.chars().count());
+        assert!(
+            c.chars().count() <= TIER3_MAX_CHARS + 1,
+            "got {} chars",
+            c.chars().count()
+        );
     }
 
     #[test]

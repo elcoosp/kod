@@ -29,13 +29,13 @@
 
 use async_trait::async_trait;
 use futures::Stream;
-use kod_core::router::RouterConfig;
 use kod_core::KodEngine;
+use kod_core::router::RouterConfig;
 use kod_error::Result;
 use kod_provider::request::CompletionRequest;
 use kod_provider::{
-    GenerationOptions, GenerationResponse, LlmProvider, ProviderCapabilities,
-    ProviderRegistry, StreamChunk,
+    GenerationOptions, GenerationResponse, LlmProvider, ProviderCapabilities, ProviderRegistry,
+    StreamChunk,
 };
 use kod_types::ToolDefinition;
 use std::pin::Pin;
@@ -120,7 +120,11 @@ async fn mechanical_compaction_elides_large_fences_before_summarizing() {
         "",
     );
     engine
-        .set_registry(Arc::new(reg), kod_provider::ModelRef::new("default", ""), None)
+        .set_registry(
+            Arc::new(reg),
+            kod_provider::ModelRef::new("default", ""),
+            None,
+        )
         .await;
     engine.start().await.unwrap();
 
@@ -223,9 +227,7 @@ async fn no_mechanical_compaction_on_a_small_transcript() {
     let cfg = fixture_config(tmp.path());
     let engine = Arc::new(KodEngine::new(cfg, tmp.path().join("m.redb")).unwrap());
 
-    let provider: Arc<dyn LlmProvider> = Arc::new(TextProvider {
-        reply: "ok".into(),
-    });
+    let provider: Arc<dyn LlmProvider> = Arc::new(TextProvider { reply: "ok".into() });
     let mut reg = ProviderRegistry::new();
     reg.insert(
         "default",
@@ -234,7 +236,11 @@ async fn no_mechanical_compaction_on_a_small_transcript() {
         "",
     );
     engine
-        .set_registry(Arc::new(reg), kod_provider::ModelRef::new("default", ""), None)
+        .set_registry(
+            Arc::new(reg),
+            kod_provider::ModelRef::new("default", ""),
+            None,
+        )
         .await;
     engine.start().await.unwrap();
 

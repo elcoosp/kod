@@ -114,23 +114,47 @@ impl CapabilityRegistry {
     /// the layout without touching the real filesystem.
     pub fn default_sources(home: &Path, cwd: &Path) -> Vec<DiscoverySource> {
         vec![
-            DiscoverySource::new(cwd.join(".kod").join("skills"), "kod-project", Band::Project),
+            DiscoverySource::new(
+                cwd.join(".kod").join("skills"),
+                "kod-project",
+                Band::Project,
+            ),
             DiscoverySource::new(
                 cwd.join(".agents").join("skills"),
                 "agents-project",
                 Band::Project,
             ),
-            DiscoverySource::new(cwd.join(".claude").join("skills"), "claude-project", Band::Foreign),
+            DiscoverySource::new(
+                cwd.join(".claude").join("skills"),
+                "claude-project",
+                Band::Foreign,
+            ),
             DiscoverySource::new(
                 cwd.join(".cursor").join("skills"),
                 "cursor-project",
                 Band::Foreign,
             ),
             DiscoverySource::new(home.join(".kod").join("skills"), "kod-global", Band::Global),
-            DiscoverySource::new(home.join(".agents").join("skills"), "agents-global", Band::Global),
-            DiscoverySource::new(home.join(".claude").join("skills"), "claude-global", Band::Foreign),
-            DiscoverySource::new(home.join(".cursor").join("skills"), "cursor-global", Band::Foreign),
-            DiscoverySource::new(home.join(".gemini").join("skills"), "gemini-global", Band::Foreign),
+            DiscoverySource::new(
+                home.join(".agents").join("skills"),
+                "agents-global",
+                Band::Global,
+            ),
+            DiscoverySource::new(
+                home.join(".claude").join("skills"),
+                "claude-global",
+                Band::Foreign,
+            ),
+            DiscoverySource::new(
+                home.join(".cursor").join("skills"),
+                "cursor-global",
+                Band::Foreign,
+            ),
+            DiscoverySource::new(
+                home.join(".gemini").join("skills"),
+                "gemini-global",
+                Band::Foreign,
+            ),
         ]
     }
 
@@ -160,11 +184,7 @@ impl CapabilityRegistry {
                 {
                     continue;
                 }
-                let Some(key) = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .map(String::from)
-                else {
+                let Some(key) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
                     continue;
                 };
                 let candidate = Discovered {
@@ -344,7 +364,12 @@ mod tests {
             .into_iter()
             .map(|s| s.label)
             .collect();
-        for want in ["claude-project", "cursor-project", "claude-global", "gemini-global"] {
+        for want in [
+            "claude-project",
+            "cursor-project",
+            "claude-global",
+            "gemini-global",
+        ] {
             assert!(labels.iter().any(|l| l == want), "missing {want}");
         }
     }

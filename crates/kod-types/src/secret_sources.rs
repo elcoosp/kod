@@ -112,16 +112,8 @@ pub fn vendor_patterns() -> &'static [VendorPattern] {
                 &["AKIA", "ASIA"],
             ),
             pattern("google-api", r"AIza[0-9A-Za-z_\-]{35}", &["AIza"]),
-            pattern(
-                "npm",
-                r"npm_[A-Za-z0-9]{36,}",
-                &["npm_"],
-            ),
-            pattern(
-                "pypi",
-                r"pypi-[A-Za-z0-9_\-]{50,}",
-                &["pypi-"],
-            ),
+            pattern("npm", r"npm_[A-Za-z0-9]{36,}", &["npm_"]),
+            pattern("pypi", r"pypi-[A-Za-z0-9_\-]{50,}", &["pypi-"]),
             pattern(
                 "stripe",
                 r"sk_(?:live|test)_[A-Za-z0-9]{24,}",
@@ -146,7 +138,11 @@ pub fn vendor_patterns() -> &'static [VendorPattern] {
     })
 }
 
-fn pattern(name: &'static str, regex: &str, literal_prefixes: &'static [&'static str]) -> VendorPattern {
+fn pattern(
+    name: &'static str,
+    regex: &str,
+    literal_prefixes: &'static [&'static str],
+) -> VendorPattern {
     VendorPattern {
         name,
         regex: Regex::new(regex).unwrap_or_else(|e| panic!("vendor regex {name} fails: {e}")),
@@ -202,8 +198,7 @@ fn name_is_secret_shaped(name: &str) -> bool {
             let abs = from + pos;
             let before_ok = abs == 0 || upper.as_bytes()[abs - 1] == b'_';
             let after = abs + kw.len();
-            let after_ok =
-                after == upper.len() || upper.as_bytes()[after] == b'_';
+            let after_ok = after == upper.len() || upper.as_bytes()[after] == b'_';
             if before_ok && after_ok {
                 return true;
             }
@@ -301,7 +296,10 @@ mod tests {
     use super::*;
 
     fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     // ---- env scanner -------------------------------------------------
@@ -439,8 +437,7 @@ mod tests {
                     aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let d = scan_vendors(text);
         assert_eq!(d.len(), 2);
-        let origins: std::collections::HashSet<_> =
-            d.iter().map(|x| x.origin.clone()).collect();
+        let origins: std::collections::HashSet<_> = d.iter().map(|x| x.origin.clone()).collect();
         assert!(origins.contains("aws-access-key"));
         assert!(origins.contains("github-token"));
     }
@@ -449,9 +446,7 @@ mod tests {
 
     #[test]
     fn a_postgres_url_with_password_is_found() {
-        let d = scan_connection_urls(
-            "DATABASE_URL=postgres://user:supersecret@localhost:5432/db",
-        );
+        let d = scan_connection_urls("DATABASE_URL=postgres://user:supersecret@localhost:5432/db");
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].value, "supersecret");
         assert_eq!(d[0].origin, "postgres");

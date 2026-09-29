@@ -245,11 +245,116 @@ impl WorktreeManager {
         // Delta §11.11: write the isolation-ownership marker so a
         // later process can reap this worktree if the current process
         // dies without running `Drop`.
+        if let Err(e) =
+            crate::worktree_isolation_ownership::write_marker(&path, format!("kod-worktree:{slug}"))
+        {
+            tracing::warn!(error = %e, "worktree: ownership marker write failed");
+        }
+
+        let info = WorktreeInfo { slug, path, branch };
+        self.created.push(info.clone());
+        Ok(info)
+    }
+
+    /// Delta §11.11: create a session worktree that carries the
+    /// current working tree's uncommitted changes.
+    ///
+    /// The swarm `create` above starts from `HEAD` and drops
+    /// uncommitted work — correct for a fresh agent that will produce
+    /// its own changes, wrong for a session that is relocating
+    /// mid-task. This variant captures the current dirty state first
+    /// (a dangling `git stash create` commit), adds the worktree,
+    /// then applies that capture inside the new worktree. The
+    /// original working tree is untouched — `stash create` writes a
+    /// commit object and nothing else, so the user's editor and
+    /// staged state survive the command.
+    ///
+    /// `clean_source = true` skips the carry: a fresh worktree from
+    /// `HEAD` with no dirty state. Useful when the user wants to
+    /// explore a clean branch from the same starting point.
+    ///
+    /// The branch is `wt/<yyyymmdd-hhmmss>` (UTC); the path is
+    /// `<repo>/.kod/worktrees/wt-<yyyymmdd-hhmmss>`. On any failure
+    /// past the worktree creation, the worktree and branch are rolled
+    /// back so the repo is not left half-relocated.
+    pub fn create_session(&mut self, clean_source: bool) -> Result<WorktreeInfo> {
+        let token = timestamp_token_utc();
+        let slug = format!("wt-{token}");
+        let branch = format!("wt/{token}");
+        let path = self.repo.join(".kod").join("worktrees").join(&slug);
+
+        self.ensure_gitignored()?;
+        std::fs::create_dir_all(self.repo.join(".kod").join("worktrees")).map_err(KodError::Io)?;
+
+        // Capture uncommitted work *before* adding the worktree. An
+        // empty output means the tree is clean and there is nothing
+        // to carry; skip the apply.
+        //
+        // `--include-untracked`: a new file the user has not
+        // `git add`ed is exactly the work that must survive the
+        // relocation. Without this flag `stash create` captures
+        // only tracked modifications.
+        let carry_sha: Option<String> = if clean_source {
+            None
+        } else {
+            let out = run_git(
+                &self.repo,
+                &["stash", "create", "--include-untracked"],
+                self.git_timeout_secs,
+            )?;
+            let sha = out.trim().to_string();
+            if sha.is_empty() { None } else { Some(sha) }
+        };
+
+        // Add the worktree from HEAD. On failure, no cleanup needed.
+        run_git_owned(
+            &self.repo,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                &branch,
+                path.to_string_lossy().as_ref(),
+                &self.base_commit,
+            ],
+            self.git_timeout_secs,
+        )
+        .map_err(|e| {
+            KodError::Internal(format!("git worktree add {branch} {}: {e}", path.display()))
+        })?;
+
+        // Apply the carried stash inside the new worktree. A failure
+        // here means the worktree was created but the carry could not
+        // land; roll back so the caller sees one clean error.
+        if let Some(sha) = &carry_sha {
+            if let Err(e) = run_git(&path, &["stash", "apply", sha], self.git_timeout_secs) {
+                let _ = run_git_owned(
+                    &self.repo,
+                    &[
+                        "worktree",
+                        "remove",
+                        "--force",
+                        path.to_string_lossy().as_ref(),
+                    ],
+                    self.git_timeout_secs,
+                );
+                let _ = run_git_owned(
+                    &self.repo,
+                    &["branch", "-D", &branch],
+                    self.git_timeout_secs,
+                );
+                return Err(KodError::Internal(format!(
+                    "git stash apply {sha} in session worktree {}: {e}",
+                    path.display()
+                )));
+            }
+        }
+
         if let Err(e) = crate::worktree_isolation_ownership::write_marker(
             &path,
-            format!("kod-worktree:{slug}"),
+            format!("kod-session-worktree:{slug}"),
         ) {
-            tracing::warn!(error = %e, "worktree: ownership marker write failed");
+            tracing::warn!(error = %e, "session worktree: ownership marker write failed");
         }
 
         let info = WorktreeInfo { slug, path, branch };
@@ -488,6 +593,24 @@ impl Drop for WorktreeManager {
     }
 }
 
+/// Delta §11.11: the branch token for a session worktree, in UTC:
+/// `yyyymmdd-hhmmss`. Uses the `time` crate rather than the
+/// platform's local-time formatter so two machines in different
+/// zones produce the same token for the same instant — the token is
+/// an identifier, not a human clock.
+pub fn timestamp_token_utc() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}{:02}{:02}-{:02}{:02}{:02}",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+    )
+}
+
 /// Sanitize a caller-supplied slug into a kebab-case token. Empty
 /// after sanitization means the input was all separators.
 pub fn sanitize_slug(s: &str) -> String {
@@ -671,6 +794,59 @@ mod tests {
         assert_eq!(sanitize_slug("a  b   c"), "a-b-c");
         let long = "x".repeat(100);
         assert!(sanitize_slug(&long).len() <= 32);
+    }
+
+    #[test]
+    fn timestamp_token_is_yyyymmdd_hhmmss() {
+        let t = timestamp_token_utc();
+        assert_eq!(t.len(), 15, "got: {t}");
+        assert_eq!(&t[8..9], "-", "got: {t}");
+        assert!(
+            t.chars()
+                .enumerate()
+                .all(|(i, c)| { if i == 8 { c == '-' } else { c.is_ascii_digit() } }),
+            "got: {t}",
+        );
+    }
+
+    #[test]
+    fn create_session_carries_uncommitted_changes() {
+        let Some(tmp) = init_repo() else { return };
+        std::fs::write(tmp.path().join("dirty.txt"), "in-flight\n").unwrap();
+        let mut mgr = WorktreeManager::detect(tmp.path()).unwrap().unwrap();
+        let info = mgr.create_session(false).expect("session worktree");
+        assert!(
+            info.path.exists(),
+            "worktree path missing: {}",
+            info.path.display()
+        );
+        assert!(info.branch.starts_with("wt/"), "branch: {}", info.branch);
+        let carried = std::fs::read_to_string(info.path.join("dirty.txt")).unwrap_or_default();
+        assert_eq!(carried, "in-flight\n", "dirty file not carried");
+        let original = std::fs::read_to_string(tmp.path().join("dirty.txt")).unwrap();
+        assert_eq!(original, "in-flight\n");
+    }
+
+    #[test]
+    fn create_session_clean_source_skips_the_carry() {
+        let Some(tmp) = init_repo() else { return };
+        std::fs::write(tmp.path().join("dirty.txt"), "in-flight\n").unwrap();
+        let mut mgr = WorktreeManager::detect(tmp.path()).unwrap().unwrap();
+        let info = mgr.create_session(true).expect("session worktree");
+        assert!(info.path.exists());
+        assert!(
+            !info.path.join("dirty.txt").exists(),
+            "clean_source=true must not carry the dirty file",
+        );
+    }
+
+    #[test]
+    fn create_session_on_a_clean_repo_is_a_noop_carry() {
+        let Some(tmp) = init_repo() else { return };
+        let mut mgr = WorktreeManager::detect(tmp.path()).unwrap().unwrap();
+        let info = mgr.create_session(false).expect("session worktree");
+        assert!(info.path.exists());
+        assert!(info.path.join("seed.txt").exists());
     }
 
     #[test]

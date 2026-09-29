@@ -58,10 +58,12 @@ impl ProtocolHandler for XdHandler {
         url: &str,
         _ctx: &ResolveContext,
     ) -> Result<ResolvedResource, ProtocolError> {
-        let path = url.strip_prefix("xd://").ok_or_else(|| ProtocolError::Malformed {
-            url: url.to_string(),
-            reason: "expected `xd://` or `xd://<tool>`".to_string(),
-        })?;
+        let path = url
+            .strip_prefix("xd://")
+            .ok_or_else(|| ProtocolError::Malformed {
+                url: url.to_string(),
+                reason: "expected `xd://` or `xd://<tool>`".to_string(),
+            })?;
 
         // `read xd://` — the mount list.
         if path.is_empty() {
@@ -106,10 +108,12 @@ impl ProtocolHandler for XdHandler {
         content: &str,
         ctx: &ResolveContext,
     ) -> Result<(), ProtocolError> {
-        let name = url.strip_prefix("xd://").ok_or_else(|| ProtocolError::Malformed {
-            url: url.to_string(),
-            reason: "expected `xd://<tool>`".to_string(),
-        })?;
+        let name = url
+            .strip_prefix("xd://")
+            .ok_or_else(|| ProtocolError::Malformed {
+                url: url.to_string(),
+                reason: "expected `xd://<tool>`".to_string(),
+            })?;
         if name.is_empty() {
             return Err(ProtocolError::Malformed {
                 url: url.to_string(),
@@ -121,20 +125,18 @@ impl ProtocolHandler for XdHandler {
                 url: url.to_string(),
             });
         }
-        let args: serde_json::Value = serde_json::from_str(content).map_err(|e| {
-            ProtocolError::Malformed {
+        let args: serde_json::Value =
+            serde_json::from_str(content).map_err(|e| ProtocolError::Malformed {
                 url: url.to_string(),
                 reason: format!("arguments are not JSON: {e}"),
-            }
-        })?;
+            })?;
         // Build a ToolContext from the ResolveContext. The permissions
         // are the caller's own, so a tool reached through xd:// gets
         // exactly what the ordinary path would grant it.
-        let mut tool_ctx = crate::context::ToolContext::new(ctx.working_dir.clone())
-            .with_locks(
-                Arc::new(crate::path_lock::PathLockTable::new()),
-                ctx.holder.clone(),
-            );
+        let mut tool_ctx = crate::context::ToolContext::new(ctx.working_dir.clone()).with_locks(
+            Arc::new(crate::path_lock::PathLockTable::new()),
+            ctx.holder.clone(),
+        );
         if let Some(perms) = ctx.tool_permissions.clone() {
             tool_ctx = tool_ctx.with_permissions(perms);
         }
@@ -178,7 +180,9 @@ mod tests {
             _params: &serde_json::Value,
             _ctx: &crate::ToolContext,
         ) -> kod_error::Result<kod_types::ToolResult> {
-            Ok(kod_types::ToolResult::Success(serde_json::json!({"ok": true})))
+            Ok(kod_types::ToolResult::Success(
+                serde_json::json!({"ok": true}),
+            ))
         }
     }
 
@@ -217,29 +221,21 @@ mod tests {
     #[tokio::test]
     async fn writing_a_tool_runs_it() {
         let h = handler().await;
-        let r = h
-            .write("xd://echo", r#"{"text": "hi"}"#, &rctx())
-            .await;
+        let r = h.write("xd://echo", r#"{"text": "hi"}"#, &rctx()).await;
         assert!(r.is_ok(), "expected Ok, got {r:?}");
     }
 
     #[tokio::test]
     async fn writing_an_unknown_tool_is_not_found() {
         let h = handler().await;
-        let e = h
-            .write("xd://nope", "{}", &rctx())
-            .await
-            .unwrap_err();
+        let e = h.write("xd://nope", "{}", &rctx()).await.unwrap_err();
         assert!(matches!(e, ProtocolError::NotFound { .. }));
     }
 
     #[tokio::test]
     async fn writing_invalid_json_is_malformed() {
         let h = handler().await;
-        let e = h
-            .write("xd://echo", "not json", &rctx())
-            .await
-            .unwrap_err();
+        let e = h.write("xd://echo", "not json", &rctx()).await.unwrap_err();
         assert!(matches!(e, ProtocolError::Malformed { .. }));
     }
 

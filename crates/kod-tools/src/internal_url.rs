@@ -187,7 +187,11 @@ pub trait ProtocolHandler: Send + Sync {
     fn scheme(&self) -> &'static str;
 
     /// Resolve a URL to its content.
-    async fn resolve(&self, url: &str, ctx: &ResolveContext) -> std::result::Result<ResolvedResource, ProtocolError>;
+    async fn resolve(
+        &self,
+        url: &str,
+        ctx: &ResolveContext,
+    ) -> std::result::Result<ResolvedResource, ProtocolError>;
 
     /// Write content to a URL. Default: refuse with `ReadOnly`, which
     /// is the correct default for a purely informational handler.
@@ -234,7 +238,11 @@ impl std::fmt::Debug for ProtocolRouter {
 pub fn scheme_of(url: &str) -> Option<String> {
     let idx = url.find("://")?;
     let scheme = &url[..idx];
-    if scheme.is_empty() || !scheme.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.') {
+    if scheme.is_empty()
+        || !scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+    {
         return None;
     }
     Some(scheme.to_ascii_lowercase())
@@ -290,12 +298,13 @@ impl ProtocolRouter {
             url: url.to_string(),
             reason: "no `<scheme>://` prefix".to_string(),
         })?;
-        let handler = self.handlers.get(&scheme).ok_or_else(|| {
-            ProtocolError::UnknownScheme {
+        let handler = self
+            .handlers
+            .get(&scheme)
+            .ok_or_else(|| ProtocolError::UnknownScheme {
                 scheme,
                 known: self.known_schemes(),
-            }
-        })?;
+            })?;
         handler.resolve(url, ctx).await
     }
 
@@ -310,12 +319,13 @@ impl ProtocolRouter {
             url: url.to_string(),
             reason: "no `<scheme>://` prefix".to_string(),
         })?;
-        let handler = self.handlers.get(&scheme).ok_or_else(|| {
-            ProtocolError::UnknownScheme {
+        let handler = self
+            .handlers
+            .get(&scheme)
+            .ok_or_else(|| ProtocolError::UnknownScheme {
                 scheme,
                 known: self.known_schemes(),
-            }
-        })?;
+            })?;
         handler.write(url, content, ctx).await
     }
 
@@ -558,7 +568,10 @@ mod tests {
     async fn writing_to_an_artifact_is_read_only() {
         let h = ArtifactHandler::new();
         h.store("abc", "hello", "text/plain").await.unwrap();
-        let err = h.write("artifact://abc", "new content", &ctx()).await.unwrap_err();
+        let err = h
+            .write("artifact://abc", "new content", &ctx())
+            .await
+            .unwrap_err();
         assert!(matches!(err, ProtocolError::ReadOnly { .. }));
     }
 
@@ -726,7 +739,7 @@ mod integration_tests {
     //! through to the filesystem when it does not.
 
     use super::*;
-    use crate::{Tool, ToolContext, ReadFileTool, WriteFileTool};
+    use crate::{ReadFileTool, Tool, ToolContext, WriteFileTool};
     use kod_types::ToolResult;
     use std::sync::Arc;
 
@@ -751,7 +764,10 @@ mod integration_tests {
     #[tokio::test]
     async fn read_file_dispatches_to_the_artifact_handler() {
         let handler = Arc::new(ArtifactHandler::new());
-        handler.store("abc", "hello from artifact", "text/plain").await.unwrap();
+        handler
+            .store("abc", "hello from artifact", "text/plain")
+            .await
+            .unwrap();
         let router = ProtocolRouter::new().register(handler);
         let (ctx, _tmp) = ctx_with_router(router);
 
@@ -906,9 +922,7 @@ mod integration_tests {
         }
 
         let router = ProtocolRouter::new().register(Arc::new(Scratch {
-            store: std::sync::Arc::new(tokio::sync::RwLock::new(
-                std::collections::HashMap::new(),
-            )),
+            store: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         }));
         let (ctx, _tmp) = ctx_with_router(router);
 
@@ -955,4 +969,3 @@ mod integration_tests {
         assert_eq!(on_disk, "fs write");
     }
 }
-

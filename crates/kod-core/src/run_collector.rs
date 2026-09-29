@@ -171,7 +171,10 @@ impl RunCollector {
     /// Record one tool call.
     pub fn observe_tool(&mut self, name: &str, status: ToolStatus) {
         self.tools_invoked.insert(name.to_string());
-        self.tool_counts.entry(name.to_string()).or_default().record(status);
+        self.tool_counts
+            .entry(name.to_string())
+            .or_default()
+            .record(status);
     }
 
     /// How many turns the run took.

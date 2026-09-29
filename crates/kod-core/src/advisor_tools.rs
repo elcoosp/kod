@@ -81,7 +81,9 @@ pub trait AdvisorSink: Send + Sync {
 /// Both are leaves — neither refers back to the engine — so no cycle
 /// exists and no `Weak` is needed.
 pub struct SteerQueueSink {
-    pub steers: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Vec<crate::steer::SoftInterrupt>>>>,
+    pub steers: Arc<
+        tokio::sync::RwLock<std::collections::HashMap<String, Vec<crate::steer::SoftInterrupt>>>,
+    >,
     pub is_running: Arc<tokio::sync::RwLock<bool>>,
 }
 
@@ -100,9 +102,7 @@ impl AdvisorSink for SteerQueueSink {
         // queue; the header distinguishes them for the model. See
         // the module doc's "Delivery, honestly" section.
         let header = match delivery {
-            Delivery::Aside => {
-                "## Advisor aside (a non-blocking observation; weigh, do not obey)"
-            }
+            Delivery::Aside => "## Advisor aside (a non-blocking observation; weigh, do not obey)",
             Delivery::Steer => {
                 "## Advisor steer (a concern raised mid-work; adjust before continuing)"
             }
@@ -132,10 +132,7 @@ pub struct AdviseTool {
 }
 
 impl AdviseTool {
-    pub fn new(
-        guard: Arc<parking_lot::Mutex<EmissionGuard>>,
-        sink: Arc<dyn AdvisorSink>,
-    ) -> Self {
+    pub fn new(guard: Arc<parking_lot::Mutex<EmissionGuard>>, sink: Arc<dyn AdvisorSink>) -> Self {
         Self {
             guard,
             sink,
@@ -278,9 +275,7 @@ impl Tool for AdviseTool {
         // engine is gone, which routes every severity to a card.
         let state = self.sink.primary_state(&context.holder).await;
         let delivery = route(&advice, state);
-        self.sink
-            .deliver(&context.holder, &advice, delivery)
-            .await;
+        self.sink.deliver(&context.holder, &advice, delivery).await;
 
         // Free the pending budget slot now that the note is
         // dispatched: the doc's "routed notes can't be displaced"
@@ -327,19 +322,15 @@ mod tests {
             self.state
         }
         async fn deliver(&self, key: &str, advice: &Advice, delivery: Delivery) {
-            self.deliveries.lock().unwrap().push((
-                key.to_string(),
-                delivery,
-                advice.note.clone(),
-            ));
+            self.deliveries
+                .lock()
+                .unwrap()
+                .push((key.to_string(), delivery, advice.note.clone()));
         }
     }
 
     fn ctx(holder: &str) -> ToolContext {
-        ToolContext::new("/tmp").with_locks(
-            Arc::new(kod_tools::PathLockTable::new()),
-            holder,
-        )
+        ToolContext::new("/tmp").with_locks(Arc::new(kod_tools::PathLockTable::new()), holder)
     }
 
     fn build(state: PrimaryState) -> (AdviseTool, Arc<RecordingSink>) {
@@ -489,10 +480,7 @@ mod tests {
     async fn a_missing_note_is_a_tool_error_not_a_delivery() {
         let (tool, sink) = build(PrimaryState::Streaming);
         let r = tool
-            .execute(
-                &serde_json::json!({"severity": "concern"}),
-                &ctx("session"),
-            )
+            .execute(&serde_json::json!({"severity": "concern"}), &ctx("session"))
             .await
             .unwrap();
         assert!(matches!(r, ToolResult::Error(_)));

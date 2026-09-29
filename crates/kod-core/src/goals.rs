@@ -130,8 +130,8 @@ impl Goal {
     /// is not added separately — it is already inside the
     /// "new input" remainder.
     pub fn delta_tokens(usage: &TokenUsage) -> u64 {
-        let new_input = (usage.prompt_tokens as u64)
-            .saturating_sub(usage.cache_read_tokens.unwrap_or(0));
+        let new_input =
+            (usage.prompt_tokens as u64).saturating_sub(usage.cache_read_tokens.unwrap_or(0));
         let output = usage.completion_tokens as u64;
         new_input + output
     }
@@ -143,9 +143,7 @@ impl Goal {
         if self.status.is_terminal() {
             return;
         }
-        self.tokens_used = self
-            .tokens_used
-            .saturating_add(Self::delta_tokens(usage));
+        self.tokens_used = self.tokens_used.saturating_add(Self::delta_tokens(usage));
         self.recheck_budget();
     }
 
@@ -204,10 +202,7 @@ impl Goal {
             Some(b) => format!("{} / {} s", self.time_used_seconds, b),
             None => format!("{} s", self.time_used_seconds),
         };
-        format!(
-            "goal {:?}: {token_part}, {time_part}",
-            self.status,
-        )
+        format!("goal {:?}: {token_part}, {time_part}", self.status,)
     }
 }
 
@@ -302,7 +297,10 @@ impl GoalRuntime {
     /// Whether a continuation turn should fire: a goal exists and
     /// wants one.
     pub fn wants_continuation(&self) -> bool {
-        self.current.as_ref().map(|g| g.wants_continuation()).unwrap_or(false)
+        self.current
+            .as_ref()
+            .map(|g| g.wants_continuation())
+            .unwrap_or(false)
     }
 }
 
@@ -348,10 +346,7 @@ mod tests {
         // written or not.
         let unwritten = usage(1000, 0, 0, 50); // new input 1000
         let written = usage(1000, 0, 500, 50); // new input 1000
-        assert_eq!(
-            Goal::delta_tokens(&unwritten),
-            Goal::delta_tokens(&written),
-        );
+        assert_eq!(Goal::delta_tokens(&unwritten), Goal::delta_tokens(&written),);
     }
 
     // ---- budget accounting --------------------------------------------

@@ -127,10 +127,7 @@ mod tests {
     fn cfg(entries: &[(&str, &[&str])]) -> RetryConfig {
         let mut fallback_chains = BTreeMap::new();
         for (k, vs) in entries {
-            fallback_chains.insert(
-                k.to_string(),
-                vs.iter().map(|s| s.to_string()).collect(),
-            );
+            fallback_chains.insert(k.to_string(), vs.iter().map(|s| s.to_string()).collect());
         }
         RetryConfig { fallback_chains }
     }
@@ -166,16 +163,10 @@ mod tests {
     #[test]
     fn failed_endpoint_is_never_a_candidate() {
         let c = cfg(&[("TransportRateLimit", &["a", "b", "c"])]);
-        assert_eq!(
-            c.resolve("b", "TransportRateLimit"),
-            vec!["a", "c"],
-        );
+        assert_eq!(c.resolve("b", "TransportRateLimit"), vec!["a", "c"],);
         // And when the failed appears twice, both are dropped.
         let c = cfg(&[("TransportRateLimit", &["a", "b", "b", "c"])]);
-        assert_eq!(
-            c.resolve("b", "TransportRateLimit"),
-            vec!["a", "c"],
-        );
+        assert_eq!(c.resolve("b", "TransportRateLimit"), vec!["a", "c"],);
     }
 
     #[test]

@@ -199,7 +199,11 @@ impl AgentRegistry {
     }
 
     /// Attach a session file to a ref.
-    pub fn set_session_file(&mut self, id: &str, path: std::path::PathBuf) -> Result<(), RegistryError> {
+    pub fn set_session_file(
+        &mut self,
+        id: &str,
+        path: std::path::PathBuf,
+    ) -> Result<(), RegistryError> {
         let a = self.agents.get_mut(id).ok_or(RegistryError::Unknown)?;
         if a.lifecycle == Lifecycle::Dead {
             return Err(RegistryError::Tombstoned);
@@ -256,11 +260,7 @@ impl AgentRegistry {
     /// a generation older than the ref's current one is a no-op that
     /// returns `StaleGeneration`, so a stale finalizer cannot clobber
     /// a newer session.
-    pub fn park(
-        &mut self,
-        id: &str,
-        expected_generation: u64,
-    ) -> Result<(), RegistryError> {
+    pub fn park(&mut self, id: &str, expected_generation: u64) -> Result<(), RegistryError> {
         let a = self.agents.get_mut(id).ok_or(RegistryError::Unknown)?;
         if a.lifecycle == Lifecycle::Dead {
             return Err(RegistryError::Tombstoned);
@@ -326,8 +326,7 @@ impl AgentRegistry {
             .agents
             .values()
             .filter(|a| {
-                a.lifecycle == Lifecycle::Idle
-                    && now.saturating_sub(a.last_state_change_ms) >= ttl
+                a.lifecycle == Lifecycle::Idle && now.saturating_sub(a.last_state_change_ms) >= ttl
             })
             .map(|a| a.id.clone())
             .collect();
@@ -378,9 +377,7 @@ impl AgentRegistry {
         match std::fs::read_to_string(path) {
             Ok(text) => {
                 let mut agents: HashMap<String, AgentRef> = serde_json::from_str(&text)
-                    .map_err(|e| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-                    })?;
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
                 // A ref on disk is not live; park it.
                 for a in agents.values_mut() {
                     if a.lifecycle != Lifecycle::Dead {
@@ -515,7 +512,10 @@ mod tests {
         r.revive("a").unwrap(); // generation now 1
         // A park issued against generation 0 is stale.
         match r.park("a", 0) {
-            Err(RegistryError::StaleGeneration { expected: 1, got: 0 }) => {}
+            Err(RegistryError::StaleGeneration {
+                expected: 1,
+                got: 0,
+            }) => {}
             other => panic!("expected StaleGeneration, got {other:?}"),
         }
     }
@@ -616,7 +616,8 @@ mod tests {
     fn set_session_file_records_the_path() {
         let mut r = AgentRegistry::new();
         r.register("a", AgentKind::Sub);
-        r.set_session_file("a", std::path::PathBuf::from("/tmp/a.jsonl")).unwrap();
+        r.set_session_file("a", std::path::PathBuf::from("/tmp/a.jsonl"))
+            .unwrap();
         assert_eq!(
             r.get("a").unwrap().session_file.as_deref(),
             Some(std::path::Path::new("/tmp/a.jsonl")),
@@ -659,7 +660,10 @@ mod persistence_tests {
         r.persist(&path).unwrap();
 
         let loaded = AgentRegistry::load(&path).unwrap();
-        assert_eq!(loaded.live_ids(), vec!["child".to_string(), "root".to_string()]);
+        assert_eq!(
+            loaded.live_ids(),
+            vec!["child".to_string(), "root".to_string()]
+        );
         assert_eq!(loaded.depth_of("child"), 1);
     }
 
@@ -711,7 +715,8 @@ mod persistence_tests {
         let path = tmp.path().join("registry.json");
         let mut r = AgentRegistry::new();
         r.register("a", AgentKind::Sub);
-        r.set_session_file("a", std::path::PathBuf::from("/tmp/a.jsonl")).unwrap();
+        r.set_session_file("a", std::path::PathBuf::from("/tmp/a.jsonl"))
+            .unwrap();
         r.park("a", 0).unwrap();
         r.persist(&path).unwrap();
 
@@ -736,7 +741,8 @@ mod persistence_tests {
         // Persist a ref with session_file "/old".
         let mut r = AgentRegistry::new();
         r.register("a", AgentKind::Sub);
-        r.set_session_file("a", std::path::PathBuf::from("/old")).unwrap();
+        r.set_session_file("a", std::path::PathBuf::from("/old"))
+            .unwrap();
         r.park("a", 0).unwrap();
         r.persist(&path).unwrap();
 
@@ -744,7 +750,9 @@ mod persistence_tests {
         // pointing at a different session file.
         let mut fresh = AgentRegistry::new();
         fresh.register("a", AgentKind::Sub);
-        fresh.set_session_file("a", std::path::PathBuf::from("/new")).unwrap();
+        fresh
+            .set_session_file("a", std::path::PathBuf::from("/new"))
+            .unwrap();
 
         let a = fresh.cold_revive("a", &path).unwrap();
         assert_eq!(
@@ -759,9 +767,6 @@ mod persistence_tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("registry.json");
         let mut r = AgentRegistry::new();
-        assert_eq!(
-            r.cold_revive("nope", &path),
-            Err(RegistryError::Unknown),
-        );
+        assert_eq!(r.cold_revive("nope", &path), Err(RegistryError::Unknown),);
     }
 }

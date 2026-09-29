@@ -356,9 +356,7 @@ impl ModelPricing {
             output_per_mtok_usd,
             cache_read_per_mtok_usd: input_per_mtok_usd * DEFAULT_CACHE_READ_RATIO,
             cache_write_per_mtok_usd: input_per_mtok_usd * DEFAULT_CACHE_WRITE_RATIO,
-            cache_write_1h_per_mtok_usd: Some(
-                input_per_mtok_usd * DEFAULT_CACHE_WRITE_1H_RATIO,
-            ),
+            cache_write_1h_per_mtok_usd: Some(input_per_mtok_usd * DEFAULT_CACHE_WRITE_1H_RATIO),
             cache_convention: crate::CacheConvention::Split,
         }
     }
@@ -433,10 +431,7 @@ impl ModelPricing {
         // when the field is absent). A provider that reports one
         // tier sends `cache_creation_1h_tokens == None` and the
         // whole write prices at the base rate.
-        let write_1h = usage
-            .cache_creation_1h_tokens
-            .unwrap_or(0)
-            .min(write);
+        let write_1h = usage.cache_creation_1h_tokens.unwrap_or(0).min(write);
         let write_5m = write.saturating_sub(write_1h);
         let write_1h_rate = self
             .cache_write_1h_per_mtok_usd
@@ -611,7 +606,6 @@ mod coverage_prompt_types {
 mod cache_convention_tests {
     use super::*;
 
-
     #[test]
     fn split_convention_bills_fresh_at_full_and_cache_at_discount() {
         // kod's `prompt_tokens` is the *total* input window — Anthropic's
@@ -628,7 +622,7 @@ mod cache_convention_tests {
             cache_convention: crate::CacheConvention::Split,
         };
         let usage = crate::TokenUsage {
-            prompt_tokens: 6_000_000,      // total window = fresh + read
+            prompt_tokens: 6_000_000, // total window = fresh + read
             completion_tokens: 0,
             total_tokens: 6_000_000,
             cache_read_tokens: Some(5_000_000),
@@ -651,7 +645,7 @@ mod cache_convention_tests {
             cache_convention: crate::CacheConvention::Subset,
         };
         let usage = crate::TokenUsage {
-            prompt_tokens: 6_000_000,      // includes the cached 5M
+            prompt_tokens: 6_000_000, // includes the cached 5M
             completion_tokens: 0,
             total_tokens: 6_000_000,
             cache_read_tokens: Some(5_000_000),
@@ -680,7 +674,7 @@ mod cache_convention_tests {
         let mut subset = base;
         subset.cache_convention = crate::CacheConvention::Subset;
         let usage = crate::TokenUsage {
-            prompt_tokens: 1_000_000,       // total window
+            prompt_tokens: 1_000_000, // total window
             completion_tokens: 0,
             total_tokens: 1_000_000,
             cache_read_tokens: Some(0),

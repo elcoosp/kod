@@ -83,7 +83,11 @@ pub fn list(root: &Path, kind: MarkerKind) -> Vec<LiveSession> {
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            let pid: u32 = std::fs::read_to_string(e.path()).ok()?.trim().parse().ok()?;
+            let pid: u32 = std::fs::read_to_string(e.path())
+                .ok()?
+                .trim()
+                .parse()
+                .ok()?;
             process_alive(pid).then_some(LiveSession { name, pid })
         })
         .collect();
@@ -122,7 +126,13 @@ pub fn process_alive(_pid: u32) -> bool {
 fn sanitize(s: &str) -> String {
     let mut out: String = s
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if out.is_empty() {
         out.push_str("session");

@@ -104,7 +104,6 @@ pub enum KodError {
     Internal(String),
 }
 
-
 /// Whether a transport-layer error message names a transient failure
 /// worth retrying.
 ///

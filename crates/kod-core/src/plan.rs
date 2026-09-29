@@ -280,10 +280,7 @@ pub fn slugify(text: &str) -> String {
 /// which is the exact form a subagent sees. Returns the path written,
 /// or `None` on any I/O error (best-effort: a failed autosave must
 /// not fail the plan operation).
-pub fn autosave_plan(
-    plan: &Plan,
-    working_dir: &std::path::Path,
-) -> Option<std::path::PathBuf> {
+pub fn autosave_plan(plan: &Plan, working_dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let dir = plan_dir_for_working_dir(working_dir)?;
     std::fs::create_dir_all(&dir).ok()?;
     let date = time::OffsetDateTime::now_utc()
@@ -324,15 +321,32 @@ pub fn autosave_plan(
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum PlanUpdate {
     Advance,
-    Annotate { step_id: u32, note: String },
-    Insert { after_id: u32, text: String },
-    Remove { step_id: u32 },
-    Replace { step_id: u32, text: String },
-    SetStatus { step_id: u32, status: PlanStatus },
+    Annotate {
+        step_id: u32,
+        note: String,
+    },
+    Insert {
+        after_id: u32,
+        text: String,
+    },
+    Remove {
+        step_id: u32,
+    },
+    Replace {
+        step_id: u32,
+        text: String,
+    },
+    SetStatus {
+        step_id: u32,
+        status: PlanStatus,
+    },
     /// Delta §11.10: declare (or withdraw) a path whose `read_file`
     /// result must survive shake and prune. `path: None` drops the
     /// declaration; `Some` adds it (idempotent).
-    ReferencePath { path: String, drop: Option<bool> },
+    ReferencePath {
+        path: String,
+        drop: Option<bool>,
+    },
 }
 
 impl Plan {

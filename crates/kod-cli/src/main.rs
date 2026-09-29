@@ -27,8 +27,7 @@ fn main() -> kod_error::Result<()> {
     // fallback is `warn` — errors and warnings still reach the
     // terminal, but the info-level chatter of a normal session does
     // not.
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("warn"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
     // Session-safe writer: stderr until the TUI owns the terminal,
     // then `~/.kod/session.log`. A raw stderr write while the
     // alternate screen is active garbles the ratatui frame (the line

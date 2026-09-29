@@ -454,7 +454,12 @@ mod tests {
             .collect();
         let v = g.feed(&degenerate);
         assert!(
-            matches!(v, StallVerdict::Loop { detector: "exact-cycle" }),
+            matches!(
+                v,
+                StallVerdict::Loop {
+                    detector: "exact-cycle"
+                }
+            ),
             "expected exact-cycle loop, got {v:?}",
         );
     }
@@ -512,7 +517,12 @@ mod tests {
 
         let v = g.final_verdict();
         assert!(
-            matches!(v, StallVerdict::Loop { detector: "exact-cycle" }),
+            matches!(
+                v,
+                StallVerdict::Loop {
+                    detector: "exact-cycle"
+                }
+            ),
             "final_verdict should catch the completed pattern: {v:?}",
         );
     }

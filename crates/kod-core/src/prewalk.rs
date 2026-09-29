@@ -130,15 +130,13 @@ impl Prewalk {
 }
 
 /// The default nudge injected when a prewalk arms.
-pub const DEFAULT_NUDGE: &str =
-    "Before you start editing, plan the approach deliberately. Name the \
+pub const DEFAULT_NUDGE: &str = "Before you start editing, plan the approach deliberately. Name the \
      files you will change, the invariants you must preserve, and the \
      test you will run to check the change. Do not edit until you have \
      written that plan.";
 
 /// The default checklist pushed after the handoff.
-pub const DEFAULT_CHECKLIST: &str =
-    "Checklist for this task:\n\
+pub const DEFAULT_CHECKLIST: &str = "Checklist for this task:\n\
      1. Read the files the plan names before editing.\n\
      2. Make one focused change at a time.\n\
      3. Run the test or check the plan named.\n\

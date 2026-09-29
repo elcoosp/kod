@@ -175,8 +175,7 @@ impl ToolLoopGuard {
             return None;
         }
 
-        let corrective =
-            build_corrective(calls, results, self.threshold as u32);
+        let corrective = build_corrective(calls, results, self.threshold as u32);
         self.recent.clear();
         Some(corrective)
     }
@@ -296,11 +295,7 @@ fn write_canon(out: &mut String, v: &Value) {
 // ---------------------------------------------------------------------------
 
 /// Build the corrective from the current (looping) round.
-fn build_corrective(
-    calls: &[ToolCall],
-    results: &[ToolResult],
-    count: u32,
-) -> Corrective {
+fn build_corrective(calls: &[ToolCall], results: &[ToolResult], count: u32) -> Corrective {
     // The first call in sorted order — stable, and names *something*
     // concrete. An empty-calls round cannot reach here (observe_round
     // returns early on `calls.is_empty()`), so `.first()` is safe;
@@ -322,8 +317,7 @@ fn build_corrective(
         args_raw.push(')');
     }
     let arguments_summary =
-        kod_types::strutil::truncate_chars(&args_raw, MAX_ARGUMENTS_SUMMARY_CHARS)
-            .to_string();
+        kod_types::strutil::truncate_chars(&args_raw, MAX_ARGUMENTS_SUMMARY_CHARS).to_string();
 
     let mut res_raw = String::new();
     for (i, result) in results.iter().enumerate() {
@@ -333,8 +327,7 @@ fn build_corrective(
         res_raw.push_str(&summarize_result(result));
     }
     let result_summary =
-        kod_types::strutil::truncate_chars(&res_raw, MAX_RESULT_SUMMARY_CHARS)
-            .to_string();
+        kod_types::strutil::truncate_chars(&res_raw, MAX_RESULT_SUMMARY_CHARS).to_string();
 
     Corrective {
         tool_name,
@@ -595,12 +588,7 @@ mod tests {
         // exceed the cap.
         let big_path = "x".repeat(200);
         let calls: Vec<ToolCall> = (0..10)
-            .map(|i| {
-                call(
-                    "read_file",
-                    json!({"path": format!("{big_path}/{i}")}),
-                )
-            })
+            .map(|i| call("read_file", json!({"path": format!("{big_path}/{i}")})))
             .collect();
         let r = vec![ok(json!({}))];
         let corrective = build_corrective(&calls, &r, 3);

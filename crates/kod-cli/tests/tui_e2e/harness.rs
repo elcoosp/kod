@@ -101,11 +101,7 @@ impl TestEnv {
         // has something to scan. Without any files the walk is
         // trivially empty, which is fine, but a single file
         // exercises the read-one-file path in the repomap builder.
-        std::fs::write(
-            workspace.join("main.rs"),
-            "fn main() {}\n",
-        )
-        .expect("seed workspace file");
+        std::fs::write(workspace.join("main.rs"), "fn main() {}\n").expect("seed workspace file");
 
         let mock = if byte_by_byte {
             MockServer::start_char_by_char(reply)
@@ -155,7 +151,10 @@ auto_check = false
 auto_lsp = false
 "#
         );
-        eprintln!("test: writing config.toml pointing at mock on port {}", port);
+        eprintln!(
+            "test: writing config.toml pointing at mock on port {}",
+            port
+        );
         std::fs::write(self.config_dir.join("config.toml"), config).expect("write config.toml");
     }
 

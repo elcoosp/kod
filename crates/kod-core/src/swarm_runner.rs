@@ -35,8 +35,8 @@
 //! if agents are ever expected to see each other's reasoning.
 
 use crate::engine::KodEngine;
-use futures::future::join_all;
 use futures::FutureExt;
+use futures::future::join_all;
 use kod_error::{KodError, Result};
 use kod_provider::{GenerationOptions, LlmProvider};
 use kod_swarm::coordination::Task;
@@ -317,10 +317,7 @@ impl SwarmRunner {
     /// decide whether a new wave may start, and the caller renders the
     /// report from the cards afterward. Nothing about the dispatch
     /// mechanics changes.
-    pub fn with_overnight(
-        mut self,
-        manifest: crate::overnight::OvernightManifest,
-    ) -> Self {
+    pub fn with_overnight(mut self, manifest: crate::overnight::OvernightManifest) -> Self {
         self.overnight_manifest = Some(manifest);
         self
     }
@@ -980,8 +977,7 @@ impl SwarmRunner {
                         let path = working_dir.join(cleaned);
                         if path.is_file()
                             && seen.insert(path.clone())
-                            && let Ok(d) =
-                                kod_swarm::brief_assembly::digest_file(&path)
+                            && let Ok(d) = kod_swarm::brief_assembly::digest_file(&path)
                             && file_summaries.len() < 12
                         {
                             file_summaries.push((d.path, d.summary, d.line_count));
@@ -1090,301 +1086,292 @@ impl SwarmRunner {
                         .push(format!("swarm:{id}"));
                 }
                 wave_tasks.push(async move {
-                // Delta §11.4: catch a panic in one agent so
-                // it fails that agent alone, not the whole wave.
-                let id_panic = id.clone();
-                let name_panic = name.clone();
-                let subtask_panic = subtask.clone();
-                let inner = async move {
-                // H-D1: guard the deregistration even on panic.
-                struct DispatchGuard {
-                    keys: Arc<
-                        parking_lot::Mutex<std::collections::HashMap<AgentId, Vec<String>>>,
-                    >,
-                    pool: AgentId,
-                    key: String,
-                }
-                impl Drop for DispatchGuard {
-                    fn drop(&mut self) {
-                        let mut m = self.keys.lock();
-                        if let Some(v) = m.get_mut(&self.pool) {
-                            v.retain(|k| k != &self.key);
-                            if v.is_empty() {
-                                m.remove(&self.pool);
+                    // Delta §11.4: catch a panic in one agent so
+                    // it fails that agent alone, not the whole wave.
+                    let id_panic = id.clone();
+                    let name_panic = name.clone();
+                    let subtask_panic = subtask.clone();
+                    let inner = async move {
+                        // H-D1: guard the deregistration even on panic.
+                        struct DispatchGuard {
+                            keys: Arc<
+                                parking_lot::Mutex<std::collections::HashMap<AgentId, Vec<String>>>,
+                            >,
+                            pool: AgentId,
+                            key: String,
+                        }
+                        impl Drop for DispatchGuard {
+                            fn drop(&mut self) {
+                                let mut m = self.keys.lock();
+                                if let Some(v) = m.get_mut(&self.pool) {
+                                    v.retain(|k| k != &self.key);
+                                    if v.is_empty() {
+                                        m.remove(&self.pool);
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-                let _dispatch_guard = DispatchGuard {
-                    keys: dispatch_keys,
-                    pool: pool_agent_id.clone(),
-                    key: format!("swarm:{id}"),
-                };
+                        let _dispatch_guard = DispatchGuard {
+                            keys: dispatch_keys,
+                            pool: pool_agent_id.clone(),
+                            key: format!("swarm:{id}"),
+                        };
 
-                // Role preamble is computed once — retries use the
-                // same shaped prompt.
-                // Planner-assigned, not re-inferred — a planner that labelled
-                // the subtask as CodeReview gets the reviewer preamble.
-                let per_agent_role = subtask.capability;
-                let role_prefix = role_preamble(per_agent_role);
-                let transcript_key = format!("swarm:{id}");
+                        // Role preamble is computed once — retries use the
+                        // same shaped prompt.
+                        // Planner-assigned, not re-inferred — a planner that labelled
+                        // the subtask as CodeReview gets the reviewer preamble.
+                        let per_agent_role = subtask.capability;
+                        let role_prefix = role_preamble(per_agent_role);
+                        let transcript_key = format!("swarm:{id}");
 
-                // Resolve the per-capability model once per agent
-                // (design D1.4 PR A7). `[llm.routing.swarm]` maps a
-                // subtask's `capability` to an endpoint; `None` when
-                // the table is absent or has no entry — the engine
-                // then routes by task type, the pre-A7 behaviour.
-                // Computed here rather than inside the retry loop so
-                // the agent panel sees the model on the first
-                // `AgentStarted` emit of every attempt.
-                let override_model: Option<kod_provider::ModelRef> = engine
-                    .resolve_model_ref_for_capability(&subtask.capability)
-                    .await;
+                        // Resolve the per-capability model once per agent
+                        // (design D1.4 PR A7). `[llm.routing.swarm]` maps a
+                        // subtask's `capability` to an endpoint; `None` when
+                        // the table is absent or has no entry — the engine
+                        // then routes by task type, the pre-A7 behaviour.
+                        // Computed here rather than inside the retry loop so
+                        // the agent panel sees the model on the first
+                        // `AgentStarted` emit of every attempt.
+                        let override_model: Option<kod_provider::ModelRef> = engine
+                            .resolve_model_ref_for_capability(&subtask.capability)
+                            .await;
 
-                // Announce this agent's start to its peers before it
-                // begins work (D4.3). A terminal-only lifecycle left
-                // an agent whose subtask depends on another's output
-                // with no way to know a peer was working on it; a
-                // start broadcast closes that gap. Best-effort: a hub
-                // that is not yet populated accepts the broadcast
-                // silently.
-                let _ = hub
-                    .broadcast_lifecycle(
-                        &id,
-                        &format!(
-                            "started: {}",
-                            subtask.description.lines().next().unwrap_or("")
-                        ),
-                    )
-                    .await;
+                        // Announce this agent's start to its peers before it
+                        // begins work (D4.3). A terminal-only lifecycle left
+                        // an agent whose subtask depends on another's output
+                        // with no way to know a peer was working on it; a
+                        // start broadcast closes that gap. Best-effort: a hub
+                        // that is not yet populated accepts the broadcast
+                        // silently.
+                        let _ = hub
+                            .broadcast_lifecycle(
+                                &id,
+                                &format!(
+                                    "started: {}",
+                                    subtask.description.lines().next().unwrap_or("")
+                                ),
+                            )
+                            .await;
 
-                let mut last_error: Option<String> = None;
-                let mut attempt: u32 = 0;
-                loop {
-                    attempt += 1;
-                    let _ = out
-                        .send(SwarmEvent::AgentStarted {
-                        id: id.clone(),
-                        name: name.clone(),
-                        subtask: subtask.description.clone(),
-                        // Same per-capability model the streaming
-                        // call will use. Falls back to the current
-                        // model when no `[llm.routing.swarm]` table
-                        // is configured — the panel never shows a
-                        // blank, and a user can always tell which
-                        // endpoint an agent is on.
-                        model: Some(
-                            match &override_model {
-                                Some(m) => m.display(),
-                                None => engine.current_model().await.display(),
-                            },
-                        ),
-                    }
-                    )
-                        .await;
-
-                    // Retry attempts get the previous error appended so
-                    // the model can react to it.
-                    // P5: build a typed brief from the parent
-                    // context. The role preamble is the first
-                    // constraint; retry attempts add the previous
-                    // error as an extra constraint.
-                    let extra_constraints = match &last_error {
-                        Some(err) => vec![format!(
-                            "The previous attempt failed with: {err}. \
-                             Avoid the failure mode above and try a different approach.",
-                        )],
-                        None => Vec::new(),
-                    };
-                    let brief = kod_swarm::brief_assembly::assemble_brief(
-                        &subtask.description,
-                        role_prefix,
-                        extra_constraints,
-                        &parent_context,
-                    );
-                    let shaped = kod_swarm::brief::render_brief(&brief);
-
-                    let (tx, mut rx) = mpsc::channel::<String>(64);
-                    let out_pump = out.clone();
-                    let id_pump = id.clone();
-                    let name_pump = name.clone();
-                    // Keep a handle to the agent so the pump can record
-                    // a heartbeat on every chunk (design D4.3). "The
-                    // agent produced output" is the signal the watchdog
-                    // watches; the alternative — polling the engine's
-                    // last-chunk timestamp — would need a second
-                    // cross-task slot for no gain.
-                    let swarm_for_hb = swarm.clone();
-                    let id_for_hb = pool_agent_id.clone();
-                    let pump = tokio::spawn(async move {
-                        // The swarm's registry is shared; a lookup per
-                        // chunk is a HashMap get. Cheap, and the pump
-                        // already crosses an await boundary per chunk
-                        // (the mpsc recv), so no extra yield point.
-                        //
-                        // H-D1: heartbeats live on the *pool* agent
-                        // (the one registered in the swarm); the
-                        // dispatch id is an engine-transcript-only
-                        // identity.
-                        while let Some(chunk) = rx.recv().await {
-                            if let Some(agent) = swarm_for_hb.get_agent(&id_for_hb).await {
-                                agent.record_heartbeat();
-                            }
-                            let display = if let Some((_cid, tool)) =
-                                crate::engine::parse_tool_start(&chunk)
-                            {
-                                format!("  [tool: {tool}]\n")
-                            } else if let Some((_cid, brief)) =
-                                crate::engine::parse_tool_args(&chunk)
-                            {
-                                format!("  [{brief}]\n")
-                            } else if crate::engine::parse_tool_done(&chunk).is_some()
-                                || crate::engine::is_thinking_marker(&chunk)
-                                || crate::engine::parse_turn_marker(&chunk).is_some()
-                                || crate::engine::parse_activity_marker(&chunk).is_some()
-                                || crate::engine::parse_rate_limit_wait(&chunk).is_some()
-                                || chunk.starts_with('\0')
-                            {
-                                // Control markers (and any future
-                                // `\0`-prefixed chunk) are panel-level
-                                // signals, never agent prose — the
-                                // TUI/CLI pumps translate the ones they
-                                // render. Previously they leaked raw into
-                                // the merged answer.
-                                continue;
-                            } else {
-                                chunk
-                            };
-                            let _ = out_pump
-                                .send(SwarmEvent::AgentChunk {
-                                    id: id_pump.clone(),
-                                    name: name_pump.clone(),
-                                    text: display,
-                                })
-                                .await;
-                        }
-                    });
-
-                    let attempt_cancel_epoch = engine.cancel_epoch_for(&transcript_key);
-
-                    let run = engine
-                        .process_streaming_with_model_for(
-                            &transcript_key,
-                            &shaped,
-                            &tx,
-                            override_model.clone(),
-                            Some(self.worker_effort),
-                        );
-
-                    let outcome: std::result::Result<
-                        crate::router::TaskResponse,
-                        String,
-                    > = if agent_timeout_secs == 0 {
-                        run.await.map_err(|e| e.to_string())
-                    } else {
-                        match tokio::time::timeout(
-                            std::time::Duration::from_secs(agent_timeout_secs),
-                            run,
-                        )
-                        .await
-                        {
-                            Ok(Ok(resp)) => Ok(resp),
-                            Ok(Err(e)) => Err(e.to_string()),
-                            Err(_) => Err(format!(
-                                "timed out after {agent_timeout_secs}s"
-                            )),
-                        }
-                    };
-
-                    // Drop the chunk sender, wait for the pump to
-                    // drain, and clear the transcript + cancel flag
-                    // before any retry reuses the key.
-                    drop(tx);
-                    let _ = pump.await;
-                    engine.forget_transcript(&transcript_key).await;
-                    engine.set_blackboard_viewer(&transcript_key, false).await;
-                    // Clear only cancels that predate this attempt. A
-                    // coordinator cancel that landed *during* the
-                    // attempt bumped the epoch, and this clear must
-                    // not erase it — that would let a retry run on an
-                    // agent the user already stopped.
-                    engine.clear_cancel_through(&transcript_key, attempt_cancel_epoch);
-
-                    match outcome {
-                        Ok(resp) => {
-                            let writes = collect_writes(&resp);
-                            let text = resp.text.unwrap_or_default();
-                            return (id, name, subtask, writes, Ok(text));
-                        }
-                        Err(err) => {
-                            // Signal any in-flight loop to stop cleanly
-                            // (the timeout already dropped the future,
-                            // but a cooperative cancel is cheap and
-                            // makes the next-attempt state unambiguous).
-                            engine.request_cancel_for(&transcript_key);
-                            last_error = Some(err.clone());
-                            if attempt >= max_attempts {
-                                return (id, name, subtask, Vec::new(), Err(err));
-                            }
-                            // A cancel that survived the scoped clear
-                            // (`clear_cancel_through` above) means a
-                            // coordinator stopped this agent while it
-                            // ran. Do not retry — the stop outranks
-                            // the retry budget.
-                            if engine.is_cancelled_for(&transcript_key) {
-                                return (
-                                    id,
-                                    name,
-                                    subtask,
-                                    Vec::new(),
-                                    Err("a coordinator cancelled this agent".to_string()),
-                                );
-                            }
-                            // Announce the retry so a live UI can show
-                            // "agent-1 retrying (2/2): …".
+                        let mut last_error: Option<String> = None;
+                        let mut attempt: u32 = 0;
+                        loop {
+                            attempt += 1;
                             let _ = out
-                                .send(SwarmEvent::AgentRetrying {
+                                .send(SwarmEvent::AgentStarted {
                                     id: id.clone(),
                                     name: name.clone(),
-                                    attempt: attempt + 1,
-                                    max_attempts,
-                                    previous_error: err.clone(),
+                                    subtask: subtask.description.clone(),
+                                    // Same per-capability model the streaming
+                                    // call will use. Falls back to the current
+                                    // model when no `[llm.routing.swarm]` table
+                                    // is configured — the panel never shows a
+                                    // blank, and a user can always tell which
+                                    // endpoint an agent is on.
+                                    model: Some(match &override_model {
+                                        Some(m) => m.display(),
+                                        None => engine.current_model().await.display(),
+                                    }),
                                 })
                                 .await;
-                            // Tell the peers this agent is retrying
-                            // (D4.3). A peer that is waiting on a
-                            // fact this agent was going to produce
-                            // learns there is a delay, not a silent
-                            // failure.
-                            let _ = hub
-                                .broadcast_lifecycle(
-                                    &id,
-                                    &format!(
-                                        "retrying ({}/{}): {}",
-                                        attempt + 1,
-                                        max_attempts,
-                                        err.lines().next().unwrap_or("")
-                                    ),
-                                )
-                                .await;
+
+                            // Retry attempts get the previous error appended so
+                            // the model can react to it.
+                            // P5: build a typed brief from the parent
+                            // context. The role preamble is the first
+                            // constraint; retry attempts add the previous
+                            // error as an extra constraint.
+                            let extra_constraints = match &last_error {
+                                Some(err) => vec![format!(
+                                    "The previous attempt failed with: {err}. \
+                             Avoid the failure mode above and try a different approach.",
+                                )],
+                                None => Vec::new(),
+                            };
+                            let brief = kod_swarm::brief_assembly::assemble_brief(
+                                &subtask.description,
+                                role_prefix,
+                                extra_constraints,
+                                &parent_context,
+                            );
+                            let shaped = kod_swarm::brief::render_brief(&brief);
+
+                            let (tx, mut rx) = mpsc::channel::<String>(64);
+                            let out_pump = out.clone();
+                            let id_pump = id.clone();
+                            let name_pump = name.clone();
+                            // Keep a handle to the agent so the pump can record
+                            // a heartbeat on every chunk (design D4.3). "The
+                            // agent produced output" is the signal the watchdog
+                            // watches; the alternative — polling the engine's
+                            // last-chunk timestamp — would need a second
+                            // cross-task slot for no gain.
+                            let swarm_for_hb = swarm.clone();
+                            let id_for_hb = pool_agent_id.clone();
+                            let pump = tokio::spawn(async move {
+                                // The swarm's registry is shared; a lookup per
+                                // chunk is a HashMap get. Cheap, and the pump
+                                // already crosses an await boundary per chunk
+                                // (the mpsc recv), so no extra yield point.
+                                //
+                                // H-D1: heartbeats live on the *pool* agent
+                                // (the one registered in the swarm); the
+                                // dispatch id is an engine-transcript-only
+                                // identity.
+                                while let Some(chunk) = rx.recv().await {
+                                    if let Some(agent) = swarm_for_hb.get_agent(&id_for_hb).await {
+                                        agent.record_heartbeat();
+                                    }
+                                    let display = if let Some((_cid, tool)) =
+                                        crate::engine::parse_tool_start(&chunk)
+                                    {
+                                        format!("  [tool: {tool}]\n")
+                                    } else if let Some((_cid, brief)) =
+                                        crate::engine::parse_tool_args(&chunk)
+                                    {
+                                        format!("  [{brief}]\n")
+                                    } else if crate::engine::parse_tool_done(&chunk).is_some()
+                                        || crate::engine::is_thinking_marker(&chunk)
+                                        || crate::engine::parse_turn_marker(&chunk).is_some()
+                                        || crate::engine::parse_activity_marker(&chunk).is_some()
+                                        || crate::engine::parse_rate_limit_wait(&chunk).is_some()
+                                        || chunk.starts_with('\0')
+                                    {
+                                        // Control markers (and any future
+                                        // `\0`-prefixed chunk) are panel-level
+                                        // signals, never agent prose — the
+                                        // TUI/CLI pumps translate the ones they
+                                        // render. Previously they leaked raw into
+                                        // the merged answer.
+                                        continue;
+                                    } else {
+                                        chunk
+                                    };
+                                    let _ = out_pump
+                                        .send(SwarmEvent::AgentChunk {
+                                            id: id_pump.clone(),
+                                            name: name_pump.clone(),
+                                            text: display,
+                                        })
+                                        .await;
+                                }
+                            });
+
+                            let attempt_cancel_epoch = engine.cancel_epoch_for(&transcript_key);
+
+                            let run = engine.process_streaming_with_model_for(
+                                &transcript_key,
+                                &shaped,
+                                &tx,
+                                override_model.clone(),
+                                Some(self.worker_effort),
+                            );
+
+                            let outcome: std::result::Result<crate::router::TaskResponse, String> =
+                                if agent_timeout_secs == 0 {
+                                    run.await.map_err(|e| e.to_string())
+                                } else {
+                                    match tokio::time::timeout(
+                                        std::time::Duration::from_secs(agent_timeout_secs),
+                                        run,
+                                    )
+                                    .await
+                                    {
+                                        Ok(Ok(resp)) => Ok(resp),
+                                        Ok(Err(e)) => Err(e.to_string()),
+                                        Err(_) => {
+                                            Err(format!("timed out after {agent_timeout_secs}s"))
+                                        }
+                                    }
+                                };
+
+                            // Drop the chunk sender, wait for the pump to
+                            // drain, and clear the transcript + cancel flag
+                            // before any retry reuses the key.
+                            drop(tx);
+                            let _ = pump.await;
+                            engine.forget_transcript(&transcript_key).await;
+                            engine.set_blackboard_viewer(&transcript_key, false).await;
+                            // Clear only cancels that predate this attempt. A
+                            // coordinator cancel that landed *during* the
+                            // attempt bumped the epoch, and this clear must
+                            // not erase it — that would let a retry run on an
+                            // agent the user already stopped.
+                            engine.clear_cancel_through(&transcript_key, attempt_cancel_epoch);
+
+                            match outcome {
+                                Ok(resp) => {
+                                    let writes = collect_writes(&resp);
+                                    let text = resp.text.unwrap_or_default();
+                                    return (id, name, subtask, writes, Ok(text));
+                                }
+                                Err(err) => {
+                                    // Signal any in-flight loop to stop cleanly
+                                    // (the timeout already dropped the future,
+                                    // but a cooperative cancel is cheap and
+                                    // makes the next-attempt state unambiguous).
+                                    engine.request_cancel_for(&transcript_key);
+                                    last_error = Some(err.clone());
+                                    if attempt >= max_attempts {
+                                        return (id, name, subtask, Vec::new(), Err(err));
+                                    }
+                                    // A cancel that survived the scoped clear
+                                    // (`clear_cancel_through` above) means a
+                                    // coordinator stopped this agent while it
+                                    // ran. Do not retry — the stop outranks
+                                    // the retry budget.
+                                    if engine.is_cancelled_for(&transcript_key) {
+                                        return (
+                                            id,
+                                            name,
+                                            subtask,
+                                            Vec::new(),
+                                            Err("a coordinator cancelled this agent".to_string()),
+                                        );
+                                    }
+                                    // Announce the retry so a live UI can show
+                                    // "agent-1 retrying (2/2): …".
+                                    let _ = out
+                                        .send(SwarmEvent::AgentRetrying {
+                                            id: id.clone(),
+                                            name: name.clone(),
+                                            attempt: attempt + 1,
+                                            max_attempts,
+                                            previous_error: err.clone(),
+                                        })
+                                        .await;
+                                    // Tell the peers this agent is retrying
+                                    // (D4.3). A peer that is waiting on a
+                                    // fact this agent was going to produce
+                                    // learns there is a delay, not a silent
+                                    // failure.
+                                    let _ = hub
+                                        .broadcast_lifecycle(
+                                            &id,
+                                            &format!(
+                                                "retrying ({}/{}): {}",
+                                                attempt + 1,
+                                                max_attempts,
+                                                err.lines().next().unwrap_or("")
+                                            ),
+                                        )
+                                        .await;
+                                }
+                            }
                         }
+                    };
+                    match std::panic::AssertUnwindSafe(inner).catch_unwind().await {
+                        Ok(v) => v,
+                        Err(_) => (
+                            id_panic,
+                            name_panic,
+                            subtask_panic,
+                            Vec::new(),
+                            Err("agent panicked".to_string()),
+                        ),
                     }
-                }
-                };
-                match std::panic::AssertUnwindSafe(inner)
-                    .catch_unwind()
-                    .await
-                {
-                    Ok(v) => v,
-                    Err(_) => (
-                        id_panic,
-                        name_panic,
-                        subtask_panic,
-                        Vec::new(),
-                        Err("agent panicked".to_string()),
-                    ),
-                }
-            });
+                });
             }
             // Run this wave under whatever budget remains. A wave
             // that starts just under the deadline cannot overrun it.
@@ -1552,17 +1539,13 @@ impl SwarmRunner {
                     // land in piece 3; this piece only proves the API
                     // names line up and the plan is computed.
                     let report = kod_swarm::brief::parse_report(&text);
-                    let brief_for_merge =
-                        kod_swarm::brief_assembly::assemble_brief(
-                            &subtask.description,
-                            role_preamble(subtask.capability),
-                            Vec::new(),
-                            &parent_context,
-                        );
-                    let plan = kod_swarm::brief_assembly::merge_report(
-                        &report,
-                        &brief_for_merge,
+                    let brief_for_merge = kod_swarm::brief_assembly::assemble_brief(
+                        &subtask.description,
+                        role_preamble(subtask.capability),
+                        Vec::new(),
+                        &parent_context,
                     );
+                    let plan = kod_swarm::brief_assembly::merge_report(&report, &brief_for_merge);
                     // P3-e: the tag-delimited completion report is a
                     // *second* contract, independent of the JSON brief
                     // above. `parse_report` handles the JSON shape a
@@ -2486,8 +2469,6 @@ fn parse_subtasks(text: &str, max: usize) -> Option<Vec<Subtask>> {
     }
     Some(out)
 }
-
-
 
 #[cfg(test)]
 mod tests {

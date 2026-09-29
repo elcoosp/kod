@@ -453,10 +453,7 @@ fn scan_suffix_hint(body: &str) -> Option<Duration> {
     let needle = "retry-after-ms=";
     let pos = body.rfind(needle)?;
     let after = &body[pos + needle.len()..];
-    let digits: String = after
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
+    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
     digits.parse::<u64>().ok().map(Duration::from_millis)
 }
 
@@ -592,11 +589,7 @@ mod hint_tests {
             .unwrap()
             .as_secs() as i64;
         let future = (now_s + 3600).to_string();
-        let r = extract_retry_hints(
-            Some(429),
-            &[hdr("x-ratelimit-reset", &future)],
-            "",
-        );
+        let r = extract_retry_hints(Some(429), &[hdr("x-ratelimit-reset", &future)], "");
         let d = r.delay.expect("epoch hint");
         let secs = d.as_secs();
         assert!(
@@ -607,11 +600,7 @@ mod hint_tests {
 
     #[test]
     fn rate_limit_reset_bare_delta_is_seconds() {
-        let r = extract_retry_hints(
-            Some(429),
-            &[hdr("x-ratelimit-reset", "45")],
-            "",
-        );
+        let r = extract_retry_hints(Some(429), &[hdr("x-ratelimit-reset", "45")], "");
         assert_eq!(r.delay, Some(Duration::from_secs(45)));
     }
 

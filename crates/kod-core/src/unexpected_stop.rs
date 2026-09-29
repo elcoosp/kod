@@ -63,9 +63,7 @@
 //!   and only spends the judge call on a candidate. Most turns are
 //!   not candidates.
 
-use kod_provider::judgment::{
-    JudgmentClient, JudgmentError, Question,
-};
+use kod_provider::judgment::{JudgmentClient, JudgmentError, Question};
 // `GenerationResponse` is a provider-crate type (`kod_provider::types`),
 // not a `kod_types` type — the `kod_types` crate carries the wire
 // primitives (ToolCall, ToolResult, ChatMessage), while the assembled
@@ -172,16 +170,9 @@ impl UnexpectedStopClassifier {
     /// classifier will ask the question and the judge will almost
     /// certainly answer `no` — but spending a judge call on a reply
     /// that is not a candidate is waste.
-    pub async fn classify(
-        &self,
-        request: &str,
-        reply: &str,
-    ) -> Result<bool, JudgmentError> {
+    pub async fn classify(&self, request: &str, reply: &str) -> Result<bool, JudgmentError> {
         let question = Self::question();
-        let state: &[(&str, &str)] = &[
-            ("request", request),
-            ("reply", reply),
-        ];
+        let state: &[(&str, &str)] = &[("request", request), ("reply", reply)];
         let answers = self.client.ask(state, &[question]).await?;
         Ok(matches!(answers.get("unexpected"), Some("yes")))
     }
@@ -263,9 +254,7 @@ mod tests {
     use async_trait::async_trait;
     use kod_error::{KodError, Result as KodResult};
     use kod_provider::judgment::JudgmentOptions;
-    use kod_provider::{
-        GenerationOptions, LlmProvider, ModelInfo, ModelRef, StreamChunk,
-    };
+    use kod_provider::{GenerationOptions, LlmProvider, ModelInfo, ModelRef, StreamChunk};
     use kod_types::{ChatMessage, ToolCall, ToolDefinition};
     use std::pin::Pin;
     use std::sync::Arc;
@@ -292,11 +281,7 @@ mod tests {
         async fn list_models(&self) -> KodResult<Vec<ModelInfo>> {
             Ok(vec![])
         }
-        async fn generate(
-            &self,
-            _p: &str,
-            _o: &GenerationOptions,
-        ) -> KodResult<String> {
+        async fn generate(&self, _p: &str, _o: &GenerationOptions) -> KodResult<String> {
             Ok(String::new())
         }
         async fn generate_with_tools(
@@ -553,10 +538,7 @@ mod tests {
     #[tokio::test]
     async fn a_no_reply_classifies_as_expected() {
         let classifier = classifier_with_reply("unexpected: no\n");
-        let verdict = classifier
-            .classify("what is 2+2?", "4")
-            .await
-            .unwrap();
+        let verdict = classifier.classify("what is 2+2?", "4").await.unwrap();
         assert!(!verdict, "expected Expected");
     }
 
@@ -581,11 +563,7 @@ mod tests {
             async fn list_models(&self) -> KodResult<Vec<ModelInfo>> {
                 Ok(vec![])
             }
-            async fn generate(
-                &self,
-                _p: &str,
-                _o: &GenerationOptions,
-            ) -> KodResult<String> {
+            async fn generate(&self, _p: &str, _o: &GenerationOptions) -> KodResult<String> {
                 Ok(String::new())
             }
             async fn generate_with_tools(
@@ -640,7 +618,10 @@ mod tests {
     fn summarize_result_labels_every_variant() {
         // A trivial smoke test: the function exists, matches every
         // variant, and does not panic.
-        assert_eq!(summarize_result(&ToolResult::Success(serde_json::json!({}))), "success");
+        assert_eq!(
+            summarize_result(&ToolResult::Success(serde_json::json!({}))),
+            "success"
+        );
         assert_eq!(summarize_result(&ToolResult::Error("x".into())), "error");
         assert_eq!(
             summarize_result(&ToolResult::RequiresConfirmation {

@@ -274,9 +274,7 @@ impl MemoryManager {
             // heuristic for high-entropy tokens near secret-shaped
             // keywords. See `kod_types::redact`.
             redactor: Some(std::sync::Arc::new(kod_types::redact::Redactor::default())),
-            query_embed_cache: parking_lot::Mutex::new(QueryEmbedCache::new(
-                QUERY_EMBED_CACHE_CAP,
-            )),
+            query_embed_cache: parking_lot::Mutex::new(QueryEmbedCache::new(QUERY_EMBED_CACHE_CAP)),
         })
     }
 
@@ -296,10 +294,7 @@ impl MemoryManager {
         *self.vector_index.write() = None;
         // A vector from a different model is incomparable; a cached
         // query vector would silently mismatch the new index.
-        self.query_embed_cache
-            .lock()
-            .entries
-            .clear();
+        self.query_embed_cache.lock().entries.clear();
     }
 
     /// The installed embedder's name, if any. `"none"` when none is
@@ -453,11 +448,7 @@ impl MemoryManager {
         // inside another.
         let content_owned = crate::hygiene::strip_memory_tags(&content_owned);
         let content: &str = content_owned.as_str();
-        metadata.tags = metadata
-            .tags
-            .iter()
-            .map(|t| self.redact_text(t))
-            .collect();
+        metadata.tags = metadata.tags.iter().map(|t| self.redact_text(t)).collect();
 
         // H-D4: cap content length. `memory_save` is model-invocable
         // with no dedup, no rate limit, and no size limit; a runaway
@@ -538,7 +529,7 @@ impl MemoryManager {
                     timestamp: OffsetDateTime::now_utc(),
                     relevance: 1.0,
                     metadata,
-                
+
                     superseded_by: None,
                     contradicts: Vec::new(),
                 };
@@ -558,7 +549,7 @@ impl MemoryManager {
                     timestamp: OffsetDateTime::now_utc(),
                     relevance: 0.8,
                     metadata,
-                
+
                     superseded_by: None,
                     contradicts: Vec::new(),
                 };
@@ -572,7 +563,7 @@ impl MemoryManager {
                     timestamp: OffsetDateTime::now_utc(),
                     relevance: 0.7,
                     metadata,
-                
+
                     superseded_by: None,
                     contradicts: Vec::new(),
                 };
@@ -806,8 +797,7 @@ impl MemoryManager {
         let cosines: std::collections::HashMap<MemoryId, f32> = if semantic_available {
             let embedder = self.embedder.as_ref().unwrap();
             let query_capped: String =
-                kod_types::strutil::truncate_chars(query, QUERY_EMBED_MAX_CHARS)
-                    .to_string();
+                kod_types::strutil::truncate_chars(query, QUERY_EMBED_MAX_CHARS).to_string();
             // Delta §12.5: apply the same projection to the query as
             // to the stored text so the two vectors are comparable.
             // A query that leads with `## ` or a role prefix would
@@ -822,28 +812,23 @@ impl MemoryManager {
             let cached = self.query_embed_cache.lock().get(&query_for_embed);
             let q_vec: Option<Vec<f32>> = match cached {
                 Some(v) => Some(v),
-                None => {
-                    match embedder
-                        .embed(std::slice::from_ref(&query_for_embed))
-                        .await
-                    {
-                        Ok(mut v) if !v.is_empty() => {
-                            let vec = v.remove(0);
-                            self.query_embed_cache
-                                .lock()
-                                .insert(query_capped.clone(), vec.clone());
-                            Some(vec)
-                        }
-                        Ok(_) => None,
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                "query embedding failed; keyword+recency only"
-                            );
-                            None
-                        }
+                None => match embedder.embed(std::slice::from_ref(&query_for_embed)).await {
+                    Ok(mut v) if !v.is_empty() => {
+                        let vec = v.remove(0);
+                        self.query_embed_cache
+                            .lock()
+                            .insert(query_capped.clone(), vec.clone());
+                        Some(vec)
                     }
-                }
+                    Ok(_) => None,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "query embedding failed; keyword+recency only"
+                        );
+                        None
+                    }
+                },
             };
             match q_vec {
                 Some(q_vec) => {
@@ -869,10 +854,8 @@ impl MemoryManager {
         // be prose) applies only a fraction of the bias; a query that
         // reads clearly as temporal applies most of it.
         let (intent, confidence) = crate::fusion::classify_intent_with_confidence(query);
-        let weights = crate::fusion::blend_weights(
-            crate::fusion::intent_weights(intent),
-            confidence,
-        );
+        let weights =
+            crate::fusion::blend_weights(crate::fusion::intent_weights(intent), confidence);
 
         // Delta §12.8: polyphonic fusion. Build four ranked voices
         // — vector (cosine), fact (BM25 keyword), importance (the
@@ -891,20 +874,22 @@ impl MemoryManager {
                     .iter()
                     .filter_map(|e| cosines.get(&e.id).map(|c| (e, *c)))
                     .collect();
-                pairs.sort_by(|a, b| {
-                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                });
-                pairs.into_iter().map(|(e, _)| e.id.as_uuid().to_string()).collect()
+                pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                pairs
+                    .into_iter()
+                    .map(|(e, _)| e.id.as_uuid().to_string())
+                    .collect()
             };
             let keyword_voice: Vec<String> = {
                 let mut pairs: Vec<(&MemoryEntry, f32)> = all
                     .iter()
                     .map(|e| (e, self.scorer.keyword_bm25_lite(&query_terms, e)))
                     .collect();
-                pairs.sort_by(|a, b| {
-                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                });
-                pairs.into_iter().map(|(e, _)| e.id.as_uuid().to_string()).collect()
+                pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                pairs
+                    .into_iter()
+                    .map(|(e, _)| e.id.as_uuid().to_string())
+                    .collect()
             };
             let importance_voice: Vec<String> = {
                 let mut pairs: Vec<(&MemoryEntry, f32)> = all
@@ -914,10 +899,11 @@ impl MemoryManager {
                         (e, e.relevance * tw)
                     })
                     .collect();
-                pairs.sort_by(|a, b| {
-                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                });
-                pairs.into_iter().map(|(e, _)| e.id.as_uuid().to_string()).collect()
+                pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                pairs
+                    .into_iter()
+                    .map(|(e, _)| e.id.as_uuid().to_string())
+                    .collect()
             };
             let temporal_voice: Vec<String> = {
                 let mut pairs: Vec<(&MemoryEntry, f32)> = all
@@ -927,12 +913,18 @@ impl MemoryManager {
                         (e, crate::retrieval::decay_at(e.timestamp, now, shape))
                     })
                     .collect();
-                pairs.sort_by(|a, b| {
-                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                });
-                pairs.into_iter().map(|(e, _)| e.id.as_uuid().to_string()).collect()
+                pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                pairs
+                    .into_iter()
+                    .map(|(e, _)| e.id.as_uuid().to_string())
+                    .collect()
             };
-            vec![vector_voice, keyword_voice, importance_voice, temporal_voice]
+            vec![
+                vector_voice,
+                keyword_voice,
+                importance_voice,
+                temporal_voice,
+            ]
         };
         let fused = crate::fusion::reciprocal_rank_fusion(&voices);
 
@@ -967,8 +959,7 @@ impl MemoryManager {
         // duplicates).
         let scored: Vec<(f32, MemoryEntry)> = {
             const RERANK_POOL: usize = 40;
-            let pool: Vec<(f32, MemoryEntry)> =
-                scored.into_iter().take(RERANK_POOL).collect();
+            let pool: Vec<(f32, MemoryEntry)> = scored.into_iter().take(RERANK_POOL).collect();
             let contents: std::collections::HashMap<String, String> = pool
                 .iter()
                 .map(|(_, e)| (e.id.as_uuid().to_string(), e.content.clone()))
@@ -1174,8 +1165,7 @@ impl MemoryManager {
                 if !ea.is_active() || !eb.is_active() {
                     continue;
                 }
-                let (Some(ca), Some(cb)) = (ea.metadata.confidence, eb.metadata.confidence)
-                else {
+                let (Some(ca), Some(cb)) = (ea.metadata.confidence, eb.metadata.confidence) else {
                     continue;
                 };
                 if (ca - cb).abs() < 1e-6 {
@@ -1699,10 +1689,7 @@ mod redaction_tests {
     async fn a_github_pat_in_content_is_redacted() {
         let (_tmp, manager) = fixture();
         let id = manager
-            .store(
-                MemoryType::LongTerm,
-                &format!("token: {SAMPLE_GITHUB_PAT}"),
-            )
+            .store(MemoryType::LongTerm, &format!("token: {SAMPLE_GITHUB_PAT}"))
             .await
             .unwrap();
         let stored = manager.get_long_term(&id).await.unwrap().unwrap();
@@ -1783,10 +1770,7 @@ mod redaction_tests {
         let (_tmp, mut manager) = fixture();
         manager.disable_redaction();
         let id = manager
-            .store(
-                MemoryType::LongTerm,
-                &format!("key {SAMPLE_OPENAI_KEY}"),
-            )
+            .store(MemoryType::LongTerm, &format!("key {SAMPLE_OPENAI_KEY}"))
             .await
             .unwrap();
         let stored = manager.get_long_term(&id).await.unwrap().unwrap();
@@ -1815,26 +1799,17 @@ mod redaction_tests {
         // same bytes, so they dedup to one.
         let (_tmp, manager) = fixture();
         let a = manager
-            .store(
-                MemoryType::LongTerm,
-                &format!("key {SAMPLE_OPENAI_KEY}"),
-            )
+            .store(MemoryType::LongTerm, &format!("key {SAMPLE_OPENAI_KEY}"))
             .await
             .unwrap();
         let b = manager
-            .store(
-                MemoryType::LongTerm,
-                &format!("token {SAMPLE_GITHUB_PAT}"),
-            )
+            .store(MemoryType::LongTerm, &format!("token {SAMPLE_GITHUB_PAT}"))
             .await
             .unwrap();
         assert_ne!(a, b, "different secrets must be different entries");
 
         let c = manager
-            .store(
-                MemoryType::LongTerm,
-                &format!("key {SAMPLE_OPENAI_KEY}"),
-            )
+            .store(MemoryType::LongTerm, &format!("key {SAMPLE_OPENAI_KEY}"))
             .await
             .unwrap();
         assert_eq!(a, c, "identical writes dedup to one entry");
@@ -1848,10 +1823,7 @@ mod redaction_tests {
         // secret was there without seeing the value.
         let (_tmp, manager) = fixture();
         let id = manager
-            .store(
-                MemoryType::LongTerm,
-                &format!("key {SAMPLE_OPENAI_KEY}"),
-            )
+            .store(MemoryType::LongTerm, &format!("key {SAMPLE_OPENAI_KEY}"))
             .await
             .unwrap();
         let stored = manager.get_long_term(&id).await.unwrap().unwrap();
@@ -2193,7 +2165,10 @@ mod freshness_tests {
         let mut p = PendingMemory::snapshot(ctx_with(vec![a]));
         let dropped = p.revalidate(&store).await;
         assert_eq!(dropped, 1);
-        assert!(p.context.long_term.is_empty(), "a superseded entry is dropped");
+        assert!(
+            p.context.long_term.is_empty(),
+            "a superseded entry is dropped"
+        );
     }
 
     #[tokio::test]
@@ -2227,7 +2202,6 @@ mod freshness_tests {
         assert_eq!(p.context.long_term.len(), 1);
     }
 }
-
 
 #[cfg(test)]
 mod confidence_bump_tests {
@@ -2287,7 +2261,6 @@ mod confidence_bump_tests {
     }
 }
 
-
 #[cfg(test)]
 mod contradiction_resolution_tests {
     //! §12.2: a contradiction between two entries whose `confidence`
@@ -2319,7 +2292,10 @@ mod contradiction_resolution_tests {
             .await
             .unwrap();
         let b = mgr
-            .store(MemoryType::LongTerm, "the config lives in crates/config/lib.rs")
+            .store(
+                MemoryType::LongTerm,
+                "the config lives in crates/config/lib.rs",
+            )
             .await
             .unwrap();
         set_confidence(&mgr, &a, 0.4).await;

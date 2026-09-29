@@ -114,10 +114,7 @@ impl Tool for ToolSearchTool {
             })?;
         let limit = params["limit"].as_u64().unwrap_or(5).clamp(1, 20) as usize;
 
-        let inv = self
-            .inventory
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
+        let inv = self.inventory.read().unwrap_or_else(|e| e.into_inner());
         if inv.definitions.is_empty() {
             return Ok(ToolResult::Success(serde_json::json!({
                 "matches": [],
@@ -162,10 +159,7 @@ impl Tool for ToolSearchTool {
             .collect();
 
         // Descending score; ties keep registry order.
-        scored.sort_by(|a, b| {
-            b.0.partial_cmp(&a.0)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
         let matches: Vec<Value> = scored
             .iter()
@@ -214,7 +208,9 @@ mod tests {
     }
 
     fn inventory(defs: Vec<ToolDefinition>) -> Arc<std::sync::RwLock<ToolInventory>> {
-        Arc::new(std::sync::RwLock::new(ToolInventory::from_definitions(defs)))
+        Arc::new(std::sync::RwLock::new(ToolInventory::from_definitions(
+            defs,
+        )))
     }
 
     #[tokio::test]
@@ -235,8 +231,16 @@ mod tests {
     #[tokio::test]
     async fn a_name_match_ranks_above_a_description_match() {
         let t = ToolSearchTool::new(inventory(vec![
-            tool("read_file", "Read a file from disk", ToolCategory::FileSystem),
-            tool("write_file", "Read stdin and write to a file", ToolCategory::FileSystem),
+            tool(
+                "read_file",
+                "Read a file from disk",
+                ToolCategory::FileSystem,
+            ),
+            tool(
+                "write_file",
+                "Read stdin and write to a file",
+                ToolCategory::FileSystem,
+            ),
         ]));
         let ctx = ToolContext::new(std::path::Path::new("."));
         let r = t

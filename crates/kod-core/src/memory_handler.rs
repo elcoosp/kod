@@ -36,9 +36,7 @@
 //! surprise capability.
 
 use crate::router::TaskRouter;
-use kod_tools::internal_url::{
-    ProtocolError, ProtocolHandler, ResolveContext, ResolvedResource,
-};
+use kod_tools::internal_url::{ProtocolError, ProtocolHandler, ResolveContext, ResolvedResource};
 use std::sync::Arc;
 
 /// The default number of entries a search returns. Matches the
@@ -102,21 +100,21 @@ impl ProtocolHandler for MemoryHandler {
         url: &str,
         _ctx: &ResolveContext,
     ) -> Result<ResolvedResource, ProtocolError> {
-        let path = url.strip_prefix("memory://").ok_or_else(|| {
-            ProtocolError::Malformed {
+        let path = url
+            .strip_prefix("memory://")
+            .ok_or_else(|| ProtocolError::Malformed {
                 url: url.to_string(),
                 reason: "expected `memory://<shape>`".to_string(),
-            }
-        })?;
+            })?;
 
-        let query = path.strip_prefix("search/").ok_or_else(|| {
-            ProtocolError::Malformed {
+        let query = path
+            .strip_prefix("search/")
+            .ok_or_else(|| ProtocolError::Malformed {
                 url: url.to_string(),
                 reason: "expected `memory://search/<query>`; \
                          a direct `memory://<id>` shape is not supported"
                     .to_string(),
-            }
-        })?;
+            })?;
         if query.is_empty() {
             return Err(ProtocolError::Malformed {
                 url: url.to_string(),
@@ -246,7 +244,10 @@ mod tests {
         );
         let h = MemoryHandler::new(router);
         let ctx = ResolveContext::new("session", "/tmp");
-        let err = h.resolve("memory://search/anything", &ctx).await.unwrap_err();
+        let err = h
+            .resolve("memory://search/anything", &ctx)
+            .await
+            .unwrap_err();
         match err {
             ProtocolError::Handler { message, .. } => {
                 assert!(message.contains("disabled"), "got: {message}");

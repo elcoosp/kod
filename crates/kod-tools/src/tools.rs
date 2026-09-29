@@ -512,11 +512,12 @@ impl Tool for WriteFileTool {
         if let Some(router) = context.protocol_router.as_ref()
             && router.handles(path)
         {
-            let content = params["content"]
-                .as_str()
-                .ok_or_else(|| KodError::InvalidParameters {
-                    reason: "Missing 'content' parameter".to_string(),
-                })?;
+            let content =
+                params["content"]
+                    .as_str()
+                    .ok_or_else(|| KodError::InvalidParameters {
+                        reason: "Missing 'content' parameter".to_string(),
+                    })?;
             let rctx = crate::internal_url::ResolveContext::new(
                 context.holder.clone(),
                 context.working_dir.clone(),
@@ -743,9 +744,7 @@ impl Tool for ExecuteCommandTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
         {
-            let stall = params
-                .get("stall_wake_seconds")
-                .and_then(|v| v.as_u64());
+            let stall = params.get("stall_wake_seconds").and_then(|v| v.as_u64());
             match &context.on_background_command {
                 Some(hook) => match hook.spawn(command, stall, &context.holder) {
                     Some(job_id) => {
@@ -762,9 +761,7 @@ impl Tool for ExecuteCommandTool {
                         // or a cap). Falling through to inline is the
                         // safe reading: the command the model asked
                         // for still runs, it just blocks.
-                        tracing::warn!(
-                            "background spawn declined; running inline",
-                        );
+                        tracing::warn!("background spawn declined; running inline",);
                     }
                 },
                 None => {
@@ -1070,8 +1067,7 @@ impl Tool for ExecuteCommandTool {
                             // means a genuine collision is a no-op,
                             // not a lost write).
                             use std::hash::{Hash, Hasher};
-                            let mut h =
-                                std::collections::hash_map::DefaultHasher::new();
+                            let mut h = std::collections::hash_map::DefaultHasher::new();
                             command.hash(&mut h);
                             raw_stdout.hash(&mut h);
                             let id = format!("cmd-{:016x}", h.finish());
@@ -1727,7 +1723,6 @@ impl Tool for GrepTool {
                 results = reordered;
             }
         }
-
 
         Ok(ToolResult::Success(serde_json::json!({
             "pattern": pattern,

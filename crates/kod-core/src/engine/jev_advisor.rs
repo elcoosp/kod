@@ -9,7 +9,7 @@
 
 use super::KodEngine;
 use super::ToolFilterState;
-use super::{format_call_brief, question_marker, AWAIT_APPROVAL_SECS, DEFAULT_TRANSCRIPT_KEY};
+use super::{AWAIT_APPROVAL_SECS, DEFAULT_TRANSCRIPT_KEY, format_call_brief, question_marker};
 use kod_provider::ModelRef;
 use kod_types::{ToolCall, ToolDefinition, ToolResult};
 
@@ -686,7 +686,9 @@ impl KodEngine {
         // The verdict is a network round-trip; tell the visible turn
         // what it is waiting on instead of a generic "thinking…".
         if let Some(tx) = chunk_tx {
-            let _ = tx.send(crate::engine::activity_marker("checking request…")).await;
+            let _ = tx
+                .send(crate::engine::activity_marker("checking request…"))
+                .await;
         }
         let state = crate::jev::build_state(input, &[]);
         let pairs = [(
@@ -1631,10 +1633,14 @@ impl KodEngine {
 
         // Refilter: Jev call plus a commit on the state.
         let before = definitions.len();
-        let filtered =
-            self.filter_tool_definitions_with_jev(key, input, definitions.clone()).await;
+        let filtered = self
+            .filter_tool_definitions_with_jev(key, input, definitions.clone())
+            .await;
         let changed = filtered.len() != before
-            || filtered.iter().map(|d| &d.name).ne(definitions.iter().map(|d| &d.name));
+            || filtered
+                .iter()
+                .map(|d| &d.name)
+                .ne(definitions.iter().map(|d| &d.name));
 
         // Rebuild the category set from the filtered list and commit.
         let cats: std::collections::HashSet<kod_types::ToolCategory> =

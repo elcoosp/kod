@@ -10,6 +10,6 @@
 //! Both are pure functions over data the engine already has.
 
 pub mod behavioral;
-pub mod request;
-pub mod if_bench;
 pub mod commit;
+pub mod if_bench;
+pub mod request;

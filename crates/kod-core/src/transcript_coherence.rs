@@ -480,16 +480,8 @@ mod tests {
     fn nested_arguments_key_order_does_not_change_the_digest() {
         // The canonicalization recurses. A change here would let a
         // nested-object reorder silently invalidate the cache.
-        let a = assistant_with_call(
-            "c1",
-            "tool",
-            serde_json::json!({"outer": {"a": 1, "b": 2}}),
-        );
-        let b = assistant_with_call(
-            "c1",
-            "tool",
-            serde_json::json!({"outer": {"b": 2, "a": 1}}),
-        );
+        let a = assistant_with_call("c1", "tool", serde_json::json!({"outer": {"a": 1, "b": 2}}));
+        let b = assistant_with_call("c1", "tool", serde_json::json!({"outer": {"b": 2, "a": 1}}));
         assert_eq!(MessageDigest::of(&a), MessageDigest::of(&b));
     }
 

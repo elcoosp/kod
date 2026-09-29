@@ -19,13 +19,13 @@
 
 use async_trait::async_trait;
 use futures::Stream;
-use kod_core::router::RouterConfig;
 use kod_core::KodEngine;
+use kod_core::router::RouterConfig;
 use kod_error::Result;
 use kod_provider::request::CompletionRequest;
 use kod_provider::{
-    GenerationOptions, GenerationResponse, LlmProvider, ModelRef,
-    ProviderCapabilities, ProviderRegistry, StreamChunk,
+    GenerationOptions, GenerationResponse, LlmProvider, ModelRef, ProviderCapabilities,
+    ProviderRegistry, StreamChunk,
 };
 use kod_types::ToolDefinition;
 use std::pin::Pin;

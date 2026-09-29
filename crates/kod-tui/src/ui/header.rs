@@ -55,7 +55,11 @@ impl HeaderWidget {
             dim
         };
         spans.push(Span::styled(
-            format!(" ctx ≈{}/{} ", app.context_tokens_k(), app.context_limit_k()),
+            format!(
+                " ctx ≈{}/{} ",
+                app.context_tokens_k(),
+                app.context_limit_k()
+            ),
             ctx_style,
         ));
 

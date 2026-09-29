@@ -179,13 +179,11 @@ impl IrcBus {
     pub async fn register(&self, id: impl Into<String>, has_receiver: bool) {
         let id = id.into();
         let mut g = self.inner.lock().await;
-        g.agents
-            .entry(id)
-            .or_insert_with(|| AgentState {
-                mailbox: VecDeque::new(),
-                has_receiver,
-                dead: false,
-            });
+        g.agents.entry(id).or_insert_with(|| AgentState {
+            mailbox: VecDeque::new(),
+            has_receiver,
+            dead: false,
+        });
     }
 
     /// Mark an agent's receiver live or gone. A subagent that
@@ -244,10 +242,7 @@ impl IrcBus {
         // timeout.
         let (correlation, rx) = {
             let mut g = self.inner.lock().await;
-            let state = g
-                .agents
-                .get(&to)
-                .ok_or(SendError::UnknownTarget)?;
+            let state = g.agents.get(&to).ok_or(SendError::UnknownTarget)?;
             if state.dead {
                 return Err(SendError::TargetStopped);
             }
@@ -329,7 +324,11 @@ impl IrcBus {
             dropped = true;
         }
         state.mailbox.push_back(msg);
-        if dropped { Receipt::DroppedOldest } else { receipt }
+        if dropped {
+            Receipt::DroppedOldest
+        } else {
+            receipt
+        }
     }
 
     /// Drain an agent's mailbox. Returns everything queued, oldest
@@ -466,9 +465,7 @@ mod tests {
         let b = IrcBus::new();
         b.register("a", true).await;
         b.mark_dead("a").await;
-        let r = b
-            .send_await("x", "a", "hi", Duration::from_secs(10))
-            .await;
+        let r = b.send_await("x", "a", "hi", Duration::from_secs(10)).await;
         assert_eq!(r, Err(SendError::TargetStopped));
     }
 

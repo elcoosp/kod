@@ -195,10 +195,7 @@ pub enum CompactionPlan {
     Prune(PrunePlan),
     /// A summary string that replaces the first `covers_through + 1`
     /// messages.
-    Summary {
-        covers_through: usize,
-        text: String,
-    },
+    Summary { covers_through: usize, text: String },
     /// Delta §4.5: rasterize the older half of the transcript into a
     /// PNG and attach it as an image on the next request. The
     /// transcript's older half is *replaced* by a short marker
@@ -412,7 +409,10 @@ impl CompactionDispatcher {
                     continue;
                 }
                 MethodOutcome::Failed(err) => {
-                    notices.push(format!("`{}` failed: {err}; falling through", method.name()));
+                    notices.push(format!(
+                        "`{}` failed: {err}; falling through",
+                        method.name()
+                    ));
                     continue;
                 }
             }
@@ -663,9 +663,7 @@ impl CompactionMethod for RemoteMethod {
                 })
             }
             Ok(None) => MethodOutcome::NoChange,
-            Err(e) => MethodOutcome::Failed(format!(
-                "provider-native compaction failed: {e}",
-            )),
+            Err(e) => MethodOutcome::Failed(format!("provider-native compaction failed: {e}",)),
         }
     }
 }
@@ -733,8 +731,7 @@ impl CompactionMethod for SnapcompactMethod {
     fn available(&self, ctx: &CompactionContext<'_>) -> bool {
         match ctx.provider.as_ref() {
             Some(h) => {
-                h.provider.capabilities().vision
-                    && ctx.transcript.len() >= MIN_REMOTE_MESSAGES
+                h.provider.capabilities().vision && ctx.transcript.len() >= MIN_REMOTE_MESSAGES
             }
             None => false,
         }
@@ -962,9 +959,7 @@ impl CompactionMethod for SoftMethod {
         true
     }
     async fn run(&self, _ctx: &CompactionContext<'_>) -> MethodOutcome {
-        MethodOutcome::Unavailable(
-            "soft summarize is not yet wired into the engine".to_string(),
-        )
+        MethodOutcome::Unavailable("soft summarize is not yet wired into the engine".to_string())
     }
 }
 
@@ -1025,11 +1020,9 @@ mod tests {
         // outlives the context without pulling a Box through every
         // call. The set is tiny; a single allocation for the whole
         // test module is not a concern.
-        static NO_PATHS: std::sync::OnceLock<
-            std::collections::HashSet<std::path::PathBuf>,
-        > = std::sync::OnceLock::new();
-        let no_paths = NO_PATHS
-            .get_or_init(std::collections::HashSet::new);
+        static NO_PATHS: std::sync::OnceLock<std::collections::HashSet<std::path::PathBuf>> =
+            std::sync::OnceLock::new();
+        let no_paths = NO_PATHS.get_or_init(std::collections::HashSet::new);
         CompactionContext {
             protected_paths: no_paths,
             transcript,
@@ -1285,9 +1278,7 @@ mod tests {
     #[tokio::test]
     async fn unavailable_flag_skips_silently() {
         let d = CompactionDispatcher::new(vec![
-            Box::new(
-                ScriptedMethod::new("first", MethodOutcome::NoChange).unavailable_flag(),
-            ),
+            Box::new(ScriptedMethod::new("first", MethodOutcome::NoChange).unavailable_flag()),
             Box::new(ScriptedMethod::new(
                 "second",
                 MethodOutcome::Plan(CompactionPlan::Summary {
@@ -1374,7 +1365,10 @@ mod tests {
             MethodOutcome::Plan(CompactionPlan::Shake(p)) => {
                 assert_eq!(p.len(), 1);
             }
-            other => panic!("expected a shake plan, got {other:?}", other = variant_name(&other)),
+            other => panic!(
+                "expected a shake plan, got {other:?}",
+                other = variant_name(&other)
+            ),
         }
     }
 
@@ -1384,10 +1378,7 @@ mod tests {
         let method = ShakeMethod::new(ShakeConfig::default());
         let est = big_suffix();
         let c = ctx(&transcript, &est);
-        assert!(matches!(
-            method.run(&c).await,
-            MethodOutcome::NoChange,
-        ));
+        assert!(matches!(method.run(&c).await, MethodOutcome::NoChange,));
     }
 
     // ---- PruneMethod end-to-end ----------------------------------------
@@ -1428,10 +1419,7 @@ mod tests {
         let method = PruneMethod::new(crate::prune::PruneConfig::default());
         let est = big_suffix();
         let c = ctx(&transcript, &est);
-        assert!(matches!(
-            method.run(&c).await,
-            MethodOutcome::NoChange,
-        ));
+        assert!(matches!(method.run(&c).await, MethodOutcome::NoChange,));
     }
 
     // ---- Stub availability ----------------------------------------------
@@ -1513,7 +1501,10 @@ mod tests {
                     "handoff reason should name the missing provider: {reason}",
                 );
             }
-            other => panic!("handoff should be unavailable, got {}", variant_name(&other)),
+            other => panic!(
+                "handoff should be unavailable, got {}",
+                variant_name(&other)
+            ),
         }
     }
 
@@ -1669,11 +1660,7 @@ mod tests {
         let (a, a_count) = CountingMethod::new("a");
         let (b, b_count) = CountingMethod::new("b");
         let (c, c_count) = CountingMethod::new("c");
-        let d = CompactionDispatcher::new(vec![
-            Box::new(a),
-            Box::new(b),
-            Box::new(c),
-        ]);
+        let d = CompactionDispatcher::new(vec![Box::new(a), Box::new(b), Box::new(c)]);
         let t: Vec<ChatMessage> = Vec::new();
         let est = big_suffix();
         let out = d.compact(&ctx(&t, &est)).await;

@@ -321,7 +321,11 @@ mod tests {
         let b = q.drain_streaming();
         assert_eq!(
             b.messages,
-            vec!["first".to_string(), "second".to_string(), "third".to_string()],
+            vec![
+                "first".to_string(),
+                "second".to_string(),
+                "third".to_string()
+            ],
         );
     }
 
