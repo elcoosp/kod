@@ -34,6 +34,7 @@
 
 pub mod client;
 pub mod http_policy;
+pub mod tool_cache;
 pub mod types;
 
 pub use client::{McpClient, McpError};
