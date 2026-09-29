@@ -69,6 +69,17 @@ impl HeaderWidget {
             ));
         }
 
+        // Wall-clock the last finished turn took. Lives here instead
+        // of the transcript: a duration row per turn was tried and
+        // removed as noise, but the figure itself is worth one header
+        // slot. Cleared when the next turn begins.
+        if app.has_last_turn_duration() {
+            spans.push(Span::styled(
+                format!(" took {} ", app.last_turn_label()),
+                dim,
+            ));
+        }
+
         // The active goal identifies the work; it renders before the
         // state badges so narrow terminals clip the badges first.
         if let Some(goal) = app.goal() {
