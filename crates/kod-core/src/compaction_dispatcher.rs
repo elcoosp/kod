@@ -243,6 +243,67 @@ impl CompactionPlan {
     }
 }
 
+/// Delta §4.3: admission control for a compaction plan.
+///
+/// The design's rule: reject a plan whose projected post-state is
+/// **not smaller** than the pre-state, measured locally with the same
+/// estimator the planner used (never trust provider-reported token
+/// counts — an imported session reports 0). The guard exists because
+/// a summarizer asked to reduce a transcript can, in the worst case,
+/// produce a summary longer than what it replaces — a "compaction"
+/// that grows the context. Comparing the two sizes locally *before*
+/// the drain-and-replace mutates the transcript catches that; a
+/// rejected plan leaves the transcript untouched, the dispatcher
+/// falls through to the next rung, and if every rung is rejected the
+/// caller keeps the existing context-full handling (a provider
+/// rejection the caller sees and reacts to).
+///
+/// # Why the reserve is not a hard admission floor
+///
+/// The design's §4.3 also names `reserve = max(15% of window, 16_384)`
+/// and a `projected <= window − reserve` projection. That rule is the
+/// **`should_compact` trigger** — the threshold that decides *when to
+/// try compaction* — not the admission rule. Conflating them breaks
+/// small windows: with `window = 8_192` and `reserve = 16_384` the
+/// projection is `projected <= 0` and *every* plan is rejected,
+/// including a handoff that reduces a 7_000-token transcript to a
+/// 50-token summary. A caller already over the window gets no
+/// compaction and no recovery. The reserve is therefore kept on the
+/// struct for a caller that wants a `projected <= window − reserve`
+/// gate of its own (via [`Self::fits_under_reserve`]), but
+/// [`Self::admits`] consults only the shrink rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompactionAdmission {
+    /// Estimated tokens after the plan is applied.
+    pub projected: u64,
+    /// Estimated tokens in the transcript the plan was computed
+    /// against.
+    pub current: u64,
+    /// The model's context window in tokens.
+    pub window: u64,
+    /// `max(15% of window, 16_384)` — the headroom kept for the
+    /// system prompt, tool schemas, and the model's output.
+    pub reserve: u64,
+}
+
+impl CompactionAdmission {
+    /// True when the plan is admitted: it strictly shrinks the
+    /// transcript. This is the design's no-reduction guard.
+    pub fn admits(&self) -> bool {
+        self.projected < self.current
+    }
+
+    /// The design's projection check, kept separate so a caller that
+    /// knows its window is large enough can opt in. True when the
+    /// projected post-state fits under `window − reserve`.
+    ///
+    /// **Not** consulted by [`Self::admits`] — see the type's docs
+    /// for why conflating the two breaks small windows.
+    pub fn fits_under_reserve(&self) -> bool {
+        self.projected <= self.window.saturating_sub(self.reserve)
+    }
+}
+
 /// One rung of the compaction ladder.
 #[async_trait]
 pub trait CompactionMethod: Send + Sync {
@@ -1007,6 +1068,83 @@ mod tests {
         // No window known: refuse to compact. The caller learns the
         // real number on the next provider call.
         assert!(!should_compact(u64::MAX, 0));
+    }
+
+    // ---- CompactionAdmission (§4.3) ---------------------------------
+
+    #[test]
+    fn admission_rejects_a_plan_that_does_not_shrink() {
+        let a = CompactionAdmission {
+            projected: 10_000,
+            current: 10_000,
+            window: 200_000,
+            reserve: 30_000,
+        };
+        assert!(!a.admits(), "equal size is not a reduction");
+        let a = CompactionAdmission {
+            projected: 11_000,
+            current: 10_000,
+            window: 200_000,
+            reserve: 30_000,
+        };
+        assert!(!a.admits(), "growth must be rejected");
+    }
+
+    #[test]
+    fn admission_accepts_any_strict_shrink() {
+        // Even a small shrink is a shrink. The reserve is a
+        // `should_compact` trigger, not an admission floor.
+        let a = CompactionAdmission {
+            projected: 179_000,
+            current: 180_000,
+            window: 200_000,
+            reserve: 30_000,
+        };
+        assert!(a.admits(), "1k tokens smaller is smaller");
+    }
+
+    #[test]
+    fn admission_accepts_a_shrinking_plan_on_a_small_window() {
+        // The bug this test pins: with window = 8_192 and
+        // reserve = 16_384, `projected <= window - reserve` is
+        // `<= 0`, so a reserve-as-admission-floor would reject every
+        // plan including a handoff that reduces 7k tokens to 50.
+        let a = CompactionAdmission {
+            projected: 50,
+            current: 7_000,
+            window: 8_192,
+            reserve: resolve_reserve(8_192),
+        };
+        assert!(a.admits(), "a handoff that shrinks must be admitted");
+    }
+
+    #[test]
+    fn the_reserve_check_is_available_but_separate() {
+        // `fits_under_reserve` is the design's projection check; it
+        // is a hint a caller with a large window may consult, not
+        // part of `admits`.
+        let a = CompactionAdmission {
+            projected: 175_000,
+            current: 180_000,
+            window: 200_000,
+            reserve: 30_000,
+        };
+        assert!(a.admits(), "shrinks");
+        assert!(
+            !a.fits_under_reserve(),
+            "175k > 200k - 30k = 170k: reserve breached",
+        );
+    }
+
+    #[test]
+    fn fits_under_reserve_holds_at_the_ceiling() {
+        let a = CompactionAdmission {
+            projected: 170_000,
+            current: 180_000,
+            window: 200_000,
+            reserve: 30_000,
+        };
+        assert!(a.fits_under_reserve());
     }
 
     // ---- Dispatcher ordering and fall-through ---------------------------

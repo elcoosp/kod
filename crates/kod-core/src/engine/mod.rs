@@ -2685,7 +2685,9 @@ impl KodEngine {
         // call entirely. Only when the mechanical rungs find nothing
         // (or fall short) does the summary path run.
         if let Some(plan) = self.try_mechanical_compaction(key, window as u64).await {
-            let affected = self.apply_compaction_plan(key, plan).await;
+            let affected = self
+                .apply_compaction_plan(key, plan, window as u64)
+                .await;
             if affected > 0 {
                 tracing::info!(
                     holder = key,
@@ -3070,12 +3072,16 @@ impl KodEngine {
     /// carry per-message byte ranges already ordered descending by
     /// start (the planner's contract), so splicing them in the order
     /// given leaves earlier offsets valid. `Prune` plans blank whole
-    /// message bodies. A `Summary` plan is not produced by this path
-    /// (that is the existing summary flow's shape) and is a no-op here.
+    /// message bodies. The three summary-family variants
+    /// (`Summary`, `NativeSummary`, `Image`) drain the covered
+    /// prefix and insert a pinned marker in its place; a provider
+    /// block (native) or a rasterized frame (image) is stored
+    /// under the transcript key so the next request carries it.
     async fn apply_compaction_plan(
         &self,
         key: &str,
         plan: crate::compaction_dispatcher::CompactionPlan,
+        window_tokens: u64,
     ) -> usize {
         use crate::compaction_dispatcher::CompactionPlan;
         use crate::prune::PruneAction;
@@ -3085,6 +3091,25 @@ impl KodEngine {
         let Some(turns) = history.get_mut(key) else {
             return 0;
         };
+
+        // Delta §4.3: the no-reduction guard's inputs. `current` is
+        // measured locally with the same chars/4 convention every
+        // planner uses; `reserve` is the same `max(15%, 16_384)` the
+        // dispatcher's `should_compact` applies. Both are read before
+        // any arm mutates the transcript.
+        //
+        // Shake and Prune are exempt: a placeholder is by construction
+        // shorter than the body it replaces (the config's
+        // `min_tokens` / `min_prune_tokens` gate rejects the candidate
+        // before the plan is produced), so the guard would only fire
+        // on a plan that is already a no-op. Summary-family plans are
+        // not: a summarizer asked to reduce a transcript can, in the
+        // worst case, produce a summary longer than what it replaces.
+        let current_tokens: u64 = turns
+            .iter()
+            .map(|m| (m.content.len() / 4) as u64)
+            .sum();
+        let reserve = crate::compaction_dispatcher::resolve_reserve(window_tokens);
 
         // Snapshot the id → index map once. Message ids are unique
         // within a transcript by construction.
@@ -3135,6 +3160,38 @@ impl KodEngine {
                 text,
                 encrypted_content,
             } => {
+                // Delta §4.3: no-reduction guard BEFORE any state
+                // mutation. A rejected plan leaves the transcript and
+                // the native-block store untouched.
+                if turns.is_empty() {
+                    return 0;
+                }
+                let end = (covers_through + 1).min(turns.len());
+                if end == 0 {
+                    return 0;
+                }
+                let summary_body = format!("## Previous Conversation Handoff\n{text}");
+                let projected = (summary_body.len() / 4) as u64
+                    + turns[end..]
+                        .iter()
+                        .map(|m| (m.content.len() / 4) as u64)
+                        .sum::<u64>();
+                let admission = crate::compaction_dispatcher::CompactionAdmission {
+                    projected,
+                    current: current_tokens,
+                    window: window_tokens,
+                    reserve,
+                };
+                if !admission.admits() {
+                    tracing::warn!(
+                        projected,
+                        current = current_tokens,
+                        window = window_tokens,
+                        reserve,
+                        "native compaction plan rejected: not a reduction",
+                    );
+                    return 0;
+                }
                 // Same drain-and-replace as `Summary`, plus store the
                 // opaque block so the next request for this
                 // transcript carries it. The block lives under the
@@ -3148,23 +3205,12 @@ impl KodEngine {
                         .await
                         .insert(key.to_string(), encrypted_content);
                 }
-                // Fall through to the shared drain-and-replace path
-                // below by re-entering the Summary arm. A `match`
-                // cannot fall through, so the work is duplicated with
-                // a comment pointing at the shared shape.
-                if turns.is_empty() {
-                    return 0;
-                }
-                let end = (covers_through + 1).min(turns.len());
-                if end == 0 {
-                    return 0;
-                }
                 let dropped: Vec<kod_types::ChatMessage> =
                     turns.drain(..end).collect();
                 let mut summary_msg = kod_types::ChatMessage::text(
                     kod_types::MessageId::new(),
                     kod_types::MessageRole::User,
-                    format!("## Previous Conversation Handoff\n{text}"),
+                    summary_body,
                     time::OffsetDateTime::now_utc(),
                 );
                 summary_msg.metadata.pinned = true;
@@ -3176,12 +3222,47 @@ impl KodEngine {
                 png_base64,
                 source_lines,
             } => {
-                // Delta §4.5: store the frame, replace the older half
-                // with a short marker. The frame is attached to every
-                // subsequent request for this transcript, so the
-                // provider sees the image in place of the text it
-                // rasterized.
+                // Delta §4.5: replace the older half with a short
+                // marker and attach the frame on subsequent requests.
+                //
+                // Delta §4.3: the no-reduction guard runs BEFORE the
+                // frame store so a rejected plan does not leave a
+                // stray frame attached to a transcript it did not
+                // shrink.
                 if png_base64.is_empty() {
+                    return 0;
+                }
+                if turns.is_empty() {
+                    return 0;
+                }
+                let end = (covers_through + 1).min(turns.len());
+                if end == 0 {
+                    return 0;
+                }
+                let marker_body = format!(
+                    "## Previous conversation rendered as image frame\n\
+                     ({source_lines} lines rasterized; the image is \
+                     attached to this request.)",
+                );
+                let projected = (marker_body.len() / 4) as u64
+                    + turns[end..]
+                        .iter()
+                        .map(|m| (m.content.len() / 4) as u64)
+                        .sum::<u64>();
+                let admission = crate::compaction_dispatcher::CompactionAdmission {
+                    projected,
+                    current: current_tokens,
+                    window: window_tokens,
+                    reserve,
+                };
+                if !admission.admits() {
+                    tracing::warn!(
+                        projected,
+                        current = current_tokens,
+                        window = window_tokens,
+                        reserve,
+                        "image compaction plan rejected: not a reduction",
+                    );
                     return 0;
                 }
                 self.image_frames
@@ -3193,23 +3274,12 @@ impl KodEngine {
                         png_base64,
                         media_type: "image/png".to_string(),
                     });
-                if turns.is_empty() {
-                    return 0;
-                }
-                let end = (covers_through + 1).min(turns.len());
-                if end == 0 {
-                    return 0;
-                }
                 let dropped: Vec<kod_types::ChatMessage> =
                     turns.drain(..end).collect();
                 let mut marker_msg = kod_types::ChatMessage::text(
                     kod_types::MessageId::new(),
                     kod_types::MessageRole::User,
-                    format!(
-                        "## Previous conversation rendered as image frame\n\
-                         ({source_lines} lines rasterized; the image is \
-                         attached to this request.)",
-                    ),
+                    marker_body,
                     time::OffsetDateTime::now_utc(),
                 );
                 marker_msg.metadata.pinned = true;
@@ -3240,12 +3310,40 @@ impl KodEngine {
                 if end == 0 {
                     return 0;
                 }
+                // Delta §4.3: no-reduction guard. Measured with the
+                // same chars/4 convention every planner uses; a
+                // rejected plan leaves the transcript untouched so
+                // the dispatcher can fall through to the next rung
+                // (and a caller with no further rung sees the
+                // existing context-full handling).
+                let summary_body = format!("## Previous Conversation Handoff\n{text}");
+                let projected = (summary_body.len() / 4) as u64
+                    + turns[end..]
+                        .iter()
+                        .map(|m| (m.content.len() / 4) as u64)
+                        .sum::<u64>();
+                let admission = crate::compaction_dispatcher::CompactionAdmission {
+                    projected,
+                    current: current_tokens,
+                    window: window_tokens,
+                    reserve,
+                };
+                if !admission.admits() {
+                    tracing::warn!(
+                        projected,
+                        current = current_tokens,
+                        window = window_tokens,
+                        reserve,
+                        "compaction summary rejected: not a reduction",
+                    );
+                    return 0;
+                }
                 let dropped: Vec<kod_types::ChatMessage> =
                     turns.drain(..end).collect();
                 let mut summary_msg = kod_types::ChatMessage::text(
                     kod_types::MessageId::new(),
                     kod_types::MessageRole::User,
-                    format!("## Previous Conversation Handoff\n{text}"),
+                    summary_body,
                     time::OffsetDateTime::now_utc(),
                 );
                 // Pinned: the render path never drops the handoff
