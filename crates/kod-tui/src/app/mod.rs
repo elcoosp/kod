@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use kod_types::{MessageId, MessageMetadata, MessageRole};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Streaming response lifecycle (extracted from this file).
 mod streaming;
@@ -743,6 +743,10 @@ pub struct KodApp {
     /// When the current generation started. Used to decide whether a
     /// completion is worth a terminal bell — a 2-second turn is not.
     turn_started_at: Option<Instant>,
+    /// Wall-clock the last finished turn took. Set on finish / fail /
+    /// cancel from `spinner_started`, cleared when the next turn
+    /// begins. Rendered in the header (`took 1m05s`).
+    last_turn_duration: Option<Duration>,
     should_quit: bool,
     next_seq: u64,
 }
@@ -1002,6 +1006,7 @@ impl KodApp {
             session_output_tokens: 0,
             session_cost_usd: 0.0,
             turn_started_at: None,
+            last_turn_duration: None,
             should_quit: false,
             next_seq: 0,
         }
