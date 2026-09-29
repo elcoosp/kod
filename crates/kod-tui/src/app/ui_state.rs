@@ -393,12 +393,55 @@ impl KodApp {
         self.spinner()
     }
 
-    /// `12s` since the generation started (empty when idle).
+    /// Friendly wall-clock duration: `340ms`, `1.2s`, `1m05s`,
+    /// `2h03m`. Same tiers as the engine's `format_duration_ms`
+    /// plus an hour tier (turns and rate-limit waits outgrow minutes).
+    pub fn format_friendly_duration(d: std::time::Duration) -> String {
+        let ms = d.as_millis().min(u128::from(u64::MAX)) as u64;
+        if ms < 1000 {
+            format!("{ms}ms")
+        } else {
+            let s = ms / 1000;
+            if s < 60 {
+                format!("{:.1}s", ms as f64 / 1000.0)
+            } else if s < 3600 {
+                format!("{}m{:02}s", s / 60, s % 60)
+            } else {
+                format!("{}h{:02}m", s / 3600, (s % 3600) / 60)
+            }
+        }
+    }
+
+    /// Friendly `12s`/`1m05s` since the generation started (empty when
+    /// idle). Rendered in the status strip next to the spinner phase.
     pub fn elapsed_label(&self) -> String {
         match self.spinner_started {
-            Some(s) => format!("{}s", s.elapsed().as_secs()),
+            Some(s) => Self::format_friendly_duration(s.elapsed()),
             None => String::new(),
         }
+    }
+
+    /// Wall-clock the last finished turn took, in friendly form
+    /// (`1m05s`). Empty when no turn has completed yet. Shown in the
+    /// header — the transcript stays free of duration rows by design
+    /// (see `turn_completion_pushes_no_duration_row`).
+    pub fn last_turn_label(&self) -> String {
+        match self.last_turn_duration {
+            Some(d) => Self::format_friendly_duration(d),
+            None => String::new(),
+        }
+    }
+
+    /// Whether a finished turn's duration is available for the header.
+    pub fn has_last_turn_duration(&self) -> bool {
+        self.last_turn_duration.is_some()
+    }
+
+    /// Snapshot the running turn's wall-clock as its final duration.
+    /// Called on finish / fail / cancel, before `spinner_started` is
+    /// cleared. A turn that never started the spinner records nothing.
+    pub(super) fn record_turn_duration(&mut self) {
+        self.last_turn_duration = self.spinner_started.map(|s| s.elapsed());
     }
 
     /// Milliseconds from `begin_generation` to the first non-empty
@@ -800,5 +843,24 @@ impl KodApp {
             }
             None => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::KodApp;
+    use std::time::Duration;
+
+    #[test]
+    fn friendly_duration_picks_tier_by_magnitude() {
+        let f = KodApp::format_friendly_duration;
+        assert_eq!(f(Duration::from_millis(0)), "0ms");
+        assert_eq!(f(Duration::from_millis(340)), "340ms");
+        assert_eq!(f(Duration::from_millis(999)), "999ms");
+        assert_eq!(f(Duration::from_millis(1200)), "1.2s");
+        assert_eq!(f(Duration::from_secs(45)), "45.0s");
+        assert_eq!(f(Duration::from_secs(65)), "1m05s");
+        assert_eq!(f(Duration::from_secs(1200)), "20m00s");
+        assert_eq!(f(Duration::from_secs(4500)), "1h15m");
     }
 }
