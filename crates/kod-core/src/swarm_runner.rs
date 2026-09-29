@@ -1240,7 +1240,17 @@ impl SwarmRunner {
                                 format!("  [{brief}]\n")
                             } else if crate::engine::parse_tool_done(&chunk).is_some()
                                 || crate::engine::is_thinking_marker(&chunk)
+                                || crate::engine::parse_turn_marker(&chunk).is_some()
+                                || crate::engine::parse_activity_marker(&chunk).is_some()
+                                || crate::engine::parse_rate_limit_wait(&chunk).is_some()
+                                || chunk.starts_with('\0')
                             {
+                                // Control markers (and any future
+                                // `\0`-prefixed chunk) are panel-level
+                                // signals, never agent prose — the
+                                // TUI/CLI pumps translate the ones they
+                                // render. Previously they leaked raw into
+                                // the merged answer.
                                 continue;
                             } else {
                                 chunk
