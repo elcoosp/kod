@@ -707,6 +707,25 @@ impl Tool for ExecuteCommandTool {
             })?;
 
         context.can_execute_command(command)?;
+
+        // Delta §7.7 item 3: intercept bare `grep`/`cat`/`find`
+        // invocations and redirect to the tool. The command is
+        // rejected — the model learns the routing on the next turn
+        // without a shell round-trip. Pipelines, shell operators,
+        // unsupported flags, and env-prefixed commands pass through
+        // (see `bash_interceptor` for the shapes that qualify).
+        if let Some(i) = crate::bash_interceptor::intercept(command) {
+            tracing::info!(
+                suggested_tool = i.suggested_tool,
+                command = %command,
+                "bash interceptor: redirecting shell invocation to tool",
+            );
+            return Ok(ToolResult::Error(format!(
+                "{}\n\nUse the `{}` tool. The shell command was not executed.",
+                i.message, i.suggested_tool,
+            )));
+        }
+
         // Delta §11.4: the command's wall time, for the
         // background-suggestion threshold below.
         let started = std::time::Instant::now();
