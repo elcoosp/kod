@@ -42,7 +42,15 @@ impl KodApp {
                     self.streamed_chars_this_turn.saturating_add(chunk.len());
             }
             self.current_response.push_str(chunk);
-            if self.phase == GenPhase::Connecting {
+            if matches!(
+                self.phase,
+                GenPhase::Connecting | GenPhase::RateLimited | GenPhase::Activity(_)
+            ) {
+                // First model text of the turn — or the retry landing
+                // after a rate-limit wait / auxiliary pass. Either way
+                // the model is talking again, so the spinner stops
+                // showing the wait state. (ExecutingTool/Summarizing
+                // are left alone: tool rows interleave text.)
                 self.set_phase(GenPhase::Generating);
             }
         }
