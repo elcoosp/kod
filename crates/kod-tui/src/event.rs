@@ -185,6 +185,14 @@ pub enum Event {
     SwarmError(String),
     AgentMessage(String, String),
     ResponseChunk(String),
+    /// Engine auxiliary work (Jev verdict, memory fact extraction,
+    /// decision mining). Carries the short label the spinner shows
+    /// until the next text / tool / thinking / turn signal.
+    Activity(String),
+    /// The provider rate-limited the turn; the engine is sleeping out
+    /// the retry window. Carries the bounded-wait system line; the
+    /// spinner switches to the rate-limited phase alongside it.
+    RateLimited(String),
     /// Goal-loop turn boundary: the engine finished turn N-1 and is
     /// starting turn N. The main loop flushes the previous turn's text
     /// as its own bubble and opens a new one — turns must never merge
