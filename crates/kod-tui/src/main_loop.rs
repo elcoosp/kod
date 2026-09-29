@@ -7280,6 +7280,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_window_usage_replaces_estimate_with_round_snapshot() {
+        // The meter tracks the latest round's provider numbers (the
+        // true window snapshot), not the turn's merged total. Later
+        // markers supersede earlier ones, and the char estimate stops
+        // contributing once real numbers land.
+        let mut tui = TuiLoop::new();
+        tui.app_mut().begin_generation();
+        // Seed the chars/4 estimate the way a real prompt does.
+        tui.app_mut().note_prompt(&"x".repeat(400));
+        let estimated = tui.app().context_tokens();
+        assert!(estimated > 0);
+        tui.handle_event(Event::WindowUsage {
+            prompt_tokens: 10_000,
+            completion_tokens: 500,
+        })
+        .await
+        .unwrap();
+        assert_eq!(tui.app().context_tokens(), 10_500);
+        // A later round replaces, not accumulates (merged totals
+        // would sum history once per round).
+        tui.handle_event(Event::WindowUsage {
+            prompt_tokens: 11_000,
+            completion_tokens: 700,
+        })
+        .await
+        .unwrap();
+        assert_eq!(tui.app().context_tokens(), 11_700);
+    }
+
+    #[tokio::test]
     async fn test_finished_turn_records_friendly_duration_for_header() {
         // The header's `took …` figure: recorded on completion (no
         // transcript row — `turn_completion_pushes_no_duration_row`
