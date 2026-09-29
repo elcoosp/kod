@@ -35,6 +35,7 @@
 
 pub mod aliases;
 pub mod ask;
+pub mod bash_interceptor;
 pub mod batch;
 pub mod tool_search;
 pub mod relevance;
