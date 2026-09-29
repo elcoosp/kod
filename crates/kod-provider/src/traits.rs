@@ -114,6 +114,21 @@ pub trait LlmProvider: Send + Sync {
     /// Generate a completion without tools
     async fn generate(&self, prompt: &str, options: &GenerationOptions) -> Result<String>;
 
+    /// WS-A: stable background session for tab-bridge backends.
+    ///
+    /// When set, sessionless requests (the `generate` path and
+    /// `complete` with `session_id: None`) are stamped with this id
+    /// instead of minting a throwaway session per request. Main turns
+    /// always carry an explicit `session_id`, which takes precedence.
+    /// Default: no session (legacy behavior — every implementor that
+    /// does not override keeps it).
+    fn set_default_session(&self, _session: Option<String>) {}
+
+    /// The session set by [`LlmProvider::set_default_session`], if any.
+    fn default_session(&self) -> Option<String> {
+        None
+    }
+
     /// Generate a completion with tool calling support
     async fn generate_with_tools(
         &self,
