@@ -187,6 +187,18 @@ impl CompletionRequest {
         }
     }
 
+    /// Delta §9.10: trim this request's image frames to fit a
+    /// provider's per-request budget before serialization. Dropped
+    /// frames are counted, not repaired — see [`crate::image_budget`]
+    /// for the three rules (undecodable, oversize, over-cap). Returns
+    /// the report so a caller can log the drop.
+    pub fn apply_image_budget(
+        &mut self,
+        policy: &crate::image_budget::ImageBudgetPolicy,
+    ) -> crate::image_budget::BudgetReport {
+        crate::image_budget::apply_image_budget(&mut self.image_frames, policy)
+    }
+
     /// Render the entire request as a single text prompt, matching the
     /// shape the legacy `LlmProvider::generate_with_tools` callers pass
     /// today (system block, then a transcript). The layout is
