@@ -526,6 +526,12 @@ pub async fn run_chat(
                     continue;
                 }
 
+                if let Some(turn) = kod_core::engine::parse_turn_marker(&chunk) {
+                    print!("\n\n—— turn {turn} ——\n");
+                    let _ = io::stdout().flush();
+                    continue;
+                }
+
                 if kod_core::engine::parse_tool_start(&chunk).is_some()
                     || kod_core::engine::parse_tool_done(&chunk).is_some()
                     || kod_core::engine::is_thinking_marker(&chunk)
