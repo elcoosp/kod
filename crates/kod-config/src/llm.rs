@@ -2,6 +2,25 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Prewarm policy for the keystroke-triggered cache probe.
+///
+/// `auto` (default) enables prewarm except when the active endpoint is
+/// a tab bridge (`tab_bridge = true`): on a stateful tab backend the
+/// probe mints a throwaway session on some *other* tab than the real
+/// conversation's, so it buys no time-to-first-token and only costs a
+/// ~17 k-char turn plus a minute of tab occupancy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PrewarmMode {
+    /// Enabled, except on tab-bridge endpoints.
+    #[default]
+    Auto,
+    /// Always enabled, even on tab-bridge endpoints.
+    On,
+    /// Disabled.
+    Off,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmConfig {
@@ -18,6 +37,10 @@ pub struct LlmConfig {
     /// Which endpoint each task type routes to, plus a fallback
     /// chain. `None` means every task uses `default_endpoint()`.
     pub routing: Option<RoutingConfig>,
+    /// Keystroke-triggered cache prewarm policy. Default `auto`
+    /// (on, except on tab-bridge endpoints).
+    #[serde(default)]
+    pub prewarm: PrewarmMode,
 }
 
 impl Default for LlmConfig {
@@ -38,8 +61,10 @@ impl Default for LlmConfig {
                 trust: None,
                 effort: None,
                 rate_limit_wait_secs: None,
-}],
+                tab_bridge: false,
+            }],
             routing: None,
+            prewarm: PrewarmMode::Auto,
         }
     }
 }
@@ -457,6 +482,14 @@ pub struct EndpointConfig {
     /// clamped to the backoff cap; the engine never waits).
     #[serde(default)]
     pub rate_limit_wait_secs: Option<u64>,
+    /// Whether this endpoint is a tab bridge (stateful browser-tab
+    /// backend). Default false. When true, kod stamps every background
+    /// LLM request with one stable per-engine session id (so the
+    /// bridge keeps exactly one background tab instead of minting a
+    /// throwaway `anon-*` session per request), and `prewarm = "auto"`
+    /// disables the keystroke probe (it would warm the wrong tab).
+    #[serde(default)]
+    pub tab_bridge: bool,
 }
 
 fn default_timeout_secs() -> u64 {
@@ -755,6 +788,7 @@ mod tests {
                     trust: None,
                     effort: None,
                     rate_limit_wait_secs: None,
+                    tab_bridge: false,
 },
                 EndpointConfig {
                     name: "local".into(),
@@ -770,6 +804,7 @@ mod tests {
                     trust: None,
                     effort: None,
                     rate_limit_wait_secs: None,
+                    tab_bridge: false,
 },
             ],
             routing: Some(r),
@@ -778,6 +813,43 @@ mod tests {
         assert_eq!(c.route_for_task("Simple"), "local");
         // Unrouted task falls back to the first endpoint's name.
         assert_eq!(c.route_for_task("Debugging"), "default");
+    }
+
+    #[test]
+    fn prewarm_defaults_to_auto_and_tab_bridge_to_false() {
+        let c = LlmConfig::default();
+        assert_eq!(c.prewarm, PrewarmMode::Auto);
+        assert!(!c.default_endpoint().tab_bridge);
+    }
+
+    #[test]
+    fn prewarm_and_tab_bridge_round_trip() {
+        let c: LlmConfig = toml::from_str(
+            "prewarm = \"off\"\n\
+             [[endpoints]]\n\
+             name = \"bridge\"\n\
+             provider = \"openai-compatible\"\n\
+             base_url = \"http://127.0.0.1:8789/v1\"\n\
+             model = \"deepseek-web-chat\"\n\
+             context_window = 8192\n\
+             tab_bridge = true",
+        )
+        .unwrap();
+        assert_eq!(c.prewarm, PrewarmMode::Off);
+        assert!(c.default_endpoint().tab_bridge);
+
+        // Old configs without the keys still parse.
+        let c: LlmConfig = toml::from_str(
+            "[[endpoints]]\n\
+             name = \"default\"\n\
+             provider = \"openai-compatible\"\n\
+             base_url = \"http://x\"\n\
+             model = \"m\"\n\
+             context_window = 8192",
+        )
+        .unwrap();
+        assert_eq!(c.prewarm, PrewarmMode::Auto);
+        assert!(!c.default_endpoint().tab_bridge);
     }
 }
 
@@ -805,6 +877,7 @@ mod coverage_llm_validate {
             effort: None,
             pricing: None,
             rate_limit_wait_secs: None,
+            tab_bridge: false,
         }
 }
 
