@@ -18,7 +18,7 @@ are listed here; the full set lives in `crates/kod-config/src/llm.rs`.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `rate_limit_wait_secs` | u64 (seconds), optional | `0` | Sleep out provider rate-limit windows up to this long before re-driving a request. Set ~1500 for tab-bridge. Default: 0 (fail fast). |
+| `rate_limit_wait_secs` | u64 (seconds), optional | auto (1800) | Sleep out provider rate-limit windows up to this long before re-driving the request automatically — both inside the provider retry loops and at the engine's turn level. Covers tab-bridge's 1200 s window out of the box. `0` restores the legacy fail-fast behavior (the error surfaces immediately). |
 
 ---
 

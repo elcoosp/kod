@@ -512,6 +512,20 @@ pub async fn run_chat(
                     continue;
                 }
 
+                // H-RL1: the engine is sleeping out a rate-limit window
+                // and will re-drive the request. Show one line, never
+                // the raw marker.
+                if let Some((secs, attempt, max)) =
+                    kod_core::engine::parse_rate_limit_wait(&chunk)
+                {
+                    println!(
+                        "\nRate limited by the provider — waiting {} before automatic retry (attempt {attempt}/{max})…",
+                        kod_core::engine::format_duration_ms(secs.saturating_mul(1000)),
+                    );
+                    let _ = io::stdout().flush();
+                    continue;
+                }
+
                 if kod_core::engine::parse_tool_start(&chunk).is_some()
                     || kod_core::engine::parse_tool_done(&chunk).is_some()
                     || kod_core::engine::is_thinking_marker(&chunk)

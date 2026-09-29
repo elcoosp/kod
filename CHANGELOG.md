@@ -5,6 +5,25 @@
 Fixes from a full-workspace production-readiness review. Every item
 below is covered by a test; the targeted suites are green.
 
+### Rate limits
+
+- **Automatic rate-limit retry (H-RL1).** A provider 429 with a
+  `Retry-After` window at or under the configured budget is now slept
+  out and the failed request re-driven automatically, instead of
+  surfacing the error and forcing a manual retry. The per-endpoint
+  `rate_limit_wait_secs` knob now defaults to 1800 s (30 minutes,
+  covering tab-bridge's 1200 s window); `0` restores the legacy
+  fail-fast. The engine's streaming and collected loops sleep the
+  window out between requests (cancellable with `Esc`, announced via
+  a `\0kod-rate-limit:` marker the TUI renders as a system row and the
+  CLI prints as one line), and the Anthropic provider — previously
+  hard-coded to decline any window above 60 s — honours the same
+  budget on its collect, native `complete`, and streaming paths. The
+  OpenAI streaming attempt loop no longer hammers a rate-limited
+  provider with instant retries and now caps provider-side waits at
+  90 s (`STREAM_RATE_LIMIT_WAIT_CAP`) so the engine's 120 s stream
+  idle timeout never fires during a wait.
+
 ### Security
 
 - **PolicyEngine installed on every command that builds an engine.**

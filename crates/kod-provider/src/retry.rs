@@ -333,6 +333,16 @@ pub struct RetryHints {
 /// one endpoint.
 pub const HINT_CAP: Duration = Duration::from_secs(60);
 
+/// Longest window a *streaming* attempt loop may sleep out between
+/// attempts. The engine reads provider streams under a 120 s idle
+/// timeout (`engine::stream_round`, scaled by effort), so a provider
+/// that silently parks a stream attempt for longer than this would be
+/// killed by the reader before the retry ever fired. Windows above
+/// the cap must surface as a typed `RateLimited` error instead — the
+/// engine sleeps those out between rounds, where no stream is open
+/// and the wait is user-visible and cancellable.
+pub const STREAM_RATE_LIMIT_WAIT_CAP: Duration = Duration::from_secs(90);
+
 /// Read every retry-delay hint out of an error response and return
 /// the largest one.
 ///

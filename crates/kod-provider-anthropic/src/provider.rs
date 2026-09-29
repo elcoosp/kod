@@ -44,6 +44,12 @@ pub struct AnthropicProvider {
     /// streaming paths. On by default; same contract as the OpenAI
     /// provider's field.
     stream_guard_enabled: bool,
+    /// Longest provider-suggested rate-limit window (H-RL1) the
+    /// collect and streaming paths may sleep out once per call.
+    /// `ZERO` (default) keeps the legacy fail-fast; the config's
+    /// `rate_limit_wait_secs` flows in via `with_rate_limit_wait`.
+    /// Same semantics as the OpenAI provider's field.
+    rate_limit_wait: std::time::Duration,
 }
 
 impl AnthropicProvider {
@@ -94,12 +100,22 @@ impl AnthropicProvider {
                 kod_provider::concurrency::ProviderConcurrency::new(0),
             ),
             stream_guard_enabled: true,
+            rate_limit_wait: std::time::Duration::ZERO,
         })
     }
 
     /// Opt in or out of the §9.3 stream stall detector. On by default.
     pub fn with_stream_guard(mut self, enabled: bool) -> Self {
         self.stream_guard_enabled = enabled;
+        self
+    }
+
+    /// Set the longest provider-suggested rate-limit window (H-RL1)
+    /// the provider may sleep out once per call. Mirrors the OpenAI
+    /// provider's `with_rate_limit_wait`; `ZERO` (the default) keeps
+    /// the legacy fail-fast behavior.
+    pub fn with_rate_limit_wait(mut self, wait: std::time::Duration) -> Self {
+        self.rate_limit_wait = wait;
         self
     }
 
@@ -130,6 +146,7 @@ impl AnthropicProvider {
             timeout_secs: self.timeout_secs,
             concurrency: self.concurrency,
             stream_guard_enabled: self.stream_guard_enabled,
+            rate_limit_wait: self.rate_limit_wait,
         })
     }
 
@@ -188,8 +205,16 @@ impl AnthropicProvider {
         request: LlmRequest,
         stream: bool,
     ) -> Result<(String, Vec<ToolCall>, Option<kod_provider::TokenUsage>)> {
+        // H-RL1: honour the endpoint's rate-limit wait budget the same
+        // way the OpenAI provider's `collect` does — a typed 429 hint
+        // at or under the budget is slept out once per call before the
+        // next attempt instead of being clamped to the backoff cap.
+        let policy = kod_provider::retry::RetryPolicy {
+            max_rate_limit_wait: self.rate_limit_wait,
+            ..kod_provider::retry::RetryPolicy::default()
+        };
         let mut responses =
-            kod_provider::retry::with_retry(&kod_provider::retry::RetryPolicy::default(), || {
+            kod_provider::retry::with_retry(&policy, || {
                 let req = request.clone();
                 async move {
                     self.inner
@@ -319,10 +344,24 @@ impl LlmProvider for AnthropicProvider {
             } else {
                 text
             };
-            let mut err = KodError::provider_status(status.as_u16(), &snippet);
+            // H-RL1: a 429 whose hint is within the configured budget
+            // surfaces as a typed `RateLimited` so the retry layer (or
+            // the engine's turn-level wait) sleeps it out and re-drives
+            // the request instead of failing the call.
+            if status.as_u16() == 429
+                && let Some(delay) = hints.delay
+                && !delay.is_zero()
+                && delay <= self.rate_limit_wait
+            {
+                return Err(KodError::RateLimited {
+                    retry_after_secs: delay.as_secs(),
+                });
+            }
+            let mut err =
+                KodError::provider_status_with_hint(status.as_u16(), &snippet, hints.delay);
             if hints.cap_declined {
                 err = KodError::Provider(format!(
-                    "{err} (server requested a retry delay above the 60 s cap; declining automatic retry)",
+                    "{err} (server requested a retry delay above the configured rate-limit wait budget; declining automatic retry)",
                 ));
             }
             return Err(err);
@@ -444,6 +483,7 @@ impl LlmProvider for AnthropicProvider {
         let api_key = self.api_key.clone();
         let concurrency = Arc::clone(&self.concurrency);
         let guard_enabled = self.stream_guard_enabled;
+        let rate_limit_wait = self.rate_limit_wait;
 
         Box::pin(async_stream::stream! {
             // §9.2: attempt loop. A stream that fails before
@@ -535,22 +575,46 @@ impl LlmProvider for AnthropicProvider {
                             "anthropic stream: server suggested a retry delay",
                         );
                     }
-                    if attempt < MAX_STREAM_ATTEMPTS && !hints.cap_declined {
-                        tracing::warn!(
-                            attempt,
-                            status = status.as_u16(),
-                            "anthropic stream: pre-commit HTTP error; retrying"
-                        );
-                        continue;
+                    if attempt < MAX_STREAM_ATTEMPTS {
+                        // H-RL1: a small hint within the budget is slept
+                        // out once before the retry; the engine's 120 s
+                        // stream idle timeout bounds any provider-side
+                        // wait, so the cap applies here. Larger windows
+                        // surface as a typed `RateLimited` below and the
+                        // engine waits between rounds instead.
+                        let small_hint = hints.delay.filter(|d| {
+                            !d.is_zero()
+                                && *d <= rate_limit_wait
+                                && *d <= kod_provider::retry::STREAM_RATE_LIMIT_WAIT_CAP
+                        });
+                        if !hints.cap_declined || small_hint.is_some() {
+                            if let Some(d) = small_hint {
+                                tracing::warn!(
+                                    attempt,
+                                    delay_secs = d.as_secs(),
+                                    "anthropic stream: waiting out rate-limit window",
+                                );
+                                tokio::time::sleep(d).await;
+                            }
+                            tracing::warn!(
+                                attempt,
+                                status = status.as_u16(),
+                                "anthropic stream: pre-commit HTTP error; retrying"
+                            );
+                            continue;
+                        }
                     }
                     let err = if hints.cap_declined {
                         KodError::Provider(format!(
-                            "anthropic stream: HTTP {}: {} (server requested a retry delay above the 60 s cap)",
+                            "anthropic stream: HTTP {}: {} (server requested a retry delay above the configured rate-limit wait budget)",
                             status.as_u16(),
                             text,
                         ))
                     } else {
-                        KodError::provider_status(status.as_u16(), &text)
+                        // H-RL1: carry the parsed hint on the typed
+                        // error so the engine's turn-level wait can
+                        // honour the exact window.
+                        KodError::provider_status_with_hint(status.as_u16(), &text, hints.delay)
                     };
                     yield Err(err);
                     return;

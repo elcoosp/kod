@@ -443,13 +443,18 @@ pub struct EndpointConfig {
     #[serde(default)]
     pub trust: Option<String>,
     /// Longest provider-suggested rate-limit window (seconds) that this
-    /// endpoint's retry loops may sleep out inside a single request.
+    /// endpoint's retry loops — and the engine's own turn-level wait —
+    /// may sleep out before re-driving the failed request.
     ///
     /// Tab-bridge (stateful browser backend) enforces a ~20-minute
     /// send-frequency window and answers 429 with `Retry-After` up to
-    /// 1200 s; set `rate_limit_wait_secs = 1500` so kod waits out the
-    /// window and re-drives the turn instead of failing. `None`/0 keeps
-    /// the legacy fail-fast behavior (hint clamped to the backoff cap).
+    /// 1200 s. When the hint is at or under this budget, kod waits out
+    /// the window and re-drives the turn automatically instead of
+    /// surfacing the error and forcing a manual retry.
+    ///
+    /// `None` uses [`DEFAULT_RATE_LIMIT_WAIT_SECS`] (auto-retry on).
+    /// `Some(0)` restores the legacy fail-fast behavior (any hint is
+    /// clamped to the backoff cap; the engine never waits).
     #[serde(default)]
     pub rate_limit_wait_secs: Option<u64>,
 }
@@ -457,6 +462,17 @@ pub struct EndpointConfig {
 fn default_timeout_secs() -> u64 {
     300
 }
+
+/// Default longest provider-suggested rate-limit window (seconds) kod
+/// sleeps out before automatically re-driving the failed request.
+///
+/// 30 minutes covers every per-user rate-limit window observed in the
+/// wild (tab-bridge's 1200 s included) without parking an overnight
+/// run on a daily quota. A provider hint above this budget surfaces
+/// the error to the user, as before. Set
+/// `[llm.endpoints].rate_limit_wait_secs = 0` to restore the legacy
+/// fail-fast behavior.
+pub const DEFAULT_RATE_LIMIT_WAIT_SECS: u64 = 1800;
 
 /// USD per million tokens; used by the TUI cost accounting.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

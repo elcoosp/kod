@@ -135,7 +135,9 @@ fn build_provider(endpoint: &EndpointConfig) -> Result<Arc<dyn kod_provider::Llm
                 endpoint.timeout_secs,
             )?
             .with_rate_limit_wait(std::time::Duration::from_secs(
-                endpoint.rate_limit_wait_secs.unwrap_or(0),
+                endpoint
+                    .rate_limit_wait_secs
+                    .unwrap_or(kod_config::DEFAULT_RATE_LIMIT_WAIT_SECS),
             ));
             Ok(Arc::new(provider))
         }
@@ -145,7 +147,12 @@ fn build_provider(endpoint: &EndpointConfig) -> Result<Arc<dyn kod_provider::Llm
                 endpoint.base_url.clone(),
                 endpoint.model.clone(),
                 api_key,
-            )?;
+            )?
+            .with_rate_limit_wait(std::time::Duration::from_secs(
+                endpoint
+                    .rate_limit_wait_secs
+                    .unwrap_or(kod_config::DEFAULT_RATE_LIMIT_WAIT_SECS),
+            ));
             Ok(Arc::new(provider))
         }
     }

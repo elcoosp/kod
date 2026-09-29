@@ -179,6 +179,16 @@ async fn engine_from_config(
         kod_core::build_registry(&config.llm, Some(&model_name))?;
     engine.set_registry(registry, default_model, routing).await;
 
+    // H-RL1: rate-limit auto-retry budget from the endpoint config
+    // (`None` → the shared default; `0` → legacy fail-fast).
+    engine.set_rate_limit_wait_budget(
+        config
+            .llm
+            .default_endpoint()
+            .rate_limit_wait_secs
+            .unwrap_or(kod_config::DEFAULT_RATE_LIMIT_WAIT_SECS),
+    );
+
     // Config-derived engine settings.
     engine.set_hooks(config.hooks.clone());
     engine.set_network_access(config.llm.network_access);

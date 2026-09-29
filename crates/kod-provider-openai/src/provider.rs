@@ -615,6 +615,14 @@ impl OpenAICompatProvider {
         Box::pin(async_stream::stream! {
             // §9.2: attempt loop.
             const MAX_STREAM_ATTEMPTS: u32 = 3;
+            // H-RL1: the engine reads this stream under a 120 s idle
+            // timeout, so a provider-side wait must stay under
+            // `STREAM_RATE_LIMIT_WAIT_CAP`; longer windows surface as a
+            // typed error and the engine sleeps them out between rounds.
+            let stream_wait_budget = self
+                .rate_limit_wait
+                .min(kod_provider::retry::STREAM_RATE_LIMIT_WAIT_CAP);
+            let mut long_wait_used = false;
             let mut empty_retry =
                 kod_provider::retry_safety::EmptyCompletionRetry::new();
             let mut attempt: u32 = 0;
@@ -654,7 +662,12 @@ impl OpenAICompatProvider {
                         }
                         let err = adk_err_typed(e);
                         if attempt < MAX_STREAM_ATTEMPTS {
-                            let delay = rate_limit_delay(&err, self.rate_limit_wait, attempt);
+                            let delay = rate_limit_delay(
+                                &err,
+                                stream_wait_budget,
+                                attempt,
+                                &mut long_wait_used,
+                            );
                             tracing::warn!(
                                 attempt,
                                 delay_ms = delay.as_millis() as u64,
@@ -821,7 +834,12 @@ impl OpenAICompatProvider {
                         && tracker.is_safe_to_retry()
                         && attempt < MAX_STREAM_ATTEMPTS
                     {
-                        let delay = rate_limit_delay(&err, self.rate_limit_wait, attempt);
+                        let delay = rate_limit_delay(
+                            &err,
+                            stream_wait_budget,
+                            attempt,
+                            &mut long_wait_used,
+                        );
                         tracing::warn!(
                             attempt,
                             delay_ms = delay.as_millis() as u64,
@@ -931,18 +949,37 @@ fn adk_err_typed(e: adk_core::AdkError) -> KodError {
 }
 
 /// Delay before the next streaming attempt. A typed rate limit within
-/// the wait budget sleeps out its window exactly once (attempt 1 only —
-/// a second window inside one turn fails fast instead of parking the
-/// session again). Other transients get a small linear backoff; the
-/// pre-fix loop retried instantly, hammering a provider that had just
-/// said "slow down".
-fn rate_limit_delay(err: &KodError, wait_budget: std::time::Duration, attempt: u32) -> std::time::Duration {
+/// the wait budget sleeps out its window exactly once per turn (the
+/// `long_wait_used` flag — a second window inside one turn fails fast
+/// into a small backoff instead of parking the session again). Hints
+/// above the budget and other transients get a small linear backoff;
+/// the pre-fix loop retried a 429 *instantly*, hammering a provider
+/// that had just said "slow down".
+///
+/// `wait_budget` is the caller's budget already capped by
+/// [`kod_provider::retry::STREAM_RATE_LIMIT_WAIT_CAP`]: the engine
+/// reads provider streams under a 120 s idle timeout, so a longer
+/// window must surface as a typed `RateLimited` error and let the
+/// engine wait between rounds instead.
+fn rate_limit_delay(
+    err: &KodError,
+    wait_budget: std::time::Duration,
+    attempt: u32,
+    long_wait_used: &mut bool,
+) -> std::time::Duration {
     if let KodError::RateLimited { retry_after_secs } = err {
         let hint = std::time::Duration::from_secs(*retry_after_secs);
-        if hint <= wait_budget && attempt <= 1 {
-            return hint;
+        if !hint.is_zero() && hint <= wait_budget {
+            if !*long_wait_used {
+                *long_wait_used = true;
+                return hint;
+            }
+            // Budget already spent on this turn: back off politely.
+            return std::time::Duration::from_millis(250 * u64::from(attempt));
         }
-        return std::time::Duration::ZERO;
+        // Over-budget hint: fail the provider attempts quickly (the
+        // engine may still wait out the full window at the turn level).
+        return std::time::Duration::from_millis(250 * u64::from(attempt));
     }
     std::time::Duration::from_millis(250 * u64::from(attempt))
 }

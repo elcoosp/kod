@@ -30,6 +30,13 @@ use tokio::sync::RwLock;
 /// user has waited minutes for nothing.
 const MAX_TOOL_ROUNDS: usize = 40;
 
+/// H-RL1: how many times the engine may sleep out a provider rate-limit
+/// window and re-drive the same request within one turn (streaming and
+/// collected paths share the cap). A second full window inside one turn
+/// means the provider's quota is not coming back soon enough to be
+/// worth parking the session again — the error surfaces instead.
+const MAX_RATE_LIMIT_RETRIES: u32 = 2;
+
 /// Delta §4.5: the minimum token count a tool result must have
 /// before the inline-imaging pass considers rasterizing it.
 const MIN_INLINE_IMAGE_TOKENS: u64 = 3_000;
@@ -212,6 +219,80 @@ pub fn thinking_marker() -> String {
 
 pub fn is_thinking_marker(chunk: &str) -> bool {
     chunk == THINKING_MARKER
+}
+
+/// Marker announcing an automatic rate-limit wait on the streaming
+/// chunk channel: `\0kod-rate-limit:<secs>\0<attempt>\0<max>`.
+/// Emitted by the engine just before it sleeps out a provider
+/// rate-limit window and re-drives the turn on the same endpoint
+/// (H-RL1). The TUI renders it as a system row and the CLI prints one
+/// line; neither appends it to the transcript.
+pub const RATE_LIMIT_WAIT_MARKER: &str = "\0kod-rate-limit:";
+
+/// Build a rate-limit-wait marker: the window in seconds plus the
+/// 1-based attempt and the attempt cap, for display.
+pub fn rate_limit_wait_marker(secs: u64, attempt: u32, max_attempts: u32) -> String {
+    format!("{RATE_LIMIT_WAIT_MARKER}{secs}\0{attempt}\0{max_attempts}")
+}
+
+/// If `chunk` is a rate-limit-wait marker, return
+/// `(secs, attempt, max_attempts)`. A malformed tail degrades to
+/// defaults instead of dropping the notice, the way [`parse_tool_done`]
+/// degrades its duration.
+pub fn parse_rate_limit_wait(chunk: &str) -> Option<(u64, u32, u32)> {
+    let rest = chunk.strip_prefix(RATE_LIMIT_WAIT_MARKER)?;
+    let mut parts = rest.splitn(3, '\0');
+    let secs = parts.next()?.parse::<u64>().unwrap_or(0);
+    let attempt = parts
+        .next()
+        .unwrap_or("1")
+        .parse::<u32>()
+        .unwrap_or(1)
+        .max(1);
+    let max = parts
+        .next()
+        .unwrap_or("1")
+        .parse::<u32>()
+        .unwrap_or(1)
+        .max(1);
+    Some((secs, attempt, max))
+}
+
+#[cfg(test)]
+mod rate_limit_marker_tests {
+    use super::*;
+
+    #[test]
+    fn marker_round_trips() {
+        let chunk = rate_limit_wait_marker(1200, 1, 2);
+        assert_eq!(parse_rate_limit_wait(&chunk), Some((1200, 1, 2)));
+    }
+
+    #[test]
+    fn non_marker_chunks_do_not_parse() {
+        assert_eq!(parse_rate_limit_wait("hello"), None);
+        assert_eq!(parse_rate_limit_wait(THINKING_MARKER), None);
+        assert_eq!(
+            parse_rate_limit_wait(&tool_start_marker("c1", "read_file")),
+            None
+        );
+    }
+
+    #[test]
+    fn malformed_tail_degrades_to_defaults() {
+        let chunk = format!("{RATE_LIMIT_WAIT_MARKER}60");
+        assert_eq!(parse_rate_limit_wait(&chunk), Some((60, 1, 1)));
+    }
+
+    #[test]
+    fn other_tool_markers_do_not_collide_with_the_prefix() {
+        // The tool markers share the `\0kod-` prefix; the rate-limit
+        // parser must not claim them.
+        assert_eq!(
+            parse_rate_limit_wait(&format!("{TOOL_ARGS_MARKER}c1:ls\0")),
+            None
+        );
+    }
 }
 
 /// Marker prefix for an interactive question on the streaming chunk
@@ -1682,6 +1763,13 @@ pub struct KodEngine {
     /// chronically failing endpoint is skipped in the chain for a
     /// cooldown instead of being retried as primary every turn.
     endpoint_health: std::sync::Mutex<crate::endpoint_health::EndpointHealth>,
+    /// H-RL1: the longest provider-suggested rate-limit window (secs)
+    /// the engine may sleep out before re-driving the failed request.
+    /// Installed from the endpoint's `rate_limit_wait_secs` (default
+    /// [`kod_config::DEFAULT_RATE_LIMIT_WAIT_SECS`]); `0` restores the
+    /// legacy fail-fast. An atomic so the wait helpers read it without
+    /// an async lock on the retry path.
+    rate_limit_wait_budget_secs: std::sync::atomic::AtomicU64,
     /// P6: background read-only jobs. One runner per engine so the
     /// concurrency cap is shared across every spawn site.
     background: std::sync::Arc<crate::background::BackgroundJobRunner>,
@@ -3690,6 +3778,9 @@ impl KodEngine {
             current_sensitivity: RwLock::new(crate::sensitivity::Sensitivity::Public),
             endpoint_trust: RwLock::new(std::collections::HashMap::new()),
             endpoint_health: std::sync::Mutex::new(crate::endpoint_health::EndpointHealth::default()),
+            rate_limit_wait_budget_secs: std::sync::atomic::AtomicU64::new(
+                kod_config::DEFAULT_RATE_LIMIT_WAIT_SECS,
+            ),
             background: std::sync::Arc::new(crate::background::BackgroundJobRunner::default()),
             background_mode: std::sync::atomic::AtomicBool::new(false),
             fidelity_cache: RwLock::new(HashMap::new()),
@@ -8558,6 +8649,9 @@ pub(crate) fn filter_chain_by_trust(
                     )>,
                 > = None;
                 let mut last_failure: Option<KodError> = None;
+                // H-RL1: how many rate-limit windows this call has
+                // already slept out. Shared cap with the streaming path.
+                let mut rate_limit_retries: u32 = 0;
                 loop {
                     let mut attempt_options = options.clone();
                     let round = RoundContext {
@@ -8583,6 +8677,28 @@ pub(crate) fn filter_chain_by_trust(
                             break;
                         }
                         Err(e) => {
+                            // H-RL1: a rate limit with a waitable hint is
+                            // slept out here instead of failing the call.
+                            // The collected path has no chunk channel, so
+                            // the wait is silent apart from the trace log.
+                            if rate_limit_retries < MAX_RATE_LIMIT_RETRIES
+                                && let Some(hint) = self.rate_limit_hint_within_budget(&e)
+                            {
+                                rate_limit_retries += 1;
+                                tracing::warn!(
+                                    endpoint = %model_ref.endpoint,
+                                    hint_secs = hint.as_secs(),
+                                    attempt = rate_limit_retries,
+                                    "provider rate limit; waiting out the window and re-driving the request"
+                                );
+                                if self.is_cancelled_for(key) {
+                                    return Err(KodError::InvalidState(
+                                        "cancelled by user".to_string(),
+                                    ));
+                                }
+                                tokio::time::sleep(hint).await;
+                                continue;
+                            }
                             let failure =
                                 crate::retry_strategy::TurnFailure::classify(&e.to_string());
                             let action = crate::retry_strategy::choose_action(&failure);
@@ -9023,16 +9139,38 @@ pub(crate) fn filter_chain_by_trust(
                     trace: trace_ref,
                     fallback: fallback_ref,
                 };
-                match self
-                    .run_streaming_loop(
-                        &this_provider,
-                        &mut attempt_pending,
-                        &mut attempt_messages,
-                        chunk_tx,
-                        &round,
-                    )
-                    .await
-                {
+                // H-RL1: a rate-limited turn is slept out (up to the
+                // configured budget, MAX_RATE_LIMIT_RETRIES times) and
+                // re-driven on the SAME endpoint instead of surfacing
+                // the error and forcing a manual retry. Cancellation
+                // during the wait surfaces as the normal cancel error.
+                let mut rate_limit_attempt: u32 = 0;
+                let loop_outcome = loop {
+                    match self
+                        .run_streaming_loop(
+                            &this_provider,
+                            &mut attempt_pending,
+                            &mut attempt_messages,
+                            chunk_tx,
+                            &round,
+                        )
+                        .await
+                    {
+                        Ok(v) => break Ok(v),
+                        Err(e) => match self
+                            .rate_limit_retry_wait(&e, rate_limit_attempt, key, chunk_tx)
+                            .await
+                        {
+                            Ok(Some(())) => {
+                                rate_limit_attempt += 1;
+                                continue;
+                            }
+                            Ok(None) => break Err(e),
+                            Err(cancelled) => break Err(cancelled),
+                        },
+                    }
+                };
+                match loop_outcome {
                     Ok((text, calls, results, usage, retry)) => {
                         // P5.6 — Jev said the round was off-track. If
                         // a fallback endpoint remains, keep the
@@ -9441,16 +9579,36 @@ pub(crate) fn filter_chain_by_trust(
                         trace: None,
                         fallback: None,
                     };
-                    match self
-                        .run_streaming_loop(
-                            &this_provider,
-                            &mut attempt_pending,
-                            &mut attempt_messages,
-                            chunk_tx,
-                            &round,
-                        )
-                        .await
-                    {
+                    // H-RL1: same contract as the streaming chain — a
+                    // rate-limited goal turn is slept out and re-driven
+                    // on the same endpoint.
+                    let mut rate_limit_attempt: u32 = 0;
+                    let turn_outcome_result = loop {
+                        match self
+                            .run_streaming_loop(
+                                &this_provider,
+                                &mut attempt_pending,
+                                &mut attempt_messages,
+                                chunk_tx,
+                                &round,
+                            )
+                            .await
+                        {
+                            Ok(v) => break Ok(v),
+                            Err(e) => match self
+                                .rate_limit_retry_wait(&e, rate_limit_attempt, key, chunk_tx)
+                                .await
+                            {
+                                Ok(Some(())) => {
+                                    rate_limit_attempt += 1;
+                                    continue;
+                                }
+                                Ok(None) => break Err(e),
+                                Err(cancelled) => break Err(cancelled),
+                            },
+                        }
+                    };
+                    match turn_outcome_result {
                         Ok(v) => {
                             // Fold this turn's extended messages back
                             // so the next turn starts from the full
@@ -13512,6 +13670,105 @@ pub(crate) fn filter_chain_by_trust(
             .read()
             .get(key)
             .is_some_and(|(_, fired)| *fired)
+    }
+
+    /// H-RL1: the longest provider-suggested rate-limit window the
+    /// engine may sleep out before re-driving a failed request.
+    pub fn rate_limit_wait_budget(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(
+            self.rate_limit_wait_budget_secs
+                .load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
+
+    /// H-RL1: install the rate-limit wait budget (seconds). Called by
+    /// the CLI/TUI bootstrap from the endpoint's `rate_limit_wait_secs`
+    /// (`None` → [`kod_config::DEFAULT_RATE_LIMIT_WAIT_SECS`]); `0`
+    /// restores the legacy fail-fast behavior where a rate limit
+    /// surfaces to the user immediately.
+    pub fn set_rate_limit_wait_budget(&self, secs: u64) {
+        self.rate_limit_wait_budget_secs
+            .store(secs, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// H-RL1: the waitable rate-limit window implied by `err`, when it
+    /// is a rate limit at or under the engine's wait budget. `None`
+    /// for anything else, for a zero hint, or when the budget is
+    /// disabled (`0`). Shared by the streaming and collected retry
+    /// paths; the typed `RateLimited` variant is matched first and the
+    /// string classifier only catches providers that surface the 429
+    /// as a formatted message.
+    fn rate_limit_hint_within_budget(&self, err: &KodError) -> Option<std::time::Duration> {
+        let hint_secs = match err {
+            KodError::RateLimited { retry_after_secs } => *retry_after_secs,
+            other => {
+                match crate::retry_strategy::TurnFailure::classify(&other.to_string()) {
+                    crate::retry_strategy::TurnFailure::TransportRateLimit {
+                        retry_after_secs,
+                    } => retry_after_secs?,
+                    _ => return None,
+                }
+            }
+        };
+        if hint_secs == 0 {
+            return None;
+        }
+        let hint = std::time::Duration::from_secs(hint_secs);
+        let budget = self.rate_limit_wait_budget();
+        if budget.is_zero() || hint > budget {
+            return None;
+        }
+        Some(hint)
+    }
+
+    /// H-RL1: sleep out a provider rate-limit window and tell the
+    /// caller to re-drive the same request. Emits the
+    /// [`RATE_LIMIT_WAIT_MARKER`] so the TUI/CLI show a bounded,
+    /// cancellable wait instead of a frozen spinner, then sleeps in
+    /// one-second slices so `Esc` cancels promptly.
+    ///
+    /// Returns `Ok(Some(()))` when the caller should retry the same
+    /// endpoint, `Ok(None)` when the error is not waitable (not a rate
+    /// limit, hint above the budget, or the retry cap is spent) and
+    /// the original error should propagate, and `Err` when the user
+    /// cancelled during the wait.
+    async fn rate_limit_retry_wait(
+        &self,
+        err: &KodError,
+        attempt: u32,
+        holder: &str,
+        chunk_tx: &tokio::sync::mpsc::Sender<String>,
+    ) -> Result<Option<()>> {
+        if attempt >= MAX_RATE_LIMIT_RETRIES {
+            return Ok(None);
+        }
+        let Some(hint) = self.rate_limit_hint_within_budget(err) else {
+            return Ok(None);
+        };
+        let _ = chunk_tx
+            .send(rate_limit_wait_marker(
+                hint.as_secs(),
+                attempt + 1,
+                MAX_RATE_LIMIT_RETRIES,
+            ))
+            .await;
+        tracing::warn!(
+            holder = %holder,
+            hint_secs = hint.as_secs(),
+            attempt = attempt + 1,
+            max = MAX_RATE_LIMIT_RETRIES,
+            "provider rate limit; waiting out the window and re-driving the turn"
+        );
+        let mut waited = std::time::Duration::ZERO;
+        while waited < hint {
+            if self.is_cancelled_for(holder) {
+                return Err(KodError::InvalidState("cancelled by user".to_string()));
+            }
+            let step = std::time::Duration::from_secs(1).min(hint - waited);
+            tokio::time::sleep(step).await;
+            waited += step;
+        }
+        Ok(Some(()))
     }
 
     /// Queue a steering note on the default transcript.

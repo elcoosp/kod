@@ -13,7 +13,10 @@ pub mod swarm;
 pub use config::{HooksConfig, KodConfig, LspConfig, RedactConfig, SecurityConfig, ToolsConfig};
 pub use jev::{JevConfig, JevThresholds};
 pub use limits::{LimitsConfig, OnExhausted, ToolQuota};
-pub use llm::{EndpointConfig, LlmConfig, PricingConfig, ProviderKind, RoutingConfig};
+pub use llm::{
+    DEFAULT_RATE_LIMIT_WAIT_SECS, EndpointConfig, LlmConfig, PricingConfig, ProviderKind,
+    RoutingConfig,
+};
 pub use mcp::{McpConfig, McpServerConfig};
 pub use memory::{EmbeddingEndpoint, MemoryConfig, MemoryScope};
 pub use policy::{

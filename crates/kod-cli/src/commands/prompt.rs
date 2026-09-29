@@ -192,6 +192,18 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
         use std::io::Write;
         while let Some(chunk) = rx.recv().await {
             // Skip control markers.
+            // H-RL1: the engine is sleeping out a rate-limit window and
+            // will re-drive the request. One line, never the raw marker.
+            if let Some((secs, attempt, max)) =
+                kod_core::engine::parse_rate_limit_wait(&chunk)
+            {
+                println!(
+                    "\nRate limited by the provider — waiting {} before automatic retry (attempt {attempt}/{max})…",
+                    kod_core::engine::format_duration_ms(secs.saturating_mul(1000)),
+                );
+                let _ = std::io::stdout().flush();
+                continue;
+            }
             if kod_core::engine::parse_tool_start(&chunk).is_some()
                 || kod_core::engine::parse_tool_args(&chunk).is_some()
                 || kod_core::engine::parse_tool_done(&chunk).is_some()
