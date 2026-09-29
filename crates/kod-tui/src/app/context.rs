@@ -65,6 +65,22 @@ impl KodApp {
         self.note_real_usage(total);
     }
 
+    /// Record one round's provider usage as the context-window
+    /// snapshot. This is the accurate meter: the latest round's
+    /// prompt is what the model's window actually holds
+    /// (system + history + tools + fresh results), while the turn's
+    /// merged total re-counts history every round. Replaces the
+    /// running estimate and, like `note_real_usage`, stops the
+    /// char estimate contributing for the rest of the turn.
+    pub fn note_window_usage(&mut self, prompt_tokens: usize, completion_tokens: usize) {
+        let total = prompt_tokens.saturating_add(completion_tokens);
+        if total > 0 {
+            self.context_tokens = total;
+            self.turn_has_real_usage = true;
+        }
+        self.maybe_compact();
+    }
+
     pub(super) fn note_usage(&mut self, chars: usize) {
         // Suppressed once real usage for this turn has been recorded.
         // See `turn_has_real_usage` for the double-count this avoids.
