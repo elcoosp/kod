@@ -66,11 +66,10 @@ const SYS_LANDLOCK_RESTRICT_SELF: libc::c_long = 446;
 const LANDLOCK_CREATE_RULESET_VERSION: u32 = 1 << 0;
 const LANDLOCK_RULE_PATH_BENEATH: u32 = 1;
 
-/// `PR_SET_NO_NEW_PRIVS`. Required before `landlock_restrict_self`;
-// ignore the clippy warning about `libc` already declaring a
-/// constant of the same name — using our own keeps the semantics
-/// visible at the call site.
-#[allow(dead_code)]
+/// `PR_SET_NO_NEW_PRIVS`. Required before `landlock_restrict_self`.
+/// Declared here rather than using a `libc` constant so the
+/// semantics stay visible at the call site; the value is the one
+/// `<linux/prctl.h>` assigns.
 const PR_SET_NO_NEW_PRIVS: libc::c_int = 38;
 
 // File access rights (bitmask in a u64). Names match
@@ -303,12 +302,24 @@ fn add_path_rule(ruleset_fd: &OwnedFd, path: &Path, allowed_access: u64) -> Resu
     let fd_raw = unsafe { libc::open(cstr.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
     if fd_raw < 0 {
         let err = std::io::Error::last_os_error();
-        tracing::debug!(
-            path = %path.display(),
-            error = %err,
-            "landlock: could not open path for rule; skipping"
-        );
-        return Ok(());
+        // `ENOENT` is the expected case the doc comment above
+        // explains: a path that does not exist yet is skipped, not
+        // fatal. Every other errno (`EACCES`, `ELOOP`, a name too
+        // long) is a real failure — a profile built without the rule
+        // is not the profile the caller declared, and the module's
+        // own contract forbids the "illusion of security" a silent
+        // drop produces. Surface it.
+        if err.kind() == std::io::ErrorKind::NotFound {
+            tracing::debug!(
+                path = %path.display(),
+                "landlock: path does not exist; rule skipped"
+            );
+            return Ok(());
+        }
+        return Err(KodError::SandboxViolation(format!(
+            "landlock: could not open {} for a path rule: {err}",
+            path.display()
+        )));
     }
     // SAFETY: fd_raw is a fresh fd from open(2).
     let fd: OwnedFd = unsafe { OwnedFd::from_raw_fd(fd_raw) };
