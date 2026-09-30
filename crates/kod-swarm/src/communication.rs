@@ -168,6 +168,17 @@ impl AgentCommunicationHub {
     /// Use [`AgentCommunicationHub::get_sent_history`] or
     /// [`AgentCommunicationHub::get_received_history`] when the
     /// distinction matters.
+    /// Delta §7.6: the agents known to the hub and their online
+    /// state. Used by the hub tool's `list` op. Returns
+    /// `(id, online)` pairs, sorted by id for stable output.
+    pub async fn list_agents(&self) -> Vec<(AgentId, bool)> {
+        let agents = self.agents.read().await;
+        let mut out: Vec<(AgentId, bool)> =
+            agents.iter().map(|(id, info)| (id.clone(), info.online)).collect();
+        out.sort_by(|a, b| a.0.to_string().cmp(&b.0.to_string()));
+        out
+    }
+
     pub async fn send_direct(
         &self,
         from: &AgentId,
