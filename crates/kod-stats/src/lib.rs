@@ -11,5 +11,6 @@
 
 pub mod behavioral;
 pub mod commit;
+pub mod commit_mapreduce;
 pub mod if_bench;
 pub mod request;
