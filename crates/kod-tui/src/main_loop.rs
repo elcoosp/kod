@@ -301,6 +301,8 @@ impl TuiLoop {
                 .rate_limit_wait_secs
                 .unwrap_or(kod_config::DEFAULT_RATE_LIMIT_WAIT_SECS),
         );
+        // Delta section 9.7: per-failure-class fallback chains.
+        engine.set_retry_config(config.llm.retry.clone()).await;
         engine.set_hooks(config.hooks.clone());
         engine.set_network_access(config.llm.network_access);
         self.app
