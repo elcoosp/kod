@@ -408,7 +408,13 @@ fn extract_symbols_and_imports(path: &Path) -> (Vec<Symbol>, Vec<String>) {
     };
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
     let symbols = match ext {
-        "rs" => extract_rust(&content),
+        // Delta §7.3: Rust goes through tree-sitter (the parse cache
+        // makes a repeat rebuild of an unchanged file free). The
+        // tree-sitter and regex paths produce the same
+        // `(kind, name, line)` tuples, so the repo map downstream is
+        // unchanged; `extract_rust` stays as the fallback for a
+        // parse the grammar rejects.
+        "rs" => extract_rust_via_ast(&content).unwrap_or_else(|| extract_rust(&content)),
         "py" => extract_python(&content),
         "js" | "jsx" | "ts" | "tsx" => extract_js(&content),
         "go" => extract_go(&content),
@@ -488,6 +494,24 @@ fn scan(content: &str, patterns: &[(&'static str, &Regex)]) -> Vec<Symbol> {
     out.truncate(200);
     out
 }
+/// Delta §7.3: Rust symbols via the tree-sitter parse cache. Returns
+/// `None` when the grammar cannot produce a tree (the caller falls
+/// back to the regex extractor). Applies the same test-attribute
+/// filter the regex path does, so the two agree on what counts.
+fn extract_rust_via_ast(content: &str) -> Option<Vec<Symbol>> {
+    let syms = kod_ast::rust::rust_symbols(content)?;
+    Some(
+        syms.into_iter()
+            .map(|s| Symbol {
+                kind: s.kind,
+                name: s.name,
+                line: s.line,
+            })
+            .filter(|sym| !(sym.kind == "fn" && has_test_attribute(content, sym.line)))
+            .collect(),
+    )
+}
+
 fn extract_rust(content: &str) -> Vec<Symbol> {
     static FN: OnceLock<Regex> = OnceLock::new();
 
@@ -636,6 +660,54 @@ fn extract_c(content: &str) -> Vec<Symbol> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    #[test]
+    fn the_ast_and_regex_rust_paths_agree() {
+        // Delta §7.3: the repo map routes `.rs` through tree-sitter
+        // now. If the two paths disagree on any construct, the map
+        // silently changes shape. This pins agreement on a sample
+        // that exercises every kind the extractors emit.
+        let src = "\
+// a comment
+pub fn a() {}
+pub(crate) async fn b() {}
+struct S;
+enum E { X }
+trait T {}
+mod m {}
+const C: u32 = 1;
+
+#[test]
+fn a_test() {}
+
+#[tokio::test]
+async fn an_async_test() {}
+";
+        let regex = extract_rust(src);
+        let ast = extract_rust_via_ast(src).expect("tree-sitter parse");
+        // Same names, kinds, and lines.
+        let r: Vec<(&str, String, usize)> = regex
+            .iter()
+            .map(|s| (s.kind, s.name.clone(), s.line))
+            .collect();
+        let a: Vec<(&str, String, usize)> = ast
+            .iter()
+            .map(|s| (s.kind, s.name.clone(), s.line))
+            .collect();
+        assert_eq!(a, r, "AST and regex paths must agree");
+        // And the test filter applied on both: no test fns.
+        assert!(!r.iter().any(|(_, n, _)| n == "a_test" || n == "an_async_test"));
+    }
+
+    #[test]
+    fn the_ast_path_is_actually_used() {
+        // `extract_rust_via_ast` returns Some for valid Rust, so the
+        // dispatch's `.unwrap_or_else(regex)` does not fire. If the
+        // grammar ever failed to load, this would return None and the
+        // map would silently fall back.
+        assert!(extract_rust_via_ast("fn x() {}").is_some());
+    }
 
     #[test]
     fn extract_rust_finds_top_level_symbols() {
