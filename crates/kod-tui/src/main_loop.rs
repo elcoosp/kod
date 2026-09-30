@@ -3756,6 +3756,46 @@ impl TuiLoop {
                     if cleared == 1 { "" } else { "s" },
                 ));
             }
+            "/wt" => {
+                // Delta section 11.11: relocate the session into a
+                // clone-first worktree that carries the current
+                // working tree's uncommitted changes. The engine's
+                // transcript working-dir override is pointed at the
+                // new worktree, so every subsequent tool call runs
+                // there. The original repo is untouched; the changes
+                // were copied (via `git stash create` for tracked
+                // edits + a file copy for untracked), not moved.
+                //
+                // Refuse mid-generation: a tool call in flight would
+                // keep running against the old dir while the box
+                // shows the new one.
+                if self.app.is_generating() {
+                    self.app.push_system_message(
+                        "A generation is running — cancel it first (Esc), then /wt.",
+                    );
+                    return Ok(());
+                }
+                let Some(engine) = self.engine.clone() else {
+                    self.app.push_system_message("Engine not initialized.");
+                    return Ok(());
+                };
+                let clean = parts.next().is_some_and(|a| a == "--clean");
+                match engine.relocate_to_session_worktree("", clean).await {
+                    Ok(info) => {
+                        self.app.push_system_message(&format!(
+                            "Session worktree: {} on branch {}{}. \
+                             Tool calls now run there; the original repo is untouched.",
+                            info.path.display(),
+                            info.branch,
+                            if clean { " (clean, no carry)" } else { "" },
+                        ));
+                    }
+                    Err(e) => {
+                        self.app
+                            .push_system_message(&format!("Could not create a session worktree: {e}"));
+                    }
+                }
+            }
             "/fork" => {
                 let label = parts.next().map(|s| s.to_string());
                 let n = self.app.fork_messages();
@@ -6251,6 +6291,51 @@ mod tests {
             "expected a missing-project message, got: {}",
             last.content,
         );
+    }
+
+    #[tokio::test]
+    async fn test_wt_without_engine_reports() {
+        // Without an engine, /wt has nowhere to relocate the session
+        // to. The command must say so, not silently do nothing.
+        let mut tui = TuiLoop::new();
+        tui.handle_command("/wt").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("Engine not initialized"),
+            "expected a clear no-engine message, got: {}",
+            last.content,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wt_in_a_non_git_dir_reports_cleanly() {
+        // With an engine pointed at a non-git directory, /wt must
+        // report that no worktree is possible rather than panicking.
+        use kod_core::{KodEngine, RouterConfig};
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db = tmp.path().join("t.redb");
+        let cfg = RouterConfig {
+            skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+            embedder: None,
+        };
+        let engine = std::sync::Arc::new(KodEngine::new(cfg, db).unwrap());
+        engine.start().await.unwrap();
+        let mut tui = TuiLoop::new();
+        tui.set_engine(engine.clone());
+        tui.handle_command("/wt").await.unwrap();
+        let last = tui.app().messages().last().unwrap();
+        assert!(
+            last.content.contains("not a git repository")
+                || last.content.contains("worktree"),
+            "expected a worktree-unavailable message, got: {}",
+            last.content,
+        );
+        let _ = engine.shutdown().await;
     }
 
     #[tokio::test]
