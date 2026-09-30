@@ -2268,6 +2268,7 @@ dependencies = [
  "dirs 6.0.0",
  "futures",
  "ignore",
+ "kod-ast",
  "kod-config",
  "kod-error",
  "kod-lsp",
