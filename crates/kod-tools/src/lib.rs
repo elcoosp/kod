@@ -54,6 +54,7 @@ pub mod patch;
 pub mod patch_text;
 pub mod path_lock;
 pub mod plan;
+pub mod query_syntax;
 pub mod registry;
 pub mod sandbox;
 pub mod search;
