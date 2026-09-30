@@ -16,7 +16,7 @@ pub enum KodError {
     #[error("Provider error: {0}")]
     Provider(String),
 
-    #[error("Provider timeout after {timeout_ms}ms")]
+    #[error("{}", format_provider_timeout(*timeout_ms))]
     ProviderTimeout { timeout_ms: u64 },
 
     #[error("Rate limited by provider, retry after {retry_after_secs}s")]
@@ -128,8 +128,11 @@ pub fn is_transient_transport_error(msg: &str) -> bool {
         "overloaded",
         "temporarily",
         "try again",
-        // Server-side, in prose.
-        "500 ",
+        // Server-side, in prose and as a bare code. `"500 "` (trailing
+        // space) missed `server error 500: …` (the workspace's own
+        // shape) and a bare `"500"` a transport library would emit;
+        // `"500"` catches both, matching `"502"` / `"503"` / `"504"`.
+        "500",
         "502",
         "503",
         "504",
@@ -165,12 +168,27 @@ pub fn is_transient_transport_error(msg: &str) -> bool {
     PATTERNS.iter().any(|p| m.contains(p))
 }
 
+/// Render the `ProviderTimeout` message. A `0` sentinel (the HTTP
+/// 408 case, where no client-side timeout was measured) reads as
+/// "server returned 408" rather than the misleading "after 0ms".
+fn format_provider_timeout(timeout_ms: u64) -> String {
+    if timeout_ms == 0 {
+        "Provider timeout (server returned 408)".to_string()
+    } else {
+        format!("Provider timeout after {timeout_ms}ms")
+    }
+}
+
 impl KodError {
     /// Construct a `RateLimited` from an HTTP 429 response.
     /// `retry_after` is parsed from the `Retry-After` header, if present.
-    pub fn rate_limited(retry_after: Option<std::time::Duration>, status: u16, body: &str) -> Self {
+    ///
+    /// The status code and body are not carried: the variant holds only
+    /// the wait. A caller that wants to log them does so before
+    /// constructing the error (the earlier signature accepted and
+    /// discarded them, which was worse than not accepting them).
+    pub fn rate_limited(retry_after: Option<std::time::Duration>) -> Self {
         let secs = retry_after.map(|d| d.as_secs()).unwrap_or(30);
-        let _ = (status, body);
         KodError::RateLimited {
             retry_after_secs: secs,
         }
@@ -303,7 +321,7 @@ mod coverage_error_classification {
 
     #[test]
     fn is_retryable_recognizes_server_errors() {
-        for code in ["502", "503", "504"] {
+        for code in ["500", "502", "503", "504"] {
             let msg = format!("server error {code}: bad gateway");
             assert!(KodError::Provider(msg).is_retryable(), "{code}");
         }
@@ -393,6 +411,11 @@ mod coverage_error_classification {
         let body = "x".repeat(1000);
         let err = KodError::provider_status(500, &body);
         let msg = err.to_string();
+        // The cap is exactly 300 x's (see `truncate_chars(body, 300)`
+        // in `provider_status_with_hint`). A loose `< 500` bound would
+        // pass if the cap were silently raised to 499.
+        let x_run = msg.chars().filter(|c| *c == 'x').count();
+        assert_eq!(x_run, 300, "truncation cap must be 300: {msg}");
         assert!(
             msg.len() < 500,
             "message not truncated: {} chars",
@@ -446,14 +469,14 @@ mod coverage_error_classification {
 
     #[test]
     fn rate_limited_uses_retry_after_or_default() {
-        let e = KodError::rate_limited(Some(std::time::Duration::from_secs(7)), 429, "");
+        let e = KodError::rate_limited(Some(std::time::Duration::from_secs(7)));
         assert!(matches!(
             e,
             KodError::RateLimited {
                 retry_after_secs: 7
             }
         ));
-        let e = KodError::rate_limited(None, 429, "");
+        let e = KodError::rate_limited(None);
         assert!(matches!(
             e,
             KodError::RateLimited {
