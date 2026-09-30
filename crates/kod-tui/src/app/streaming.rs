@@ -165,6 +165,7 @@ impl KodApp {
         self.current_response.clear();
         self.generating = false;
         self.record_turn_duration();
+        self.stamp_reply_duration();
         self.spinner_started = None;
         self.first_chunk_at = None;
         self.rate_limit_deadline = None;
@@ -232,6 +233,9 @@ impl KodApp {
             });
             self.stream_flushed_bubble = true;
         }
+        // Label the partial bubble with how long the turn ran before it
+        // failed — the figure the header records for this same turn.
+        self.stamp_reply_duration();
         self.last_error = Some(error.to_string());
         self.push_system_message(&Self::friendly_error(error, self.fail_count));
         // Errors live in the chat scroll view — never in a strip above
@@ -352,6 +356,10 @@ impl KodApp {
         } else {
             self.push_system_message("Cancelled.");
         }
+        // Same as the fail path: the partial bubble carries the time the
+        // cancelled turn ran for; with no partial there is nothing to
+        // label (the flag is false and no old bubble is touched).
+        self.stamp_reply_duration();
     }
 
     /// Set the persistent goal (`/goal <text>`). While set, every prompt
