@@ -141,8 +141,10 @@ pub fn default_socket_path() -> PathBuf {
 /// A request line.
 #[derive(Debug, Deserialize)]
 struct Request {
+    /// Protocol version, read by the dispatch loop's version gate
+    /// (`MIN_PROTOCOL_VERSION..=MAX_PROTOCOL_VERSION`). `None` for a
+    /// pre-version client; every v1 method works without it.
     #[serde(default)]
-    #[allow(dead_code)]
     v: Option<u8>,
     id: String,
     method: String,
@@ -164,10 +166,7 @@ struct Response<'a> {
 
 /// Run the daemon until `shutdown` fires or `SIGINT` arrives.
 pub async fn serve(engine: Arc<KodEngine>, socket_path: PathBuf) -> Result<()> {
-    prepare_socket(&socket_path).await?;
-    let listener = UnixListener::bind(&socket_path).map_err(|e| {
-        KodError::Internal(format!("could not bind {}: {e}", socket_path.display()))
-    })?;
+    let listener = bind_listener(&socket_path).await?;
     set_socket_perms(&socket_path)?;
     tracing::info!(socket = %socket_path.display(), "kod serve listening");
 
@@ -252,12 +251,22 @@ pub async fn stop_daemon(socket_path: &Path) -> Result<()> {
 // Internal
 // ---------------------------------------------------------------------------
 
-/// Remove a stale socket file, or refuse to start if a live daemon
-/// is already listening on it.
-async fn prepare_socket(path: &Path) -> Result<()> {
+/// Bind the daemon's Unix socket, or refuse if a live daemon already
+/// owns it.
+///
+/// The whole check-then-bind runs under an exclusive `flock` on a
+/// sibling `<socket>.lock` file, so two concurrent `kod serve`
+/// invocations serialize. Without the lock, a connect-probe that saw
+/// a stale file could unlink a socket a sibling had just bound
+/// (check-then-act with no atomicity).
+///
+/// The lock is held until the function returns — by then the listener
+/// is bound and the file on disk is ours.
+async fn bind_listener(path: &Path) -> Result<UnixListener> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(KodError::Io)?;
     }
+    let _lock = SocketLock::acquire(path)?;
     match UnixStream::connect(path).await {
         Ok(_) => Err(KodError::InvalidState(format!(
             "another kod server is already listening on {}",
@@ -265,11 +274,52 @@ async fn prepare_socket(path: &Path) -> Result<()> {
         ))),
         Err(_) => {
             // Either no file, or a stale one from a crashed daemon.
-            // Removing is safe: if a live server were there, connect
-            // would have succeeded and we would not be here.
+            // Removing is safe *under the lock*: no sibling can bind
+            // between the probe and the unlink.
             let _ = std::fs::remove_file(path);
-            Ok(())
+            UnixListener::bind(path).map_err(|e| {
+                KodError::Internal(format!(
+                    "could not bind {}: {e}",
+                    path.display()
+                ))
+            })
         }
+    }
+}
+
+/// `flock`-based exclusive lock on `<socket>.lock`. Held for the
+/// duration of `bind_listener`; the lock releases when the file
+/// handle drops (POSIX semantics — no explicit `flock(LOCK_UN)`).
+struct SocketLock {
+    /// Open handle on the lock file. Held only for its side effect;
+    /// the name is prefixed so the compiler does not warn about a
+    /// field that is never read.
+    _file: std::fs::File,
+}
+
+impl SocketLock {
+    fn acquire(socket_path: &Path) -> Result<Self> {
+        let lock_path = socket_path.with_extension("lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(KodError::Io)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            // SAFETY: `file` is a valid open fd; `flock` is the
+            // standard advisory-lock syscall. LOCK_EX blocks until
+            // the lock is available — the wait is short (the locked
+            // region runs no await).
+            let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+            if rc != 0 {
+                return Err(KodError::Io(std::io::Error::last_os_error()));
+            }
+        }
+        Ok(Self { _file: file })
     }
 }
 
@@ -1026,6 +1076,7 @@ mod coverage_serve_serde {
 #[cfg(test)]
 mod coverage_serve_handlers {
     use super::*;
+    use std::os::unix::fs::FileTypeExt as _;
     use tokio::sync::mpsc;
 
     async fn drain_one<F, Fut>(f: F) -> String
@@ -1203,45 +1254,47 @@ mod coverage_serve_handlers {
     // ---- prepare_socket -------------------------------------------------
 
     #[tokio::test]
-    async fn prepare_socket_creates_the_parent_directory() {
+    async fn bind_listener_creates_the_parent_directory() {
         let tmp = tempfile::TempDir::new().unwrap();
         let sock = tmp.path().join("nested").join("kod.sock");
         assert!(!sock.parent().unwrap().exists());
-        prepare_socket(&sock).await.unwrap();
+        let _l = bind_listener(&sock).await.unwrap();
         assert!(
             sock.parent().unwrap().is_dir(),
-            "prepare_socket must create the parent directory",
+            "bind_listener must create the parent directory",
         );
     }
 
     #[tokio::test]
-    async fn prepare_socket_succeeds_on_a_fresh_path() {
+    async fn bind_listener_creates_the_socket_file() {
         let tmp = tempfile::TempDir::new().unwrap();
         let sock = tmp.path().join("kod.sock");
-        prepare_socket(&sock).await.unwrap();
-        // The socket file itself is not created here — only
-        // `UnixListener::bind` does that. What `prepare_socket`
-        // guarantees is that no stale file blocks the bind.
+        let _l = bind_listener(&sock).await.unwrap();
+        // `bind_listener` returns a bound listener, so the socket
+        // path exists and is a socket.
+        let md = std::fs::metadata(&sock).expect("socket file exists");
         assert!(
-            !sock.exists(),
-            "prepare_socket must not leave a socket file behind",
+            md.file_type().is_socket(),
+            "bind_listener must leave a socket at the path",
         );
     }
 
     #[tokio::test]
-    async fn prepare_socket_removes_a_stale_socket_file() {
+    async fn bind_listener_replaces_a_stale_socket_file() {
         // A crashed daemon leaves an inode on disk that is not a
-        // listening socket. `prepare_socket` must clear it so the
+        // listening socket. `bind_listener` must clear it so the
         // next bind succeeds, rather than returning "already
         // listening" for a server that no longer exists.
         let tmp = tempfile::TempDir::new().unwrap();
         let sock = tmp.path().join("kod.sock");
         std::fs::write(&sock, b"stale").unwrap();
         assert!(sock.exists());
-        prepare_socket(&sock).await.unwrap();
+        let _l = bind_listener(&sock).await.unwrap();
+        // The path now holds a socket, not the stale text file.
+        let md = std::fs::metadata(&sock).expect("path exists after bind");
         assert!(
-            !sock.exists(),
-            "prepare_socket must remove a stale socket file",
+            md.file_type().is_socket(),
+            "bind_listener must replace the stale file with a socket",
         );
     }
 
@@ -1253,7 +1306,7 @@ mod coverage_serve_handlers {
         let tmp = tempfile::TempDir::new().unwrap();
         let sock = tmp.path().join("kod.sock");
         let _listener = UnixListener::bind(&sock).expect("bind test listener");
-        let err = prepare_socket(&sock).await.unwrap_err();
+        let err = bind_listener(&sock).await.unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("another kod server") || msg.contains("listening"),
