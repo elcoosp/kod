@@ -63,9 +63,13 @@ OpenAI-compatible implementation (backed by `adk-model`):
 - Model listing via `GET /v1/models`
 
 #### kod-provider-anthropic
-<!-- SUPERSEDED: Anthropic Messages API provider (backed by `adk-model`): -->
+Anthropic Messages API provider (native `wire` module):
 - The same `LlmProvider` trait as the OpenAI-compatible provider
-- Wraps `adk_model::anthropic::Anthropic` — one code path per provider kind
+- `complete`, streaming, and native compaction build the wire body in
+  `wire.rs`, so `cache_control` can sit on the last cacheable system
+  segment (an `adk-model` wrapper flattens the system prompt and loses
+  the breakpoint)
+- `generate` / `generate_with_tools` keep the legacy `adk-model` text path
 
 #### kod-lsp
 Minimal Language Server Protocol client for code intelligence:
