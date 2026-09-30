@@ -29,6 +29,7 @@ pub mod engine;
 pub mod fixture;
 pub mod goals;
 pub mod hooks;
+pub mod hub_tool;
 pub mod jev;
 pub mod lsp_tools;
 pub mod mcp_adapters;
