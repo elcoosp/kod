@@ -111,6 +111,21 @@ pub struct MessageMetadata {
     /// `None` on every message that has not been imaged.
     #[serde(default)]
     pub image: Option<RasterizedImage>,
+    /// Wall-clock the TUI measured for the turn that produced this
+    /// assistant reply, in milliseconds. Rendered as the `took 4.2s`
+    /// row under that reply's bubble and persisted with the session,
+    /// so a reloaded transcript keeps its timings.
+    ///
+    /// `None` on every non-assistant message, on the live streaming
+    /// bubble (the turn is still running), on a turn that pushed no
+    /// reply, and on sessions written before the field existed.
+    ///
+    /// Not the engine's `thinking_time_ms` (a provider-reported
+    /// figure): this is end-to-end wall-clock for the whole turn —
+    /// tools, retries, rate-limit waits and all — measured on the TUI
+    /// thread. `#[serde(default)]` so pre-field session files parse.
+    #[serde(default)]
+    pub turn_duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -334,6 +349,8 @@ mod coverage_message_render {
         assert!(m.agent_id.is_none());
         assert!(m.thinking_time_ms.is_none());
         assert!(m.token_count.is_none());
+        assert!(m.image.is_none());
+        assert!(m.turn_duration_ms.is_none());
         assert!(!m.pinned);
     }
 
@@ -348,12 +365,24 @@ mod coverage_message_render {
     }
 
     #[test]
+    fn turn_duration_round_trips_through_json() {
+        // The `took …` row under an assistant bubble reads this field;
+        // it must survive the session-file round trip.
+        let mut m = MessageMetadata::default();
+        m.turn_duration_ms = Some(4200);
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"turn_duration_ms\":4200"), "got: {json}");
+        let parsed: MessageMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.turn_duration_ms, Some(4200));
+    }
+
+    #[test]
     fn metadata_without_pinned_key_defaults_to_false() {
         // `MessageMetadata` only carries a per-field default on
-        // `pinned`; the other five fields are required. A session
-        // file written before `pinned` existed carries those five
-        // and no `pinned` key; it must parse with `pinned` defaulting
-        // to false.
+        // `pinned`, `image`, and `turn_duration_ms`; the other five
+        // fields are required. A session file written before those
+        // three existed carries the five and no `pinned` key; it must
+        // parse with every defaulted field taking its `None`/`false`.
         let legacy = r#"{
             "skill_applied": null,
             "tools_used": [],
@@ -363,6 +392,8 @@ mod coverage_message_render {
         }"#;
         let parsed: MessageMetadata = serde_json::from_str(legacy).unwrap();
         assert!(!parsed.pinned);
+        assert!(parsed.image.is_none());
+        assert!(parsed.turn_duration_ms.is_none());
     }
 }
 
