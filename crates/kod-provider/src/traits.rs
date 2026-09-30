@@ -153,10 +153,7 @@ pub trait LlmProvider: Send + Sync {
     /// The default implementation collects [`generate_with_tools`] and
     /// replays it as chunks (no live tokens, but every implementor works).
     /// Providers with SSE support should override for real token streaming.
-    /// Default capabilities. Providers that care — Anthropic for
-    /// explicit cache support, OpenAI for pricing — override this.
-    /// The conservative default disables nothing that works (tools on,
-    /// streaming_tools off), which is the safe side of the trade.
+    ///
     /// Delta §4.4: provider-native compaction.
     ///
     /// A provider with server-side compaction summarizes the prompt
@@ -182,6 +179,11 @@ pub trait LlmProvider: Send + Sync {
         Ok(None)
     }
 
+    /// Default capabilities. Providers that care — Anthropic for
+    /// explicit cache support, OpenAI for pricing — override this.
+    /// The conservative default disables nothing that works (tools
+    /// on, `streaming_tools` off), which is the safe side of the
+    /// trade.
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities::conservative()
     }
