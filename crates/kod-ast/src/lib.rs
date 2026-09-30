@@ -24,6 +24,8 @@
 
 pub mod lang;
 pub mod parse_cache;
+pub mod rust;
 
 pub use lang::Lang;
 pub use parse_cache::{ParseCache, global};
+pub use rust::AstSymbol;
