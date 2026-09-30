@@ -7,7 +7,7 @@
   <p>
     <img src="https://img.shields.io/badge/Rust-1.85%2B%20%7C%202024-000000?style=flat-square&logo=rust" alt="Rust"/>
     <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License MIT"/>
-    <img src="https://img.shields.io/badge/Crates-15-6F4E37?style=flat-square" alt="Crates"/>
+    <img src="https://img.shields.io/badge/Crates-20-6F4E37?style=flat-square" alt="Crates"/>
     <img src="https://img.shields.io/badge/Backend-Ollama%20%7C%20OpenAI--Compatible-6A0DAD?style=flat-square" alt="Backend"/>
     <img src="https://img.shields.io/badge/Interface-TUI%20%2B%20CLI-4B32C3?style=flat-square" alt="Interface"/>
     <img src="https://img.shields.io/badge/Skills-Markdown%20%2B%20Hot%20Reload-00BFFF?style=flat-square" alt="Skills"/>
@@ -108,6 +108,11 @@ KOD is a Cargo workspace. Each crate has a single responsibility and a narrow pu
 | `kod-core` | `KodEngine`, `TaskRouter`, `SwarmRunner`, repository map, session log, hooks. |
 | `kod-tui` | Terminal UI: app state, event handling, widgets, keybindings, themes. |
 | `kod-cli` | The `kod` binary: command definitions and handlers. |
+| `kod-risk` | Path-danger classification: ranks filesystem paths by blast radius for approval and sandboxing. |
+| `kod-schema-dialect` | Per-provider JSON-schema dialect translation for tool definitions. |
+| `kod-minimize` | Shell-output minimizer: reduces a command's output to the lines that matter. |
+| `kod-stats` | Behavioral + per-request analytics, `if-bench`, and conventional-commit validation. |
+| `kod-telemetry` | OTLP export of turn and session telemetry. |
 
 ### Data flow
 
@@ -197,6 +202,7 @@ Commands:
   sessions     Inspect, export, or clear the saved TUI session
   map          Print the repository map
   replay       Re-run the tool calls from a session log
+  serve        Run a daemon that keeps one engine alive across client invocations
   doctor       Print a diagnostics report
   init         First-run helper
   test         Run the built-in self-tests
@@ -430,6 +436,10 @@ The workspace contains roughly 356 test attributes across 11 crates. `cargo test
 | `kod-core` | Engine lifecycle, task classification, memory wiring, prompt grounding, tool rounds, session log, swarm runner. |
 | `kod-tui` | App state, event handling, keybindings, completion, search, streaming, main loop. |
 | `kod-cli` | Doctor checks, command dispatch, in-process engine tests. |
+| `kod-lsp` | JSON-RPC framing, position math, diagnostics collection. |
+| `kod-mcp` | Protocol framing, `tools/list` pagination, tool invocation. |
+| `kod-swarm` | Work pool, agent registry, IRC bus, yield queue, cleanse scheduler. |
+| `kod-provider-anthropic` | Wire body construction, cache-control placement, native compaction. |
 
 To see the exact current total:
 
