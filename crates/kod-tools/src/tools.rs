@@ -192,7 +192,7 @@ impl ReadFileTool {
                 trust_level: kod_types::trust::TrustLevel::default(),
                 id: ToolId::new(),
                 name: "read_file".to_string(),
-                description: "Read a file. Also serves `xd://` (mounted tools), `artifact://`, and `memory://` URLs."
+                description: "Read a file. Also serves `xd://` (mounted tools), `artifact://`, and `memory://` URLs. With numbered=true, emits `N:line` output and a content tag usable with the `edit` tool."
                     .to_string(),
                 category: ToolCategory::FileSystem,
                 parameters_schema: serde_json::json!({
@@ -201,6 +201,10 @@ impl ReadFileTool {
                         "path": {
                             "type": "string",
                             "description": "Path to the file to read"
+                        },
+                        "numbered": {
+                            "type": "boolean",
+                            "description": "Emit `N:line` output and record a snapshot for the `edit` tool. Required before using `edit` on this file. Default false."
                         }
                     },
                     "required": ["path"]
@@ -420,6 +424,37 @@ impl Tool for ReadFileTool {
         // Tier 1.3 — sanitize the content when the path matched a
         // read-protection pattern and the mode is `Redact`.
         let content = redact_read_content(&content, context, &resolved);
+
+        // Delta §7.1: numbered mode emits `N:line` rows and records a
+        // snapshot so the `edit` tool can address these lines under a
+        // tag guard. Plain reads (the default) are unchanged — the
+        // TUI, `@path` expansion, and every existing caller see the
+        // same shape they always did.
+        let numbered = params
+            .get("numbered")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if numbered && !truncated {
+            let line_count = content.lines().count();
+            // Everything the read returned is "seen"; a truncated
+            // read is not (an unseen tail must not be editable).
+            let seen = vec![true; line_count + 1];
+            let tag = context.edit_store.as_ref().map(|store| {
+                store
+                    .lock()
+                    .map(|mut g| g.record_snapshot(&resolved, &content, seen))
+                    .unwrap_or([0, 0])
+            });
+            let numbered_text = crate::edit_hashline::render_numbered(&content, usize::MAX);
+            return Ok(ToolResult::Success(serde_json::json!({
+                "path": resolved.to_string_lossy().to_string(),
+                "content": numbered_text,
+                "truncated": false,
+                "binary": false,
+                "numbered": true,
+                "tag": tag.map(crate::edit_hashline::tag_hex),
+            })));
+        }
 
         Ok(ToolResult::Success(serde_json::json!({
             "path": resolved.to_string_lossy().to_string(),
@@ -2042,6 +2077,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_file_numbered_emits_rows_and_a_tag() {
+        // Delta §7.1: numbered mode is what feeds the `edit` tool.
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("code.rs");
+        std::fs::write(&path, "fn a() {}\nfn b() {}\n").unwrap();
+        let store = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::edit_hashline::EditStore::new(),
+        ));
+        let mut ctx = crate::context::ToolContext::new(temp.path());
+        ctx.permissions.read_files = true;
+        ctx.edit_store = Some(std::sync::Arc::clone(&store));
+        let tool = ReadFileTool::new();
+        let r = tool
+            .execute(
+                &serde_json::json!({"path": "code.rs", "numbered": true}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let ToolResult::Success(v) = r else {
+            panic!("expected success, got {r:?}");
+        };
+        let content = v["content"].as_str().unwrap();
+        assert!(content.starts_with("1:fn a() {}"), "got: {content}");
+        assert!(content.contains("2:fn b() {}"), "got: {content}");
+        assert!(v["tag"].is_string(), "a tag must be recorded");
+        // The store now holds a snapshot for this path.
+        assert!(store.lock().unwrap().current_tag(&path).is_some());
+    }
+
+    #[tokio::test]
+    async fn read_file_plain_is_unchanged() {
+        // The default read must not gain `N:` prefixes — every
+        // existing caller depends on the raw shape.
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("x.txt"), "hello\n").unwrap();
+        let mut ctx = crate::context::ToolContext::new(temp.path());
+        ctx.permissions.read_files = true;
+        let tool = ReadFileTool::new();
+        let r = tool
+            .execute(&serde_json::json!({"path": "x.txt"}), &ctx)
+            .await
+            .unwrap();
+        let ToolResult::Success(v) = r else { panic!() };
+        assert_eq!(v["content"].as_str().unwrap(), "hello\n");
+        assert!(v.get("tag").is_none(), "plain read records no tag");
+    }
+
     async fn read_file_small_file_is_not_truncated() {
         let temp = tempfile::TempDir::new().unwrap();
         std::fs::write(temp.path().join("small.txt"), "hello world").unwrap();
