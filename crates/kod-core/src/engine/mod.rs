@@ -3867,7 +3867,11 @@ impl KodEngine {
                 },
             )
         };
+        let edit_store = std::sync::Arc::new(std::sync::Mutex::new(
+            kod_tools::edit_hashline::EditStore::new(),
+        ));
         let tool_context = ToolContext::new(working_dir.clone())
+            .with_edit_store(std::sync::Arc::clone(&edit_store))
             .with_permissions(ToolPermissions {
                 read_files: true,
                 write_files: true,
@@ -8204,6 +8208,11 @@ impl KodEngine {
         if !background {
             self.tools.register(Box::new(WriteFileTool::new())).await;
             self.tools.register(Box::new(PatchFileTool::new())).await;
+            // Delta §7.1: the hashline edit tool. Its store is shared
+            // through the tool context.
+            self.tools
+                .register(Box::new(kod_tools::EditHashlineTool::new()))
+                .await;
         }
         // Swarm coordination tools (D4.3). The blackboard is the
         // engine's `AgentCommunicationHub` — the note tool broadcasts
