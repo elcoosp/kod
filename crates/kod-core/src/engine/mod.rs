@@ -13125,15 +13125,23 @@ impl KodEngine {
                     .unwrap_or(true);
                 let lsp_wanted = self.auto_lsp_setting() && lsp_config_auto;
                 let compiler_wanted = self.auto_check_setting();
+                // Delta 7.2 batch mode: a round that writes several
+                // files runs the LSP pass on the *last* one (the
+                // design's "flush on the last write of a call") rather
+                // than on no file at all. The model gets feedback on
+                // the file it touched most recently; running a full
+                // settle per file would cost N times the wait.
+                let last_write = writes.last().expect("writes is non-empty");
+                let batch = writes.len() > 1;
                 let lsp_eligible =
-                    lsp_wanted && writes.len() == 1 && Self::lsp_binary_for(&writes[0].0).is_some();
+                    lsp_wanted && Self::lsp_binary_for(&last_write.0).is_some();
 
                 let diags: Vec<kod_tools::check::Diagnostic>;
                 let source: String;
                 let used_lsp: bool;
 
                 if lsp_eligible {
-                    let (path, content) = &writes[0];
+                    let (path, content) = last_write;
                     let binary = Self::lsp_binary_for(path).unwrap_or("lsp");
                     // `settle_ms` from `[lsp]` bounds how long we
                     // wait for the server to publish before accepting
@@ -13143,7 +13151,12 @@ impl KodEngine {
                     let settle_ms = kod_config::KodConfig::load_default()
                         .ok()
                         .map(|c| c.lsp.settle_ms)
-                        .unwrap_or(1_500);
+                        .unwrap_or(500);
+                    // Batch rounds take a shorter inline wait: the
+                    // model wants a fast answer on the last file, not
+                    // a thorough one. Deferred diagnostics still cover
+                    // a slow server.
+                    let settle_ms = if batch { settle_ms.min(400) } else { settle_ms };
                     let lsp_diags = self
                         .lsp_diagnostics(path, content, std::time::Duration::from_millis(settle_ms))
                         .await;
