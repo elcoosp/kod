@@ -22,6 +22,7 @@ members = [
     "crates/kod-minimize",
     "crates/kod-stats",
     "crates/kod-telemetry",
+    "crates/kod-ast",
 ]
 
 [workspace.package]
@@ -225,6 +226,21 @@ base64 = "0.22"
 
 # System
 libc = "0.2"
+
+# AST (delta 7.3): tree-sitter core + the grammars kod's repo map
+# understands. Each grammar compiles a C parser on first build, which
+# is why this is a separate crate rather than a kod-core module.
+tree-sitter = "0.25"
+tree-sitter-rust = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-ruby = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-c = "0.23"
+# parse_cache key hashing. xxh3 is the modern variant.
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 # Tools & schema
 walkdir = "2.5.0"
