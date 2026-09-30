@@ -423,8 +423,10 @@ impl KodApp {
 
     /// Wall-clock the last finished turn took, in friendly form
     /// (`1m05s`). Empty when no turn has completed yet. Shown in the
-    /// header — the transcript stays free of duration rows by design
-    /// (see `turn_completion_pushes_no_duration_row`).
+    /// header as the "what did the *last* turn take" glance, cleared
+    /// when the next turn begins. Each reply bubble carries its own
+    /// figure too (the `took …` row stamped by `stamp_reply_duration`),
+    /// so scrolling back still shows how long an older reply took.
     pub fn last_turn_label(&self) -> String {
         match self.last_turn_duration {
             Some(d) => Self::format_friendly_duration(d),
@@ -442,6 +444,33 @@ impl KodApp {
     /// cleared. A turn that never started the spinner records nothing.
     pub(super) fn record_turn_duration(&mut self) {
         self.last_turn_duration = self.spinner_started.map(|s| s.elapsed());
+    }
+
+    /// Attach the finished turn's wall-clock to the reply bubble this
+    /// turn produced, so the chat can render a `took 4.2s` row under the
+    /// bubble instead of leaving the figure only in the header.
+    ///
+    /// Called after the reply is pushed (finish / fail / cancel paths) and
+    /// after `record_turn_duration`. `stream_flushed_bubble` is the
+    /// per-turn "this turn pushed a reply" flag — it is reset in
+    /// `begin_generation` and set wherever an assistant bubble lands — so
+    /// a turn that pushed nothing stamps no old bubble with its time.
+    pub(super) fn stamp_reply_duration(&mut self) {
+        if !self.stream_flushed_bubble {
+            return;
+        }
+        let Some(d) = self.last_turn_duration else {
+            return;
+        };
+        let Some(reply) = self
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|m| m.role == MessageRole::Assistant)
+        else {
+            return;
+        };
+        reply.metadata.turn_duration_ms = Some(d.as_millis().min(u128::from(u64::MAX)) as u64);
     }
 
     /// Milliseconds from `begin_generation` to the first non-empty
