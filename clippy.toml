@@ -1,3 +1,7 @@
-# Clippy configuration
-too-many-arguments-threshold = 8
-type-complexity-threshold = 300
+# Clippy configuration.
+#
+# The two thresholds that used to live here — `too-many-arguments` and
+# `type-complexity` — were dead: the workspace allows both lints
+# (`[workspace.lints.clippy]` in Cargo.toml), so the thresholds could
+# never fire. Tuning them changed nothing. If the allows are ever
+# lifted, the thresholds belong back here.
