@@ -8230,6 +8230,15 @@ impl KodEngine {
                 self.swarm_coordinator_id.clone(),
             )))
             .await;
+        // Delta §7.6: the op-dispatched hub tool (messaging + jobs;
+        // process supervision reports unavailable).
+        self.tools
+            .register(Box::new(crate::hub_tool::HubTool::new(
+                self.swarm_hub(),
+                self.swarm_coordinator_id.clone(),
+                self.background(),
+            )))
+            .await;
         self.tools.register(Box::new(ListFilesTool::new())).await;
         self.tools.register(Box::new(GrepTool::new())).await;
         self.tools.register(Box::new(FileInfoTool::new())).await;
