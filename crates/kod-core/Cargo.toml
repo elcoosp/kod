@@ -33,6 +33,7 @@ kod-provider-anthropic = { path = "../kod-provider-anthropic" }
 kod-skills = { path = "../kod-skills" }
 kod-memory = { path = "../kod-memory" }
 kod-tools = { path = "../kod-tools" }
+kod-ast = { path = "../kod-ast" }
 kod-lsp = { path = "../kod-lsp" }
 kod-mcp = { path = "../kod-mcp" }
 kod-swarm = { path = "../kod-swarm" }
