@@ -543,6 +543,11 @@ pub struct KodApp {
     cursor_position: usize,
     input_history: Vec<String>,
     history_index: Option<usize>,
+    /// Byte ranges of bracketed-paste insertions still present in
+    /// `input`. Large pasted blocks render as a `[Pasted N lines]`
+    /// chip instead of flooding the box; every edit adjusts or drops
+    /// the ranges so chips never attach to the wrong text.
+    pasted_blocks: Vec<input::PastedBlock>,
     /// Unsent draft stashed when the user first presses Up — Down past the
     /// newest entry restores it instead of blanking the box.
     draft: String,
@@ -943,6 +948,7 @@ impl KodApp {
             input_history: Vec::new(),
             history_index: None,
             draft: String::new(),
+            pasted_blocks: Vec::new(),
 
             messages: Vec::new(),
             scroll_lines: 0,
