@@ -39,6 +39,7 @@ pub mod bash_interceptor;
 pub mod batch;
 pub mod check;
 pub mod context;
+pub mod edit_hashline;
 pub mod git;
 pub mod internal_url;
 pub mod relevance;
