@@ -139,6 +139,7 @@ Core engine:
 4. **Task Routing** → Core Engine
 5. **LLM Generation** → Provider
 6. **Tool Execution** → Tools (if needed)
+7. **Tool Result Feedback** → Provider (the results feed the next round)
 8. **Response** → CLI/TUI
 
 ## Design Principles
