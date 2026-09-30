@@ -98,7 +98,7 @@ KOD is a Cargo workspace. Each crate has a single responsibility and a narrow pu
 | `kod-config` | `KodConfig`, `LlmConfig`, `MemoryConfig`, `SkillsConfig`, `SwarmConfig`, model profiles. |
 | `kod-provider` | `LlmProvider` trait, `GenerationOptions`, streaming chunk types. |
 | `kod-provider-openai` | OpenAI-compatible implementation (backed by `adk-model`). |
-| `kod-provider-anthropic` | Anthropic Messages API provider (backed by `adk-model`). |
+| `kod-provider-anthropic` | Anthropic Messages API provider (native wire; `adk-model` for the legacy text path). |
 | `kod-lsp` | Minimal Language Server Protocol client: JSON-RPC over stdio, diagnostics, definition, references, hover. |
 | `kod-mcp` | Minimal Model Context Protocol client: spawns MCP servers, lists and calls their tools. |
 | `kod-skills` | Skill parser, loader, matcher, and hot-reload watcher. |
