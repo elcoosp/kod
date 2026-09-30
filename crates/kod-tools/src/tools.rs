@@ -2125,6 +2125,7 @@ mod tests {
         assert!(v.get("tag").is_none(), "plain read records no tag");
     }
 
+    #[tokio::test]
     async fn read_file_small_file_is_not_truncated() {
         let temp = tempfile::TempDir::new().unwrap();
         std::fs::write(temp.path().join("small.txt"), "hello world").unwrap();
