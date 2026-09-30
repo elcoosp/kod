@@ -1,0 +1,25 @@
+[package]
+name = "kod-ast"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tree-sitter = { workspace = true }
+tree-sitter-rust = { workspace = true }
+tree-sitter-python = { workspace = true }
+tree-sitter-typescript = { workspace = true }
+tree-sitter-javascript = { workspace = true }
+tree-sitter-go = { workspace = true }
+tree-sitter-ruby = { workspace = true }
+tree-sitter-java = { workspace = true }
+tree-sitter-c = { workspace = true }
+xxhash-rust = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[lints]
+workspace = true
