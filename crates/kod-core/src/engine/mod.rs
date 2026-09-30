@@ -1576,6 +1576,11 @@ pub struct KodEngine {
     /// back to `current_model` as a single-element chain. Populated by
     /// `set_registry` from the config's `routing` field.
     routing: RwLock<Option<kod_config::RoutingConfig>>,
+    /// Delta section 9.7: per-failure-class fallback chains. Read in
+    /// the fallback loops when a candidate chain falls through; a
+    /// class entry names additional endpoints to try. Empty (the
+    /// default) preserves the flat `routing.fallback` behavior.
+    retry_config: RwLock<kod_config::RetryConfig>,
     /// `Arc`-shared so the advisor sink can observe run state
     /// without holding a reference to the engine (which would be a
     /// cycle: the engine owns the tool registry owns the tool owns
@@ -3887,6 +3892,7 @@ impl KodEngine {
             registry: RwLock::new(None),
             current_model: RwLock::new(ModelRef::new("default", "")),
             routing: RwLock::new(None),
+            retry_config: RwLock::new(kod_config::RetryConfig::default()),
             is_running: Arc::new(RwLock::new(false)),
             tools: tools_for_router,
             tool_context,
@@ -7127,6 +7133,52 @@ impl KodEngine {
         *self.routing.write().await = routing;
     }
 
+    /// Delta section 9.7: additional fallback candidates for a
+    /// failure of `class` on `failed_selector`, resolved to
+    /// `ModelRef`s via the registry and deduplicated against the
+    /// endpoints already in `chain`.
+    ///
+    /// Empty when the retry config has no entry for this class (the
+    /// default), when every candidate is already in the chain, or
+    /// when a candidate's endpoint is not registered.
+    async fn retry_chain_candidates(
+        &self,
+        failed_selector: &str,
+        class: &str,
+        chain: &[ModelRef],
+    ) -> Vec<ModelRef> {
+        let cfg = self.retry_config.read().await.clone();
+        let names = cfg.resolve(failed_selector, class);
+        if names.is_empty() {
+            return Vec::new();
+        }
+        let registry = self.registry.read().await.clone();
+        let Some(reg) = registry else {
+            return Vec::new();
+        };
+        let mut out: Vec<ModelRef> = Vec::new();
+        for endpoint in names {
+            // Never re-add an endpoint the chain already holds (the
+            // static chain, or a candidate added on an earlier
+            // iteration).
+            if chain.iter().any(|m| m.endpoint == endpoint)
+                || out.iter().any(|m| m.endpoint == endpoint)
+            {
+                continue;
+            }
+            if let Some(model) = reg.default_model(&endpoint) {
+                out.push(ModelRef::new(endpoint, model));
+            }
+        }
+        out
+    }
+
+    /// Delta section 9.7: install the retry-fallback chains. Called
+    /// by the CLI / TUI bootstrap from `config.llm.retry`.
+    pub async fn set_retry_config(&self, retry: kod_config::RetryConfig) {
+        *self.retry_config.write().await = retry;
+    }
+
     /// WS-A: install [`Self::background_session_id`] as the default
     /// session on every provider in the registry, when (and only
     /// when) the active endpoint is a tab bridge. Idempotent: called
@@ -8879,7 +8931,7 @@ impl KodEngine {
                 .iter()
                 .map(|m| (m.content.len() as u64) / 4)
                 .sum();
-            let chain = self
+            let mut chain = self
                 .resolve_chain_for_task_gated(&task_key, head_fingerprint, transcript_tokens)
                 .await;
             if chain.is_empty() {
@@ -8897,8 +8949,15 @@ impl KodEngine {
             // endpoint the model response came from.
             let mut winning_provider: Option<Arc<dyn LlmProvider>> = None;
             let mut winning_model: Option<ModelRef> = None;
-            for (i, model_ref) in chain.iter().enumerate() {
-                let this_provider = match self.resolve_provider_for_model_ref(model_ref).await {
+            // Delta section 9.7: index-based so the retry-config
+            // candidates can be appended to `chain` mid-walk.
+            let mut i: usize = 0;
+            while i < chain.len() {
+                let model_ref: ModelRef = chain[i].clone();
+                let this_provider = match self
+                    .resolve_provider_for_model_ref(&model_ref)
+                    .await
+                {
                     Ok(p) => p,
                     Err(e) => {
                         tracing::warn!(
@@ -8907,6 +8966,7 @@ impl KodEngine {
                             "cannot resolve endpoint; skipping in chain"
                         );
                         last_err = Some(e);
+                        i += 1;
                         continue;
                     }
                 };
@@ -8933,7 +8993,7 @@ impl KodEngine {
                     let mut attempt_options = options.clone();
                     let round = RoundContext {
                         system_text: &system_text,
-                        model_ref,
+                        model_ref: &model_ref,
                         definitions: &definitions,
                         options: &attempt_options,
                         holder: key,
@@ -9063,7 +9123,7 @@ impl KodEngine {
                             );
                             self.record_model_fallback(
                                 key,
-                                model_ref,
+                                &model_ref,
                                 next,
                                 &format!("{} ({})", e, failure.summary()),
                             )
@@ -9079,7 +9139,42 @@ impl KodEngine {
                                 );
                             }
                             last_err = Some(e);
+                            i += 1;
                             continue;
+                        }
+                        // Delta section 9.7: the static chain is
+                        // exhausted. Consult the per-class retry
+                        // config for additional candidates; append
+                        // them and keep walking if it supplies any.
+                        if failure.recoverable()
+                            && matches!(
+                                action,
+                                crate::retry_strategy::RetryAction::NextEndpoint
+                                    | crate::retry_strategy::RetryAction::SameEndpointBackoff
+                                    | crate::retry_strategy::RetryAction::SameEndpointLowerTemp
+                                    | crate::retry_strategy::RetryAction::ShrinkHistory
+                                    | crate::retry_strategy::RetryAction::ReinjectTools
+                                    | crate::retry_strategy::RetryAction::SameEndpointConstrained
+                            )
+                        {
+                            let extra = self
+                                .retry_chain_candidates(
+                                    &model_ref.display(),
+                                    failure.class_name(),
+                                    &chain,
+                                )
+                                .await;
+                            if !extra.is_empty() {
+                                tracing::warn!(
+                                    failed = %model_ref.display(),
+                                    class = %failure.class_name(),
+                                    added = extra.len(),
+                                    "retry chain: appending per-class candidates",
+                                );
+                                chain.extend(extra);
+                                i += 1;
+                                continue;
+                            }
                         }
                         return Err(e);
                     }
@@ -9360,7 +9455,7 @@ impl KodEngine {
             // retryable error typically fires before any token, so the
             // user sees a clean stream from the fallback endpoint.
             let task_key = format!("{:?}", response.task_type);
-            let chain = self
+            let mut chain = self
                 .build_streaming_chain(&task_key, override_model.as_ref())
                 .await;
             if chain.is_empty() {
@@ -9375,8 +9470,15 @@ impl KodEngine {
             )> = None;
             let mut winning_provider: Option<Arc<dyn LlmProvider>> = None;
             let mut winning_model: Option<ModelRef> = None;
-            for (i, model_ref) in chain.iter().enumerate() {
-                let this_provider = match self.resolve_provider_for_model_ref(model_ref).await {
+            // Delta section 9.7: index-based so per-class retry-chain
+            // candidates can be appended to `chain` mid-walk.
+            let mut i: usize = 0;
+            while i < chain.len() {
+                let model_ref: ModelRef = chain[i].clone();
+                let this_provider = match self
+                    .resolve_provider_for_model_ref(&model_ref)
+                    .await
+                {
                     Ok(p) => p,
                     Err(e) => {
                         tracing::warn!(
@@ -9397,7 +9499,7 @@ impl KodEngine {
                 let fallback_ref = chain.get(i + 1);
                 let round = RoundContext {
                     system_text: &system_text,
-                    model_ref,
+                    model_ref: &model_ref,
                     definitions: &definitions,
                     options: &options,
                     holder: key,
@@ -9449,9 +9551,15 @@ impl KodEngine {
                                 to = %next.display(),
                                 "Jev flagged the reply off-track; trying next endpoint"
                             );
-                            self.record_model_fallback(key, model_ref, next, "jev quality gate")
-                                .await;
+                            self.record_model_fallback(
+                                key,
+                                &model_ref,
+                                next,
+                                "jev quality gate",
+                            )
+                            .await;
                             last_err = None;
+                            i += 1;
                             continue;
                         }
                         outcome = Some((text, calls, results, usage));
@@ -9476,8 +9584,13 @@ impl KodEngine {
                             error = %e,
                             "retryable provider error; falling back"
                         );
-                        self.record_model_fallback(key, model_ref, next, &e.to_string())
-                            .await;
+                        self.record_model_fallback(
+                            key,
+                            &model_ref,
+                            next,
+                            &e.to_string(),
+                        )
+                        .await;
                         // Hygiene 3.2: record the endpoint failure.
                         if let Ok(mut h) = self.endpoint_health.lock()
                             && h.record_failure(&model_ref.endpoint, e.to_string())
@@ -9488,9 +9601,57 @@ impl KodEngine {
                             );
                         }
                         last_err = Some(e);
+                        i += 1;
                         continue;
                     }
-                    Err(e) => return Err(e),
+                    Err(e) => {
+                        // Delta section 9.7: the static chain has no
+                        // next entry. Consult the per-class retry
+                        // config for additional candidates; append
+                        // and keep walking if it supplies any.
+                        let failure =
+                            crate::retry_strategy::TurnFailure::classify(&e.to_string());
+                        let action = crate::retry_strategy::choose_action(&failure);
+                        if failure.recoverable()
+                            && matches!(
+                                action,
+                                crate::retry_strategy::RetryAction::NextEndpoint
+                                    | crate::retry_strategy::RetryAction::SameEndpointBackoff
+                                    | crate::retry_strategy::RetryAction::SameEndpointLowerTemp
+                                    | crate::retry_strategy::RetryAction::ShrinkHistory
+                                    | crate::retry_strategy::RetryAction::ReinjectTools
+                                    | crate::retry_strategy::RetryAction::SameEndpointConstrained
+                            )
+                        {
+                            let extra = self
+                                .retry_chain_candidates(
+                                    &model_ref.display(),
+                                    failure.class_name(),
+                                    &chain,
+                                )
+                                .await;
+                            if !extra.is_empty() {
+                                // Reset the stream so the fallback's
+                                // text does not append to this
+                                // attempt's partial output.
+                                let _ = chunk_tx.send(stream_reset_marker()).await;
+                                tracing::warn!(
+                                    failed = %model_ref.display(),
+                                    class = %failure.class_name(),
+                                    added = extra.len(),
+                                    "retry chain: appending per-class candidates",
+                                );
+                                if let Ok(mut h) = self.endpoint_health.lock() {
+                                    h.record_failure(&model_ref.endpoint, e.to_string());
+                                }
+                                chain.extend(extra);
+                                last_err = Some(e);
+                                i += 1;
+                                continue;
+                            }
+                        }
+                        return Err(e);
+                    }
                 }
             }
             let (final_text, tool_calls, tool_results, usage) =
