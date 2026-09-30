@@ -14615,6 +14615,52 @@ impl KodEngine {
             .unwrap_or_else(|| self.working_dir.clone())
     }
 
+    /// Delta section 11.11: relocate a transcript into a fresh
+    /// worktree that carries the current working tree's uncommitted
+    /// changes.
+    ///
+    /// Returns the new worktree's path and branch. `clean_source =
+    /// true` gives a worktree from HEAD with no dirty state.
+    ///
+    /// The current transcript working dir (the override, or the
+    /// engine-wide root) is the repository the worktree branches
+    /// from. After creation the transcript's working-dir override is
+    /// pointed at the new worktree, so every subsequent tool call
+    /// runs there. The original repo is untouched.
+    ///
+    /// Not in the engine's tool context: `/wt` is a user action, not
+    /// a model action, and the model should not be able to relocate
+    /// a session on its own.
+    pub async fn relocate_to_session_worktree(
+        &self,
+        key: &str,
+        clean_source: bool,
+    ) -> Result<crate::worktree::WorktreeInfo> {
+        let repo = self.working_dir_for(key).await;
+        let mut mgr = crate::worktree::WorktreeManager::detect(&repo)
+            .map_err(|e| {
+                KodError::Internal(format!(
+                    "could not inspect {} for worktree support: {e}",
+                    repo.display()
+                ))
+            })?
+            .ok_or_else(|| {
+                KodError::InvalidState(format!(
+                    "{} is not a git repository; a session worktree needs one",
+                    repo.display()
+                ))
+            })?;
+        let info = mgr.create_session(clean_source)?;
+        // The manager's `Drop` removes every worktree it created on
+        // the way out; a session worktree must outlive the manager,
+        // so hand ownership off before it drops. The on-disk
+        // ownership marker is what a future reaper consults.
+        mgr.disarm();
+        self.set_transcript_working_dir(key, Some(info.path.clone()))
+            .await;
+        Ok(info)
+    }
+
     /// Clear the per-transcript working directory override for `key`.
     /// Called by the swarm runner after an agent's worktree is
     /// removed.
