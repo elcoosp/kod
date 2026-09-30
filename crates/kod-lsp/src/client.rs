@@ -240,18 +240,21 @@ impl LspClient {
         overall_timeout: Duration,
     ) -> Result<Vec<Diagnostic>, LspError> {
         let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        match self.opened.get_mut(&key) {
+        let sent_version = match self.opened.get_mut(&key) {
             Some(version) => {
                 *version += 1;
                 let v = *version;
                 self.did_change(&key, content, v).await?;
+                Some(v)
             }
             None => {
                 self.did_open(&key, content).await?;
                 self.opened.insert(key.clone(), 1);
+                Some(1)
             }
-        }
-        self.collect_diagnostics(&key, overall_timeout).await
+        };
+        self.collect_diagnostics(&key, overall_timeout, sent_version)
+            .await
     }
 
     /// Read notifications until diagnostics for `path` have arrived
@@ -263,10 +266,16 @@ impl LspClient {
     /// fixed post-first-message wait is the simplest correct handling.
     ///
     /// `overall_timeout` caps the total wait regardless.
+    /// [`Self::diagnostics`] passes the version it sent so a server
+    /// that echoes it in `publishDiagnostics` can be accepted the
+    /// instant its publish arrives, without waiting out the quiet
+    /// window. A server that does not echo (the version field is
+    /// optional in the spec) keeps the settle heuristic unchanged.
     pub async fn collect_diagnostics(
         &mut self,
         path: &Path,
         overall_timeout: Duration,
+        sent_version: Option<i64>,
     ) -> Result<Vec<Diagnostic>, LspError> {
         // H-R7c: the settle heuristic. The pre-fix rule — "800 ms
         // since our file's last publish, then accept the answer" —
@@ -342,6 +351,19 @@ impl LspClient {
             if is_our_diags && let Some(params) = msg.get("params") {
                 target_publishes += 1;
                 latest = Some(parse_diagnostics(params, &target_uri));
+                // Delta 7.2 version fast path: a server that echoes
+                // the version we sent has answered for exactly the
+                // state we asked about — accept it now instead of
+                // waiting out the quiet window. A server that does
+                // not echo (rust-analyzer omits the optional field)
+                // falls through to the settle rule below.
+                let echoed = params.get("version").and_then(|v| v.as_i64());
+                if let (Some(sent), Some(echoed)) = (sent_version, echoed)
+                    && sent == echoed
+                {
+                    tracing::debug!(target_uri, version = sent, "LSP: version echo; accepting");
+                    return Ok(latest.unwrap_or_default());
+                }
             }
         }
 
