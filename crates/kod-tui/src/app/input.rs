@@ -519,16 +519,23 @@ impl KodApp {
                             let chip = format!("[Pasted {n} lines]");
                             row.push_str(&chip);
                             chips.push((chip_start, chip_start + chip.chars().count()));
-                            if cursor_char.is_none() && cb >= b.start && cb <= b.end {
-                                // Cursor hidden inside the chip: park it
-                                // just past the chip text.
+                            if cursor_char.is_none() && cb >= b.start && cb < b.end {
+                                // Cursor strictly inside the chip: park
+                                // it just past the chip text. A cursor
+                                // exactly at the block end belongs to
+                                // the tail text handled below.
                                 cursor_char = Some(row.chars().count());
                             }
                             // Consume through the block's last line, keep
-                            // the row open for its tail text.
+                            // the row open for its tail text. When the
+                            // block swallowed the line's newline too,
+                            // nothing remains on this line.
                             i = last;
                             pos = b.end;
                             lend = ends[i];
+                            if pos > lend {
+                                break;
+                            }
                             continue;
                         } else {
                             let e = b.end.min(lend);
