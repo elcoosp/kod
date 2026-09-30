@@ -739,8 +739,10 @@ impl TuiLoop {
                     } else {
                         0
                     };
-                    // The input box grows with multiline content (clamped).
-                    let input_height: u16 = self.app.input_height_rows();
+                    // The input box grows with wrapped content and
+                    // collapsed paste chips (clamped). Width-aware: a
+                    // 300-char line wraps to several rows.
+                    let input_height: u16 = self.app.input_height_rows(size.width);
 
                     // NOTE: errors are NOT given a layout row here. They
                     // live only in the chat scroll view (see
@@ -827,20 +829,11 @@ impl TuiLoop {
         match event {
             Event::Key(key_code) => self.handle_key(key_code).await?,
             Event::Paste(text) => {
-                // H-T9: insert the pasted block into the input verbatim,
-                // newlines and all. `add_char` per char would be
-                // equivalent, but this also preserves a multi-line
-                // paste as one undo unit conceptually. The user can
-                // still edit before pressing Enter to submit.
-                for ch in text.chars() {
-                    if ch == '\n' {
-                        self.app.insert_newline();
-                    } else if ch == '\r' {
-                        // CRLF pastes arrive with both; skip CR.
-                    } else {
-                        self.app.add_char(ch);
-                    }
-                }
+                // H-T9: insert the pasted block as one unit. Large
+                // pastes collapse to a `[Pasted N lines]` chip in the
+                // box (full text still submits); CRLF arrives with
+                // both bytes and CR is dropped inside.
+                self.app.insert_paste(&text);
             }
             Event::UserInput(input) => {
                 self.app.set_input(input);
@@ -7322,9 +7315,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_finished_turn_records_friendly_duration_for_header() {
-        // The header's `took …` figure: recorded on completion (no
-        // transcript row — `turn_completion_pushes_no_duration_row`
-        // still holds), cleared when the next turn begins.
+        // The header's `took …` figure: recorded on completion, cleared
+        // when the next turn begins. The reply bubble gets its own copy
+        // stamped at the same moment (that is what the `took …` row under
+        // a bubble reads), so it must outlive this header figure.
         let mut tui = TuiLoop::new();
         assert!(!tui.app().has_last_turn_duration());
         assert!(tui.app().last_turn_label().is_empty());
@@ -7337,8 +7331,28 @@ mod tests {
             .unwrap();
         assert!(tui.app().has_last_turn_duration());
         assert!(!tui.app().last_turn_label().is_empty());
+
+        let stamped = tui
+            .app()
+            .messages()
+            .iter()
+            .rev()
+            .find(|m| m.role == kod_types::MessageRole::Assistant)
+            .and_then(|m| m.metadata.turn_duration_ms);
+        assert!(stamped.is_some(), "the reply must carry its turn duration");
+
+        // The next turn clears the header figure but never rewrites an
+        // older bubble's stamp.
         tui.app_mut().begin_generation();
         assert!(!tui.app().has_last_turn_duration());
+        let still = tui
+            .app()
+            .messages()
+            .iter()
+            .rev()
+            .find(|m| m.role == kod_types::MessageRole::Assistant)
+            .and_then(|m| m.metadata.turn_duration_ms);
+        assert_eq!(still, stamped, "the stamp must survive the next turn");
     }
 
     #[tokio::test]
