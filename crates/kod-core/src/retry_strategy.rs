@@ -133,6 +133,29 @@ impl TurnFailure {
     }
 
     /// A one-line description for the log and the TUI.
+    /// The variant's config-facing name. Matches the key a user
+    /// writes under `[llm.retry.fallback_chains]` (delta section
+    /// 9.7), so `resolve(selector, class_name())` finds the right
+    /// per-class chain. Kept in lockstep with the enum's variant
+    /// spelling.
+    pub fn class_name(&self) -> &'static str {
+        match self {
+            TurnFailure::TransportTimeout => "TransportTimeout",
+            TurnFailure::TransportNetwork => "TransportNetwork",
+            TurnFailure::TransportRateLimit { .. } => "TransportRateLimit",
+            TurnFailure::ProviderRefused { .. } => "ProviderRefused",
+            TurnFailure::ProviderAuthError { .. } => "ProviderAuthError",
+            TurnFailure::ContextWindowExceeded { .. } => "ContextWindowExceeded",
+            TurnFailure::MalformedJson { .. } => "MalformedJson",
+            TurnFailure::HallucinatedTool { .. } => "HallucinatedTool",
+            TurnFailure::ContentFiltered { .. } => "ContentFiltered",
+            TurnFailure::UserCancelled => "UserCancelled",
+            TurnFailure::BudgetExhausted => "BudgetExhausted",
+            TurnFailure::PolicyDenied { .. } => "PolicyDenied",
+            TurnFailure::Unknown { .. } => "Unknown",
+        }
+    }
+
     pub fn summary(&self) -> String {
         match self {
             TurnFailure::TransportTimeout => "transport timeout".to_string(),
@@ -202,6 +225,40 @@ pub fn choose_action(f: &TurnFailure) -> RetryAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn class_name_covers_every_variant() {
+        // Every `TurnFailure` value's `class_name` is a stable
+        // identifier a user writes as a `[llm.retry.fallback_chains]`
+        // key. Pinned so a new variant gets a name and the
+        // config-facing match cannot silently miss it.
+        let variants: [TurnFailure; 13] = [
+            TurnFailure::TransportTimeout,
+            TurnFailure::TransportNetwork,
+            TurnFailure::TransportRateLimit { retry_after_secs: Some(1) },
+            TurnFailure::ProviderRefused { reason: "x".to_string() },
+            TurnFailure::ProviderAuthError { detail: "x".to_string() },
+            TurnFailure::ContextWindowExceeded { over_by: None },
+            TurnFailure::MalformedJson { snippet: "x".to_string() },
+            TurnFailure::HallucinatedTool { name: "x".to_string() },
+            TurnFailure::ContentFiltered { category: "x".to_string() },
+            TurnFailure::UserCancelled,
+            TurnFailure::BudgetExhausted,
+            TurnFailure::PolicyDenied { rule: "x".to_string() },
+            TurnFailure::Unknown { raw: "x".to_string() },
+        ];
+        for v in &variants {
+            let n = v.class_name();
+            assert!(
+                !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric()),
+                "class_name must be a bare identifier, got: {n:?}",
+            );
+        }
+        assert_eq!(
+            TurnFailure::TransportRateLimit { retry_after_secs: None }.class_name(),
+            "TransportRateLimit",
+        );
+    }
 
     #[test]
     fn classify_timeout() {
