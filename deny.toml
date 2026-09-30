@@ -84,7 +84,11 @@ default = "deny"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+# The workspace's one git dependency (typesafe-ai-rs, the Jev
+# client — see the `[workspace.dependencies]` comment in
+# Cargo.toml). Pinned by `rev` there so a fresh checkout without
+# the lockfile resolves to the same commit.
+allow-git = ["https://github.com/elcoosp/typesafe-ai-rs"]
 
 # ---------------------------------------------------------------------------
 # Advisory database (RustSec)
