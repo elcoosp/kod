@@ -1767,4 +1767,93 @@ mod coverage_split_hunks {
             2,
         );
     }
+
+    // ---- input box: grow, scroll, paste chips ------------------------
+
+    #[test]
+    fn input_height_grows_with_wrapped_content_then_clamps() {
+        let mut app = KodApp::new();
+        assert_eq!(app.input_height_rows(80), 3);
+        // 200 chars ≈ 3 wrapped rows at width 80 → box grows.
+        app.set_input("x".repeat(200));
+        assert_eq!(app.input_height_rows(80), 5);
+        // 50 lines clamp at the max instead of eating the chat.
+        app.set_input("x\n".repeat(50));
+        assert_eq!(app.input_height_rows(80), 10);
+    }
+
+    #[test]
+    fn long_single_line_maps_cursor_into_wrapped_tail() {
+        let mut app = KodApp::new();
+        // set_input parks the cursor at the end — the case that used
+        // to type invisibly past the fold.
+        app.set_input("x".repeat(200));
+        let view = app.input_view(78);
+        // 76 + 78 + 46 cells across three visual rows.
+        assert_eq!(view.rows.len(), 3, "rows: {:?}", view.rows);
+        assert_eq!(view.cursor_row, 2);
+        assert_eq!(view.rows[2].cursor_cell, Some(46));
+    }
+
+    #[test]
+    fn large_paste_collapses_to_chip_but_keeps_full_text() {
+        let mut app = KodApp::new();
+        let payload = (0..10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        app.insert_paste(&payload);
+        // Full text is what submits.
+        assert_eq!(app.input(), &payload);
+        let view = app.input_view(80);
+        // Chip row plus the empty line the trailing newline opens
+        // (the cursor sits there, ready to type).
+        assert_eq!(view.rows.len(), 2, "rows: {:?}", view.rows);
+        assert!(
+            view.rows[0].text.contains("[Pasted 10 lines]"),
+            "got: {}",
+            view.rows[0].text
+        );
+        assert!(!view.rows[0].chips.is_empty());
+        assert_eq!(view.cursor_row, 1);
+        assert_eq!(app.input_height_rows(80), 4);
+    }
+
+    #[test]
+    fn short_paste_stays_verbatim_and_crlf_is_cleaned() {
+        let mut app = KodApp::new();
+        app.insert_paste("a\r\nb\r\n");
+        assert_eq!(app.input(), "a\nb\n");
+        let view = app.input_view(80);
+        assert_eq!(view.rows.len(), 3);
+        assert!(view.rows.iter().all(|r| r.chips.is_empty()));
+    }
+
+    #[test]
+    fn typing_after_paste_keeps_chip_until_overlap() {
+        let mut app = KodApp::new();
+        // No trailing newline: the chip is the whole box.
+        let payload = (0..10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        app.insert_paste(&payload);
+        assert_eq!(app.input_view(80).rows.len(), 1);
+        // Cursor sits at the end; typing appends after the block.
+        app.add_char('!');
+        assert_eq!(app.input_view(80).rows.len(), 1, "chip must survive");
+        // Backspace the typed char: still intact.
+        app.backspace();
+        assert_eq!(app.input_view(80).rows.len(), 1, "chip must survive");
+        // Backspace into the block: the chip dissolves, text shows.
+        app.backspace();
+        let view = app.input_view(80);
+        assert!(
+            view.rows.iter().all(|r| r.chips.is_empty()),
+            "chip must dissolve, got: {:?}",
+            view.rows
+        );
+        assert!(view.rows.len() > 1);
+    }
 }
