@@ -118,11 +118,17 @@ impl ChatWidget {
     /// Falls back to a plain header when the viewport is too narrow.
     /// Plain text — no markdown parsing. Long rows reflow mid-word exactly
     /// like `Paragraph` with `Wrap { trim: false }` so scroll math stays exact.
+    ///
+    /// `duration` is the finished turn's friendly wall-clock (`4.2s`),
+    /// rendered as a dim `took 4.2s` row *below* the bubble. `None` while
+    /// the reply is still streaming (there is no final figure yet) and on
+    /// any reply that never got stamped.
     fn assistant_block(
         content: &str,
         width: usize,
         _style: Style,
         app: &KodApp,
+        duration: Option<String>,
     ) -> Vec<Line<'static>> {
         let theme = app.theme();
         let frame = Style::default().fg(theme.accent);
@@ -130,6 +136,23 @@ impl ChatWidget {
             .fg(theme.accent)
             .add_modifier(Modifier::BOLD);
         let inner = width.saturating_sub(4).max(1); // "│ " + content + " │"
+
+        // Dim, italic, indented to the text column: a timing caption, not
+        // part of the reply. Kept *outside* the bordered block so the
+        // frame still reads as the reply's edge.
+        let duration_row = || {
+            duration.as_ref().map(|label| {
+                Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(
+                        format!("took {label}"),
+                        Style::default()
+                            .fg(theme.dim)
+                            .add_modifier(Modifier::ITALIC),
+                    ),
+                ])
+            })
+        };
 
         // Markdown rendering (D6.5). Headers, code fences, lists,
         // blockquotes, inline code, bold, and italic get their own
@@ -155,6 +178,9 @@ impl ChatWidget {
                 spans.extend(row.spans);
                 lines.push(Line::from(spans));
             }
+            if let Some(row) = duration_row() {
+                lines.push(row);
+            }
             return lines;
         }
         let mut lines = Vec::new();
@@ -177,6 +203,12 @@ impl ChatWidget {
             format!("╰{}╯", "─".repeat(width.saturating_sub(2))),
             frame,
         )]));
+        // The timing caption closes the block: under the frame, never
+        // inside it, so it belongs to the reply without being part of
+        // the quoted content.
+        if let Some(row) = duration_row() {
+            lines.push(row);
+        }
         lines
     }
 
@@ -352,7 +384,14 @@ impl ChatWidget {
         }
 
         if let MessageRole::Assistant = message.role {
-            let lines = Self::assistant_block(&message.content, width, assistant_style, app);
+            // The turn wall-clock stamped on the reply (finish / fail /
+            // cancel paths); `None` for replies from sessions written
+            // before the field existed, so old transcripts render plain.
+            let duration = message
+                .metadata
+                .turn_duration_ms
+                .map(|ms| KodApp::format_friendly_duration(std::time::Duration::from_millis(ms)));
+            let lines = Self::assistant_block(&message.content, width, assistant_style, app, duration);
             return Self::apply_search(app, lines);
         }
 
@@ -502,6 +541,7 @@ impl ChatWidget {
                     narrow_width,
                     Style::default().fg(app.theme().assistant),
                     app,
+                    None,
                 );
                 #[allow(unstable_name_collisions)]
                 let rows = Paragraph::new(Text::from(block))
@@ -563,6 +603,9 @@ impl ChatWidget {
                 text_width,
                 Style::default().fg(theme.assistant),
                 app,
+                // Still running: no final figure to show. The row appears
+                // when this body settles into a stamped message.
+                None,
             ));
         }
 
@@ -961,6 +1004,74 @@ mod coverage_chat_widget {
         let body = row_spans(&lines, "fn main() {}");
         assert_eq!(body[1].style.fg, Some(Color::Gray));
         assert_eq!(body[1].style.bg, None);
+    }
+
+    /// Push an assistant reply carrying a turn duration — what
+    /// `KodApp::stamp_reply_duration` writes when a turn finishes.
+    fn push_stamped_reply(app: &mut KodApp, content: &str, turn_duration_ms: u64) {
+        app.add_message(Message {
+            id: MessageId::new(),
+            role: MessageRole::Assistant,
+            content: content.to_string(),
+            timestamp: Utc::now(),
+            metadata: kod_types::MessageMetadata {
+                turn_duration_ms: Some(turn_duration_ms),
+                ..Default::default()
+            },
+            sequence: 0,
+        });
+    }
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn stamped_reply_shows_a_took_row_under_the_block() {
+        let mut app = KodApp::new();
+        push_stamped_reply(&mut app, "the answer", 4200);
+        let msg = app.messages().last().unwrap();
+        let lines = ChatWidget::message_lines(&app, msg, 60);
+
+        let caption = lines.last().expect("a caption row");
+        // Two-cell indent to the bubble's inner text column (see the
+        // `duration_row` closure in `assistant_block`).
+        assert_eq!(line_text(caption), "  took 4.2s");
+        let style = caption.spans[1].style;
+        assert_eq!(style.fg, Some(app.theme().dim));
+        assert!(style.add_modifier.contains(Modifier::ITALIC), "caption is dim + italic");
+
+        // Directly under the bubble's closing border, never inside it.
+        let border = line_text(&lines[lines.len() - 2]);
+        assert!(border.starts_with('╰'), "caption must sit below the frame: {border}");
+
+        // And the whole thing survives the widget's render path.
+        push_message(&mut app, MessageRole::User, "next");
+        assert!(render(&app, 80, 30).contains("took 4.2s"));
+    }
+
+    #[test]
+    fn reply_without_a_stamp_has_no_took_row() {
+        let mut app = KodApp::new();
+        push_message(&mut app, MessageRole::Assistant, "the answer");
+        let msg = app.messages().last().unwrap();
+        let lines = ChatWidget::message_lines(&app, msg, 60);
+        assert!(lines.iter().all(|l| !line_text(l).contains("took ")));
+        // Still a full block: the last row is the closing border.
+        assert!(line_text(lines.last().unwrap()).starts_with('╰'));
+    }
+
+    #[test]
+    fn caption_tiers_match_the_header_figure() {
+        // The same `format_friendly_duration` the header uses, so the
+        // row under a bubble and `took …` in the header never disagree.
+        for (ms, want) in [(340, "340ms"), (4200, "4.2s"), (65_000, "1m05s")] {
+            let mut app = KodApp::new();
+            push_stamped_reply(&mut app, "x", ms);
+            let msg = app.messages().last().unwrap();
+            let lines = ChatWidget::message_lines(&app, msg, 60);
+            assert_eq!(line_text(lines.last().unwrap()), format!("  took {want}"));
+        }
     }
 
     #[test]
