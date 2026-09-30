@@ -677,6 +677,13 @@ pub struct ToolContext {
     /// for a swarm, so the engine installs a table explicitly.
     pub lock_table: Option<std::sync::Arc<PathLockTable>>,
 
+    /// Delta §7.1: the hashline edit store. `read_file` records a
+    /// snapshot here and the `edit` tool applies tag-guarded line
+    /// edits against it. `None` (a bare test context) disables the
+    /// `edit` tool — there is nowhere to record a snapshot, so a tag
+    /// guard cannot hold.
+    pub edit_store: Option<std::sync::Arc<std::sync::Mutex<crate::edit_hashline::EditStore>>>,
+
     /// Identity this context writes under — used as the "holder" string
     /// on a path lock, so a blocked waiter's error message and any
     /// debug log can attribute the write.
@@ -842,6 +849,7 @@ impl ToolContext {
             permissions: ToolPermissions::default(),
             timeout_secs: 30,
             lock_table: None,
+            edit_store: None,
             holder: "session".to_string(),
             lock_timeout: std::time::Duration::from_secs(2),
             sandbox: SandboxMode::Auto,
@@ -858,6 +866,18 @@ impl ToolContext {
             protocol_router: None,
             prefetched_read: None,
         }
+    }
+
+    /// Delta §7.1: install the shared hashline edit store. The engine
+    /// builds one per session and hands the same `Arc` to every tool
+    /// context, so a `read_file` in one round is visible to an `edit`
+    /// in the next.
+    pub fn with_edit_store(
+        mut self,
+        store: std::sync::Arc<std::sync::Mutex<crate::edit_hashline::EditStore>>,
+    ) -> Self {
+        self.edit_store = Some(store);
+        self
     }
 
     /// Install a shared lock table and set the writer identity.
