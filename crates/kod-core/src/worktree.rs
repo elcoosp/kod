@@ -556,6 +556,20 @@ impl WorktreeManager {
     /// Remove every worktree and delete the branches. Best-effort —
     /// the caller keeps a `kod/agent-*` branch only if the removal
     /// fails, which is worth logging but not worth aborting shutdown.
+    /// Delta section 11.11: hand the created worktrees off to another
+    /// owner. After `disarm`, `Drop` removes nothing — the caller has
+    /// taken responsibility for cleanup (or the worktree is meant to
+    /// outlive this process, with the on-disk ownership marker as the
+    /// reaper's signal).
+    ///
+    /// Used by the session `/wt` path: a session worktree must
+    /// survive the manager that created it.
+    pub fn disarm(&mut self) {
+        self.created.clear();
+        self.merged_ok.clear();
+        self.force_cleanup = false;
+    }
+
     pub fn cleanup(&mut self) {
         for info in self.created.drain(..) {
             // Delta §11.11: remove the ownership marker first, so a
