@@ -49,6 +49,7 @@ pub mod xd_handler;
 /// minimizer without a direct `kod-minimize` dependency.
 pub use kod_minimize;
 pub mod patch;
+pub mod patch_text;
 pub mod path_lock;
 pub mod plan;
 pub mod registry;
