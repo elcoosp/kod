@@ -1,32 +1,37 @@
-//! Anthropic Messages API provider, backed by `adk-model`.
+//! Anthropic Messages API provider.
 //!
-//! The spike (ADR-04) confirmed `adk-model 2.2` ships a native
-//! Anthropic client, so this provider is a wrapper — the same shape as
-//! `kod-provider-openai::OpenAICompatProvider` around
-//! `adk_model::openai_compatible::OpenAICompatible`. The wire format,
-//! SSE parsing, and tool-call assembly all come from `adk-model`.
+//! # Two wire paths
 //!
-//! # What the wrapper adds
+//! The modern paths — [`AnthropicProvider::complete`], the streaming
+//! loop, and native compaction — build the request body in the local
+//! [`wire`] module. That module exists because `adk-model`'s Anthropic
+//! client takes a single `system: String` and flattens a multi-segment
+//! system prompt before the wire call, which is fatal to prompt
+//! caching: Anthropic's `cache_control: {"type": "ephemeral"}` is a
+//! marker on a *block* inside a system array, not on a top-level
+//! string. [`wire::system_blocks`] emits the structured form and places
+//! the breakpoint on the last cacheable segment.
 //!
-//! - The `LlmProvider` trait surface (name, list_models, generate,
-//!   generate_with_tools, stream, capabilities).
+//! The legacy text paths (`generate` / `generate_with_tools`) still go
+//! through `adk_model::anthropic::Anthropic`; they predate the
+//! structured request and carry no cache hints.
+//!
+//! # What the wrapper adds over a bare wire body
+//!
+//! - The `LlmProvider` trait surface (name, `list_models`, generate,
+//!   `generate_with_tools`, stream, capabilities).
 //! - The `ProviderCapabilities` matrix, so the router knows Anthropic
 //!   supports explicit prompt caching (`cache_control`) and the TUI
 //!   can display pricing when configured.
 //! - An error message naming the Anthropic endpoint instead of a
 //!   generic HTTP failure, matching the OpenAI provider's diagnostic
 //!   quality.
+//! - Native-compaction support (`compact-2026-01-12` beta): the
+//!   `native_compact` request/response, built in [`wire`] like the
+//!   other structured paths.
 //!
-//! # What the wrapper does NOT do (yet)
-//!
-//! `cache_control` is not placed on the system prompt's cacheable
-//! segments. `adk-model`'s Anthropic client takes a single `system:
-//! String`; the ADK wrapper flattens multi-segment prompts before the
-//! wire call. Emitting `cache_control: {"type": "ephemeral"}` on the
-//! last cacheable segment requires either an `adk-model` API that
-//! accepts segments, or a local wire module. That work is scoped for
-//! A5b — the D1 registry and the honest capability declaration ship
-//! today.
+//! See ADR-05 for why this crate is a native wire rather than a thin
+//! `adk-model` wrapper.
 
 mod provider;
 pub mod wire;
