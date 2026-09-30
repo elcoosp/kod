@@ -419,6 +419,10 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "reset transient state: input, search, expansions, attachments",
     },
     SlashCommand {
+        name: "/wt",
+        hint: "move this session into a worktree carrying uncommitted changes: /wt [--clean]",
+    },
+    SlashCommand {
         name: "/fork",
         hint: "save the current chat as a restorable fork: /fork [label]",
     },
