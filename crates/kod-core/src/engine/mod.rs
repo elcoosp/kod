@@ -9282,6 +9282,16 @@ impl KodEngine {
                 Some(advisory) => format!("{final_text}{advisory}"),
                 None => final_text,
             };
+            // Delta §7.7 item 5: a clean-stop turn (no tool calls)
+            // may have emitted an OpenAI-style patch as prose. Lift it
+            // and run it as synthetic `patch_file` calls through the
+            // normal approval path.
+            if tool_calls.is_empty()
+                && let Some(note) =
+                    self.maybe_recover_inline_patch(key, &final_text, None).await
+            {
+                tracing::info!(holder = %key, note = %note, "recovered inline patch");
+            }
             self.remember_turn_for(key, false, &final_text).await;
             // Delta §11.7: remind the model of open todos at stop.
             self.maybe_emit_todo_completion_reminder(key, &final_text)
@@ -9750,6 +9760,24 @@ impl KodEngine {
                 Some(advisory) => format!("{final_text}{advisory}"),
                 None => final_text,
             };
+            // Delta §7.7 item 5: a clean-stop turn (no tool calls)
+            // may have emitted an OpenAI-style patch as prose. Lift it
+            // and run it as synthetic `patch_file` calls through the
+            // normal approval path. Any tool rows the recovery
+            // produces stream back on `chunk_tx`.
+            if tool_calls.is_empty()
+                && let Some(note) = self
+                    .maybe_recover_inline_patch(key, &final_text, Some(chunk_tx))
+                    .await
+            {
+                tracing::info!(holder = %key, note = %note, "recovered inline patch");
+                let _ = chunk_tx
+                    .send(format!("
+
+{note}
+"))
+                    .await;
+            }
             self.remember_turn_for(key, false, &final_text).await;
             // Delta §11.7: remind the model of open todos at stop.
             self.maybe_emit_todo_completion_reminder(key, &final_text)
@@ -14319,6 +14347,85 @@ impl KodEngine {
         Ok(Some(()))
     }
 
+    /// Delta §7.7 item 5: on a clean-stop turn (no tool calls), lift a
+    /// `*** Begin Patch` envelope out of the reply text and run it as
+    /// synthetic `patch_file` calls.
+    ///
+    /// A model that learned the OpenAI `apply_patch` envelope sometimes
+    /// emits one as prose and stops — without this the edit is lost.
+    /// The synthetic calls go through the normal tool path (approval,
+    /// path lock, policy), so extraction is not an approval bypass.
+    ///
+    /// Returns `Some(note)` when at least one patch was recovered (the
+    /// note describes what happened, for a system row), `None` when
+    /// there was nothing to recover or every patch was rejected before
+    /// dispatch.
+    async fn maybe_recover_inline_patch(
+        &self,
+        holder: &str,
+        final_text: &str,
+        chunk_tx: Option<&tokio::sync::mpsc::Sender<String>>,
+    ) -> Option<String> {
+        let patches = kod_tools::patch_text::extract(final_text)?;
+        if patches.is_empty() {
+            return None;
+        }
+        let working_dir = self.working_dir_for(holder).await;
+        let mut calls: Vec<ToolCall> = Vec::new();
+        let mut notes: Vec<String> = Vec::new();
+        for patch in &patches {
+            let (path, original) = match patch {
+                kod_tools::patch_text::FilePatch::Add { path, .. } => {
+                    (path.clone(), String::new())
+                }
+                kod_tools::patch_text::FilePatch::Update { path, .. }
+                | kod_tools::patch_text::FilePatch::Delete { path } => {
+                    let abs = if std::path::Path::new(path).is_absolute() {
+                        std::path::PathBuf::from(path)
+                    } else {
+                        working_dir.join(path)
+                    };
+                    let body = std::fs::read_to_string(&abs).unwrap_or_default();
+                    (path.clone(), body)
+                }
+            };
+            let diff = match kod_tools::patch_text::to_unified_diff(patch, &original) {
+                Ok(d) => d,
+                Err(e) => {
+                    notes.push(format!("  · {path}: skipped — {e}"));
+                    continue;
+                }
+            };
+            calls.push(ToolCall {
+                id: None,
+                tool_name: "patch_file".to_string(),
+                arguments: serde_json::json!({ "path": path, "patch": diff }),
+            });
+        }
+        if calls.is_empty() {
+            return Some(format!(
+                "Recovered a `*** Begin Patch` block, but no hunk matched uniquely:\n{}",
+                notes.join("\n")
+            ));
+        }
+        let round = self.run_tool_calls(&calls, holder, chunk_tx).await;
+        let applied = calls.len();
+        let failed: usize = round
+            .results
+            .iter()
+            .filter(|r| matches!(r, kod_types::ToolResult::Error(_)))
+            .count();
+        let mut note = format!(
+            "Recovered {applied} file patch(es) from an inline `*** Begin Patch` block \
+             and ran them as patch_file calls ({failed} rejected).",
+        );
+        if !notes.is_empty() {
+            note.push('\n');
+            note.push_str(&notes.join("\n"));
+        }
+        Some(note)
+    }
+
     /// Queue a steering note on the default transcript.
     pub async fn steer(&self, note: &str) {
         self.steer_for(DEFAULT_TRANSCRIPT_KEY, note).await;
@@ -15242,6 +15349,83 @@ mod tests {
 
         // Removing again reports false.
         assert!(!engine.remove_deny_rule(&same_value).await);
+    }
+
+    #[tokio::test]
+    async fn recovers_an_inline_begin_patch() {
+        // Delta §7.7 item 5: a clean-stop reply that carries an OpenAI
+        // `*** Begin Patch` envelope is applied through the normal
+        // patch_file path. The patch is strict-searched, so a unique
+        // context block applies and a non-unique one is rejected.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let target = tmp.path().join("hello.txt");
+        std::fs::write(&target, "alpha\nbeta\ngamma\n").unwrap();
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let db = tempfile::NamedTempFile::new().unwrap().path().to_path_buf();
+        let engine = KodEngine::new(cfg, db).unwrap();
+        let text = "Sure, here is the change:\n\
+            *** Begin Patch\n\
+            *** Update File: hello.txt\n\
+            @@\n\
+             alpha\n\
+            -beta\n\
+            +BETA\n\
+             gamma\n\
+            *** End Patch\n";
+        engine.start().await.unwrap();
+        let note = engine.maybe_recover_inline_patch("", text, None).await;
+        assert!(note.is_some(), "expected a recovery note");
+        let after = std::fs::read_to_string(&target).unwrap();
+        assert!(after.contains("BETA"), "file not patched: {after}");
+        assert!(!after.contains("\nbeta\n"), "old line remains: {after}");
+    }
+
+    #[tokio::test]
+    async fn inline_patch_without_an_envelope_is_a_noop() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let db = tempfile::NamedTempFile::new().unwrap().path().to_path_buf();
+        let engine = KodEngine::new(cfg, db).unwrap();
+        let note = engine
+            .maybe_recover_inline_patch("", "just prose, no patch here", None)
+            .await;
+        assert!(note.is_none(), "prose must not trigger recovery");
+    }
+
+    #[tokio::test]
+    async fn inline_patch_with_an_ambiguous_block_is_rejected() {
+        // The context block appears twice; the strict search refuses
+        // rather than editing the wrong one. The file must be
+        // untouched.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let target = tmp.path().join("dup.txt");
+        std::fs::write(&target, "same\nsame\n").unwrap();
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let db = tempfile::NamedTempFile::new().unwrap().path().to_path_buf();
+        let engine = KodEngine::new(cfg, db).unwrap();
+        let text = "*** Begin Patch\n\
+            *** Update File: dup.txt\n\
+            @@\n\
+            -same\n\
+            +changed\n\
+            *** End Patch\n";
+        let note = engine.maybe_recover_inline_patch("", text, None).await;
+        // The note reports the skip; the file is unchanged.
+        assert!(note.is_some());
+        let after = std::fs::read_to_string(&target).unwrap();
+        assert_eq!(after, "same\nsame\n", "ambiguous patch must not edit");
     }
 
     #[tokio::test]
