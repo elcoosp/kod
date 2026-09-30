@@ -1118,3 +1118,57 @@ fn approval_popup_legend_survives_a_wide_diff() {
     );
     assert!(text.contains("deny"), "deny legend must be visible: {text}");
 }
+
+#[test]
+fn test_input_widget_keeps_overflow_cursor_visible() {
+    // 700 chars ≈ 9 visual rows in an 8-row box: the view must
+    // scroll so the tail and the cursor glyph stay on screen
+    // instead of clipping past the fold.
+    let mut app = KodApp::new();
+    app.set_input_mode(InputMode::Insert);
+    app.set_input("x".repeat(700));
+    let area = ratatui::layout::Rect::new(0, 0, 80, 10);
+    let mut buffer = ratatui::buffer::Buffer::empty(area);
+    InputWidget::new().render(&app, area, &mut buffer);
+    let text = buffer_text(&buffer);
+    assert!(text.contains("▌"), "cursor must be visible: {text}");
+    // Last CONTENT row (row 8 of 10; row 9 is the box border)
+    // carries the tail of the input, not its head: the head must
+    // have scrolled out.
+    let rows: Vec<String> = buffer
+        .content()
+        .chunks(80)
+        .map(|row| row.iter().map(|c| c.symbol().to_string()).collect())
+        .collect();
+    let last_content = &rows[rows.len() - 2];
+    assert!(
+        last_content.contains('x'),
+        "tail row must show input text: {last_content}"
+    );
+}
+
+#[test]
+fn test_input_widget_collapses_large_paste_to_chip() {
+    let mut app = KodApp::new();
+    app.set_input_mode(InputMode::Insert);
+    let payload = (0..10)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    app.insert_paste(&payload);
+    // Full text is what would submit.
+    assert_eq!(app.input(), &payload);
+    let area = ratatui::layout::Rect::new(0, 0, 80, 10);
+    let mut buffer = ratatui::buffer::Buffer::empty(area);
+    InputWidget::new().render(&app, area, &mut buffer);
+    let text = buffer_text(&buffer);
+    assert!(
+        text.contains("[Pasted 10 lines]"),
+        "chip must render: {text}"
+    );
+    assert!(
+        !text.contains("line 9"),
+        "pasted body must stay collapsed: {text}"
+    );
+}
