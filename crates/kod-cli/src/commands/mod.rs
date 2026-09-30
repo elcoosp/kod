@@ -188,6 +188,8 @@ async fn engine_from_config(
             .rate_limit_wait_secs
             .unwrap_or(kod_config::DEFAULT_RATE_LIMIT_WAIT_SECS),
     );
+    // Delta section 9.7: per-failure-class fallback chains.
+    engine.set_retry_config(config.llm.retry.clone()).await;
 
     // Config-derived engine settings.
     engine.set_hooks(config.hooks.clone());
