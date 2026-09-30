@@ -40,6 +40,7 @@ pub mod batch;
 pub mod check;
 pub mod context;
 pub mod edit_hashline;
+pub mod edit_tool;
 pub mod git;
 pub mod internal_url;
 pub mod relevance;
@@ -63,6 +64,7 @@ pub mod walk_cache;
 pub mod web;
 pub use ask::{AskUserTool, QUESTION_MARKER, QuestionRequest, parse_question, question_marker};
 pub use check::CheckTool;
+pub use edit_tool::EditHashlineTool;
 pub use git::{GitBranchTool, GitCommitTool, GitDiffTool, GitStatusTool};
 pub use search::SearchFilesTool;
 pub use todo::{
