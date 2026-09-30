@@ -662,7 +662,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    #[test]
     fn the_ast_and_regex_rust_paths_agree() {
         // Delta §7.3: the repo map routes `.rs` through tree-sitter
         // now. If the two paths disagree on any construct, the map
