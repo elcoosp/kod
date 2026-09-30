@@ -4,8 +4,10 @@
 //! without attaching to any of them and without scanning a directory
 //! of transcripts. A one-file-per-session marker directory does that:
 //! the file's existence is the presence, its contents are the owning
-//! pid, and liveness is a `kill(pid, 0)` — the cheapest liveness check
-//! a Unix gives you.
+//! pid plus (where available) the process's kernel start token, and
+//! liveness is a `kill(pid, 0)` guarded by a start-token comparison.
+//! The pid alone is not sufficient — the OS recycles pids — but a
+//! recycled pid has a different start time, so the pair is correct.
 //!
 //! A marker whose pid is gone is a crashed session. That is the useful
 //! signal: the transcript is on disk, so a crashed session can be
@@ -47,14 +49,50 @@ pub fn marker_dir(root: &Path, kind: MarkerKind) -> PathBuf {
 
 /// Write a marker for `session` owned by the current process.
 ///
+/// The file holds `"<pid> <start_token>"`: the pid is the cheap
+/// liveness check, the start token is what makes it *correct* across
+/// pid reuse (see [`process_alive_with_token`]). A start token of `-`
+/// means the platform could not produce one, in which case the reader
+/// falls back to the pid-only check.
+///
 /// Best-effort: a failure means the session is simply absent from the
 /// list, which is better than failing the session's own startup.
 pub fn mark(root: &Path, kind: MarkerKind, session: &str) -> Option<PathBuf> {
     let dir = marker_dir(root, kind);
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join(sanitize(session));
-    std::fs::write(&path, std::process::id().to_string()).ok()?;
+    let pid = std::process::id();
+    let token = process_start_token(pid).unwrap_or_else(|| "-".to_string());
+    std::fs::write(&path, format!("{pid} {token}")).ok()?;
     Some(path)
+}
+
+/// The kernel's start token for `pid`: an opaque string that is
+/// stable for one process instance and different for a reused pid.
+///
+/// Linux: field 22 of `/proc/<pid>/stat` (starttime, in clock ticks
+/// since boot). macOS: there is no /proc; `proc_pidinfo` would give
+/// the start time but pulls in a new binding — instead the fallback
+/// `None` is returned, and readers fall back to the pid-only check.
+/// That is a regression relative to Linux, not a false positive.
+pub fn process_start_token(pid: u32) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let raw = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // Field 22, 1-based. The comm field can contain spaces and
+        // parentheses, so the split is on the *last* ')' first.
+        let after_comm = raw.rsplit_once(')')?.1;
+        // After the comm, fields are 3 onward (state, ppid, …). Field
+        // 22 is index 19 in that tail.
+        let tail: Vec<&str> = after_comm.split_whitespace().collect();
+        let starttime = tail.get(19)?;
+        Some(starttime.to_string())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        None
+    }
 }
 
 /// Remove a session's marker.
@@ -83,16 +121,52 @@ pub fn list(root: &Path, kind: MarkerKind) -> Vec<LiveSession> {
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            let pid: u32 = std::fs::read_to_string(e.path())
-                .ok()?
-                .trim()
-                .parse()
-                .ok()?;
-            process_alive(pid).then_some(LiveSession { name, pid })
+            let raw = std::fs::read_to_string(e.path()).ok()?;
+            let (pid, token) = parse_marker(&raw)?;
+            let alive = match token.as_deref() {
+                Some(t) if t != "-" => process_alive_with_token(pid, t),
+                // No token on file (older marker, or an OS where we
+                // cannot read one): fall back to the pid-only check.
+                _ => process_alive(pid),
+            };
+            alive.then_some(LiveSession { name, pid })
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
+}
+
+/// Parse a marker file body: `"<pid> <token>"` or the legacy
+/// `"<pid>"`. Returns the pid and an optional token.
+fn parse_marker(raw: &str) -> Option<(u32, Option<String>)> {
+    let trimmed = raw.trim();
+    let (pid_str, token) = match trimmed.split_once(char::is_whitespace) {
+        Some((p, t)) => (p, Some(t.trim().to_string())),
+        None => (trimmed, None),
+    };
+    let pid: u32 = pid_str.parse().ok()?;
+    Some((pid, token))
+}
+
+/// Liveness with pid-reuse protection: `pid` names a live process
+/// *and* its current start token matches `token`.
+///
+/// A bare `kill(pid, 0)` returns true for any process that happens to
+/// hold the pid — including an unrelated one after the OS recycles
+/// it. Comparing start tokens (field 22 of `/proc/<pid>/stat` on
+/// Linux, where available) rejects that case: the recycled process
+/// has a different start time, so the marker reads as dead.
+pub fn process_alive_with_token(pid: u32, token: &str) -> bool {
+    if !process_alive(pid) {
+        return false;
+    }
+    match process_start_token(pid) {
+        // Token matches: same process instance.
+        Some(now) => now == token,
+        // No current token (unsupported OS, or the process exited
+        // between the two reads): the pid-only answer is all we have.
+        None => true,
+    }
 }
 
 /// Whether `pid` names a live process.
@@ -101,6 +175,11 @@ pub fn list(root: &Path, kind: MarkerKind) -> Vec<LiveSession> {
 /// sending a signal. `ESRCH` means no such process; `EPERM` means one
 /// exists but is not ours — which is still alive, and the honest
 /// answer is `true`.
+///
+/// **Pid reuse**: this returns `true` for any process holding the
+/// pid, including an unrelated one the OS recycled it to. A caller
+/// with a stored start token should prefer
+/// [`process_alive_with_token`].
 #[cfg(unix)]
 pub fn process_alive(pid: u32) -> bool {
     if pid == 0 {
