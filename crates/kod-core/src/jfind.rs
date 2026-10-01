@@ -68,10 +68,11 @@ pub const FILE_THRESHOLD: f32 = 0.2;
 
 /// The judge the cascade consults. Production wires Jev's batch
 /// scorer; a test supplies a stub.
+#[async_trait::async_trait]
 pub trait Judge: Send + Sync {
     /// Score each candidate on `[0.0, 1.0]` for relevance to
     /// `question`. The returned vec is parallel to `candidates`.
-    fn score_batch(&self, question: &str, candidates: &[String]) -> Vec<f32>;
+    async fn score_batch(&self, question: &str, candidates: &[String]) -> Vec<f32>;
 }
 
 /// One hit: a file, a line range, and the verified score.
@@ -94,11 +95,11 @@ pub struct Query {
 
 /// Run the cascade over `root`. `judge` scores candidates; `read` a
 /// file's text (injected so a test needs no filesystem).
-pub fn search(
+pub async fn search(
     root: &Path,
     query: &Query,
     judge: Arc<dyn Judge>,
-    read: &dyn Fn(&Path) -> Option<String>,
+    read: &(dyn Fn(&Path) -> Option<String> + Send + Sync),
     list: &[PathBuf],
 ) -> Vec<Hit> {
     if query.grep_keywords.is_empty() && query.text.is_empty() {
@@ -110,7 +111,7 @@ pub fn search(
         return Vec::new();
     }
     // Wave 2: filename judge, batched.
-    let kept = judge_filenames(&query.text, &candidates, judge.as_ref());
+    let kept = judge_filenames(&query.text, &candidates, judge.as_ref()).await;
     if kept.is_empty() {
         return Vec::new();
     }
@@ -123,7 +124,7 @@ pub fn search(
         let mut scored: Vec<(usize, f32)> = Vec::new();
         for batch in windows.chunks(SKETCH_BATCH) {
             let cards: Vec<String> = batch.iter().map(|(_, w)| sketch(w)).collect();
-            let scores = judge.score_batch(&query.text, &cards);
+            let scores = judge.score_batch(&query.text, &cards).await;
             for (i, (start, _)) in batch.iter().enumerate() {
                 let s = scores.get(i).copied().unwrap_or(0.0);
                 scored.push((*start, s));
@@ -141,6 +142,7 @@ pub fn search(
             let passage = passage_of(&text, *start, end);
             let verified = judge
                 .score_batch(&query.text, &[passage])
+                .await
                 .first()
                 .copied()
                 .unwrap_or(*s);
@@ -194,14 +196,14 @@ fn lexical_rank(files: &[PathBuf], keywords: &[String], limit: usize) -> Vec<Pat
 /// Wave 2: batch the candidates and ask the judge which filenames
 /// look relevant. A filename scoring above zero is kept (the filename
 /// is a coarse signal; the window wave does the fine work).
-fn judge_filenames(question: &str, candidates: &[PathBuf], judge: &dyn Judge) -> Vec<PathBuf> {
+async fn judge_filenames(question: &str, candidates: &[PathBuf], judge: &dyn Judge) -> Vec<PathBuf> {
     let mut kept: Vec<PathBuf> = Vec::new();
     for batch in candidates.chunks(FILENAME_BATCH) {
         let names: Vec<String> = batch
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
-        let scores = judge.score_batch(question, &names);
+        let scores = judge.score_batch(question, &names).await;
         for (i, path) in batch.iter().enumerate() {
             if scores.get(i).copied().unwrap_or(0.0) > 0.0 {
                 kept.push(path.clone());
@@ -253,8 +255,9 @@ mod tests {
     /// A stub judge that scores by how many query words appear in the
     /// candidate (case-folded), on `[0, 1]`.
     struct KeywordJudge;
+    #[async_trait::async_trait]
     impl Judge for KeywordJudge {
-        fn score_batch(&self, question: &str, candidates: &[String]) -> Vec<f32> {
+        async fn score_batch(&self, question: &str, candidates: &[String]) -> Vec<f32> {
             let words: Vec<String> = question
                 .split_whitespace()
                 .map(|w| w.to_lowercase())
@@ -278,8 +281,8 @@ mod tests {
         None
     }
 
-    #[test]
-    fn empty_query_returns_nothing() {
+    #[tokio::test]
+    async fn empty_query_returns_nothing() {
         let q = Query {
             text: String::new(),
             grep_keywords: Vec::new(),
@@ -290,7 +293,8 @@ mod tests {
             Arc::new(KeywordJudge),
             &no_read,
             &[],
-        );
+        )
+        .await;
         assert!(hits.is_empty());
     }
 
@@ -325,8 +329,8 @@ mod tests {
         assert!(s.chars().all(|c| c == 'é'), "no broken char");
     }
 
-    #[test]
-    fn a_relevant_file_becomes_a_hit() {
+    #[tokio::test]
+    async fn a_relevant_file_becomes_a_hit() {
         let files = vec![PathBuf::from("retry.rs")];
         let content = "fn backoff(attempt) {\n    // exponential retry delay\n}\n";
         let read = |p: &Path| {
@@ -336,14 +340,14 @@ mod tests {
             text: "retry backoff".to_string(),
             grep_keywords: vec!["retry".to_string()],
         };
-        let hits = search(Path::new("/r"), &q, Arc::new(KeywordJudge), &read, &files);
+        let hits = search(Path::new("/r"), &q, Arc::new(KeywordJudge), &read, &files).await;
         assert_eq!(hits.len(), 1, "got: {hits:?}");
         assert_eq!(hits[0].path, PathBuf::from("retry.rs"));
         assert!(hits[0].score >= FILE_THRESHOLD);
     }
 
-    #[test]
-    fn an_irrelevant_file_is_not_a_hit() {
+    #[tokio::test]
+    async fn an_irrelevant_file_is_not_a_hit() {
         let files = vec![PathBuf::from("retry.rs")];
         // The content has none of the query words.
         let content = "fn a() {}\nfn b() {}\n";
@@ -352,12 +356,12 @@ mod tests {
             text: "websocket handshake".to_string(),
             grep_keywords: vec!["retry".to_string()],
         };
-        let hits = search(Path::new("/r"), &q, Arc::new(KeywordJudge), &read, &files);
+        let hits = search(Path::new("/r"), &q, Arc::new(KeywordJudge), &read, &files).await;
         assert!(hits.is_empty(), "got: {hits:?}");
     }
 
-    #[test]
-    fn a_file_with_no_keyword_in_its_name_is_filtered_out() {
+    #[tokio::test]
+    async fn a_file_with_no_keyword_in_its_name_is_filtered_out() {
         let files = vec![PathBuf::from("other.txt")];
         let read = |_: &Path| Some("retry backoff retry".to_string());
         let q = Query {
@@ -366,12 +370,12 @@ mod tests {
         };
         // `other.txt` has no "retry" in its path, so the lexical wave
         // drops it before the window wave could see the content.
-        let hits = search(Path::new("/r"), &q, Arc::new(KeywordJudge), &read, &files);
+        let hits = search(Path::new("/r"), &q, Arc::new(KeywordJudge), &read, &files).await;
         assert!(hits.is_empty(), "lexical wave must filter on filename");
     }
 
-    #[test]
-    fn hits_are_sorted_by_score_descending() {
+    #[tokio::test]
+    async fn hits_are_sorted_by_score_descending() {
         // Filenames carry a keyword so the filename wave keeps them —
         // the stub judge scores a bare "a.rs" as 0 and drops it.
         let files = vec![PathBuf::from("retry_a.rs"), PathBuf::from("retry_b.rs")];
@@ -384,7 +388,7 @@ mod tests {
             text: "retry backoff".to_string(),
             grep_keywords: vec!["retry".to_string()],
         };
-        let hits = search(Path::new("/r"), &q, Arc::new(KeywordJudge), &read, &files);
+        let hits = search(Path::new("/r"), &q, Arc::new(KeywordJudge), &read, &files).await;
         assert!(!hits.is_empty(), "at least one hit expected");
         for w in hits.windows(2) {
             assert!(w[0].score >= w[1].score, "scores must descend");
