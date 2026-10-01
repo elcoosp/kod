@@ -63,6 +63,7 @@ pub mod todo_tracker;
 pub mod tools;
 pub mod walk_cache;
 pub mod web;
+pub mod web_retry;
 pub use ask::{AskUserTool, QUESTION_MARKER, QuestionRequest, parse_question, question_marker};
 pub use check::CheckTool;
 pub use edit_tool::EditHashlineTool;
