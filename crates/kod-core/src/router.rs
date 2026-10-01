@@ -492,6 +492,13 @@ impl TaskRouter {
     /// return the top-k entries. Called by the `memory_search` tool.
     /// Empty result for a query with no match; empty result when memory
     /// is disabled.
+    /// M-43: the router's live `MemoryManager`, when memory is enabled.
+    /// The TUI routes every `/memory` operation through this rather
+    /// than opening a second redb handle (which locks).
+    pub fn memory_manager(&self) -> Option<&MemoryManager> {
+        self.memory_manager.as_ref()
+    }
+
     pub async fn search_long_term(&self, query: &str, k: usize) -> Vec<kod_types::MemoryEntry> {
         let Some(manager) = &self.memory_manager else {
             return Vec::new();
