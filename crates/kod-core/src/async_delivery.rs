@@ -75,10 +75,14 @@ pub struct AsyncResult {
 /// Render one result for inclusion in a batched message.
 fn render_one(r: &AsyncResult) -> String {
     let header = format!("[job {} {}]", r.job_id, r.kind);
-    if r.body.len() <= INLINE_CAP {
+    // F2e-7: pick ONE unit. The old code compared `body.len()` (bytes)
+    // against the cap, sliced by CHARS, then reported the elided count
+    // as `len() - PREVIEW` — a bytes-vs-chars mixup that could emit a
+    // multibyte body whole while claiming truncation. Chars throughout.
+    let char_count = r.body.chars().count();
+    if char_count <= INLINE_CAP {
         return format!("{header}\n{}", r.body);
     }
-    // Over the cap: preview + pointer.
     let preview: String = r.body.chars().take(PREVIEW).collect();
     let pointer = match r.artifact.as_deref() {
         Some(url) => format!("\n[full result: {url}]"),
@@ -86,7 +90,7 @@ fn render_one(r: &AsyncResult) -> String {
     };
     format!(
         "{header}\n{preview}\n…[{} chars elided]{}",
-        r.body.len() - PREVIEW,
+        char_count - PREVIEW,
         pointer
     )
 }
