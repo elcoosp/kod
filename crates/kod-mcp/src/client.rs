@@ -351,7 +351,15 @@ async fn read_loop(
                         continue;
                     }
                 };
-                if let Some(id) = msg.get("id").and_then(|v| v.as_i64()) {
+                // M-2: a message with a method is a server-*initiated*
+                // request/notification, even when it carries a numeric
+                // id; only id-present + method-absent is a response. The
+                // old order treated any numeric id as a response, so a
+                // server request was swallowed and an id collision could
+                // hijack a pending tools/call result.
+                if msg.get("method").is_none()
+                    && let Some(id) = msg.get("id").and_then(|v| v.as_i64())
+                {
                     let sender = pending.lock().await.remove(&id);
                     if let Some(tx) = sender {
                         if let Some(err) = msg.get("error") {
