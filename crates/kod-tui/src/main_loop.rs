@@ -261,7 +261,11 @@ impl TuiLoop {
             Ok(p) => std::path::PathBuf::from(p),
             Err(_) => config.memory_db_path()?,
         };
-        let _ = std::fs::create_dir_all(db_path.parent().unwrap());
+        // `KOD_TEST_DB=test.redb` has no parent component; unwrap()ing
+        // None panicked during engine init.
+        if let Some(parent) = db_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
 
         // Propagate the model's context window to the router so its
         // memory manager sizes its own budget from the same number the
@@ -1285,8 +1289,13 @@ impl TuiLoop {
             for f in &attached {
                 match std::fs::read_to_string(f) {
                     Ok(body) => {
-                        let shown = if body.len() > 64 * 1024 {
-                            format!("{}…\n[truncated]", &body[..64 * 1024])
+                        const MAX_ATTACH_BYTES: usize = 64 * 1024;
+                        let shown = if body.len() > MAX_ATTACH_BYTES {
+                            let cut = kod_types::strutil::floor_char_boundary(
+                                &body,
+                                MAX_ATTACH_BYTES,
+                            );
+                            format!("{}…\n[truncated]", &body[..cut])
                         } else {
                             body
                         };
@@ -6228,11 +6237,14 @@ fn parse_at_agent_prefix(input: &str) -> Option<(usize, &str)> {
     }
     // Require exactly one space (or a tab) after the digits, then the
     // text. Any other character means this is not an `@N` prefix.
-    let (sep, text) = rest.split_at(1);
-    if sep != " " && sep != "\t" {
+    // Char-safe: split_at(1) is a BYTE split and panicked on a
+    // multibyte first char (`@1é`, `@2日`).
+    let mut cs = rest.chars();
+    let sep = cs.next()?;
+    if sep != ' ' && sep != '\t' {
         return None;
     }
-    Some((n, text))
+    Some((n, cs.as_str()))
 }
 
 /// Parse an overnight duration like `2h`, `90m`, `1h30m`.
