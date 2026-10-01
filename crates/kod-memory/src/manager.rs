@@ -518,7 +518,12 @@ impl MemoryManager {
         // the vector is filled in when the provider answers.
         // `skip_embed` captures the caller's intent before `metadata`
         // is moved into the entry.
-        let skip_embed = metadata.embedding.is_some() || self.embedder.is_none();
+        // Short-term entries are never persisted; embedding one burns
+        // an HTTP round-trip and inserts an orphan vector into the
+        // long-term index (never consulted, never removed).
+        let skip_embed = metadata.embedding.is_some()
+            || self.embedder.is_none()
+            || matches!(memory_type, MemoryType::ShortTerm);
 
         match memory_type {
             MemoryType::ShortTerm => {
@@ -817,7 +822,10 @@ impl MemoryManager {
                         let vec = v.remove(0);
                         self.query_embed_cache
                             .lock()
-                            .insert(query_capped.clone(), vec.clone());
+                            // SAME key as the lookup: get() keys on the
+                            // projected text, so insert() on the raw
+                            // query never hit (and could collide).
+                            .insert(query_for_embed.clone(), vec.clone());
                         Some(vec)
                     }
                     Ok(_) => None,
