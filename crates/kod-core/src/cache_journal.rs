@@ -91,6 +91,21 @@ pub fn record(cause: InvalidationCause) {
         "cause": cause,
     });
     let _ = writeln!(file, "{line}");
+    // F2e-8: honour the "bounded" doc. Past ~8 MiB, keep the newest
+    // half (journal is debug-only).
+    let path = journal_path();
+    if let Some(p) = path
+        && let Ok(md) = std::fs::metadata(&p)
+        && md.len() > 8 * 1024 * 1024
+        && let Ok(all) = std::fs::read_to_string(&p)
+    {
+        let keep: String = all
+            .lines()
+            .skip(all.lines().count() / 2)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = std::fs::write(&p, keep);
+    }
 }
 
 /// Read the last `n` entries for `/debug cache`. Returns an empty vec
