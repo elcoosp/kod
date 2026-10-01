@@ -465,12 +465,24 @@ impl WorktreeManager {
         // showed a modified file and the check refused every merge.
         // A user's own edit to `.gitignore` is a small price to pay
         // for making the merge path actually usable.
-        let status = run_git_owned(
+        let status = match run_git_owned(
             &self.repo,
             &["status", "--porcelain", "--", ":(exclude).gitignore"],
             self.git_timeout_secs,
-        )
-        .unwrap_or_default();
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                // Fail CLOSED: an unreadable status is not a clean tree.
+                // The old `unwrap_or_default()` turned any error into an
+                // empty string, the dirty-index guard passed, and merge
+                // ran on a dirty index.
+                let msg = format!("cannot verify working-tree state: {e}");
+                for info in &self.created {
+                    report.failed.push((info.branch.clone(), msg.clone()));
+                }
+                return Ok(report);
+            }
+        };
         if !status.trim().is_empty() {
             let msg = format!(
                 "refusing to merge: working tree has uncommitted changes:\n{}",
@@ -730,6 +742,31 @@ fn run_git_inner(repo: &Path, args: &[&str], timeout_secs: u64) -> Result<String
         .env("GIT_MERGE_AUTOEDIT", "no");
 
     let mut child = cmd.spawn().map_err(KodError::Io)?;
+    // Drain the pipes CONCURRENTLY with the wait: `git status` on a
+    // large dirty tree fills the ~64KiB pipe buffer, and a child
+    // blocked on write never exits, so polling try_wait alone deadlocks
+    // until the deadline (and the swallowed error then ran a merge on a
+    // dirty index).
+    use std::io::Read;
+    let mut stdout_pipe = child
+        .stdout
+        .take()
+        .ok_or_else(|| KodError::Internal("git: stdout not captured".to_string()))?;
+    let mut stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| KodError::Internal("git: stderr not captured".to_string()))?;
+    let out_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout_pipe.read_to_end(&mut buf);
+        buf
+    });
+    let err_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut buf);
+        buf
+    });
+
     let effective = timeout_secs.max(1);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(effective);
     let status = loop {
@@ -739,6 +776,8 @@ fn run_git_inner(repo: &Path, args: &[&str], timeout_secs: u64) -> Result<String
                 if std::time::Instant::now() >= deadline {
                     let _ = child.kill();
                     let _ = child.wait();
+                    let _ = out_thread.join();
+                    let _ = err_thread.join();
                     return Err(KodError::Internal(format!(
                         "git {}: did not finish within {}s (killed)",
                         args.join(" "),
@@ -749,18 +788,8 @@ fn run_git_inner(repo: &Path, args: &[&str], timeout_secs: u64) -> Result<String
             }
         }
     };
-
-    // Drain both pipes (they are already closed because the child has
-    // exited; reads return immediately).
-    use std::io::Read;
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    if let Some(mut p) = child.stdout.take() {
-        let _ = p.read_to_end(&mut stdout);
-    }
-    if let Some(mut p) = child.stderr.take() {
-        let _ = p.read_to_end(&mut stderr);
-    }
+    let stdout = out_thread.join().unwrap_or_default();
+    let stderr = err_thread.join().unwrap_or_default();
 
     if !status.success() {
         let err = String::from_utf8_lossy(&stderr);
