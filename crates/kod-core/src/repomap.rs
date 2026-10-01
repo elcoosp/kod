@@ -414,13 +414,18 @@ fn extract_symbols_and_imports(path: &Path) -> (Vec<Symbol>, Vec<String>) {
         // `(kind, name, line)` tuples, so the repo map downstream is
         // unchanged; `extract_rust` stays as the fallback for a
         // parse the grammar rejects.
-        "rs" => extract_rust_via_ast(&content).unwrap_or_else(|| extract_rust(&content)),
-        "py" => extract_python(&content),
-        "js" | "jsx" | "ts" | "tsx" => extract_js(&content),
-        "go" => extract_go(&content),
-        "rb" => extract_ruby(&content),
-        "java" => extract_java(&content),
-        "c" | "h" | "cc" | "cpp" | "hpp" | "cxx" => extract_c(&content),
+        // Delta §7.3: every language in the repo map's set goes
+        // through tree-sitter first (the parse cache makes a repeat
+        // rebuild of an unchanged file free), falling back to the
+        // regex extractor when the grammar cannot produce a tree. The
+        // two paths produce the same `(kind, name, line)` tuples.
+        "rs" => ast_or_regex(&content, "rs", extract_rust),
+        "py" => ast_or_regex(&content, "py", extract_python),
+        "js" | "jsx" | "ts" | "tsx" => ast_or_regex(&content, ext, extract_js),
+        "go" => ast_or_regex(&content, "go", extract_go),
+        "rb" => ast_or_regex(&content, "rb", extract_ruby),
+        "java" => ast_or_regex(&content, "java", extract_java),
+        "c" | "h" | "cc" | "cpp" | "hpp" | "cxx" => ast_or_regex(&content, "c", extract_c),
         _ => Vec::new(),
     };
     let imports = extract_imports(ext, &content);
@@ -494,22 +499,53 @@ fn scan(content: &str, patterns: &[(&'static str, &Regex)]) -> Vec<Symbol> {
     out.truncate(200);
     out
 }
-/// Delta §7.3: Rust symbols via the tree-sitter parse cache. Returns
-/// `None` when the grammar cannot produce a tree (the caller falls
-/// back to the regex extractor). Applies the same test-attribute
-/// filter the regex path does, so the two agree on what counts.
+/// Delta §7.3: run the tree-sitter extractor for the language `ext`,
+/// falling back to the regex `fallback` when the grammar cannot
+/// produce a tree. The two paths produce the same tuples, so the repo
+/// map downstream is unchanged.
+///
+/// Rust additionally drops test functions (`#[test]`, `#[tokio::test]`)
+/// — the same filter the regex path applies — so the two agree on the
+/// production surface.
+fn ast_or_regex(content: &str, ext: &str, fallback: fn(&str) -> Vec<Symbol>) -> Vec<Symbol> {
+    let lang = match ext {
+        "rs" => kod_ast::Lang::Rust,
+        "py" => kod_ast::Lang::Python,
+        "js" | "jsx" => kod_ast::Lang::JavaScript,
+        "ts" => kod_ast::Lang::TypeScript,
+        "tsx" => kod_ast::Lang::Tsx,
+        "go" => kod_ast::Lang::Go,
+        "rb" => kod_ast::Lang::Ruby,
+        "java" => kod_ast::Lang::Java,
+        "c" | "h" | "cc" | "cpp" | "hpp" | "cxx" => kod_ast::Lang::C,
+        _ => return fallback(content),
+    };
+    // Rust has its own extractor in `kod-ast` (the eight-language
+    // `extract::symbols` table returns `None` for `Lang::Rust` by
+    // design — the two were kept separate so the test-attribute filter
+    // stayed at the caller). Route Rust to `rust_symbols`.
+    let syms = if matches!(lang, kod_ast::Lang::Rust) {
+        kod_ast::rust::rust_symbols(content)
+    } else {
+        kod_ast::extract::symbols(lang, content)
+    };
+    let Some(syms) = syms else {
+        return fallback(content);
+    };
+    syms.into_iter()
+        .map(|s| Symbol {
+            kind: s.kind,
+            name: s.name,
+            line: s.line,
+        })
+        .filter(|sym| !(sym.kind == "fn" && has_test_attribute(content, sym.line)))
+        .collect()
+}
+
+/// Kept for the Rust agreement test; delegates to `ast_or_regex`.
+#[cfg(test)]
 fn extract_rust_via_ast(content: &str) -> Option<Vec<Symbol>> {
-    let syms = kod_ast::rust::rust_symbols(content)?;
-    Some(
-        syms.into_iter()
-            .map(|s| Symbol {
-                kind: s.kind,
-                name: s.name,
-                line: s.line,
-            })
-            .filter(|sym| !(sym.kind == "fn" && has_test_attribute(content, sym.line)))
-            .collect(),
-    )
+    Some(ast_or_regex(content, "rs", extract_rust))
 }
 
 fn extract_rust(content: &str) -> Vec<Symbol> {
@@ -706,6 +742,52 @@ async fn an_async_test() {}
         // grammar ever failed to load, this would return None and the
         // map would silently fall back.
         assert!(extract_rust_via_ast("fn x() {}").is_some());
+    }
+
+    #[test]
+    fn the_ast_and_regex_paths_agree_for_every_language() {
+        // Delta §7.3: every language routes through tree-sitter now,
+        // falling back to regex. If the two disagree on any construct,
+        // the map silently changes shape. This pins agreement per
+        // language on a sample that exercises each extractor's kinds.
+        let cases: &[(&str, &str)] = &[
+            ("py", "def a():\n    pass\nclass B:\n    pass\n"),
+            ("js", "function a() {}\nclass B {}\nconst C = 1;\n"),
+            ("go", "package m\nfunc A() {}\ntype T struct{}\n"),
+            ("rb", "def a\nend\nclass B\nend\nmodule M\nend\n"),
+            ("java", "public class C {}\ninterface I {}\n"),
+            ("c", "struct S { int x; };\n"),
+        ];
+        for (ext, src) in cases {
+            let content = *src;
+            let regex = match *ext {
+                "py" => extract_python(content),
+                "js" => extract_js(content),
+                "go" => extract_go(content),
+                "rb" => extract_ruby(content),
+                "java" => extract_java(content),
+                "c" => extract_c(content),
+                _ => unreachable!(),
+            };
+            let ast = ast_or_regex(content, ext, match *ext {
+                "py" => extract_python,
+                "js" => extract_js,
+                "go" => extract_go,
+                "rb" => extract_ruby,
+                "java" => extract_java,
+                "c" => extract_c,
+                _ => unreachable!(),
+            });
+            let r: Vec<(&str, String, usize)> = regex
+                .iter()
+                .map(|s| (s.kind, s.name.clone(), s.line))
+                .collect();
+            let a: Vec<(&str, String, usize)> = ast
+                .iter()
+                .map(|s| (s.kind, s.name.clone(), s.line))
+                .collect();
+            assert_eq!(a, r, "AST and regex disagree for .{ext}");
+        }
     }
 
     #[test]
