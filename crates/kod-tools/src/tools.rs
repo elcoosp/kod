@@ -1341,7 +1341,9 @@ fn truncate_entry(s: &str, max: usize) -> String {
 /// global git excludes), keeping dotfiles visible but always pruning `.git`.
 /// Used by `list_files` and `grep` so ignored build output (`target/`,
 /// `node_modules/`, …) never bloats tool results.
-pub(crate) fn gitaware_walk(root: &std::path::Path, recursive: bool) -> Vec<std::path::PathBuf> {
+/// Walk `root` honoring ignore files. Public so `jfind` (in
+/// `kod-core`) can feed the same file list the `grep` tool uses.
+pub fn gitaware_walk(root: &std::path::Path, recursive: bool) -> Vec<std::path::PathBuf> {
     // Delta §7.7: a repeat walk of the same `(root, recursive)` in
     // the same turn reuses the first result. Invalidation is on
     // every write (see `atomic_write`) and on a short TTL inside
