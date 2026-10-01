@@ -330,7 +330,15 @@ impl LspClient {
                 break;
             }
             let remaining = deadline.saturating_duration_since(now);
-            let read = tokio::time::timeout(remaining, self.read_handling_server_requests()).await;
+            // Bound the read by the settle window once any activity has
+            // been seen: bounding by `remaining` meant the settle check
+            // never got a chance to fire (a single read ate the whole
+            // 30s budget even when diagnostics arrived in 200ms).
+            let wait = match last_activity_at {
+                Some(_) => remaining.min(SETTLE_AFTER),
+                None => remaining,
+            };
+            let read = tokio::time::timeout(wait, self.read_handling_server_requests()).await;
             let msg = match read {
                 Ok(Ok(m)) => m,
                 Ok(Err(LspError::Io(e))) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
