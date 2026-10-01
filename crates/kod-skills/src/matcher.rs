@@ -146,9 +146,15 @@ impl SkillMatcher {
         }
 
         // 2. Tag matching (medium weight: 0.4)
+        const MIN_TAG_MATCH_CHARS: usize = 3;
         for tag in &skill.metadata.tags {
             let tag_lower = tag.to_lowercase();
-            if query.contains(&tag_lower) || tag_lower.contains(query) {
+            // M-10: the reversed check (tag contains query) needs a
+            // length floor, or a 2-char query like "ui" matched "build"
+            // and injected unrelated skills at 0.4 >= the 0.3 threshold.
+            let reverse_hit = query.len() >= MIN_TAG_MATCH_CHARS
+                && tag_lower.contains(query);
+            if query.contains(&tag_lower) || reverse_hit {
                 score += 0.4;
                 reasons.push(MatchReason::TagMatch { tag: tag.clone() });
             }
