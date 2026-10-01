@@ -1461,9 +1461,15 @@ impl KodEngine {
         // too high) emptied the prompt's memory block entirely.
         // Snapshot the original before consuming it.
         let original = entries.clone();
+        // M-18: only the first MAX_ENTRIES were scored. Entries past
+        // the cap must pass through untouched — the old `.filter()`
+        // over the WHOLE vec silently dropped everything after 30
+        // (fail-closed on unscored data).
         let filtered: Vec<(String, String)> = entries
             .into_iter()
-            .filter(|(id, _)| keep_ids.contains(id))
+            .enumerate()
+            .filter(|(i, (id, _))| *i >= MAX_ENTRIES || keep_ids.contains(id))
+            .map(|(_, e)| e)
             .collect();
         if filtered.is_empty() {
             return original;
