@@ -708,9 +708,14 @@ impl TuiLoop {
         // without waiting for the first tick.
         self.render().await?;
 
+        // M-42: render at most every 33ms during sustained streaming.
+        // `Tick` only fires on an idle channel, so a flood of
+        // ResponseChunks starved it and the stream froze.
+        let mut last_render = std::time::Instant::now();
         while !self.app.should_quit() {
             let event = self.event_handler.next_event().await;
             let mut render_now = event.requires_render();
+            let mut saw_chunk = matches!(event, Event::ResponseChunk(_));
             self.handle_event(event).await?;
 
             const MAX_EVENTS_PER_FRAME: usize = 256;
@@ -719,14 +724,25 @@ impl TuiLoop {
                     break;
                 };
                 render_now |= next.requires_render();
+                if matches!(next, Event::ResponseChunk(_)) {
+                    saw_chunk = true;
+                }
                 self.handle_event(next).await?;
                 if self.app.should_quit() {
                     break;
                 }
             }
 
+            if saw_chunk
+                && !render_now
+                && last_render.elapsed() >= std::time::Duration::from_millis(33)
+            {
+                render_now = true;
+            }
+
             if render_now && !self.app.should_quit() {
                 self.render().await?;
+                last_render = std::time::Instant::now();
             }
         }
 
@@ -2557,42 +2573,19 @@ impl TuiLoop {
                 }
             }
             "/memory" => {
-                // The engine owns the memory subsystem. The TUI
-                // must not open a second MemoryManager here: redb
-                // locks the file, so a second handle fails with
-                // "database already open". Every memory operation
-                // routes through the engine.
-                if self.engine.is_none() {
+                // M-43: the engine owns the ONE MemoryManager. Opening
+                // a second handle here locked the redb file
+                // ("database already open"). Route every op through
+                // the router's live manager.
+                let Some(engine) = self.engine.clone() else {
                     self.app.push_system_message("Engine not initialized.");
                     return Ok(());
-                }
-                let config = match KodConfig::load_default() {
-                    Ok(c) => c,
-                    Err(e) => {
-                        self.app
-                            .push_system_message(&format!("Could not load config: {e}"));
-                        return Ok(());
-                    }
                 };
-                let path = match config.memory_db_path() {
-                    Ok(p) => p,
-                    Err(e) => {
-                        self.app.push_system_message(&format!(
-                            "Could not determine memory database path: {e}"
-                        ));
-                        return Ok(());
-                    }
+                let Some(manager) = engine.router().memory_manager() else {
+                    self.app
+                        .push_system_message("Long-term memory is not enabled in this session.");
+                    return Ok(());
                 };
-                let manager =
-                    match kod_memory::MemoryManager::new(path, config.memory.short_term_capacity) {
-                        Ok(m) => m,
-                        Err(e) => {
-                            self.app.push_system_message(&format!(
-                                "Could not open memory database: {e}"
-                            ));
-                            return Ok(());
-                        }
-                    };
 
                 let sub = parts.next();
                 match sub {
@@ -2726,40 +2719,17 @@ impl TuiLoop {
                     );
                     return Ok(());
                 }
-                // Same rationale as /memory: the engine owns the
-                // subsystem, and a second redb handle fails with
-                // "database already open".
-                if self.engine.is_none() {
+                // M-43: same as /memory — use the engine's manager,
+                // never a second redb handle.
+                let Some(engine) = self.engine.clone() else {
                     self.app.push_system_message("Engine not initialized.");
                     return Ok(());
-                }
-                let config = match KodConfig::load_default() {
-                    Ok(c) => c,
-                    Err(e) => {
-                        self.app
-                            .push_system_message(&format!("Could not load config: {e}"));
-                        return Ok(());
-                    }
                 };
-                let path = match config.memory_db_path() {
-                    Ok(p) => p,
-                    Err(e) => {
-                        self.app.push_system_message(&format!(
-                            "Could not determine memory database path: {e}"
-                        ));
-                        return Ok(());
-                    }
+                let Some(manager) = engine.router().memory_manager() else {
+                    self.app
+                        .push_system_message("Long-term memory is not enabled in this session.");
+                    return Ok(());
                 };
-                let manager =
-                    match kod_memory::MemoryManager::new(path, config.memory.short_term_capacity) {
-                        Ok(m) => m,
-                        Err(e) => {
-                            self.app.push_system_message(&format!(
-                                "Could not open memory database: {e}"
-                            ));
-                            return Ok(());
-                        }
-                    };
                 let project_key = std::env::current_dir()
                     .ok()
                     .map(|cwd| kod_core::TaskRouter::project_key_for(&cwd));
