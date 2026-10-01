@@ -1211,7 +1211,13 @@ pub async fn run_if_bench(
     println!("depth: {depth} / {} (par {})", cfg.turns, cfg.par,);
     let pass = depth >= cfg.par;
     println!("{}", if pass { "PASS" } else { "FAIL" });
-    Ok(())
+    // M-51: the command doc promises exit 1 below par; always Ok(())
+    // made it unusable in a script.
+    if pass {
+        Ok(())
+    } else {
+        std::process::exit(1);
+    }
 }
 
 /// Delta §14.4: validate a proposed commit before writing it.
