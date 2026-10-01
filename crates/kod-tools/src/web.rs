@@ -248,10 +248,12 @@ impl Tool for WebFetchTool {
                 .await
                 .unwrap_or(Ok(Vec::new()))
                 .unwrap_or_default();
-                // First address only; if `Host:` header needs to be
-                // preserved, reqwest does that automatically when we
-                // use the `resolve` builder.
-                lookup.into_iter().next()
+                // M-32: pin only from the VALIDATED set. The pin's
+                // second lookup can disagree with the pre-flight under
+                // TTL-0 DNS; filter through the same private-IP check.
+                lookup
+                    .into_iter()
+                    .find(|addr| block_private_ip(addr.ip()).is_none())
             } else {
                 None
             }
