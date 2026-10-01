@@ -84,7 +84,8 @@ const TABLE: &[(&str, &str)] = &[
     ("apply_patch", "patch_file"),
     ("str_replace", "patch_file"),
     ("str_replace_editor", "patch_file"),
-    ("edit", "patch_file"),
+    // ("edit", "patch_file") removed: it shadowed the registered
+    // hashline `edit` tool, dispatching every edit to patch_file.
     // Search.
     ("grep", "grep"),
     ("file_grep", "grep"),
