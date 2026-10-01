@@ -609,6 +609,14 @@ impl LlmProvider for AnthropicProvider {
                                 status = status.as_u16(),
                                 "anthropic stream: pre-commit HTTP error; retrying"
                             );
+                            // M-58: back off before the retry — the
+                            // pre-fix loop re-POSTed a 429/5xx within
+                            // milliseconds (the OpenAI path sleeps
+                            // 250ms x attempt).
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                250 * u64::from(attempt.max(1)),
+                            ))
+                            .await;
                             continue;
                         }
                     }
