@@ -40,6 +40,7 @@ pub mod batch;
 pub mod check;
 pub mod conflict_handler;
 pub mod context;
+pub mod env_policy;
 pub mod edit_hashline;
 pub mod edit_tool;
 pub mod git;
