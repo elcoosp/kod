@@ -603,6 +603,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolving_another_sessions_artifact_is_refused() {
+        // M-40: `store_for` tags the artifact with its owner; a
+        // resolve from a different holder must not see the bytes.
+        let h = ArtifactHandler::new();
+        h.store_for("abc", "hello", "text/plain", "agent-a")
+            .await
+            .unwrap();
+        let other = ResolveContext::new("agent-b", "/tmp");
+        let err = h.resolve("artifact://abc", &other).await.unwrap_err();
+        match err {
+            ProtocolError::Handler { message, .. } => {
+                assert!(
+                    message.contains("another session"),
+                    "got: {message}"
+                );
+            }
+            other => panic!("expected Handler, got {other:?}"),
+        }
+        // The owning session still reads it fine.
+        let owner = ResolveContext::new("agent-a", "/tmp");
+        let r = h.resolve("artifact://abc", &owner).await.unwrap();
+        assert_eq!(r.text, "hello");
+    }
+
+    #[tokio::test]
+    async fn store_for_refuses_a_cross_session_id_collision() {
+        // Two agents running the same command produce the same
+        // content-addressed id. The store must not hand agent B a
+        // URL to agent A's bytes; it refuses with a distinct
+        // message that names the collision as cross-session (not a
+        // hash collision within one session).
+        let h = ArtifactHandler::new();
+        h.store_for("cmd-1", "same", "text/plain", "agent-a")
+            .await
+            .unwrap();
+        let err = h
+            .store_for("cmd-1", "same", "text/plain", "agent-b")
+            .await
+            .unwrap_err();
+        match err {
+            ProtocolError::Handler { message, .. } => {
+                assert!(
+                    message.contains("another session"),
+                    "got: {message}"
+                );
+            }
+            other => panic!("expected Handler, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn restoring_identical_content_returns_the_same_url() {
         // Idempotent for identical content: a content-addressed
         // caller re-storing the same bytes gets the same URL, not
