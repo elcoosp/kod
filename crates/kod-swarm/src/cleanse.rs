@@ -154,7 +154,14 @@ impl CleanseScheduler {
             if claimed.len() >= budget {
                 break;
             }
-            if owner.worker == worker && !owner.released && self.pending.contains_key(file) {
+            // F2h-13: the documented single-flight check — a file
+            // with a send already in flight must not join a second
+            // batch.
+            if owner.worker == worker
+                && !owner.released
+                && !owner.sending
+                && self.pending.contains_key(file)
+            {
                 claimed.push(file.clone());
             }
         }
