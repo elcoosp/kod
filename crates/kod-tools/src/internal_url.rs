@@ -432,7 +432,22 @@ impl ArtifactHandler {
                     .to_string(),
             });
         }
+        // M-36: cap the store — long sessions offload many artifacts
+        // and the map grew without bound. FIFO eviction past a
+        // generous cap; artifact URLs are re-readable only within the
+        // window the model is actually working, and a dropped one
+        // re-offloads on demand.
+        const MAX_ARTIFACTS: usize = 512;
         store.insert(id.clone(), StoredArtifact { text, mime });
+        while store.len() > MAX_ARTIFACTS {
+            // Evict an arbitrary (first) key; the store is a cache,
+            // not a history.
+            if let Some(victim) = store.keys().next().cloned() {
+                store.remove(&victim);
+            } else {
+                break;
+            }
+        }
         Ok(format!("artifact://{id}"))
     }
 
