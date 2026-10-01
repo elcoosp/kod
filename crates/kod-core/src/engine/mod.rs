@@ -11970,6 +11970,16 @@ impl KodEngine {
                 time::OffsetDateTime::now_utc(),
             );
             tool_msg.tool_call_id = Some(id);
+            // Delta §7.7 item 1: flag a result that told the model
+            // nothing (an empty read, a grep with no hits, a clean
+            // diff). A §3 pruning pass drops these without
+            // re-inspecting the payload. Only a `Success` can be
+            // useless; an error or a confirmation carries a message.
+            if let Some(kod_types::ToolResult::Success(v)) = results.get(i)
+                && kod_types::is_useless(&call.tool_name, v)
+            {
+                tool_msg.metadata.useless = true;
+            }
             messages.push(tool_msg);
         }
         messages
