@@ -261,6 +261,11 @@ impl LlmConfig {
                 "research",
                 "debugging",
                 "refactoring",
+                // M-7: the engine reads routing.swarm["judge"] (or
+                // by_task["judge"]) for the judge role; without this the
+                // load-time validation dropped the entry and judge
+                // routing was unconfigurable.
+                "judge",
             ];
             r.by_task.retain(|k, _| {
                 if KNOWN_TASK_KEYS.contains(&k.as_str()) {
