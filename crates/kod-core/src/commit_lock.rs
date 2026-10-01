@@ -37,10 +37,24 @@ impl CommitLock {
     /// serialize, and refusing is more honest than locking a
     /// filesystem path that means nothing.
     pub fn for_path(path: &Path) -> Option<Self> {
-        Some(Self {
-            key: git_common_dir(path)?,
-            inner: Arc::new(tokio::sync::Mutex::new(())),
-        })
+        // M-27: a process-global registry keyed on the git common dir,
+        // so two `for_path` calls for the same repo share ONE mutex.
+        // The old shape minted a fresh `Arc<Mutex>` per call, so two
+        // callers "serializing" on the same repo did not serialize.
+        use std::collections::HashMap as StdMap;
+        use std::sync::{Mutex as StdMutex, OnceLock};
+        static REGISTRY: OnceLock<
+            StdMutex<StdMap<std::path::PathBuf, Arc<tokio::sync::Mutex<()>>>>,
+        > = OnceLock::new();
+        let key = git_common_dir(path)?;
+        let reg = REGISTRY.get_or_init(|| StdMutex::new(StdMap::new()));
+        let inner = reg
+            .lock()
+            .ok()?
+            .entry(key.clone())
+            .or_default()
+            .clone();
+        Some(Self { key, inner })
     }
 
     /// The directory this lock is keyed to, for a log line.
