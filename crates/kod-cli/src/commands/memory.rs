@@ -451,11 +451,17 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool, yes: bool) -> R
     // both stricter than the threat model needs and inconsistent
     // with its own printed message. Destructive logs still require
     // an explicit acknowledgement.
-    let destructive_names = ["execute_command", "write_file", "patch_file"];
+    // M-52: fail CLOSED. The log is untrusted input, so anything not
+    // on the read-only allowlist requires `--yes`. A denylist ages
+    // badly (git_commit shipped after the old three-name list).
+    const READ_ONLY_TOOLS: &[&str] = &[
+        "read_file", "grep", "search_files", "list_files", "file_info",
+        "git_status", "git_diff", "lsp_diagnostics", "check", "web_fetch",
+    ];
     let destructive: Vec<_> = tool_calls
         .iter()
         .enumerate()
-        .filter(|(_, (name, _, _, _, _))| destructive_names.contains(&name.as_str()))
+        .filter(|(_, (name, _, _, _, _))| !READ_ONLY_TOOLS.contains(&name.as_str()))
         .collect();
     if !yes && !destructive.is_empty() {
         println!(
