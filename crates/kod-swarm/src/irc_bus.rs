@@ -259,7 +259,10 @@ impl IrcBus {
             to: to.clone(),
             body: body.into(),
             delivery: Delivery::Interrupt,
-            reply_to: None,
+            // Deliver the correlation id the waiter parked under: the
+            // recipient needs it to call reply(), otherwise every
+            // awaited send times out by construction.
+            reply_to: Some(correlation),
         };
         let _ = self.enqueue(msg).await;
 
