@@ -1782,6 +1782,20 @@ impl Tool for GrepTool {
                     files_skipped: 0,
                 };
                 // Score and reorder the `results` Vec to match.
+                // F2f-19: index map instead of an O(n²) `position` +
+                // deep `Value::contains` scan per match.
+                let mut index: std::collections::HashMap<(String, u64), usize> =
+                    std::collections::HashMap::with_capacity(results.len());
+                for (i, r) in results.iter().enumerate() {
+                    let key = (
+                        r.get("file")
+                            .and_then(|f| f.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        r.get("line").and_then(|n| n.as_u64()).unwrap_or(0),
+                    );
+                    index.insert(key, i);
+                }
                 let ranked = crate::relevance::rank_hits(&sr, pattern);
                 let mut reordered: Vec<serde_json::Value> = Vec::with_capacity(results.len());
                 for (path, line) in ranked {
