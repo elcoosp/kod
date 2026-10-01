@@ -5682,6 +5682,19 @@ impl KodEngine {
         }
     }
 
+    /// M-20: deny every pending approval at once. The ACP fail-closed
+    /// path calls this when an approval batch cannot be parsed, so a
+    /// corrupt batch denies immediately instead of hanging every item
+    /// for `AWAIT_APPROVAL_SECS`. Returns the number denied.
+    pub async fn deny_all_pending_approvals(&self) -> usize {
+        let mut map = self.pending_approvals.write().await;
+        let n = map.len();
+        for (_, tx) in map.drain() {
+            let _ = tx.send(ApprovalDecision::Deny);
+        }
+        n
+    }
+
     /// Answer a pending ask_user question. Returns `true` when the id
     /// matched and the answer was delivered.
     pub async fn respond_to_question(&self, id: u64, answer: String) -> bool {
