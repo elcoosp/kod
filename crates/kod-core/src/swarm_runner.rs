@@ -502,6 +502,10 @@ impl SwarmRunner {
         if let Some(mgr) = worktree_mgr.as_mut() {
             for (i, st) in subtasks.iter().enumerate() {
                 let slug = format!("agent-{}-{}", i + 1, sanitize(&st.name));
+                // NOTE: `create` runs sync git (a `thread::sleep` poll
+                // loop). Moving it to `spawn_blocking` would require
+                // restructuring ownership of `worktree_mgr` (a raw
+                // pointer is not `Send`); deferred as its own change.
                 match mgr.create(&slug) {
                     Ok(info) => worktree_created.push(info),
                     Err(e) => {
