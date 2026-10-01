@@ -360,6 +360,19 @@ impl ProtocolHandler for ConflictHandler {
                 reason: "registered block no longer fits the file (it changed)".to_string(),
             });
         }
+        // F2f-22: byte-length is not integrity — a same-length edit
+        // since the scan shifts every registered offset onto unrelated
+        // text. Re-derive the block's stable id from the current bytes
+        // and compare.
+        let current_body = &text[b.start..b.end];
+        if crate::edit_hashline::tag_hex(crate::edit_hashline::tag_of(current_body))
+            != b.id
+        {
+            return Err(ProtocolError::Malformed {
+                url: url.to_string(),
+                reason: "registered conflict block changed since the scan".to_string(),
+            });
+        }
         // The replacement is the caller's text, made to end with a
         // newline so the splice does not merge lines.
         let mut replacement = content.to_string();
