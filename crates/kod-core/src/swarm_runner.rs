@@ -640,6 +640,28 @@ impl SwarmRunner {
             parking_lot::Mutex<std::collections::HashMap<AgentId, Vec<String>>>,
         > = Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new()));
 
+        // M-22: worktrees were created one-per-subtask in `subtasks`
+        // order (see the create loop above), but the pool is built
+        // from *distinct capabilities* in first-appearance order.
+        // Indexing `worktree_created` with the pool index therefore
+        // handed the wrong worktree to any capability that is not
+        // the i-th distinct one. Build the mapping explicitly: a
+        // capability owns the worktree created for its first subtask.
+        // (The dispatch loop below re-points the transcript at the
+        // subtask's *own* worktree, so two subtasks that share a
+        // capability do not share a directory.)
+        let mut capability_worktree: std::collections::HashMap<
+            Capability,
+            crate::worktree::WorktreeInfo,
+        > = std::collections::HashMap::new();
+        for (i, st) in subtasks.iter().enumerate() {
+            if let Some(wt) = worktree_created.get(i) {
+                capability_worktree
+                    .entry(st.capability)
+                    .or_insert_with(|| wt.clone());
+            }
+        }
+
         let mut pool_handles: Vec<AgentHandle> = Vec::with_capacity(pool.len());
         for (i, cap) in pool.iter().enumerate() {
             let slug = format!("agent-{}-{}", i + 1, sanitize(cap.as_str()));
@@ -656,7 +678,9 @@ impl SwarmRunner {
             // time on the subtask-scoped dispatch id, not here. We
             // still surface the WorktreeCreated event so the UI knows
             // the pool agent owns a worktree.
-            let pool_worktree = worktree_created.get(i).cloned();
+            // M-22: keyed by capability, not by pool index — see the
+            // `capability_worktree` map above.
+            let pool_worktree = capability_worktree.get(cap).cloned();
             if let Some(wt) = &pool_worktree {
                 let _ = chunk_tx
                     .send(SwarmEvent::WorktreeCreated {
@@ -697,7 +721,13 @@ impl SwarmRunner {
         // dispatches on. Rebuild it here from `subtasks` and the pool
         // so the rest of the file does not change.
         let mut handles: Vec<AgentHandle> = Vec::with_capacity(subtasks.len());
-        for st in &subtasks {
+        // M-22: enumerated so the worktree for THIS subtask is looked
+        // up by its own index in `worktree_created` (created
+        // one-per-subtask above), not by the pool agent's
+        // pre-assigned worktree. Two subtasks that share a capability
+        // dispatch to the same pool agent but each gets its own
+        // directory via its own dispatch key.
+        for (st_idx, st) in subtasks.iter().enumerate() {
             let candidates = capability_agents
                 .get(&st.capability)
                 .cloned()
@@ -724,11 +754,13 @@ impl SwarmRunner {
                         .unwrap_or_else(|| candidates[0].clone())
                 }
             };
-            let (name, worktree) = pool_handles
+            let name = pool_handles
                 .iter()
                 .find(|h| h.id == chosen)
-                .map(|h| (h.name.clone(), h.worktree.clone()))
-                .unwrap_or_else(|| (format!("agent-{}", st.name), None));
+                .map(|h| h.name.clone())
+                .unwrap_or_else(|| format!("agent-{}", st.name));
+            // M-22: the subtask's own worktree, not the pool agent's.
+            let worktree = worktree_created.get(st_idx).cloned();
 
             let task = Task::new(st.description.clone(), Priority::Medium);
             let task_id = task.id.clone();
