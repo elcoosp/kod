@@ -340,7 +340,14 @@ fn sanitize_in_place(
         }
         // Structural keywords are the schema; dropping them changes
         // meaning. `$defs` is dropped only when empty.
-        let safe = matches!(role_of(&key), KeywordRole::Data | KeywordRole::Unknown);
+        //
+        // M-4: `$ref`/`$schema`/`$id` classify as `Unknown` (they are
+        // not in every spec's table) but are structural — dropping a
+        // `$ref` reduced a ref-only schema to `{}`, which widens it to
+        // accept anything.
+        let structural = matches!(key.as_str(), "$ref" | "$schema" | "$id" | "$defs");
+        let safe = !structural
+            && matches!(role_of(&key), KeywordRole::Data | KeywordRole::Unknown);
         if safe {
             obj.remove(&key);
             applied.push(AppliedTransform::Removed {
