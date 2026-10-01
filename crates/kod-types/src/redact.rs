@@ -269,6 +269,10 @@ fn redact_high_entropy(input: &str, floor: f64) -> (String, Vec<Redaction>) {
         }
         // Look at 40 chars before for a keyword.
         let before_start = m.start().saturating_sub(40);
+        // Byte offset floored to a char boundary: m.start() is a char
+        // boundary but start-40 can land inside a multibyte char, and
+        // slicing there panicked the always-on session-log redaction.
+        let before_start = crate::strutil::floor_char_boundary(input, before_start);
         let before = &input[before_start..m.start()];
         if !keyword.is_match(before) {
             continue;
