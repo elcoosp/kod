@@ -413,7 +413,11 @@ impl CheckTool {
             .current_dir(workdir)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            .stderr(std::process::Stdio::piped())
+            // H-R12 actually applied: a timed-out `cargo check` must not
+            // keep running (and holding the target-dir lock) after the
+            // tool returned.
+            .kill_on_drop(true);
 
         let output =
             match tokio::time::timeout(Duration::from_secs(timeout_secs), cmd.output()).await {
