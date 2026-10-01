@@ -48,6 +48,10 @@ pub enum KeyCode {
     CtrlLeft,
     CtrlRight,
     F(u8),
+    /// F2g-12: a crossterm key the mapping does not name (Insert,
+    /// Media, …). Ignored by the input loop rather than typed as a
+    /// phantom space.
+    Ignore,
 }
 
 impl From<CrosstermKeyCode> for KeyCode {
@@ -69,7 +73,9 @@ impl From<CrosstermKeyCode> for KeyCode {
             CrosstermKeyCode::Tab => KeyCode::Tab,
             CrosstermKeyCode::BackTab => KeyCode::BackTab,
             CrosstermKeyCode::F(n) => KeyCode::F(n),
-            _ => KeyCode::Char(' '),
+            // F2g-12: unmapped keys (Insert, Media, …) must not type a
+            // phantom space. `Ignore` is a no-op in the input loop.
+            _ => KeyCode::Ignore,
         }
     }
 }
