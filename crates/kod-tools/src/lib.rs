@@ -38,6 +38,7 @@ pub mod ask;
 pub mod bash_interceptor;
 pub mod batch;
 pub mod check;
+pub mod conflict_handler;
 pub mod context;
 pub mod edit_hashline;
 pub mod edit_tool;
