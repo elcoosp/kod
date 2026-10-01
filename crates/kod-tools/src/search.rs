@@ -135,6 +135,13 @@ impl Tool for SearchFilesTool {
         let mut truncated = false;
 
         'outer: for file in files {
+            // M-38: cap before reading (grep's limit) — a multi-GB log
+            // otherwise OOMs before the match loop.
+            if let Ok(md) = std::fs::metadata(&file)
+                && md.len() > 8 * 1024 * 1024
+            {
+                continue;
+            }
             let text = match std::fs::read_to_string(&file) {
                 Ok(t) => t,
                 Err(_) => continue,
