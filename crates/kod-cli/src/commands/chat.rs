@@ -298,7 +298,31 @@ pub async fn run_chat(
     // user think-time). Ctrl+C is intercepted by tokio so the
     // process does not die mid-tool with orphaned MCP children; it
     // cancels the current turn instead. Ctrl+D (EOF) still exits.
-    let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
+    //
+    // M-47: exactly one task owns stdin. The REPL loop below and
+    // the approval/question pump (spawned per turn) all read lines
+    // from this channel. Pre-fix the pump called
+    // `io::stdin().read_line()` directly — a blocking read on fd 0
+    // behind tokio's back that raced this async reader (stolen
+    // bytes or a wedged worker).
+    let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        use tokio::io::AsyncBufReadExt;
+        let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if input_tx.send(line.trim_end().to_string()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    let input_rx = std::sync::Arc::new(tokio::sync::Mutex::new(input_rx));
     let mut input = String::new();
 
     loop {
@@ -306,11 +330,8 @@ pub async fn run_chat(
         let _ = io::stdout().flush();
         input.clear();
 
-        let read_result = tokio::select! {
-            r = {
-                use tokio::io::AsyncBufReadExt;
-                reader.read_line(&mut input)
-            } => r,
+        let read_result: Option<String> = tokio::select! {
+            r = async { input_rx.lock().await.recv().await } => r,
             _ = tokio::signal::ctrl_c() => {
                 // Cancel the running turn and continue the REPL.
                 engine.request_cancel();
@@ -320,12 +341,8 @@ pub async fn run_chat(
         };
 
         match read_result {
-            Ok(0) => break, // EOF (Ctrl+D)
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("Input error: {}", e);
-                break;
-            }
+            None => break, // channel closed => stdin EOF (Ctrl+D)
+            Some(line) => input = line,
         }
 
         let input_line = input.trim();
@@ -369,6 +386,9 @@ pub async fn run_chat(
         });
         let approval_tx_pump = approval_tx.clone();
         let question_tx_pump = question_tx.clone();
+        // M-47: the pump reads approval / question answers from the
+        // single stdin task's channel — never from fd 0.
+        let input_rx_pump = input_rx.clone();
         let pump = tokio::spawn(async move {
             // `streamed_any` counts text chunks, not control markers.
             // It decides whether the caller still needs to print the
@@ -416,10 +436,10 @@ pub async fn run_chat(
                     }
                     print!("> ");
                     let _ = io::stdout().flush();
-                    let mut answer = String::new();
-                    let text = match io::stdin().read_line(&mut answer) {
-                        Ok(_) => answer.trim_end().to_string(),
-                        Err(_) => "(no answer)".to_string(),
+                    // M-47: read from the single stdin task, not fd 0.
+                    let text = match input_rx_pump.lock().await.recv().await {
+                        Some(line) => line,
+                        None => "(no answer)".to_string(),
                     };
                     let _ = question_tx_pump.send((id, text)).await;
                     continue;
@@ -455,10 +475,10 @@ pub async fn run_chat(
                         }
                         print!("Approve? [y/N/a=never] ");
                         let _ = io::stdout().flush();
-                        let mut answer = String::new();
-                        let answer_lower = match io::stdin().read_line(&mut answer) {
-                            Ok(_) => answer.trim().to_lowercase(),
-                            Err(_) => String::new(),
+                        // M-47: read from the single stdin task, not fd 0.
+                        let answer_lower = match input_rx_pump.lock().await.recv().await {
+                            Some(line) => line.trim().to_lowercase(),
+                            None => String::new(),
                         };
                         let decision = match answer_lower.as_str() {
                             "y" | "yes" => kod_core::engine::ApprovalDecision::Approve,
@@ -498,10 +518,10 @@ pub async fn run_chat(
                     }
                     print!("Approve? [y/N/a=never] ");
                     let _ = io::stdout().flush();
-                    let mut answer = String::new();
-                    let answer_lower = match io::stdin().read_line(&mut answer) {
-                        Ok(_) => answer.trim().to_lowercase(),
-                        Err(_) => String::new(),
+                    // M-47: read from the single stdin task, not fd 0.
+                    let answer_lower = match input_rx_pump.lock().await.recv().await {
+                        Some(line) => line.trim().to_lowercase(),
+                        None => String::new(),
                     };
                     let decision = match answer_lower.as_str() {
                         "y" | "yes" => kod_core::engine::ApprovalDecision::Approve,
