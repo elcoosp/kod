@@ -334,6 +334,12 @@ pub struct TaskRouter {
     /// dir, so an edit in `~/.kod/skills` silently dropped every
     /// project-local skill (and vice versa).
     watched_dirs: std::sync::Mutex<Vec<std::path::PathBuf>>,
+    /// H-3: the SAME list, behind an `Arc` shared with every reload
+    /// task. Each task previously cloned a per-call snapshot frozen at
+    /// `enable_hot_reload` time, so the task for an early dir rebuilt
+    /// the matcher from that dir alone and `replace_all` wiped every
+    /// later dir's skills.
+    watched_dirs_shared: std::sync::Arc<std::sync::Mutex<Vec<std::path::PathBuf>>>,
     /// Repository map cache with mtime-based invalidation. Stores the
     /// structured `RepoMap` (not the pre-rendered string) so future
     /// consumers — PageRank in D5, a `/map` command that wants counts —
@@ -386,6 +392,7 @@ impl TaskRouter {
             skill_matcher,
             skill_watchers: std::sync::Mutex::new(Vec::new()),
             watched_dirs: std::sync::Mutex::new(Vec::new()),
+            watched_dirs_shared: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             repo_map_cache: crate::router::RepoMapCache::new(),
         })
     }
@@ -650,24 +657,16 @@ impl TaskRouter {
             };
             guard.push(skills_dir.to_path_buf());
         }
+        if let Ok(mut shared) = self.watched_dirs_shared.lock() {
+            shared.push(skills_dir.to_path_buf());
+        }
 
         let (watcher, mut event_rx) = kod_skills::SkillWatcher::new(skills_dir)?;
         watcher.start()?;
 
-        let dirs_snapshot: std::sync::Arc<std::sync::Mutex<Vec<std::path::PathBuf>>> =
-            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        // Prime the snapshot from the current watched list.
-        {
-            let all = self
-                .watched_dirs
-                .lock()
-                .map(|g| g.clone())
-                .unwrap_or_default();
-            if let Ok(mut s) = dirs_snapshot.lock() {
-                *s = all;
-            }
-        }
-        let dirs_shared = dirs_snapshot.clone();
+        // Every reload task shares the ONE registry, read live at
+        // event time — not a per-task snapshot frozen here.
+        let dirs_shared = std::sync::Arc::clone(&self.watched_dirs_shared);
         let weak_matcher = Arc::downgrade(&matcher);
         let event_dir = skills_dir.to_path_buf();
         tokio::spawn(async move {
@@ -1037,6 +1036,53 @@ impl TaskRouter {
         }
     }
 
+    /// H-7: async variant that runs the fingerprint walk and, on a
+    /// miss, the full map build on the blocking pool. The sync
+    /// `repo_map_text` ran a 100k-file parse + PageRank on a tokio
+    /// worker on every cache miss (the normal state of an agentic
+    /// loop); callers on the async path must use this.
+    pub(crate) async fn repo_map_text_async(&self) -> Option<std::sync::Arc<String>> {
+        let dir = self.config.working_dir.clone();
+        let cache = &self.repo_map_cache;
+        // A cheap `Arc` clone of the whole cache is not possible (it is
+        // borrowed), so do the two blocking passes with explicit
+        // spawn_blocking calls and store under the lock between them.
+        let fp = {
+            let dir = dir.clone();
+            tokio::task::spawn_blocking(move || crate::router::fingerprint_of(&dir))
+                .await
+                .ok()?
+        };
+        if let Ok(guard) = cache.inner.read()
+            && let Some(cached) = guard.as_ref()
+            && cached.fingerprint == fp
+        {
+            return (!cached.rendered.is_empty()).then(|| cached.rendered.clone());
+        }
+        let built = {
+            let dir = dir.clone();
+            tokio::task::spawn_blocking(move || crate::repomap::build_repo_map(&dir))
+                .await
+                .ok()?
+        };
+        if built.file_count() == 0 {
+            if let Ok(mut guard) = cache.inner.write() {
+                *guard = None;
+            }
+            return None;
+        }
+        let rendered = std::sync::Arc::new(built.render(crate::repomap::DEFAULT_MAP_CHARS));
+        let languages = std::sync::Arc::new(built.languages.iter().cloned().collect::<Vec<_>>());
+        if let Ok(mut guard) = cache.inner.write() {
+            *guard = Some(CachedRepoMap {
+                fingerprint: fp,
+                rendered: rendered.clone(),
+                languages,
+            });
+        }
+        (!rendered.is_empty()).then_some(rendered)
+    }
+
     /// Build a full prompt for LLM generation, retrieving memory
     /// internally. Kept for tests and callers that do not already hold a
     /// memory context. The engine uses
@@ -1115,7 +1161,7 @@ impl TaskRouter {
         // substring scan over an empty table and a short-term recency
         // slice, both no-ops for a fresh session.
         prompt.push_str("## Stable prefix (cacheable)\n\n");
-        if let Some(map) = self.repo_map_text() {
+        if let Some(map) = self.repo_map_text_async().await {
             let map_str = map.as_str();
             let shown = match budget {
                 Some(a) => crate::engine::truncate_chars(map_str, a.repomap),
