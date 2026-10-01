@@ -303,6 +303,36 @@ impl KodConfig {
         Ok(Some(cfg))
     }
 
+    /// M-11: mtime-validated config cache for hot paths. `load_default`
+    /// re-reads and re-parses `config.toml` on every call — the engine
+    /// hits it ~3x per tool-write round. This parses once and re-parses
+    /// only when the file's mtime changes. Startup side-effects
+    /// (creating a default config) stay in `load_default`.
+    pub fn load_cached() -> Result<std::sync::Arc<Self>> {
+        use std::sync::{Mutex, OnceLock};
+        static CACHE: OnceLock<
+            Mutex<Option<(PathBuf, Option<std::time::SystemTime>, std::sync::Arc<KodConfig>)>>,
+        > = OnceLock::new();
+        let path = match Self::config_dir() {
+            Ok(d) => d.join("config.toml"),
+            Err(_) => return Ok(std::sync::Arc::new(Self::default())),
+        };
+        let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let cache = CACHE.get_or_init(|| Mutex::new(None));
+        if let Ok(g) = cache.lock()
+            && let Some((p, t, cfg)) = g.as_ref()
+            && *p == path
+            && *t == mtime
+        {
+            return Ok(cfg.clone());
+        }
+        let cfg = std::sync::Arc::new(Self::load_default()?);
+        if let Ok(mut g) = cache.lock() {
+            *g = Some((path, mtime, cfg.clone()));
+        }
+        Ok(cfg)
+    }
+
     pub fn load_default() -> Result<Self> {
         let config_dir = match Self::config_dir() {
             Ok(d) => d,
