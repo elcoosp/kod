@@ -223,6 +223,35 @@ pub enum SessionEntry {
         /// "jev" | "heuristic" | "llm".
         source: String,
     },
+    /// Delta §14.5: why the session ended, and which tool calls (if
+    /// any) were still in flight. Written on `shutdown` (and, in a
+    /// crash, absent — a missing `SessionExit` after a
+    /// `ToolExecutionStart` is the crash signal). A resume scans for
+    /// a dangling start and tells the model which call never
+    /// completed.
+    SessionExit {
+        timestamp_ms: u64,
+        holder: String,
+        /// `"clean"` | `"cancelled"` | `"error"`.
+        reason: String,
+        /// Tool calls that were in flight when the session ended,
+        /// as `tool_name` strings. Empty on a clean exit.
+        pending_tool_calls: Vec<String>,
+    },
+    /// Delta §14.5: a tool call has begun. Paired with a later
+    /// `ToolCall` entry for the same holder + tool. A resume that
+    /// sees a start with no matching completion reports the
+    /// interrupted call.
+    ToolExecutionStart {
+        timestamp_ms: u64,
+        holder: String,
+        tool_name: String,
+        /// The call's id, when the provider assigned one. Lets a
+        /// resume match the start to its completion precisely rather
+        /// than by name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        call_id: Option<String>,
+    },
     /// Delta §11.2: what a cold revive needs to rebuild a session.
     ///
     /// Written once when an agent's session starts. A `cold_revive`
@@ -481,6 +510,64 @@ pub fn session_init_for(
     Ok(found)
 }
 
+/// Delta §14.5: tool calls that were started but never completed in
+/// the most recent session for `holder`.
+///
+/// An interrupted turn (a crash, a kill) leaves `ToolExecutionStart`
+/// entries with no matching `ToolCall` completion. A resume reads
+/// this and can tell the model which call never finished, instead of
+/// the model seeing a transcript that silently drops it.
+///
+/// Matching is by `(holder, call_id)` when the start carried an id,
+/// else by `(holder, tool_name)` with first-in-first-out pairing so
+/// two starts of the same name are matched in order.
+pub fn pending_tool_calls(entries: &[SessionEntry], holder: &str) -> Vec<String> {
+    use std::collections::HashMap;
+    // Pending starts keyed by call_id, plus unnamed starts keyed by
+    // tool name. A completion removes the matching pending entry.
+    let mut by_id: HashMap<String, String> = HashMap::new();
+    let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
+    for e in entries {
+        match e {
+            SessionEntry::ToolExecutionStart {
+                holder: h,
+                tool_name,
+                call_id,
+                ..
+            } if h == holder => match call_id {
+                Some(id) => {
+                    by_id.insert(id.clone(), tool_name.clone());
+                }
+                None => {
+                    by_name
+                        .entry(tool_name.clone())
+                        .or_default()
+                        .push(tool_name.clone());
+                }
+            },
+            SessionEntry::ToolCall {
+                holder: h,
+                tool_name,
+                ..
+            } if h == holder => {
+                // A completion. Remove an unnamed pending of the same
+                // name if one exists.
+                if let Some(v) = by_name.get_mut(tool_name)
+                    && !v.is_empty()
+                {
+                    v.remove(0);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out: Vec<String> = by_id.into_values().collect();
+    for v in by_name.into_values() {
+        out.extend(v);
+    }
+    out
+}
+
 pub fn default_session_path() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let ts = std::time::SystemTime::now()
@@ -661,6 +748,53 @@ pub fn rehydrate_prose_turns(
 
 #[cfg(test)]
 mod tests {
+    fn exit_start(holder: &str, tool: &str, id: Option<&str>) -> SessionEntry {
+        SessionEntry::ToolExecutionStart {
+            timestamp_ms: 0,
+            holder: holder.to_string(),
+            tool_name: tool.to_string(),
+            call_id: id.map(String::from),
+        }
+    }
+    fn exit_done(holder: &str, tool: &str) -> SessionEntry {
+        SessionEntry::ToolCall {
+            timestamp_ms: 0,
+            holder: holder.to_string(),
+            tool_name: tool.to_string(),
+            arguments: serde_json::json!({}),
+            duration_ms: 0,
+            result: serde_json::json!({"success": null}),
+        }
+    }
+
+    #[test]
+    fn pending_is_empty_when_a_call_completed() {
+        let e = vec![exit_start("", "read_file", None), exit_done("", "read_file")];
+        assert!(pending_tool_calls(&e, "").is_empty());
+    }
+
+    #[test]
+    fn pending_lists_an_uncompleted_call() {
+        let e = vec![exit_start("", "write_file", None)];
+        assert_eq!(pending_tool_calls(&e, ""), vec!["write_file"]);
+    }
+
+    #[test]
+    fn pending_ignores_other_holders() {
+        let e = vec![exit_start("swarm:a", "write_file", None)];
+        assert!(pending_tool_calls(&e, "").is_empty());
+    }
+
+    #[test]
+    fn pending_pairs_unnamed_starts_fifo() {
+        let e = vec![
+            exit_start("", "read_file", None),
+            exit_start("", "read_file", None),
+            exit_done("", "read_file"),
+        ];
+        assert_eq!(pending_tool_calls(&e, ""), vec!["read_file"]);
+    }
+
     use super::*;
     use tempfile::TempDir;
 
