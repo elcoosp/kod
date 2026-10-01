@@ -197,6 +197,24 @@ pub fn tokenize(command: &str) -> Vec<String> {
                 }
                 continue;
             }
+            c if !in_single && !in_double && matches!(c, '|' | ';' | '&') => {
+                // An unquoted operator is its own token, spaced or not.
+                // The old fall-through glued `x|rm` into one token, so
+                // split_segments never saw the pipe and the destructive
+                // half ran unclassified.
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+                if (c == '&' || c == '|')
+                    && i + 1 < chars.len()
+                    && chars[i + 1] == c
+                {
+                    tokens.push(format!("{c}{c}"));
+                    i += 1;
+                } else {
+                    tokens.push(c.to_string());
+                }
+            }
             _ => current.push(c),
         }
         i += 1;
