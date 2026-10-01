@@ -3847,6 +3847,17 @@ impl KodEngine {
         )));
         let protocol_router =
             protocol_router.register(xd_handler as Arc<dyn kod_tools::ProtocolHandler>);
+        // Delta §7.7 item 4: the `conflict://` scheme. Reading a file
+        // with merge markers through it lists the blocks with stable
+        // ids; writing `conflict://<id>` splices a resolution. The
+        // store is session-scoped so an id from one read resolves in
+        // the next call.
+        let conflict_store = Arc::new(kod_tools::conflict_handler::ConflictStore::new());
+        let conflict_handler = Arc::new(kod_tools::conflict_handler::ConflictHandler::new(
+            Arc::clone(&conflict_store),
+        ));
+        let protocol_router =
+            protocol_router.register(conflict_handler as Arc<dyn kod_tools::ProtocolHandler>);
         // Delta §5: the minimizer + the artifact-store hook. The
         // hook captures the `Arc<ArtifactHandler>` directly, so it
         // does not need a reference to the engine (which would be a
