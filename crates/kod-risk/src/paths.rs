@@ -126,8 +126,17 @@ pub fn expand_lexical(raw: &str, home: &Path) -> (String, bool) {
             i = end;
             continue;
         }
-        out.push(bytes[i] as char);
-        i += 1;
+        // Copy the whole codepoint, not the byte: `bytes[i] as char`
+        // transcoded UTF-8 to Latin-1, so `strip_prefix(home)` failed
+        // for a non-ASCII home dir and credential paths classified Low.
+        if bytes[i].is_ascii() {
+            out.push(bytes[i] as char);
+            i += 1;
+        } else {
+            let ch = rest[i..].chars().next().unwrap_or('\u{FFFD}');
+            out.push(ch);
+            i += ch.len_utf8();
+        }
     }
 
     (out, unresolved)
