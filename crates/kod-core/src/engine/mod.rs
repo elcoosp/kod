@@ -1451,6 +1451,11 @@ struct StreamRoundOutcome {
     /// (`"end_turn"`, `"max_tokens"`, `"tool_use"`, …). Threaded out
     /// so the run collector's stop-reason histogram is populated.
     stop_reason: Option<String>,
+    /// M-13: a mid-stream error, carried ALONGSIDE the partial text
+    /// and calls the loop assembled. The caller decides whether to
+    /// surface it. Pre-fix, the error `return Err(err)`ed the partials
+    /// away even though the H-E11 comment promised they survive.
+    partial_error: Option<kod_error::KodError>,
 }
 
 struct ToolRound {
@@ -2579,7 +2584,7 @@ impl KodEngine {
     /// prewarm and background traffic both resolve through the default
     /// chain, so the default endpoint is the honest "active endpoint".
     async fn tab_bridge_active(&self) -> bool {
-        match kod_config::KodConfig::load_default() {
+        match kod_config::KodConfig::load_cached() {
             Ok(c) => c.llm.default_endpoint().tab_bridge,
             Err(_) => false,
         }
@@ -2589,7 +2594,7 @@ impl KodEngine {
     /// (default) disables it on tab-bridge endpoints, where the probe
     /// would warm the wrong tab.
     pub async fn prewarm_enabled(&self) -> bool {
-        let (mode, tab_bridge) = match kod_config::KodConfig::load_default() {
+        let (mode, tab_bridge) = match kod_config::KodConfig::load_cached() {
             Ok(c) => (c.llm.prewarm, c.llm.default_endpoint().tab_bridge),
             // An unreadable config must not change runtime behavior.
             Err(_) => return true,
@@ -4867,7 +4872,7 @@ impl KodEngine {
     /// `role`, and `id` are untouched so the transcript stays
     /// coherent.
     pub fn redact_messages_for_prompt(&self, messages: &mut [kod_types::ChatMessage]) -> usize {
-        let cfg = match kod_config::KodConfig::load_default() {
+        let cfg = match kod_config::KodConfig::load_cached() {
             Ok(c) => c,
             Err(_) => return 0,
         };
@@ -4890,7 +4895,7 @@ impl KodEngine {
     /// Called by `cap_rendered_result`'s caller path when in-prompt
     /// redaction is on.
     pub fn redact_tool_result_for_prompt(&self, rendered: String) -> String {
-        let cfg = match kod_config::KodConfig::load_default() {
+        let cfg = match kod_config::KodConfig::load_cached() {
             Ok(c) => c,
             Err(_) => return rendered,
         };
@@ -4906,7 +4911,7 @@ impl KodEngine {
     /// which callers thread into `cap_rendered_result` to skip the
     /// pass.
     fn prompt_redactor_if_enabled(&self) -> Option<&kod_types::redact::Redactor> {
-        let cfg = kod_config::KodConfig::load_default().ok()?;
+        let cfg = kod_config::KodConfig::load_cached().ok()?;
         if cfg.security.redact.in_prompt {
             Some(&self.redactor)
         } else {
@@ -7110,7 +7115,7 @@ impl KodEngine {
         // The endpoint's max_tokens still comes from the endpoint
         // config (loaded from disk); the caller's `RouterConfig`
         // does not carry one.
-        let max_out = match kod_config::KodConfig::load_default() {
+        let max_out = match kod_config::KodConfig::load_cached() {
             Ok(cfg) => cfg
                 .llm
                 .endpoints
@@ -7170,7 +7175,7 @@ impl KodEngine {
         // can drop an endpoint that does not meet the turn's
         // sensitivity requirement. An endpoint without a declared
         // tier is `standard`, matching `TrustRequirement`'s default.
-        if let Ok(cfg) = kod_config::KodConfig::load_default() {
+        if let Ok(cfg) = kod_config::KodConfig::load_cached() {
             let mut trust = self.endpoint_trust.write().await;
             trust.clear();
             for ep in &cfg.llm.endpoints {
@@ -7779,7 +7784,7 @@ impl KodEngine {
             return caller_effort;
         }
 
-        let config_effort = match kod_config::KodConfig::load_default() {
+        let config_effort = match kod_config::KodConfig::load_cached() {
             Ok(cfg) => cfg
                 .llm
                 .endpoints
@@ -8652,7 +8657,7 @@ impl KodEngine {
     /// closing redb, so the router's unique-holder path is available
     /// at that moment.
     async fn start_memory_consolidation_task(&self) {
-        let interval_secs = match kod_config::KodConfig::load_default() {
+        let interval_secs = match kod_config::KodConfig::load_cached() {
             Ok(c) => c.memory.compaction_interval_secs,
             Err(_) => 0,
         };
@@ -10658,6 +10663,7 @@ impl KodEngine {
                 retry_suggested: off_track,
                 speculations,
                 stop_reason,
+                partial_error,
             } = self
                 .stream_round(
                     &current_provider,
@@ -10692,6 +10698,19 @@ impl KodEngine {
                     elapsed,
                     cost_unavailable,
                 );
+            }
+            // M-13: a mid-stream error is carried alongside the round's
+            // partial text and complete calls. Surface it now — the
+            // chunks already reached the TUI live, and the caller sees
+            // the error rather than a silently-truncated success.
+            if let Some(err) = partial_error {
+                tracing::warn!(
+                    error = %err,
+                    text_len = text.len(),
+                    calls = calls.len(),
+                    "stream round ended with a partial error",
+                );
+                return Err(err);
             }
             // P5.6 — on the very first round, an off-track verdict
             // is a hard stop: discard the round's text and signal
@@ -11241,13 +11260,9 @@ impl KodEngine {
         // partial text and any complete tool calls, and the
         // `Result` carries the error so the caller can decide
         // whether to surface it.
-        if let Some(err) = stream_error {
-            // If partial calls exist, hand them back alongside the
-            // partial text. The caller can execute them and treat the
-            // error as a follow-on; otherwise the error is the
-            // terminal answer.
-            return Err(err);
-        }
+        // M-13: hand back whatever the loop assembled, plus the
+        // error. The caller can execute complete calls and surface
+        // the error; pre-fix the error discarded both.
         Ok(StreamRoundOutcome {
             text,
             calls,
@@ -11255,6 +11270,7 @@ impl KodEngine {
             retry_suggested,
             speculations,
             stop_reason: stop_reason_out,
+            partial_error: stream_error,
         })
     }
 
@@ -11269,16 +11285,30 @@ impl KodEngine {
         use futures::StreamExt;
         let mut stream = provider.stream(pending, options);
         let mut text = String::new();
-        while let Some(item) = stream.next().await {
-            match item? {
-                StreamChunk::Text(t) => {
+        // M-17: same per-chunk idle timeout `stream_round` uses (H-E11).
+        // Without it a wedged summary stream hangs the transcript key
+        // indefinitely.
+        let idle = std::time::Duration::from_secs(60);
+        loop {
+            let next = tokio::time::timeout(idle, stream.next()).await;
+            let item = match next {
+                Ok(Some(item)) => item,
+                Ok(None) => break,
+                Err(_) => {
+                    tracing::warn!("summary stream idle timeout; using partial text");
+                    break;
+                }
+            };
+            match item {
+                Ok(StreamChunk::Text(t)) => {
                     text.push_str(&t);
                     let _ = chunk_tx.send(t).await;
                 }
-                StreamChunk::Usage(_) => {
-                    // Summary stream usage is not critical (already counted in tool rounds)
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, "summary stream errored; using partial text");
+                    break; // keep `text` — do not discard it
                 }
-                _ => {}
             }
         }
         Ok(text)
@@ -13287,7 +13317,7 @@ impl KodEngine {
                 // pass runs only when both are true — a user who set
                 // either to false has asked not to be charged the
                 // per-write diagnostics cost.
-                let lsp_config_auto = kod_config::KodConfig::load_default()
+                let lsp_config_auto = kod_config::KodConfig::load_cached()
                     .ok()
                     .map(|c| c.lsp.auto_diagnostics)
                     .unwrap_or(true);
@@ -13316,7 +13346,7 @@ impl KodEngine {
                     // an empty answer as final. Read from the same
                     // config load used for `auto_diagnostics` above;
                     // default 1500 ms if the config is unreadable.
-                    let settle_ms = kod_config::KodConfig::load_default()
+                    let settle_ms = kod_config::KodConfig::load_cached()
                         .ok()
                         .map(|c| c.lsp.settle_ms)
                         .unwrap_or(500);
@@ -13337,7 +13367,7 @@ impl KodEngine {
                     // rewrite during the wait does not queue stale
                     // diagnostics.
                     if lsp_diags.is_empty() {
-                        let (deferred_enabled, deferred_ms) = kod_config::KodConfig::load_default()
+                        let (deferred_enabled, deferred_ms) = kod_config::KodConfig::load_cached()
                             .ok()
                             .map(|c| (c.lsp.deferred_enabled, c.lsp.deferred_settle_ms))
                             .unwrap_or((true, 12_000));
@@ -13730,7 +13760,7 @@ impl KodEngine {
         if !self.router.has_memory() {
             return;
         }
-        let config = match kod_config::KodConfig::load_default() {
+        let config = match kod_config::KodConfig::load_cached() {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -13874,7 +13904,7 @@ impl KodEngine {
         // WS-B: the decision extractor is gated and cadenced per
         // transcript, mirroring the retention cursor. Ineligible
         // prompts never touch the counter.
-        let decisions_every_n_turns = match kod_config::KodConfig::load_default() {
+        let decisions_every_n_turns = match kod_config::KodConfig::load_cached() {
             Ok(c) => {
                 if !c.memory.decisions_enabled {
                     return;
@@ -14040,7 +14070,7 @@ impl KodEngine {
     /// true. Also callable directly from a test or a future
     /// `/remember-session` command.
     pub async fn extract_memories_now(&self, key: &str) -> Result<usize> {
-        let config = match kod_config::KodConfig::load_default() {
+        let config = match kod_config::KodConfig::load_cached() {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(error = %e, "extract_memories_now: config load failed");
@@ -14221,7 +14251,7 @@ impl KodEngine {
         }
 
         // 7. Memory extraction (D2-B3b), opt-in.
-        if let Ok(cfg) = kod_config::KodConfig::load_default()
+        if let Ok(cfg) = kod_config::KodConfig::load_cached()
             && cfg.memory.extract_on_shutdown
             && let Err(e) = self.extract_memories_now("").await
         {
