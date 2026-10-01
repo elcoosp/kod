@@ -61,6 +61,18 @@ pub fn build_messages_body(req: &CompletionRequest) -> Value {
     if !req.tools.is_empty() {
         body["tools"] = tools_array_with_cache(&req.tools);
     }
+    // Delta §7.7 item 8: the tool-choice directive. Anthropic's shape
+    // is an object: `{"type": "auto"|"any"|"tool"|"none", "name"?}`.
+    if let Some(tc) = &req.options.tool_choice {
+        use kod_provider::traits::ToolChoice;
+        let v = match tc {
+            ToolChoice::None => json!({"type": "none"}),
+            ToolChoice::Auto => json!({"type": "auto"}),
+            ToolChoice::Required => json!({"type": "any"}),
+            ToolChoice::Specific(name) => json!({"type": "tool", "name": name}),
+        };
+        body["tool_choice"] = v;
+    }
     // Delta §4.4: a stored native compaction block goes onto the
     // first user message. The API drops every message before the
     // block, so the server reuses its pre-compaction KV cache for
@@ -1388,6 +1400,34 @@ mod coverage_wire_builders {
             permissions: kod_types::ToolPermissions::default(),
             load_mode: Default::default(),
         }
+    }
+
+    #[test]
+    fn tool_choice_emits_the_anthropic_shape() {
+        use kod_provider::traits::ToolChoice;
+        let mut req = base_req();
+        req.tools = vec![kod_types::ToolDefinition {
+            trust_level: kod_types::trust::TrustLevel::default(),
+            id: kod_types::ToolId::new(),
+            name: "read_file".to_string(),
+            description: "read".to_string(),
+            category: kod_types::ToolCategory::FileSystem,
+            parameters_schema: serde_json::json!({"type": "object"}),
+            permissions: kod_types::ToolPermissions::default(),
+            load_mode: Default::default(),
+        }];
+        req.options.tool_choice = Some(ToolChoice::Specific("read_file".to_string()));
+        let body = build_messages_body(&req);
+        assert_eq!(body["tool_choice"]["type"], "tool");
+        assert_eq!(body["tool_choice"]["name"], "read_file");
+        // None directive.
+        req.options.tool_choice = Some(ToolChoice::None);
+        let body = build_messages_body(&req);
+        assert_eq!(body["tool_choice"]["type"], "none");
+        // Absent directive: no field.
+        req.options.tool_choice = None;
+        let body = build_messages_body(&req);
+        assert!(body.get("tool_choice").is_none());
     }
 
     fn base_req() -> CompletionRequest {
