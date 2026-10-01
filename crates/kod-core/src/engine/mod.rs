@@ -8319,6 +8319,13 @@ impl KodEngine {
             .await;
         self.tools.register(Box::new(ListFilesTool::new())).await;
         self.tools.register(Box::new(GrepTool::new())).await;
+        // Delta §7.4: semantic search. Uses the Jev judge when one is
+        // installed, else a lexical fallback (the result says which).
+        self.tools
+            .register(Box::new(crate::jfind_tool::JfindTool::new(
+                self.jev_client(),
+            )))
+            .await;
         self.tools.register(Box::new(FileInfoTool::new())).await;
         // P3-e: batch runs N sub-calls in one round. The tool holds a
         // Weak to the registry so it cannot keep the engine alive and
