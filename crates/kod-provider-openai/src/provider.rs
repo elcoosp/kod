@@ -357,6 +357,29 @@ impl OpenAICompatProvider {
         }
 
         let mut config = options_to_config(&req.options);
+        // Delta §7.7 item 8: the tool-choice directive. adk-model's
+        // OpenAI-compatible client has no typed field for it, so it
+        // rides the `extensions["openai"]` passthrough, which lands
+        // verbatim in the JSON body (the same channel the session
+        // `user` field uses).
+        if let Some(tc) = &req.options.tool_choice {
+            use kod_provider::traits::ToolChoice;
+            let v = match tc {
+                ToolChoice::None => serde_json::json!("none"),
+                ToolChoice::Auto => serde_json::json!("auto"),
+                ToolChoice::Required => serde_json::json!("required"),
+                ToolChoice::Specific(name) => {
+                    serde_json::json!({"type": "function", "function": {"name": name}})
+                }
+            };
+            let ext = config
+                .extensions
+                .entry("openai".to_string())
+                .or_insert_with(|| serde_json::json!({}));
+            if let Some(obj) = ext.as_object_mut() {
+                obj.insert("tool_choice".to_string(), v);
+            }
+        }
         // Tab-bridge affinity: stateful tab backends route consecutive turns
         // of one kod session into the same tab via the OpenAI `user` field
         // (their session key). Merged through adk-model's
