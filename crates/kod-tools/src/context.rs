@@ -320,9 +320,11 @@ fn landlock_invocation(_wd: &Path, _opts: SandboxOpts) -> Result<SandboxInvocati
     ))
 }
 
-/// The default resolver for this host. Cheap after the first call.
+/// The default resolver for this host. Cached: hosts don't change
+/// mid-process (the doc always claimed this — now it's true).
 pub fn default_resolver() -> SandboxResolver {
-    SandboxResolver::detect()
+    static RESOLVER: std::sync::OnceLock<SandboxResolver> = std::sync::OnceLock::new();
+    RESOLVER.get_or_init(SandboxResolver::detect).clone()
 }
 
 /// Message shown when a primitive is missing and the mode requires one.
