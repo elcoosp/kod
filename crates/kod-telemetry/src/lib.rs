@@ -86,7 +86,11 @@ impl Telemetry {
                     service_name: "kod".to_string(),
                     headers: Vec::new(),
                 },
-                client: reqwest::Client::new(),
+                client: reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(5))
+                    .connect_timeout(std::time::Duration::from_secs(2))
+                    .build()
+                    .unwrap_or_default(),
                 logs_url: String::new(),
             }),
         }
@@ -144,7 +148,14 @@ impl Telemetry {
                     service_name,
                     headers,
                 },
-                client: reqwest::Client::new(),
+                // M-6: a timeout — a wedged collector otherwise left
+                // each spawned POST parked forever, accumulating
+                // tasks/sockets unboundedly.
+                client: reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(5))
+                    .connect_timeout(std::time::Duration::from_secs(2))
+                    .build()
+                    .unwrap_or_default(),
                 logs_url,
             }),
         }
