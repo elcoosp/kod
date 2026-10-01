@@ -86,11 +86,23 @@ impl OutputSpool {
     /// may emit anything — the preview is for a human or a model to
     /// scan, not to parse.
     pub fn preview(&self) -> String {
-        let Ok(data) = std::fs::read(&self.path) else {
+        use std::io::{Read as _, Seek as _, SeekFrom};
+        let Ok(mut f) = std::fs::File::open(&self.path) else {
             return String::new();
         };
-        let start = data.len().saturating_sub(PREVIEW_BYTES);
-        String::from_utf8_lossy(&data[start..]).into_owned()
+        // M-25: the doc promised a 4 KiB tail read; the code did
+        // `std::fs::read` (the WHOLE file) then sliced — a multi-GB
+        // spool allocated fully on every background-job completion.
+        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        let start = len.saturating_sub(PREVIEW_BYTES as u64);
+        if f.seek(SeekFrom::Start(start)).is_err() {
+            return String::new();
+        }
+        let mut data = Vec::new();
+        if f.read_to_end(&mut data).is_err() {
+            return String::new();
+        }
+        String::from_utf8_lossy(&data).into_owned()
     }
 
     /// Mark activity without writing — a heartbeat from a command
