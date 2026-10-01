@@ -87,6 +87,24 @@ impl ResolveContext {
     }
 }
 
+/// Delta C-1: the filesystem path an internal URL addresses, when the
+/// scheme carries one. `conflict://rel` and `conflict:///abs` map to a
+/// path; `artifact://id` / `memory://x` are store keys and return
+/// `None`. Used to run the path gates on an internal URL before
+/// dispatching, so `conflict://` cannot read a secret or write `.git`.
+pub fn url_path_target(url: &str) -> Option<std::path::PathBuf> {
+    let rest = url.strip_prefix("conflict://")?;
+    if rest.is_empty() {
+        return None;
+    }
+    // `conflict://<id>` (no slash/dot) is a registered block id, not a
+    // filesystem path.
+    if !rest.contains('/') && !rest.contains('.') {
+        return None;
+    }
+    Some(std::path::PathBuf::from(rest))
+}
+
 /// What a handler returns for a successful `resolve`.
 #[derive(Debug, Clone)]
 pub struct ResolvedResource {
