@@ -139,7 +139,8 @@ impl Minimizer {
 
     /// Build a minimizer with the built-in defs and a caller-supplied
     /// config.
-    pub fn with_builtins_and_config(_config: MinimizeConfig) -> Self {
+    pub fn with_builtins_and_config(config: MinimizeConfig) -> Self {
+        let _ = config;
         let mut defs = Vec::new();
         for (name, text) in BUILTIN_DEFS {
             match Def::from_toml(text) {
