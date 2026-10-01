@@ -146,6 +146,12 @@ struct LandlockPathBeneathAttr {
 /// cannot silently change the policy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LandlockProfile {
+    /// H-11: true when the caller asked for `.git` read-only. Landlock
+    /// rules are ADDITIVE (access granted if any rule allows it), so a
+    /// blanket worktree rw rule makes a `.git` ro-rule a silent no-op.
+    /// `apply` refuses when this is set and the profile still grants
+    /// the worktree wholesale, rather than degrading to unprotected.
+    pub claims_git_readonly: bool,
     /// Path subtrees the sandboxed process can read+execute but not
     /// write. Typically `/usr`, `/lib`, `/bin`, `/etc`, and the
     /// worktree's `.git`.
@@ -208,6 +214,17 @@ pub fn probe_abi() -> Option<u32> {
 /// this cannot become sandboxed, and there is no way to remove the
 /// restriction short of `execve`-ing a process that never called it.
 pub fn apply(profile: &LandlockProfile) -> Result<()> {
+    // H-11: a profile that claims `.git` read-only but grants a blanket
+    // rw rule cannot honour it (Landlock is additive). Refuse rather
+    // than silently ship an unprotected sandbox.
+    if profile.claims_git_readonly {
+        return Err(KodError::SandboxViolation(
+            "landlock: git_readonly requested but Landlock rules are additive; \
+             the backend cannot honour a `.git`-only read-only restriction. \
+             Use the bwrap backend, or set git_readonly = false."
+                .to_string(),
+        ));
+    }
     let abi = probe_abi().ok_or_else(|| {
         KodError::SandboxViolation(
             "Landlock is not available on this kernel (need Linux >= 5.13)".to_string(),
@@ -384,6 +401,7 @@ mod tests {
             ro_paths: vec![PathBuf::from("/usr")],
             rw_paths: vec![PathBuf::from("/tmp")],
             net_deny: true,
+            claims_git_readonly: false,
         };
         let json = p.to_json();
         let q = LandlockProfile::from_json(&json).expect("roundtrip");
@@ -419,6 +437,7 @@ mod tests {
             ro_paths: Vec::new(),
             rw_paths: Vec::new(),
             net_deny: false,
+            claims_git_readonly: false,
         };
         match apply(&profile) {
             Ok(()) => {}
@@ -449,6 +468,7 @@ mod tests {
             ro_paths: Vec::new(),
             rw_paths: Vec::new(),
             net_deny: true,
+            claims_git_readonly: false,
         };
         let err = apply(&profile).unwrap_err();
         match err {
