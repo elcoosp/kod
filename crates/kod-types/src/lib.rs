@@ -8,6 +8,7 @@ pub mod skill;
 pub mod strutil;
 pub mod term;
 pub mod tool;
+pub mod tool_result_meta;
 pub mod trust;
 
 pub use ids::*;
