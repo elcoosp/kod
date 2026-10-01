@@ -523,14 +523,11 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
                 // batch_id of the emitted marker's id and applies to
                 // all pending ids when the sentinel u64::MAX arrives.
                 //
-                // If the engine has no batch-level API, at least log;
-                // the caller sees the error and the ACP session sees
-                // a `session/request_permission` failure for the
-                // first item.
-                let _ = server
-                    .engine
-                    .respond_to_approval(u64::MAX, crate::engine::ApprovalDecision::Deny)
-                    .await;
+                // M-20: the engine has no u64::MAX sentinel; calling
+                // respond_to_approval with it removed nothing, so every
+                // item hung the full 120s. Use the real deny-all API.
+                let denied = server.engine.deny_all_pending_approvals().await;
+                tracing::warn!(denied, "corrupt ACP approval batch; denied all pending");
                 return Ok(());
             }
         };
