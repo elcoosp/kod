@@ -22,10 +22,12 @@
 //! follow-up here. This crate ships the parse layer; the cache is the
 //! §7.3 deliverable.
 
+pub mod extract;
 pub mod lang;
 pub mod parse_cache;
 pub mod rust;
 
 pub use lang::Lang;
 pub use parse_cache::{ParseCache, global};
+pub use extract::symbols;
 pub use rust::AstSymbol;
