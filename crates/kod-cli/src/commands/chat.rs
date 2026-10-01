@@ -323,6 +323,41 @@ pub async fn run_chat(
         }
     });
     let input_rx = std::sync::Arc::new(tokio::sync::Mutex::new(input_rx));
+    // M-48: spawn a dedicated SIGINT handler BEFORE the REPL loop.
+    // Pre-fix the `tokio::signal::ctrl_c()` arm inside the input
+    // select! only fired while the REPL was *waiting* for a line — a
+    // turn in flight was uninterruptible (the process received the
+    // signal, but no one called `request_cancel()`). This task owns
+    // the signal for the lifetime of the process: the first Ctrl+C
+    // cancels the running turn, a second within 2s exits (matches
+    // the TUI's "interrupt, then interrupt again to exit" shape).
+    {
+        let ctrl_c_engine = engine.clone();
+        tokio::spawn(async move {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static LAST: AtomicU64 = AtomicU64::new(0);
+            loop {
+                if tokio::signal::ctrl_c().await.is_err() {
+                    break;
+                }
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let prev = LAST.swap(now, Ordering::SeqCst);
+                if prev != 0 && now.saturating_sub(prev) < 2_000 {
+                    eprintln!();
+                    eprintln!("(second interrupt — exiting)");
+                    std::process::exit(130);
+                }
+                ctrl_c_engine.request_cancel();
+                eprintln!();
+                eprintln!(
+                    "(interrupt: cancelling current turn — press Ctrl+C again within 2s to exit)"
+                );
+            }
+        });
+    }
     let mut input = String::new();
 
     loop {
@@ -330,15 +365,11 @@ pub async fn run_chat(
         let _ = io::stdout().flush();
         input.clear();
 
-        let read_result: Option<String> = tokio::select! {
-            r = async { input_rx.lock().await.recv().await } => r,
-            _ = tokio::signal::ctrl_c() => {
-                // Cancel the running turn and continue the REPL.
-                engine.request_cancel();
-                println!();
-                continue;
-            }
-        };
+        // M-48: SIGINT is owned by the dedicated task spawned before
+        // this loop; the REPL just awaits the next line. Pre-fix the
+        // ctrl_c() arm here only fired while waiting for input, so a
+        // running turn was never cancelled.
+        let read_result: Option<String> = input_rx.lock().await.recv().await;
 
         match read_result {
             None => break, // channel closed => stdin EOF (Ctrl+D)
