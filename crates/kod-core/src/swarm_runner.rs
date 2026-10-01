@@ -499,23 +499,50 @@ impl SwarmRunner {
         //     whatever was created) and falls back to the shared root.
         let mut worktree_created: Vec<crate::worktree::WorktreeInfo> = Vec::new();
         let mut worktree_failed = false;
-        if let Some(mgr) = worktree_mgr.as_mut() {
-            for (i, st) in subtasks.iter().enumerate() {
-                let slug = format!("agent-{}-{}", i + 1, sanitize(&st.name));
-                // NOTE: `create` runs sync git (a `thread::sleep` poll
-                // loop). Moving it to `spawn_blocking` would require
-                // restructuring ownership of `worktree_mgr` (a raw
-                // pointer is not `Send`); deferred as its own change.
-                match mgr.create(&slug) {
-                    Ok(info) => worktree_created.push(info),
-                    Err(e) => {
+        // M-23: `create` runs sync git with a `thread::sleep` poll loop
+        // (up to `git_timeout_secs` per call). Move the whole manager
+        // onto the blocking pool for the create loop; every field is
+        // `Send`, and the caller awaits the join before touching it
+        // again. Same `Option` shape in and out.
+        if let Some(mgr) = worktree_mgr.take() {
+            let slugs: Vec<String> = subtasks
+                .iter()
+                .enumerate()
+                .map(|(i, st)| format!("agent-{}-{}", i + 1, sanitize(&st.name)))
+                .collect();
+            let res = tokio::task::spawn_blocking(move || {
+                let mut mgr = mgr;
+                let mut created = Vec::new();
+                let mut failed = None;
+                for slug in &slugs {
+                    match mgr.create(slug) {
+                        Ok(info) => created.push(info),
+                        Err(e) => {
+                            failed = Some(e);
+                            break;
+                        }
+                    }
+                }
+                (mgr, created, failed)
+            })
+            .await;
+            match res {
+                Ok((mgr, created, failed)) => {
+                    worktree_created = created;
+                    if let Some(e) = failed {
                         tracing::warn!(
                             error = %e,
                             "worktree create failed; falling back to shared root"
                         );
                         worktree_failed = true;
-                        break;
                     }
+                    // Return the manager (with the created worktrees
+                    // recorded) unless we are about to drop it.
+                    worktree_mgr = Some(mgr);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "worktree create task panicked");
+                    worktree_failed = true;
                 }
             }
         }
