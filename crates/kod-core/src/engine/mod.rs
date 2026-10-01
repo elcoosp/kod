@@ -7980,6 +7980,53 @@ impl KodEngine {
         }
     }
 
+    /// Delta §14.5: append a `SessionExit` marker. Called from
+    /// `shutdown` with the in-flight tool calls (usually empty), so a
+    /// resume can tell a clean stop from a crash: a session with tool
+    /// starts and no exit marker was interrupted.
+    fn record_session_exit(&self, reason: &str, pending_tool_calls: Vec<String>) {
+        if let Ok(guard) = self.session_recorder.read()
+            && let Some(rec) = guard.as_ref()
+        {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let entry = crate::session_log::SessionEntry::SessionExit {
+                timestamp_ms: now_ms,
+                holder: DEFAULT_TRANSCRIPT_KEY.to_string(),
+                reason: reason.to_string(),
+                pending_tool_calls,
+            };
+            if let Err(e) = rec.record(&entry) {
+                tracing::warn!(error = %e, "could not append SessionExit to session log");
+            }
+        }
+    }
+
+    /// Delta §14.5: append a `ToolExecutionStart`. Pairs with the later
+    /// `ToolCall` completion; an unmatched start is what a resume
+    /// reports as an interrupted call.
+    fn record_tool_execution_start(&self, holder: &str, tool_name: &str, call_id: Option<&str>) {
+        if let Ok(guard) = self.session_recorder.read()
+            && let Some(rec) = guard.as_ref()
+        {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let entry = crate::session_log::SessionEntry::ToolExecutionStart {
+                timestamp_ms: now_ms,
+                holder: holder.to_string(),
+                tool_name: tool_name.to_string(),
+                call_id: call_id.map(String::from),
+            };
+            if let Err(e) = rec.record(&entry) {
+                tracing::warn!(error = %e, "could not append ToolExecutionStart to session log");
+            }
+        }
+    }
+
     /// Append a `SessionEntry::ModelFallback` to the recorder, if one is
     /// installed. Best-effort: a write failure logs and the run
     /// continues.
@@ -12758,6 +12805,14 @@ impl KodEngine {
                     crate::tool_quota::QuotaVerdict::Ok => {}
                 }
                 self.tool_counts.record(&call.tool_name, command);
+                // Delta §14.5: mark the start so a crash mid-call
+                // leaves a start with no completion — the resume
+                // signal.
+                self.record_tool_execution_start(
+                    effective_holder,
+                    &call.tool_name,
+                    call.id.as_deref(),
+                );
                 let start = std::time::Instant::now();
                 let res = self
                     .tools
@@ -12838,6 +12893,14 @@ impl KodEngine {
                 .iter()
                 .map(|&i| {
                     let call = &calls_for_dispatch[i];
+                    // Delta §14.5: start marker (see the serial
+                    // branch). Emitted before the await so a crash
+                    // mid-call leaves the unmatched start.
+                    self.record_tool_execution_start(
+                        effective_holder,
+                        &call.tool_name,
+                        call.id.as_deref(),
+                    );
                     let start = std::time::Instant::now();
                     let mut ctx = tool_context.clone();
                     // Delta §10: same prefetch attach as the serial
@@ -14045,6 +14108,11 @@ impl KodEngine {
         // 4. Release path-lock cells. Outstanding guards keep their own
         //    Arc and release on drop.
         self.lock_table.release_all().await;
+
+        // Delta §14.5: mark the clean exit before the flush. A
+        // session that ends without this marker but has a
+        // ToolExecutionStart was interrupted.
+        self.record_session_exit("clean", Vec::new());
 
         // 5. Session recorder flush — best-effort.
         if let Ok(guard) = self.session_recorder.read()
