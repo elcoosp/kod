@@ -621,17 +621,53 @@ impl ChatWidget {
             )]));
         }
 
-        // Visual row count must match Ratatui's own wrapper, not a
-        // hand-rolled div_ceil. A single logical line can expand to N
-        // visual rows when Wrap is on, and our old wrap_text drifted from
-        // WordWrapper on wide graphemes/word boundaries. Ask Paragraph
-        // for the true count.
-        #[allow(unstable_name_collisions)]
-        let total_rows = {
-            let text = Text::from(lines.clone());
-            Paragraph::new(text)
-                .wrap(Wrap { trim: false })
-                .line_count(text_width as u16)
+        // M-44: sum cached per-message row counts at the paint width
+        // instead of cloning the whole line vector and asking
+        // Paragraph to re-wrap it every frame. This mirrors the
+        // scrollbar probe above (which the codebase already trusts
+        // for the same quantity); each message's count comes from
+        // `message_measurement_cached`, which is keyed by
+        // (id, content hash, width). The stream block is not a
+        // `Message` and is measured directly — it is bounded by the
+        // size of the in-progress reply.
+        let total_rows: usize = {
+            let mut rows: usize = 0;
+            let mut prev_tail_blank = false;
+            let mut rendered = false;
+            let mut hidden_count = 0usize;
+            for (i, m) in ordered.iter().enumerate() {
+                if Self::tool_row_hidden(app, m) {
+                    hidden_count += 1;
+                    continue;
+                }
+                if Self::starts_new_turn(app, m, i == 0) && !prev_tail_blank {
+                    rows += 1;
+                }
+                let (r, tb) = Self::message_measurement_cached(app, m, text_width);
+                rows += r;
+                prev_tail_blank = tb;
+                rendered = true;
+            }
+            if hidden_count > 0 {
+                rows += 1;
+            }
+            if app.is_streaming() && !stream_body.is_empty() {
+                let block = Self::assistant_block(
+                    &stream_body,
+                    text_width,
+                    Style::default().fg(theme.assistant),
+                    app,
+                    None,
+                );
+                #[allow(unstable_name_collisions)]
+                {
+                    rows += Paragraph::new(Text::from(block))
+                        .wrap(Wrap { trim: false })
+                        .line_count(text_width as u16) as usize;
+                }
+                rendered = true;
+            }
+            if !rendered && rows == 0 { 1 } else { rows }
         };
         let max_offset = total_rows.saturating_sub(height);
         let offset = app.scroll_offset().min(max_offset);
