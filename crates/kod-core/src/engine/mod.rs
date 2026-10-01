@@ -1316,15 +1316,33 @@ fn cap_transcript(turns: &mut Vec<kod_types::ChatMessage>, max: usize) {
     if turns.len() <= max {
         return;
     }
+    // Nominal policy: drop the oldest non-pinned messages.
     let mut to_drop = turns.len() - max;
-    turns.retain(|t| {
-        if to_drop > 0 && !t.metadata.pinned {
-            to_drop -= 1;
-            false
-        } else {
-            true
+    let mut keep = vec![true; turns.len()];
+    for (i, t) in turns.iter().enumerate() {
+        if to_drop == 0 {
+            break;
         }
-    });
+        if !t.metadata.pinned {
+            keep[i] = false;
+            to_drop -= 1;
+        }
+    }
+    // Pair repair: a surviving `Role::Tool` whose owning assistant was
+    // dropped is rejected by providers ("tool message without preceding
+    // tool_calls"). Tool results always follow their assistant, so
+    // every orphan sits at the front of the survivor region — extend
+    // the drop set until the survivors start on a non-tool message.
+    let mut start = 0;
+    while start < turns.len() && !keep[start] {
+        start += 1;
+    }
+    while start < turns.len() && turns[start].role == kod_types::MessageRole::Tool {
+        keep[start] = false;
+        start += 1;
+    }
+    let mut it = keep.into_iter();
+    turns.retain(|_| it.next().unwrap_or(true));
 }
 
 /// Per-turn cap. A single turn can hold a code snippet, an error trace,
@@ -9373,13 +9391,16 @@ impl KodEngine {
                 final_text
             };
 
+            // M-14: read the request BEFORE clearing it. The gate and
+            // the stop classifier both need it; the old order fed them
+            // "" on the collected path.
+            let request_text = self.current_request(key).await.unwrap_or_default();
             self.clear_current_request(key).await;
 
             // P5.4 — response quality gate. Non-blocking: the
             // reply is delivered unchanged; only an advisory is
             // appended when Jev is confident the reply missed
             // the request.
-            let request_text = self.current_request(key).await.unwrap_or_default();
             let final_text = match self
                 .check_response_quality_with_jev(key, &request_text, &final_text)
                 .await
