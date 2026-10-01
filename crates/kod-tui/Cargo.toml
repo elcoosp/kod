@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+unicode-width = "0.2"
 kod-provider = { path = "../kod-provider" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
