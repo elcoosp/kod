@@ -891,6 +891,10 @@ impl Tool for ExecuteCommandTool {
             }
             spawn.env(&k, &v);
         }
+        // Delta §7.7 item 2: force the non-interactive overrides after
+        // the inherit loop, so they win over whatever the user's shell
+        // set (a PAGER, an editor, npm prompts).
+        crate::env_policy::apply(&mut spawn);
         // Re-apply stdio after the env loop (the env calls do not touch
         // it, but keeping the ordering explicit makes the intent clear).
         spawn
