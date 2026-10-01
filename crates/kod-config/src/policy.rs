@@ -426,6 +426,14 @@ impl PolicyEngine {
                 sources.insert(tool, PolicySource::ProjectPolicy);
             }
             effective.git = project.git;
+            // M-8: merge the project's read_protection — it may only
+            // NARROW. Appending the project's deny globs protects MORE
+            // paths; the parsed value was previously discarded, making
+            // the project's secret-path deny a placebo.
+            effective
+                .read_protection
+                .deny
+                .extend(project.read_protection.deny.iter().cloned());
         }
 
         // Layer 4: CLI override wins.
