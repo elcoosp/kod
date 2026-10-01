@@ -429,19 +429,33 @@ impl<'a, R: tokio::io::AsyncBufRead + Unpin> CappedLines<'a, R> {
         // `BufReader::read_until` already grows in bounded steps,
         // so the buffer never allocates more than roughly (cap +
         // largest single chunk) before the check fires.
+        // M-19: enforce the cap DURING the read. `read_until` appends
+        // without bound until it sees the delimiter, so checking after
+        // still OOMs on a newline-less stream.
+        use tokio::io::AsyncBufReadExt as _;
         let mut buf = Vec::new();
-        let n = self
-            .reader
-            .read_until(b'\n', &mut buf)
-            .await
-            .map_err(KodError::Io)?;
-        if n == 0 {
-            return Ok(None);
+        loop {
+            let available = self.reader.fill_buf().await.map_err(KodError::Io)?;
+            if available.is_empty() {
+                break;
+            }
+            let take = available
+                .iter()
+                .position(|&b| b == b'\n')
+                .map_or(available.len(), |p| p + 1);
+            if buf.len() + take > self.cap {
+                return Err(KodError::InvalidParameters {
+                    reason: format!("request line exceeds {} bytes", self.cap),
+                });
+            }
+            buf.extend_from_slice(&available[..take]);
+            self.reader.consume(take);
+            if buf.last() == Some(&b'\n') {
+                break;
+            }
         }
-        if buf.len() > self.cap {
-            return Err(KodError::InvalidParameters {
-                reason: format!("request line exceeds {} bytes", self.cap),
-            });
+        if buf.is_empty() {
+            return Ok(None);
         }
         if buf.last() == Some(&b'\n') {
             buf.pop();
