@@ -887,6 +887,8 @@ impl GenerationDefaults {
             // unchanged. A swarm worker's effort is set at its
             // dispatch, not here.
             effort: None,
+            // No tool-choice directive: the model decides.
+            tool_choice: None,
         }
     }
 }
@@ -2640,6 +2642,7 @@ impl KodEngine {
                 // A prewarm is not a reasoning call; it should fail
                 // fast rather than wait out a thinking timeout.
                 effort: Some(kod_provider::effort::EffortLevel::None),
+                tool_choice: None,
             },
             model,
             cache_transcript: false,
