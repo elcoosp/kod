@@ -1574,7 +1574,24 @@ impl TuiLoop {
                             && chunk_count.is_multiple_of(5)
                             && accumulated.len() > 200
                             && let Some(kind) = engine_for_pump
-                                .classify_chunk_with_jev("session", &accumulated)
+                                .classify_chunk_with_jev(
+                                    "session",
+                                    // M-45: classify a tail window, not the
+                                    // whole buffer (O(n²) network bytes).
+                                    {
+                                        let s = accumulated.as_str();
+                                        let max = 2048;
+                                        if s.len() <= max {
+                                            s
+                                        } else {
+                                            let mut b = s.len() - max;
+                                            while !s.is_char_boundary(b) {
+                                                b -= 1;
+                                            }
+                                            &s[b..]
+                                        }
+                                    },
+                                )
                                 .await
                         {
                             is_reasoning = matches!(kind.as_str(), "reasoning" | "restatement");
