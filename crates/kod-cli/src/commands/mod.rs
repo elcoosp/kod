@@ -715,7 +715,13 @@ impl Cli {
                             strict,
                             first_round_only,
                         } => {
-                            let _ = run_fixture_replay(name, *strict, *first_round_only).await?;
+                            // M-50: propagate the divergence exit code;
+                            // `let _ =` hid every drift from CI.
+                            let code =
+                                run_fixture_replay(name, *strict, *first_round_only).await?;
+                            if code != 0 {
+                                std::process::exit(code);
+                            }
                             Ok(())
                         }
                         FixtureAction::List => run_fixture_list().await,
