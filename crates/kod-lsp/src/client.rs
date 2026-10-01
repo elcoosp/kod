@@ -487,8 +487,11 @@ impl LspClient {
         if self.opened.contains_key(&key) {
             return Ok(());
         }
-        let content = std::fs::read_to_string(path).unwrap_or_default();
-        self.did_open(path, &content).await?;
+        // M-10/L-2: open and record under the SAME spelling the
+        // `opened` key uses, or a later did_change/diagnostics targets
+        // a URI the server never saw (symlinks, relative paths).
+        let content = std::fs::read_to_string(&key).unwrap_or_default();
+        self.did_open(&key, &content).await?;
         self.opened.insert(key, 1);
         Ok(())
     }
