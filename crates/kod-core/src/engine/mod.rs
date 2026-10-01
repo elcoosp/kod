@@ -551,13 +551,15 @@ fn line_is_goal_marker(line: &str) -> bool {
     // Same-line summary form: `GOAL MET ## Summary…`, `GOAL MET - done`,
     // `GOAL MET: summary`. Require a structural separator after the
     // marker so `GOAL MET is what I'd say if done` still returns false.
-    if stripped.len() > 8 {
-        let (head, tail) = stripped.split_at(8);
-        if head.eq_ignore_ascii_case("GOAL MET") {
-            let sep = tail.trim_start().chars().next().unwrap_or(' ');
-            if matches!(sep, '#' | '-' | '—' | ':' | '.' | '!' | '(') {
-                return true;
-            }
+    // Char-safe: `get(..8)` returns None (never panics) when byte 8
+    // falls inside a multibyte codepoint, e.g. 5 CJK chars.
+    if let Some(head) = stripped.get(..8)
+        && head.eq_ignore_ascii_case("GOAL MET")
+    {
+        let tail = &stripped[8..];
+        let sep = tail.trim_start().chars().next().unwrap_or(' ');
+        if matches!(sep, '#' | '-' | '—' | ':' | '.' | '!' | '(') {
+            return true;
         }
     }
     false
@@ -9600,6 +9602,9 @@ impl KodEngine {
                             "cannot resolve endpoint; skipping in chain"
                         );
                         last_err = Some(e);
+                        // Advance the cursor: `continue` alone re-tested
+                        // the same index and spun forever.
+                        i += 1;
                         continue;
                     }
                 };
