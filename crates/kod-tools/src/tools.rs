@@ -151,7 +151,7 @@ fn is_secret_like_env(name: &str) -> bool {
 /// The temp file name is `.kod-tmp-<pid>-<nanos>` in the destination
 /// directory (same filesystem — a cross-fs rename is a copy + delete,
 /// not atomic). On any error the temp file is removed.
-fn atomic_write(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
+pub(crate) fn atomic_write(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let parent = path
         .parent()
@@ -257,6 +257,28 @@ impl Tool for ReadFileTool {
         if let Some(router) = context.protocol_router.as_ref()
             && router.handles(path)
         {
+            // C-1: dispatch is a ROUTING layer, not a capability. Run
+            // every gate a filesystem read would hit BEFORE the return.
+            if !context.permissions.read_files {
+                return Err(KodError::PermissionDenied {
+                    action: "read".to_string(),
+                    reason: "File reading not permitted".to_string(),
+                });
+            }
+            if let Some(target) = crate::internal_url::url_path_target(path) {
+                let resolved = context.resolve_path(&target.to_string_lossy())?;
+                if let Some(rp) = context.read_protection.as_ref()
+                    && rp.matches(&resolved)
+                {
+                    use kod_config::ReadMode;
+                    if let ReadMode::Refuse = rp.mode {
+                        return Ok(ToolResult::Error(format!(
+                            "read_file refused: {target:?} matches a read-protection pattern.",
+                        )));
+                    }
+                }
+                context.can_read(&resolved)?;
+            }
             let rctx = crate::internal_url::ResolveContext::new(
                 context.holder.clone(),
                 context.working_dir.clone(),
@@ -553,6 +575,17 @@ impl Tool for WriteFileTool {
                     .ok_or_else(|| KodError::InvalidParameters {
                         reason: "Missing 'content' parameter".to_string(),
                     })?;
+            // C-1: same gates as the read path, for writes.
+            if !context.permissions.write_files {
+                return Err(KodError::PermissionDenied {
+                    action: "write".to_string(),
+                    reason: "File writing not permitted".to_string(),
+                });
+            }
+            if let Some(target) = crate::internal_url::url_path_target(path) {
+                let resolved = context.resolve_path(&target.to_string_lossy())?;
+                context.can_write(&resolved)?;
+            }
             let rctx = crate::internal_url::ResolveContext::new(
                 context.holder.clone(),
                 context.working_dir.clone(),
@@ -1663,8 +1696,12 @@ impl Tool for GrepTool {
             if results.len() >= MAX_GREP_MATCHES {
                 break;
             }
-            if !file_path.is_file() {
-                continue;
+            // symlink_metadata does NOT follow: a file symlink planted
+            // in the tree must be skipped, or its target (outside the
+            // workspace, past every gate) is read into the transcript.
+            match std::fs::symlink_metadata(&file_path) {
+                Ok(md) if md.is_file() => {}
+                _ => continue,
             }
             // Size check before opening. `read_to_string` used to load
             // the entire file into memory; a 2 GB log would OOM here.
