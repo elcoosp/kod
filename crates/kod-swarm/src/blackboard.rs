@@ -154,7 +154,7 @@ impl Blackboard {
         }
         let mut out = String::from("## Team knowledge\n\n");
         for e in entries.iter().take(max_entries) {
-            let line = format!("- {}: {}\\n", e.key, e.value);
+            let line = format!("- {}: {}\n", e.key, e.value);
             if out.len() + line.len() > max_chars {
                 break;
             }
