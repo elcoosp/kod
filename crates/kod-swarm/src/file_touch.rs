@@ -130,15 +130,25 @@ impl FileTouchService {
     /// Record a touch. Called by the swarm runner, not the tool
     /// layer, so the bus stays the only producer.
     pub fn record(&self, touch: FileTouch) {
-        self.by_path
-            .write()
-            .unwrap()
-            .entry(touch.path.clone())
-            .or_default()
-            .push(touch.clone());
+        // M-55: per-path ring cap — a repo-wide swarm run otherwise
+        // accumulated the whole run's FileTouch clones in memory. And
+        // a poisoned lock must not cascade into a panic on every later
+        // touch.
+        const MAX_TOUCHES_PER_PATH: usize = 32;
+        {
+            let mut g = self
+                .by_path
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let v = g.entry(touch.path.clone()).or_default();
+            if v.len() >= MAX_TOUCHES_PER_PATH {
+                v.remove(0);
+            }
+            v.push(touch.clone());
+        }
         self.by_agent
             .write()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(touch.agent_id.clone())
             .or_default()
             .insert(touch.path);
