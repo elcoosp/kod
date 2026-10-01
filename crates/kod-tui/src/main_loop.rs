@@ -4819,6 +4819,17 @@ impl TuiLoop {
                 }
 
                 if !handled {
+                    // H-15 test + honest ordering: project detection is
+                    // cheap and sync. Report a missing project
+                    // immediately (no offload), and only the expensive
+                    // compile runs on a task.
+                    if kod_tools::check::ProjectKind::detect(&cwd).is_none() {
+                        self.app.push_system_message(&format!(
+                            "check failed: no recognized project at {} — look for \
+                             Cargo.toml, package.json, pyproject.toml, or go.mod",
+                            cwd.display()
+                        ));
+                    } else {
                     self.app.push_system_message(&format!(
                         "Running project check in {} …",
                         cwd.display()
@@ -4880,6 +4891,7 @@ impl TuiLoop {
                             .send(Event::System(crate::event::EventPriority::Normal, text))
                             .await;
                     });
+                    }
                 }
             }
             "/export" => {
