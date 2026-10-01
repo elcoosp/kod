@@ -125,7 +125,6 @@ impl TaskCoordinator {
         }
         task.assigned_to = Some(agent_id.clone());
         task.status = TaskStatus::InProgress;
-        drop(tasks);
 
         let assignment = TaskAssignment {
             task_id: task_id.clone(),
@@ -134,12 +133,16 @@ impl TaskCoordinator {
             capabilities_required: vec![],
         };
 
+        // M-53: hold `tasks` across the whole op so the status change
+        // and the load bump are atomic — interleaved acquire/complete
+        // left `agent_load` permanently +1 on some tasks.
         let mut assignments = self.assignments.write().await;
         assignments.insert(task_id.clone(), assignment);
-
-        // Update agent load
         let mut load = self.agent_load.write().await;
         *load.entry(agent_id.clone()).or_insert(0) += 1;
+        drop(load);
+        drop(assignments);
+        drop(tasks);
         Ok(())
     }
 
