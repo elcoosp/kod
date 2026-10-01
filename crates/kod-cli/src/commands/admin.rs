@@ -782,11 +782,12 @@ pub async fn run_doctor_fix(json: bool) -> Result<()> {
     // Every skills directory.
     if let Ok(dirs) = config.skills_dirs() {
         for d in &dirs {
-            if !d.exists()
-                && let Err(e) = std::fs::create_dir_all(d)
-            {
+            // Only genuinely new dirs go in `created`; a pre-existing
+            // one made the JSON contract wrong.
+            let existed = d.exists();
+            if !existed && let Err(e) = std::fs::create_dir_all(d) {
                 failed.push((d.display().to_string(), e.to_string()));
-            } else if d.exists() {
+            } else if !existed {
                 created.push(d.display().to_string());
             }
         }
