@@ -322,6 +322,9 @@ impl KodConfig {
                     cfg.llm.validate();
                     cfg.skills.validate();
                     cfg.limits.clamp();
+                    // Out-of-range thresholds (auto_approve_min = -1.0)
+                    // otherwise made every gated decision auto-approve.
+                    cfg.jev.thresholds.clamp();
                     Ok(cfg)
                 }
                 Err(whole_file_err) => {
@@ -413,8 +416,19 @@ impl KodConfig {
         let content = toml::to_string_pretty(self)
             .map_err(|e| KodError::Config(format!("Failed to serialize config: {}", e)))?;
 
-        std::fs::write(path, content)
-            .map_err(|e| KodError::Config(format!("Failed to write config: {}", e)))?;
+        // Atomic write: a crash/ENOSPC mid-write previously truncated
+        // the user's config.toml. tmp + fsync + rename.
+        let tmp = path.with_extension("toml.tmp");
+        {
+            use std::io::Write as _;
+            let mut f = std::fs::File::create(&tmp)
+                .map_err(|e| KodError::Config(format!("Failed to create temp config: {}", e)))?;
+            f.write_all(content.as_bytes())
+                .and_then(|_| f.sync_all())
+                .map_err(|e| KodError::Config(format!("Failed to write temp config: {}", e)))?;
+        }
+        std::fs::rename(&tmp, path)
+            .map_err(|e| KodError::Config(format!("Failed to commit config: {}", e)))?;
 
         Ok(())
     }
