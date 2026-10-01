@@ -1158,7 +1158,14 @@ fn stamp_openai_user(config: &mut GenerateContentConfig, session: &str) {
 /// fail-fast semantics (see `adk_precommit_retryable`).
 fn is_session_busy(err: &kod_error::KodError) -> bool {
     match err {
-        kod_error::KodError::Provider(msg) => msg.contains("409"),
+        kod_error::KodError::Provider(msg) => {
+            // "4096 tokens" / timestamps previously triggered the whole
+            // background retry schedule for a non-busy error.
+            msg.contains("409 ")
+                || msg.ends_with(" 409")
+                || msg.contains("status 409")
+                || msg.contains("HTTP 409")
+        }
         _ => false,
     }
 }
