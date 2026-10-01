@@ -94,7 +94,12 @@ pub async fn run_prompt_remote(prompt: String, socket: Option<std::path::PathBuf
     if errored {
         std::process::exit(1);
     }
-    Ok(())
+    // M-49: the stream ended without a `done`/`error` frame — the
+    // daemon died mid-stream. Exit non-zero so a truncated reply does
+    // not leak into a script as success.
+    Err(KodError::InvalidState(
+        "daemon closed the connection before completing the prompt".into(),
+    ))
 }
 
 pub async fn run_prompt(
