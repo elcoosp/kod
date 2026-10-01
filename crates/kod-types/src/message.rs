@@ -126,6 +126,13 @@ pub struct MessageMetadata {
     /// thread. `#[serde(default)]` so pre-field session files parse.
     #[serde(default)]
     pub turn_duration_ms: Option<u64>,
+    /// Delta §7.7 item 1: the tool result on this message provided
+    /// nothing (an empty read, a grep with no hits, a clean diff).
+    /// Set by the engine's tool-result boundary so a §3 pruning pass
+    /// can drop the message without re-inspecting the payload.
+    /// `#[serde(default)]` so pre-field session files parse.
+    #[serde(default)]
+    pub useless: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
