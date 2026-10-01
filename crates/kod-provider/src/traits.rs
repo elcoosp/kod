@@ -297,6 +297,32 @@ enum StreamReplay {
     End,
 }
 
+/// Delta §7.7 item 8: how strongly the request directs the model to
+/// call a tool. `None` on `GenerationOptions` leaves the choice to the
+/// model (the pre-change behavior).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolChoice {
+    /// Do not call any tool this turn.
+    None,
+    /// The model may call a tool or answer in prose (the provider
+    /// default).
+    Auto,
+    /// The model must call *some* tool.
+    Required,
+    /// The model must call exactly this tool.
+    Specific(String),
+}
+
+impl ToolChoice {
+    /// The tool name when this is `Specific`, else `None`.
+    pub fn specific_name(&self) -> Option<&str> {
+        match self {
+            ToolChoice::Specific(n) => Some(n.as_str()),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct GenerationOptions {
     pub model: Option<String>,
@@ -309,6 +335,10 @@ pub struct GenerationOptions {
     /// stream by effort uses the base timeout unchanged, which is the
     /// behavior every existing caller gets.
     pub effort: Option<crate::effort::EffortLevel>,
+    /// Delta §7.7 item 8: the tool-choice directive. `None` is the
+    /// pre-change behavior (the model decides). A provider that does
+    /// not support the directive ignores it.
+    pub tool_choice: Option<ToolChoice>,
 }
 
 #[cfg(test)]
