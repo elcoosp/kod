@@ -255,6 +255,37 @@ fn sanitize_in_place(
         return;
     };
 
+    // 0. Flatten a single-member combiner FIRST. The pre-fix order
+    //    ran this last, so keys the flatten merged in skipped every
+    //    rewrite below — `{"anyOf":[{"const":"x"}]}` sanitized to
+    //    `{}` (a silent widening) because the merged `const` was
+    //    never seen by `const → enum`.
+    if spec.flatten_single_combiner {
+        for kw in ["allOf", "anyOf"] {
+            let flatten = obj
+                .get(kw)
+                .and_then(Value::as_array)
+                .is_some_and(|a| a.len() == 1);
+            if flatten {
+                let member = obj
+                    .get_mut(kw)
+                    .and_then(Value::as_array_mut)
+                    .and_then(|a| a.pop())
+                    .unwrap_or(Value::Null);
+                if let Some(member_obj) = member.as_object() {
+                    obj.remove(kw);
+                    for (k, v) in member_obj {
+                        obj.insert(k.clone(), v.clone());
+                    }
+                    applied.push(AppliedTransform::FlattenedCombiner {
+                        path: path.to_string(),
+                        keyword: (*kw).to_string(),
+                    });
+                }
+            }
+        }
+    }
+
     // 1. Renames first. A renamed keyword is then checked under its
     //    new name, so `oneOf` → `anyOf` on an `anyOf`-supporting
     //    provider survives.
