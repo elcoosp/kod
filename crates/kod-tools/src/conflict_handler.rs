@@ -73,6 +73,11 @@ pub struct ConflictBlock {
 struct Registered {
     path: PathBuf,
     block: ConflictBlock,
+    /// The exact bytes at [start, end) when the block was scanned.
+    /// `write` re-reads the file and compares against this, so a
+    /// same-length external edit cannot shift the splice onto
+    /// unrelated text.
+    body: String,
 }
 
 /// The session-scoped conflict registry. `resolve` scans and registers;
@@ -97,13 +102,14 @@ impl ConflictStore {
         self.len() == 0
     }
 
-    fn register(&self, path: &std::path::Path, block: ConflictBlock) {
+    fn register(&self, path: &std::path::Path, block: ConflictBlock, body: String) {
         if let Ok(mut g) = self.entries.lock() {
             g.insert(
                 block.id.clone(),
                 Registered {
                     path: path.to_path_buf(),
                     block,
+                    body,
                 },
             );
         }
@@ -315,7 +321,8 @@ impl ProtocolHandler for ConflictHandler {
             let id = stable_id(&path, b.start, body);
             let mut registered = b.clone();
             registered.id = id.clone();
-            self.store.register(&path, registered);
+            self.store
+                .register(&path, registered, body.to_string());
             listing.push_str(&format!(
                 "conflict://{id}\n  ours ({}): {} line(s)\n  theirs ({}): {} line(s)\n\n",
                 b.ours_label,
@@ -362,12 +369,10 @@ impl ProtocolHandler for ConflictHandler {
         }
         // F2f-22: byte-length is not integrity — a same-length edit
         // since the scan shifts every registered offset onto unrelated
-        // text. Re-derive the block's stable id from the current bytes
-        // and compare.
+        // text. Compare the bytes now at [start, end) against the body
+        // recorded at scan time.
         let current_body = &text[b.start..b.end];
-        if crate::edit_hashline::tag_hex(crate::edit_hashline::tag_of(current_body))
-            != b.id
-        {
+        if current_body != reg.body {
             return Err(ProtocolError::Malformed {
                 url: url.to_string(),
                 reason: "registered conflict block changed since the scan".to_string(),
