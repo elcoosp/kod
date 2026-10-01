@@ -523,9 +523,11 @@ pub fn session_init_for(
 /// two starts of the same name are matched in order.
 pub fn pending_tool_calls(entries: &[SessionEntry], holder: &str) -> Vec<String> {
     use std::collections::HashMap;
-    // Pending starts keyed by call_id, plus unnamed starts keyed by
-    // tool name. A completion removes the matching pending entry.
+    // M-21: a ToolCall completion carries no call_id, so a start
+    // recorded under by_id could never be cleared. Track id-bearing
+    // starts per tool name too, so a completion clears the oldest.
     let mut by_id: HashMap<String, String> = HashMap::new();
+    let mut by_id_name: HashMap<String, Vec<String>> = HashMap::new();
     let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
     for e in entries {
         match e {
@@ -537,6 +539,10 @@ pub fn pending_tool_calls(entries: &[SessionEntry], holder: &str) -> Vec<String>
             } if h == holder => match call_id {
                 Some(id) => {
                     by_id.insert(id.clone(), tool_name.clone());
+                    by_id_name
+                        .entry(tool_name.clone())
+                        .or_default()
+                        .push(id.clone());
                 }
                 None => {
                     by_name
@@ -550,12 +556,24 @@ pub fn pending_tool_calls(entries: &[SessionEntry], holder: &str) -> Vec<String>
                 tool_name,
                 ..
             } if h == holder => {
-                // A completion. Remove an unnamed pending of the same
-                // name if one exists.
-                if let Some(v) = by_name.get_mut(tool_name)
-                    && !v.is_empty()
+                // A completion. Prefer the unnamed queue; else clear the
+                // oldest id-bearing start of the same name.
+                let cleared_unnamed = if let Some(v) = by_name.get_mut(tool_name) {
+                    if !v.is_empty() {
+                        v.remove(0);
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if !cleared_unnamed
+                    && let Some(ids) = by_id_name.get_mut(tool_name)
+                    && !ids.is_empty()
                 {
-                    v.remove(0);
+                    let oldest = ids.remove(0);
+                    by_id.remove(&oldest);
                 }
             }
             _ => {}
