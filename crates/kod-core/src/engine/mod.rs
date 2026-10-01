@@ -7300,7 +7300,24 @@ impl KodEngine {
             // reserves some room for the mandatory trailer.
             512 + 2048 + schemas
         };
-        budget.allocate_with_overhead(input.len(), overhead)
+        // Cap the overhead at 3/4 of the budget. Without this, a large
+        // tool set (many schemas) can exceed the whole budget on a
+        // small-window model, and `allocate_with_overhead` returns an
+        // error that fails *every* turn — a fat tool set bricks the
+        // session. The cap leaves a quarter of the budget for the
+        // request and the truncatable sections. A genuinely oversized
+        // request still errors (that is the design's intent); what we
+        // no longer allow is overhead alone consuming the window.
+        let capped_overhead = overhead.min(budget.total_chars * 3 / 4);
+        if capped_overhead < overhead {
+            tracing::warn!(
+                overhead,
+                capped = capped_overhead,
+                total = budget.total_chars,
+                "tool-schema overhead exceeds 3/4 of the prompt budget;                  capping it — reduce the enabled tool set or raise the                  endpoint's context_window",
+            );
+        }
+        budget.allocate_with_overhead(input.len(), capped_overhead)
     }
 
     /// The ordered `ModelRef` chain for a task type. The first element
@@ -15448,6 +15465,34 @@ mod tests {
 
         // Removing again reports false.
         assert!(!engine.remove_deny_rule(&same_value).await);
+    }
+
+    #[tokio::test]
+    async fn a_small_window_with_all_tools_does_not_fail_on_overhead() {
+        // Regression: `prompt_allocation` sums every tool schema into
+        // the budget overhead. On a small-window model the full tool
+        // set can exceed the whole budget, and before the cap that
+        // made `allocate_with_overhead` error — failing *every* turn.
+        // The cap leaves a quarter of the budget for the request, so a
+        // short prompt still allocates.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db = tmp.path().join("t.redb");
+        let cfg = RouterConfig {
+            context_window: 8192,
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let engine = KodEngine::new(cfg, db).unwrap();
+        engine.start().await.unwrap();
+        // Every built-in tool is now registered. A short prompt must
+        // still allocate rather than returning a BudgetError.
+        let alloc = engine.prompt_allocation("hi", "").await;
+        assert!(
+            alloc.is_ok(),
+            "a short prompt must allocate even with the full tool set: {:?}",
+            alloc.err(),
+        );
     }
 
     #[tokio::test]
