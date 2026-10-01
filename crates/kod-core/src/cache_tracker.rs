@@ -168,6 +168,9 @@ pub fn stable_message_hash(m: &ChatMessage) -> u64 {
             feed(id.as_bytes());
         }
         feed(c.tool_name.as_bytes());
+        // Arguments are on the wire: an in-place argument edit must
+        // invalidate the hash (the gap the coherence test pins).
+        feed(c.arguments.to_string().as_bytes());
     }
     if let Some(id) = &m.tool_call_id {
         feed(id.as_bytes());
