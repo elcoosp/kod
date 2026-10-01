@@ -813,7 +813,11 @@ impl TuiLoop {
                         ApprovalWidget::new().render(&self.app, size, f.buffer_mut());
                     }
                     if crate::ui::PaletteWidget::should_show(&self.app) {
-                        let h = crate::ui::PaletteWidget::height(&self.app);
+                        // M-46: clamp the height to the space below y+2,
+                        // or a <6-row terminal wrote out of bounds.
+                        let h = crate::ui::PaletteWidget::height(&self.app)
+                            .min(size.height.saturating_sub(3))
+                            .max(1);
                         let w = (64u16).min(size.width);
                         let x = size.x + size.width.saturating_sub(w) / 2;
                         let y = size.y + 2;
