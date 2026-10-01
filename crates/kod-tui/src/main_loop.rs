@@ -4832,29 +4832,37 @@ impl TuiLoop {
                         "Running project check in {} …",
                         cwd.display()
                     ));
-                    match kod_tools::CheckTool::run_check(&cwd, 120).await {
-                        Ok(outcome) => {
-                            if outcome.diagnostics.is_empty() {
-                                self.app.push_system_message(&format!(
-                                    "{}: clean ({} · exit {})",
-                                    outcome.kind, outcome.command, outcome.exit_code,
-                                ));
-                            } else {
+                    // H-15: /check can take 120s. Running it inline froze
+                    // the event loop (no key handling, no Esc, no stream
+                    // repaint). Run it on a task and deliver the result as
+                    // a System event so the loop keeps flowing.
+                    let cwd_for_task = cwd.clone();
+                    let tx = self.event_handler.sender();
+                    tokio::spawn(async move {
+                        let outcome =
+                            kod_tools::CheckTool::run_check(&cwd_for_task, 120).await;
+                        let text = match outcome {
+                            Ok(o) if o.diagnostics.is_empty() => format!(
+                                "{}: clean ({} · exit {})",
+                                o.kind, o.command, o.exit_code,
+                            ),
+                            Ok(o) => {
                                 let mut msg = format!(
                                     "{}: {} diagnostic(s) ({} · exit {})\n",
-                                    outcome.kind,
-                                    outcome.diagnostics.len(),
-                                    outcome.command,
-                                    outcome.exit_code,
+                                    o.kind,
+                                    o.diagnostics.len(),
+                                    o.command,
+                                    o.exit_code,
                                 );
-                                for d in outcome.diagnostics.iter().take(30) {
+                                for d in o.diagnostics.iter().take(30) {
                                     let code = d
                                         .code
                                         .as_deref()
                                         .map(|c| format!("[{c}]"))
                                         .unwrap_or_default();
                                     let short = if d.message.chars().count() > 120 {
-                                        let s: String = d.message.chars().take(120).collect();
+                                        let s: String =
+                                            d.message.chars().take(120).collect();
                                         format!("{s}…")
                                     } else {
                                         d.message.clone()
@@ -4864,20 +4872,23 @@ impl TuiLoop {
                                         d.severity, code, d.file, d.line, d.column, short,
                                     ));
                                 }
-                                if outcome.diagnostics.len() > 30 {
+                                if o.diagnostics.len() > 30 {
                                     msg.push_str(&format!(
                                         "  … and {} more\n",
-                                        outcome.diagnostics.len() - 30
+                                        o.diagnostics.len() - 30
                                     ));
                                 }
-                                if outcome.truncated {
+                                if o.truncated {
                                     msg.push_str("(raw output truncated)\n");
                                 }
-                                self.app.push_system_message(msg.trim_end());
+                                msg.trim_end().to_string()
                             }
-                        }
-                        Err(e) => self.app.push_system_message(&format!("check failed: {e}",)),
-                    }
+                            Err(e) => format!("check failed: {e}"),
+                        };
+                        let _ = tx
+                            .send(Event::System(crate::event::EventPriority::Normal, text))
+                            .await;
+                    });
                 }
             }
             "/export" => {
