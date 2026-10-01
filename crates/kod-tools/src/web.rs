@@ -311,7 +311,17 @@ impl Tool for WebFetchTool {
 
         let status = response.status();
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
+            // M-33: cap the error body — `.text()` reads everything a
+            // hostile server sends before the 300-char preview.
+            let mut body_bytes: Vec<u8> = Vec::new();
+            let mut response = response;
+            while body_bytes.len() < 4096 {
+                match response.chunk().await {
+                    Ok(Some(b)) => body_bytes.extend_from_slice(&b),
+                    Ok(None) | Err(_) => break,
+                }
+            }
+            let body = String::from_utf8_lossy(&body_bytes).into_owned();
             let preview = if body.len() > 300 {
                 format!("{}…", kod_types::strutil::truncate_chars(&body, 300))
             } else {
