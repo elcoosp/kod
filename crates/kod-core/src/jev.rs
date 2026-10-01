@@ -344,6 +344,12 @@ impl JevClient {
             return;
         }
         let mut guard = self.cache.lock();
+        // F2e-5: bound + sweep — `cache_get` ignored expired entries
+        // but never removed them, so the map grew monotonically.
+        guard.retain(|_, e| e.cached_at.elapsed() < e.ttl);
+        if guard.len() >= 4096 {
+            guard.clear();
+        }
         guard.insert(
             key,
             CacheEntry {
