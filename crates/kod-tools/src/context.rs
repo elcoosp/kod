@@ -375,24 +375,24 @@ fn bwrap_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
         "--proc".into(),
         "/proc".into(),
     ];
-    // .git read-only: mount it RO *after* the workspace bind so the
-    // narrower rule wins. Order matters in bwrap — later binds override
-    // earlier ones for the same mount point.
-    if opts.git_readonly {
-        let git = format!("{wd_str}/.git");
-        // Only bind when the .git directory actually exists; a bwrap
-        // invocation with a bind on a non-existent source fails hard.
-        if std::path::Path::new(&git).is_dir() {
-            args.extend(["--ro-bind".into(), git.clone(), git.clone()]);
-        }
-    }
+    // Workspace bind FIRST, then the narrower .git ro-bind: bwrap
+    // resolves overlap in favour of the LATER mount, so the ro rule
+    // must come second. The pre-fix order pushed the ro-bind before the
+    // parent `--bind`, which shadowed it and left .git writable inside
+    // the sandbox.
     args.extend([
         "--bind".into(),
         wd_str.clone(),
         wd_str.clone(),
         "--chdir".into(),
-        wd_str,
+        wd_str.clone(),
     ]);
+    if opts.git_readonly {
+        let git = format!("{wd_str}/.git");
+        if std::path::Path::new(&git).is_dir() {
+            args.extend(["--ro-bind".into(), git.clone(), git.clone()]);
+        }
+    }
     if opts.net_deny {
         args.push("--unshare-net".into());
     }
