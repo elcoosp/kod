@@ -747,13 +747,14 @@ fn indent_continuation(lines: Vec<Line<'static>>, indent: &str) -> Vec<Line<'sta
 }
 
 fn char_width(c: char) -> usize {
-    // One column for anything that is not a control character. The
-    // workspace's chat widget uses the same approximation; a
-    // codepoint-accurate width via `unicode-width` would be more
-    // correct for CJK and combining marks, but the fix that matters
-    // here is not overcounting — the previous `String` per char was
-    // allocating once per glyph.
-    if c.is_control() { 0 } else { 1 }
+    // M-41: count display cells, not chars — the chat bubble pad uses
+    // unicode-width, so counting CJK as 1 made wrapped CJK replies
+    // overflow the border.
+    if c.is_control() {
+        0
+    } else {
+        unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).max(1)
+    }
 }
 
 #[cfg(test)]
