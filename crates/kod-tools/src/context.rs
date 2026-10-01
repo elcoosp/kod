@@ -1170,6 +1170,39 @@ impl ToolContext {
         Ok(())
     }
 
+    /// M-39: re-canonicalize the destination's parent and refuse a
+    /// parent that escapes the working directory. `resolve_path` +
+    /// `can_write` run at the tool boundary; the caller opens the
+    /// path later, and a path component can be swapped to a symlink
+    /// in the interim (classic TOCTOU on the containment primitive).
+    /// Call this immediately before creating a directory or opening
+    /// the destination. The window between this check and the open
+    /// is microseconds; the complete fix is
+    /// `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` relative to
+    /// a held parent dirfd, which this pragmatic check does not
+    /// replace.
+    pub fn revalidate_write_parent(&self, resolved: &std::path::Path) -> Result<()> {
+        let parent = resolved
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let parent_canon = std::fs::canonicalize(parent).map_err(KodError::Io)?;
+        let root = std::fs::canonicalize(&self.working_dir).map_err(KodError::Io)?;
+        if !parent_canon.starts_with(&root) {
+            return Err(KodError::PermissionDenied {
+                action: "write".to_string(),
+                reason: format!(
+                    "destination's parent escaped the workspace: {} -> {}. \
+                     A path component was likely swapped to a symlink after \
+                     the write was admitted.",
+                    parent.display(),
+                    parent_canon.display(),
+                ),
+            });
+        }
+        Ok(())
+    }
+
     /// Check whether the context permits command execution at all.
     ///
     /// This is a gate, not a filter: with `execute_commands` granted it

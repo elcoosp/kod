@@ -98,6 +98,10 @@ impl Tool for EditHashlineTool {
 
         let resolved = context.resolve_path(&path_str)?;
         context.can_write(&resolved)?;
+        // M-39: same TOCTOU re-check as the write path — the store
+        // apply opens the file later, and a swapped parent would
+        // escape the workspace.
+        context.revalidate_write_parent(&resolved)?;
 
         // Serialize access to the store: the whole apply is under the
         // mutex so a concurrent edit cannot interleave between the

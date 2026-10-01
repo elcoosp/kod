@@ -659,6 +659,11 @@ impl Tool for WriteFileTool {
         // consistent shape is what lets a future caller distinguish
         // model-facing errors from tool-level failures without
         // inspecting the message text.
+        // M-39: re-validate the parent NOW, immediately before creating
+        // any directory or opening the destination. `resolve_path` +
+        // `can_write` ran earlier; a path component can be swapped to
+        // a symlink that escapes the workspace in the interim.
+        context.revalidate_write_parent(&resolved)?;
         if let Some(parent) = resolved.parent()
             && let Err(e) = std::fs::create_dir_all(parent)
         {
@@ -1546,6 +1551,8 @@ impl Tool for PatchFileTool {
             })));
         }
 
+        // M-39: same TOCTOU re-check as the write path.
+        context.revalidate_write_parent(&resolved)?;
         if let Err(e) = atomic_write(&resolved, patched.as_bytes()) {
             return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
         }
