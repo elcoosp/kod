@@ -199,6 +199,19 @@ impl EditStore {
                 got: tag,
             });
         }
+        // Guard against the FILE, not just the snapshot: an external
+        // edit since the read (sed -i, a git op, a peer) would otherwise
+        // be silently clobbered by the staged splice.
+        let current = std::fs::read_to_string(path).map_err(|e| {
+            EditError::Malformed(format!("re-read before edit failed: {e}"))
+        })?;
+        let current_tag = tag_of(&current);
+        if current_tag != snap.tag {
+            return Err(EditError::StaleTag {
+                expected: snap.tag,
+                got: current_tag,
+            });
+        }
         // Validate every op's anchors before applying any.
         for op in ops {
             if op.append {
@@ -224,11 +237,13 @@ impl EditStore {
                 return Err(EditError::UnseenAnchor { line: op.start });
             }
         }
-        // Stage the edit against the snapshot text.
-        let new_text = stage(&snap.text, ops)?;
-        // Write (best-effort atomic via the tools helper is a
-        // follow-up; `std::fs::write` here is honest).
-        std::fs::write(path, &new_text).map_err(|e| EditError::Malformed(e.to_string()))?;
+        // Stage against the CURRENT text (== snapshot, just verified).
+        let new_text = stage(&current, ops)?;
+        // Atomic write + walk-cache invalidation: a torn write fed the
+        // model garbage, and a stale listing survived 5s otherwise.
+        crate::tools::atomic_write(path, new_text.as_bytes())
+            .map_err(|e| EditError::Malformed(e.to_string()))?;
+        crate::walk_cache::invalidate_all();
         let new_tag = tag_of(&new_text);
         // The old snapshot is now stale; drop it so a chained edit
         // must carry the new tag.
@@ -240,6 +255,9 @@ impl EditStore {
 /// Apply `ops` to `text`, returning the new content. Assumes the ops
 /// are already validated.
 fn stage(text: &str, ops: &[Op]) -> Result<String, EditError> {
+    // Detect the dominant EOL before `lines()` strips `\r`, or editing
+    // one line of a CRLF file rewrites the whole file's line endings.
+    let crlf = text.contains("\r\n");
     // Sort ops by start, descending, so earlier line numbers stay
     // valid as later edits shift the buffer. Appends go last.
     let mut indexed: Vec<(usize, &Op)> = ops.iter().enumerate().map(|(i, o)| (i, o)).collect();
@@ -261,10 +279,11 @@ fn stage(text: &str, ops: &[Op]) -> Result<String, EditError> {
         }
         lines.splice(s..e, op.payload.iter().cloned());
     }
-    let mut out = lines.join("\n");
+    let eol = if crlf { "\r\n" } else { "\n" };
+    let mut out = lines.join(eol);
     // Preserve a trailing newline if the original had one.
     if text.ends_with('\n') && !out.ends_with('\n') {
-        out.push('\n');
+        out.push_str(eol);
     }
     Ok(out)
 }
