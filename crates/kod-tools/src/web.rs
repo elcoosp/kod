@@ -530,11 +530,17 @@ fn html_to_text(html: &str) -> String {
             i = if j < bytes.len() { j + 1 } else { bytes.len() };
             continue;
         }
-        // Copy the byte through. Multi-byte UTF-8 is preserved because
-        // we copy bytes, not chars — the string stays valid so long as
-        // the input was valid (checked by the caller's `from_utf8`).
-        out.push(char::from(b));
-        i += 1;
+        // Copy the whole codepoint: `char::from(b)` mapped each byte
+        // of a multibyte sequence to its own Latin-1 codepoint, turning
+        // `café` into `cafÃ©` in every fetched page.
+        if b.is_ascii() {
+            out.push(b as char);
+            i += 1;
+        } else {
+            let ch = html[i..].chars().next().unwrap_or('\u{FFFD}');
+            out.push(ch);
+            i += ch.len_utf8();
+        }
     }
 
     // Decode the entities a doc page actually uses. Order matters:
