@@ -225,6 +225,8 @@ pub struct MemoryManager {
     /// task (delta §12.5) can insert its vector without holding the
     /// manager.
     vector_index: std::sync::Arc<parking_lot::RwLock<Option<crate::vector_index::VectorIndex>>>,
+    /// M-59: single-flight guard for `rebuild_index`.
+    rebuild_in_progress: std::sync::atomic::AtomicBool,
     /// Delta §12.5: fire-and-forget embedding. A store increments
     /// this counter before spawning its embed task and decrements it
     /// on completion; [`MemoryManager::flush_embeddings`] waits for
@@ -265,6 +267,7 @@ impl MemoryManager {
             context_window: 4096, // Default context window
             embedder: None,
             vector_index: std::sync::Arc::new(parking_lot::RwLock::new(None)),
+            rebuild_in_progress: std::sync::atomic::AtomicBool::new(false),
             inflight_embeddings: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             embedding_complete: std::sync::Arc::new(tokio::sync::Notify::new()),
             scorer: crate::retrieval::HybridScorer::default(),
@@ -346,6 +349,21 @@ impl MemoryManager {
     /// Called lazily from `retrieve_context` when semantic scoring is
     /// requested and the index has not been built yet.
     async fn rebuild_index(&self) -> Result<()> {
+        // M-59: single-flight — concurrent retrievals otherwise each
+        // embed the whole corpus.
+        struct RebuildGuard<'a>(&'a std::sync::atomic::AtomicBool);
+        impl Drop for RebuildGuard<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        if self
+            .rebuild_in_progress
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Ok(());
+        }
+        let _guard = RebuildGuard(&self.rebuild_in_progress);
         let Some(embedder) = self.embedder.as_ref() else {
             *self.vector_index.write() = None;
             return Ok(());
