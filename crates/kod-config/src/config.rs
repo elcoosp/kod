@@ -290,6 +290,8 @@ impl KodConfig {
         }
         recover!(llm, crate::llm::LlmConfig);
         recover!(tools, ToolsConfig);
+        recover!(mcp, crate::mcp::McpConfig);
+        recover!(limits, crate::limits::LimitsConfig);
         recover!(hooks, HooksConfig);
         recover!(lsp, LspConfig);
         recover!(memory, crate::memory::MemoryConfig);
