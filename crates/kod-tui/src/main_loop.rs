@@ -6172,6 +6172,26 @@ fn format_entry_one_line(entry: &kod_core::session_log::SessionEntry) -> String 
             "  {holder:>8}  init     {endpoint}/{model} ({} tools)",
             tool_names.len(),
         ),
+        SessionEntry::SessionExit {
+            reason,
+            pending_tool_calls,
+            ..
+        } => {
+            if pending_tool_calls.is_empty() {
+                format!("  ------   exit     {reason}")
+            } else {
+                format!(
+                    "  ------   exit     {reason} ({} call(s) in flight: {})",
+                    pending_tool_calls.len(),
+                    pending_tool_calls.join(", "),
+                )
+            }
+        }
+        SessionEntry::ToolExecutionStart {
+            holder,
+            tool_name,
+            ..
+        } => format!("  {holder:>8}  start    {tool_name}"),
     }
 }
 
