@@ -3894,14 +3894,15 @@ impl KodEngine {
         let artifact_store_hook: kod_tools::context::ArtifactStoreHook = {
             let handler = Arc::clone(&artifact_handler);
             kod_tools::context::ArtifactStoreHook::new(
-                move |id: String, text: String, mime: String| {
+                move |id: String, text: String, mime: String, owner: String| {
                     let handler = Arc::clone(&handler);
                     Box::pin(async move {
-                        handler.store(id, text, mime).await.map_err(|e| {
-                            KodError::InvalidParameters {
+                        handler
+                            .store_for(id, text, mime, owner)
+                            .await
+                            .map_err(|e| KodError::InvalidParameters {
                                 reason: format!("artifact store: {e}"),
-                            }
-                        })
+                            })
                     })
                 },
             )

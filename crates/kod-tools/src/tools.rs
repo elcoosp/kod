@@ -1144,7 +1144,11 @@ impl Tool for ExecuteCommandTool {
                             raw_stdout.hash(&mut h);
                             let id = format!("cmd-{:016x}", h.finish());
                             let text = raw_stdout.clone();
-                            match store.call(id, text, "text/plain".to_string()).await {
+                            let owner = context.holder.clone();
+                            match store
+                                .call(id, text, "text/plain".to_string(), owner)
+                                .await
+                            {
                                 Ok(u) => Some(u),
                                 Err(e) => {
                                     tracing::warn!(error = %e, "artifact store failed; continuing without raw");

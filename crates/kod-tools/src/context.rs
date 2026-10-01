@@ -812,6 +812,7 @@ type ArtifactStoreFn = dyn Fn(
         String,
         String,
         String,
+        String,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send>>
     + Send
     + Sync;
@@ -820,6 +821,7 @@ impl ArtifactStoreHook {
     pub fn new<F>(f: F) -> Self
     where
         F: Fn(
+                String,
                 String,
                 String,
                 String,
@@ -832,8 +834,16 @@ impl ArtifactStoreHook {
         Self(std::sync::Arc::new(f))
     }
 
-    pub async fn call(&self, id: String, text: String, mime: String) -> Result<String> {
-        (self.0)(id, text, mime).await
+    /// M-40: `owner` is the holder (transcript key) the artifact
+    /// belongs to; threaded through to `ArtifactHandler::store_for`.
+    pub async fn call(
+        &self,
+        id: String,
+        text: String,
+        mime: String,
+        owner: String,
+    ) -> Result<String> {
+        (self.0)(id, text, mime, owner).await
     }
 }
 

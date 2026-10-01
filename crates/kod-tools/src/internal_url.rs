@@ -384,6 +384,10 @@ pub struct ArtifactHandler {
 struct StoredArtifact {
     text: String,
     mime: String,
+    /// M-40: the holder (transcript key) that wrote this artifact.
+    /// `resolve()` refuses a read from a different holder so one
+    /// swarm agent cannot read its peer's artifact store.
+    owner: String,
 }
 
 impl ArtifactHandler {
@@ -408,22 +412,51 @@ impl ArtifactHandler {
     /// scheme has a collision and the caller must resolve it (a
     /// longer id, a different hash) rather than the store silently
     /// overwriting the earlier content.
+    /// M-40: `store` for the default transcript (`"session"`). The
+    /// hooked minimizer path uses [`Self::store_for`] with the
+    /// caller's own holder so artifacts are per-session.
     pub async fn store(
         &self,
         id: impl Into<String>,
         text: impl Into<String>,
         mime: impl Into<String>,
     ) -> std::result::Result<String, ProtocolError> {
+        self.store_for(id, text, mime, "session").await
+    }
+
+    /// M-40: the owned variant of [`Self::store`]. `owner` is the
+    /// holder (transcript key) that will read the artifact back; a
+    /// `resolve` from a different holder is refused. Two owners may
+    /// not share an id even with identical content — that is the
+    /// honest signal that the caller's id scheme collides across
+    /// sessions (the minimizer's `cmd-<hash>` will, if two agents
+    /// run the same command with the same output).
+    pub async fn store_for(
+        &self,
+        id: impl Into<String>,
+        text: impl Into<String>,
+        mime: impl Into<String>,
+        owner: impl Into<String>,
+    ) -> std::result::Result<String, ProtocolError> {
         let id = id.into();
         let url = format!("artifact://{id}");
         let text = text.into();
         let mime = mime.into();
+        let owner = owner.into();
         let mut store = self.store.write().await;
         if let Some(existing) = store.get(&id) {
-            if existing.text == text && existing.mime == mime {
-                // Identical re-store: the artifact is already here
-                // with the same bytes. Return the same URL.
+            if existing.owner == owner && existing.text == text && existing.mime == mime {
+                // Identical re-store from the same owner: the
+                // artifact is already here with the same bytes.
                 return Ok(url);
+            }
+            if existing.owner != owner {
+                return Err(ProtocolError::Handler {
+                    url,
+                    message: "artifact id already owned by another session; \
+                              the id scheme has a cross-session collision"
+                        .to_string(),
+                });
             }
             return Err(ProtocolError::Handler {
                 url,
@@ -438,7 +471,7 @@ impl ArtifactHandler {
         // window the model is actually working, and a dropped one
         // re-offloads on demand.
         const MAX_ARTIFACTS: usize = 512;
-        store.insert(id.clone(), StoredArtifact { text, mime });
+        store.insert(id.clone(), StoredArtifact { text, mime, owner });
         while store.len() > MAX_ARTIFACTS {
             // Evict an arbitrary (first) key; the store is a cache,
             // not a history.
@@ -472,7 +505,7 @@ impl ProtocolHandler for ArtifactHandler {
     async fn resolve(
         &self,
         url: &str,
-        _ctx: &ResolveContext,
+        ctx: &ResolveContext,
     ) -> std::result::Result<ResolvedResource, ProtocolError> {
         let id = url
             .strip_prefix("artifact://")
@@ -492,6 +525,15 @@ impl ProtocolHandler for ArtifactHandler {
                 url: url.to_string(),
             });
         };
+        // M-40: per-session isolation — an artifact written by one
+        // holder is not readable by another. The module's own doc
+        // promises this; the pre-fix code ignored the context.
+        if a.owner != ctx.holder {
+            return Err(ProtocolError::Handler {
+                url: url.to_string(),
+                message: "artifact belongs to another session".to_string(),
+            });
+        }
         Ok(ResolvedResource {
             text: a.text.clone(),
             mime: Some(a.mime.clone()),
