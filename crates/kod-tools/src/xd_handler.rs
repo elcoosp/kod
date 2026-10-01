@@ -141,6 +141,13 @@ impl ProtocolHandler for XdHandler {
             tool_ctx = tool_ctx.with_permissions(perms);
         }
         match self.registry.execute_tool(name, &args, &tool_ctx).await {
+            // M-37: surface a tool's own Error result — the old
+            // `Ok(_) => Ok(())` made an xd-dispatched failure look
+            // like success.
+            Ok(kod_types::ToolResult::Error(msg)) => Err(ProtocolError::Handler {
+                url: url.to_string(),
+                message: msg,
+            }),
             Ok(_) => Ok(()),
             Err(e) => Err(ProtocolError::Handler {
                 url: url.to_string(),
