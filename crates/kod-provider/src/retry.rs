@@ -88,8 +88,8 @@ impl RetryPolicy {
 }
 
 /// Run `f` under the retry policy. Only `is_retryable()` errors are retried.
-/// A `Retry-After` hint (from `KodError::RateLimited`) overrides the
-/// computed delay.
+/// A `Retry-After` hint (from `KodError::RateLimited` or
+/// `KodError::ServerBusy`) overrides the computed delay.
 pub async fn with_retry<T, F, Fut>(policy: &RetryPolicy, f: F) -> Result<T>
 where
     F: Fn() -> Fut,
@@ -114,6 +114,20 @@ where
                             // stateful tab backend's ~20-minute send
                             // frequency limit). Sleep it out exactly once;
                             // a second such window fails the call.
+                            long_wait_used = true;
+                            hint
+                        } else {
+                            hint.min(policy.max_delay)
+                        }
+                    }
+                    KodError::ServerBusy { retry_after_secs } => {
+                        let hint = Duration::from_secs(*retry_after_secs);
+                        if hint > policy.max_delay
+                            && hint <= policy.max_rate_limit_wait
+                            && !long_wait_used
+                        {
+                            // Same single-long-wait contract as rate
+                            // limits; the overload cooldown is ~10 min.
                             long_wait_used = true;
                             hint
                         } else {
