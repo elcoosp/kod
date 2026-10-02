@@ -937,13 +937,16 @@ mod coverage_event_handler {
     }
 
     #[test]
-    fn keycode_from_crossterm_unmapped_variants_fall_back_to_space() {
-        // The input loop only forwards `KeyEventKind::Press` events, so
-        // an unmapped `CrosstermKeyCode` (Null, Insert, media keys …)
-        // should reach the app as a harmless space, not panic or drop
-        // the event.
+    fn keycode_from_crossterm_unmapped_variants_map_to_ignore() {
+        // F2g-12: an unmapped `CrosstermKeyCode` (Null, Insert, media
+        // keys …) must NOT reach the app as a phantom space — that
+        // typed a space on every media-key press. It maps to
+        // `KeyCode::Ignore`, which the input loop drops. This test
+        // tracks the fix in `From<CrosstermKeyCode>`; the previous
+        // name/assertions tracked the pre-fix behavior and were left
+        // stale when the mapping changed.
         use crossterm::event::KeyCode as CK;
-        assert_eq!(KeyCode::from(CK::Null), KeyCode::Char(' '));
-        assert_eq!(KeyCode::from(CK::Insert), KeyCode::Char(' '));
+        assert_eq!(KeyCode::from(CK::Null), KeyCode::Ignore);
+        assert_eq!(KeyCode::from(CK::Insert), KeyCode::Ignore);
     }
 }
