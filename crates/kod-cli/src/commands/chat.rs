@@ -575,6 +575,17 @@ pub async fn run_chat(
                     let _ = io::stdout().flush();
                     continue;
                 }
+                // Overload: same one-line contract, distinct wording.
+                if let Some((secs, attempt, max)) =
+                    kod_core::engine::parse_server_busy_wait(&chunk)
+                {
+                    println!(
+                        "\nServer busy — waiting {} before automatic retry (attempt {attempt}/{max})…",
+                        kod_core::engine::format_duration_ms(secs.saturating_mul(1000)),
+                    );
+                    let _ = io::stdout().flush();
+                    continue;
+                }
 
                 if let Some(turn) = kod_core::engine::parse_turn_marker(&chunk) {
                     print!("\n\n—— turn {turn} ——\n");
