@@ -102,20 +102,41 @@ pub fn extract_json(raw: &str) -> Option<Value> {
         return Some(v);
     }
 
-    // The first balanced object or array.
+    // The first balanced object or array. The scan is string-aware:
+    // a `{` / `}` inside a JSON string literal is data, not
+    // structure, so counting it desynchronizes the depth and the
+    // balanced slice never parses — a prose-wrapped JSON value
+    // whose content happens to contain a brace burns the whole
+    // retry budget.
     for (open, close) in [('{', '}'), ('[', ']')] {
         if let Some(start) = trimmed.find(open) {
-            let mut depth = 0;
+            let mut depth = 0i32;
+            let mut in_string = false;
+            let mut escaped = false;
             for (i, ch) in trimmed[start..].char_indices() {
-                if ch == open {
-                    depth += 1;
-                } else if ch == close {
-                    depth -= 1;
-                    if depth == 0
-                        && let Ok(v) = serde_json::from_str(&trimmed[start..start + i + 1])
-                    {
-                        return Some(v);
+                if in_string {
+                    if escaped {
+                        escaped = false;
+                    } else if ch == '\\' {
+                        escaped = true;
+                    } else if ch == '"' {
+                        in_string = false;
                     }
+                    continue;
+                }
+                match ch {
+                    '"' => in_string = true,
+                    c if c == open => depth += 1,
+                    c if c == close => {
+                        depth -= 1;
+                        if depth == 0
+                            && let Ok(v) =
+                                serde_json::from_str(&trimmed[start..start + i + ch.len_utf8()])
+                        {
+                            return Some(v);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -127,6 +148,15 @@ pub fn extract_json(raw: &str) -> Option<Value> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn extract_json_ignores_braces_inside_strings() {
+        // F2i-6: a `}` inside a JSON string must not close the object.
+        let prose = r#"here you go: {"a": "}", "b": {"c": "}}{"} } trailing"#;
+        let v = extract_json(prose).expect("must find the object");
+        assert_eq!(v["a"], json!("}"));
+        assert_eq!(v["b"]["c"], json!("}}{"));
+    }
 
     #[test]
     fn a_bare_object_parses() {
