@@ -753,6 +753,41 @@ pub fn expand_at_references(input: &str, working_dir: &std::path::Path) -> Strin
     out
 }
 
+/// F2c-9: keep `~/.kod/background/` from growing without bound. The
+/// spool files are per-job output captures; a session that runs many
+/// background commands leaves one file each, never removed. Sweep to
+/// the newest `MAX` by mtime when a new job starts (cheap: one
+/// `read_dir` per job creation, not per frame).
+///
+/// Best-effort: a filesystem error is logged and ignored — a full
+/// sweep is a hygiene nicety, not a correctness path.
+fn sweep_background_spools(dir: &std::path::Path) {
+    const MAX_SPOOLS: usize = 64;
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<(std::path::PathBuf, std::time::SystemTime)> = rd
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) != Some("log") {
+                return None;
+            }
+            let t = e.metadata().ok()?.modified().ok()?;
+            Some((p, t))
+        })
+        .collect();
+    if files.len() <= MAX_SPOOLS {
+        return;
+    }
+    // Oldest first; remove everything past the newest MAX.
+    files.sort_by_key(|(_, t)| *t);
+    let remove = files.len() - MAX_SPOOLS;
+    for (p, _) in files.into_iter().take(remove) {
+        let _ = std::fs::remove_file(&p);
+    }
+}
+
 /// Try to expand one `@path` token. Returns the fenced block on
 /// success, `None` when the file cannot be read or the path is not
 /// inside `working_dir` (a symlink escape is refused, matching the
@@ -2806,6 +2841,7 @@ impl KodEngine {
                 let dir = dirs::home_dir()
                     .map(|h| h.join(".kod").join("background"))
                     .unwrap_or_else(std::env::temp_dir);
+                sweep_background_spools(&dir);
                 let spool_path = dir.join(format!("{}.log", job.0));
 
                 let mut spool = match crate::output_spool::OutputSpool::create(&spool_path) {
@@ -2975,6 +3011,7 @@ impl KodEngine {
             let dir = dirs::home_dir()
                 .map(|h| h.join(".kod").join("background"))
                 .unwrap_or_else(std::env::temp_dir);
+            sweep_background_spools(&dir);
             let spool_path = dir.join(format!("{}.log", job.0));
 
             let mut spool = match crate::output_spool::OutputSpool::create(&spool_path) {
