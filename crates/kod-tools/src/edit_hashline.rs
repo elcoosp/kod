@@ -84,6 +84,9 @@ pub enum EditError {
     OutOfRange { line: usize, len: usize },
     /// An op's `s` is greater than its `e`.
     BadRange { s: usize, e: usize },
+    /// Two ops address overlapping line ranges — applying both would
+    /// splice against shifted indices.
+    Overlap { first: (usize, usize), second: (usize, usize) },
     /// The op text did not parse.
     Malformed(String),
 }
@@ -105,6 +108,11 @@ impl std::fmt::Display for EditError {
                 write!(f, "line {line} is past the end of the file ({len} lines)")
             }
             EditError::BadRange { s, e } => write!(f, "bad range {s}..{e} (start > end)"),
+            EditError::Overlap { first, second } => write!(
+                f,
+                "overlapping ops {}..{} and {}..{} — one range per line",
+                first.0, first.1, second.0, second.1
+            ),
             EditError::Malformed(m) => write!(f, "malformed edit: {m}"),
         }
     }
@@ -205,11 +213,15 @@ impl EditStore {
         let current = std::fs::read_to_string(path).map_err(|e| {
             EditError::Malformed(format!("re-read before edit failed: {e}"))
         })?;
-        let current_tag = tag_of(&current);
-        if current_tag != snap.tag {
+        // W12: compare exact bytes, not the 16-bit tag. `tag_of` folds
+        // FNV-1a to two bytes; two different contents can collide
+        // (1/65536), and a collision here would green-light a splice
+        // against text the model never saw. The snapshot text is
+        // already in memory, so the exact compare costs nothing.
+        if current != snap.text {
             return Err(EditError::StaleTag {
                 expected: snap.tag,
-                got: current_tag,
+                got: tag_of(&current),
             });
         }
         // Validate every op's anchors before applying any.
@@ -233,8 +245,32 @@ impl EditStore {
                     len,
                 });
             }
-            if !snap.seen.get(op.start).copied().unwrap_or(false) {
-                return Err(EditError::UnseenAnchor { line: op.start });
+            // W4: every line the op touches must have been seen, not
+            // just the first. `CUT 1.=5` with only line 1 read deleted
+            // four lines the model never saw — defeating the module's
+            // core safety promise.
+            for line_no in op.start..=op.end {
+                if !snap.seen.get(line_no).copied().unwrap_or(false) {
+                    return Err(EditError::UnseenAnchor { line: line_no });
+                }
+            }
+        }
+        // W3: reject overlapping non-append ops. The descending splice
+        // order only composes for disjoint ranges; two ops sharing a
+        // line splice against each other's shifted indices and drop or
+        // duplicate content silently.
+        let mut ranges: Vec<(usize, usize)> = ops
+            .iter()
+            .filter(|o| !o.append)
+            .map(|o| (o.start, o.end))
+            .collect();
+        ranges.sort_unstable();
+        for w in ranges.windows(2) {
+            if w[1].0 <= w[0].1 {
+                return Err(EditError::Overlap {
+                    first: w[0],
+                    second: w[1],
+                });
             }
         }
         // Stage against the CURRENT text (== snapshot, just verified).
@@ -304,7 +340,16 @@ pub fn parse(text: &str) -> Result<(String, Tag, Vec<Op>), EditError> {
 
     for raw in text.lines() {
         let line = raw.trim_end();
-        if line.starts_with('[') && line.ends_with(']') && path.is_none() {
+        if line.starts_with('[') && line.ends_with(']') {
+            // W5: a second header is a malformed edit. Pre-fix it fell
+            // through to the junk-ignore branch and every op after it
+            // was applied to the FIRST file — `[b.txt#..]`'s edit
+            // spliced into `a.txt`.
+            if path.is_some() {
+                return Err(EditError::Malformed(
+                    "second [path#tag] header — one edit block per call".to_string(),
+                ));
+            }
             let inner = &line[1..line.len() - 1];
             let (p, t) = inner
                 .rsplit_once('#')
@@ -409,6 +454,78 @@ mod tests {
 
     fn seen_all(n: usize) -> Vec<bool> {
         vec![true; n + 1]
+    }
+
+    #[test]
+    fn overlapping_ops_are_rejected() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let f = tmp.path().join("a.txt");
+        std::fs::write(&f, "a\nb\nc\nd\n").unwrap();
+        let mut store = EditStore::new();
+        let tag = store.record_snapshot(&f, "a\nb\nc\nd\n", seen_all(4));
+        let ops = vec![
+            Op { start: 2, end: 3, payload: vec!["B".into()], append: false },
+            Op { start: 3, end: 4, payload: vec!["C".into()], append: false },
+        ];
+        let err = store.apply(&f, tag, &ops).unwrap_err();
+        assert!(matches!(err, EditError::Overlap { .. }), "got {err:?}");
+        // File untouched.
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "a\nb\nc\nd\n");
+    }
+
+    #[test]
+    fn two_puts_on_the_same_line_are_rejected_as_overlapping() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let f = tmp.path().join("a.txt");
+        std::fs::write(&f, "a\nb\nc\n").unwrap();
+        let mut store = EditStore::new();
+        let tag = store.record_snapshot(&f, "a\nb\nc\n", seen_all(3));
+        let ops = vec![
+            Op { start: 2, end: 2, payload: vec!["FIRST".into()], append: false },
+            Op { start: 2, end: 2, payload: vec!["SECOND".into()], append: false },
+        ];
+        assert!(matches!(
+            store.apply(&f, tag, &ops).unwrap_err(),
+            EditError::Overlap { .. }
+        ));
+    }
+
+    #[test]
+    fn a_cut_whose_end_lines_were_never_seen_is_rejected() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let f = tmp.path().join("a.txt");
+        std::fs::write(&f, "a\nb\nc\nd\ne\n").unwrap();
+        let mut store = EditStore::new();
+        // Only line 1 seen.
+        let mut seen = vec![false; 6];
+        seen[1] = true;
+        let tag = store.record_snapshot(&f, "a\nb\nc\nd\ne\n", seen);
+        let ops = vec![Op { start: 1, end: 5, payload: vec![], append: false }];
+        let err = store.apply(&f, tag, &ops).unwrap_err();
+        assert!(matches!(err, EditError::UnseenAnchor { .. }), "got {err:?}");
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "a\nb\nc\nd\ne\n");
+    }
+
+    #[test]
+    fn an_externally_changed_file_is_rejected() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let f = tmp.path().join("a.txt");
+        std::fs::write(&f, "a\nb\n").unwrap();
+        let mut store = EditStore::new();
+        let tag = store.record_snapshot(&f, "a\nb\n", seen_all(2));
+        // External edit since the read.
+        std::fs::write(&f, "a\nCHANGED\n").unwrap();
+        let ops = vec![Op { start: 2, end: 2, payload: vec!["X".into()], append: false }];
+        let err = store.apply(&f, tag, &ops).unwrap_err();
+        assert!(matches!(err, EditError::StaleTag { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn a_second_header_is_a_malformed_edit() {
+        let text = "[a.txt#00ff]\nPUT 1.=1:\n+for a\n[b.txt#00ff]\nPUT 9.=9:\n+for b\n";
+        let err = parse(text).unwrap_err();
+        assert!(matches!(err, EditError::Malformed(_)), "got {err:?}");
+        assert!(err.to_string().contains("second"), "got {err}");
     }
 
     #[test]
