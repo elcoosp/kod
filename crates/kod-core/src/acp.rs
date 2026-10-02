@@ -739,11 +739,24 @@ async fn read_frame<R: tokio::io::AsyncRead + Unpin>(
     reader: &mut BufReader<R>,
 ) -> Result<Option<Value>> {
     let mut content_length: Option<usize> = None;
+    // F2d-14: bound the header loop. A peer that streams an unbounded
+    // run of lines with no terminating blank line grew `line` without
+    // limit before the body cap was ever consulted — a remote could
+    // exhaust memory through headers alone. 64 KiB across all header
+    // lines is generous for the spec's `Content-Length` + a few extras.
+    const MAX_HEADER_BYTES: usize = 64 * 1024;
+    let mut header_bytes: usize = 0;
     loop {
         let mut line = String::new();
         let n = reader.read_line(&mut line).await.map_err(KodError::Io)?;
         if n == 0 {
             return Ok(None);
+        }
+        header_bytes = header_bytes.saturating_add(n);
+        if header_bytes > MAX_HEADER_BYTES {
+            return Err(KodError::InvalidParameters {
+                reason: format!("ACP header exceeds {MAX_HEADER_BYTES} bytes"),
+            });
         }
         let trimmed = line.trim_end_matches(['\r', '\n']);
         if trimmed.is_empty() {
