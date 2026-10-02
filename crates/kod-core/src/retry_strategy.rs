@@ -23,6 +23,13 @@ pub enum TurnFailure {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         retry_after_secs: Option<u64>,
     },
+    /// Provider overloaded ("server busy, please try again later").
+    /// Distinct from a send-frequency rate limit: the cooldown is
+    /// shorter (~10 min) and the surfaced message names overload.
+    TransportServerBusy {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_after_secs: Option<u64>,
+    },
     /// The provider refused to answer (safety, policy, "cannot help").
     ProviderRefused { reason: String },
     /// Authentication or authorization failed (401/403). Never
@@ -65,6 +72,19 @@ impl TurnFailure {
         }
         if l.contains("rate limit") || l.contains("429") || l.contains("too many requests") {
             return TurnFailure::TransportRateLimit {
+                retry_after_secs: kod_provider::retry::text_hint_secs(raw),
+            };
+        }
+        // Overload BEFORE the generic 503/5xx fallthrough below (there
+        // is none here — Unknown — but before timeout/auth so a busy
+        // body mentioning "timeout" still classifies as overload).
+        if l.contains("server_busy")
+            || l.contains("server-busy")
+            || l.contains("server busy")
+            || l.contains("serverbusy")
+            || l.contains("please try again later")
+        {
+            return TurnFailure::TransportServerBusy {
                 retry_after_secs: kod_provider::retry::text_hint_secs(raw),
             };
         }
@@ -143,6 +163,7 @@ impl TurnFailure {
             TurnFailure::TransportTimeout => "TransportTimeout",
             TurnFailure::TransportNetwork => "TransportNetwork",
             TurnFailure::TransportRateLimit { .. } => "TransportRateLimit",
+            TurnFailure::TransportServerBusy { .. } => "TransportServerBusy",
             TurnFailure::ProviderRefused { .. } => "ProviderRefused",
             TurnFailure::ProviderAuthError { .. } => "ProviderAuthError",
             TurnFailure::ContextWindowExceeded { .. } => "ContextWindowExceeded",
@@ -163,6 +184,10 @@ impl TurnFailure {
             TurnFailure::TransportRateLimit { retry_after_secs } => match retry_after_secs {
                 Some(s) => format!("rate limited; retry after {s}s"),
                 None => "rate limited".to_string(),
+            },
+            TurnFailure::TransportServerBusy { retry_after_secs } => match retry_after_secs {
+                Some(s) => format!("server busy; retry after {s}s"),
+                None => "server busy".to_string(),
             },
             TurnFailure::ProviderRefused { .. } => "provider refused".to_string(),
             TurnFailure::ProviderAuthError { .. } => "provider auth error".to_string(),
@@ -209,6 +234,7 @@ pub fn choose_action(f: &TurnFailure) -> RetryAction {
             RetryAction::SameEndpointBackoff
         }
         TurnFailure::TransportRateLimit { .. } => RetryAction::SameEndpointBackoff,
+        TurnFailure::TransportServerBusy { .. } => RetryAction::SameEndpointBackoff,
         TurnFailure::ProviderRefused { .. } => RetryAction::SameEndpointLowerTemp,
         TurnFailure::ProviderAuthError { .. } => RetryAction::NoRetry,
         TurnFailure::ContextWindowExceeded { .. } => RetryAction::ShrinkHistory,
@@ -232,10 +258,11 @@ mod tests {
         // identifier a user writes as a `[llm.retry.fallback_chains]`
         // key. Pinned so a new variant gets a name and the
         // config-facing match cannot silently miss it.
-        let variants: [TurnFailure; 13] = [
+        let variants: [TurnFailure; 14] = [
             TurnFailure::TransportTimeout,
             TurnFailure::TransportNetwork,
             TurnFailure::TransportRateLimit { retry_after_secs: Some(1) },
+            TurnFailure::TransportServerBusy { retry_after_secs: Some(600) },
             TurnFailure::ProviderRefused { reason: "x".to_string() },
             TurnFailure::ProviderAuthError { detail: "x".to_string() },
             TurnFailure::ContextWindowExceeded { over_by: None },
@@ -257,6 +284,10 @@ mod tests {
         assert_eq!(
             TurnFailure::TransportRateLimit { retry_after_secs: None }.class_name(),
             "TransportRateLimit",
+        );
+        assert_eq!(
+            TurnFailure::TransportServerBusy { retry_after_secs: None }.class_name(),
+            "TransportServerBusy",
         );
     }
 
@@ -283,6 +314,21 @@ mod tests {
                 assert_eq!(retry_after_secs, Some(1200));
             }
             other => panic!("expected rate limit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_server_busy() {
+        for raw in [
+            "HTTP 503: provider reports overload (Server busy, please try again later)",
+            "turn-error:server_busy: provider notice: server busy",
+            "ServerBusy: retry after 600s",
+        ] {
+            let f = TurnFailure::classify(raw);
+            assert!(
+                matches!(f, TurnFailure::TransportServerBusy { .. }),
+                "expected server busy, got {f:?}"
+            );
         }
     }
 
@@ -348,6 +394,18 @@ mod tests {
             }
             .recoverable()
         );
+        assert!(
+            TurnFailure::TransportServerBusy {
+                retry_after_secs: None
+            }
+            .recoverable()
+        );
+        assert_eq!(
+            choose_action(&TurnFailure::TransportServerBusy {
+                retry_after_secs: Some(600)
+            }),
+            RetryAction::SameEndpointBackoff
+        );
     }
 
     #[test]
@@ -378,6 +436,9 @@ mod tests {
             TurnFailure::TransportRateLimit {
                 retry_after_secs: None,
             },
+            TurnFailure::TransportServerBusy {
+                retry_after_secs: None,
+            },
             TurnFailure::ProviderRefused { reason: "x".into() },
             TurnFailure::ProviderAuthError { detail: "x".into() },
             TurnFailure::ContextWindowExceeded { over_by: None },
@@ -404,6 +465,9 @@ mod tests {
             TurnFailure::TransportTimeout,
             TurnFailure::TransportRateLimit {
                 retry_after_secs: Some(30),
+            },
+            TurnFailure::TransportServerBusy {
+                retry_after_secs: Some(600),
             },
             TurnFailure::ProviderRefused { reason: "x".into() },
             TurnFailure::ProviderAuthError {
