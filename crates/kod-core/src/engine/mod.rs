@@ -6401,7 +6401,15 @@ impl KodEngine {
         let mut questions: Vec<(String, String)> = Vec::with_capacity(slice.len());
         for (idx, c) in slice.iter().enumerate() {
             let abs = self.working_dir.join(&c.raw_path);
-            let Ok(content) = std::fs::read_to_string(&abs) else {
+            // F2c-11: read off the async worker — this fn is awaited
+            // on the turn path and the path is model-derived.
+            let abs_for_read = abs.clone();
+            let Ok(content) = tokio::task::spawn_blocking(move || {
+                std::fs::read_to_string(&abs_for_read)
+            })
+            .await
+            .unwrap_or_else(|_| Err(std::io::Error::other("read task panicked")))
+            else {
                 continue;
             };
             let mut lines_iter = content.lines();
