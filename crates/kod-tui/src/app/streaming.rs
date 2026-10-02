@@ -44,7 +44,10 @@ impl KodApp {
             self.current_response.push_str(chunk);
             if matches!(
                 self.phase,
-                GenPhase::Connecting | GenPhase::RateLimited | GenPhase::Activity(_)
+                GenPhase::Connecting
+                    | GenPhase::RateLimited
+                    | GenPhase::ServerBusy
+                    | GenPhase::Activity(_)
             ) {
                 // First model text of the turn — or the retry landing
                 // after a rate-limit wait / auxiliary pass. Either way
