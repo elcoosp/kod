@@ -10881,6 +10881,36 @@ impl KodEngine {
                         .or_default()
                         .push(msg);
                 }
+                // M-13 remainder: the round assembled complete tool
+                // calls before the stream died. When this error is NOT
+                // retryable, the turn is ending here — no fallback will
+                // re-drive it — so executing the calls now is safe and
+                // gives the user the work the model actually asked for.
+                //
+                // When the error IS retryable the chain may fall back
+                // and re-drive the turn; the model re-emits the calls
+                // and they execute there. Executing here as well would
+                // run the same tools twice — real side effects, not a
+                // transcript blemish — so we deliberately skip.
+                if !err.is_retryable()
+                    && !calls.is_empty()
+                {
+                    let section = self
+                        .run_tool_calls_with_speculations(
+                            &calls,
+                            round.holder,
+                            Some(chunk_tx),
+                            &speculations,
+                        )
+                        .await;
+                    if !section.messages.is_empty() {
+                        messages.extend(section.messages.iter().cloned());
+                        let mut hist = self.history.write().await;
+                        let turns = hist.entry(round.holder.to_string()).or_default();
+                        turns.extend(section.messages.iter().cloned());
+                        cap_transcript(&mut *turns, MAX_HISTORY_TURNS);
+                    }
+                }
                 return Err(err);
             }
             // P5.6 — on the very first round, an off-track verdict
