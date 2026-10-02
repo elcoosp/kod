@@ -207,6 +207,15 @@ pub async fn run_streaming_prompt(prompt: String, model: Option<String>) -> Resu
                 let _ = std::io::stdout().flush();
                 continue;
             }
+            // Overload: same one-line contract, distinct wording.
+            if let Some((secs, attempt, max)) = kod_core::engine::parse_server_busy_wait(&chunk) {
+                println!(
+                    "\nServer busy — waiting {} before automatic retry (attempt {attempt}/{max})…",
+                    kod_core::engine::format_duration_ms(secs.saturating_mul(1000)),
+                );
+                let _ = std::io::stdout().flush();
+                continue;
+            }
             if let Some(turn) = kod_core::engine::parse_turn_marker(&chunk) {
                 println!("\n—— turn {turn} ——");
                 let _ = std::io::stdout().flush();
