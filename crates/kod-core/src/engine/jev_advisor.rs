@@ -742,6 +742,13 @@ impl KodEngine {
         let _ = tx.send(question_marker(id, &json)).await;
         let answer =
             tokio::time::timeout(std::time::Duration::from_secs(AWAIT_APPROVAL_SECS), orx).await;
+        // F2d-10: the sender must not outlive the wait. On timeout (or
+        // any non-answer) the oneshot entry stayed in the map forever —
+        // one leaked sender per unanswered question, and the map grew
+        // without bound across a long session. Remove it once the wait
+        // resolves; a late `respond_to_question` then finds nothing and
+        // returns false, which is the honest answer for a timed-out id.
+        self.pending_questions.write().await.remove(&id);
         match answer {
             Ok(Ok(text))
                 if !text.is_empty() && text != "(cancelled)" && text != "(question cancelled)" =>
