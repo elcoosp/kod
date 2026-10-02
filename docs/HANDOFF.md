@@ -77,33 +77,31 @@ commits) into one — but that rewrites history and was not done.
 
 ---
 
-## 4. Deferred MEDIUMs — M-13 and M-16 only
+## 4. MEDIUMs — all closed
 
-Both in `crates/kod-core/src/engine/mod.rs`, both the "transcript
-integrity" refactor the audit groups together.
+M-13 and M-16 landed in `e674d51`:
 
-### M-13 · F2c-4 — mid-stream error discards the partial text/calls
-`partial_error` is carried on `StreamRoundOutcome` (field at ~1550);
-the caller (~10821) logs it but still `return Err(err)`s without
-persisting `text`/`calls`. The half-fix is committed; the persist
-step remains.
+### M-16 · F2c-7 — failed attempts no longer duplicate rounds
+Both chain loops persisted each tool round into the shared history
+*during* the attempt, before the fallback chain picked a winner, so a
+retryable failure left the dead attempt's rounds in the transcript and
+the next endpoint stacked its own on top. Fix: snapshot the holder's
+history length ONCE above the endpoint walk, truncate back to it at
+the top of the retry loop. Placement is load-bearing — capturing
+inside the `while i < chain.len()` loop re-snapshots the polluted
+length on a fallthrough and the truncate no-ops. Helpers:
+`history_len_for`, `truncate_history_to`.
 
-### M-16 · F2c-7 — failed attempts duplicate tool rounds
-`run_streaming_loop` persists each round's `section.messages` to the
-shared history (~10946) before the fallback chain picks a winner. A
-retryable failure leaves the failed attempt's rounds in the
-transcript; the next endpoint appends on top. Collected loop same
-shape (~10546 / ~10607).
+### M-13 · F2c-4 — partial text is persisted (calls not yet)
+A mid-stream error carried the partial text on
+`StreamRoundOutcome.partial_error`, but the caller `return Err(err)`ed
+it away; the transcript recorded nothing and the next turn re-asked a
+half-answered question. Fix: append the partial assistant text to the
+in-flight `messages` and the per-transcript history before surfacing.
 
-**Coupled.** Fix together behind one `attempt_round_messages` buffer:
-- Replace the immediate `hist.write()` with an attempt-local buffer.
-- After the chain picks the winner (~9838 / ~9336), merge once +
-  `cap_transcript`.
-- On a retryable failure before the merge, drop the buffer.
-- For M-13: persist `outcome.text`, run complete `outcome.calls`,
-  then surface `partial_error`.
-
----
+**Remainder:** M-13's *complete tool calls* are still not executed
+before the error surfaces. That is a loop restructure (execute calls,
+mark the round errored) and is not in `e674d51`.
 
 ## 5. Traps learned this session
 
