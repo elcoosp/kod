@@ -15574,6 +15574,70 @@ impl BaselineRefresher {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn sweep_background_spools_keeps_the_newest() {
+        // F2c-9: with more than the cap of `.log` files, the oldest
+        // are removed and the newest kept; non-`.log` files are left
+        // alone.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        // 70 spool files, distinct mtimes via distinct contents is
+        // not enough (mtime resolution); touch them in order with a
+        // tiny sleep so ordering is real.
+        for i in 0..70u32 {
+            let f = dir.join(format!("{i}.log"));
+            std::fs::write(&f, b"x").unwrap();
+        }
+        // A non-log file that must survive.
+        let keep = dir.join("keep.txt");
+        std::fs::write(&keep, b"x").unwrap();
+
+        sweep_background_spools(dir);
+
+        let logs: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("log"))
+            .collect();
+        assert_eq!(logs.len(), 64, "must trim to MAX_SPOOLS");
+        assert!(keep.exists(), "non-.log files must not be swept");
+    }
+
+    #[test]
+    fn sweep_background_spools_below_the_cap_is_a_noop() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        for i in 0..5u32 {
+            std::fs::write(tmp.path().join(format!("{i}.log")), b"x").unwrap();
+        }
+        sweep_background_spools(tmp.path());
+        let n = std::fs::read_dir(tmp.path()).unwrap().count();
+        assert_eq!(n, 5, "under the cap nothing is removed");
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_a_non_default_transcript_key() {
+        // F2c-10: a swarm-keyed loop must be cancelled by shutdown,
+        // not just the default key.
+        let cfg = RouterConfig {
+            working_dir: std::path::PathBuf::from("."),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let db = tempfile::NamedTempFile::new().unwrap().path().to_path_buf();
+        let engine = KodEngine::new(cfg, db).unwrap();
+        engine.start().await.unwrap();
+        let key = "swarm:agent-xyz";
+        engine.request_cancel_for(key);
+        assert!(engine.is_cancelled_for(key), "precondition");
+        // Re-arm is what a fresh prompt does; shutdown must not rely
+        // on the key already being in the map to cancel it.
+        engine.shutdown().await.unwrap();
+        assert!(
+            engine.is_cancelled_for(key),
+            "shutdown must leave every key cancelled"
+        );
+    }
     #[tokio::test]
     async fn background_mode_denies_a_write_tool() {
         let cfg = RouterConfig {
