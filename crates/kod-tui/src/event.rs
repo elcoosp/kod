@@ -212,6 +212,13 @@ pub enum Event {
         message: String,
         wait_secs: u64,
     },
+    /// The provider is overloaded (HTTP 503 `server_busy`); the engine
+    /// is sleeping out the ~10-minute cooldown. Same shape as
+    /// [`Event::RateLimited`] but rendered distinctly.
+    ServerBusy {
+        message: String,
+        wait_secs: u64,
+    },
     /// Goal-loop turn boundary: the engine finished turn N-1 and is
     /// starting turn N. The main loop flushes the previous turn's text
     /// as its own bubble and opens a new one — turns must never merge
