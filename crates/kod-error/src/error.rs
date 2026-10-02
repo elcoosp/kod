@@ -22,6 +22,9 @@ pub enum KodError {
     #[error("Rate limited by provider, retry after {retry_after_secs}s")]
     RateLimited { retry_after_secs: u64 },
 
+    #[error("Server busy, retry after {retry_after_secs}s")]
+    ServerBusy { retry_after_secs: u64 },
+
     #[error("Model not found: {model}")]
     ModelNotFound { model: String },
 
@@ -194,6 +197,28 @@ impl KodError {
         }
     }
 
+    /// Construct a `ServerBusy` from an HTTP 503 overload response.
+    /// Defaults to the tab-bridge overload cooldown (10 min) when the
+    /// server sent no parseable hint.
+    pub fn server_busy(retry_after: Option<std::time::Duration>) -> Self {
+        let secs = retry_after.map(|d| d.as_secs()).unwrap_or(600);
+        KodError::ServerBusy {
+            retry_after_secs: secs,
+        }
+    }
+
+    /// True when `body` names a provider overload ("server busy, please
+    /// try again later" and neighbours), as opposed to a generic 5xx.
+    pub fn is_server_busy_body(body: &str) -> bool {
+        let l = body.to_lowercase();
+        l.contains("server_busy")
+            || l.contains("server-busy")
+            || l.contains("server busy")
+            || l.contains("please try again later")
+            || (l.contains("overloaded") && l.contains("try again"))
+            || l.contains("capacity exceeded")
+    }
+
     /// Classify an HTTP error status + body into the closest typed variant.
     pub fn provider_status(status: u16, body: &str) -> Self {
         Self::provider_status_with_hint(status, body, None)
@@ -215,6 +240,9 @@ impl KodError {
             429 => KodError::RateLimited {
                 retry_after_secs: retry_after.map(|d| d.as_secs()).unwrap_or(30),
             },
+            503 if Self::is_server_busy_body(&snippet) => KodError::ServerBusy {
+                retry_after_secs: retry_after.map(|d| d.as_secs()).unwrap_or(600),
+            },
             500..=599 => KodError::Provider(format!("server error {status}: {snippet}")),
             _ => KodError::Provider(format!("http {status}: {snippet}")),
         }
@@ -224,7 +252,9 @@ impl KodError {
     /// 401/403/404/422 are permanent — retrying only wastes the user's time.
     pub fn is_retryable(&self) -> bool {
         match self {
-            KodError::RateLimited { .. } | KodError::ProviderTimeout { .. } => true,
+            KodError::RateLimited { .. }
+            | KodError::ServerBusy { .. }
+            | KodError::ProviderTimeout { .. } => true,
             KodError::Provider(msg) => is_transient_transport_error(msg),
             KodError::Network(_) => true,
             _ => false,
@@ -237,6 +267,7 @@ impl KodError {
             self,
             KodError::ProviderTimeout { .. }
                 | KodError::RateLimited { .. }
+                | KodError::ServerBusy { .. }
                 | KodError::Network(_)
                 | KodError::LockTimeout { .. }
         )
@@ -433,6 +464,12 @@ mod coverage_error_classification {
             }
             .is_recoverable()
         );
+        assert!(
+            KodError::ServerBusy {
+                retry_after_secs: 600
+            }
+            .is_recoverable()
+        );
         assert!(KodError::Network("x".into()).is_recoverable());
         assert!(KodError::LockTimeout { path: "p".into() }.is_recoverable());
         // A Provider error whose text happens to look retryable is
@@ -483,5 +520,46 @@ mod coverage_error_classification {
                 retry_after_secs: 30
             }
         ));
+    }
+
+    #[test]
+    fn server_busy_uses_retry_after_or_ten_minute_default() {
+        let e = KodError::server_busy(Some(std::time::Duration::from_secs(600)));
+        assert!(matches!(
+            e,
+            KodError::ServerBusy {
+                retry_after_secs: 600
+            }
+        ));
+        let e = KodError::server_busy(None);
+        assert!(matches!(
+            e,
+            KodError::ServerBusy {
+                retry_after_secs: 600
+            }
+        ));
+    }
+
+    #[test]
+    fn provider_status_maps_busy_503_to_server_busy() {
+        let e = KodError::provider_status_with_hint(
+            503,
+            "provider reports overload (Server busy, please try again later); wait ~10 minutes",
+            Some(std::time::Duration::from_secs(600)),
+        );
+        assert!(matches!(
+            e,
+            KodError::ServerBusy {
+                retry_after_secs: 600
+            }
+        ));
+        assert!(e.is_retryable());
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn provider_status_keeps_plain_503_as_provider_error() {
+        let e = KodError::provider_status(503, "upstream connect error");
+        assert!(matches!(e, KodError::Provider(_)));
     }
 }
