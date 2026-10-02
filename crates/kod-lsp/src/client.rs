@@ -239,7 +239,17 @@ impl LspClient {
         content: &str,
         overall_timeout: Duration,
     ) -> Result<Vec<Diagnostic>, LspError> {
-        let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        // F2a-12: `canonicalize` is a blocking syscall on the async
+        // runtime while the per-language mutex is held. Move it off
+        // the worker.
+        let key = {
+            let p = path.to_path_buf();
+            tokio::task::spawn_blocking(move || {
+                std::fs::canonicalize(&p).unwrap_or(p)
+            })
+            .await
+            .unwrap_or_else(|_| path.to_path_buf())
+        };
         let sent_version = match self.opened.get_mut(&key) {
             Some(version) => {
                 *version += 1;
