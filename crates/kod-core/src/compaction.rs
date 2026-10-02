@@ -137,30 +137,62 @@ pub fn safe_cutoff(turns: &[ChatMessage], keep_recent: usize) -> Option<usize> {
         return Some(0);
     }
 
-    // Collect the call ids opened before `cut` and closed at or after
-    // it, then walk the cut backwards until none straddle.
-    let mut cut = nominal;
-    loop {
-        if cut == 0 {
-            // Walked past the start: no safe cut that drops anything.
-            return Some(0);
+    // F2e-6: O(n log n), not the pre-fix O(n²) retreat. For every
+    // tool-call id, the earliest message that opens it (`open`) and
+    // the earliest tool message that closes it (`close`) define a
+    // *forbidden* range of cut points: any cut in `(open, close]`
+    // drops the opener while keeping its result — the straddle the
+    // loop searched for. Merge those ranges and take the largest cut
+    // ≤ nominal outside them.
+    use std::collections::HashMap;
+    let mut open_first: HashMap<&str, usize> = HashMap::new();
+    let mut close_first: HashMap<&str, usize> = HashMap::new();
+    for (i, m) in turns.iter().enumerate() {
+        for c in &m.tool_calls {
+            if let Some(id) = c.id.as_deref() {
+                open_first.entry(id).or_insert(i);
+            }
         }
-        let open_before: std::collections::HashSet<&str> = turns[..cut]
-            .iter()
-            .flat_map(|m| m.tool_calls.iter())
-            .filter_map(|c| c.id.as_deref())
-            .collect();
-        let closes_after = turns[cut..].iter().any(|m| {
-            m.role == MessageRole::Tool
-                && m.tool_call_id
-                    .as_deref()
-                    .is_some_and(|id| open_before.contains(id))
-        });
-        if !closes_after {
-            return Some(cut);
+        if m.role == MessageRole::Tool
+            && let Some(id) = m.tool_call_id.as_deref()
+        {
+            close_first.entry(id).or_insert(i);
         }
-        cut -= 1;
     }
+    let mut forbidden: Vec<(usize, usize)> = Vec::new();
+    for (id, &o) in &open_first {
+        if let Some(&c) = close_first.get(id)
+            && o < c
+        {
+            // cut in [o + 1, c] straddles this call.
+            forbidden.push((o + 1, c));
+        }
+    }
+    forbidden.sort_unstable();
+    // Merge touching/overlapping ranges (integer cut points, so
+    // [a,b]∪[b+1,c] is contiguous).
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in forbidden {
+        match merged.last_mut() {
+            Some(last) if s <= last.1 + 1 => {
+                if e > last.1 {
+                    last.1 = e;
+                }
+            }
+            _ => merged.push((s, e)),
+        }
+    }
+    // Largest cut ≤ nominal outside every merged range.
+    let mut cut = nominal;
+    for (s, e) in merged.iter().rev() {
+        if *s <= cut && cut <= *e {
+            if *s == 0 {
+                return Some(0);
+            }
+            cut = s - 1;
+        }
+    }
+    Some(cut)
 }
 
 /// A no-LLM summary of what was dropped.
