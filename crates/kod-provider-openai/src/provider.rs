@@ -1057,7 +1057,8 @@ fn adk_err(e: adk_core::AdkError) -> KodError {
 /// formatted message, so: 429 → typed `RateLimited` with a hint parsed
 /// from the message text — tab-bridge's 429 body embeds
 /// "…wait ~20 minutes…", which `text_hint_secs` reads (the numeric
-/// `Retry-After` header itself is unreachable on this path). Everything
+/// `Retry-After` header itself is unreachable on this path). 503 +
+/// overload text → typed `ServerBusy` (default 10 min). Everything
 /// else keeps the legacy string mapping.
 fn adk_err_typed(e: adk_core::AdkError) -> KodError {
     if e.details.upstream_status_code == Some(429) {
@@ -1067,29 +1068,40 @@ fn adk_err_typed(e: adk_core::AdkError) -> KodError {
             retry_after_secs: secs,
         };
     }
+    if e.details.upstream_status_code == Some(503) {
+        let text = e.to_string();
+        if KodError::is_server_busy_body(&text) {
+            let secs = kod_provider::retry::text_hint_secs(&text).unwrap_or(600);
+            return KodError::ServerBusy {
+                retry_after_secs: secs,
+            };
+        }
+    }
     adk_err(e)
 }
 
-/// Delay before the next streaming attempt. A typed rate limit within
-/// the wait budget sleeps out its window exactly once per turn (the
-/// `long_wait_used` flag — a second window inside one turn fails fast
-/// into a small backoff instead of parking the session again). Hints
-/// above the budget and other transients get a small linear backoff;
-/// the pre-fix loop retried a 429 *instantly*, hammering a provider
-/// that had just said "slow down".
+/// Delay before the next streaming attempt. A typed rate limit (or
+/// server-busy overload) within the wait budget sleeps out its window
+/// exactly once per turn (the `long_wait_used` flag — a second window
+/// inside one turn fails fast into a small backoff instead of parking
+/// the session again). Hints above the budget and other transients get
+/// a small linear backoff; the pre-fix loop retried a 429 *instantly*,
+/// hammering a provider that had just said "slow down".
 ///
 /// `wait_budget` is the caller's budget already capped by
 /// [`kod_provider::retry::STREAM_RATE_LIMIT_WAIT_CAP`]: the engine
 /// reads provider streams under a 120 s idle timeout, so a longer
-/// window must surface as a typed `RateLimited` error and let the
-/// engine wait between rounds instead.
+/// window must surface as a typed `RateLimited`/`ServerBusy` error and
+/// let the engine wait between rounds instead.
 fn rate_limit_delay(
     err: &KodError,
     wait_budget: std::time::Duration,
     attempt: u32,
     long_wait_used: &mut bool,
 ) -> std::time::Duration {
-    if let KodError::RateLimited { retry_after_secs } = err {
+    if let KodError::RateLimited { retry_after_secs } | KodError::ServerBusy { retry_after_secs } =
+        err
+    {
         let hint = std::time::Duration::from_secs(*retry_after_secs);
         if !hint.is_zero() && hint <= wait_budget {
             if !*long_wait_used {
