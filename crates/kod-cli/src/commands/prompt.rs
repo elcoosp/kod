@@ -147,14 +147,19 @@ pub async fn run_prompt(
     install_session_recorder(&engine, no_log);
     install_jev(&engine, &config);
 
-    let resp = engine.process(&input).await?;
+    // F2h-19: capture the result so `engine.shutdown()` runs even when
+    // the prompt errored. Propagating with `?` here skipped teardown,
+    // leaving MCP children and the redb handle to process exit.
+    let result = engine.process(&input).await;
+    let shutdown = engine.shutdown().await;
+    let resp = result?;
     let text = resp.text.unwrap_or_default();
 
     // Print only the reply to stdout — a script gets exactly what it
     // asked for. Anything else goes to stderr.
     println!("{}", text.trim_end());
 
-    engine.shutdown().await?;
+    shutdown?;
     Ok(())
 }
 

@@ -162,11 +162,23 @@ pub(crate) fn atomic_write(path: &std::path::Path, content: &[u8]) -> std::io::R
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let tmp = parent.join(format!(".kod-tmp-{}-{:x}", std::process::id(), nanos));
+    // F2f-17: the rename replaces the inode, so the destination's
+    // mode (notably the exec bit on a script overwrite) would be lost
+    // — the temp file's default 0644 would win. Capture the existing
+    // destination's permissions and reapply them to the temp file
+    // before the rename. A destination that does not exist yet keeps
+    // the platform default.
+    let dest_perms = std::fs::metadata(path).ok().map(|m| m.permissions());
     let result = (|| -> std::io::Result<()> {
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(content)?;
         f.sync_all()?;
         drop(f);
+        if let Some(perms) = dest_perms {
+            // Best-effort: a filesystem that refuses set_permissions
+            // still gets the content, which is the point of the write.
+            let _ = std::fs::set_permissions(&tmp, perms);
+        }
         std::fs::rename(&tmp, path)?;
         Ok(())
     })();
@@ -456,6 +468,22 @@ impl Tool for ReadFileTool {
             .get("numbered")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        // F2f-23: a truncated read cannot be numbered safely — the
+        // unseen tail must not be editable — so numbering is skipped.
+        // Pre-fix the read silently returned unnumbered output under
+        // a `numbered: true` request, so the model addressed lines by
+        // an index the response never carried. Make the downgrade
+        // explicit in the payload instead.
+        if numbered && truncated {
+            return Ok(ToolResult::Success(serde_json::json!({
+                "path": resolved.to_string_lossy().to_string(),
+                "content": content,
+                "truncated": true,
+                "binary": false,
+                "numbered": false,
+                "numbered_downgraded": "read was truncated; numbering is disabled so line indices are not misread",
+            })));
+        }
         if numbered && !truncated {
             let line_count = content.lines().count();
             // Everything the read returned is "seen"; a truncated

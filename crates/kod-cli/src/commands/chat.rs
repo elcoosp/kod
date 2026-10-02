@@ -166,8 +166,12 @@ pub async fn run_chat_remote(socket: Option<std::path::PathBuf>) -> Result<()> {
         // is the daemon dying mid-turn. Say so instead of looping
         // back to a prompt that would then fail on connect.
         if !answered {
-            eprintln!("(daemon closed the connection before completing this turn)");
-            break;
+            // F2h-11: the daemon died mid-turn. Siblings return Err;
+            // this path returned Ok(0), so a script driving
+            // `kod chat --remote` read a dead turn as success.
+            return Err(KodError::InvalidState(
+                "daemon closed the connection before completing this turn".to_string(),
+            ));
         }
     }
 
