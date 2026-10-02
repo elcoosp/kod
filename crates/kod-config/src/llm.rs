@@ -478,13 +478,15 @@ pub struct EndpointConfig {
     /// is clamped to `standard` at load.
     #[serde(default)]
     pub trust: Option<String>,
-    /// Longest provider-suggested rate-limit window (seconds) that this
+    /// Longest provider-suggested wait window (seconds) that this
     /// endpoint's retry loops — and the engine's own turn-level wait —
-    /// may sleep out before re-driving the failed request.
+    /// may sleep out before re-driving the failed request. Covers both
+    /// rate limits (429) and provider overload (503 `server_busy`).
     ///
     /// Tab-bridge (stateful browser backend) enforces a ~20-minute
-    /// send-frequency window and answers 429 with `Retry-After` up to
-    /// 1200 s. When the hint is at or under this budget, kod waits out
+    /// send-frequency window (429, `Retry-After` up to 1200 s) and a
+    /// ~10-minute overload cooldown (503 `server_busy`, `Retry-After`
+    /// up to 600 s). When the hint is at or under this budget, kod waits out
     /// the window and re-drives the turn automatically instead of
     /// surfacing the error and forcing a manual retry.
     ///
@@ -507,11 +509,12 @@ fn default_timeout_secs() -> u64 {
     300
 }
 
-/// Default longest provider-suggested rate-limit window (seconds) kod
+/// Default longest provider-suggested wait window (seconds) kod
 /// sleeps out before automatically re-driving the failed request.
 ///
-/// 30 minutes covers every per-user rate-limit window observed in the
-/// wild (tab-bridge's 1200 s included) without parking an overnight
+/// 30 minutes covers every per-user wait window observed in the
+/// wild (tab-bridge's 1200 s rate limit and 600 s server-busy
+/// cooldown included) without parking an overnight
 /// run on a daily quota. A provider hint above this budget surfaces
 /// the error to the user, as before. Set
 /// `[llm.endpoints].rate_limit_wait_secs = 0` to restore the legacy
