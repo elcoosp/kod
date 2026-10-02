@@ -37,6 +37,13 @@ const MAX_TOOL_ROUNDS: usize = 40;
 /// worth parking the session again — the error surfaces instead.
 const MAX_RATE_LIMIT_RETRIES: u32 = 2;
 
+/// How many times the engine may sleep out a provider *overload*
+/// (`server_busy`, ~10 min cooldown) and re-drive the same request
+/// within one turn. Higher than [`MAX_RATE_LIMIT_RETRIES`]: overload
+/// clears faster than a send-frequency quota, so two extra waits are
+/// still worth parking the session for.
+const MAX_SERVER_BUSY_RETRIES: u32 = 4;
+
 /// Delta §4.5: the minimum token count a tool result must have
 /// before the inline-imaging pass considers rasterizing it.
 const MIN_INLINE_IMAGE_TOKENS: u64 = 3_000;
@@ -296,10 +303,32 @@ pub fn is_thinking_marker(chunk: &str) -> bool {
 /// line; neither appends it to the transcript.
 pub const RATE_LIMIT_WAIT_MARKER: &str = "\0kod-rate-limit:";
 
+/// Marker announcing an automatic server-busy wait:
+/// `\0kod-server-busy:<secs>\0<attempt>\0<max>`. Same contract as
+/// [`RATE_LIMIT_WAIT_MARKER`] but for provider overload (HTTP 503
+/// `server_busy`, ~10 min cooldown) instead of send-frequency rate
+/// limits. Rendered distinctly ("Server busy…") by the TUI/CLI.
+pub const SERVER_BUSY_WAIT_MARKER: &str = "\0kod-server-busy:";
+
 /// Build a rate-limit-wait marker: the window in seconds plus the
 /// 1-based attempt and the attempt cap, for display.
 pub fn rate_limit_wait_marker(secs: u64, attempt: u32, max_attempts: u32) -> String {
     format!("{RATE_LIMIT_WAIT_MARKER}{secs}\0{attempt}\0{max_attempts}")
+}
+
+/// Build a server-busy-wait marker (see [`SERVER_BUSY_WAIT_MARKER`]).
+pub fn server_busy_wait_marker(secs: u64, attempt: u32, max_attempts: u32) -> String {
+    format!("{SERVER_BUSY_WAIT_MARKER}{secs}\0{attempt}\0{max_attempts}")
+}
+
+/// Parse a wait marker of either kind into `(is_server_busy, secs,
+/// attempt, max_attempts)`. A malformed tail degrades to defaults
+/// instead of dropping the notice.
+pub fn parse_wait_marker(chunk: &str) -> Option<(bool, u64, u32, u32)> {
+    if let Some(marker) = parse_rate_limit_wait(chunk) {
+        return Some((false, marker.0, marker.1, marker.2));
+    }
+    parse_server_busy_wait(chunk).map(|(secs, attempt, max)| (true, secs, attempt, max))
 }
 
 /// If `chunk` is a rate-limit-wait marker, return
@@ -307,7 +336,17 @@ pub fn rate_limit_wait_marker(secs: u64, attempt: u32, max_attempts: u32) -> Str
 /// defaults instead of dropping the notice, the way [`parse_tool_done`]
 /// degrades its duration.
 pub fn parse_rate_limit_wait(chunk: &str) -> Option<(u64, u32, u32)> {
-    let rest = chunk.strip_prefix(RATE_LIMIT_WAIT_MARKER)?;
+    parse_wait_marker_secs(chunk, RATE_LIMIT_WAIT_MARKER)
+}
+
+/// If `chunk` is a server-busy-wait marker, return
+/// `(secs, attempt, max_attempts)` (see [`parse_rate_limit_wait`]).
+pub fn parse_server_busy_wait(chunk: &str) -> Option<(u64, u32, u32)> {
+    parse_wait_marker_secs(chunk, SERVER_BUSY_WAIT_MARKER)
+}
+
+fn parse_wait_marker_secs(chunk: &str, marker: &str) -> Option<(u64, u32, u32)> {
+    let rest = chunk.strip_prefix(marker)?;
     let mut parts = rest.splitn(3, '\0');
     let secs = parts.next()?.parse::<u64>().unwrap_or(0);
     let attempt = parts
@@ -334,7 +373,6 @@ mod rate_limit_marker_tests {
         let chunk = rate_limit_wait_marker(1200, 1, 2);
         assert_eq!(parse_rate_limit_wait(&chunk), Some((1200, 1, 2)));
     }
-
     #[test]
     fn non_marker_chunks_do_not_parse() {
         assert_eq!(parse_rate_limit_wait("hello"), None);
@@ -349,6 +387,60 @@ mod rate_limit_marker_tests {
     fn malformed_tail_degrades_to_defaults() {
         let chunk = format!("{RATE_LIMIT_WAIT_MARKER}60");
         assert_eq!(parse_rate_limit_wait(&chunk), Some((60, 1, 1)));
+    }
+
+    #[test]
+    fn server_busy_marker_round_trips_distinct_from_rate_limit() {
+        let chunk = server_busy_wait_marker(600, 1, 2);
+        assert_eq!(parse_server_busy_wait(&chunk), Some((600, 1, 2)));
+        // The two markers never collide.
+        assert_eq!(parse_rate_limit_wait(&chunk), None);
+        let rl = rate_limit_wait_marker(600, 1, 2);
+        assert_eq!(parse_server_busy_wait(&rl), None);
+        // The unified parser tags the kind.
+        assert_eq!(parse_wait_marker(&chunk), Some((true, 600, 1, 2)));
+        assert_eq!(parse_wait_marker(&rl), Some((false, 600, 1, 2)));
+        assert_eq!(parse_wait_marker("hello"), None);
+    }
+
+    #[tokio::test]
+    async fn server_busy_gets_four_waits_rate_limit_gets_two() {
+        use tempfile::TempDir;
+        let temp = TempDir::new().unwrap();
+        let engine = KodEngine::new(RouterConfig::default(), temp.path().join("t.redb")).unwrap();
+        engine.set_rate_limit_wait_budget(60);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(16);
+        let busy = KodError::ServerBusy { retry_after_secs: 1 };
+        for attempt in 0..4 {
+            let out = engine
+                .rate_limit_retry_wait(&busy, attempt, "test-holder", &tx)
+                .await
+                .unwrap();
+            assert!(out.is_some(), "busy attempt {attempt} should wait");
+            let chunk = rx.recv().await.unwrap();
+            assert_eq!(
+                parse_server_busy_wait(&chunk),
+                Some((1, attempt + 1, MAX_SERVER_BUSY_RETRIES))
+            );
+        }
+        let out = engine
+            .rate_limit_retry_wait(&busy, 4, "test-holder", &tx)
+            .await
+            .unwrap();
+        assert!(out.is_none(), "busy attempt 4 must surface");
+        let limited = KodError::RateLimited { retry_after_secs: 1 };
+        for attempt in 0..2 {
+            let out = engine
+                .rate_limit_retry_wait(&limited, attempt, "test-holder", &tx)
+                .await
+                .unwrap();
+            assert!(out.is_some(), "rate-limit attempt {attempt} should wait");
+        }
+        let out = engine
+            .rate_limit_retry_wait(&limited, 2, "test-holder", &tx)
+            .await
+            .unwrap();
+        assert!(out.is_none(), "rate-limit attempt 2 must surface");
     }
 
     #[test]
@@ -9156,20 +9248,40 @@ impl KodEngine {
                             break;
                         }
                         Err(e) => {
-                            // H-RL1: a rate limit with a waitable hint is
-                            // slept out here instead of failing the call.
-                            // The collected path has no chunk channel, so
+                            // H-RL1: a rate limit (or server-busy
+                            // overload, which gets four waits instead of
+                            // two) with a waitable hint is slept out
+                            // here instead of failing the call. The
+                            // collected path has no chunk channel, so
                             // the wait is silent apart from the trace log.
-                            if rate_limit_retries < MAX_RATE_LIMIT_RETRIES
+                            let busy = matches!(
+                                crate::retry_strategy::TurnFailure::classify(&e.to_string()),
+                                crate::retry_strategy::TurnFailure::TransportServerBusy { .. }
+                            ) || matches!(e, KodError::ServerBusy { .. });
+                            let cap = if busy {
+                                MAX_SERVER_BUSY_RETRIES
+                            } else {
+                                MAX_RATE_LIMIT_RETRIES
+                            };
+                            if rate_limit_retries < cap
                                 && let Some(hint) = self.rate_limit_hint_within_budget(&e)
                             {
                                 rate_limit_retries += 1;
-                                tracing::warn!(
-                                    endpoint = %model_ref.endpoint,
-                                    hint_secs = hint.as_secs(),
-                                    attempt = rate_limit_retries,
-                                    "provider rate limit; waiting out the window and re-driving the request"
-                                );
+                                if busy {
+                                    tracing::warn!(
+                                        endpoint = %model_ref.endpoint,
+                                        hint_secs = hint.as_secs(),
+                                        attempt = rate_limit_retries,
+                                        "provider overloaded; waiting out the window and re-driving the request"
+                                    );
+                                } else {
+                                    tracing::warn!(
+                                        endpoint = %model_ref.endpoint,
+                                        hint_secs = hint.as_secs(),
+                                        attempt = rate_limit_retries,
+                                        "provider rate limit; waiting out the window and re-driving the request"
+                                    );
+                                }
                                 if self.is_cancelled_for(key) {
                                     return Err(KodError::InvalidState(
                                         "cancelled by user".to_string(),
@@ -9665,10 +9777,12 @@ impl KodEngine {
                     fallback: fallback_ref,
                 };
                 // H-RL1: a rate-limited turn is slept out (up to the
-                // configured budget, MAX_RATE_LIMIT_RETRIES times) and
-                // re-driven on the SAME endpoint instead of surfacing
-                // the error and forcing a manual retry. Cancellation
-                // during the wait surfaces as the normal cancel error.
+                // configured budget, MAX_RATE_LIMIT_RETRIES times —
+                // server-busy overload gets MAX_SERVER_BUSY_RETRIES)
+                // and re-driven on the SAME endpoint instead of
+                // surfacing the error and forcing a manual retry.
+                // Cancellation during the wait surfaces as the normal
+                // cancel error.
                 let mut rate_limit_attempt: u32 = 0;
                 let loop_outcome = loop {
                     match self
@@ -14490,14 +14604,18 @@ impl KodEngine {
     /// is a rate limit at or under the engine's wait budget. `None`
     /// for anything else, for a zero hint, or when the budget is
     /// disabled (`0`). Shared by the streaming and collected retry
-    /// paths; the typed `RateLimited` variant is matched first and the
-    /// string classifier only catches providers that surface the 429
-    /// as a formatted message.
+    /// paths; the typed `RateLimited`/`ServerBusy` variants are matched
+    /// first and the string classifier only catches providers that
+    /// surface the 429/503 as a formatted message.
     fn rate_limit_hint_within_budget(&self, err: &KodError) -> Option<std::time::Duration> {
         let hint_secs = match err {
             KodError::RateLimited { retry_after_secs } => *retry_after_secs,
+            KodError::ServerBusy { retry_after_secs } => *retry_after_secs,
             other => match crate::retry_strategy::TurnFailure::classify(&other.to_string()) {
                 crate::retry_strategy::TurnFailure::TransportRateLimit { retry_after_secs } => {
+                    retry_after_secs?
+                }
+                crate::retry_strategy::TurnFailure::TransportServerBusy { retry_after_secs } => {
                     retry_after_secs?
                 }
                 _ => return None,
@@ -14516,7 +14634,8 @@ impl KodEngine {
 
     /// H-RL1: sleep out a provider rate-limit window and tell the
     /// caller to re-drive the same request. Emits the
-    /// [`RATE_LIMIT_WAIT_MARKER`] so the TUI/CLI show a bounded,
+    /// [`RATE_LIMIT_WAIT_MARKER`] (or [`SERVER_BUSY_WAIT_MARKER`] for
+    /// overload) so the TUI/CLI show a bounded,
     /// cancellable wait instead of a frozen spinner, then sleeps in
     /// one-second slices so `Esc` cancels promptly.
     ///
@@ -14532,26 +14651,48 @@ impl KodEngine {
         holder: &str,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
     ) -> Result<Option<()>> {
-        if attempt >= MAX_RATE_LIMIT_RETRIES {
+        let busy = matches!(
+            err,
+            KodError::ServerBusy { .. }
+        ) || matches!(
+            crate::retry_strategy::TurnFailure::classify(&err.to_string()),
+            crate::retry_strategy::TurnFailure::TransportServerBusy { .. }
+        );
+        // Overload gets four waits per turn, rate limits two.
+        let cap = if busy {
+            MAX_SERVER_BUSY_RETRIES
+        } else {
+            MAX_RATE_LIMIT_RETRIES
+        };
+        if attempt >= cap {
             return Ok(None);
         }
         let Some(hint) = self.rate_limit_hint_within_budget(err) else {
             return Ok(None);
         };
-        let _ = chunk_tx
-            .send(rate_limit_wait_marker(
-                hint.as_secs(),
-                attempt + 1,
-                MAX_RATE_LIMIT_RETRIES,
-            ))
-            .await;
-        tracing::warn!(
-            holder = %holder,
-            hint_secs = hint.as_secs(),
-            attempt = attempt + 1,
-            max = MAX_RATE_LIMIT_RETRIES,
-            "provider rate limit; waiting out the window and re-driving the turn"
-        );
+        let marker = if busy {
+            server_busy_wait_marker(hint.as_secs(), attempt + 1, cap)
+        } else {
+            rate_limit_wait_marker(hint.as_secs(), attempt + 1, cap)
+        };
+        let _ = chunk_tx.send(marker).await;
+        if busy {
+            tracing::warn!(
+                holder = %holder,
+                hint_secs = hint.as_secs(),
+                attempt = attempt + 1,
+                max = cap,
+                "provider overloaded; waiting out the window and re-driving the turn"
+            );
+        } else {
+            tracing::warn!(
+                holder = %holder,
+                hint_secs = hint.as_secs(),
+                attempt = attempt + 1,
+                max = cap,
+                "provider rate limit; waiting out the window and re-driving the turn"
+            );
+        }
         let mut waited = std::time::Duration::ZERO;
         while waited < hint {
             if self.is_cancelled_for(holder) {
