@@ -50,6 +50,22 @@ impl KodApp {
                 }
                 None => "rate-limited — waiting…".to_string(),
             },
+            GenPhase::ServerBusy => match self.rate_limit_deadline {
+                Some(deadline) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        "server-busy — retrying…".to_string()
+                    } else {
+                        format!(
+                            "server-busy — retry in {}…",
+                            kod_core::engine::format_duration_ms(
+                                remaining.as_millis().min(u128::from(u64::MAX)) as u64
+                            )
+                        )
+                    }
+                }
+                None => "server-busy — waiting…".to_string(),
+            },
         };
         Some(label)
     }
@@ -76,6 +92,18 @@ impl KodApp {
             self.rate_limit_deadline =
                 Some(Instant::now() + std::time::Duration::from_secs(wait_secs));
             self.set_phase(GenPhase::RateLimited);
+        }
+    }
+
+    /// Enter the server-busy wait: the provider is overloaded and the
+    /// engine is sleeping out the ~10-minute cooldown. Same deadline
+    /// machinery as [`Self::begin_rate_limit_wait`], distinct phase so
+    /// the spinner names overload instead of rate limiting.
+    pub fn begin_server_busy_wait(&mut self, wait_secs: u64) {
+        if self.generating {
+            self.rate_limit_deadline =
+                Some(Instant::now() + std::time::Duration::from_secs(wait_secs));
+            self.set_phase(GenPhase::ServerBusy);
         }
     }
 
