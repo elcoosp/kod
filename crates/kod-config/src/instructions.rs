@@ -297,6 +297,39 @@ impl InstructionChain {
     /// Load every `AGENTS.md` / `CLAUDE.md` from `repo_root` down to
     /// (and including) `cwd`, in root-first order.
     pub fn load(cwd: &Path, repo_root: &Path) -> Self {
+        // F2b-11: the router calls `load` every turn; re-walking and
+        // re-reading AGENTS.md/CLAUDE.md per request is avoidable.
+        // Cache the parsed chain for a short TTL keyed by
+        // (cwd, repo_root). A TTL (rather than mtime validation)
+        // keeps this a handful of lines and is correct for the
+        // use case: an edit to an instruction file takes effect
+        // within the TTL, and the TTL is far below a human's
+        // edit→turn latency.
+        thread_local! {
+            static CACHE: std::cell::RefCell<
+                std::collections::HashMap<(PathBuf, PathBuf), (std::time::Instant, Vec<InstructionSection>)>,
+            > = std::cell::RefCell::new(std::collections::HashMap::new());
+        }
+        const TTL: std::time::Duration = std::time::Duration::from_secs(2);
+        let key = (cwd.to_path_buf(), repo_root.to_path_buf());
+        if let Some(sections) = CACHE.with(|c| {
+            c.borrow()
+                .get(&key)
+                .filter(|(at, _)| at.elapsed() < TTL)
+                .map(|(_, s)| s.clone())
+        }) {
+            return Self { sections };
+        }
+        let chain = Self::load_uncached(cwd, repo_root);
+        CACHE.with(|c| {
+            c.borrow_mut()
+                .insert(key, (std::time::Instant::now(), chain.sections.clone()));
+        });
+        chain
+    }
+
+    /// The pre-cache load: walk root->cwd, read each file, parse.
+    fn load_uncached(cwd: &Path, repo_root: &Path) -> Self {
         let mut raw = Vec::new();
         let mut dirs: Vec<PathBuf> = Vec::new();
         let mut p = cwd.to_path_buf();
