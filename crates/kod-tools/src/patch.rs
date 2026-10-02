@@ -134,7 +134,12 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
         }
         let old_len = hunk.old_lines;
         let consumed = cursor - target;
-        if consumed != old_len && old_len > 0 {
+        // W9: the guard is unconditional. `@@ -1,0 +1,3 @@` with body
+        // lines skipped the check because of `&& old_len > 0`, the
+        // splice applied silently, and the running offset every later
+        // hunk trusts was corrupted. A legitimate new-file hunk has
+        // consumed == 0 == old_len, so it still passes.
+        if consumed != old_len {
             return Err(KodError::InvalidParameters {
                 reason: format!(
                     "hunk at line {} consumed {} source lines but header declared {}",
@@ -150,7 +155,10 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
     // CRLF after a patch; a Unix file stays LF.
     let sep = if uses_crlf { "\r\n" } else { "\n" };
     let mut out = lines.join(sep);
-    if had_trailing_newline {
+    // W8: only re-emit the trailing EOL when the result is non-empty.
+    // A patch that removes every line produced a 1-byte "\n" file
+    // (the join of an empty vec is "", then this pushed a newline).
+    if had_trailing_newline && !lines.is_empty() {
         out.push_str(sep);
     }
     Ok(out)
@@ -278,6 +286,28 @@ pub fn render_unified_diff(old: &str, new: &str, path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn removing_every_line_yields_an_empty_file() {
+        // W8: a patch that removes every line must produce "", not "\n".
+        let patch = "--- a/x\n+++ b/x\n@@ -1,2 +0,0 @@\n-one\n-two\n";
+        let out = apply_unified_diff("one\ntwo\n", patch).expect("applies");
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn a_header_declaring_an_empty_old_range_cannot_consume_lines() {
+        // W9: the header declares an empty old range (`-1,0`) but the
+        // body carries context lines that consume real source lines.
+        // The pre-fix guard (`&& old_len > 0`) skipped the check, the
+        // splice applied silently, and the running offset every later
+        // hunk trusts was corrupted. Context matches the file so the
+        // hunk reaches the consumed check.
+        let patch = "--- a/x\n+++ b/x\n@@ -1,0 +1,2 @@\n a\n b\n";
+        let err = apply_unified_diff("a\nb\nc\n", patch).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("consumed"), "got: {msg}");
+    }
 
     #[test]
     fn parse_unified_diff_rejects_multibyte_first_byte() {
