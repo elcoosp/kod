@@ -203,10 +203,16 @@ impl AgentCommunicationHub {
                 );
                 let tx = info.tx.clone();
                 drop(agents);
+                // F2h-16: record only after delivery succeeds. Pre-fix
+                // the history was written first, so a failed `tx.send`
+                // (recipient gone between the online check and the
+                // send) left both agents' histories claiming a message
+                // that never arrived — a debug panel reading the
+                // history saw phantom traffic.
+                tx.send(message.clone())
+                    .map_err(|e| KodError::InvalidState(e.to_string()))?;
                 self.record_message(from, &message).await;
                 self.record_message(to, &message).await;
-                tx.send(message)
-                    .map_err(|e| KodError::InvalidState(e.to_string()))?;
                 Ok(())
             }
             Some(_) => Err(KodError::InvalidState(format!("Agent {} is offline", to))),
