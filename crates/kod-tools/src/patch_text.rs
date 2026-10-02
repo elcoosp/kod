@@ -202,10 +202,24 @@ pub fn to_unified_diff(patch: &FilePatch, original: &str) -> Result<String, Stri
             Ok(out)
         }
         FilePatch::Update { path, hunks } => {
-            let file_lines: Vec<&str> = original.split('\n').collect();
+            // W6: `split('\n')` leaves a phantom trailing "" for a file
+            // ending in `\n`. `apply_unified_diff` pops that element, so
+            // the search haystack must too or a block can match the
+            // phantom and never apply.
+            let mut file_lines: Vec<&str> = original.split('\n').collect();
+            if original.ends_with('\n') {
+                file_lines.pop();
+            }
             let mut out = String::new();
             out.push_str(&format!("--- a/{path}\n"));
             out.push_str(&format!("+++ b/{path}\n"));
+            // W10: the new-side start of each hunk is the old-file
+            // position plus the running delta of earlier hunks. Pre-fix
+            // every hunk reused the old start, so `git apply`, GNU
+            // patch, and review tools misplaced every hunk after the
+            // first. kod's own applier ignores `new_start`, which is
+            // why this went unnoticed internally.
+            let mut new_side_offset: isize = 0;
             for hunk in hunks {
                 let (old_lines, new_lines) = split_hunk(&hunk.lines);
                 let (start, count) = find_unique_block(&file_lines, &old_lines)
@@ -216,13 +230,40 @@ pub fn to_unified_diff(patch: &FilePatch, original: &str) -> Result<String, Stri
                     ))?;
                 let old_count = count;
                 let new_count = new_lines.len();
+                let new_start = (start as isize + new_side_offset).max(0) as usize;
                 out.push_str(&format!(
-                    "@@ -{start},{old_count} +{start},{new_count} @@\n"
+                    "@@ -{start},{old_count} +{new_start},{new_count} @@\n"
                 ));
+                // W6: re-emit context / removal lines with the FILE's
+                // exact bytes, not the patch's spelling. `find_unique_block`
+                // tolerates trailing whitespace; `apply_unified_diff`
+                // compares exactly — so a patch the search accepted could
+                // be rejected on apply. Position-tracked so the emitted
+                // body aligns with the located block.
+                let mut pos = start - 1;
                 for l in &hunk.lines {
-                    out.push_str(l);
-                    out.push('\n');
+                    match l.as_bytes().first() {
+                        Some(b' ') | Some(b'-') => {
+                            match file_lines.get(pos) {
+                                Some(file_line) => {
+                                    out.push(if l.starts_with(' ') { ' ' } else { '-' });
+                                    out.push_str(file_line);
+                                    out.push('\n');
+                                }
+                                None => {
+                                    out.push_str(l);
+                                    out.push('\n');
+                                }
+                            }
+                            pos += 1;
+                        }
+                        _ => {
+                            out.push_str(l);
+                            out.push('\n');
+                        }
+                    }
                 }
+                new_side_offset += new_count as isize - old_count as isize;
             }
             Ok(out)
         }
@@ -289,6 +330,51 @@ fn find_unique_block(haystack: &[&str], needle: &[String]) -> Option<(usize, usi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn later_hunks_new_start_accounts_for_earlier_insertions() {
+        // W10: hunk 1 inserts two lines; hunk 2 sits lower in the NEW
+        // file, but the emitter reused the old start. A standard diff
+        // consumer misplaces it.
+        let original = "a\nb\nc\nd\ne\n";
+        let patch = FilePatch::Update {
+            path: "x".into(),
+            hunks: vec![
+                Hunk {
+                    section: String::new(),
+                    lines: vec![" a".into(), "+A1".into(), "+A2".into()],
+                },
+                Hunk {
+                    section: String::new(),
+                    lines: vec!["-e".into(), "+E".into()],
+                },
+            ],
+        };
+        let diff = to_unified_diff(&patch, original).expect("emits");
+        assert!(
+            diff.lines().any(|l| l.starts_with("@@ -5,1 +7,1 @@")),
+            "expected @@ -5,1 +7,1 @@ in:\n{diff}"
+        );
+    }
+
+    #[test]
+    fn trailing_space_file_lines_survive_search_then_apply() {
+        // W6: the search tolerates trailing whitespace; the applier
+        // compares exactly. The emitter must re-emit the FILE's bytes.
+        let original = "keep   \nold\ntail\n";
+        let patch = FilePatch::Update {
+            path: "x".into(),
+            hunks: vec![Hunk {
+                section: String::new(),
+                lines: vec![" keep   ".into(), "-old".into(), "+new".into()],
+            }],
+        };
+        let diff = to_unified_diff(&patch, original).expect("emits");
+        // The context line in the diff must carry the file's trailing
+        // spaces, so apply_unified_diff (exact compare) accepts it.
+        let out = crate::patch::apply_unified_diff(original, &diff).expect("applies");
+        assert_eq!(out, "keep   \nnew\ntail\n");
+    }
 
     #[test]
     fn extract_returns_none_without_the_envelope() {
