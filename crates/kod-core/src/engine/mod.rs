@@ -14818,19 +14818,56 @@ impl KodEngine {
         let mut calls: Vec<ToolCall> = Vec::new();
         let mut notes: Vec<String> = Vec::new();
         for patch in &patches {
-            let (path, original) = match patch {
-                kod_tools::patch_text::FilePatch::Add { path, .. } => {
-                    (path.clone(), String::new())
+            let abs_of = |path: &str| {
+                if std::path::Path::new(path).is_absolute() {
+                    std::path::PathBuf::from(path)
+                } else {
+                    working_dir.join(path)
                 }
-                kod_tools::patch_text::FilePatch::Update { path, .. }
-                | kod_tools::patch_text::FilePatch::Delete { path } => {
-                    let abs = if std::path::Path::new(path).is_absolute() {
-                        std::path::PathBuf::from(path)
-                    } else {
-                        working_dir.join(path)
-                    };
-                    let body = std::fs::read_to_string(&abs).unwrap_or_default();
-                    (path.clone(), body)
+            };
+            let (path, original) = match patch {
+                // W1: an Add onto a file that already has content would
+                // duplicate it — `apply_unified_diff` splices the new
+                // content at the top and keeps everything behind it, and
+                // reports success. Skip with a note; a missing or empty
+                // file is a genuine creation.
+                kod_tools::patch_text::FilePatch::Add { path, .. } => {
+                    match std::fs::read_to_string(abs_of(path)) {
+                        Ok(body) if !body.is_empty() => {
+                            notes.push(format!(
+                                "  · {path}: skipped — file already exists with \
+                                 content; an Add would duplicate it, use an \
+                                 Update hunk"
+                            ));
+                            continue;
+                        }
+                        _ => (path.clone(), String::new()),
+                    }
+                }
+                // W2: Delete cannot be expressed as a content diff.
+                // Pre-fix it was folded into Update, so "deleting" a
+                // file either truncated it to "\n" or (when the pre-read
+                // failed) applied an empty no-op diff and reported
+                // success. Deletion is a shell operation.
+                kod_tools::patch_text::FilePatch::Delete { path } => {
+                    notes.push(format!(
+                        "  · {path}: skipped — file deletion is not supported \
+                         by patch_file; remove it with a shell command"
+                    ));
+                    continue;
+                }
+                // W2 (second half): an unreadable Update source is
+                // reported, not silently diffed against "".
+                kod_tools::patch_text::FilePatch::Update { path, .. } => {
+                    match std::fs::read_to_string(abs_of(path)) {
+                        Ok(body) => (path.clone(), body),
+                        Err(e) => {
+                            notes.push(format!(
+                                "  · {path}: skipped — could not read the file: {e}"
+                            ));
+                            continue;
+                        }
+                    }
                 }
             };
             let diff = match kod_tools::patch_text::to_unified_diff(patch, &original) {
@@ -14853,15 +14890,20 @@ impl KodEngine {
             ));
         }
         let round = self.run_tool_calls(&calls, holder, chunk_tx).await;
-        let applied = calls.len();
+        // W11: `applied` must exclude the rejected calls. Pre-fix it was
+        // `calls.len()`, so a round with 3 calls and 1 failure reported
+        // "3 file patch(es) … (1 rejected)" — the model was told its
+        // failed patch had been applied.
         let failed: usize = round
             .results
             .iter()
             .filter(|r| matches!(r, kod_types::ToolResult::Error(_)))
             .count();
+        let applied = calls.len().saturating_sub(failed);
         let mut note = format!(
-            "Recovered {applied} file patch(es) from an inline `*** Begin Patch` block \
-             and ran them as patch_file calls ({failed} rejected).",
+            "Recovered {} file patch(es) from an inline `*** Begin Patch` block; \
+             {applied} applied, {failed} rejected.",
+            calls.len(),
         );
         if !notes.is_empty() {
             note.push('\n');
