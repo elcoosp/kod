@@ -15943,6 +15943,152 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recovery_add_onto_an_existing_non_empty_file_is_skipped() {
+        // W1: an `*** Add File:` against a file that already has
+        // content would duplicate it (splice new at the top, keep the
+        // old behind, report success). It must be skipped.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let target = tmp.path().join("existing.txt");
+        std::fs::write(&target, "OLD CONTENT\n").unwrap();
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let db = tempfile::NamedTempFile::new().unwrap().path().to_path_buf();
+        let engine = KodEngine::new(cfg, db).unwrap();
+        engine.start().await.unwrap();
+        let text = "*** Begin Patch\n\
+            *** Add File: existing.txt\n\
+            +NEW CONTENT\n\
+            *** End Patch\n";
+        let note = engine.maybe_recover_inline_patch("", text, None).await;
+        assert!(note.is_some());
+        let after = std::fs::read_to_string(&target).unwrap();
+        assert_eq!(
+            after, "OLD CONTENT\n",
+            "Add onto an existing file must not duplicate content"
+        );
+        assert!(
+            note.unwrap().contains("already exists"),
+            "the note must explain the skip"
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_add_creates_a_genuinely_new_file() {
+        // W1 counterpart: Add onto a missing file is a real creation.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let db = tempfile::NamedTempFile::new().unwrap().path().to_path_buf();
+        let engine = KodEngine::new(cfg, db).unwrap();
+        engine.start().await.unwrap();
+        let text = "*** Begin Patch\n\
+            *** Add File: fresh.txt\n\
+            +hello\n\
+            +world\n\
+            *** End Patch\n";
+        let note = engine.maybe_recover_inline_patch("", text, None).await;
+        assert!(note.is_some());
+        let after = std::fs::read_to_string(tmp.path().join("fresh.txt")).unwrap();
+        assert_eq!(after, "hello\nworld\n");
+    }
+
+    #[tokio::test]
+    async fn recovery_delete_file_is_skipped_and_the_file_remains() {
+        // W2: `*** Delete File:` cannot be expressed as a content diff.
+        // Pre-fix it either truncated the file to a bare newline or
+        // applied as a silent no-op. It must be skipped with a note,
+        // and the file must be untouched.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let target = tmp.path().join("doomed.txt");
+        std::fs::write(&target, "one\ntwo\n").unwrap();
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let db = tempfile::NamedTempFile::new().unwrap().path().to_path_buf();
+        let engine = KodEngine::new(cfg, db).unwrap();
+        engine.start().await.unwrap();
+        let text = "*** Begin Patch\n\
+            *** Delete File: doomed.txt\n\
+            *** End Patch\n";
+        let note = engine.maybe_recover_inline_patch("", text, None).await;
+        assert!(note.is_some());
+        let after = std::fs::read_to_string(&target).unwrap();
+        assert_eq!(
+            after, "one\ntwo\n",
+            "a Delete recovery must not modify the file"
+        );
+        assert!(
+            note.unwrap().contains("deletion is not supported"),
+            "the note must name the operation as unsupported"
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_note_does_not_count_failed_calls_as_applied() {
+        // W11: a round with a failing call reported the pre-fix
+        // `calls.len()` as "applied". The note must report
+        // `applied = calls - failed`.
+        //
+        // Two hunks on the same file, both converted against the SAME
+        // pre-patch snapshot. Hunk 1 changes `beta` to `BETA`; hunk 2
+        // carries `beta` as context. Both convert to patch_file calls;
+        // hunk 1 applies, then hunk 2's context no longer matches the
+        // mutated file and its call is rejected. So: 2 calls, 1
+        // applied, 1 rejected.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let good = tmp.path().join("good.txt");
+        std::fs::write(&good, "alpha\nbeta\ngamma\n").unwrap();
+        let cfg = RouterConfig {
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        let db = tempfile::NamedTempFile::new().unwrap().path().to_path_buf();
+        let engine = KodEngine::new(cfg, db).unwrap();
+        engine.start().await.unwrap();
+        let text = "*** Begin Patch\n\
+            *** Update File: good.txt\n\
+            @@\n\
+             alpha\n\
+            -beta\n\
+            +BETA\n\
+             gamma\n\
+            *** Update File: good.txt\n\
+            @@\n\
+             beta\n\
+            -gamma\n\
+            +GAMMA\n\
+            *** End Patch\n";
+        let note = engine.maybe_recover_inline_patch("", text, None).await;
+        let note = note.expect("expected a recovery note");
+        assert!(
+            note.contains("2 file patch(es)"),
+            "both hunks convert to calls, got: {note}"
+        );
+        assert!(
+            note.contains("1 applied, 1 rejected"),
+            "the note must report the split honestly, got: {note}"
+        );
+        assert!(
+            !note.contains("2 applied"),
+            "the failing call must not be counted as applied, got: {note}"
+        );
+        // The applying hunk took effect; the rejected one did not.
+        let after = std::fs::read_to_string(&good).unwrap();
+        assert!(after.contains("BETA"), "hunk 1 must apply: {after}");
+        assert!(after.contains("gamma"), "hunk 2 must be rejected: {after}");
+        assert!(!after.contains("GAMMA"), "hunk 2 must not apply: {after}");
+    }
+
+    #[tokio::test]
     async fn test_engine_lifecycle() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.redb");
