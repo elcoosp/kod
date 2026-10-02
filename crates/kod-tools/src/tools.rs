@@ -193,6 +193,26 @@ pub(crate) fn atomic_write(path: &std::path::Path, content: &[u8]) -> std::io::R
     result
 }
 
+/// W14: signal the whole process group, not just the direct child.
+/// `execute_command` spawns `sh -c <command>`; a shell that forks
+/// (dash -c "sleep 60") leaves the grandchild holding the stdout /
+/// stderr write-ends, so killing only the shell left the drain loop
+/// blocked until the grandchild exited on its own. With the child in
+/// its own process group (`process_group(0)`), `kill(-pgid)` reaches
+/// the tree.
+fn kill_child_tree(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        let pgid = -(pid as libc::pid_t);
+        let rc = unsafe { libc::kill(pgid, libc::SIGKILL) };
+        if rc == 0 {
+            return;
+        }
+    }
+    // Non-unix, or the group kill failed: fall back to the direct child.
+    let _ = child.start_kill();
+}
+
 pub struct ReadFileTool {
     pub definition: ToolDefinition,
 }
@@ -974,6 +994,10 @@ impl Tool for ExecuteCommandTool {
             // normal path, which always calls `child.wait()`.
             .kill_on_drop(true);
 
+        // W14: put the child in its own process group so a timeout kill
+        // reaches grandchildren the shell forked (see `kill_child_tree`).
+        #[cfg(unix)]
+        spawn.process_group(0);
         let mut child = spawn.spawn().map_err(KodError::Io)?;
 
         let mut stdout = child
@@ -1027,7 +1051,7 @@ impl Tool for ExecuteCommandTool {
                         Ok(_) => {
                             if stdout_buf.len() >= MAX_CMD_OUTPUT_BYTES {
                                 stdout_capped = true;
-                                let _ = child.start_kill();
+                                kill_child_tree(&mut child);
                             }
                         }
                         Err(_) => stdout_eof = true,
@@ -1040,7 +1064,7 @@ impl Tool for ExecuteCommandTool {
                         Ok(_) => {
                             if stderr_buf.len() >= MAX_CMD_OUTPUT_BYTES {
                                 stderr_capped = true;
-                                let _ = child.start_kill();
+                                kill_child_tree(&mut child);
                             }
                         }
                         Err(_) => stderr_eof = true,
@@ -1103,7 +1127,7 @@ impl Tool for ExecuteCommandTool {
         // did not). Then drain whatever both pipes already buffered
         // so the reads hit EOF and `child.wait()` reaps cleanly.
         if timed_out || stdout_capped || stderr_capped {
-            let _ = child.start_kill();
+            kill_child_tree(&mut child);
             while !stdout_eof || !stderr_eof {
                 tokio::select! {
                     r = read_some(&mut stdout, &mut stdout_buf, MAX_CMD_OUTPUT_BYTES),
@@ -1557,6 +1581,24 @@ impl Tool for PatchFileTool {
 
         let original = match std::fs::read_to_string(&resolved) {
             Ok(s) => s,
+            // W7: a genuinely new file has no content to read. Allow
+            // the patch through with an empty original *only* when it
+            // is a pure-insertion (new-file) patch — the `--- /dev/null`
+            // shape, every hunk `old_start == 0 && old_lines == 0`.
+            // Anything else against a missing file is a real error.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let new_file_patch = crate::patch::parse_unified_diff(patch)
+                    .map(|hs| {
+                        !hs.is_empty()
+                            && hs.iter().all(|h| h.old_start == 0 && h.old_lines == 0)
+                    })
+                    .unwrap_or(false);
+                if new_file_patch {
+                    String::new()
+                } else {
+                    return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
+                }
+            }
             Err(e) => {
                 return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
             }
@@ -1970,6 +2012,41 @@ fn redact_read_content(content: &str, context: &ToolContext, resolved: &std::pat
 mod tests {
     use super::*;
     use kod_types::ToolPermissions;
+
+    #[tokio::test]
+    async fn test_patch_file_creates_a_new_file_from_dev_null_diff() {
+        // W7: a `/dev/null` new-file patch must create the file.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = ToolContext::new(tmp.path()).with_permissions(ToolPermissions {
+            read_files: true,
+            write_files: true,
+            ..Default::default()
+        });
+        let tool = PatchFileTool::new();
+        let patch = "--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1,2 @@\n+hello\n+world\n";
+        let args = serde_json::json!({ "path": "new.txt", "patch": patch });
+        let r = tool.execute(&args, &ctx).await.unwrap();
+        assert!(matches!(r, ToolResult::Success(_)), "got {r:?}");
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("new.txt")).unwrap(),
+            "hello\nworld\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_patch_file_on_missing_file_without_dev_null_header_fails() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = ToolContext::new(tmp.path()).with_permissions(ToolPermissions {
+            read_files: true,
+            write_files: true,
+            ..Default::default()
+        });
+        let tool = PatchFileTool::new();
+        let patch = "--- a/nope.txt\n+++ b/nope.txt\n@@ -1,1 +1,1 @@\n-old\n+new\n";
+        let args = serde_json::json!({ "path": "nope.txt", "patch": patch });
+        let r = tool.execute(&args, &ctx).await.unwrap();
+        assert!(matches!(r, ToolResult::Error(_)), "expected error, got {r:?}");
+    }
 
     fn full_context(dir: &std::path::Path) -> ToolContext {
         // These tests exercise the raw shell path — the sandbox wraps
