@@ -146,6 +146,16 @@ impl TuiLoop {
                 .unwrap_or(0),
         ));
         std::fs::write(&tmp, initial.as_bytes()).map_err(KodError::Io)?;
+        // F2g-14: the draft holds whatever the user is about to send —
+        // often a pasted secret. On a shared `/tmp` the default 0644
+        // made it world-readable, and a crash before the remove below
+        // left it on disk. Owner-only, best-effort (a filesystem that
+        // cannot set the mode still gets the file).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        }
 
         // Suspend TUI mode. Order matters: leave the alternate
         // screen *before* disabling raw mode so the terminal's
