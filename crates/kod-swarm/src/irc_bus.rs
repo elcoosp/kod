@@ -153,7 +153,41 @@ struct AgentState {
 
 /// The bus.
 pub struct IrcBus {
-    inner: Mutex<Inner>,
+    /// F2h-15: `Arc` so a `WaiterGuard` can clean up a parked waiter
+    /// on future-drop (task cancellation), not just on the timeout
+    /// path. Without it, a cancelled `send_await` left its entry in
+    /// `waiters` forever.
+    inner: std::sync::Arc<Mutex<Inner>>,
+}
+
+/// F2h-15: RAII cleanup for a parked waiter. On drop it removes the
+/// correlation entry if it is still present. Armed until the caller
+/// has observed the reply (or explicitly removed it); the timeout
+/// path removes the entry and disarms the guard.
+struct WaiterGuard {
+    inner: std::sync::Arc<Mutex<Inner>>,
+    correlation: u64,
+    armed: bool,
+}
+
+impl WaiterGuard {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for WaiterGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        // Best-effort: `try_lock` because `Drop` cannot await. If the
+        // lock is contended the entry is left for a later cleanup —
+        // strictly better than the pre-fix unconditional leak.
+        if let Ok(mut g) = self.inner.try_lock() {
+            g.waiters.remove(&self.correlation);
+        }
+    }
 }
 
 struct Inner {
@@ -166,11 +200,11 @@ struct Inner {
 impl IrcBus {
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(Inner {
+            inner: std::sync::Arc::new(Mutex::new(Inner {
                 agents: HashMap::new(),
                 waiters: HashMap::new(),
                 next_correlation: 1,
-            }),
+            })),
         }
     }
 
@@ -266,7 +300,14 @@ impl IrcBus {
         };
         let _ = self.enqueue(msg).await;
 
-        match tokio::time::timeout(timeout, rx).await {
+        // F2h-15: arm the guard so a cancelled future (task dropped
+        // mid-await) removes the waiter, not just the timeout path.
+        let mut guard = WaiterGuard {
+            inner: std::sync::Arc::clone(&self.inner),
+            correlation,
+            armed: true,
+        };
+        let result = match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(reply)) => Ok(reply),
             Ok(Err(_)) => {
                 // The sender half was dropped without a value —
@@ -281,7 +322,11 @@ impl IrcBus {
                 g.waiters.remove(&correlation);
                 Err(SendError::Timeout)
             }
-        }
+        };
+        // The reply (or timeout) resolved; the entry is gone or
+        // intentionally absent. Disarm so Drop is a no-op.
+        guard.disarm();
+        result
     }
 
     /// Reply to a message. `reply_to` is the correlation id the
