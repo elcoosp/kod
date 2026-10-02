@@ -426,6 +426,32 @@ impl Default for IrcBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_cancelled_send_await_leaves_no_waiter() {
+        // F2h-15: a `send_await` future dropped mid-await must not
+        // leak its waiter entry.
+        let b = IrcBus::new();
+        b.register("target", true).await;
+        assert_eq!(b.waiter_count().await, 0);
+        {
+            // Park a waiter, then drop the future without letting it
+            // resolve. `tokio::time::timeout` with a long window and
+            // an immediate drop is the cancellation shape.
+            let fut = b.send_await("me", "target", "hi", Duration::from_secs(3600));
+            tokio::pin!(fut);
+            // Poll once so it reaches the parked state.
+            let _ = futures::poll!(fut.as_mut());
+            // Drop without awaiting completion.
+        }
+        // Give the Drop a beat (it uses try_lock).
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(
+            b.waiter_count().await,
+            0,
+            "a cancelled send_await must not leave a waiter"
+        );
+    }
     use std::sync::Arc;
 
     #[tokio::test]
