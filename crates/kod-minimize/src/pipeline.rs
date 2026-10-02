@@ -272,13 +272,35 @@ fn compile_patterns(
 /// author who genuinely wants whole-text anchors writes `\A` / `\z`
 /// explicitly, which are unaffected by the flag.
 fn compile(pattern: &str, stage: &'static str) -> Result<regex::Regex, PipelineError> {
-    regex::RegexBuilder::new(pattern)
+    // F2a-13: cache compiled regexes process-wide, keyed by the
+    // pattern text. A def is applied to every command's output; the
+    // pre-fix code rebuilt every regex on every call. `regex::Regex`
+    // is `Arc`-backed, so a hit is a cheap refcount bump.
+    //
+    // A compile *error* is not cached: a bad pattern is a config bug
+    // the caller must see every time, and it is rare enough that the
+    // re-compile cost is irrelevant.
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, regex::Regex>>> = OnceLock::new();
+
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(g) = cache.lock()
+        && let Some(re) = g.get(pattern)
+    {
+        return Ok(re.clone());
+    }
+    let re = regex::RegexBuilder::new(pattern)
         .multi_line(true)
         .build()
         .map_err(|e| PipelineError::Stage {
             stage,
             reason: format!("bad pattern `{pattern}`: {e}"),
-        })
+        })?;
+    if let Ok(mut g) = cache.lock() {
+        g.insert(pattern.to_string(), re.clone());
+    }
+    Ok(re)
 }
 
 enum LineBound {
