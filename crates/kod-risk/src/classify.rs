@@ -341,12 +341,50 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
         let mut i = 0;
         while i < args.len() {
             let a = unquote(&args[i]);
-            if a == ">" || a.starts_with(">") && !a.starts_with(">>") {
-                let target = if a == ">" {
-                    args.get(i + 1).map(|t| unquote(t)).unwrap_or_default()
+            // F2a-11: a truncating redirect may carry an fd prefix
+            // (`2>file`, `&>file`) or be the bare `>file`. The
+            // pre-fix scan required a leading `>`, so the prefixed
+            // forms bypassed the truncating-write check entirely.
+            // Strip the prefix, require a single `>` (a `>>` appends
+            // and destroys nothing), and reject an fd duplication
+            // (`>&2`, which touches no file).
+            let redir_target: Option<String> = {
+                let rest = if let Some(r) = a.strip_prefix('&') {
+                    Some(r)
                 } else {
-                    a.trim_start_matches('>').to_string()
+                    let digits = a.find(|c: char| !c.is_ascii_digit()).unwrap_or(a.len());
+                    if digits > 0 && a[digits..].starts_with('>') {
+                        Some(&a[digits..])
+                    } else if a.starts_with('>') {
+                        Some(a.as_str())
+                    } else {
+                        None
+                    }
                 };
+                match rest {
+                    Some(r) if r.starts_with('>') && !r.starts_with(">>") => {
+                        let inline = &r[1..];
+                        if inline.starts_with('&') {
+                            // `>&2`: fd duplication, not a file.
+                            None
+                        } else if inline.is_empty() {
+                            // `2>&1` tokenizes as `2>` `&` `1`, so the
+                            // target slot holds the fd-dup `&`. That is
+                            // not a file; skip it.
+                            let next = args.get(i + 1).map(|t| unquote(t));
+                            match next {
+                                Some(n) if n.starts_with('&') => None,
+                                Some(n) => Some(n),
+                                None => Some(String::new()),
+                            }
+                        } else {
+                            Some(inline.to_string())
+                        }
+                    }
+                    _ => None,
+                }
+            };
+            if let Some(target) = redir_target {
                 if !target.is_empty() && !is_safe_sink(&target) {
                     let (danger, why) = classify_path(&target, ctx);
                     // A truncating write to scratch is the normal
@@ -511,6 +549,34 @@ mod tests {
         // The affected set is decided at runtime.
         let a = assess("find / -type f | xargs rm", &ctx());
         assert!(a.level >= RiskLevel::Confirm, "got {:?}", a.level);
+    }
+
+    #[test]
+    fn fd_prefixed_redirect_to_a_source_file_confirms() {
+        // F2a-11: `2>file` truncates the file just like `>file`; it
+        // must not slip past the truncating-write check.
+        for cmd in ["cargo build 2> /work/proj/src/main.rs", "cmd &> /work/proj/src/main.rs"] {
+            let a = assess(cmd, &ctx());
+            assert!(
+                a.level >= RiskLevel::Confirm,
+                "`{cmd}` must be at least Confirm, got {:?}",
+                a.level
+            );
+        }
+    }
+
+    #[test]
+    fn append_and_fd_dup_redirects_are_not_truncating() {
+        // `2>>` appends, `2>&1` duplicates an fd — neither destroys a
+        // file, so neither is a truncating write.
+        for cmd in ["cargo build 2>> /work/proj/out.log", "cmd 2>&1"] {
+            let a = assess(cmd, &ctx());
+            assert!(
+                a.level < RiskLevel::Confirm,
+                "`{cmd}` is not a truncating file write, got {:?}",
+                a.level
+            );
+        }
     }
 
     #[test]
