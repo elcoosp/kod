@@ -889,6 +889,10 @@ impl TuiLoop {
                 self.app.begin_rate_limit_wait(wait_secs);
                 self.app.push_system_message(&message);
             }
+            Event::ServerBusy { message, wait_secs } => {
+                self.app.begin_server_busy_wait(wait_secs);
+                self.app.push_system_message(&message);
+            }
             Event::TurnBoundary(turn) => {
                 // Goal-loop turn boundary: flush the finished turn as
                 // its own assistant bubble, then open the next turn with
@@ -1525,6 +1529,24 @@ impl TuiLoop {
                             .send(Event::RateLimited {
                                 message: format!(
                                     "Rate limited by the provider — waiting {} before automatic retry (attempt {attempt}/{max}) · Esc cancels",
+                                    kod_core::engine::format_duration_ms(
+                                        secs.saturating_mul(1000)
+                                    ),
+                                ),
+                                wait_secs: secs,
+                            })
+                            .await;
+                    } else if let Some((secs, attempt, max)) =
+                        kod_core::engine::parse_server_busy_wait(&chunk)
+                    {
+                        // Overload — the engine is sleeping out the
+                        // ~10-minute server-busy cooldown and will
+                        // re-drive the turn. Rendered distinctly from a
+                        // rate limit.
+                        let _ = event_tx_chunks
+                            .send(Event::ServerBusy {
+                                message: format!(
+                                    "Server busy — waiting {} before automatic retry (attempt {attempt}/{max}) · Esc cancels",
                                     kod_core::engine::format_duration_ms(
                                         secs.saturating_mul(1000)
                                     ),
@@ -7410,6 +7432,39 @@ mod tests {
             "wait line must stay in the transcript, got: {bodies:?}"
         );
         // The retry landing restores the generating phase.
+        tui.handle_event(Event::ResponseChunk("resumed".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(tui.app().phase_label().as_deref(), Some("thinking…"));
+    }
+
+    #[tokio::test]
+    async fn test_server_busy_phase_renders_distinctly_from_rate_limited() {
+        // Overload waits show "server-busy…", never "rate-limited…",
+        // and fresh text restores the generating phase.
+        let mut tui = TuiLoop::new();
+        tui.app_mut().begin_generation();
+        tui.handle_event(Event::ServerBusy {
+            message: "Server busy — waiting 10m00s before automatic retry (attempt 1/4) · Esc cancels".to_string(),
+            wait_secs: 600,
+        })
+        .await
+        .unwrap();
+        let label = tui.app().phase_label().unwrap_or_default();
+        assert!(
+            label.starts_with("server-busy — retry in 9m") || label.starts_with("server-busy — retry in 10m"),
+            "countdown label, got: {label}"
+        );
+        let bodies: Vec<&str> = tui
+            .app()
+            .messages()
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect();
+        assert!(
+            bodies.iter().any(|m| m.contains("Server busy")),
+            "wait line must stay in the transcript, got: {bodies:?}"
+        );
         tui.handle_event(Event::ResponseChunk("resumed".to_string()))
             .await
             .unwrap();
