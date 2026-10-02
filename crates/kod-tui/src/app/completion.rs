@@ -145,13 +145,38 @@ impl KodApp {
             dir_part.clone()
         };
 
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(rd) => rd,
-            Err(_) => return Vec::new(),
-        };
+        // F2g-9: `path_candidates` runs every frame via the popup
+        // height computation, so an unconditional `read_dir` was a
+        // syscall per frame while a `@path` completion was open. Cache
+        // the listing for a short TTL keyed by the directory. The
+        // cache lives in a thread-local (the TUI is single-threaded,
+        // like `render_cache`), so `&self` stays `&self`.
+        thread_local! {
+            static DIR_CACHE: std::cell::RefCell<
+                std::collections::HashMap<String, (std::time::Instant, Vec<String>)>,
+            > = std::cell::RefCell::new(std::collections::HashMap::new());
+        }
+        const DIR_TTL: std::time::Duration = std::time::Duration::from_millis(250);
+        let dir_entries: Vec<String> = DIR_CACHE.with(|c| {
+            let mut map = c.borrow_mut();
+            if let Some((at, names)) = map.get(&dir)
+                && at.elapsed() < DIR_TTL
+            {
+                return names.clone();
+            }
+            let mut names: Vec<String> = match std::fs::read_dir(&dir) {
+                Ok(rd) => rd
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
+            names.sort();
+            map.insert(dir.clone(), (std::time::Instant::now(), names.clone()));
+            names
+        });
         let mut out: Vec<String> = Vec::new();
-        for entry in entries.filter_map(|e| e.ok()) {
-            let name = entry.file_name().to_string_lossy().to_string();
+        for name in dir_entries {
             if !name.starts_with(&prefix) {
                 continue;
             }
@@ -159,7 +184,9 @@ impl KodApp {
                 continue;
             }
             let mut candidate = format!("{}{}", dir_part, name);
-            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            // Directory detection needs a stat; do it on the candidate
+            // path (the name alone has no type).
+            if std::path::Path::new(&candidate).is_dir() {
                 candidate.push('/');
             }
             out.push(candidate);
