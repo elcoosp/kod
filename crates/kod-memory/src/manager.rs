@@ -707,6 +707,19 @@ impl MemoryManager {
         // secret that the original store did not carry. See the
         // module doc for the "replayed forever" rationale.
         let content_owned = self.redact_text(content);
+        // F2i-9: apply the same hygiene the store path enforces. An
+        // update could otherwise smuggle a `<memories>` block (prompt
+        // scaffolding, not a fact) or an over-cap body past the
+        // guards `store_with_metadata` applies. Latent today — no
+        // production caller — but the public method must not be a
+        // bypass.
+        let content_owned = crate::hygiene::strip_memory_tags(&content_owned);
+        const MAX_CONTENT_BYTES: usize = 4 * 1024;
+        let content_owned: String = if content_owned.len() > MAX_CONTENT_BYTES {
+            kod_types::strutil::truncate_chars(&content_owned, MAX_CONTENT_BYTES).to_string()
+        } else {
+            content_owned
+        };
         let content: &str = content_owned.as_str();
         match memory_type {
             MemoryType::ShortTerm => {
