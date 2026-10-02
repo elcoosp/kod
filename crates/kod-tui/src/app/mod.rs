@@ -516,6 +516,10 @@ pub enum GenPhase {
     /// The provider rate-limited the turn and the engine is sleeping
     /// out the retry window before re-driving it.
     RateLimited,
+    /// The provider is overloaded (HTTP 503 `server_busy`) and the
+    /// engine is sleeping out the ~10-minute cooldown. Rendered
+    /// distinctly from [`GenPhase::RateLimited`].
+    ServerBusy,
 }
 
 /// Destructive action awaiting a yes/no answer.
