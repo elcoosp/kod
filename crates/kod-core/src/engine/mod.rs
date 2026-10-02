@@ -12517,6 +12517,13 @@ impl KodEngine {
             let answer =
                 tokio::time::timeout(std::time::Duration::from_secs(AWAIT_APPROVAL_SECS), orx)
                     .await;
+            // F2c-8: remove the oneshot sender once the wait resolves.
+            // Pre-fix a timed-out (unanswered) question left its entry
+            // in `pending_questions` forever — one leaked sender per
+            // dialog a user walked away from. A late answer then finds
+            // nothing and reports false, which is the honest result
+            // for an id that has already timed out.
+            self.pending_questions.write().await.remove(&id);
             match answer {
                 Ok(Ok(text)) => {
                     answers.insert(i, text);
@@ -12628,7 +12635,7 @@ impl KodEngine {
         // Phase 1 — build every request and register every oneshot
         // up-front so out-of-order answers are buffered.
         let mut items: Vec<ApprovalRequest> = Vec::new();
-        let mut awaiting: Vec<(usize, tokio::sync::oneshot::Receiver<ApprovalDecision>)> =
+        let mut awaiting: Vec<(usize, u64, tokio::sync::oneshot::Receiver<ApprovalDecision>)> =
             Vec::new();
         for i in &need_approval {
             let Some(call) = calls.get(*i) else { continue };
@@ -12674,7 +12681,7 @@ impl KodEngine {
                 summary,
                 id: Some(id),
             });
-            awaiting.push((*i, orx));
+            awaiting.push((*i, id, orx));
         }
 
         // Phase 2 — emit ONE batch marker.
@@ -12686,10 +12693,13 @@ impl KodEngine {
         let _ = tx.send(tool_approval_batch_marker(batch_id, &json)).await;
 
         // Phase 3 — await each in order.
-        for (i, orx) in awaiting {
+        for (i, id, orx) in awaiting {
             let decision =
                 tokio::time::timeout(std::time::Duration::from_secs(AWAIT_APPROVAL_SECS), orx)
                     .await;
+            // F2c-8: evict the oneshot sender once the wait resolves —
+            // an unanswered approval otherwise leaked its map entry.
+            self.pending_approvals.write().await.remove(&id);
             let tool_name = calls
                 .get(i)
                 .map(|c| c.tool_name.clone())
@@ -14414,9 +14424,18 @@ impl KodEngine {
             return Ok(());
         }
 
-        // 2. Signal stop to any running loop. `request_cancel` is safe to
-        //    call twice; a subsequent `clear_cancel` (from a new prompt)
-        //    would only matter if the engine is reused, which it is not.
+        // 2. Signal stop to every running loop. F2c-10: `request_cancel`
+        //    targets only the default transcript; a swarm run's
+        //    `swarm:<id>` loops (and any other per-key transcript)
+        //    kept running through teardown. Cancel every key the
+        //    engine knows about, then the default as a belt-and-braces.
+        {
+            // `cancels` is a parking_lot RwLock — synchronous.
+            let keys: Vec<String> = self.cancels.read().keys().cloned().collect();
+            for k in keys {
+                self.request_cancel_for(&k);
+            }
+        }
         self.request_cancel();
 
         // 3. LSP client shutdown (may be mid-request; timeout inside).
