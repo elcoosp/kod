@@ -9186,6 +9186,13 @@ impl KodEngine {
             // Delta section 9.7: index-based so the retry-config
             // candidates can be appended to `chain` mid-walk.
             let mut i: usize = 0;
+            // M-16: rounds an attempt persists into the shared history
+            // must not survive a failed attempt. Captured ONCE here,
+            // above the endpoint walk: a fallthrough (`i += 1`) reuses
+            // this base, so the next attempt's truncate drops the dead
+            // attempt's rounds instead of re-snapshotting the polluted
+            // length.
+            let attempt_history_base = self.history_len_for(key).await;
             while i < chain.len() {
                 let model_ref: ModelRef = chain[i].clone();
                 let this_provider = match self
@@ -9224,6 +9231,10 @@ impl KodEngine {
                 // already slept out. Shared cap with the streaming path.
                 let mut rate_limit_retries: u32 = 0;
                 loop {
+                    // M-16: drop any rounds a prior attempt appended.
+                    // `attempt_history_base` is captured once above the
+                    // endpoint walk.
+                    self.truncate_history_to(key, attempt_history_base).await;
                     let mut attempt_options = options.clone();
                     let round = RoundContext {
                         system_text: &system_text,
@@ -9740,6 +9751,10 @@ impl KodEngine {
             // Delta section 9.7: index-based so per-class retry-chain
             // candidates can be appended to `chain` mid-walk.
             let mut i: usize = 0;
+            // M-16: same as the collected path — captured once above
+            // the endpoint walk so a fallthrough reuses the pre-chain
+            // base.
+            let attempt_history_base = self.history_len_for(key).await;
             while i < chain.len() {
                 let model_ref: ModelRef = chain[i].clone();
                 let this_provider = match self
@@ -9785,6 +9800,10 @@ impl KodEngine {
                 // cancel error.
                 let mut rate_limit_attempt: u32 = 0;
                 let loop_outcome = loop {
+                    // M-16: drop any rounds a prior attempt appended.
+                    // `attempt_history_base` is captured once above the
+                    // endpoint walk.
+                    self.truncate_history_to(key, attempt_history_base).await;
                     match self
                         .run_streaming_loop(
                             &this_provider,
@@ -10683,6 +10702,26 @@ impl KodEngine {
         }
     }
 
+    /// M-16: current length of a transcript's history.
+    async fn history_len_for(&self, key: &str) -> usize {
+        self.history
+            .read()
+            .await
+            .get(key)
+            .map(|v| v.len())
+            .unwrap_or(0)
+    }
+
+    /// M-16: truncate a transcript's history back to `len` messages.
+    async fn truncate_history_to(&self, key: &str, len: usize) {
+        let mut hist = self.history.write().await;
+        if let Some(turns) = hist.get_mut(key)
+            && turns.len() > len
+        {
+            turns.truncate(len);
+        }
+    }
+
     /// Streaming agentic loop: text chunks are forwarded to `chunk_tx` the
     /// moment they arrive; tool-start markers go through the same channel.
     async fn run_streaming_loop(
@@ -10825,6 +10864,23 @@ impl KodEngine {
                     calls = calls.len(),
                     "stream round ended with a partial error",
                 );
+                // M-13: persist what the user already saw. The chunks
+                // reached the TUI live; without this the transcript
+                // recorded nothing and the next turn re-asked a
+                // question the model had already half-answered.
+                if !text.trim().is_empty() {
+                    let msg = kod_types::ChatMessage::text(
+                        kod_types::MessageId::new(),
+                        kod_types::MessageRole::Assistant,
+                        text.clone(),
+                        time::OffsetDateTime::now_utc(),
+                    );
+                    messages.push(msg.clone());
+                    let mut hist = self.history.write().await;
+                    hist.entry(round.holder.to_string())
+                        .or_default()
+                        .push(msg);
+                }
                 return Err(err);
             }
             // P5.6 — on the very first round, an off-track verdict
