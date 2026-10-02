@@ -407,6 +407,48 @@ pub fn yield_contract_satisfied(response: &serde_json::Value, items: &[WorkItem]
 mod tests {
     use super::*;
 
+    #[test]
+    fn round_robin_picks_the_least_loaded_not_the_cursor() {
+        // F2h-12: two Idle slots. Load `b` heavily via `record_yield`,
+        // leaving `a` light. Then dispatch several times and assert
+        // every pick lands on `a` — the cursor must not rotate onto
+        // the busier `b`.
+        let mut pool = WorkPool::new(4, 100);
+        pool.record_spawned("a", 1000);
+        pool.record_spawned("b", 1000);
+        // Give `b` a large consumed context. `record_yield` marks the
+        // slot Idle again (contract satisfied) and adds tokens.
+        pool.record_yield("b", 900, true);
+
+        for n in 0..5 {
+            match pool.dispatch(item(&format!("i{n}"))) {
+                Dispatch::Queued { agent_id } => {
+                    assert_eq!(agent_id, "a", "must pick the least-loaded slot");
+                }
+                other => panic!("expected Queued onto a, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn equal_load_still_alternates() {
+        // The tie-break property the cursor exists for: two slots at
+        // the same load alternate across dispatches.
+        let mut pool = WorkPool::new(4, 100);
+        pool.record_spawned("a", 1000);
+        pool.record_spawned("b", 1000);
+        let mut picks = Vec::new();
+        for n in 0..4 {
+            match pool.dispatch(item(&format!("i{n}"))) {
+                Dispatch::Queued { agent_id } => picks.push(agent_id),
+                other => panic!("expected Queued, got {other:?}"),
+            }
+        }
+        // Both slots must appear — the cursor rotates among the tie.
+        assert!(picks.contains(&"a".to_string()), "a never picked: {picks:?}");
+        assert!(picks.contains(&"b".to_string()), "b never picked: {picks:?}");
+    }
+
     fn item(id: &str) -> WorkItem {
         WorkItem::new(id, serde_json::json!({ "task": id }))
     }
