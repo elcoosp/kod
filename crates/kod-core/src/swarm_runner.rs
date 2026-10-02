@@ -1470,7 +1470,14 @@ impl SwarmRunner {
                 None => join_all(wave_tasks).await,
             };
             for (idx, res) in ready.iter().zip(wave_results) {
-                completed.insert(handles[*idx].subtask.name.clone());
+                // F2d-11: only a *successful* subtask counts as
+                // completed. Pre-fix every ready handle was inserted
+                // regardless of its result, so a failed subtask's
+                // dependents dispatched in the next wave without their
+                // dependency having produced anything.
+                if res.4.is_ok() {
+                    completed.insert(handles[*idx].subtask.name.clone());
+                }
                 raw.push(res);
             }
             remaining = blocked;
