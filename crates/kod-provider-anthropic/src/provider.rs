@@ -297,26 +297,44 @@ impl LlmProvider for AnthropicProvider {
     async fn complete(&self, req: &CompletionRequest) -> Result<GenerationResponse> {
         let body = crate::wire::build_messages_body(req);
         let url = format!("{}/messages", self.base_url);
-        // Bound the whole round-trip: the engine's non-streaming path
-        // applies no timeout of its own, so a server that accepts the
-        // connection and stalls would hang the turn forever.
-        let resp = tokio::time::timeout(
-            std::time::Duration::from_secs(self.timeout_secs.max(1)),
-            self.client
-                .post(&url)
-                .header("x-api-key", &self.api_key)
-                .header("anthropic-version", "2023-06-01")
-                .json(&body)
-                .send(),
-        )
-        .await
-        .map_err(|_| {
-            KodError::Provider(format!(
-                "anthropic: POST {url} timed out after {}s",
-                self.timeout_secs.max(1)
-            ))
-        })?
-        .map_err(|e| KodError::Provider(format!("anthropic: POST {url}: {e}")))?;
+        // F2i-8: the non-streaming path had no transient-error retry,
+        // while the streaming path (and OpenAI's collect) retry 3x.
+        // A momentary 5xx or dropped connection failed the whole call.
+        // Wrap the POST+status-check in the same `with_retry` the
+        // streaming path uses, honouring the endpoint's rate-limit
+        // wait budget.
+        let policy = kod_provider::retry::RetryPolicy {
+            max_rate_limit_wait: self.rate_limit_wait,
+            ..kod_provider::retry::RetryPolicy::default()
+        };
+        let resp = kod_provider::retry::with_retry(&policy, || {
+            let url = url.clone();
+            let body = body.clone();
+            async move {
+                // Bound the whole round-trip: the engine's non-streaming
+                // path applies no timeout of its own, so a server that
+                // accepts the connection and stalls would hang the turn.
+                let resp = tokio::time::timeout(
+                    std::time::Duration::from_secs(self.timeout_secs.max(1)),
+                    self.client
+                        .post(&url)
+                        .header("x-api-key", &self.api_key)
+                        .header("anthropic-version", "2023-06-01")
+                        .json(&body)
+                        .send(),
+                )
+                .await
+                .map_err(|_| {
+                    KodError::Provider(format!(
+                        "anthropic: POST {url} timed out after {}s",
+                        self.timeout_secs.max(1)
+                    ))
+                })?
+                .map_err(|e| KodError::Provider(format!("anthropic: POST {url}: {e}")))?;
+                Ok::<_, KodError>(resp)
+            }
+        })
+        .await?;
         let status = resp.status();
         if !status.is_success() {
             // §9.1: extract retry-delay hints from the response before
