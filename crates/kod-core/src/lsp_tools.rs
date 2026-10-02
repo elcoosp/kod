@@ -24,6 +24,21 @@ use std::sync::Arc;
 /// Read a file's contents. A missing file is a tool-level error the
 /// model can act on.
 fn read_file(path: &std::path::Path) -> std::result::Result<String, String> {
+    // F2e-9: the path is model-controlled and the read is unbounded —
+    // a multi-GB file (or `/dev/zero`-style source) would block the
+    // async tool loop and allocate without limit. Cap at the same
+    // 4 MiB ceiling the LSP client uses for document bodies; a larger
+    // source file is not something an lsp_* query can usefully edit.
+    const MAX_SOURCE_BYTES: u64 = 4 * 1024 * 1024;
+    let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if meta.len() > MAX_SOURCE_BYTES {
+        return Err(format!(
+            "{}: {} bytes exceeds the {} byte lsp read cap",
+            path.display(),
+            meta.len(),
+            MAX_SOURCE_BYTES,
+        ));
+    }
     std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
