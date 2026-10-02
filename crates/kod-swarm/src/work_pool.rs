@@ -291,12 +291,18 @@ impl WorkPool {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.0.cmp(b.0))
         });
-        // Round-robin across the (possibly equal-load) candidates.
-        // The cursor *starts* at 0 so the first call returns the
-        // least-loaded; each subsequent call advances, which is
-        // what makes two equally-loaded slots alternate.
-        let n = candidates.len();
-        let idx = self.cursor % n;
+        // F2h-12: rotate only among the slots tied at the *minimum*
+        // load. Pre-fix the cursor indexed the whole sorted list, so
+        // `cursor % n` could select a busier slot than the
+        // least-loaded one — defeating the policy the sort was there
+        // to serve. Find the tie group at the front, then round-robin
+        // within it.
+        let min_ratio = candidates[0].1.load_ratio();
+        let tied = candidates
+            .iter()
+            .take_while(|(_, s)| s.load_ratio() == min_ratio)
+            .count();
+        let idx = self.cursor % tied.max(1);
         self.cursor = self.cursor.wrapping_add(1);
         Some(candidates[idx].0.clone())
     }
