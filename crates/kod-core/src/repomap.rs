@@ -532,13 +532,15 @@ fn ast_or_regex(content: &str, ext: &str, fallback: fn(&str) -> Vec<Symbol>) -> 
     let Some(syms) = syms else {
         return fallback(content);
     };
+    // F2d-13: one line split for the filter pass.
+    let lines: Vec<&str> = content.lines().collect();
     syms.into_iter()
         .map(|s| Symbol {
             kind: s.kind,
             name: s.name,
             line: s.line,
         })
-        .filter(|sym| !(sym.kind == "fn" && has_test_attribute(content, sym.line)))
+        .filter(|sym| !(sym.kind == "fn" && has_test_attribute(&lines, sym.line)))
         .collect()
 }
 
@@ -574,6 +576,8 @@ fn extract_rust(content: &str) -> Vec<Symbol> {
     let c = CONST.get_or_init(|| {
         Regex::new(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?const\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap()
     });
+    // F2d-13: one line split for the whole filter pass.
+    let lines: Vec<&str> = content.lines().collect();
     scan(
         content,
         &[
@@ -589,7 +593,12 @@ fn extract_rust(content: &str) -> Vec<Symbol> {
     // Test fns (`#[test]`, `#[tokio::test]`, …) are noise in the
     // map: the model needs the production surface, not the test
     // suite. Non-test items are untouched.
-    .filter(|sym| !(sym.kind == "fn" && has_test_attribute(content, sym.line)))
+    //
+    // F2d-13: split the content into lines ONCE here rather than
+    // re-collecting it inside the filter for every symbol.
+    .filter(|sym| {
+        !(sym.kind == "fn" && has_test_attribute(&lines, sym.line))
+    })
     .collect()
 }
 
@@ -598,8 +607,7 @@ fn extract_rust(content: &str) -> Vec<Symbol> {
 /// directly above it. Walks up over the attribute block, skipping
 /// blank lines and `//` comments; any other code line stops the
 /// scan so a distant `#[test]` cannot leak onto an unrelated item.
-fn has_test_attribute(content: &str, symbol_line: usize) -> bool {
-    let lines: Vec<&str> = content.lines().collect();
+fn has_test_attribute(lines: &[&str], symbol_line: usize) -> bool {
     if symbol_line == 0 || symbol_line > lines.len() {
         return false;
     }
