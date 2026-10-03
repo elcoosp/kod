@@ -645,7 +645,6 @@ impl LspClient {
                 "Content-Length {n} exceeds the {MAX_MESSAGE_BYTES}-byte cap"
             )));
         }
-        const MAX_MESSAGE_BYTES: usize = 50 * 1024 * 1024;
         if n > MAX_MESSAGE_BYTES {
             return Err(LspError::Protocol(format!(
                 "Content-Length {n} exceeds the {MAX_MESSAGE_BYTES}-byte cap"
