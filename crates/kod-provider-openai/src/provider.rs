@@ -1177,11 +1177,14 @@ fn stamp_openai_user(config: &mut GenerateContentConfig, session: &str) {
 fn is_session_busy(err: &kod_error::KodError) -> bool {
     match err {
         kod_error::KodError::Provider(msg) => {
-            // "4096 tokens" / timestamps previously triggered the whole
-            // background retry schedule for a non-busy error.
-            msg.contains("\"status\":409")
-                || msg.contains("\"status\": 409")
-                || msg.contains("status: 409")
+            // T2-C3: match `409` as a whitespace-delimited token,
+            // optionally wrapped in punctuation (`(409)`, `409:`).
+            // Rejects "4096 tokens", mid-token digits in timestamps,
+            // and "tcp 40901" while still matching every real 409
+            // status surfaced by tab-bridge or a proxy.
+            msg.split_whitespace().any(|w| {
+                w.trim_matches(|c: char| !c.is_ascii_digit()) == "409"
+            })
         }
         _ => false,
     }
