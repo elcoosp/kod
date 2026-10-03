@@ -871,6 +871,13 @@ impl SwarmRunner {
             std::result::Result<String, String>,
         )> = Vec::with_capacity(handles.len());
         let mut completed: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // F2d-11 (real fix): names of subtasks that ran and failed.
+        // A subtask whose dependency is in here is *failed*, not run —
+        // pre-fix the wave loop's cycle-fallback re-ran blocked
+        // subtasks whenever nothing was "ready", which is exactly the
+        // state a failure leaves, so dependents ran without their
+        // dependency.
+        let mut failed: std::collections::HashSet<String> = std::collections::HashSet::new();
         // Per-run heartbeat watchdog (design D4.3). Polls every 10 s;
         // for any agent whose last heartbeat is older than 90 s, sends
         // a cooperative cancel so the agent's streaming loop stops at
@@ -1108,15 +1115,53 @@ impl SwarmRunner {
                 break;
             }
 
-            let (ready, blocked): (Vec<usize>, Vec<usize>) =
-                remaining.into_iter().partition(|&i| {
-                    handles[i]
-                        .subtask
-                        .depends_on
-                        .iter()
-                        .all(|d| completed.contains(d))
-                });
-            let (ready, blocked) = if ready.is_empty() {
+            // F2d-11: three-way classification. A subtask is
+            // *failed-out* when any dependency failed; *ready* when
+            // every dependency completed; *blocked* otherwise.
+            let mut ready: Vec<usize> = Vec::new();
+            let mut blocked: Vec<usize> = Vec::new();
+            let mut failed_out: Vec<usize> = Vec::new();
+            for i in remaining {
+                let st = &handles[i].subtask;
+                if st.depends_on.iter().any(|d| failed.contains(d)) {
+                    failed_out.push(i);
+                } else if st.depends_on.iter().all(|d| completed.contains(d)) {
+                    ready.push(i);
+                } else {
+                    blocked.push(i);
+                }
+            }
+            // A subtask failed-out by a failed dependency is recorded
+            // as failed and its own dependents cascade next iteration.
+            for i in &failed_out {
+                let st = &handles[*i].subtask;
+                failed.insert(st.name.clone());
+                let _ = chunk_tx
+                    .send(SwarmEvent::AgentFailed {
+                        id: handles[*i].id.clone(),
+                        name: handles[*i].name.clone(),
+                        error: format!(
+                            "skipped: dependency `{}` failed",
+                            st.depends_on
+                                .iter()
+                                .find(|d| failed.contains(*d))
+                                .cloned()
+                                .unwrap_or_default(),
+                        ),
+                    })
+                    .await;
+                raw.push((
+                    handles[*i].id.clone(),
+                    handles[*i].name.clone(),
+                    st.clone(),
+                    Vec::new(),
+                    Err("dependency failed".to_string()),
+                ));
+            }
+            // The cycle-fallback fires only when nothing is ready AND
+            // nothing failed-out this round (a genuine cycle/unknown
+            // dep), never to bypass a failure gate.
+            let (ready, blocked) = if ready.is_empty() && failed_out.is_empty() {
                 tracing::warn!(
                     count = blocked.len(),
                     "swarm: dependency cycle or unknown dependency; \
@@ -1477,6 +1522,8 @@ impl SwarmRunner {
                 // dependency having produced anything.
                 if res.4.is_ok() {
                     completed.insert(handles[*idx].subtask.name.clone());
+                } else {
+                    failed.insert(handles[*idx].subtask.name.clone());
                 }
                 raw.push(res);
             }
