@@ -55,10 +55,22 @@ suite prove nothing about a fix that has no test targeting it.
 
 ## 3. What remains
 
-### F2c-12 — NOT done (needs a project)
-The per-round `messages.clone()` in the grounded-request build is
-required: the provider request owns its messages. Removing it needs
-a `Cow`/`Arc` refactor of `CompletionRequest`. Documented, not fixed.
+### F2c-12 — PARTIAL (`87b7d068`)
+
+The audit listed two costs. One is fixed, one is not:
+
+1. **Per-message secret re-obfuscation — FIXED.** `SecretVault::obfuscate`
+   cloned and re-sorted the whole secrets map on every call (once per
+   message per round). Now a longest-first `Arc<Vec>` cached in
+   `VaultInner.sorted`, invalidated by `register`. Tests pin the
+   invalidation and the ordering.
+
+2. **Full-history deep-clone — NOT fixed.** `messages.clone()` in the
+   grounded-request build is still there. It is *required* while
+   `CompletionRequest.messages: Vec<ChatMessage>` owns its messages;
+   removing it needs `Arc`/`Cow` on that field plus a provider-side
+   adjustment (18 read sites across 3 provider crates). That is a
+   cross-crate refactor, not a LOCAL change — deliberately not attempted.
 
 ### Bisect caveat (unchanged)
 `6e6a1a1` (`GenPhase::ServerBusy`) and `65cd320` (`Event::ServerBusy`)
