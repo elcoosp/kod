@@ -307,7 +307,13 @@ impl LlmProvider for AnthropicProvider {
             max_rate_limit_wait: self.rate_limit_wait,
             ..kod_provider::retry::RetryPolicy::default()
         };
-        let resp = kod_provider::retry::with_retry(&policy, || {
+        // F2i-8: the whole request→response→error path runs inside
+        // `with_retry`. The pre-fix wrap covered only `.send()`, but a
+        // 503 is a *successful* HTTP exchange — `with_retry` saw
+        // `Ok(resp)` and never retried. Mapping a non-2xx status to a
+        // typed `KodError` must happen inside the closure so the retry
+        // layer can classify it.
+        kod_provider::retry::with_retry(&policy, || {
             let url = url.clone();
             let body = body.clone();
             async move {
@@ -331,72 +337,70 @@ impl LlmProvider for AnthropicProvider {
                     ))
                 })?
                 .map_err(|e| KodError::Provider(format!("anthropic: POST {url}: {e}")))?;
-                Ok::<_, KodError>(resp)
+                let status = resp.status();
+                if !status.is_success() {
+                    // §9.1: extract retry-delay hints from the response
+                    // before `.text()` consumes it.
+                    let hint_headers: Vec<(String, String)> = resp
+                        .headers()
+                        .iter()
+                        .filter_map(|(k, v)| {
+                            v.to_str()
+                                .ok()
+                                .map(|s| (k.as_str().to_string(), s.to_string()))
+                        })
+                        .collect();
+                    let text = resp.text().await.unwrap_or_default();
+                    let hints = kod_provider::retry::extract_retry_hints(
+                        Some(status.as_u16()),
+                        &hint_headers,
+                        &text,
+                    );
+                    if let Some(delay) = hints.delay {
+                        tracing::warn!(
+                            status = status.as_u16(),
+                            hint_delay_secs = delay.as_secs(),
+                            cap_declined = hints.cap_declined,
+                            "anthropic complete: server suggested a retry delay",
+                        );
+                    }
+                    let snippet = if text.len() > 400 {
+                        format!("{}…", kod_types::strutil::truncate_chars(&text, 400))
+                    } else {
+                        text
+                    };
+                    // H-RL1: a 429 whose hint is within the configured
+                    // budget surfaces as a typed `RateLimited` so the
+                    // retry layer (or the engine's turn-level wait)
+                    // sleeps it out and re-drives.
+                    if status.as_u16() == 429
+                        && let Some(delay) = hints.delay
+                        && !delay.is_zero()
+                        && delay <= self.rate_limit_wait
+                    {
+                        return Err(KodError::RateLimited {
+                            retry_after_secs: delay.as_secs(),
+                        });
+                    }
+                    let mut err = KodError::provider_status_with_hint(
+                        status.as_u16(),
+                        &snippet,
+                        hints.delay,
+                    );
+                    if hints.cap_declined {
+                        err = KodError::Provider(format!(
+                            "{err} (server requested a retry delay above the configured rate-limit wait budget; declining automatic retry)",
+                        ));
+                    }
+                    return Err(err);
+                }
+                let parsed: serde_json::Value = resp.json().await.map_err(|e| {
+                    KodError::Provider(format!("anthropic: invalid JSON: {e}"))
+                })?;
+                parse_response(&parsed)
             }
         })
-        .await?;
-        let status = resp.status();
-        if !status.is_success() {
-            // §9.1: extract retry-delay hints from the response before
-            // `.text()` consumes it. Headers are the only place
-            // `retry-after`, `retry-after-ms`, and `x-ratelimit-reset`
-            // appear; the body may carry a free-form "try again in N"
-            // hint that the extractor also reads.
-            let hint_headers: Vec<(String, String)> = resp
-                .headers()
-                .iter()
-                .filter_map(|(k, v)| {
-                    v.to_str()
-                        .ok()
-                        .map(|s| (k.as_str().to_string(), s.to_string()))
-                })
-                .collect();
-            let text = resp.text().await.unwrap_or_default();
-            let hints = kod_provider::retry::extract_retry_hints(
-                Some(status.as_u16()),
-                &hint_headers,
-                &text,
-            );
-            if let Some(delay) = hints.delay {
-                tracing::warn!(
-                    status = status.as_u16(),
-                    hint_delay_secs = delay.as_secs(),
-                    cap_declined = hints.cap_declined,
-                    "anthropic complete: server suggested a retry delay",
-                );
-            }
-            let snippet = if text.len() > 400 {
-                format!("{}…", kod_types::strutil::truncate_chars(&text, 400))
-            } else {
-                text
-            };
-            // H-RL1: a 429 whose hint is within the configured budget
-            // surfaces as a typed `RateLimited` so the retry layer (or
-            // the engine's turn-level wait) sleeps it out and re-drives
-            // the request instead of failing the call.
-            if status.as_u16() == 429
-                && let Some(delay) = hints.delay
-                && !delay.is_zero()
-                && delay <= self.rate_limit_wait
-            {
-                return Err(KodError::RateLimited {
-                    retry_after_secs: delay.as_secs(),
-                });
-            }
-            let mut err =
-                KodError::provider_status_with_hint(status.as_u16(), &snippet, hints.delay);
-            if hints.cap_declined {
-                err = KodError::Provider(format!(
-                    "{err} (server requested a retry delay above the configured rate-limit wait budget; declining automatic retry)",
-                ));
-            }
-            return Err(err);
-        }
-        let parsed: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| KodError::Provider(format!("anthropic: invalid JSON: {e}")))?;
-        parse_response(&parsed)
+        .await
     }
 
     /// Delta §4.4: the `compact-2026-01-12` beta call.
