@@ -49,7 +49,17 @@ impl LongTermMemory {
         }
 
         let db = Database::create(path)
-            .map_err(|e| KodError::MemoryDatabase(format!("Failed to open database: {}", e)))?;
+            .map_err(|e| {
+                let s = e.to_string();
+                if s.contains("locked") || s.contains("LockError") || s.contains("already") {
+                    KodError::MemoryDatabase(format!(
+                        "Failed to open memory database at {}: {} — another kod process may hold the file lock",
+                        path.display(), e
+                    ))
+                } else {
+                    KodError::MemoryDatabase(format!("Failed to open database: {}", e))
+                }
+            })?;
 
         let txn = db
             .begin_write()
@@ -289,10 +299,12 @@ impl LongTermMemory {
             {
                 match entry {
                     Ok((_, value)) => {
-                        if let Ok(memory_entry) =
-                            serde_json::from_slice::<MemoryEntry>(value.value())
-                        {
-                            entries.push(memory_entry);
+                        match serde_json::from_slice::<MemoryEntry>(value.value()) {
+                            Ok(memory_entry) => entries.push(memory_entry),
+                            Err(e) => tracing::warn!(
+                                error = %e,
+                                "get_all: corrupt entry skipped — schema migration may be needed"
+                            ),
                         }
                     }
                     Err(e) => {
