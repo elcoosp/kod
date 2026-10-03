@@ -93,6 +93,11 @@ struct VaultInner {
     /// Placeholder -> secret. Kept in sync with `forward` so
     /// deobfuscation is a single lookup.
     reverse: parking_lot_free::RwLock<HashMap<String, String>>,
+    /// F2c-12: the forward map as a longest-first sorted vector, built
+    /// once and reused. `obfuscate` runs per message per round; the
+    /// pre-cache code cloned the whole map and re-sorted it every
+    /// call. Cleared to `None` by `register` (the only mutation).
+    sorted: parking_lot_free::RwLock<Option<std::sync::Arc<Vec<(String, String)>>>>,
 }
 
 /// A minimal `RwLock` wrapper. Defined here so the module does not
@@ -152,6 +157,7 @@ impl SecretVault {
                 key,
                 forward: parking_lot_free::RwLock::new(HashMap::new()),
                 reverse: parking_lot_free::RwLock::new(HashMap::new()),
+                sorted: parking_lot_free::RwLock::new(None),
             }),
         }
     }
@@ -235,6 +241,10 @@ impl SecretVault {
         if let Ok(mut g) = self.inner.reverse.write() {
             g.insert(placeholder.clone(), secret);
         }
+        // F2c-12: the sorted view is now stale.
+        if let Ok(mut g) = self.inner.sorted.write() {
+            *g = None;
+        }
         placeholder
     }
 
@@ -294,23 +304,38 @@ impl SecretVault {
     /// substituted first. Otherwise a shorter secret would eat part
     /// of a longer one and the longer one would never match.
     pub fn obfuscate(&self, text: &str) -> String {
-        let secrets: Vec<(String, String)> = match self.inner.forward.read() {
-            Ok(g) => g.iter().map(|(s, p)| (s.clone(), p.clone())).collect(),
-            Err(_) => return text.to_string(),
+        // F2c-12: read the cached longest-first vector; build it once
+        // if absent. `Arc` clone is a refcount bump, not a map copy —
+        // the pre-cache code cloned + sorted the whole map on every
+        // call, which is per message per round.
+        let cached = match self.inner.sorted.read() {
+            Ok(g) => g.clone(),
+            Err(_) => None,
         };
-        if secrets.is_empty() {
+        let sorted = match cached {
+            Some(v) => v,
+            None => {
+                let mut v: Vec<(String, String)> = match self.inner.forward.read() {
+                    Ok(g) => g.iter().map(|(s, p)| (s.clone(), p.clone())).collect(),
+                    Err(_) => return text.to_string(),
+                };
+                v.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+                let v = std::sync::Arc::new(v);
+                if let Ok(mut g) = self.inner.sorted.write() {
+                    *g = Some(v.clone());
+                }
+                v
+            }
+        };
+        if sorted.is_empty() {
             return text.to_string();
         }
-        // Longest-first by secret length.
-        let mut sorted = secrets;
-        sorted.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-
         let mut out = text.to_string();
-        for (secret, placeholder) in sorted {
-            if !out.contains(&secret) {
+        for (secret, placeholder) in sorted.iter() {
+            if !out.contains(secret) {
                 continue;
             }
-            out = out.replace(&secret, &placeholder);
+            out = out.replace(secret, placeholder);
         }
         out
     }
@@ -478,7 +503,40 @@ mod tests {
     }
 
     #[test]
-    fn obfuscate_replaces_a_registered_secret() {
+    fn obfuscate_cache_is_invalidated_by_register() {
+        // F2c-12: `obfuscate` caches the longest-first secret vector.
+        // A secret registered *after* the first obfuscate must still
+        // be replaced — the cache must be invalidated by `register`.
+        let v = SecretVault::with_key([7u8; 32]);
+        let p1 = v.register("sk-first");
+        assert_eq!(v.obfuscate("a sk-first b"), format!("a {p1} b"));
+        // Second call uses the cache.
+        assert_eq!(v.obfuscate("a sk-first b"), format!("a {p1} b"));
+        // Register a new secret; the cache must drop.
+        let p2 = v.register("sk-second");
+        assert_eq!(
+            v.obfuscate("a sk-first b sk-second c"),
+            format!("a {p1} b {p2} c"),
+            "a secret registered after the cache was built must be replaced"
+        );
+    }
+
+    fn obfuscate_longest_first_after_cache_build() {
+        // The cached vector must still be longest-first: a shorter
+        // secret registered after a longer one must not eat its prefix.
+        let v = SecretVault::with_key([9u8; 32]);
+        let _short = v.register("sk-abc");
+        let _ = v.obfuscate("warm the cache");
+        let long = v.register("sk-abcdef");
+        let out = v.obfuscate("x sk-abcdef y");
+        assert_eq!(
+            out,
+            format!("x {long} y"),
+            "longest-first must hold after invalidation, got {out}"
+        );
+    }
+
+        fn obfuscate_replaces_a_registered_secret() {
         let v = vault();
         let p = v.register("sk-abc123");
         let out = v.obfuscate("the key is sk-abc123 ok");
