@@ -337,21 +337,31 @@ async fn read_loop(
     stdin: std::sync::Arc<tokio::sync::Mutex<ChildStdin>>,
 ) {
     const MAX_LINE_BYTES: usize = 10 * 1024 * 1024;
-    let mut reader = BufReader::new(stdout).lines();
+    let mut reader = BufReader::new(stdout);
+    let mut line_buf: Vec<u8> = Vec::new();
     loop {
-        match reader.next_line().await {
-            // T2-C6: cap the line length. A misbehaving server can emit
-            // an arbitrarily long line; without this bound, `lines()`
-            // allocates without limit.
-            Ok(Some(ref line)) if line.len() > MAX_LINE_BYTES => {
-                tracing::error!(
-                    target: "mcp",
-                    bytes = line.len(),
-                    cap = MAX_LINE_BYTES,
-                    "server line exceeded cap; closing connection"
-                );
-                break;
-            }
+        line_buf.clear();
+        let next_line: std::io::Result<Option<String>> =
+            match reader.read_until(b'\n', &mut line_buf).await {
+                Ok(0) => Ok(None),
+                Ok(_) => {
+                    if line_buf.len() > MAX_LINE_BYTES {
+                        tracing::error!(
+                            target: "mcp",
+                            bytes = line_buf.len(),
+                            cap = MAX_LINE_BYTES,
+                            "server line exceeded cap; closing connection"
+                        );
+                        break;
+                    }
+                    let s = String::from_utf8_lossy(&line_buf)
+                        .trim_end_matches(['\r', '\n'])
+                        .to_string();
+                    Ok(Some(s))
+                }
+                Err(e) => Err(e),
+            };
+        match next_line {
             Ok(Some(line)) => {
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
