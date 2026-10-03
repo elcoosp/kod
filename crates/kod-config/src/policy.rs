@@ -1515,3 +1515,46 @@ mod coverage_policy_deny_rules {
         assert_eq!(resolve_path(wd, "/.."), PathBuf::from("/"));
     }
 }
+
+/// T5-C7: return every binary name we can identify in a command line,
+/// unwrapping `bash -c '<cmd>'` and similar shell wrappers up to four
+/// levels deep. The pre-fix check only looked at the first whitespace
+/// token, so `bash -c 'rm -rf /'` reported `bash` and the inner `rm`
+/// was never consulted against the forbidden/allow lists.
+fn binary_candidates(cmd: &str) -> Vec<String> {
+    const WRAPPERS: &[&str] = &["bash", "sh", "zsh", "dash", "ksh"];
+    let mut out = Vec::new();
+    let mut cur: String = cmd.trim().to_string();
+    for _ in 0..4 {
+        let first = cur
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .rsplit('/')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        if first.is_empty() {
+            break;
+        }
+        out.push(first.clone());
+        if !WRAPPERS.contains(&first.as_str()) {
+            break;
+        }
+        let mut parts = cur.split_whitespace().skip(1);
+        let mut inner: Option<String> = None;
+        while let Some(p) = parts.next() {
+            if p == "-c" {
+                inner = Some(parts.collect::<Vec<_>>().join(" "));
+                break;
+            }
+        }
+        let Some(i) = inner else { break };
+        let cleaned = i.trim().trim_matches(|c| c == '\'' || c == '"').to_string();
+        if cleaned.is_empty() {
+            break;
+        }
+        cur = cleaned;
+    }
+    out
+}
