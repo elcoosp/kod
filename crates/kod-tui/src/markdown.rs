@@ -246,7 +246,9 @@ fn parse(markdown: &str) -> Vec<Block> {
 
     for raw in markdown.split('\n') {
         if in_code {
-            if raw.trim_start().starts_with("```") {
+            let t = raw.trim_start();
+            let is_close = t.len() >= 3 && t.chars().all(|c| c == '`');
+            if is_close {
                 blocks.push(Block::Code {
                     lang: code_lang.take(),
                     lines: std::mem::take(&mut code_lines),
@@ -407,7 +409,7 @@ fn render_block(block: &Block, width: usize, theme: &Theme, out: &mut Vec<Line<'
                     .add_modifier(Modifier::BOLD),
             )];
             spans.extend(inline);
-            let wrapped = wrap_spans(spans, width);
+            let wrapped = wrap_spans(spans, width.saturating_sub(2));
             out.extend(indent_continuation(wrapped, "  "));
         }
 
@@ -422,7 +424,7 @@ fn render_block(block: &Block, width: usize, theme: &Theme, out: &mut Vec<Line<'
                     .add_modifier(Modifier::BOLD),
             )];
             spans.extend(inline);
-            let wrapped = wrap_spans(spans, width);
+            let wrapped = wrap_spans(spans, width.saturating_sub(indent.chars().count()));
             out.extend(indent_continuation(wrapped, &indent));
         }
 
@@ -436,7 +438,7 @@ fn render_block(block: &Block, width: usize, theme: &Theme, out: &mut Vec<Line<'
             for span in inline {
                 spans.push(Span::styled(span.content.into_owned(), text_style));
             }
-            let wrapped = wrap_spans(spans, width);
+            let wrapped = wrap_spans(spans, width.saturating_sub(2));
             out.extend(indent_continuation(wrapped, "│ "));
         }
 
