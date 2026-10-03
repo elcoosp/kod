@@ -168,7 +168,10 @@ pub struct LandlockProfile {
 impl LandlockProfile {
     /// Serialize to the JSON the `kod __sandbox-exec` launcher reads.
     pub fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap_or_else(|_| "{}".to_string())
+        serde_json::to_string(self).unwrap_or_else(|e| {
+            tracing::error!(error = %e, "landlock profile serialization failed");
+            format!("{{\"__serialize_error\":\"{}\"}}", e)
+        })
     }
 
     pub fn from_json(s: &str) -> Result<Self> {
