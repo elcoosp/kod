@@ -1,3 +1,4 @@
+#![cfg(test)]
     use super::*;
     use kod_swarm::file_touch::{FileTouchBus, FileTouchService};
 

@@ -327,6 +327,10 @@ pub struct EventHandler {
     #[allow(dead_code)]
     last_tick: StdMutex<Instant>,
     is_running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// F2g-15: the spawned input-loop task. `stop()` aborts it so a
+    /// task parked on `reader.next().await` (which the `is_running`
+    /// flag alone cannot wake) does not leak for the process lifetime.
+    input_task: StdMutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl EventHandler {
@@ -340,6 +344,7 @@ impl EventHandler {
             tick_rate,
             last_tick: StdMutex::new(Instant::now()),
             is_running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            input_task: StdMutex::new(None),
         }
     }
 
@@ -456,7 +461,7 @@ impl EventHandler {
             queue: self.event_queue.clone(),
         };
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let priority_tx = priority_tx;
             let mut reader = EventStream::new();
 
@@ -545,12 +550,23 @@ impl EventHandler {
                 }
             }
         });
+        if let Ok(mut g) = self.input_task.lock() {
+            *g = Some(handle);
+        }
     }
 
     /// Stop the event handler
     pub fn stop(&self) {
         self.is_running
             .store(false, std::sync::atomic::Ordering::SeqCst);
+        // F2g-15: wake the task. The flag alone cannot interrupt a
+        // `reader.next().await`; aborting the handle drops the parked
+        // task (and its `EventStream`).
+        if let Ok(mut g) = self.input_task.lock()
+            && let Some(h) = g.take()
+        {
+            h.abort();
+        }
     }
 }
 

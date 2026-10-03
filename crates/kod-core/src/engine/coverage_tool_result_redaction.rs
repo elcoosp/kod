@@ -1,3 +1,4 @@
+#![cfg(test)]
     //! Pins the tool-result half of the in-prompt redaction pass
     //! (Tier 1.3). Unlike the message path, `cap_rendered_result`
     //! takes the redactor as a parameter, so the test can drive it

@@ -1,3 +1,4 @@
+#![cfg(test)]
     //! Pins the in-prompt redaction pass (Tier 1.3).
     use super::*;
 

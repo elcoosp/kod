@@ -1,3 +1,4 @@
+#![cfg(test)]
     //! Pins the engine's decision-log accessors (Tier 3.4).
     use super::*;
     use crate::decisions::{DecisionAuthor, DecisionKind, DecisionLog};

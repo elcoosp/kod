@@ -64,6 +64,11 @@ fn no_direct_terminal_writes_outside_tests() {
             let Ok(src) = std::fs::read_to_string(&file) else {
                 continue;
             };
+            // A whole file that is a test module (its body starts with
+            // the inner `#![cfg(test)]`) is test code throughout.
+            if src.trim_start().starts_with("#![cfg(test)]") {
+                continue;
+            }
             // Everything after the first `#[cfg(test)]` marker is test
             // code: test binaries and test modules may legitimately
             // write to the terminal.
@@ -73,6 +78,7 @@ fn no_direct_terminal_writes_outside_tests() {
                 let is_write = t.starts_with("println!")
                     || t.starts_with("eprintln!")
                     || t.starts_with("print!")
+                    || t.starts_with("eprint!")
                     || t.starts_with("dbg!");
                 if is_write
                     && !t.contains(ALLOW_MARKER)

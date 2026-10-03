@@ -1,3 +1,4 @@
+#![cfg(test)]
     //! P5.6 — the mid-stream switch mechanism.
     //!
     //! `fallback_stream_for_off_track` opens a stream against a

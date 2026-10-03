@@ -1,3 +1,4 @@
+#![cfg(test)]
     use crate::engine::KodEngine;
     use crate::router::RouterConfig;
     use crate::session_log::{RehydrationMode, SessionEntry, SessionRecorder};

@@ -1,3 +1,4 @@
+#![cfg(test)]
     use super::*;
     use kod_types::{ToolCall, ToolResult};
     use tempfile::TempDir;

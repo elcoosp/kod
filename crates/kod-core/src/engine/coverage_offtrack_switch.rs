@@ -1,3 +1,4 @@
+#![cfg(test)]
     //! P5.6 — the full mid-stream switch path, end to end.
     //!
     //! A scripted `JevDecider` returns a confident `is_off_track`

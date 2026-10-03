@@ -1,3 +1,4 @@
+#![cfg(test)]
     use super::*;
     use crate::sensitivity::Sensitivity;
     use kod_provider::{ModelInfo, ModelRef};

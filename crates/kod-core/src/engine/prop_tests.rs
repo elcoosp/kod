@@ -1,3 +1,4 @@
+#![cfg(test)]
     //! Property tests for the \0kod-* marker protocol.
     //!
     //! The four markers (`tool_start_marker`, `tool_args_marker`,

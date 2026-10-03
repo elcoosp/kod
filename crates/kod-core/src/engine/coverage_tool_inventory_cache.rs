@@ -1,3 +1,4 @@
+#![cfg(test)]
     //! Pins the invariant that `ground_prompt`'s tool inventory
     //! lands only in the volatile tail, never in the cacheable head
     //! (Tier 3.1). If a future change moved the inventory above the

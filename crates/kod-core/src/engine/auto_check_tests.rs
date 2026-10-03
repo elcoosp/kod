@@ -1,3 +1,4 @@
+#![cfg(test)]
     //! Tests for the auto-check injection in `run_tool_calls`.
     //!
     //! The feature is subtle: after a write_file succeeds, the engine

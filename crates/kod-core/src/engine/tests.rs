@@ -1,3 +1,4 @@
+#![cfg(test)]
     #[test]
     fn sweep_background_spools_keeps_the_newest() {
         // F2c-9: with more than the cap of `.log` files, the oldest

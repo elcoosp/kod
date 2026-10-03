@@ -1,3 +1,4 @@
+#![cfg(test)]
     use super::*;
     use crate::router::RouterConfig;
     use crate::session_log::{SessionEntry, SessionRecorder};

@@ -1,3 +1,4 @@
+#![cfg(test)]
     //! `expand_at_references` is the @-syntax preprocessor for a
     //! prompt. The containment rule it enforces is the same one
     //! the tool context uses: a resolved path must live inside

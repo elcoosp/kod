@@ -276,12 +276,19 @@ impl KodApp {
         if elapsed < threshold {
             return None;
         }
-        // Terminal bell.
-        eprint!("\x07");
-        // OSC 9 notification (iTerm2, Windows Terminal, kitty). Some
-        // terminals do not implement it and ignore the sequence.
-        let msg = format!("kod: turn completed in {}s", elapsed.as_secs());
-        eprint!("\x1b]9;{}\x07", msg);
+        // F2g-13: only ring when stderr is a terminal. Writing raw
+        // control bytes to a piped or redirected stderr corrupts the
+        // captured output, and the TUI already owns the screen.
+        use std::io::IsTerminal as _;
+        if std::io::stderr().is_terminal() {
+            // Terminal bell.
+            eprint!("\x07"); // tripwire:allow — bell
+            // OSC 9 notification (iTerm2, Windows Terminal, kitty).
+            // Some terminals do not implement it and ignore the
+            // sequence.
+            let msg = format!("kod: turn completed in {}s", elapsed.as_secs());
+            eprint!("\x1b]9;{}\x07", msg); // tripwire:allow — OSC 9
+        }
         Some(elapsed)
     }
 

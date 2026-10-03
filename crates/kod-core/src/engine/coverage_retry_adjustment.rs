@@ -1,3 +1,4 @@
+#![cfg(test)]
     //! Pins the shape of `KodEngine::apply_retry_adjustment`
     //! (Tier 3.3). The function is pure: it mutates two locals and
     //! returns whether the strategy could help. A regression either
