@@ -68,6 +68,9 @@ pub fn parse_agents_md(src: &str, from: &Path) -> Vec<InstructionSection> {
     let mut current_name: Option<String> = None;
     let mut buf = String::new();
     let mut in_fence = false;
+    // F2b-9: track markdown ``` fences so a `::: when` shown as an
+    // example inside a code block is not parsed as a live directive.
+    let mut in_code_fence = false;
 
     fn flush(
         out: &mut Vec<InstructionSection>,
@@ -90,7 +93,15 @@ pub fn parse_agents_md(src: &str, from: &Path) -> Vec<InstructionSection> {
 
     for line in src.lines() {
         let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix(":::") {
+        if trimmed.starts_with("```") {
+            in_code_fence = !in_code_fence;
+            buf.push_str(line);
+            buf.push('\n');
+            continue;
+        }
+        if !in_code_fence
+            && let Some(rest) = trimmed.strip_prefix(":::")
+        {
             let rest = rest.trim();
             if rest.is_empty() {
                 flush(
@@ -117,7 +128,7 @@ pub fn parse_agents_md(src: &str, from: &Path) -> Vec<InstructionSection> {
             }
             continue;
         }
-        if !in_fence && let Some(name) = trimmed.strip_prefix("## ") {
+        if !in_code_fence && !in_fence && let Some(name) = trimmed.strip_prefix("## ") {
             flush(
                 &mut out,
                 current_when.clone(),
