@@ -189,7 +189,7 @@ impl SkillParser {
         let pattern = format!("{}='", attr);
         let start = tag.find(&pattern)?;
         let content_start = start + pattern.len();
-        let end = tag[content_start..].find('"')? + content_start;
+        let end = tag[content_start..].find('\'')? + content_start;
 
         Some(tag[content_start..end].to_string())
     }
