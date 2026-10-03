@@ -379,7 +379,7 @@ impl LlmProvider for AnthropicProvider {
                         && delay <= self.rate_limit_wait
                     {
                         return Err(KodError::RateLimited {
-                            retry_after_secs: delay.as_secs(),
+                            retry_after_secs: (delay.as_millis() as u64).div_ceil(1000).max(1),
                         });
                     }
                     let mut err = KodError::provider_status_with_hint(
