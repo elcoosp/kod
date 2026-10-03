@@ -835,6 +835,10 @@ impl KodEngine {
             tool_context.read_protection = guard.clone();
         }
         tool_context.redactor = Some(self.redactor.clone());
+        // F2b-10: thread the config's `.git` write protection.
+        tool_context.git_history_protected = self
+            .git_history_protected
+            .load(std::sync::atomic::Ordering::Relaxed);
         if per_transcript_wd != self.working_dir {
             tool_context.working_dir = per_transcript_wd;
         }

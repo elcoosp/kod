@@ -722,6 +722,12 @@ pub struct ToolContext {
     /// `None` means "no protection" — the pre-1.3 behaviour a test
     /// or embedder that builds a bare context sees.
     pub read_protection: Option<kod_config::ReadProtection>,
+    /// F2b-10: honor `[policy.git] history_protected`. When `true`
+    /// (the default) a raw `write_file`/`patch_file` into `.git` is
+    /// refused; when `false` the deny is skipped and the git tools'
+    /// own `GitAccess` gate is the only barrier. Fed from config by
+    /// the engine's bootstrap; a bare `ToolContext::new` stays `true`.
+    pub git_history_protected: bool,
     /// The redactor used to sanitize file content under `Redact`
     /// mode. `None` disables redaction even when a rule matched.
     pub redactor: Option<std::sync::Arc<kod_types::redact::Redactor>>,
@@ -866,6 +872,7 @@ impl ToolContext {
             lock_timeout: std::time::Duration::from_secs(2),
             sandbox: SandboxMode::Auto,
             read_protection: None,
+            git_history_protected: true,
             redactor: None,
             allowed_domains: Vec::new(),
             allowed_write_globs: None,
@@ -933,6 +940,12 @@ impl ToolContext {
     }
 
     /// Enable or disable sandboxed shell execution.
+    /// F2b-10: set `.git` write protection (default `true`).
+    pub fn with_git_history_protected(mut self, protected: bool) -> Self {
+        self.git_history_protected = protected;
+        self
+    }
+
     pub fn with_sandbox(mut self, mode: SandboxMode) -> Self {
         self.sandbox = mode;
         self
@@ -1128,9 +1141,10 @@ impl ToolContext {
         // The check is on the path components, so a symlink that
         // points *into* `.git` is caught after `resolve_path` too
         // (which canonicalizes the link target).
-        if path
-            .components()
-            .any(|c| c.as_os_str() == std::ffi::OsStr::new(".git"))
+        if self.git_history_protected
+            && path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new(".git"))
         {
             return Err(KodError::PermissionDenied {
                 action: "write".to_string(),

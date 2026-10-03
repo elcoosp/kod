@@ -253,6 +253,7 @@ impl KodEngine {
             // that never touches this gets the design's safe default.
             sandbox_mode_atomic: std::sync::atomic::AtomicU8::new(2),
             read_protection: std::sync::RwLock::new(None),
+            git_history_protected: std::sync::atomic::AtomicBool::new(true),
             redactor: std::sync::Arc::new(kod_types::redact::Redactor::default()),
             // Delta §14.1: the vault is installed by the CLI/TUI via
             // `set_secret_vault` after construction. A default

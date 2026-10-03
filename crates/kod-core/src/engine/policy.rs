@@ -7,6 +7,12 @@ impl KodEngine {
     /// `write_file`/`patch_file` and leaves every other tool alone —
     /// the pre-D3 behaviour.
     pub async fn set_policy(&self, policy: Arc<kod_config::PolicyEngine>) {
+        // F2b-10: cache the git-history knob so the per-call context
+        // builder can thread it without re-reading the policy.
+        self.git_history_protected.store(
+            policy.git_history_protected(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         *self.policy.write().await = Some(policy);
     }
 

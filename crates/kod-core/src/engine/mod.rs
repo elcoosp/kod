@@ -1706,6 +1706,10 @@ pub struct KodEngine {
     sandbox_mode_atomic: std::sync::atomic::AtomicU8,
     /// Read-protection rules (Tier 1.3).
     read_protection: std::sync::RwLock<Option<kod_config::ReadProtection>>,
+    /// F2b-10: from `[policy.git] history_protected`. Threaded into
+    /// every per-call `ToolContext`; `true` (the default) refuses a
+    /// raw write into `.git`.
+    git_history_protected: std::sync::atomic::AtomicBool,
     /// The redactor used for content sanitization (Tier 1.3).
     redactor: std::sync::Arc<kod_types::redact::Redactor>,
     /// Delta §14.1: the reversible secret-placeholder vault. When
