@@ -805,10 +805,14 @@ impl KodEngine {
                     // A firing rule with `interrupt` aborts the stream
                     // so the caller injects the correction and retries;
                     // a non-interrupting hit is logged.
-                    {
+                    // T3-C7: compute the interrupt under the lock, then
+                    // drop the write guard before any send. Holding the
+                    // TTSR write lock across `chunk_tx.send().await`
+                    // parks the whole TTSR subsystem when a slow
+                    // consumer fills the channel.
+                    let interrupt = {
                         let mut engine = self.ttsr.write().await;
                         let fired = engine.observe_text(&t);
-                        let interrupt = fired.iter().find(|f| f.interrupt).cloned();
                         if !fired.is_empty() {
                             for f in &fired {
                                 tracing::debug!(
@@ -818,14 +822,15 @@ impl KodEngine {
                                 );
                             }
                         }
-                        if let Some(f) = interrupt {
-                            let _ = chunk_tx.send(t).await;
-                            stream_error = Some(KodError::InvalidState(format!(
-                                "ttsr rule `{}` fired: {}",
-                                f.id, f.correction,
-                            )));
-                            break;
-                        }
+                        fired.iter().find(|f| f.interrupt).cloned()
+                    };
+                    if let Some(f) = interrupt {
+                        let _ = chunk_tx.send(t).await;
+                        stream_error = Some(KodError::InvalidState(format!(
+                            "ttsr rule `{}` fired: {}",
+                            f.id, f.correction,
+                        )));
+                        break;
                     }
                     let _ = chunk_tx.send(t).await;
                     chunk_count += 1;
