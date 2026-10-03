@@ -234,9 +234,15 @@ impl IrcBus {
     /// `TargetStopped` rather than timing out.
     pub async fn mark_dead(&self, id: &str) {
         let mut g = self.inner.lock().await;
+        // T5-C4: drop every parked oneshot sender so receivers wake with
+        // TargetStopped immediately instead of waiting the full timeout.
+        let waiter_keys: Vec<u64> = g.waiters.keys().copied().collect();
         if let Some(a) = g.agents.get_mut(id) {
             a.dead = true;
             a.has_receiver = false;
+        }
+        for k in waiter_keys {
+            let _ = g.waiters.remove(&k);
         }
     }
 
