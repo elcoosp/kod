@@ -45,12 +45,18 @@ triggers:
 Python testing instructions.
 "#;
 
-    // Create subdirectories for organization
-    let coding_dir = skills_dir.join("coding");
-    fs::create_dir_all(&coding_dir).unwrap();
+    // One directory per skill, each containing SKILL.md. The loader
+    // consults top-level .md files and SKILL.md inside a one-level
+    // subdirectory — a bare `coding/rust.md` is not a candidate, by
+    // design (resource files inside a skill package must not be loaded
+    // as standalone skills).
+    let rust_dir = skills_dir.join("rust-refactoring");
+    fs::create_dir_all(&rust_dir).unwrap();
+    fs::write(rust_dir.join("SKILL.md"), rust_skill).unwrap();
 
-    fs::write(coding_dir.join("rust.md"), rust_skill).unwrap();
-    fs::write(coding_dir.join("python.md"), python_skill).unwrap();
+    let python_dir = skills_dir.join("python-testing");
+    fs::create_dir_all(&python_dir).unwrap();
+    fs::write(python_dir.join("SKILL.md"), python_skill).unwrap();
 
     // Create an invalid file (should be skipped)
     fs::write(skills_dir.join("invalid.md"), "not a valid skill").unwrap();
