@@ -1183,9 +1183,15 @@ impl LearnedAllow {
     pub fn from_call(call: &ToolCall) -> Self {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         let bytes = serde_json::to_vec(&call.arguments).unwrap_or_default();
-        for b in bytes {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        // T3-C3: SHA-256-derived u64 instead of FNV-1a so collisions are
+        // cryptographically hard rather than trivially brute-forceable.
+        use sha2::{Digest, Sha256};
+        let mut sha = Sha256::new();
+        sha.update(&bytes);
+        let digest = sha.finalize();
+        let mut h: u64 = 0;
+        for b in &digest[..8] {
+            h = (h << 8) | (*b as u64);
         }
         Self {
             tool_name: call.tool_name.clone(),
@@ -2615,7 +2621,18 @@ impl KodEngine {
                         }
                     }
 
-                    let status = child.wait().await;
+                    let status = match tokio::time::timeout(
+                        std::time::Duration::from_secs(60),
+                        child.wait(),
+                    )
+                    .await
+                    {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let _ = child.start_kill();
+                            child.wait().await
+                        }
+                    };
                     let preview = spool.preview();
                     let summary = match status {
                         Ok(s) if s.success() => format!(
@@ -2755,7 +2772,18 @@ impl KodEngine {
                         }
                     }
                 }
-                let status = child.wait().await;
+                let status = match tokio::time::timeout(
+                    std::time::Duration::from_secs(60),
+                    child.wait(),
+                )
+                .await
+                {
+                    Ok(s) => s,
+                    Err(_) => {
+                        let _ = child.start_kill();
+                        child.wait().await
+                    }
+                };
                 let preview = spool.preview();
                 let summary = match status {
                     Ok(s) if s.success() => format!(
