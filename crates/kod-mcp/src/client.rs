@@ -92,6 +92,10 @@ impl McpClient {
             // to `tracing` when we need to debug a misbehaving server.
             .stderr(Stdio::null())
             .kill_on_drop(true);
+        #[cfg(unix)]
+        command.process_group(0);
+        #[cfg(unix)]
+        command.process_group(0);
         for (k, v) in env {
             command.env(k, v);
         }
@@ -332,6 +336,8 @@ async fn read_loop(
     pending: PendingMap,
     stdin: std::sync::Arc<tokio::sync::Mutex<ChildStdin>>,
 ) {
+    const MAX_LINE_BYTES: usize = 10 * 1024 * 1024;
+    const MAX_LINE_BYTES: usize = 10 * 1024 * 1024;
     let mut reader = BufReader::new(stdout).lines();
     loop {
         match reader.next_line().await {
