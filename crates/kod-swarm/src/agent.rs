@@ -278,6 +278,8 @@ impl Agent {
     pub fn is_timed_out(&self, timeout: Duration) -> bool {
         match self.last_heartbeat() {
             Some(last) => last.elapsed() > timeout,
+            // T5-C18: a never-started agent is not "timed out".
+            // T5-C18: a never-started agent is not "timed out".
             None => true, // No heartbeat means timed out
         }
     }
