@@ -531,28 +531,38 @@ impl PolicyEngine {
             if tool == "execute_command"
                 && let Some(cmd) = args.get("command").and_then(|v| v.as_str())
             {
-                let first = cmd
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or("");
+                // T5-C7: candidates include every binary the shell
+                // wrapper chain reveals, so `bash -c 'rm x'` sees `rm`.
+                let candidates = binary_candidates(cmd);
                 if let Some(forbidden) = &tp.forbidden_binaries
-                    && forbidden.iter().any(|b| b == first)
+                    && candidates.iter().any(|c| forbidden.iter().any(|b| b == c))
                 {
+                    let hit = candidates
+                        .iter()
+                        .find(|c| forbidden.iter().any(|b| b == *c))
+                        .cloned()
+                        .unwrap_or_default();
                     return PolicyDecision {
                         outcome: Decision::Deny,
-                        rule: format!("{tool} forbids binary {first:?}"),
+                        rule: format!("{tool} forbids binary {hit:?}"),
                         source: self.source_for(tool),
                     };
                 }
                 if let Some(allow) = &tp.binaries
-                    && !allow.iter().any(|b| b == first)
+                    && candidates
+                        .iter()
+                        .any(|c| !allow.iter().any(|b| b == c))
                 {
+                    let hit = candidates
+                        .iter()
+                        .find(|c| !allow.iter().any(|b| b == *c))
+                        .cloned()
+                        .unwrap_or_default();
                     return PolicyDecision {
                         outcome: Decision::Deny,
-                        rule: format!("{tool} allow-list does not include binary {first:?}"),
+                        rule: format!(
+                            "{tool} allow-list does not include binary {hit:?} (from command {cmd:?})"
+                        ),
                         source: self.source_for(tool),
                     };
                 }
