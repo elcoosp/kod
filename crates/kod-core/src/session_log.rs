@@ -372,7 +372,7 @@ impl SessionRecorder {
         let line =
             serde_json::to_string(&cloned).map_err(|e| KodError::Serialization(e.to_string()))?;
         {
-            let mut w = self.writer.lock().unwrap();
+            let mut w = self.writer.lock().unwrap_or_else(|p| p.into_inner());
             // H-D10: one `write_all` of the full line + newline, not
             // `writeln!`. `writeln!` on a raw File issues two
             // `write` syscalls (payload, newline); O_APPEND atomicity
@@ -424,7 +424,7 @@ impl SessionRecorder {
     /// this returns") without relying on the per-line flush not
     /// regressing later.
     pub fn flush(&self) -> Result<()> {
-        let mut w = self.writer.lock().unwrap();
+        let mut w = self.writer.lock().unwrap_or_else(|p| p.into_inner());
         w.flush().map_err(KodError::Io)?;
         Ok(())
     }
