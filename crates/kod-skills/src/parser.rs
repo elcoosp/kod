@@ -179,7 +179,14 @@ impl SkillParser {
 
     /// Extract attribute value from an XML-like tag
     fn extract_attribute(&self, tag: &str, attr: &str) -> Option<String> {
+        // T5-C31: double quotes first, then single.
         let pattern = format!("{}=\"", attr);
+        if let Some(start) = tag.find(&pattern) {
+            let rest = &tag[start + pattern.len()..];
+            let end = rest.find('"')?;
+            return Some(rest[..end].to_string());
+        }
+        let pattern = format!("{}='", attr);
         let start = tag.find(&pattern)?;
         let content_start = start + pattern.len();
         let end = tag[content_start..].find('"')? + content_start;
