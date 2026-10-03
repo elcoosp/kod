@@ -218,7 +218,7 @@ fn landlock_invocation(wd: &Path, opts: SandboxOpts) -> Result<SandboxInvocation
             PathBuf::from("/bin"),
             PathBuf::from("/etc"),
         ],
-        rw_paths: vec![wd.to_path_buf()],
+        rw_paths: vec![std::fs::canonicalize(wd).unwrap_or_else(|_| wd.to_path_buf())],
         net_deny: opts.net_deny,
     };
     if opts.git_readonly {
@@ -372,6 +372,9 @@ fn bwrap_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
         "--ro-bind".into(),
         "/etc".into(),
         "/etc".into(),
+        "--unshare-pid".into(),
+        "--unshare-user".into(),
+        "--unshare-uts".into(),
         "--dev".into(),
         "/dev".into(),
         "--proc".into(),
@@ -433,7 +436,8 @@ fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
     // Seatbelt rules are evaluated top-to-bottom and the *last*
     // matching rule wins, so `(deny file-write* ...)` on .git must
     // come after the general `(allow file-write* ...)`.
-    let mut profile = String::from("(version 1)\n(allow default)\n");
+    let mut profile = String::from("(version 1)\n(deny default)\n");
+    profile.push_str("(allow file-read* (subpath \"/usr\") (subpath \"/lib\") (subpath \"/System\") (subpath \"/bin\") (subpath \"/sbin\"))\n");
     if opts.net_deny {
         profile.push_str("(deny network*)\n");
     }
