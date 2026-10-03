@@ -28,6 +28,10 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{Mutex, OnceCell, oneshot};
 
+// T2-C6: cap on a single MCP server line. Bounds the per-line
+// allocation in `read_loop`.
+const MAX_LINE_BYTES: usize = 10 * 1024 * 1024;
+
 /// The per-request responder map. `i64` request ids map to a
 /// oneshot that will carry the server's reply (or an error). The
 /// alias exists because the raw type is a four-layer generic and
@@ -330,13 +334,14 @@ impl McpClient {
     }
 }
 
+
+
 /// Background reader: parse one JSON object per line, dispatch by id.
 async fn read_loop(
     stdout: ChildStdout,
     pending: PendingMap,
     stdin: std::sync::Arc<tokio::sync::Mutex<ChildStdin>>,
 ) {
-    const MAX_LINE_BYTES: usize = 10 * 1024 * 1024;
     let mut reader = BufReader::new(stdout);
     let mut line_buf: Vec<u8> = Vec::new();
     loop {
@@ -653,3 +658,21 @@ for line in sys.stdin:
         }
     }
 }
+
+#[cfg(test)]
+mod t2_c6_regression {
+    use super::MAX_LINE_BYTES;
+
+    #[test]
+    fn max_line_bytes_is_bounded() {
+        assert!(
+            MAX_LINE_BYTES <= 64 * 1024 * 1024,
+            "MAX_LINE_BYTES = {MAX_LINE_BYTES}; above 64 MiB is not a cap",
+        );
+        assert!(
+            MAX_LINE_BYTES >= 64 * 1024,
+            "MAX_LINE_BYTES = {MAX_LINE_BYTES}; below 64 KiB rejects real frames",
+        );
+    }
+}
+
