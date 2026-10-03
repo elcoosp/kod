@@ -180,6 +180,18 @@ pub(crate) fn atomic_write(path: &std::path::Path, content: &[u8]) -> std::io::R
             let _ = std::fs::set_permissions(&tmp, perms);
         }
         std::fs::rename(&tmp, path)?;
+        // T1-C6: fsync the parent directory so the rename is durable.
+        if let Some(parent) = path.parent() {
+            if let Ok(dir) = std::fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
+        }
+        // T1-C6: fsync the parent directory so the rename is durable.
+        if let Some(parent) = path.parent() {
+            if let Ok(dir) = std::fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
+        }
         Ok(())
     })();
     if result.is_err() {
@@ -1623,6 +1635,15 @@ impl Tool for PatchFileTool {
 
         // M-39: same TOCTOU re-check as the write path.
         context.revalidate_write_parent(&resolved)?;
+        // T1-C9: re-read the file under the lock and refuse to clobber a
+        // concurrent non-kod edit (IDE save, git checkout).
+        let fresh = std::fs::read_to_string(&resolved).unwrap_or_default();
+        if fresh != original {
+            return Ok(ToolResult::Error(format!(
+                "patch_file: file changed between read and write ({} bytes -> {} bytes); re-read and re-apply",
+                original.len(), fresh.len()
+            )));
+        }
         if let Err(e) = atomic_write(&resolved, patched.as_bytes()) {
             return Ok(ToolResult::Error(describe_path_error(&resolved, &e)));
         }
