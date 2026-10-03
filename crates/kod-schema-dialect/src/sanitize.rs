@@ -245,12 +245,23 @@ pub fn sanitize(schema: &Value, spec: &DialectSpec) -> (Value, Vec<AppliedTransf
     (out, applied)
 }
 
+const MAX_SCHEMA_DEPTH: usize = 64;
+
 fn sanitize_in_place(
     value: &mut Value,
     spec: &DialectSpec,
     path: &str,
     applied: &mut Vec<AppliedTransform>,
+    depth: usize,
 ) {
+    if depth >= MAX_SCHEMA_DEPTH {
+        applied.push(AppliedTransform::Removed {
+            path: path.to_string(),
+            keyword: "<deeply-nested-schema-dropped>".to_string(),
+        });
+        *value = Value::Object(Default::default());
+        return;
+    }
     let Some(obj) = value.as_object_mut() else {
         return;
     };
