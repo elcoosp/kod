@@ -236,12 +236,7 @@ impl KodError {
         // T5-C9: strip secrets before embedding the body in Display.
         let snippet = {
             use kod_types::redact::Redactor;
-            Redactor::default().redact(&snippet)
-        };
-        // T5-C9: strip secrets before embedding the body in Display.
-        let snippet = {
-            use kod_types::redact::Redactor;
-            Redactor::default().redact(&snippet)
+            Redactor::default().redact(&snippet).0
         };
         match status {
             401 | 403 => KodError::Provider(format!("auth error {status}: {snippet}")),
