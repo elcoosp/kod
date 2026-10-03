@@ -337,10 +337,21 @@ async fn read_loop(
     stdin: std::sync::Arc<tokio::sync::Mutex<ChildStdin>>,
 ) {
     const MAX_LINE_BYTES: usize = 10 * 1024 * 1024;
-    const MAX_LINE_BYTES: usize = 10 * 1024 * 1024;
     let mut reader = BufReader::new(stdout).lines();
     loop {
         match reader.next_line().await {
+            // T2-C6: cap the line length. A misbehaving server can emit
+            // an arbitrarily long line; without this bound, `lines()`
+            // allocates without limit.
+            Ok(Some(ref line)) if line.len() > MAX_LINE_BYTES => {
+                tracing::error!(
+                    target: "mcp",
+                    bytes = line.len(),
+                    cap = MAX_LINE_BYTES,
+                    "server line exceeded cap; closing connection"
+                );
+                break;
+            }
             Ok(Some(line)) => {
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
