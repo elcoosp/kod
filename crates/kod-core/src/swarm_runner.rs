@@ -667,8 +667,8 @@ impl SwarmRunner {
             let slug = format!("agent-{}-{}", i + 1, sanitize(cap.as_str()));
             let agent = AgentBuilder::new(&slug).with_capability(*cap).build();
             let id = agent.id().clone();
-            swarm.add_agent(agent).await?;
-            swarm.start_agent(&id).await?;
+            if let Err(e) = swarm.add_agent(agent).await { self.engine.uninstall_swarm_file_bus().await; return Err(e); }
+            if let Err(e) = swarm.start_agent(&id).await { self.engine.uninstall_swarm_file_bus().await; return Err(e); }
 
             // Point this agent's transcript at its own worktree, if one
             // was created. The per-transcript working_dir override
@@ -764,8 +764,8 @@ impl SwarmRunner {
 
             let task = Task::new(st.description.clone(), Priority::Medium);
             let task_id = task.id.clone();
-            swarm.coordinator().register_task(task).await?;
-            swarm.coordinator().assign_task(&task_id, &chosen).await?;
+            if let Err(e) = swarm.coordinator().register_task(task).await { self.engine.uninstall_swarm_file_bus().await; return Err(e); }
+            if let Err(e) = swarm.coordinator().assign_task(&task_id, &chosen).await { self.engine.uninstall_swarm_file_bus().await; return Err(e); }
 
             // H-D1: mint a *fresh* dispatch id for this subtask. The
             // engine keys its per-transcript state (history, cancel
