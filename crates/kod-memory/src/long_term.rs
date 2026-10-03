@@ -20,6 +20,14 @@ use std::sync::Arc;
 
 const MEMORY_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("memories");
 
+/// F2i-10: `content_hash(8 bytes BE) || memory_type_tag(1) -> memory id`.
+/// Lets the store path answer "is this exact content already present?"
+/// without deserializing the whole `MEMORY_TABLE`. A miss falls back to
+/// the full scan, so an entry written before this index existed still
+/// dedups correctly.
+const HASH_INDEX_TABLE: TableDefinition<&[u8], &[u8]> =
+    TableDefinition::new("content_hash_index");
+
 /// Persistent long-term memory storage.
 pub struct LongTermMemory {
     db: Arc<Database>,
@@ -49,6 +57,10 @@ impl LongTermMemory {
 
         txn.open_table(MEMORY_TABLE)
             .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {}", e)))?;
+        // F2i-10: create the index table on first open so a fresh db
+        // has it; an existing db gets it the first time `store` writes.
+        txn.open_table(HASH_INDEX_TABLE)
+            .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {}", e)))?;
 
         txn.commit()
             .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {}", e)))?;
@@ -74,12 +86,74 @@ impl LongTermMemory {
             .map_err(|e| KodError::MemoryDatabase(format!("spawn_blocking join failed: {}", e)))?
     }
 
+    /// F2i-10: one byte standing in for `MemoryType`, so the index key
+    /// is fixed-width without serde.
+    fn type_tag(t: kod_types::MemoryType) -> u8 {
+        match t {
+            kod_types::MemoryType::ShortTerm => 0,
+            kod_types::MemoryType::LongTerm => 1,
+            kod_types::MemoryType::Episodic => 2,
+        }
+    }
+
+    /// F2i-10: index key for `(content_hash, memory_type)`.
+    fn index_key(hash: u64, t: kod_types::MemoryType) -> [u8; 9] {
+        let mut k = [0u8; 9];
+        k[..8].copy_from_slice(&hash.to_be_bytes());
+        k[8] = Self::type_tag(t);
+        k
+    }
+
+    /// F2i-10: look up an existing entry id by content hash +
+    /// memory type, without deserializing the corpus. `None` means
+    /// "no index hit" — the caller falls back to a full scan so an
+    /// entry predating the index still dedups.
+    pub async fn find_by_content_hash(
+        &self,
+        hash: u64,
+        memory_type: kod_types::MemoryType,
+    ) -> Result<Option<MemoryId>> {
+        let key = Self::index_key(hash, memory_type);
+        self.blocking(move |db| {
+            let txn = db.begin_read().map_err(|e| {
+                KodError::MemoryDatabase(format!("Failed to start read transaction: {}", e))
+            })?;
+            let table = match txn.open_table(HASH_INDEX_TABLE) {
+                Ok(t) => t,
+                // Table absent on an old db: no hit, caller rescans.
+                Err(_) => return Ok(None),
+            };
+            let Some(v) = table
+                .get(key.as_slice())
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to get: {}", e)))?
+            else {
+                return Ok(None);
+            };
+            let bytes = v.value();
+            if bytes.len() != 16 {
+                return Ok(None);
+            }
+            let mut u = [0u8; 16];
+            u.copy_from_slice(bytes);
+            Ok(Some(MemoryId::from_uuid(uuid::Uuid::from_bytes(u))))
+        })
+        .await
+    }
+
     /// Store an entry persistently. Overwrites any existing entry with
     /// the same id.
     pub async fn store(&self, entry: MemoryEntry) -> Result<()> {
         let key = entry.id.as_uuid().as_bytes().to_vec();
         let value =
             serde_json::to_vec(&entry).map_err(|e| KodError::Serialization(e.to_string()))?;
+        // F2i-10: keep the content-hash index in step with the entry.
+        let idx_key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            entry.content.hash(&mut h);
+            Self::index_key(h.finish(), entry.memory_type)
+        };
+        let idx_val = entry.id.as_uuid().as_bytes().to_vec();
 
         self.blocking(move |db| {
             let txn = db.begin_write().map_err(|e| {
@@ -91,6 +165,11 @@ impl LongTermMemory {
                 })?;
                 table
                     .insert(key.as_slice(), value.as_slice())
+                    .map_err(|e| KodError::MemoryDatabase(format!("Failed to insert: {}", e)))?;
+                let mut idx = txn.open_table(HASH_INDEX_TABLE).map_err(|e| {
+                    KodError::MemoryDatabase(format!("Failed to open table: {}", e))
+                })?;
+                idx.insert(idx_key.as_slice(), idx_val.as_slice())
                     .map_err(|e| KodError::MemoryDatabase(format!("Failed to insert: {}", e)))?;
             }
             txn.commit()
@@ -397,6 +476,51 @@ mod tests {
     use super::*;
     use kod_types::MemoryType;
     use tempfile::TempDir;
+
+    fn entry(content: &str) -> MemoryEntry {
+        MemoryEntry {
+            id: MemoryId::new(),
+            memory_type: kod_types::MemoryType::LongTerm,
+            content: content.to_string(),
+            timestamp: time::OffsetDateTime::now_utc(),
+            relevance: 1.0,
+            metadata: Default::default(),
+            superseded_by: None,
+            contradicts: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn content_hash_index_dedups_without_a_scan() {
+        // F2i-10: storing the same content twice must return the same
+        // id via the index, not via a full-table scan.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let m = LongTermMemory::new(&tmp.path().join("m.redb")).unwrap();
+        let stored = entry("Rust is a systems language");
+        let id = stored.id.clone();
+        m.store(stored.clone()).await.unwrap();
+        let hit = m
+            .find_by_content_hash({
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                stored.content.hash(&mut h);
+                h.finish()
+            }, stored.memory_type)
+            .await
+            .unwrap();
+        assert_eq!(hit, Some(id), "index must return the stored id");
+    }
+
+    #[tokio::test]
+    async fn content_hash_index_miss_for_unknown() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let m = LongTermMemory::new(&tmp.path().join("m.redb")).unwrap();
+        let hit = m
+            .find_by_content_hash(0xdead_beef, kod_types::MemoryType::LongTerm)
+            .await
+            .unwrap();
+        assert_eq!(hit, None);
+    }
 
     #[tokio::test]
     async fn test_basic_operations() {

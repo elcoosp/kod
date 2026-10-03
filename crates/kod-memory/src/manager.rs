@@ -496,6 +496,36 @@ impl MemoryManager {
             let mut h = DefaultHasher::new();
             content.hash(&mut h);
             let content_hash = h.finish();
+            // F2i-10: the index answers "already present?" in O(log n)
+            // without deserializing the whole table. A miss (None) means
+            // either genuinely new content or an entry written before the
+            // index existed; only then do we fall back to the O(corpus)
+            // scan so an old entry still dedups.
+            if let Some(id) = self
+                .long_term
+                .find_by_content_hash(content_hash, memory_type)
+                .await?
+            {
+                // A re-mention is evidence: raise confidence, persist.
+                if let Some(e) = self.long_term.get(&id).await? {
+                    let current = e.metadata.confidence.unwrap_or_else(|| {
+                        crate::veracity::Veracity::Stated.base_confidence() as f32
+                    });
+                    let raised = crate::veracity::raise_confidence(
+                        current as f64,
+                        crate::veracity::Veracity::Stated.weight(),
+                    ) as f32;
+                    if raised > current + f32::EPSILON {
+                        let mut bumped = e.clone();
+                        bumped.metadata.confidence = Some(raised);
+                        if let Err(err) = self.long_term.store(bumped).await {
+                            tracing::warn!(error = %err, "re-mention confidence bump: persist failed");
+                        }
+                    }
+                    return Ok(id);
+                }
+            }
+            // Fallback: full scan (old entries, or an index miss).
             let existing = self.long_term.get_all().await?;
             for e in existing {
                 let mut eh = DefaultHasher::new();

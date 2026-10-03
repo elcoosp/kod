@@ -13,6 +13,7 @@ tokio = { workspace = true }
 redb = { workspace = true }
 reqwest = { workspace = true }
 async-trait = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
 parking_lot = { workspace = true }
 tracing = { workspace = true }
 time = { workspace = true }
