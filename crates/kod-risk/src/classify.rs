@@ -301,6 +301,24 @@ fn split_segments(tokens: &[String]) -> Vec<Vec<String>> {
 
 /// Assess a command.
 pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
+    // T5-C2: `tokenize` emits a sentinel when a heredoc body has no
+    // closing terminator (the rest of the command would otherwise be
+    // silently swallowed as heredoc data). Escalate so the gate does
+    // not return Safe for `cat foo <<EOF; rm -rf /`.
+    if tokenize(command)
+        .iter()
+        .any(|t| t == "__kod_heredoc_unterminated__")
+    {
+        return RiskAssessment {
+            level: RiskLevel::Confirm,
+            findings: vec![RiskFinding {
+                level: RiskLevel::Confirm,
+                reason: "heredoc body had no closing terminator".to_string(),
+                target: command.to_string(),
+            }],
+        };
+    }
+
     let tokens = tokenize(command);
     let mut findings: Vec<RiskFinding> = Vec::new();
 
@@ -499,13 +517,6 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
         // A pipe whose producer is a `find ~` and consumer a
         // destructive command: escalate — the set of affected files
         // is exactly what cannot be checked.
-        if prog_base == "xargs" && pipe_fed {
-            findings.push(RiskFinding {
-                level: RiskLevel::Confirm,
-                reason: "xargs in a pipe: the affected set is decided at runtime".to_string(),
-                target: "xargs".to_string(),
-            });
-        }
     }
 
     let level = findings
