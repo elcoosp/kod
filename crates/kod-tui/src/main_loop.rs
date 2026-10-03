@@ -876,6 +876,7 @@ impl TuiLoop {
                 self.dispatch_prompt().await?;
             }
             Event::Quit => {
+                self.cancel_generation();
                 self.app.quit();
             }
             Event::Tick => {
