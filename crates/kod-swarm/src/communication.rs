@@ -252,17 +252,21 @@ impl AgentCommunicationHub {
         drop(agents);
 
         self.record_message(from, &message).await;
-        for (id, _) in &recipients {
-            self.record_message(id, &message).await;
-        }
 
         // Deliver to every recipient. `message` is Clone, so each send
         // gets its own copy. (The previous code moved `message` into
         // the loop; on a single recipient it happened to compile, but
         // the intent is a broadcast, not a one-shot.)
-        for (_, tx) in recipients {
-            tx.send(message.clone())
-                .map_err(|e| KodError::InvalidState(e.to_string()))?;
+        let mut failed = Vec::new();
+        for (id, tx) in recipients {
+            if tx.send(message.clone()).is_err() {
+                failed.push(id);
+            } else {
+                self.record_message(&id, &message).await;
+            }
+        }
+        if !failed.is_empty() {
+            tracing::warn!(?failed, "broadcast dropped for closed recipients");
         }
         Ok(())
     }
