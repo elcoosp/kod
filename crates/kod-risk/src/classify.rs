@@ -133,6 +133,16 @@ pub fn tokenize(command: &str) -> Vec<String> {
         let c = chars[i];
 
         if let Some(term) = &heredoc_terminator {
+            // T5-C2: end of command while still in the heredoc body —
+            // terminator missing, escalate rather than accept truncation.
+            if i >= chars.len() {
+                findings.push(RiskFinding {
+                    level: RiskLevel::Confirm,
+                    reason: "heredoc body had no closing terminator".into(),
+                    target: term.clone(),
+                });
+                break;
+            }
             // Inside a heredoc body: skip whole lines until the
             // terminator.
             let line_end = command[..]
@@ -434,6 +444,54 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
                 };
                 // A destructive command fed from a pipe cannot be
                 // checked: the operands arrive on stdin.
+                // T5-C1: xargs forwards its non-flag operands to the
+                // wrapped command. Classify them even without a pipe.
+                if prog_base == "xargs" {
+                    let mut iter = args.iter();
+                    while let Some(a) = iter.next() {
+                        let a_unq = unquote(a);
+                        if a_unq.starts_with('-') { continue; }
+                        let wrapped_base = a_unq.rsplit('/').next().unwrap_or(&a_unq).to_string();
+                        if DESTRUCTIVE.contains(&wrapped_base.as_str()) {
+                            for rest in iter.by_ref() {
+                                let rest_unq = unquote(rest);
+                                let (danger, why) = classify_path(&rest_unq, ctx);
+                                if danger >= PathDanger::Confirm {
+                                    findings.push(RiskFinding {
+                                        level: danger.into(),
+                                        reason: format!("xargs {wrapped_base}: {why}"),
+                                        target: rest_unq,
+                                    });
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+                // T5-C1: xargs forwards its non-flag operands to the
+                // wrapped command. Classify them even without a pipe.
+                if prog_base == "xargs" {
+                    let mut iter = args.iter();
+                    while let Some(a) = iter.next() {
+                        let a_unq = unquote(a);
+                        if a_unq.starts_with('-') { continue; }
+                        let wrapped_base = a_unq.rsplit('/').next().unwrap_or(&a_unq).to_string();
+                        if DESTRUCTIVE.contains(&wrapped_base.as_str()) {
+                            for rest in iter.by_ref() {
+                                let rest_unq = unquote(rest);
+                                let (danger, why) = classify_path(&rest_unq, ctx);
+                                if danger >= PathDanger::Confirm {
+                                    findings.push(RiskFinding {
+                                        level: danger.into(),
+                                        reason: format!("xargs {wrapped_base}: {why}"),
+                                        target: rest_unq,
+                                    });
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
                 if pipe_fed && prog_base == "xargs" {
                     findings.push(RiskFinding {
                         level: RiskLevel::Confirm,
