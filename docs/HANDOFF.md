@@ -59,18 +59,24 @@ cache), `026d603e` F2g-9 (completion dir cache), `9943ed0c` F2b-11
 `a0d80403` F2h-12 (round-robin least-loaded), `2899779e` F2h-15
 (waiter Drop guard), `87b7d068` F2c-12 (secret-vector cache).
 
-### Still open (verified by scan, not fixed)
+### Closed this session (5 small LOWs + F2i-10)
+
+- `29e1226a` F2b-9 — `parse_agents_md` skips `:::`/`## ` inside code fences
+- `917ef7df` F2d-9 — swarm `run()` error paths uninstall the file bus
+- `cb5ba176` F2b-10 — `[policy.git] history_protected` now honoured
+- `6bf4f618` F2g-13 + F2g-15 — bell/OSC gated on `is_terminal`; tripwire
+  catches `eprint!`; input loop aborts on `stop()`
+- `396e2b61` + `d980b297` F2i-10 (partial) — content-hash index for store
+  dedup; retrieval still scans (inherent to BM25/vector scoring)
+
+### Still open (4 LOWs)
+
 | ID | File | Finding |
 |---|---|---|
-| F2d-9 | `swarm_runner.rs` | error-path `?` skips bus/subscriber cleanup |
 | F2f-18 | `kod-tools/src/git.rs` | `Command::output()` buffers whole stdout before truncate |
-| F2g-13 | `kod-tui/app/ui_state.rs` | raw `eprint!` bell/OSC while TUI owns terminal |
-| F2g-15 | `kod-tui/event.rs` | input task parks after `stop()` |
 | F2d-13 | `kod-core/repomap.rs` | per-match full-file line count |
 | F2h-18 | `kod-cli/commands/observability.rs` | replay temp dirs leak on error |
-| F2i-10 | `kod-memory/manager.rs` | whole redb table deserialized per op |
-| F2b-9 | `kod-config/instructions.rs` | `parse_agents_md` ignores code fences |
-| F2b-10 | `kod-config/policy.rs` | `git.history_protected` has no consumers |
+| F2c-12 | `engine` | per-round `messages.clone()` (needs `Arc`/`Cow`) |
 
 ### F2c-12 — PARTIAL (`87b7d068`)
 Obfuscation cache done. The per-round `messages.clone()` remains;
