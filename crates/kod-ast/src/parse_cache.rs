@@ -100,7 +100,7 @@ impl ParseCache {
         let mut g = self.entries.lock().ok()?;
         let tick = self.tick.fetch_add(1, Ordering::Relaxed);
         for e in g.iter_mut() {
-            if e.hash == hash && e.lang == lang && e.source.as_ref() == source {
+            if e.hash == hash && e.lang == lang && e.source.len() == source.len() {
                 e.last_used = tick;
                 return Some(e.tree.clone());
             }
