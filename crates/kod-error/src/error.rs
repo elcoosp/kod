@@ -233,6 +233,16 @@ impl KodError {
         retry_after: Option<std::time::Duration>,
     ) -> Self {
         let snippet = kod_types::strutil::truncate_chars(body, 300);
+        // T5-C9: strip secrets before embedding the body in Display.
+        let snippet = {
+            use kod_types::redact::Redactor;
+            Redactor::default().redact(&snippet)
+        };
+        // T5-C9: strip secrets before embedding the body in Display.
+        let snippet = {
+            use kod_types::redact::Redactor;
+            Redactor::default().redact(&snippet)
+        };
         match status {
             401 | 403 => KodError::Provider(format!("auth error {status}: {snippet}")),
             404 => KodError::Provider(format!("not found {status}: {snippet}")),
