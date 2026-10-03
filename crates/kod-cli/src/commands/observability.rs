@@ -464,6 +464,15 @@ pub async fn run_trace_replay(
 /// Drive a fresh engine with `prompt` and return the captured
 /// requests. Uses an empty provider registry — we only need the
 /// engine to build the request, not to answer it.
+/// F2h-18: remove the replay scratch dir on every exit path, including
+/// the `return` sites that skip the explicit `remove_dir_all` below.
+struct TempDirGuard(std::path::PathBuf);
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 pub(super) async fn drive_prompt_through_fresh_engine(
     prompt: &str,
 ) -> (Vec<kod_provider::CompletionRequest>, Option<String>) {
@@ -506,6 +515,7 @@ pub(super) async fn drive_prompt_through_fresh_engine(
     if let Err(e) = std::fs::create_dir_all(&tmp) {
         return (Vec::new(), Some(format!("tempdir: {e}")));
     }
+    let _guard = TempDirGuard(tmp.clone());
     let cfg = match std::env::current_dir() {
         Ok(cwd) => kod_core::RouterConfig {
             working_dir: cwd,
@@ -530,7 +540,6 @@ pub(super) async fn drive_prompt_through_fresh_engine(
     }
     let _ = engine.process_for("session", prompt).await;
     let _ = engine.shutdown().await;
-    let _ = std::fs::remove_dir_all(&tmp);
     // The concrete handle is what `captured()` lives on; the
     // provider we gave the registry shares the same inner state.
     let captured = replay_concrete.captured();
