@@ -281,9 +281,13 @@ debug = false
 incremental = false
 overflow-checks = false
 
+# Precompile-perf: deps in release do not need codegen-units = 1.
+# Serializing LLVM codegen for every dep multiplies build time
+# without shrinking the final binary's LTO output — the LTO pass
+# reads the dep's bitcode, which cgu=1 does not improve.
 [profile.release.package."*"]
 opt-level = 3
-codegen-units = 1
+codegen-units = 16
 
 
 [profile.dev]
@@ -306,5 +310,12 @@ debug = true
 # Dependencies stay optimized. They are compiled once and cached,
 # so opt-level 1 on them costs nothing per iteration but keeps
 # perf-sensitive tests honest (they aren't running slow unopt deps).
+# Precompile-perf: dev deps at opt-level 0.
+# The previous opt-level = 1 assumed "compiled once and cached",
+# which is true only if Cargo.toml never changes. Any edit to the
+# workspace Cargo.toml or a dep version bump recompiles all 552
+# packages at opt-1 instead of opt-0. If a specific dep is hot in
+# tests, bump it back individually with a `[profile.dev.package.X]`
+# block.
 [profile.dev.package."*"]
-opt-level = 1
+opt-level = 0
