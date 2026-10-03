@@ -69,14 +69,21 @@ cache), `026d603e` F2g-9 (completion dir cache), `9943ed0c` F2b-11
 - `396e2b61` + `d980b297` F2i-10 (partial) — content-hash index for store
   dedup; retrieval still scans (inherent to BM25/vector scoring)
 
-### Still open (4 LOWs)
+### Closed after the above (3 more LOWs)
 
-| ID | File | Finding |
-|---|---|---|
-| F2f-18 | `kod-tools/src/git.rs` | `Command::output()` buffers whole stdout before truncate |
-| F2d-13 | `kod-core/repomap.rs` | per-match full-file line count |
-| F2h-18 | `kod-cli/commands/observability.rs` | replay temp dirs leak on error |
-| F2c-12 | `engine` | per-round `messages.clone()` (needs `Arc`/`Cow`) |
+- `5b99e5ae` F2d-13 — repomap splits lines once, not per symbol
+- `e107e682` F2h-18 — replay scratch dir removed on every exit path
+- `42753776` F2f-18 — `run_git` streams stdout with a cap, no full buffer
+
+### Still open: F2c-12 only (assessed NOT worth it)
+
+The remaining F2c-12 item is the per-round `messages.clone()` in
+`build_grounded_request`. Measured: ~40 KB memcpy per round against a
+0.5–5 s provider call — noise. The fix needs `Arc<Vec<ChatMessage>>`
+threaded through ~30 sites in `process.rs`, `agent_loop.rs`,
+`tool_dispatch.rs` (two scripted attempts corrupted it; hand-edit
+only). The obfuscation half (the real cost) is already fixed in
+`87b7d068`. **Recommend leaving it.**
 
 ### F2c-12 — PARTIAL (`87b7d068`)
 Obfuscation cache done. The per-round `messages.clone()` remains;
