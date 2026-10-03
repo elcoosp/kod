@@ -245,13 +245,41 @@ pub fn apply(profile: &LandlockProfile) -> Result<()> {
     // as the first 8 bytes of the attr; passing only that field is
     // legal and works on every ABI we support.
     let handled = handled_access_fs(abi);
-    // SAFETY: `handled` is a valid u64; the syscall reads exactly
-    // size_of::<u64>() bytes from the pointer.
+    // T1-C1: on ABI >= 4 the ruleset attr carries a second u64 for the
+    // network access mask. The previous shape passed only
+    // size_of::<u64>() so the kernel read handled_access_fs and left
+    // handled_access_net at 0 — meaning "do not restrict network at
+    // all". net_deny then silently no-op'd on every modern kernel.
+    // With the mask set and no per-port allow rules, restrict_self
+    // denies every connect/bind the profile would otherwise permit.
+    #[repr(C)]
+    struct LandlockRulesetAttr {
+        handled_access_fs: u64,
+        handled_access_net: u64,
+    }
+    const LANDLOCK_ACCESS_NET_BIND_TCP: u64 = 1 << 0;
+    const LANDLOCK_ACCESS_NET_CONNECT_TCP: u64 = 1 << 1;
+    let net_handled: u64 = if profile.net_deny && abi >= 4 {
+        LANDLOCK_ACCESS_NET_BIND_TCP | LANDLOCK_ACCESS_NET_CONNECT_TCP
+    } else {
+        0
+    };
+    let attr = LandlockRulesetAttr {
+        handled_access_fs: handled,
+        handled_access_net: net_handled,
+    };
+    let attr_size = if abi >= 4 {
+        std::mem::size_of::<LandlockRulesetAttr>()
+    } else {
+        std::mem::size_of::<u64>()
+    };
+    // SAFETY: `attr` is a repr(C) struct with two u64 fields; the
+    // kernel reads exactly `attr_size` bytes from the pointer.
     let ruleset_fd_raw = unsafe {
         libc::syscall(
             SYS_LANDLOCK_CREATE_RULESET,
-            &handled as *const u64 as *const std::ffi::c_void,
-            std::mem::size_of::<u64>(),
+            &attr as *const _ as *const std::ffi::c_void,
+            attr_size,
             0u32,
         )
     };
