@@ -436,8 +436,32 @@ fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
     // Seatbelt rules are evaluated top-to-bottom and the *last*
     // matching rule wins, so `(deny file-write* ...)` on .git must
     // come after the general `(allow file-write* ...)`.
-    let mut profile = String::from("(version 1)\n(deny default)\n");
-    profile.push_str("(allow file-read* (subpath \"/usr\") (subpath \"/lib\") (subpath \"/System\") (subpath \"/bin\") (subpath \"/sbin\"))\n");
+    let mut profile = String::from("(version 1)\n(allow default)\n");
+    // T1-C5: seatbelt is a syscall filter, not a namespace sandbox —
+    // "deny default" kills mach-lookup / ipc-posix-shm / file-read-
+    // metadata on process startup, so a deny-default profile that can
+    // still exec a shell requires Apple's system.sb, which kod does
+    // not carry. Instead, allow by default and deny the specific
+    // credential trees a prompt-injected model would exfiltrate.
+    // The paths are resolved from $HOME; a user with a non-standard
+    // home simply doesn't get the deny for that path.
+    if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        let h = home.display();
+        // Keep the denies ordered: seatbelt's last-match-wins means
+        // a later allow could re-open a subtree, so these come after
+        // any allow we add below.
+        let secrets = [
+            format!("{h}/.ssh"),
+            format!("{h}/.aws"),
+            format!("{h}/.gnupg"),
+            format!("{h}/.config/kod"),
+            format!("{h}/.netrc"),
+            format!("{h}/.docker/config.json"),
+        ];
+        for path in &secrets {
+            profile.push_str(&format!("(deny file-read* (subpath \"{path}\"))\n"));
+        }
+    }
     if opts.net_deny {
         profile.push_str("(deny network*)\n");
     }
