@@ -1063,10 +1063,16 @@ fn adk_err(e: adk_core::AdkError) -> KodError {
 fn adk_err_typed(e: adk_core::AdkError) -> KodError {
     if e.details.upstream_status_code == Some(429) {
         let text = e.to_string();
-        let secs = kod_provider::retry::text_hint_secs(&text).unwrap_or(1200);
-        return KodError::RateLimited {
-            retry_after_secs: secs,
-        };
+        // Only surface a typed RateLimited when the body actually
+        // carried a parseable hint. A hint-less 429 falls through to
+        // the generic transient path, which backs off with jitter —
+        // the pre-fix `unwrap_or(1200)` parked the turn for 20 minutes
+        // on a soft limit the server meant for seconds.
+        if let Some(secs) = kod_provider::retry::text_hint_secs(&text) {
+            return KodError::RateLimited {
+                retry_after_secs: secs,
+            };
+        }
     }
     if e.details.upstream_status_code == Some(503) {
         let text = e.to_string();
@@ -1173,10 +1179,9 @@ fn is_session_busy(err: &kod_error::KodError) -> bool {
         kod_error::KodError::Provider(msg) => {
             // "4096 tokens" / timestamps previously triggered the whole
             // background retry schedule for a non-busy error.
-            msg.contains("409 ")
-                || msg.ends_with(" 409")
-                || msg.contains("status 409")
-                || msg.contains("HTTP 409")
+            msg.contains("\"status\":409")
+                || msg.contains("\"status\": 409")
+                || msg.contains("status: 409")
         }
         _ => false,
     }
