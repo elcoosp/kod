@@ -203,8 +203,10 @@ impl SkillMatcher {
                 desc_hits += 1;
             }
         }
+        let query_words: std::collections::HashSet<&str> =
+            query.split_whitespace().collect();
         for word in desc_lower.split(|c: char| !c.is_alphanumeric()) {
-            if word.len() > 4 && query.contains(word) && !seen.contains(&word) {
+            if word.len() > 4 && query_words.contains(word) && !seen.contains(&word) {
                 seen.push(word);
                 desc_hits += 1;
             }
