@@ -668,7 +668,12 @@ fn preset_decision(preset: Preset, tool: &str) -> Decision {
 
 /// Extract the `path` or `file` argument from a tool call, if any.
 fn extract_path_arg(args: &Value) -> Option<String> {
-    for key in ["path", "file"] {
+    const PATH_KEYS: &[&str] = &[
+        "path", "file", "file_path", "filename",
+        "target", "destination", "to",
+        "directory", "dir", "output",
+    ];
+    for key in PATH_KEYS {
         if let Some(s) = args.get(key).and_then(|v| v.as_str()) {
             return Some(s.to_string());
         }
