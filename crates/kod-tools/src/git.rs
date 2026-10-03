@@ -46,11 +46,17 @@ async fn run_git(args: &[&str], wd: &std::path::Path, timeout_secs: u64) -> Resu
     // the env var is what a user's shell sets.
     cmd.env("GIT_PAGER", "cat").env("PAGER", "cat");
 
-    let fut = cmd.output();
+    // F2f-18: stream stdout with a hard cap instead of `Command::output()`
+    // (which buffers the entire stdout before the 64 KB truncate ever
+    // runs — a `git diff` on a large refactor can be hundreds of MB).
+    // Read up to the cap into `out`; keep draining (and discarding) the
+    // rest so the child sees its pipe consumed and can exit rather than
+    // blocking on a full pipe. stderr is small (one line of detail) and
+    // read to a modest cap.
     let effective = timeout_secs.max(1);
-    let output = match tokio::time::timeout(std::time::Duration::from_secs(effective), fut).await {
-        Ok(Ok(o)) => o,
-        Ok(Err(e)) => {
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
             return Err(KodError::ToolExecution {
                 tool_name: "git".to_string(),
                 reason: format!(
@@ -60,23 +66,79 @@ async fn run_git(args: &[&str], wd: &std::path::Path, timeout_secs: u64) -> Resu
                 ),
             });
         }
-        Err(_) => {
+    };
+    let mut stdout = child.stdout.take().expect("stdout was piped");
+    let mut stderr = child.stderr.take().expect("stderr was piped");
+
+    let collect = async {
+        use tokio::io::AsyncReadExt as _;
+        let mut out: Vec<u8> = Vec::with_capacity(8192);
+        let mut buf = [0u8; 8192];
+        // Cap stdout at MAX_GIT_OUTPUT_BYTES + a small slack so the
+        // truncate notice has room; the callers re-truncate anyway.
+        let stdout_cap = MAX_GIT_OUTPUT_BYTES + 4096;
+        loop {
+            match stdout.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if out.len() < stdout_cap {
+                        let room = stdout_cap - out.len();
+                        out.extend_from_slice(&buf[..n.min(room)]);
+                    }
+                    // else: discard, but keep reading so git does not
+                    // block writing into a full pipe.
+                }
+                Err(_) => break,
+            }
+        }
+        let mut err: Vec<u8> = Vec::with_capacity(1024);
+        let mut ebuf = [0u8; 1024];
+        loop {
+            match stderr.read(&mut ebuf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if err.len() < 16 * 1024 {
+                        let room = 16 * 1024 - err.len();
+                        err.extend_from_slice(&ebuf[..n.min(room)]);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        (out, err)
+    };
+
+    let (stdout_bytes, stderr_bytes) =
+        match tokio::time::timeout(std::time::Duration::from_secs(effective), collect).await {
+            Ok(v) => v,
+            Err(_) => {
+                // kill_on_drop reaps the child when `child` drops here.
+                return Err(KodError::ToolExecution {
+                    tool_name: "git".to_string(),
+                    reason: format!(
+                        "`git {}` did not finish within {}s",
+                        args.join(" "),
+                        effective
+                    ),
+                });
+            }
+        };
+
+    let status = match child.wait().await {
+        Ok(st) => st,
+        Err(e) => {
             return Err(KodError::ToolExecution {
                 tool_name: "git".to_string(),
-                reason: format!(
-                    "`git {}` did not finish within {}s",
-                    args.join(" "),
-                    effective
-                ),
+                reason: format!("`git {}` wait failed: {}", args.join(" "), e),
             });
         }
     };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&stderr_bytes);
         let stderr = stderr.trim();
         let detail = if stderr.is_empty() {
-            format!("exit status {:?}", output.status.code())
+            format!("exit status {:?}", status.code())
         } else {
             stderr.to_string()
         };
@@ -86,7 +148,7 @@ async fn run_git(args: &[&str], wd: &std::path::Path, timeout_secs: u64) -> Resu
         });
     }
 
-    let raw = String::from_utf8_lossy(&output.stdout);
+    let raw = String::from_utf8_lossy(&stdout_bytes);
     let text = raw.trim_end_matches('\n').to_string();
     Ok(text)
 }
