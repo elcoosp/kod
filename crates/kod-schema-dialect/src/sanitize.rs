@@ -241,7 +241,7 @@ pub fn spec_for_provider(provider: &str) -> DialectSpec {
 pub fn sanitize(schema: &Value, spec: &DialectSpec) -> (Value, Vec<AppliedTransform>) {
     let mut out = schema.clone();
     let mut applied = Vec::new();
-    sanitize_in_place(&mut out, spec, "", &mut applied);
+    sanitize_in_place(&mut out, spec, "", &mut applied, 0);
     (out, applied)
 }
 
@@ -406,20 +406,20 @@ fn sanitize_in_place(
         match role_of(&key) {
             KeywordRole::Subschema => {
                 if let Some(v) = obj.get_mut(&key) {
-                    sanitize_in_place(v, spec, &child_path, applied);
+                    sanitize_in_place(v, spec, &child_path, applied, depth + 1);
                 }
             }
             KeywordRole::SubschemaMap => {
                 if let Some(Value::Object(map)) = obj.get_mut(&key) {
                     for (_name, sub) in map.iter_mut() {
-                        sanitize_in_place(sub, spec, &child_path, applied);
+                        sanitize_in_place(sub, spec, &child_path, applied, depth + 1);
                     }
                 }
             }
             KeywordRole::SubschemaArray => {
                 if let Some(Value::Array(arr)) = obj.get_mut(&key) {
                     for (i, sub) in arr.iter_mut().enumerate() {
-                        sanitize_in_place(sub, spec, &format!("{child_path}/{i}"), applied);
+                        sanitize_in_place(sub, spec, &format!("{child_path}/{i}"), applied, depth + 1);
                     }
                 }
             }
