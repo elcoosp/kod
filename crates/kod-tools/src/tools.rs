@@ -215,13 +215,23 @@ pub(crate) fn atomic_write(path: &std::path::Path, content: &[u8]) -> std::io::R
 fn kill_child_tree(child: &mut tokio::process::Child) {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
+        // T1-C8: signal the session, not just the process group. A
+        // child can setpgid(0, 0) to escape a pgroup kill; a session
+        // created by setsid(2) cannot be left — the SID is invariant.
+        let sid = unsafe { libc::getsid(pid as libc::pid_t) };
+        if sid > 0 && sid == pid as libc::pid_t {
+            let rc = unsafe { libc::kill(-sid, libc::SIGKILL) };
+            if rc == 0 {
+                return;
+            }
+        }
         let pgid = -(pid as libc::pid_t);
         let rc = unsafe { libc::kill(pgid, libc::SIGKILL) };
         if rc == 0 {
             return;
         }
     }
-    // Non-unix, or the group kill failed: fall back to the direct child.
+    // Non-unix, or the session kill failed: fall back to the direct child.
     let _ = child.start_kill();
 }
 
@@ -1009,7 +1019,20 @@ impl Tool for ExecuteCommandTool {
         // W14: put the child in its own process group so a timeout kill
         // reaches grandchildren the shell forked (see `kill_child_tree`).
         #[cfg(unix)]
-        spawn.process_group(0);
+        {
+            use std::os::unix::process::CommandExt;
+            spawn.process_group(0);
+            // SAFETY: setsid(2) is async-signal-safe and does not
+            // touch shared memory in the child. Without it, a
+            // prompt-injected `setpgid(0, 0)` from the child escapes
+            // the pgroup kill in `kill_child_tree`.
+            unsafe {
+                spawn.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+        }
         let mut child = spawn.spawn().map_err(KodError::Io)?;
 
         let mut stdout = child
