@@ -293,7 +293,9 @@ impl EditStore {
 fn stage(text: &str, ops: &[Op]) -> Result<String, EditError> {
     // Detect the dominant EOL before `lines()` strips `\r`, or editing
     // one line of a CRLF file rewrites the whole file's line endings.
-    let crlf = text.contains("\r\n");
+    let crlf_count = text.matches("\r\n").count();
+    let lf_count = text.matches('\n').count().saturating_sub(crlf_count);
+    let crlf = crlf_count > lf_count;
     // Sort ops by start, descending, so earlier line numbers stay
     // valid as later edits shift the buffer. Appends go last.
     let mut indexed: Vec<(usize, &Op)> = ops.iter().enumerate().map(|(i, o)| (i, o)).collect();
