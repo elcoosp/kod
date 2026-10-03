@@ -133,13 +133,6 @@ pub fn tokenize(command: &str) -> Vec<String> {
         let c = chars[i];
 
         if let Some(term) = &heredoc_terminator {
-            // T5-C2: end of command while still in the heredoc body —
-            // terminator missing, escalate rather than accept truncation.
-            if i >= chars.len() {
-                let _ = term;
-                tokens.push("__kod_heredoc_unterminated__".to_string());
-                break;
-            }
             // Inside a heredoc body: skip whole lines until the
             // terminator.
             let line_end = command[..]
@@ -200,7 +193,9 @@ pub fn tokenize(command: &str) -> Vec<String> {
                     i += 1;
                 }
                 if !term.is_empty() {
-                    heredoc_terminator = Some(term);
+                    heredoc_terminator = Some(
+                        term.trim_matches(|c| c == '\'' || c == '"').to_string(),
+                    );
                 }
                 continue;
             }
@@ -226,6 +221,14 @@ pub fn tokenize(command: &str) -> Vec<String> {
         }
         i += 1;
     }
+    // T5-C2: if the loop exited while a heredoc was still open, the
+    // input had no closing terminator. Everything after `<<EOF` was
+    // swallowed as heredoc data, including any command on the same
+    // line. Emit a sentinel so `assess` escalates.
+    if heredoc_terminator.is_some() {
+        tokens.push("__kod_heredoc_unterminated__".to_string());
+    }
+
     if !current.is_empty() {
         tokens.push(current);
     }
@@ -670,3 +673,49 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod t5_regression {
+    use super::*;
+
+    fn ctx() -> RiskContext {
+        RiskContext::from_env()
+    }
+
+    #[test]
+    fn xargs_with_destructive_wrapped_command_is_flagged() {
+        let r = assess("xargs rm /etc/passwd", &ctx());
+        assert!(
+            r.level >= RiskLevel::Confirm,
+            "expected Confirm+, got {:?}: {:?}",
+            r.level, r.findings,
+        );
+    }
+
+    #[test]
+    fn unterminated_heredoc_does_not_swallow_trailing_command() {
+        let r = assess("cat foo <<EOF; rm -rf /tmp/whatever", &ctx());
+        assert!(
+            r.level >= RiskLevel::Confirm,
+            "expected Confirm+, got {:?}: {:?}",
+            r.level, r.findings,
+        );
+    }
+
+    #[test]
+    fn terminated_heredoc_does_not_escalate() {
+        let r = assess("cat foo <<EOF\nbody\nEOF\n", &ctx());
+        // No trailing destructive command — must not fire the sentinel.
+        assert!(
+            r.findings.iter().all(|f| !f.reason.contains("closing terminator")),
+            "terminated heredoc should not escalate: {:?}", r.findings,
+        );
+    }
+
+    #[test]
+    fn benign_command_stays_safe() {
+        let r = assess("ls -la", &ctx());
+        assert_eq!(r.level, RiskLevel::Safe, "ls flagged: {:?}", r.findings);
+    }
+}
+
