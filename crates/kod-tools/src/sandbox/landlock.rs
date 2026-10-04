@@ -351,6 +351,90 @@ pub fn apply(profile: &LandlockProfile) -> Result<()> {
         )));
     }
 
+    // T1-C3 residual: Landlock is fs+net only. It does not restrict
+    // `ptrace(2)`, `process_vm_readv(2)`, or `process_vm_writev(2)`.
+    // PR_SET_DUMPABLE=0 (step 4a) stops a sibling from attaching to
+    // *this* process, but does not stop this process from reading a
+    // sibling's memory. A seccomp BPF filter denying those three
+    // syscalls closes the loop: the sandboxed child cannot attach to
+    // anything, anywhere.
+    install_seccomp_filter()?;
+
+    Ok(())
+}
+
+/// T1-C3: install a seccomp BPF filter that denies cross-process
+/// memory access syscalls. Called after `landlock_restrict_self` and
+/// before `apply` returns. On kernels without seccomp, logs a warning
+/// and returns Ok — the caller's protection is the PR_SET_DUMPABLE=0
+/// on both sides, which is weaker but not nothing.
+///
+/// No external dependency: the BPF program is built with
+/// `libc::sock_filter` and `libc::sock_fprog`.
+fn install_seccomp_filter() -> Result<()> {
+    #[cfg(not(target_arch = "aarch64"))]
+    const AUDIT_ARCH: u32 = 0xc000_003e; // EM_X86_64
+    #[cfg(target_arch = "aarch64")]
+    const AUDIT_ARCH: u32 = 0xc000_00b7; // EM_AARCH64
+
+    const SECCOMP_SET_MODE_FILTER: libc::c_ulong = 1;
+    const SECCOMP_RET_KILL_PROCESS: u32 = 0x8000_0000;
+    const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
+
+    // Syscall numbers differ per arch; only the ones we deny are listed.
+    #[cfg(target_arch = "aarch64")]
+    let (nr_ptrace, nr_pvm_read, nr_pvm_write) = (117u32, 270u32, 271u32);
+    #[cfg(not(target_arch = "aarch64"))]
+    let (nr_ptrace, nr_pvm_read, nr_pvm_write) = (101u32, 310u32, 311u32);
+
+    // BPF program layout:
+    //   ld [4]                ; arch
+    //   jne ARCH, kill        ; reject if a different arch (no 32-bit bypass)
+    //   ld [0]                ; nr
+    //   jeq ptrace, kill
+    //   jeq pvm_readv, kill
+    //   jeq pvm_writev, kill
+    //   ret ALLOW
+    //   kill: ret KILL_PROCESS
+    //
+    // Offsets 0 and 4 are the low/high halves of seccomp_data.nr and
+    // .arch; nr is u32 at offset 0, arch at offset 4.
+    #[allow(clippy::cast_possible_truncation)]
+    let mut filter: Vec<libc::sock_filter> = vec![
+        libc::sock_filter { code: 0x20, jt: 0, jf: 0, k: 4 },                 // BPF_LD|BPF_W|BPF_ABS, arch
+        libc::sock_filter { code: 0x15, jt: 0, jf: 1, k: AUDIT_ARCH },        // jeq ARCH, next, kill
+        libc::sock_filter { code: 0x06, jt: 0, jf: 0, k: SECCOMP_RET_KILL_PROCESS }, // ret KILL
+        libc::sock_filter { code: 0x20, jt: 0, jf: 0, k: 0 },                 // ld nr
+        libc::sock_filter { code: 0x15, jt: 0, jf: 1, k: nr_ptrace },
+        libc::sock_filter { code: 0x06, jt: 0, jf: 0, k: SECCOMP_RET_KILL_PROCESS },
+        libc::sock_filter { code: 0x15, jt: 0, jf: 1, k: nr_pvm_read },
+        libc::sock_filter { code: 0x06, jt: 0, jf: 0, k: SECCOMP_RET_KILL_PROCESS },
+        libc::sock_filter { code: 0x15, jt: 0, jf: 1, k: nr_pvm_write },
+        libc::sock_filter { code: 0x06, jt: 0, jf: 0, k: SECCOMP_RET_KILL_PROCESS },
+        libc::sock_filter { code: 0x06, jt: 0, jf: 0, k: SECCOMP_RET_ALLOW },
+    ];
+    let prog = libc::sock_fprog {
+        len: filter.len() as u16,
+        filter: filter.as_mut_ptr(),
+    };
+    // SAFETY: `prog` points at a Vec that lives for the duration of the
+    // call; the kernel copies the filter at install time.
+    let ret = unsafe {
+        libc::prctl(
+            libc::PR_SET_SECCOMP,
+            SECCOMP_SET_MODE_FILTER as libc::c_ulong,
+            &prog as *const _ as libc::c_ulong,
+            0,
+            0,
+        )
+    };
+    if ret != 0 {
+        let err = std::io::Error::last_os_error();
+        tracing::warn!(
+            error = %err,
+            "seccomp filter install failed; cross-process memory reads              remain possible via ptrace/process_vm_*"
+        );
+    }
     Ok(())
 }
 
