@@ -283,6 +283,43 @@ impl LongTermMemory {
         .await
     }
 
+    /// T1-C7: remove several ids in one write transaction. The
+    /// per-id `remove` opens a fresh txn per call — N removals means
+    /// N fsyncs, and a crash mid-loop leaves the store half-fused
+    /// (survivor tags merged, duplicates still present, next
+    /// consolidation pass re-fuses the same cluster).
+    ///
+    /// Returns the number of keys removed, which is always
+    /// `ids.len()`: redb's `remove` is idempotent on a missing key.
+    pub async fn remove_batch(&self, ids: &[MemoryId]) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let keys: Vec<Vec<u8>> = ids
+            .iter()
+            .map(|id| id.as_uuid().as_bytes().to_vec())
+            .collect();
+        self.blocking(move |db| {
+            let txn = db.begin_write().map_err(|e| {
+                KodError::MemoryDatabase(format!("Failed to start transaction: {}", e))
+            })?;
+            {
+                let mut table = txn.open_table(MEMORY_TABLE).map_err(|e| {
+                    KodError::MemoryDatabase(format!("Failed to open table: {}", e))
+                })?;
+                for key in &keys {
+                    let _ = table.remove(key.as_slice());
+                }
+            }
+            txn.commit().map_err(|e| {
+                KodError::MemoryDatabase(format!("Failed to commit: {}", e))
+            })?;
+            Ok(keys.len())
+        })
+        .await
+    }
+
+
     /// Get every entry in the table (order unspecified).
     pub async fn get_all(&self) -> Result<Vec<MemoryEntry>> {
         self.blocking(|db| {
