@@ -1066,18 +1066,6 @@ fn adk_err(e: adk_core::AdkError) -> KodError {
 /// else keeps the legacy string mapping.
 fn adk_err_typed(e: adk_core::AdkError) -> KodError {
     if e.details.upstream_status_code == Some(429) {
-        // T2-H2: prefer the structured retry hint. `adk-model` sets
-        // `AdkError::retry.retry_after_ms` from the HTTP Retry-After
-        // header (which the previous text-scanning path could not
-        // see). Fall back to text scanning only when the structured
-        // hint is absent — the tab-bridge backend embeds the delay in
-        // prose, not a header.
-        if let Some(d) = e.retry.retry_after() {
-            return KodError::RateLimited {
-                retry_after_secs: (d.as_millis() as u64).div_ceil(1000).max(1),
-            };
-        }
-
         let text = e.to_string();
         // Only surface a typed RateLimited when the body actually
         // carried a parseable hint. A hint-less 429 falls through to
@@ -1227,35 +1215,6 @@ fn tool_declarations(tools: &[ToolDefinition]) -> HashMap<String, serde_json::Va
 
 #[cfg(test)]
 mod coverage_openai_helpers {
-
-    #[test]
-    fn structured_retry_hint_is_honored() {
-        // T2-H2: an AdkError carrying a structured retry_after_ms must
-        // produce a typed RateLimited with the same hint, without
-        // needing to parse the message body.
-        use adk_core::{AdkError, ErrorCategory, ErrorComponent};
-        let mut err = AdkError::new(
-            ErrorComponent::Model,
-            ErrorCategory::RateLimited,
-            "model.openai.rate_limited",
-            "slow down",
-        );
-        err.details.upstream_status_code = Some(429);
-        err.retry.should_retry = true;
-        err.retry.retry_after_ms = Some(750);
-
-        let kod = adk_err_typed(err);
-        match kod {
-            KodError::RateLimited { retry_after_secs } => {
-                assert_eq!(
-                    retry_after_secs, 1,
-                    "750ms should round up to 1s",
-                );
-            }
-            other => panic!("expected RateLimited, got {:?}", other),
-        }
-    }
-
     use super::*;
     // ---- normalize_base_url --------------------------------------------
 
