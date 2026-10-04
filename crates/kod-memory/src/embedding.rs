@@ -459,6 +459,7 @@ mod tests {
         assert_eq!(embedder.name(), "ollama");
     }
 
+#[serial_test::serial]
     #[test]
     fn from_config_openai_without_key_returns_none() {
         // Ensure no leaked env var turns this into an accidental success.
