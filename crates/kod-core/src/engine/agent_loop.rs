@@ -1111,7 +1111,12 @@ impl KodEngine {
     /// That order is sorted (see `registry.rs`) so a re-registration
     /// of the same set produces the same fingerprint.
     pub(crate) async fn note_tool_surface_fingerprint(&self, key: &str, definitions: &[ToolDefinition]) {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        // T3-C1: FNV-1a instead of `DefaultHasher::new()`. The latter
+        // is seeded randomly per call, so the same tool surface
+        // produced a different fingerprint on every prompt — the
+        // cache journal recorded a spurious `ToolSurfaceChanged` on
+        // every turn and the cache-invalidation check never fired.
+        let mut hasher = Fnv1aHasher::new();
         for d in definitions {
             use std::hash::Hash;
             d.name.hash(&mut hasher);
@@ -1579,5 +1584,31 @@ impl KodEngine {
             body,
             time::OffsetDateTime::now_utc(),
         ));
+    }
+}
+
+/// T3-C1: a deterministic 64-bit FNV-1a hasher. `DefaultHasher::new()`
+/// reseeds per call — using it as a fingerprint source means two calls
+/// for the identical input produce different output, so any
+/// change-detection built on top of it always reports "changed".
+struct Fnv1aHasher(u64);
+
+impl Fnv1aHasher {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    fn new() -> Self {
+        Self(Self::OFFSET)
+    }
+}
+
+impl std::hash::Hasher for Fnv1aHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.0 ^= *b as u64;
+            self.0 = self.0.wrapping_mul(Self::PRIME);
+        }
     }
 }
