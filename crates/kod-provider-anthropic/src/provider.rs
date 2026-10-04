@@ -530,7 +530,10 @@ impl LlmProvider for AnthropicProvider {
 
                 // §9.9: one admission permit per streaming HTTP
                 // request, released when this attempt ends.
-                let _permit = concurrency.acquire().await;
+                // T2-C8: named (not `_permit`) so the retry branch
+                // below can drop it before any sleep — the permit
+                // bounds concurrent HTTP requests, not sleep time.
+                let permit = concurrency.acquire().await;
 
                 // §9.3: fresh guard per attempt. The previous
                 // attempt's tail is not evidence about this one.
@@ -618,6 +621,10 @@ impl LlmProvider for AnthropicProvider {
                                 && *d <= kod_provider::retry::STREAM_RATE_LIMIT_WAIT_CAP
                         });
                         if !hints.cap_declined || small_hint.is_some() {
+                            // T2-C8: release the admission permit before
+                            // sleeping so a peer stream can start while
+                            // this one waits out the retry delay.
+                            drop(permit);
                             if let Some(d) = small_hint {
                                 tracing::warn!(
                                     attempt,
