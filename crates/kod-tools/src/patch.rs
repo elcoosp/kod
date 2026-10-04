@@ -183,10 +183,6 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
 
 /// Parse a unified diff (`--- a/…`, `+++ b/…`, `@@ -l,n +l,n @@`).
 pub fn parse_unified_diff(patch: &str) -> Result<Vec<Hunk>> {
-    // T1-C11: set true when the previous line carried a
-    // `\ No newline at end of file` marker. The applier reads it
-    // to decide whether the final line ends with a newline.
-    let mut no_newline_marker = false;
     let mut hunks = Vec::new();
     let mut current: Option<Hunk> = None;
     // H-R14: the `--- ` / `+++ ` headers are only meaningful *before*
