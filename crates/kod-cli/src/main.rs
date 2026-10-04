@@ -23,6 +23,23 @@ use kod_cli::commands::Cli;
 use tracing_subscriber::EnvFilter;
 
 fn main() -> kod_error::Result<()> {
+    // T1-C3: mark this process un-ptraceable before any sandboxed
+    // child is spawned. Landlock does not restrict ptrace(2); without
+    // this, a prompt-injected sandboxed child running `ptrace $PPID`
+    // reads the kod process's memory, which includes any credential
+    // the env-strip tried to remove.
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: prctl(PR_SET_DUMPABLE) is a standard libc wrapper.
+        let ret = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) };
+        if ret != 0 {
+            eprintln!(
+                "kod: warning: could not set PR_SET_DUMPABLE=0; the process \
+                 remains ptraceable by sandboxed children"
+            );
+        }
+    }
+
     // `EnvFilter::try_from_default_env` reads `RUST_LOG`. The
     // fallback is `warn` — errors and warnings still reach the
     // terminal, but the info-level chatter of a normal session does
