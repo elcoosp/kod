@@ -87,20 +87,26 @@ async fn fuse_merges_identical_entries_and_unions_tags() {
             "prefers dark mode",
             MemoryMetadata {
                 tags: vec!["preference".into()],
+                last_retrieved_at_ms: Some(1),
                 ..Default::default()
             },
         )
         .await
         .unwrap();
-    // A small delay so `last_retrieved_at_ms` / timestamps make the
-    // first entry the "older" one and the second the survivor.
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    // Deterministic ordering: set last_retrieved_at_ms explicitly so the
+    // sort is stable regardless of wall-clock timing. The pre-fix test
+    // relied on a 2 ms sleep, but the sort key falls back to
+    // `timestamp.unix_timestamp() * 1000` (1-second resolution), so the
+    // two entries could land in the same second and the "survivor" would
+    // be whichever the stable sort put first — flipping the assertion.
+    // Setting the field removes the wall-clock dependency entirely.
     manager
         .store_with_metadata(
             MemoryType::LongTerm,
             "likes dark themes",
             MemoryMetadata {
                 tags: vec!["ui".into()],
+                last_retrieved_at_ms: Some(2),
                 ..Default::default()
             },
         )
