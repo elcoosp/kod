@@ -66,6 +66,13 @@ pub struct LspClient {
     /// protocol error. Keyed by canonical path so equivalent spellings
     /// (`./foo.rs`, `foo.rs`, absolute) resolve to the same entry.
     opened: std::collections::HashMap<PathBuf, i64>,
+    /// T2-C4: notifications that arrived while `request_with_response`
+    /// was waiting for a specific id. Without this buffer, a
+    /// `publishDiagnostics` that lands during a `definition` request is
+    /// read, fails the id match, and is dropped — the engine then
+    /// reports "no diagnostics" for a file that has fresh ones.
+    /// `collect_diagnostics` drains this before reading new frames.
+    pending_notifications: Vec<serde_json::Value>,
 }
 
 impl LspClient {
@@ -104,6 +111,7 @@ impl LspClient {
             workspace_root: workspace_root.to_path_buf(),
             program: program.to_string(),
             opened: std::collections::HashMap::new(),
+            pending_notifications: Vec::new(),
         })
     }
 
@@ -348,14 +356,25 @@ impl LspClient {
                 Some(_) => remaining.min(SETTLE_AFTER),
                 None => remaining,
             };
-            let read = tokio::time::timeout(wait, self.read_handling_server_requests()).await;
-            let msg = match read {
-                Ok(Ok(m)) => m,
-                Ok(Err(LspError::Io(e))) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    break;
+            // T2-C4: prefer any notifications buffered by a prior
+            // `request_with_response` (definition / references / hover)
+            // before reading the wire. A `publishDiagnostics` that
+            // landed while the caller awaited a specific id is now in
+            // this queue, not on the socket.
+            let msg = if let Some(buffered) = self.pending_notifications.pop() {
+                buffered
+            } else {
+                let read = tokio::time::timeout(wait, self.read_handling_server_requests()).await;
+                match read {
+                    Ok(Ok(m)) => m,
+                    Ok(Err(LspError::Io(e)))
+                        if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                    {
+                        break;
+                    }
+                    Ok(Err(e)) => return Err(e),
+                    Err(_) => break, // overall timeout
                 }
-                Ok(Err(e)) => return Err(e),
-                Err(_) => break, // overall timeout
             };
             // Any message from the server resets the quiet timer.
             last_activity_at = Some(tokio::time::Instant::now());
@@ -542,6 +561,17 @@ impl LspClient {
                     .get("result")
                     .cloned()
                     .unwrap_or(serde_json::Value::Null));
+            }
+            // T2-C4: this frame is not the response we're waiting for.
+            // If it carries a `method` field it's a server-initiated
+            // notification (publishDiagnostics, $/progress, window/log
+            // Message) and must not be dropped — buffer it so
+            // `collect_diagnostics` can process it after this request
+            // returns. Anything without a method and without our id is
+            // a response to a request we did not send; drop it silently
+            // (it is either a duplicate or a server bug).
+            if msg.get("method").and_then(|v| v.as_str()).is_some() {
+                self.pending_notifications.push(msg);
             }
         }
     }
