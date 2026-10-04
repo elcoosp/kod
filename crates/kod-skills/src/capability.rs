@@ -229,17 +229,23 @@ mod tests {
     use std::fs;
 
     fn tmpdir() -> PathBuf {
-        let p = std::env::temp_dir().join(format!(
-            "kod-cap-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0),
-        ));
-        fs::create_dir_all(&p).unwrap();
-        p
-    }
+    // Unique per call. The pre-fix shape returned the same path for
+    // every call within a process (`temp_dir().join(format!(
+    // "kod-skills-test-{pid}"))`). When the test binary ran tests in
+    // parallel, two tests shared the same directory — one test's
+    // `discover()` saw the other's files, and the assertion counts
+    // were wrong. A per-call counter keeps the paths distinct.
+    static TMPDIR_COUNTER: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+    let n = TMPDIR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let p = std::env::temp_dir().join(format!(
+        "kod-skills-test-{}-{}",
+        std::process::id(),
+        n,
+    ));
+    std::fs::create_dir_all(&p).ok();
+    p
+}
 
     fn write(dir: &Path, name: &str) {
         fs::create_dir_all(dir).unwrap();
