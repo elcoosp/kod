@@ -88,6 +88,12 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Notify;
 
+// T5-split: `default_socket_path` moved to `kod-core-state`
+// so both kod-core and kod-core-serve can depend on it without a
+// circular dependency. Re-exported here so existing call sites
+// (`kod_core::serve::default_socket_path`) keep resolving.
+pub use kod_core_state::socket_path::default_socket_path;
+
 /// Protocol version. Sent by the client in every request; the
 /// server ignores a missing version (older clients) but reserves
 /// the right to reject a higher one in a future release.
@@ -127,16 +133,7 @@ pub const PROTOCOL_METHODS: &[&str] = &[
 pub const MAX_PROTOCOL_VERSION: u8 = 1;
 
 /// Default socket path for this user.
-pub fn default_socket_path() -> PathBuf {
-    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
-        let dir = PathBuf::from(dir);
-        if dir.is_dir() {
-            return dir.join("kod.sock");
-        }
-    }
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join(".kod").join("run").join("kod.sock")
-}
+
 
 /// A request line.
 #[derive(Debug, Deserialize)]
@@ -943,7 +940,7 @@ mod tests {
 
     #[test]
     fn default_socket_path_is_a_socket_path() {
-        let p = default_socket_path();
+        let p = kod_core_state::socket_path::default_socket_path();
         assert!(p.ends_with("kod.sock"), "got {p:?}");
     }
 
@@ -1076,7 +1073,7 @@ mod coverage_serve_serde {
         // this function; a change to the filename would break
         // every `--remote` invocation with a "connection refused"
         // that names a socket nobody is listening on.
-        let p = default_socket_path();
+        let p = kod_core_state::socket_path::default_socket_path();
         assert!(p.ends_with("kod.sock"), "got {p:?}");
     }
 }

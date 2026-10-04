@@ -403,7 +403,7 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
     // finds none needs the hint; a user who does not use the daemon
     // sees a quiet "no".
     {
-        let socket = crate::serve::default_socket_path();
+        let socket = kod_core_state::socket_path::default_socket_path();
         if socket.exists() {
             report.push(
                 "serve",

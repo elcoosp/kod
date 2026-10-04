@@ -29,3 +29,4 @@ pub mod commit_lock;
 pub mod deferred_diagnostics;
 pub mod sensitivity;
 pub mod steer;
+pub mod socket_path;
