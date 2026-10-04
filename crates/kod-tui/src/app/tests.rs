@@ -341,6 +341,7 @@ mod tests {
     /// the restored transcript. The dead loop the previous
     /// implementation carried never did anything; the branch that
     /// actually works is covered here.
+#[serial_test::serial]
     #[test]
     fn test_load_session_backfills_legacy_sequences() {
         use crate::app::{KodApp, Message};
@@ -714,6 +715,7 @@ mod tests {
     /// simulates the failure by pointing KOD_TUI_STATE_DIR at a path
     /// whose parent cannot be created, and asserts the previously
     /// saved file still loads.
+#[serial_test::serial]
     #[test]
     fn test_save_session_does_not_corrupt_previous_file() {
         use crate::app::{KodApp, Message};
