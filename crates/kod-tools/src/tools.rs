@@ -1020,7 +1020,6 @@ impl Tool for ExecuteCommandTool {
         // reaches grandchildren the shell forked (see `kill_child_tree`).
         #[cfg(unix)]
         {
-            use std::os::unix::process::CommandExt;
             spawn.process_group(0);
             // SAFETY: setsid(2) is async-signal-safe and does not
             // touch shared memory in the child. Without it, a
