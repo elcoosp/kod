@@ -432,7 +432,6 @@ impl<'a, R: tokio::io::AsyncBufRead + Unpin> CappedLines<'a, R> {
         // M-19: enforce the cap DURING the read. `read_until` appends
         // without bound until it sees the delimiter, so checking after
         // still OOMs on a newline-less stream.
-        use tokio::io::AsyncBufReadExt as _;
         let mut buf = Vec::new();
         loop {
             let available = self.reader.fill_buf().await.map_err(KodError::Io)?;
