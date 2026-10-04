@@ -525,38 +525,10 @@ impl MemoryManager {
                     return Ok(id);
                 }
             }
-            // Fallback: full scan (old entries, or an index miss).
-            let existing = self.long_term.get_all().await?;
-            for e in existing {
-                let mut eh = DefaultHasher::new();
-                e.content.hash(&mut eh);
-                if eh.finish() == content_hash && e.memory_type == memory_type {
-                    // Delta §12.2: a re-mention is evidence. Raise the
-                    // fact's confidence with the saturating update and
-                    // persist the raised value. `None` means "use the
-                    // base for how it was learned" — the store path
-                    // does not yet know the source, so it defaults to
-                    // `Stated`'s base.
-                    let current = e.metadata.confidence.unwrap_or_else(|| {
-                        crate::veracity::Veracity::Stated.base_confidence() as f32
-                    });
-                    let raised = crate::veracity::raise_confidence(
-                        current as f64,
-                        crate::veracity::Veracity::Stated.weight(),
-                    ) as f32;
-                    if raised > current + f32::EPSILON {
-                        let mut bumped = e.clone();
-                        bumped.metadata.confidence = Some(raised);
-                        if let Err(err) = self.long_term.store(bumped).await {
-                            tracing::warn!(
-                                error = %err,
-                                "re-mention confidence bump: persist failed"
-                            );
-                        }
-                    }
-                    return Ok(e.id);
-                }
-            }
+            // T1-C12: the fallback full-table scan is gone.
+            // `LongTermMemory::new` migrates any pre-index entries
+            // into `HASH_INDEX_TABLE`, so a miss above is always a
+            // genuinely new fact — no O(N) scan needed.
         }
 
         let id = MemoryId::new();
