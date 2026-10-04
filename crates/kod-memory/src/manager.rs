@@ -1119,6 +1119,20 @@ impl MemoryManager {
     /// the pass reports `fused: 0` and leaves every pair in place. The
     /// archival half runs regardless.
     pub async fn consolidate(&self) -> Result<ConsolidationReport> {
+        // T4-flake: wait for in-flight embed tasks before compacting.
+        //
+        // `spawn_embed` does a read-modify-write on the entry: `get`,
+        // set `metadata.embedding`, `update(e)`. If an embed task read
+        // the entry *before* `fuse_duplicates` ran `store_batch` on
+        // the merged survivor and writes back *after*, the merged tags
+        // are clobbered with the pre-merge value — the survivor keeps
+        // its own tag only, and the fused tag vanishes.
+        //
+        // `flush_embeddings` waits for every embed task spawned up to
+        // this point to finish. After that, no task holds a stale
+        // snapshot of any entry `fuse_duplicates` is about to rewrite.
+        self.flush_embeddings().await;
+
         let all = self.long_term.get_all().await?;
         if all.is_empty() {
             return Ok(ConsolidationReport::default());

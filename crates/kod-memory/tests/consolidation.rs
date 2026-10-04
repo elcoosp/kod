@@ -270,3 +270,97 @@ async fn archival_drops_old_episodic_entries_only() {
     assert_eq!(report.fused, 0, "no embedder, no fusion");
     assert_eq!(manager.get_all_long_term().await.unwrap().len(), 2);
 }
+
+/// T4-flake regression test.
+///
+/// The pre-fix `consolidate` did not wait for in-flight embed tasks,
+/// so a task that read the survivor before `store_batch` wrote the
+/// merged tags and wrote the entry back afterwards would clobber
+/// them. This test uses a slow embedder (50 ms per call) so both
+/// embed tasks are guaranteed to still be in flight when
+/// `consolidate` starts.
+#[tokio::test]
+async fn consolidate_waits_for_pending_embeds() {
+    use std::time::Duration;
+
+    struct SlowEmbedder {
+        table: Vec<(&'static str, Vec<f32>)>,
+        delay: Duration,
+    }
+
+    #[async_trait]
+    impl EmbeddingClient for SlowEmbedder {
+        fn name(&self) -> &str {
+            "slow-stub"
+        }
+        fn dims(&self) -> usize {
+            4
+        }
+        async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            tokio::time::sleep(self.delay).await;
+            Ok(texts
+                .iter()
+                .map(|t| {
+                    for (needle, v) in &self.table {
+                        if t.contains(needle) {
+                            return v.clone();
+                        }
+                    }
+                    vec![0.01, 0.01, 0.01, 0.01]
+                })
+                .collect())
+        }
+    }
+
+    let dir = TempDir::new().unwrap();
+    let embedder = Arc::new(SlowEmbedder {
+        table: vec![("dark", vec![1.0, 0.0, 0.0, 0.0])],
+        delay: Duration::from_millis(50),
+    });
+    let manager = manager_with_embedder(&dir, embedder);
+
+    manager
+        .store_with_metadata(
+            MemoryType::LongTerm,
+            "prefers dark mode",
+            MemoryMetadata {
+                tags: vec!["preference".into()],
+                last_retrieved_at_ms: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    manager
+        .store_with_metadata(
+            MemoryType::LongTerm,
+            "likes dark themes",
+            MemoryMetadata {
+                tags: vec!["ui".into()],
+                last_retrieved_at_ms: Some(2),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // Both embed tasks are now in flight. consolidate must wait for
+    // them before fusing.
+    let report = manager.consolidate().await.unwrap();
+    assert_eq!(report.fused, 1, "expected one fusion");
+
+    let after = manager.get_all_long_term().await.unwrap();
+    assert_eq!(after.len(), 1, "one survivor");
+    let survivor = &after[0];
+    assert!(
+        survivor.metadata.tags.contains(&"ui".to_string()),
+        "survivor's own tag missing: {:?}",
+        survivor.metadata.tags,
+    );
+    assert!(
+        survivor.metadata.tags.contains(&"preference".to_string()),
+        "T4-flake regression: merged tag lost after embed completed. \
+         survivor tags: {:?}",
+        survivor.metadata.tags,
+    );
+}
