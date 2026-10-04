@@ -422,26 +422,55 @@ impl LlmProvider for AnthropicProvider {
     ) -> Result<Option<kod_provider::NativeCompaction>> {
         let body = crate::wire::build_compaction_body(req);
         let url = format!("{}/messages", self.base_url);
-        let resp = self
-            .client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("anthropic-beta", crate::wire::ANTHROPIC_COMPACTION_BETA)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                KodError::Provider(format!("anthropic native_compact: POST {url}: {e}"))
-            })?;
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(KodError::provider_status(status.as_u16(), &text));
-        }
-        let parsed: serde_json::Value = resp.json().await.map_err(|e| {
-            KodError::Provider(format!("anthropic native_compact: invalid JSON: {e}"))
-        })?;
+        // T2-H1: compaction runs exactly when the prompt is over
+        // budget — the most expensive call in the turn, and the one
+        // least worth failing on a transient 5xx. Wrap it in the same
+        // retry loop `complete()` uses: bounded attempts, exponential
+        // backoff, and typed `RateLimited`/`ServerBusy` hints honored
+        // exactly once for long windows.
+        let policy = kod_provider::retry::RetryPolicy {
+            max_attempts: 3,
+            base_delay: std::time::Duration::from_millis(500),
+            max_delay: std::time::Duration::from_secs(8),
+            jitter_fraction: 0.3,
+            max_rate_limit_wait: self.rate_limit_wait,
+            sleep_fn: std::sync::Arc::new(|d| Box::pin(tokio::time::sleep(d))),
+        };
+        let client = self.client.clone();
+        let api_key = self.api_key.clone();
+        let body_ref = &body;
+        let parsed: serde_json::Value = kod_provider::retry::with_retry(&policy, || {
+            let url = url.clone();
+            let client = client.clone();
+            let api_key = api_key.clone();
+            let body_json = body_ref.clone();
+            async move {
+                let resp = client
+                    .post(&url)
+                    .header("x-api-key", &api_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("anthropic-beta", crate::wire::ANTHROPIC_COMPACTION_BETA)
+                    .json(&body_json)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        KodError::Provider(format!(
+                            "anthropic native_compact: POST {url}: {e}"
+                        ))
+                    })?;
+                let status = resp.status();
+                if !status.is_success() {
+                    let text = resp.text().await.unwrap_or_default();
+                    return Err(KodError::provider_status(status.as_u16(), &text));
+                }
+                resp.json::<serde_json::Value>().await.map_err(|e| {
+                    KodError::Provider(format!(
+                        "anthropic native_compact: invalid JSON: {e}"
+                    ))
+                })
+            }
+        })
+        .await?;
         Ok(crate::wire::parse_compaction_block(&parsed))
     }
 
