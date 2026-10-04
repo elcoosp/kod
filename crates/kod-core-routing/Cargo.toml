@@ -1,0 +1,38 @@
+[package]
+name = "kod-core-routing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+parking_lot = { workspace = true }
+async-trait = "0.1"
+futures = { workspace = true }
+dirs = { workspace = true }
+regex = { workspace = true }
+kod-types = { path = "../kod-types" }
+kod-error = { path = "../kod-error" }
+kod-config = { path = "../kod-config" }
+kod-provider = { path = "../kod-provider" }
+kod-provider-openai = { path = "../kod-provider-openai" }
+kod-provider-anthropic = { path = "../kod-provider-anthropic" }
+kod-memory = { path = "../kod-memory" }
+kod-core-state = { path = "../kod-core-state" }
+
+[dev-dependencies]
+toml = { workspace = true }
+serial_test = { workspace = true }
+tempfile = "3.8"
+tokio = { workspace = true }
+
+[lints]
+workspace = true

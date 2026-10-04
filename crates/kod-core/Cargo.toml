@@ -19,6 +19,7 @@ chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 futures = { workspace = true }
 kod-core-state = { path = "../kod-core-state" }
+kod-core-routing = { path = "../kod-core-routing" }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
 kod-stats = { path = "../kod-stats" }

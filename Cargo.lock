@@ -2271,6 +2271,7 @@ dependencies = [
  "ignore",
  "kod-ast",
  "kod-config",
+ "kod-core-routing",
  "kod-core-state",
  "kod-error",
  "kod-lsp",
@@ -2303,6 +2304,36 @@ dependencies = [
  "toml",
  "tracing",
  "typesafe-ai-rs",
+ "uuid",
+]
+
+[[package]]
+name = "kod-core-routing"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "dirs 6.0.0",
+ "futures",
+ "kod-config",
+ "kod-core-state",
+ "kod-error",
+ "kod-memory",
+ "kod-provider",
+ "kod-provider-anthropic",
+ "kod-provider-openai",
+ "kod-types",
+ "parking_lot",
+ "regex",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "tempfile",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "toml",
+ "tracing",
  "uuid",
 ]
 

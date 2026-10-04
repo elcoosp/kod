@@ -3,6 +3,13 @@
 //! This crate integrates skills, memory, tools, and LLM providers
 //! into a unified task routing and execution engine.
 
+// Re-exports from kod-core-routing so `crate::<module>` keeps resolving.
+pub use kod_core_routing::retry_strategy;
+pub use kod_core_routing::provider_setup;
+pub use kod_core_routing::config;
+pub use kod_core_routing::context;
+pub use kod_core_routing::context_engine;
+
 // Re-exports from kod-core-state so `crate::<module>` keeps resolving.
 pub use kod_core_state::session_log;
 pub use kod_core_state::checkpoint;
@@ -33,9 +40,6 @@ pub mod auto_thinking;
 pub mod background;
 pub mod compaction;
 pub mod compaction_dispatcher;
-pub mod config;
-pub mod context;
-pub mod context_engine;
 pub mod doctor;
 pub mod engine;
 pub mod fixture;
@@ -52,10 +56,7 @@ pub mod output_spool;
 pub mod overnight;
 pub mod pause_gate;
 pub mod prewalk;
-pub mod provider_setup;
 pub mod repomap;
-pub mod retry_strategy;
-pub mod router;
 pub mod run_collector;
 pub mod serve;
 pub mod shake;
@@ -114,3 +115,5 @@ pub use swarm_runner::{
 pub use worktree::{MergeReport, WorktreeInfo, WorktreeManager};
 pub mod preflight;
 pub mod prune;
+
+pub mod router;
