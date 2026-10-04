@@ -17,6 +17,7 @@ members = [
     "crates/kod-tui",
     "crates/kod-cli",
     "crates/kod-core",
+    "crates/kod-core-state",
     "crates/kod-risk",
     "crates/kod-schema-dialect",
     "crates/kod-minimize",

@@ -18,6 +18,7 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 futures = { workspace = true }
+kod-core-state = { path = "../kod-core-state" }
 kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
 kod-stats = { path = "../kod-stats" }

@@ -2271,6 +2271,7 @@ dependencies = [
  "ignore",
  "kod-ast",
  "kod-config",
+ "kod-core-state",
  "kod-error",
  "kod-lsp",
  "kod-mcp",
@@ -2302,6 +2303,37 @@ dependencies = [
  "toml",
  "tracing",
  "typesafe-ai-rs",
+ "uuid",
+]
+
+[[package]]
+name = "kod-core-state"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "dirs 6.0.0",
+ "futures",
+ "kod-config",
+ "kod-error",
+ "kod-provider",
+ "kod-tools",
+ "kod-types",
+ "libc",
+ "parking_lot",
+ "proptest",
+ "regex",
+ "rstest",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
