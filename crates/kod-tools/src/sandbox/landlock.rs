@@ -306,6 +306,30 @@ pub fn apply(profile: &LandlockProfile) -> Result<()> {
         add_path_rule(&ruleset_fd, path, rw_access)?;
     }
 
+    // T1-C3: mark this process un-ptraceable *before* we restrict
+    // ourselves. Landlock is a filesystem- and network-only LSM; it
+    // does not restrict `ptrace(2)`, `process_vm_readv(2)`, or
+    // `/proc/<pid>/mem`. A prompt-injected child that can ptrace a
+    // sibling reads its memory, including any secret the sibling's
+    // env-strip tried to remove. `PR_SET_DUMPABLE=0` makes this
+    // process refuse to be the *target* of a ptrace attach (and
+    // refuses `/proc/self/mem` reads by others), so a sibling
+    // sandboxed the same way cannot read us.
+    //
+    // The converse — denying this child's *own* ptrace syscall — is
+    // a seccomp filter, which is a separate design decision. Until
+    // that lands, the child can still try to ptrace the parent; the
+    // parent defends itself by setting the same prctl at startup.
+    //
+    // SAFETY: prctl(PR_SET_DUMPABLE) is a standard libc wrapper that
+    // accepts one integer and ignores the rest. Failure is
+    // non-fatal, and we log it for diagnosis.
+    let dumpable_ret = unsafe { libc::prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) };
+    if dumpable_ret != 0 {
+        let err = std::io::Error::last_os_error();
+        tracing::warn!(error = %err, "prctl(PR_SET_DUMPABLE, 0) failed;             sandboxed child remains ptraceable by siblings");
+    }
+
     // 4. PR_SET_NO_NEW_PRIVS is required before landlock_restrict_self.
     // SAFETY: prctl is a standard libc wrapper; the arguments are the
     // documented form for PR_SET_NO_NEW_PRIVS.
