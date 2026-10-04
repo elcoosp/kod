@@ -754,7 +754,9 @@ impl OpenAICompatProvider {
 
                 // §9.9: one admission permit per streaming HTTP
                 // request, released when this attempt ends.
-                let _permit = concurrency.acquire().await;
+                // T2-C8: named (not `_permit`) so the retry branches
+                // below can drop it before any sleep.
+                let permit = concurrency.acquire().await;
 
                 // §9.3: fresh guard per attempt. The previous
                 // attempt's tail is not evidence about this one.
@@ -797,6 +799,8 @@ impl OpenAICompatProvider {
                                 "openai-compat stream: pre-commit transport error; retrying",
                             );
                             if delay > std::time::Duration::ZERO {
+                                // T2-C8: release the permit before sleeping.
+                                drop(permit);
                                 tokio::time::sleep(delay).await;
                             }
                             continue;
