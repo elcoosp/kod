@@ -1129,6 +1129,7 @@ impl MemoryManager {
         let cutoff = now - time::Duration::days(ARCHIVE_AFTER_DAYS as i64);
         let mut archived = 0usize;
         let mut remaining: Vec<MemoryEntry> = Vec::with_capacity(all.len());
+        let mut to_archive: Vec<MemoryId> = Vec::new();
         for entry in all {
             if entry.memory_type == MemoryType::Episodic {
                 let last_touch = entry
@@ -1136,12 +1137,28 @@ impl MemoryManager {
                     .last_retrieved_at_ms
                     .and_then(|ms| OffsetDateTime::from_unix_timestamp((ms / 1000) as i64).ok())
                     .unwrap_or(entry.timestamp);
-                if last_touch < cutoff && self.long_term.remove(&entry.id).await.is_ok() {
-                    archived += 1;
+                if last_touch < cutoff {
+                    // T1-C7: collect the ids and batch the delete. The
+                    // pre-fix loop opened one write txn (one fsync) per
+                    // archived entry; a crash mid-loop left the store
+                    // half-archived and the next pass re-archived the
+                    // remainder — same shape the fuse path had before
+                    // `remove_batch` landed.
+                    to_archive.push(entry.id.clone());
                     continue;
                 }
             }
             remaining.push(entry);
+        }
+        if !to_archive.is_empty() {
+            match self.long_term.remove_batch(&to_archive).await {
+                Ok(n) => archived = n,
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    count = to_archive.len(),
+                    "consolidate: archive batch remove failed; entries stay in the store",
+                ),
+            }
         }
 
         // --- Pass 2: fuse near-duplicates. ---
