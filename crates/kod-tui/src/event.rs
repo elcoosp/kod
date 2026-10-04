@@ -14,6 +14,18 @@ use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 
+/// T4-C2: a process-wide wake signal shared by `EventHandler` and
+/// `PrioritySender`. Both push into priority queues that the event
+/// loop cannot otherwise observe — without a signal, a key pushed
+/// while `next_event` is parked in its select! waits up to
+/// `tick_rate` (100 ms default) before dispatch. A `Notify` is the
+/// cheapest thing that wakes a select! arm.
+fn wake_notify() -> &'static tokio::sync::Notify {
+    static W: std::sync::OnceLock<tokio::sync::Notify> = std::sync::OnceLock::new();
+    W.get_or_init(tokio::sync::Notify::new)
+}
+
+
 /// Key codes we care about
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum KeyCode {
@@ -315,6 +327,11 @@ impl PrioritySender {
             .position(|(p, _)| *p < priority)
             .unwrap_or(queue.len());
         queue.insert(insert_pos, (priority, event));
+        drop(queue);
+        // T4-C2: wake the select! in `next_event` so a key queued
+        // while the loop is parked is returned without waiting for
+        // the tick.
+        wake_notify().notify_one();
     }
 }
 
@@ -379,34 +396,42 @@ impl EventHandler {
             .unwrap_or(queue.len());
 
         queue.insert(insert_pos, (priority, event));
+        drop(queue);
+        // T4-C2: wake the select! in `next_event` so a key queued
+        // while the loop is parked is returned without waiting for
+        // the tick.
+        wake_notify().notify_one();
     }
 
     /// Get the next event (waits if no events)
     pub async fn next_event(&self) -> Event {
-        // First check the priority queue
-        {
-            let mut queue = self.event_queue.lock().unwrap();
-            if let Some((_, event)) = queue.pop_front() {
-                return event;
-            }
-        }
-
-        // If no events in queue, wait for new events or tick
         let mut rx = self.event_rx.lock().await;
         let deadline = tokio::time::Instant::now() + self.tick_rate;
-
-        tokio::select! {
-            event = rx.recv() => {
-                if let Some(event) = event {
+        loop {
+            // T4-C2: re-check the priority queue on every loop
+            // iteration so a key pushed while we were parked in the
+            // select! is returned immediately.
+            {
+                let mut queue = self.event_queue.lock().unwrap();
+                if let Some((_, event)) = queue.pop_front() {
                     return event;
                 }
             }
-            _ = tokio::time::sleep_until(deadline) => {
-                return Event::Tick;
+            tokio::select! {
+                event = rx.recv() => {
+                    if let Some(event) = event {
+                        return event;
+                    }
+                }
+                _ = wake_notify().notified() => {
+                    // Priority queue may have a new entry; loop.
+                    continue;
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    return Event::Tick;
+                }
             }
         }
-
-        Event::Tick
     }
 
     /// Non-blocking variant of [`next_event`](Self::next_event).
