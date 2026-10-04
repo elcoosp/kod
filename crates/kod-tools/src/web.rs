@@ -35,6 +35,10 @@ use serde_json::Value;
 /// page and bounds the worst case.
 const MAX_BODY_BYTES: usize = 256 * 1024;
 
+/// T1-C15: cap on manual redirect hops. Every hop is validated and
+/// re-pinned, so this is a bound on work, not a trust decision.
+const MAX_REDIRECTS: usize = 5;
+
 /// Per-request wall-clock timeout. Longer than the tool timeout default
 /// (30s) because a cold TLS handshake over a slow link can be slow, but
 /// short enough that a hung server fails fast.
@@ -131,6 +135,117 @@ impl WebFetchTool {
             client,
         }
     }
+
+    
+        /// T1-C15: follow redirects manually, re-validating and re-pinning
+        /// the target address at every hop.
+        ///
+        /// reqwest's `redirect::Policy::custom` runs synchronously and
+        /// cannot perform a DNS lookup — it sees only the literal host
+        /// string of the redirect target. That accepted
+        /// `http://attacker/ -> 302 -> http://metadata.google.internal/`
+        /// because the string `metadata.google.internal` is not on the
+        /// literal blocklist; reqwest's resolver then turned the name into
+        /// 169.254.169.254 and connected to the metadata endpoint.
+        ///
+        /// With `Policy::none()` and this loop, on every hop:
+        ///   1. `block_private_host` runs on the URL's literal host.
+        ///   2. The host is re-resolved and every returned address is
+        ///      checked against `block_private_ip`.
+        ///   3. The connection is pinned to a validated address so a
+        ///      TTL-0 DNS cannot swap in a private IP between our check
+        ///      and the TCP connect.
+        ///
+        /// Returns the final non-redirect response, or a user-facing error
+        /// string the caller surfaces via `ToolResult::Error`.
+        async fn fetch_with_safe_redirects(
+            &self,
+            start: reqwest::Url,
+        ) -> std::result::Result<reqwest::Response, String> {
+            let mut current = start.clone();
+            for hop in 0..=MAX_REDIRECTS {
+                let host = current
+                    .host_str()
+                    .ok_or_else(|| format!("URL {} has no host", current))?
+                    .to_string();
+                if let Some(reason) = block_private_host(&host) {
+                    return Err(format!("refusing to fetch {}: {}", current, reason));
+                }
+                let port = current
+                    .port_or_known_default()
+                    .ok_or_else(|| format!("URL {} has no known port", current))?;
+                let host_owned = host.clone();
+                let lookup = tokio::task::spawn_blocking(move || {
+                    use std::net::ToSocketAddrs;
+                    (host_owned.as_str(), port)
+                        .to_socket_addrs()
+                        .map(|it| it.collect::<Vec<_>>())
+                })
+                .await
+                .map_err(|e| format!("DNS lookup task failed: {e}"))?
+                .map_err(|e| format!("DNS lookup failed for {host}: {e}"))?;
+                if lookup.is_empty() {
+                    return Err(format!("{host} resolved to no addresses"));
+                }
+                for addr in &lookup {
+                    if let Some(reason) = block_private_ip(addr.ip()) {
+                        return Err(format!(
+                            "refusing to fetch {}: {} resolves to {} ({})",
+                            current,
+                            host,
+                            addr.ip(),
+                            reason
+                        ));
+                    }
+                }
+                let pinned = lookup[0];
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
+                    .user_agent(concat!(
+                        "kod/",
+                        env!("CARGO_PKG_VERSION"),
+                        " (+https://github.com/elcoosp/kod)"
+                    ))
+                    // T1-C15: no auto-redirects — we follow them here so
+                    // every hop goes through the checks above.
+                    .redirect(reqwest::redirect::Policy::none())
+                    .resolve(&host, pinned)
+                    .build()
+                    .map_err(|e| format!("could not build request client: {e}"))?;
+                let response = client
+                    .get(current.clone())
+                    .send()
+                    .await
+                    .map_err(|e| format!("request failed for {}: {}", current, e))?;
+                let status = response.status();
+                if !status.is_redirection() {
+                    return Ok(response);
+                }
+                let location = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                    .ok_or_else(|| {
+                        format!("{current} returned {status} with no Location header")
+                    })?;
+                let next = current
+                    .join(location)
+                    .map_err(|e| format!("redirect Location {location:?} is not a valid URL: {e}"))?;
+                if !matches!(next.scheme(), "http" | "https") {
+                    return Err(format!(
+                        "redirect from {current} to non-http(s) scheme {:?}",
+                        next.scheme()
+                    ));
+                }
+                if hop == MAX_REDIRECTS {
+                    return Err(format!(
+                        "too many redirects ({MAX_REDIRECTS} hops) starting from {start}"
+                    ));
+                }
+                current = next;
+            }
+            unreachable!("redirect loop returns within MAX_REDIRECTS + 1 iterations")
+        }
 }
 
 impl Default for WebFetchTool {
@@ -229,86 +344,18 @@ impl Tool for WebFetchTool {
             }
         }
 
-        // H-S7 (second half): DNS rebinding. The pre-flight check
-        // resolved once; `reqwest` would resolve again for the actual
-        // connection, and a TTL-0 attacker DNS can answer the check
-        // with a public IP and the fetch with `127.0.0.1`. Building a
-        // per-request client that pins the host to a validated address
-        // closes the window. The pre-flight already validated every
-        // address the resolver returned; we pin to the first one.
-        let pinned_addr: Option<std::net::SocketAddr> = if let Some(host) = url.host_str() {
-            if let Some(port) = url.port_or_known_default() {
-                let host_owned = host.to_string();
-                let lookup = tokio::task::spawn_blocking(move || {
-                    use std::net::ToSocketAddrs;
-                    (host_owned.as_str(), port)
-                        .to_socket_addrs()
-                        .map(|it| it.collect::<Vec<_>>())
-                })
-                .await
-                .unwrap_or(Ok(Vec::new()))
-                .unwrap_or_default();
-                // M-32: pin only from the VALIDATED set. The pin's
-                // second lookup can disagree with the pre-flight under
-                // TTL-0 DNS; filter through the same private-IP check.
-                lookup
-                    .into_iter()
-                    .find(|addr| block_private_ip(addr.ip()).is_none())
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let request_client: reqwest::Client = match (url.host_str(), pinned_addr) {
-            (Some(host), Some(addr)) => {
-                match reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
-                    .user_agent(concat!(
-                        "kod/",
-                        env!("CARGO_PKG_VERSION"),
-                        " (+https://github.com/elcoosp/kod)"
-                    ))
-                    .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                        // Clone the pieces we need before any consume.
-                        let next = attempt.url().clone();
-                        let scheme = next.scheme().to_string();
-                        let host = next.host_str().map(|s| s.to_string());
-                        if !matches!(scheme.as_str(), "http" | "https") {
-                            return attempt.error(std::io::Error::new(
-                                std::io::ErrorKind::InvalidInput,
-                                format!("redirect to non-http(s) scheme: {scheme}"),
-                            ));
-                        }
-                        if let Some(h) = host
-                            && let Some(reason) = block_private_host(&h)
-                        {
-                            return attempt.error(std::io::Error::new(
-                                std::io::ErrorKind::PermissionDenied,
-                                format!("redirect target {} refused: {reason}", next),
-                            ));
-                        }
-                        attempt.follow()
-                    }))
-                    .resolve(host, addr)
-                    .build()
-                {
-                    Ok(c) => c,
-                    Err(_) => self.client.clone(),
-                }
-            }
-            _ => self.client.clone(),
-        };
-
-        let response = match request_client.get(url.clone()).send().await {
+        // T1-C15: `fetch_with_safe_redirects` re-validates and re-pins
+        // the address at every redirect hop. reqwest's
+        // `Policy::custom` runs synchronously and cannot do a DNS
+        // lookup — it saw only the literal host text of a redirect
+        // target, so `attacker -> 302 -> metadata.google.internal`
+        // passed the check while reqwest's own resolver turned the
+        // name into 169.254.169.254 and connected. Following the
+        // redirect here means the SSRF check and the address pin both
+        // run on every hop.
+        let response = match self.fetch_with_safe_redirects(url.clone()).await {
             Ok(r) => r,
-            Err(e) => {
-                return Ok(ToolResult::Error(format!(
-                    "request failed for {}: {}",
-                    url, e
-                )));
-            }
+            Err(msg) => return Ok(ToolResult::Error(msg)),
         };
 
         let status = response.status();
@@ -428,6 +475,7 @@ impl Tool for WebFetchTool {
             "text": rendered,
         })))
     }
+
 }
 
 /// Reject obvious private hosts by literal text: `localhost`,
@@ -638,6 +686,30 @@ fn skip_element_at(lower: &str, i: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+
+    #[tokio::test]
+    async fn safe_redirects_rejects_loopback() {
+        let tool = WebFetchTool::new();
+        let url = reqwest::Url::parse("http://127.0.0.1:1/").unwrap();
+        let result = tool.fetch_with_safe_redirects(url).await;
+        assert!(result.is_err(), "loopback URL must be refused");
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("127.0.0.1") || msg.contains("loopback"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn safe_redirects_rejects_metadata_host() {
+        let tool = WebFetchTool::new();
+        let url = reqwest::Url::parse("http://metadata.google.internal/").unwrap();
+        let result = tool.fetch_with_safe_redirects(url).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("metadata"), "got: {msg}");
+    }
+
     use super::*;
     use kod_types::ToolPermissions;
 
