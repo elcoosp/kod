@@ -14,7 +14,7 @@
 
 use kod_error::{KodError, Result};
 use kod_types::{MemoryEntry, MemoryId};
-use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -75,7 +75,20 @@ impl LongTermMemory {
         txn.commit()
             .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {}", e)))?;
 
-        Ok(Self { db: Arc::new(db) })
+        let db = Arc::new(db);
+        // T1-C12: one-time migration. If the hash index is empty but
+        // the memory table is not, walk the memory table and populate
+        // the index. After this, `find_by_content_hash` always
+        // answers, and the O(N) fallback in `store_with_metadata`
+        // never fires on a normal store.
+        if let Err(e) = Self::migrate_index_if_stale(&db) {
+            tracing::warn!(
+                error = %e,
+                "content-hash index migration failed; dedup will fall back \
+                 to a full scan until the next clean open",
+            );
+        }
+        Ok(Self { db })
     }
 
     /// Run a closure against the redb database on the blocking thread pool.
@@ -149,6 +162,86 @@ impl LongTermMemory {
         })
         .await
     }
+
+    /// T1-C12: one-time migration of the content-hash index.
+    ///
+    /// Entries written before the F2i-10 index existed have no index
+    /// entry. Without this, every store for a fact that matches a
+    /// pre-index entry falls through to an O(N) full-table scan in
+    /// `store_with_metadata`. The migration walks the memory table
+    /// once and populates the index for every entry; subsequent
+    /// stores take the O(log n) path unconditionally.
+    ///
+    /// Idempotent: it returns early if the index already has any
+    /// entries, so a fresh install and a migrated install both no-op
+    /// on the second call.
+    fn migrate_index_if_stale(db: &Arc<Database>) -> Result<()> {
+        let db = Arc::clone(db);
+        // T1-C12: `new()` is sync — the caller has not entered the
+        // async runtime yet, or is on a current-thread runtime where
+        // `block_in_place` would panic. Just do the redb work
+        // synchronously; it is a one-time startup cost.
+        {
+            let read_txn = db.begin_read().map_err(|e| {
+                KodError::MemoryDatabase(format!("migration read txn: {}", e))
+            })?;
+            let idx_table = match read_txn.open_table(HASH_INDEX_TABLE) {
+                Ok(t) => t,
+                Err(_) => return Ok(()), // no index table yet — nothing to migrate
+            };
+            let idx_len = idx_table.len().unwrap_or(0);
+            let mem_table = read_txn.open_table(MEMORY_TABLE).map_err(|e| {
+                KodError::MemoryDatabase(format!("migration mem table: {}", e))
+            })?;
+            let mem_len = mem_table.len().unwrap_or(0);
+            drop(idx_table);
+            drop(mem_table);
+            drop(read_txn);
+            if idx_len > 0 || mem_len == 0 {
+                return Ok(());
+            }
+            tracing::info!(
+                entries = mem_len,
+                "content-hash index empty; migrating pre-index entries"
+            );
+            let write_txn = db.begin_write().map_err(|e| {
+                KodError::MemoryDatabase(format!("migration write txn: {}", e))
+            })?;
+            let mut inserted = 0usize;
+            {
+                let mem = write_txn.open_table(MEMORY_TABLE).map_err(|e| {
+                    KodError::MemoryDatabase(format!("migration open mem: {}", e))
+                })?;
+                let mut idx = write_txn.open_table(HASH_INDEX_TABLE).map_err(|e| {
+                    KodError::MemoryDatabase(format!("migration open idx: {}", e))
+                })?;
+                let iter = mem.iter().map_err(|e| {
+                    KodError::MemoryDatabase(format!("migration iter: {}", e))
+                })?;
+                for entry in iter {
+                    let Ok((_k, v)) = entry else { continue };
+                    let Ok(e) = serde_json::from_slice::<MemoryEntry>(v.value()) else {
+                        continue;
+                    };
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    e.content.hash(&mut h);
+                    let hash = h.finish();
+                    let key = Self::index_key(hash, e.memory_type);
+                    let val = e.id.as_uuid().as_bytes().to_vec();
+                    if idx.insert(key.as_slice(), val.as_slice()).is_ok() {
+                        inserted += 1;
+                    }
+                }
+            }
+            write_txn.commit().map_err(|e| {
+                KodError::MemoryDatabase(format!("migration commit: {}", e))
+            })?;
+            tracing::info!(inserted, "content-hash index migrated");
+            Ok(())
+        }
+    }
+
 
     /// Store an entry persistently. Overwrites any existing entry with
     /// the same id.
