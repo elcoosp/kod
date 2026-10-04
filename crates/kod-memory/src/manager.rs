@@ -1431,9 +1431,16 @@ impl MemoryManager {
         }
 
         let mut actually_deleted = 0usize;
-        for id in &to_delete {
-            if self.long_term.remove(id).await.is_ok() {
-                actually_deleted += 1;
+        // T1-C7: one write transaction for all deletions rather than
+        // one per id. A crash mid-loop no longer leaves the store with
+        // a partially-fused cluster.
+        if !to_delete.is_empty() {
+            match self.long_term.remove_batch(&to_delete).await {
+                Ok(n) => actually_deleted = n,
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    "fuse_duplicates: batch remove failed; store unchanged",
+                ),
             }
         }
         Ok(actually_deleted)
