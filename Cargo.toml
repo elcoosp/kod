@@ -20,6 +20,7 @@ members = [
     "crates/kod-core-state",
     "crates/kod-core-routing",
     "crates/kod-core-quality",
+    "crates/kod-core-tools",
     "crates/kod-risk",
     "crates/kod-schema-dialect",
     "crates/kod-minimize",

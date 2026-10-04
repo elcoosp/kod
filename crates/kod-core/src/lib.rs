@@ -3,6 +3,17 @@
 //! This crate integrates skills, memory, tools, and LLM providers
 //! into a unified task routing and execution engine.
 
+// Re-exports from kod-core-tools so `crate::<module>` keeps resolving.
+pub use kod_core_tools::jfind;
+pub use kod_core_tools::lsp_tools;
+
+
+
+pub use kod_core_tools::tool_loop_guard;
+pub use kod_core_tools::speculation;
+pub use kod_core_tools::prewalk;
+
+
 // Re-exports from kod-core-quality so `crate::<module>` keeps resolving.
 pub use kod_core_quality::repomap;
 pub use kod_core_quality::prune;
@@ -45,7 +56,6 @@ pub use kod_core_state::sensitivity;
 pub use kod_core_state::steer;
 
 pub mod acp;
-pub mod advisor_tools;
 pub mod async_delivery;
 pub mod background;
 pub mod compaction;
@@ -54,24 +64,14 @@ pub mod doctor;
 pub mod engine;
 pub mod fixture;
 pub mod hooks;
-pub mod jfind;
-pub mod jfind_tool;
-pub mod hub_tool;
 pub mod jev;
-pub mod lsp_tools;
-pub mod mcp_adapters;
-pub mod memory_handler;
-pub mod memory_tools;
 pub mod output_spool;
 pub mod overnight;
 pub mod pause_gate;
-pub mod prewalk;
 pub mod run_collector;
 pub mod serve;
-pub mod speculation;
 pub mod swarm_adapters;
 pub mod swarm_runner;
-pub mod tool_loop_guard;
 pub mod tool_quota;
 pub mod unexpected_stop;
 pub use cost::{CostSnapshot, CostTracker, SoftWarningTrigger};
@@ -117,3 +117,9 @@ pub use swarm_runner::{
 };
 pub use worktree::{MergeReport, WorktreeInfo, WorktreeManager};
 pub mod router;
+pub mod mcp_adapters;
+pub mod memory_handler;
+pub mod memory_tools;
+pub mod advisor_tools;
+pub mod hub_tool;
+pub mod jfind_tool;
