@@ -1,0 +1,37 @@
+[package]
+name = "kod-core-quality"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+parking_lot = { workspace = true }
+async-trait = "0.1"
+futures = { workspace = true }
+dirs = { workspace = true }
+regex = { workspace = true }
+ignore = { workspace = true }
+kod-types = { path = "../kod-types" }
+kod-error = { path = "../kod-error" }
+kod-ast = { path = "../kod-ast" }
+kod-tools = { path = "../kod-tools" }
+kod-provider = { path = "../kod-provider" }
+kod-core-state = { path = "../kod-core-state" }
+kod-core-routing = { path = "../kod-core-routing" }
+
+[dev-dependencies]
+tempfile = "3.8"
+tokio = { workspace = true }
+rstest = { workspace = true }
+
+[lints]
+workspace = true

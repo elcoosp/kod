@@ -3,6 +3,17 @@
 //! This crate integrates skills, memory, tools, and LLM providers
 //! into a unified task routing and execution engine.
 
+// Re-exports from kod-core-quality so `crate::<module>` keeps resolving.
+pub use kod_core_quality::repomap;
+pub use kod_core_quality::prune;
+pub use kod_core_quality::shake;
+pub use kod_core_quality::worktree;
+pub use kod_core_quality::worktree_isolation_ownership;
+pub use kod_core_quality::preflight;
+pub use kod_core_quality::transcript_coherence;
+pub use kod_core_quality::auto_thinking;
+pub use kod_core_quality::snapcompact;
+
 // Re-exports from kod-core-routing so `crate::<module>` keeps resolving.
 pub use kod_core_routing::retry_strategy;
 pub use kod_core_routing::provider_setup;
@@ -36,7 +47,6 @@ pub use kod_core_state::steer;
 pub mod acp;
 pub mod advisor_tools;
 pub mod async_delivery;
-pub mod auto_thinking;
 pub mod background;
 pub mod compaction;
 pub mod compaction_dispatcher;
@@ -56,21 +66,14 @@ pub mod output_spool;
 pub mod overnight;
 pub mod pause_gate;
 pub mod prewalk;
-pub mod repomap;
 pub mod run_collector;
 pub mod serve;
-pub mod shake;
-pub mod snapcompact;
 pub mod speculation;
 pub mod swarm_adapters;
 pub mod swarm_runner;
 pub mod tool_loop_guard;
 pub mod tool_quota;
-pub mod transcript_coherence;
 pub mod unexpected_stop;
-pub mod worktree;
-pub mod worktree_isolation_ownership;
-
 pub use cost::{CostSnapshot, CostTracker, SoftWarningTrigger};
 pub use decisions::{DecisionAuthor, DecisionKind, DecisionLog, DecisionRecord};
 pub use engine::KodEngine;
@@ -113,7 +116,4 @@ pub use swarm_runner::{
     WorktreeMergeOutcome,
 };
 pub use worktree::{MergeReport, WorktreeInfo, WorktreeManager};
-pub mod preflight;
-pub mod prune;
-
 pub mod router;
