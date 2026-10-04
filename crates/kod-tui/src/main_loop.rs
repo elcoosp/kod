@@ -6338,6 +6338,20 @@ fn parse_overnight_duration(s: &str) -> Option<Duration> {
 
 #[cfg(test)]
 mod tests {
+
+    /// T4-flake: `std::env::set_current_dir` is process-global, so the
+    /// guard that serializes it must be process-global too. The pre-fix
+    /// shape declared a `static CWD_LOCK` inside each test fn; two tests
+    /// in the same process each held their own lock and raced on the
+    /// cwd. This helper is the single, module-wide guard.
+    fn cwd_lock() -> std::sync::MutexGuard<'static, ()> {
+        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        CWD_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
     use super::*;
 
     #[tokio::test]
@@ -6352,11 +6366,7 @@ mod tests {
         let mut tui = TuiLoop::new();
         let tmp = tempfile::TempDir::new().unwrap();
         let old_cwd = std::env::current_dir().unwrap();
-        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        let _guard = CWD_LOCK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _guard = cwd_lock();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let result = tui.handle_command("/check").await;
@@ -6512,11 +6522,7 @@ mod tests {
         // cwd under the shared `CWD_LOCK`; a parallel run of this
         // test without the lock saw the tmp dir those tests chdir'd
         // into. Take the same lock.
-        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        let _guard = CWD_LOCK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _guard = cwd_lock();
         let mut tui = TuiLoop::new();
         tui.handle_command("/map").await.unwrap();
         let last = tui.app().messages().last().unwrap();
@@ -6540,11 +6546,7 @@ mod tests {
         // proves the argument reaches the renderer.
         //
         // S10 follow-up: same CWD_LOCK reason as `test_map_command_produces_output`.
-        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        let _guard = CWD_LOCK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _guard = cwd_lock();
         let mut tui = TuiLoop::new();
         tui.handle_command("/map 1").await.unwrap();
         let last = tui.app().messages().last().unwrap();
@@ -6628,13 +6630,7 @@ mod tests {
         // and would leave artefacts on the developer's machine.
         let tmp = tempfile::TempDir::new().unwrap();
         let old_cwd = std::env::current_dir().unwrap();
-        // Serialize cwd mutation across tests via a static mutex so
-        // the change does not race a parallel test.
-        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        let _guard = CWD_LOCK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _guard = cwd_lock();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let result = tui.handle_command("/export-html").await;
@@ -6688,11 +6684,7 @@ mod tests {
         tui.app_mut().push_system_message("stdout content");
         let tmp = tempfile::TempDir::new().unwrap();
         let old_cwd = std::env::current_dir().unwrap();
-        static CWD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        let _guard = CWD_LOCK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _guard = cwd_lock();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let result = tui.handle_command("/export-html -").await;
