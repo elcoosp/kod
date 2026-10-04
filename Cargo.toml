@@ -266,6 +266,7 @@ syntect = { version = "5.2", default-features = false, features = ["default-synt
 # Testing
 proptest = "1.11.0"
 rstest = "0.26.1"
+serial_test = "3"
 criterion = "0.5"
 
 # TypeSafe AI / Jev client (git dependency, gilljon/typesafe-ai-rs v0.1.0).
