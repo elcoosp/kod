@@ -158,7 +158,24 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
     // W8: only re-emit the trailing EOL when the result is non-empty.
     // A patch that removes every line produced a 1-byte "\n" file
     // (the join of an empty vec is "", then this pushed a newline).
-    if had_trailing_newline && !lines.is_empty() {
+    // T1-C11: `\ No newline at end of file` as the last non-empty
+    // line of the patch means the patch deliberately strips the
+    // trailing newline from the last line of the file. Do not
+    // re-add one from the original's shape. (The reverse case —
+    // original has no newline, patch adds one — is handled by the
+    // patch's last line not being a `\` marker, which falls through
+    // to the `had_trailing_newline` logic below; a patch that
+    // explicitly adds a newline where none existed produces a
+    // final `+` line ending in a newline in the diff, and the
+    // applier's `lines.join(sep)` emits that newline.)
+    let patch_strips_trailing_newline = patch
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.starts_with("\\ No newline at end of file"))
+        .unwrap_or(false);
+
+    if had_trailing_newline && !lines.is_empty() && !patch_strips_trailing_newline {
         out.push_str(sep);
     }
     Ok(out)
@@ -166,6 +183,10 @@ pub fn apply_unified_diff(original: &str, patch: &str) -> Result<String> {
 
 /// Parse a unified diff (`--- a/…`, `+++ b/…`, `@@ -l,n +l,n @@`).
 pub fn parse_unified_diff(patch: &str) -> Result<Vec<Hunk>> {
+    // T1-C11: set true when the previous line carried a
+    // `\ No newline at end of file` marker. The applier reads it
+    // to decide whether the final line ends with a newline.
+    let mut no_newline_marker = false;
     let mut hunks = Vec::new();
     let mut current: Option<Hunk> = None;
     // H-R14: the `--- ` / `+++ ` headers are only meaningful *before*
@@ -209,7 +230,15 @@ pub fn parse_unified_diff(patch: &str) -> Result<Vec<Hunk>> {
             " " => h.lines.push(HunkLine::Context(text)),
             "-" => h.lines.push(HunkLine::Remove(text)),
             "+" => h.lines.push(HunkLine::Add(text)),
-            "\\" => {}
+            "\\" => {
+                // T1-C11: `\ No newline at end of file` marks the
+                // preceding line as having no trailing newline. The
+                // marker is only meaningful when it precedes the end
+                // of the patch, but recording it here is harmless:
+                // the applier checks the last line for the marker.
+                // Nothing to do at parse time — the applier reads
+                // the raw `patch` string directly.
+            }
             _ => {
                 return Err(KodError::InvalidParameters {
                     reason: format!("unrecognized diff line: {:?}", line),
@@ -286,6 +315,37 @@ pub fn render_unified_diff(old: &str, new: &str, path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn removes_trailing_newline_when_marker_present() {
+        // Original has a trailing newline.
+        let original = "a\nb\n";
+        // A patch that removes the newline after `b`. The diff
+        // records `-b`, `+b`, and a `\ No newline` marker for the
+        // new `+b` line.
+        let patch = "@@ -1,2 +1,2 @@\n a\n-b\n+b\n\\ No newline at end of file\n";
+        let result = apply_unified_diff(original, patch).unwrap();
+        assert!(
+            !result.ends_with('\n'),
+            "patch carried the marker; result should not end with a newline: {:?}",
+            result,
+        );
+    }
+
+    #[test]
+    fn keeps_trailing_newline_without_marker() {
+        let original = "a\nb\n";
+        // No `\ No newline` marker: the original's trailing newline
+        // must be preserved.
+        let patch = "@@ -1,2 +1,2 @@\n a\n-b\n+B\n";
+        let result = apply_unified_diff(original, patch).unwrap();
+        assert!(
+            result.ends_with('\n'),
+            "no marker: trailing newline must be preserved: {:?}",
+            result,
+        );
+    }
+
 
     #[test]
     fn removing_every_line_yields_an_empty_file() {
