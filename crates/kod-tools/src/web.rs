@@ -47,58 +47,14 @@ const REQUEST_TIMEOUT_SECS: u64 = 30;
 /// Fetch a URL over HTTP/HTTPS and return its text content.
 pub struct WebFetchTool {
     pub definition: ToolDefinition,
-    client: reqwest::Client,
 }
 
 impl WebFetchTool {
     pub fn new() -> Self {
-        // A dedicated client, built once: the connection pool and TLS
-        // session cache are the entire point of having a client rather
-        // than spawning a request per call.
-        // H-S7: the default redirect policy follows up to 10 hops
-        // without re-validating the destination. An attacker URL
-        // (`http://attacker/r` -> 302 -> `http://169.254.169.254/…`)
-        // bypassed the private-IP check that only ran on the first
-        // URL. The custom policy re-runs `block_private_host` and
-        // (best-effort) the address family check on every hop.
-        //
-        // The policy is a *synchronous* closure, so it cannot do a
-        // DNS lookup — the async pre-flight validation still owns
-        // that. The redirect check covers the cheap-but-effective
-        // cases: literal private hosts, literal private IPs, and
-        // non-http(s) schemes (which `reqwest` would otherwise
-        // refuse on its own but we make explicit).
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
-            .user_agent(concat!(
-                "kod/",
-                env!("CARGO_PKG_VERSION"),
-                " (+https://github.com/elcoosp/kod)"
-            ))
-            .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                // `attempt.url()` is the *next* URL; the hop count is
-                // already tracked by reqwest.
-                let next = attempt.url().clone();
-                if !matches!(next.scheme(), "http" | "https") {
-                    return attempt.error(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        format!("redirect to non-http(s) scheme: {}", next.scheme()),
-                    ));
-                }
-                if let Some(host) = next.host_str()
-                    && let Some(reason) = block_private_host(host)
-                {
-                    return attempt.error(std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        format!("redirect target {} refused: {reason}", next),
-                    ));
-                }
-                // Continue following the redirect. `reqwest`'s own
-                // ten-hop cap still applies.
-                attempt.follow()
-            }))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        // H-S7 / T1-C15: the initial client is no longer built here.
+        // `fetch_with_safe_redirects` builds a per-hop client with the
+        // address pinned from its own validation pass.
+
         Self {
             definition: ToolDefinition {
                 trust_level: kod_types::trust::TrustLevel::ToolUntrusted,
@@ -132,7 +88,6 @@ impl WebFetchTool {
                 },
                 load_mode: Default::default(),
             },
-            client,
         }
     }
 
