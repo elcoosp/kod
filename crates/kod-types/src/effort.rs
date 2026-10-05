@@ -44,9 +44,16 @@ impl EffortLevel {
             "high" => Self::High,
             "xhigh" | "x-high" | "extra-high" => Self::Xhigh,
             "max" => Self::Max,
-            _ => Self::Medium,
-        }
-    }
+            _ => {
+                // T5-C40: a value kod does not recognise is more likely a
+                // typo than a new tier. Warn so the user sees the fallback.
+                tracing::warn!(
+                    value = %s,
+                    "effort: unrecognized value; falling back to Medium",
+                );
+                Self::Medium
+            }
+        }    }
 
     /// The idle-timeout multiplier for this effort.
     ///
