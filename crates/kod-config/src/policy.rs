@@ -765,8 +765,7 @@ fn resolve_path(working_dir: &Path, p: &str) -> PathBuf {
 /// `*` does not cross `/` and `**` does — the same semantics git
 /// uses for `.gitignore`.
 fn glob_matches(pattern: &str, path: &Path, working_dir: &Path) -> bool {
-    use globset::GlobBuilder;
-
+    
             // T5-C32: use the process-wide compiled-glob cache instead of
         // recompiling on every call.
         let build = |pat: &str| -> Option<std::sync::Arc<globset::GlobMatcher>> {
