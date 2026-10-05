@@ -125,6 +125,10 @@ impl SkillWatcher {
 
     /// Start the watcher (it's already watching, this is for state tracking)
     pub fn start(&self) -> Result<()> {
+        // T5-C20: the watcher actually starts in `new()` (notify's
+        // `recommended_watcher` callback is registered and `watch()` is
+        // called there). This flag is bookkeeping only — the pre-fix
+        // doc claimed `start` performed the watch registration.
         self.is_running
             .store(true, std::sync::atomic::Ordering::SeqCst);
         Ok(())
