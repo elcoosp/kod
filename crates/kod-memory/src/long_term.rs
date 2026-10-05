@@ -522,23 +522,20 @@ impl LongTermMemory {
     }
 
     pub async fn count(&self) -> Result<usize> {
+        // T1-H3: redb tracks the row count internally; `len()` is an
+        // O(1) B-tree count, not a walk. The pre-fix shape iterated
+        // every entry.
         self.blocking(|db| {
             let txn = db.begin_read().map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to start read transaction: {}", e))
+                KodError::MemoryDatabase(format!("Failed to start transaction: {}", e))
             })?;
-            let table = txn
-                .open_table(MEMORY_TABLE)
-                .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {}", e)))?;
-            let mut count = 0usize;
-            for entry in table
-                .iter()
-                .map_err(|e| KodError::MemoryDatabase(format!("Failed to iterate: {}", e)))?
-            {
-                if entry.is_ok() {
-                    count += 1;
-                }
-            }
-            Ok(count)
+            let table = txn.open_table(MEMORY_TABLE).map_err(|e| {
+                KodError::MemoryDatabase(format!("Failed to open table: {}", e))
+            })?;
+            let n = table.len().map_err(|e| {
+                KodError::MemoryDatabase(format!("Failed to read table len: {}", e))
+            })?;
+            Ok(n as usize)
         })
         .await
     }
