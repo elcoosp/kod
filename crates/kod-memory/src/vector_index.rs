@@ -66,50 +66,52 @@ impl VectorIndex {
     /// L2-normalized in place. A zero vector, a wrong-dim vector, or a
     /// NaN component is rejected.
     pub fn insert(&mut self, id: MemoryId, v: Vec<f32>) -> Result<()> {
-        if self.dim == 0 {
-            return Err(KodError::MemoryStorage(
-                "vector index has dim = 0; cannot insert".to_string(),
-            ));
-        }
-        if v.len() != self.dim {
-            return Err(KodError::MemoryStorage(format!(
-                "vector index expects {} dims, got {}",
-                self.dim,
-                v.len()
-            )));
-        }
-        let norm_sq: f32 = v.iter().map(|x| x * x).sum();
-        if !norm_sq.is_finite() || norm_sq == 0.0 {
-            return Err(KodError::MemoryStorage(
-                "vector index: zero or non-finite vector".to_string(),
-            ));
-        }
-        let norm = norm_sq.sqrt();
-        let normalized: Vec<f32> = v.iter().map(|x| x / norm).collect();
-
-        // Replace if present, else append.
-        if let Some(slot) = self
-            .entries
-            .iter_mut()
-            .find(|(existing, _)| existing == &id)
-        {
-            slot.1 = normalized;
-        } else {
-            self.entries.push((id, normalized));
-        }
-        Ok(())
+    if self.dim == 0 {
+        return Err(KodError::MemoryStorage(
+            "vector index has dim = 0; cannot insert".to_string(),
+        ));
     }
+    if v.len() != self.dim {
+        return Err(KodError::MemoryStorage(format!(
+            "vector index expects {} dims, got {}",
+            self.dim,
+            v.len()
+        )));
+    }
+    let norm_sq: f32 = v.iter().map(|x| x * x).sum();
+    if !norm_sq.is_finite() || norm_sq == 0.0 {
+        return Err(KodError::MemoryStorage(
+            "vector index: zero or non-finite vector".to_string(),
+        ));
+    }
+    let norm = norm_sq.sqrt();
+    let normalized: Vec<f32> = v.iter().map(|x| x / norm).collect();
+
+    // T1-H5: O(1) lookup via side index.
+    if let Some(&pos) = self.positions.get(&id) {
+        self.entries[pos].1 = normalized;
+    } else {
+        self.positions.insert(id.clone(), self.entries.len());
+        self.entries.push((id, normalized));
+    }
+    Ok(())
+}
 
     /// Remove the entry for `id`, if present. Returns `true` when a
     /// vector was removed.
     pub fn remove(&mut self, id: &MemoryId) -> bool {
-        if let Some(pos) = self.entries.iter().position(|(i, _)| i == id) {
-            self.entries.swap_remove(pos);
-            true
-        } else {
-            false
-        }
+    // T1-H5: O(1) lookup + swap_remove + fixup the moved element's
+    // position in the side index.
+    let Some(pos) = self.positions.remove(id) else {
+        return false;
+    };
+    self.entries.swap_remove(pos);
+    if pos < self.entries.len() {
+        let moved_id = self.entries[pos].0.clone();
+        self.positions.insert(moved_id, pos);
     }
+    true
+}
 
     /// Top-`k` vectors by dot product (== cosine, since inputs are
     /// normalized). The query is normalized on the fly. Ties are
