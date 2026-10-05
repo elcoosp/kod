@@ -414,7 +414,14 @@ impl AgentRegistry {
             // Load the persisted file and merge its refs in without
             // clobbering anything already live. A ref already in
             // memory wins — the in-memory one is the truth.
-            let loaded = Self::load(persisted_path).map_err(|_| RegistryError::Unknown)?;
+            let loaded = Self::load(persisted_path).map_err(|e| {
+                tracing::error!(
+                    path = %persisted_path.display(),
+                    error = %e,
+                    "registry load failed during cold_revive",
+                );
+                RegistryError::Unknown
+            })?;
             for (k, v) in loaded.agents {
                 self.agents.entry(k).or_insert(v);
             }
