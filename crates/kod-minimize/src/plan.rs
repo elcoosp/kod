@@ -221,6 +221,18 @@ mod tests {
     fn a_leading_whitespace_is_trimmed() {
         assert_eq!(single("   git status").0, "git");
     }
+
+    #[test]
+    fn strip_quotes_strips_only_matched_pairs() {
+        assert_eq!(strip_quotes("abc"), "abc");
+        assert_eq!(strip_quotes("'abc'"), "abc");
+        assert_eq!(strip_quotes("\"abc\""), "abc");
+        assert_eq!(strip_quotes("'"), "'");
+        assert_eq!(strip_quotes(""), "");
+        assert_eq!(strip_quotes("'abc"), "'abc");
+        assert_eq!(strip_quotes("abc'"), "abc'");
+        assert_eq!(strip_quotes("'abc\""), "'abc\"");
+    }
 }
 
 /// T5-C35: a token like `'status'` or `"status"` should compare equal to
