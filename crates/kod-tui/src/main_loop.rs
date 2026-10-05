@@ -69,6 +69,10 @@ pub struct TuiLoop {
     /// wheel scrolls the chat; `m` switches to select-mode (capture
     /// off, native drag-select works, wheel goes to the terminal).
     mouse_captured: bool,
+
+    /// T4-H4: handles to spawned background tasks. Aborted on
+    /// quit so they cannot mutate shared state after teardown.
+    bg_tasks: Vec<tokio::task::JoinHandle<()>>
 }
 
 impl TuiLoop {
@@ -86,6 +90,7 @@ impl TuiLoop {
             cli_preset: None,
             no_resume: false,
             mouse_captured: true,
+            bg_tasks: Vec::new(),
         }
     }
 
@@ -713,6 +718,13 @@ impl TuiLoop {
     ///
     /// Keys, paste, resize, completion, errors, and the initial frame
     /// still render immediately.
+    /// T4-H4: abort every tracked background task before teardown.
+    fn abort_bg_tasks(&mut self) {
+        for h in self.bg_tasks.drain(..) {
+            h.abort();
+        }
+    }
+
     async fn main_loop(&mut self) -> Result<()> {
         // Render once before blocking so the initial screen is visible
         // without waiting for the first tick.
@@ -729,7 +741,14 @@ impl TuiLoop {
             self.handle_event(event).await?;
 
             const MAX_EVENTS_PER_FRAME: usize = 256;
-            for _ in 0..MAX_EVENTS_PER_FRAME {
+            let mut _yield_counter: usize = 0;
+for _ in 0..MAX_EVENTS_PER_FRAME {
+                // T4-H3: yield to the runtime every 32 events so a
+                // burst of ResponseChunks cannot starve other tasks.
+                _yield_counter += 1;
+                if _yield_counter % 32 == 0 {
+                    tokio::task::yield_now().await;
+                }
                 let Some(next) = self.event_handler.try_next_event() else {
                     break;
                 };
@@ -877,6 +896,7 @@ impl TuiLoop {
             }
             Event::Quit => {
                 self.cancel_generation();
+                self.abort_bg_tasks();
                 self.app.quit();
             }
             Event::Tick => {
