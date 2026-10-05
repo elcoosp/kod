@@ -384,6 +384,13 @@ impl KodConfig {
                             // Preserve the broken file for inspection.
                             let backup = config_path.with_extension("toml.broken");
                             let _ = std::fs::rename(&config_path, &backup);
+                            // T5-C30: after renaming the broken file, write the
+                            // recovered config back so a subsequent load reads the
+                            // recovered shape instead of a fresh default that
+                            // discards the recovered sections.
+                            if let Ok(toml_str) = toml::to_string_pretty(&cfg) {
+                                let _ = std::fs::write(&config_path, toml_str);
+                            }
                             eprintln!(
                                 "kod: config parse error in {}: {}. The \
                                  recoverable sections were kept; the broken \
