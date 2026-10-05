@@ -101,9 +101,11 @@ impl AgentRef {
     /// The agent's depth in the spawn tree. A main agent is 0; a
     /// child of a main agent is 1; a grandchild is 2.
     pub fn depth(&self) -> u32 {
-        // The registry walks the chain; this method answers from
-        // the ref itself only when the parent is absent. Callers
-        // that need the true depth use `AgentRegistry::depth_of`.
+        // T5-C38: the pre-fix shape returned 0 or 1 based on
+        // `parent.is_some()`, which lied for any deeper agent. This
+        // method cannot walk the registry without a reference to it,
+        // so it is documented as "immediate depth" only; callers that
+        // need the true depth use `AgentRegistry::depth_of`.
         if self.parent.is_some() { 1 } else { 0 }
     }
 }
