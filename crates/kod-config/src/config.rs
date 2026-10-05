@@ -531,7 +531,15 @@ impl KodConfig {
             .skills_dirs()?
             .into_iter()
             .next()
-            .unwrap_or_else(|| PathBuf::from(".kod/skills")))
+            .unwrap_or_else(|| {
+                // T5-C39: warn when home is unresolvable rather than
+                // silently falling back to a cwd-relative path.
+                tracing::warn!(
+                    "home directory is unresolvable; falling back to \
+                     ./.kod/skills (relative to the current working dir)",
+                );
+                PathBuf::from(".kod/skills")
+            }))
     }
 
     /// Every directory KOD scans for skills, in load order.
