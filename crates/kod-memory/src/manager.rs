@@ -1525,10 +1525,11 @@ impl MemoryManager {
     ///
     /// Idempotency is by construction. A caller that needs to reuse
     /// the store after a shutdown creates a fresh manager.
-    pub fn close(self) {
-        // Bind to a local and drop explicitly so the intent is obvious
-        // even if a future field is added: every owned subsystem is
-        // released on this line.
+    pub async fn close(self) {
+        // T1-M3: drain background embed tasks before dropping the DB.
+        // A task in flight holds a clone of `long_term`; without this
+        // wait the DB can be closed underneath it.
+        self.flush_embeddings().await;
         let Self {
             short_term,
             long_term,
