@@ -110,6 +110,20 @@ impl LlmConfig {
     /// clamps with a `tracing::warn!` per adjustment so the session
     /// still runs and the user sees what changed.
     pub fn validate(&mut self) {
+        // T5-C28: warn when a declared api_key_env is not set. A
+        // config that names ANTHROPIC_API_KEY but never exports it
+        // otherwise fails at the first turn with a 401 and no hint.
+        for ep in &self.endpoints {
+            if let Some(env_name) = &ep.api_key_env
+                && std::env::var(env_name).is_err()
+            {
+                tracing::warn!(
+                    endpoint = %ep.name,
+                    env = %env_name,
+                    "endpoint declares api_key_env but the variable is unset",
+                );
+            }
+        }
         for e in &mut self.endpoints {
             // Clamp an unrecognised trust tier to `standard` rather
             // than silently treating a typo as `trusted`.
