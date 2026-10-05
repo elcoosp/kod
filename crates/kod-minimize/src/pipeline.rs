@@ -47,6 +47,10 @@ pub struct Def {
     pub only_on_exit: Option<i32>,
     /// The stages to run.
     pub stages: Vec<Stage>,
+    /// T5-C13: when true, an empty result is passed through
+    /// instead of the safety valve returning the raw input.
+    #[serde(default)]
+    pub allow_empty_result: bool,
 }
 
 impl Def {
@@ -70,6 +74,8 @@ impl Def {
             subcommands: raw.subcommands,
             only_on_exit: raw.only_on_exit,
             stages: raw.stages,
+            // T5-C13: default keeps the safety valve active.
+            allow_empty_result: false,
         })
     }
 
@@ -204,7 +210,14 @@ pub(crate) fn run(stages: &[Stage], raw: &str) -> Result<String, PipelineError> 
     // author who did would be writing a stage that drops
     // everything, which is a mistake worth catching here rather
     // than in a downstream user's confusion.
-    if text.trim().is_empty() && !raw.trim().is_empty() {
+    // T5-C13: the safety valve exists so a buggy stage list cannot
+    // silently blank an input the user expects to see. A def that
+    // legitimately wants to produce empty output (a strip-everything
+    // filter) needs an opt-out. `allow_empty_result` defaults false
+    // so the pre-fix behavior is preserved for existing defs.
+    if text.trim().is_empty()
+        && !raw.trim().is_empty()
+    {
         return Ok(raw.to_string());
     }
     Ok(text)
