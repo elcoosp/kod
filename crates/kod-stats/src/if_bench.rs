@@ -136,7 +136,12 @@ pub fn parse_reported_array(text: &str) -> Option<Vec<char>> {
 ///
 /// The reply is split at the midpoint (by lines); the sound must be in
 /// the first third, the middle third, or the last third of the lines.
-pub fn cat_sound_at(text: &str, position: SoundPosition) -> bool {
+pub // T5-C34: this method measures "middle" by line index, but a
+// single-line reply always classifies as End regardless of where
+// the sound sits in the line. A character-offset based check would
+// be more accurate; the current test suite pins the line-index
+// behavior, so a fix must update the tests as well.
+    fn cat_sound_at(text: &str, position: SoundPosition) -> bool {
     let lines: Vec<&str> = text.lines().collect();
     if lines.is_empty() {
         return false;
