@@ -77,7 +77,17 @@ impl SessionSafeWriter {
                     // Best-effort: a missing .kod directory is not fatal.
                     let _ = std::fs::create_dir_all(parent);
                 }
-                OpenOptions::new().create(true).append(true).open(path).ok()
+                {
+            // T4-H9: cap session.log at 50 MiB. Without rotation, a
+            // debug-level session can grow unbounded.
+            const MAX_LOG_BYTES: u64 = 50 * 1024 * 1024;
+            if let Ok(md) = std::fs::metadata(&path)
+                && md.len() > MAX_LOG_BYTES
+            {
+                let _ = std::fs::remove_file(&path);
+            }
+            OpenOptions::new().create(true).append(true).open(path).ok()
+        }
             });
         }
         match slot.as_mut() {
