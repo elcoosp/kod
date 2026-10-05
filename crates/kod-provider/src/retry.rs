@@ -76,11 +76,24 @@ impl RetryPolicy {
             return capped;
         }
         // Deterministic pseudo-jitter from nanos; avoids pulling in `rand`.
+        // T2-H11: mix thread id + process id + nanos into the jitter seed.
+        // The pre-fix shape read only `SystemTime::subsec_nanos`, which is
+        // correlated across threads: a swarm hitting the same 429 at the
+        // same wall-clock instant computed identical jitter and retried
+        // in lockstep — the exact failure mode jitter exists to prevent.
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos() as f64)
-            .unwrap_or(0.0);
-        let jitter = (nanos / 1e9) * 2.0 - 1.0; // in [-1, 1)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let tid = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            std::thread::current().id().hash(&mut h);
+            h.finish()
+        };
+        let mut state = nanos ^ tid ^ (std::process::id() as u64);
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let jitter = ((state >> 33) as f64) / (u32::MAX as f64) * 2.0 - 1.0;
         let factor = 1.0 + jitter * self.jitter_fraction;
         let secs = capped.as_secs_f64() * factor;
         Duration::from_secs_f64(secs.max(0.0))
@@ -99,7 +112,12 @@ where
     let mut long_wait_used = false;
     loop {
         match f().await {
-            Ok(v) => return Ok(v),
+            Ok(v) => {
+                if attempt > 1 {
+                    tracing::debug!(attempt, "provider call succeeded after retry");
+                }
+                return Ok(v);
+            }
             Err(e) if !e.is_retryable() => return Err(e),
             Err(e) if attempt >= policy.max_attempts => return Err(e),
             Err(e) => {
