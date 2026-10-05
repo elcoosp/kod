@@ -1568,3 +1568,31 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
     }
     out
 }
+
+/// T5-C32: cache the compiled GlobBuilder matcher per (pattern,
+/// literal_separator). The pre-fix shape recompiled up to three
+/// patterns on every decide.
+fn compiled_glob(pattern: &str) -> Option<std::sync::Arc<globset::GlobMatcher>> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<std::sync::Arc<globset::GlobMatcher>>>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(g) = cache.lock()
+        && let Some(v) = g.get(pattern)
+    {
+        return v.clone();
+    }
+    let compiled = globset::GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()
+        .ok()
+        .map(|g| std::sync::Arc::new(g.compile_matcher()));
+    if let Ok(mut g) = cache.lock() {
+        if g.len() > 512 {
+            g.clear();
+        }
+        g.insert(pattern.to_string(), compiled.clone());
+    }
+    compiled
+}
