@@ -32,6 +32,7 @@ pub fn write_clipboard(text: &str) -> bool {
         for (bin, args) in [
             ("xclip", vec!["-sel", "clipboard", "-i"]),
             ("xsel", vec!["--clipboard", "--input"]),
+            ("wl-copy", vec![]),
         ] {
             let mut child = match Command::new(bin)
                 .args(&args)
