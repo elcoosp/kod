@@ -77,7 +77,7 @@
 //! `shutdown` (or `SIGINT`) the accept loop exits, the socket file
 //! is removed, and the call returns.
 
-use crate::engine::KodEngine;
+use kod_core::engine::KodEngine;
 use kod_error::{KodError, Result};
 use kod_provider::ModelRef;
 use serde::{Deserialize, Serialize};
@@ -621,9 +621,9 @@ async fn handle_connection(
             "respond_to_approval" => {
                 let item_id = req.params.get("id").and_then(|v| v.as_u64());
                 let decision = match req.params.get("decision").and_then(|v| v.as_str()) {
-                    Some("approve") => Some(crate::engine::ApprovalDecision::Approve),
-                    Some("deny") => Some(crate::engine::ApprovalDecision::Deny),
-                    Some("deny_always") => Some(crate::engine::ApprovalDecision::DenyAlways),
+                    Some("approve") => Some(kod_core::engine::ApprovalDecision::Approve),
+                    Some("deny") => Some(kod_core::engine::ApprovalDecision::Deny),
+                    Some("deny_always") => Some(kod_core::engine::ApprovalDecision::DenyAlways),
                     _ => None,
                 };
                 match (item_id, decision) {
@@ -809,8 +809,8 @@ async fn run_swarm(
     max_agents: usize,
     merge: bool,
 ) -> Result<()> {
-    let runner = crate::swarm_runner::SwarmRunner::new(engine.clone(), max_agents, merge).await?;
-    let (evt_tx, mut evt_rx) = tokio::sync::mpsc::channel::<crate::swarm_runner::SwarmEvent>(256);
+    let runner = kod_core::swarm_runner::SwarmRunner::new(engine.clone(), max_agents, merge).await?;
+    let (evt_tx, mut evt_rx) = tokio::sync::mpsc::channel::<kod_core::swarm_runner::SwarmEvent>(256);
     let goal_owned = goal.to_string();
     let run_handle = tokio::spawn(async move { runner.run(&goal_owned, &evt_tx).await });
     while let Some(evt) = evt_rx.recv().await {
@@ -880,7 +880,7 @@ async fn write_chunk(tx: &tokio::sync::mpsc::Sender<String>, id: &str, chunk: &s
 async fn write_done(
     tx: &tokio::sync::mpsc::Sender<String>,
     id: &str,
-    resp: &crate::router::TaskResponse,
+    resp: &kod_core::router::TaskResponse,
 ) -> Result<()> {
     let data = serde_json::to_value(resp).unwrap_or(Value::Null);
     send_response(

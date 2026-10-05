@@ -17,6 +17,7 @@ kod-types = { path = "../kod-types" }
 kod-error = { path = "../kod-error" }
 kod-config = { path = "../kod-config" }
 kod-core = { path = "../kod-core" }
+kod-core-serve = { path = "../kod-core-serve" }
 kod-skills = { path = "../kod-skills" }
 kod-memory = { path = "../kod-memory" }
 kod-provider = { path = "../kod-provider" }

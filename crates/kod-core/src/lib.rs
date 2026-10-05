@@ -55,7 +55,6 @@ pub use kod_core_state::deferred_diagnostics;
 pub use kod_core_state::sensitivity;
 pub use kod_core_state::steer;
 
-pub mod acp;
 pub mod async_delivery;
 pub mod background;
 pub mod compaction;
@@ -69,7 +68,6 @@ pub mod output_spool;
 pub mod overnight;
 pub mod pause_gate;
 pub mod run_collector;
-pub mod serve;
 pub mod swarm_adapters;
 pub mod swarm_runner;
 pub mod tool_quota;

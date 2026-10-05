@@ -2217,6 +2217,7 @@ dependencies = [
  "ignore",
  "kod-config",
  "kod-core",
+ "kod-core-serve",
  "kod-error",
  "kod-memory",
  "kod-provider",
@@ -2273,6 +2274,7 @@ dependencies = [
  "kod-config",
  "kod-core-quality",
  "kod-core-routing",
+ "kod-core-serve",
  "kod-core-state",
  "kod-core-tools",
  "kod-error",
@@ -2364,6 +2366,24 @@ dependencies = [
  "time",
  "tokio",
  "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "kod-core-serve"
+version = "0.1.0"
+dependencies = [
+ "kod-core",
+ "kod-core-state",
+ "kod-error",
+ "kod-provider",
+ "kod-types",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
  "tracing",
  "uuid",
 ]

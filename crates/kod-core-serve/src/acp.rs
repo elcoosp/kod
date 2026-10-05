@@ -56,7 +56,7 @@
 //! access through its own buffer should be told so explicitly; this
 //! bridge does not pretend to.
 
-use crate::engine::{ApprovalDecision, KodEngine};
+use kod_core::engine::{ApprovalDecision, KodEngine};
 use kod_error::{KodError, Result};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -500,13 +500,13 @@ async fn run_prompt(server: Arc<Server>, req_id: Value, session_id: String, prom
 async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Result<()> {
     // Approval batch: one `session/request_permission` per item,
     // await each in turn, forward the decision to the engine.
-    if let Some((batch_id, json_str)) = crate::engine::parse_tool_approval_batch(chunk) {
+    if let Some((batch_id, json_str)) = kod_core::engine::parse_tool_approval_batch(chunk) {
         // H-R1: do not silently drop the batch on parse failure.
         // The pre-fix `unwrap_or_default()` produced an empty batch,
         // no `respond_to_approval` was sent, and every pending
         // approval hung out the engine's 120 s timeout before being
         // denied — with no error surfaced to either side.
-        let batch: crate::engine::ApprovalBatch = match serde_json::from_str(json_str) {
+        let batch: kod_core::engine::ApprovalBatch = match serde_json::from_str(json_str) {
             Ok(b) => b,
             Err(e) => {
                 tracing::error!(
@@ -544,7 +544,7 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
     // pauses on an ask_user would hang. Reply with a placeholder so
     // the engine continues; the model sees a "(no answer) from the
     // editor" string and can adapt.
-    if let Some((qid, _json)) = crate::engine::parse_question(chunk) {
+    if let Some((qid, _json)) = kod_core::engine::parse_question(chunk) {
         server
             .engine
             .respond_to_question(
@@ -556,7 +556,7 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
     }
 
     // Tool lifecycle.
-    if let Some((_cid, name)) = crate::engine::parse_tool_start(chunk) {
+    if let Some((_cid, name)) = kod_core::engine::parse_tool_start(chunk) {
         let tool_call_id = format!("tc-{}", uuid::Uuid::new_v4());
         server
             .last_tool_call_id
@@ -581,7 +581,7 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
             .await;
         return Ok(());
     }
-    if let Some((_cid, brief)) = crate::engine::parse_tool_args(chunk) {
+    if let Some((_cid, brief)) = kod_core::engine::parse_tool_args(chunk) {
         if let Some(tool_call_id) = server
             .last_tool_call_id
             .lock()
@@ -606,7 +606,7 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
         }
         return Ok(());
     }
-    if let Some((_cid, header, summary, _ms)) = crate::engine::parse_tool_done(chunk) {
+    if let Some((_cid, header, summary, _ms)) = kod_core::engine::parse_tool_done(chunk) {
         if let Some(tool_call_id) = server
             .last_tool_call_id
             .lock()
@@ -633,7 +633,7 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
         }
         return Ok(());
     }
-    if crate::engine::is_thinking_marker(chunk) {
+    if kod_core::engine::is_thinking_marker(chunk) {
         return Ok(());
     }
     if chunk.is_empty() || chunk.starts_with('\0') {
@@ -661,7 +661,7 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
 async fn request_permission(
     server: &Arc<Server>,
     session_id: &str,
-    item: &crate::engine::ApprovalRequest,
+    item: &kod_core::engine::ApprovalRequest,
 ) -> ApprovalDecision {
     let tool_call_id = server
         .last_tool_call_id

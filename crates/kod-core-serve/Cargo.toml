@@ -1,0 +1,25 @@
+[package]
+name = "kod-core-serve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+libc = { workspace = true }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+kod-error = { path = "../kod-error" }
+kod-provider = { path = "../kod-provider" }
+kod-types = { path = "../kod-types" }
+kod-core = { path = "../kod-core" }
+kod-core-state = { path = "../kod-core-state" }
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[lints]
+workspace = true

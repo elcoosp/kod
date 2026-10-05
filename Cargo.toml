@@ -21,6 +21,7 @@ members = [
     "crates/kod-core-routing",
     "crates/kod-core-quality",
     "crates/kod-core-tools",
+    "crates/kod-core-serve",
     "crates/kod-risk",
     "crates/kod-schema-dialect",
     "crates/kod-minimize",

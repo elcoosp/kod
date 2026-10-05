@@ -10,7 +10,7 @@
 //!
 //! - The subcommand exists and is dispatched (a missing arm in
 //!   `Cli::run` would fail at `clap` parse or exit non-zero).
-//! - The ACP bridge (`kod_core::acp::serve`) runs and answers the
+//! - The ACP bridge (`kod_core_serve::acp::serve`) runs and answers the
 //!   spec's `initialize` method.
 //! - The response is framed as `Content-Length: N\r\n\r\nJSON`, the
 //!   ACP/LSP stdio convention.

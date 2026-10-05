@@ -21,7 +21,7 @@ pub async fn run_prompt_remote(prompt: String, socket: Option<std::path::PathBuf
         return Err(KodError::Config("empty prompt".to_string()));
     }
 
-    let socket_path = socket.unwrap_or_else(kod_core::serve::default_socket_path);
+    let socket_path = socket.unwrap_or_else(kod_core_serve::serve::default_socket_path);
     let stream = tokio::net::UnixStream::connect(&socket_path)
         .await
         .map_err(|e| {

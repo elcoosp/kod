@@ -1851,7 +1851,7 @@ fn preview(s: &str, max: usize) -> String {
 /// Run the Agent Client Protocol (ACP) bridge on stdin/stdout.
 ///
 /// Builds an engine from the current config exactly as `kod chat`
-/// does, then hands it to `kod_core::acp::serve`, which speaks the ACP
+/// does, then hands it to `kod_core_serve::acp::serve`, which speaks the ACP
 /// v1 protocol on stdio. The process is meant to be spawned by an
 /// editor (Zed, for instance), not run by a human; stderr is where any
 /// diagnostic goes.
@@ -1863,7 +1863,7 @@ fn preview(s: &str, max: usize) -> String {
 /// `--stop`.
 ///
 /// Starting: builds a `KodEngine` from the current config exactly
-/// as `kod chat` does, then hands it to `kod_core::serve::serve`.
+/// as `kod chat` does, then hands it to `kod_core_serve::serve::serve`.
 /// The daemon blocks until it receives a `shutdown` request or a
 /// SIGINT.
 ///

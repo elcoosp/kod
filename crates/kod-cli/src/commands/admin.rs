@@ -455,7 +455,7 @@ pub async fn run_policy(action: PolicyAction) -> Result<()> {
             // A future `kod policy forget` that reaches the daemon (a
             // `set_policy_rule` NDJSON method) is a follow-up; today
             // the honest answer is the one below.
-            let socket = kod_core::serve::default_socket_path();
+            let socket = kod_core_serve::serve::default_socket_path();
             if !socket.exists() {
                 println!("No daemon listening at {}.", socket.display());
                 println!();
@@ -594,7 +594,7 @@ pub async fn run_map(max_chars: usize) -> Result<()> {
 }
 
 pub async fn run_serve(stop: bool, socket: Option<std::path::PathBuf>) -> Result<()> {
-    let socket_path = socket.unwrap_or_else(kod_core::serve::default_socket_path);
+    let socket_path = socket.unwrap_or_else(kod_core_serve::serve::default_socket_path);
 
     if stop {
         if !socket_path.exists() {
@@ -604,7 +604,7 @@ pub async fn run_serve(stop: bool, socket: Option<std::path::PathBuf>) -> Result
             );
             return Ok(());
         }
-        kod_core::serve::stop_daemon(&socket_path).await?;
+        kod_core_serve::serve::stop_daemon(&socket_path).await?;
         // Poll for the socket file to disappear.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while std::time::Instant::now() < deadline {
@@ -657,7 +657,7 @@ pub async fn run_serve(stop: bool, socket: Option<std::path::PathBuf>) -> Result
         "Starting daemon at {} (Ctrl+C to stop).",
         socket_path.display()
     );
-    let result = kod_core::serve::serve(engine.clone(), socket_path.clone()).await;
+    let result = kod_core_serve::serve::serve(engine.clone(), socket_path.clone()).await;
 
     // Graceful engine shutdown after the accept loop exits.
     let _ = engine.shutdown().await;

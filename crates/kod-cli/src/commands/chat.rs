@@ -10,7 +10,7 @@ use super::*;
 pub async fn run_chat_remote(socket: Option<std::path::PathBuf>) -> Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    let socket_path = socket.unwrap_or_else(kod_core::serve::default_socket_path);
+    let socket_path = socket.unwrap_or_else(kod_core_serve::serve::default_socket_path);
     if !socket_path.exists() {
         return Err(KodError::InvalidState(format!(
             "no daemon listening at {}. Start one with `kod serve`, \
@@ -675,7 +675,7 @@ pub async fn run_agent_remote(
         return Err(KodError::Config("empty goal".to_string()));
     }
 
-    let socket_path = socket.unwrap_or_else(kod_core::serve::default_socket_path);
+    let socket_path = socket.unwrap_or_else(kod_core_serve::serve::default_socket_path);
     if !socket_path.exists() {
         return Err(KodError::InvalidState(format!(
             "no daemon listening at {}. Start one with `kod serve`, \
@@ -851,7 +851,7 @@ pub async fn run_acp(cli_preset: Option<String>) -> Result<()> {
         Err(e) => eprintln!("acp: could not load skills: {e}"),
     }
 
-    kod_core::acp::serve(engine.clone()).await?;
+    kod_core_serve::acp::serve(engine.clone()).await?;
 
     engine.shutdown().await?;
     Ok(())

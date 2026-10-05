@@ -66,7 +66,7 @@ async fn shutdown_request_terminates_the_daemon() {
     let server_engine = engine.clone();
     let server_sock = sock.clone();
     let server =
-        tokio::spawn(async move { kod_core::serve::serve(server_engine, server_sock).await });
+        tokio::spawn(async move { kod_core_serve::serve::serve(server_engine, server_sock).await });
 
     // Give the accept loop a moment to bind.
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
@@ -136,7 +136,7 @@ async fn unknown_method_reports_an_error_line() {
     let server_engine = engine.clone();
     let server_sock = sock.clone();
     let server =
-        tokio::spawn(async move { kod_core::serve::serve(server_engine, server_sock).await });
+        tokio::spawn(async move { kod_core_serve::serve::serve(server_engine, server_sock).await });
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     while !sock.exists() && std::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -204,7 +204,7 @@ async fn second_daemon_on_the_same_socket_refuses_to_start() {
     let server_engine = engine.clone();
     let server_sock = sock.clone();
     let server =
-        tokio::spawn(async move { kod_core::serve::serve(server_engine, server_sock).await });
+        tokio::spawn(async move { kod_core_serve::serve::serve(server_engine, server_sock).await });
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     while !sock.exists() && std::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -213,7 +213,7 @@ async fn second_daemon_on_the_same_socket_refuses_to_start() {
 
     // Second attempt on the same path.
     let (tmp2, engine2) = start_engine().await;
-    let result = kod_core::serve::serve(engine2, sock.clone()).await;
+    let result = kod_core_serve::serve::serve(engine2, sock.clone()).await;
     assert!(
         result.is_err(),
         "a second serve on a live socket must fail; got: {result:?}",

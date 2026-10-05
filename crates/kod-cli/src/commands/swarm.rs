@@ -14,7 +14,7 @@ pub async fn run_swarm_remote(
         return Err(KodError::Config("empty goal".to_string()));
     }
 
-    let socket_path = socket.unwrap_or_else(kod_core::serve::default_socket_path);
+    let socket_path = socket.unwrap_or_else(kod_core_serve::serve::default_socket_path);
     if !socket_path.exists() {
         return Err(KodError::InvalidState(format!(
             "no daemon listening at {}. Start one with `kod serve`, \
