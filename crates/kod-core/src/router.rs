@@ -554,7 +554,13 @@ impl TaskRouter {
     pub fn close_memory(self) {
         let Self { memory_manager, .. } = self;
         if let Some(manager) = memory_manager {
-            manager.close();
+            // T1-M3: `close` is now async (it drains pending embeds). This
+            // caller is not in an async context, so drive the future to
+            // completion on the current thread. Nothing here is running
+            // on a Tokio worker — the router crate has no runtime — so
+            // `block_on` is safe and the drain completes before the
+            // manager drops.
+            futures::executor::block_on(manager.close());
         }
     }
 
