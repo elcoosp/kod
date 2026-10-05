@@ -297,7 +297,16 @@ fn compile(pattern: &str, stage: &'static str) -> Result<regex::Regex, PipelineE
             stage,
             reason: format!("bad pattern `{pattern}`: {e}"),
         })?;
+    // T5-C12: bound the process-wide regex cache. A long session
+    // loading many defs (or a model registering new ones at runtime)
+    // otherwise accumulates every pattern ever compiled.
+    const MAX_CACHED_PATTERNS: usize = 256;
     if let Ok(mut g) = cache.lock() {
+        if g.len() >= MAX_CACHED_PATTERNS {
+            if let Some(k) = g.keys().next().cloned() {
+                g.remove(&k);
+            }
+        }
         g.insert(pattern.to_string(), re.clone());
     }
     Ok(re)
