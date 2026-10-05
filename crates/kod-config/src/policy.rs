@@ -214,8 +214,8 @@ impl ReadProtection {
             } else {
                 (basename, pat.as_str())
             };
-            if let Some(glob) = globset::GlobBuilder::new(pat_use).literal_separator(true).build().ok()
-                && glob.compile_matcher().is_match(target)
+            if let Some(glob) = globset::GlobBuilder::new(pat_use).literal_separator(true).build().ok().map(|g| g.compile_matcher())
+                && glob.is_match(target)
             {
                 return true;
             }
