@@ -51,12 +51,14 @@ fn main() -> kod_error::Result<()> {
     // lands at the live cursor and the diff-based redraw never
     // repairs the cells), so log output must leave the terminal for
     // the lifetime of the TUI session.
-    let _ = tracing_subscriber::fmt()
+    if let Err(e) = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(kod_cli::logging::SessionSafeWriter::default())
         .with_ansi(false)
         .with_target(false)
-        .try_init();
+        .try_init() {
+        eprintln!("kod: could not install tracing subscriber ({e}); logs will be lost.");
+    }
 
     let cli = Cli::parse();
 
