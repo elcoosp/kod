@@ -74,6 +74,11 @@ pub struct Justification(pub String);
 
 impl Justification {
     pub fn is_substantive(&self) -> bool {
+        // T5-C29: reject all-whitespace justifications.
+        if self.0.trim().is_empty() {
+            return false;
+        }
+
         let t = self.0.trim();
         if t.chars().count() < 25 {
             return false;
