@@ -29,6 +29,11 @@ use kod_types::MemoryId;
 /// In-memory index of embedding vectors, keyed by `MemoryId`.
 pub struct VectorIndex {
     entries: Vec<(MemoryId, Vec<f32>)>,
+    /// T1-H5: `id -> index into entries`. The pre-fix `insert` and
+    /// `remove` linear-scanned `entries` (O(N) per op); a rebuild of
+    /// 10 000 entries was 100 M comparisons. The side index makes
+    /// both O(1).
+    positions: std::collections::HashMap<MemoryId, usize>,
     dim: usize,
 }
 
@@ -37,6 +42,7 @@ impl VectorIndex {
     pub fn new(dim: usize) -> Self {
         Self {
             entries: Vec::new(),
+            positions: std::collections::HashMap::new(),
             dim,
         }
     }
