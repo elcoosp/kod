@@ -998,8 +998,22 @@ impl KodEngine {
             Vec::with_capacity(partials.len());
         for (index, p) in partials {
             let Some(name) = p.name else { continue };
-            let arguments: serde_json::Value = serde_json::from_str(&p.args)
-                .unwrap_or_else(|_| serde_json::Value::String(p.args.clone()));
+            // T3-H17: an unparseable argument blob is a real error, not a
+            // JSON string masquerading as arguments. Record it so the
+            // dispatch can report "malformed arguments" rather than a
+            // generic "missing argument" when a tool reads `path`.
+            let arguments: serde_json::Value = match serde_json::from_str(&p.args) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(
+                        tool = %name,
+                        error = %e,
+                        raw = %p.args.chars().take(120).collect::<String>(),
+                        "streamed tool call had malformed arguments",
+                    );
+                    serde_json::Value::Null
+                }
+            };
             calls.push(ToolCall {
                 id: p.id,
                 tool_name: name,
