@@ -504,6 +504,10 @@ pub fn parse_sse_line(
         return Vec::new();
     }
     let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else {
+        tracing::debug!(
+            payload = %payload.chars().take(200).collect::<String>(),
+            "anthropic SSE: dropped malformed JSON frame",
+        );
         // A malformed frame is dropped: the byte stream is
         // non-fatal and the next frame may be well-formed. A real
         // protocol error would produce zero readable frames, and the
