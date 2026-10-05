@@ -366,4 +366,54 @@ mod coverage_vector_search {
         let ids_b: Vec<_> = b.iter().map(|(id, _)| id.clone()).collect();
         assert_eq!(ids_a, ids_b);
     }
+
+    #[test]
+    fn swap_remove_keeps_side_index_consistent() {
+        // T1-H5 regression: after a swap_remove, the element that moved
+        // into the removed slot must still be findable for removal.
+        let mut idx = VectorIndex::new(2);
+        let ids: Vec<MemoryId> = (0..5).map(|_| MemoryId::new()).collect();
+        for (i, id) in ids.iter().enumerate() {
+            idx.insert(id.clone(), vec![i as f32 + 1.0, 0.0]).unwrap();
+        }
+        assert_eq!(idx.len(), 5);
+
+        // Remove the middle: swap_remove moves ids[4] to index 2.
+        assert!(idx.remove(&ids[2]));
+        assert_eq!(idx.len(), 4);
+
+        // The moved element must still be removable.
+        assert!(
+            idx.remove(&ids[4]),
+            "swap-moved entry must remain removable via the side index",
+        );
+        assert_eq!(idx.len(), 3);
+
+        // Removing it again returns false.
+        assert!(!idx.remove(&ids[4]));
+        assert_eq!(idx.len(), 3);
+
+        // Reinsert a fresh id and verify insert-vs-replace still works.
+        let fresh = MemoryId::new();
+        idx.insert(fresh.clone(), vec![9.0, 0.0]).unwrap();
+        assert_eq!(idx.len(), 4);
+        idx.insert(fresh.clone(), vec![8.0, 0.0]).unwrap();
+        assert_eq!(idx.len(), 4, "replace must not grow the index");
+    }
+
+    #[test]
+    fn replace_then_remove_removes_only_that_id() {
+        let mut idx = VectorIndex::new(2);
+        let a = MemoryId::new();
+        let b = MemoryId::new();
+        idx.insert(a.clone(), vec![1.0, 0.0]).unwrap();
+        idx.insert(b.clone(), vec![0.0, 1.0]).unwrap();
+        // Replace a — should not add a duplicate entry.
+        idx.insert(a.clone(), vec![1.0, 0.0]).unwrap();
+        assert_eq!(idx.len(), 2);
+        // Remove a — b must remain.
+        assert!(idx.remove(&a));
+        assert_eq!(idx.len(), 1);
+        assert!(!idx.remove(&a));
+    }
 }
