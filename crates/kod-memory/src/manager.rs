@@ -2490,4 +2490,42 @@ mod contradiction_resolution_tests {
             "a resolved pair is not re-resolved on the next pass",
         );
     }
+
+    #[tokio::test]
+    async fn flush_returns_after_panicking_embed_task() {
+        use async_trait::async_trait;
+        use kod_error::Result;
+
+        struct PanicEmbedder;
+        #[async_trait]
+        impl crate::embedding::EmbeddingClient for PanicEmbedder {
+            fn name(&self) -> &str { "panic" }
+            fn dims(&self) -> usize { 2 }
+            async fn embed(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>> {
+                panic!("T1-H1 regression fixture: embed panics");
+            }
+        }
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = dir.path().join("m.redb");
+        let mut m = MemoryManager::new(db, 100).expect("manager");
+        m.set_embedder(std::sync::Arc::new(PanicEmbedder));
+
+        // Store: spawns a background embed that will panic.
+        let _ = m
+            .store_with_metadata(
+                MemoryType::LongTerm,
+                "trigger embed",
+                Default::default(),
+            )
+            .await;
+
+        // T1-H1: flush_embeddings must return within a bounded time
+        // even though the embed task panicked. Without the drop guard
+        // it would park forever.
+        let flush = m.flush_embeddings();
+        tokio::time::timeout(std::time::Duration::from_secs(2), flush)
+            .await
+            .expect("flush_embeddings must not hang on a panicked embed task");
+    }
 }
