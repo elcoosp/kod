@@ -634,6 +634,23 @@ impl MemoryManager {
         let notify = std::sync::Arc::clone(&self.embedding_complete);
         inflight.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         tokio::spawn(async move {
+            // T1-H1: guard the inflight counter. Drop runs on both
+            // the normal exit and a panic, so `flush_embeddings`
+            // never parks forever on a dead task.
+            struct _Guard {
+                inflight: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+                notify: std::sync::Arc<tokio::sync::Notify>,
+            }
+            impl Drop for _Guard {
+                fn drop(&mut self) {
+                    self.inflight.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    self.notify.notify_one();
+                }
+            }
+            let _g = _Guard {
+                inflight: std::sync::Arc::clone(&inflight),
+                notify: std::sync::Arc::clone(&notify),
+            };
             match embedder.embed(std::slice::from_ref(&text)).await {
                 Ok(mut v) if !v.is_empty() => {
                     let vec = v.remove(0);
@@ -657,9 +674,14 @@ impl MemoryManager {
                     );
                 }
             }
-            inflight.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-            notify.notify_one();
         });
+        // T1-H1: the inflight decrement is now owned by a drop guard
+        // so a panic in `embedder.embed(...)` (a reqwest panic, a
+        // poisoned lock, an unwrap downstream) still releases the
+        // slot. The pre-fix code put both the decrement and the
+        // notify *after* the match, so a panic left the counter
+        // permanently above zero and `flush_embeddings` waited
+        // forever at shutdown.
     }
 
     /// Delta §12.5: wait for every in-flight background embed.
