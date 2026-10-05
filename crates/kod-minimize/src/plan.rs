@@ -106,7 +106,9 @@ pub fn classify(cmd: &str) -> CommandPlan {
     let Some(program) = tokens.next() else {
         return CommandPlan::Unsupported;
     };
-    let args: Vec<String> = tokens.map(String::from).collect();
+    // T5-C35: strip matched surrounding quotes so `git "status"` matches
+    // a def keyed on `status`.
+    let args: Vec<String> = tokens.map(|t| strip_quotes(t).to_string()).collect();
     CommandPlan::Single {
         program: program.to_string(),
         args,
