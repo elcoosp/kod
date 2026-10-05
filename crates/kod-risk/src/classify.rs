@@ -722,5 +722,15 @@ mod t5_regression {
         let r = assess("ls -la", &ctx());
         assert_eq!(r.level, RiskLevel::Safe, "ls flagged: {:?}", r.findings);
     }
+
+    #[test]
+    fn whitespace_only_justification_is_not_substantive() {
+        // T5-C29: a 25-space justification used to pass the length
+        // floor. It must be rejected.
+        let padded = " ".repeat(40);
+        assert!(!Justification(padded).is_substantive());
+        assert!(!Justification("\t\n   \t".to_string()).is_substantive());
+        assert!(!Justification(String::new()).is_substantive());
+    }
 }
 
