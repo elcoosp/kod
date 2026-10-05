@@ -1337,28 +1337,46 @@ impl MemoryManager {
             });
             group.truncate(FUSE_WINDOW);
 
-            // Embed the group in one batch. Any embed error skips
-            // fusion for this project — the archive half already ran,
-            // so the pass is not lost.
-            let texts: Vec<String> = group.iter().map(|e| e.content.clone()).collect();
-            let vectors = match embedder.embed(&texts).await {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        count = texts.len(),
-                        "fuse_duplicates: embed failed; skipping project",
-                    );
-                    continue;
+            // T1-H21: reuse each entry's stored embedding when
+            // present; only embed the entries that are missing one.
+            // A group of N entries where most are already embedded
+            // costs one embed call for the missing few instead of N.
+            let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(group.len());
+            let mut missing_texts: Vec<String> = Vec::new();
+            let mut missing_slots: Vec<usize> = Vec::new();
+            for (i, e) in group.iter().enumerate() {
+                if let Some(v) = e.metadata.embedding.as_ref() {
+                    vectors.push(v.clone());
+                } else {
+                    missing_slots.push(i);
+                    missing_texts.push(e.content.clone());
+                    vectors.push(Vec::new()); // placeholder
                 }
-            };
-            if vectors.len() != group.len() {
-                tracing::warn!(
-                    got = vectors.len(),
-                    expected = group.len(),
-                    "fuse_duplicates: embed returned wrong count; skipping project",
-                );
-                continue;
+            }
+            if !missing_texts.is_empty() {
+                match embedder.embed(&missing_texts).await {
+                    Ok(fresh) => {
+                        if fresh.len() != missing_texts.len() {
+                            tracing::warn!(
+                                got = fresh.len(),
+                                expected = missing_texts.len(),
+                                "fuse_duplicates: embed returned wrong count; skipping project",
+                            );
+                            continue;
+                        }
+                        for (slot, v) in missing_slots.iter().zip(fresh.into_iter()) {
+                            vectors[*slot] = v;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            count = missing_texts.len(),
+                            "fuse_duplicates: embed failed; skipping project",
+                        );
+                        continue;
+                    }
+                }
             }
 
             // Normalize each vector so cosine == dot product.
