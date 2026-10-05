@@ -94,7 +94,7 @@ impl McpClient {
             // every request would otherwise mix its diagnostics into
             // the terminal the TUI owns. A future revision can pipe it
             // to `tracing` when we need to debug a misbehaving server.
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         #[cfg(unix)]
         command.process_group(0);
@@ -108,6 +108,19 @@ impl McpClient {
             program: cmd.to_string(),
             source,
         })?;
+
+        // T2-H12: pipe server stderr to tracing instead of discarding it.
+        if let Some(err) = child.stderr.take() {
+            let program = cmd.to_string();
+            tokio::spawn(async move {
+                use tokio::io::AsyncBufReadExt;
+                let mut reader = tokio::io::BufReader::new(err).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    tracing::debug!(target: "mcp::stderr", %program, "{line}");
+                }
+            });
+        }
+
         let stdin = child
             .stdin
             .take()
@@ -273,9 +286,26 @@ impl McpClient {
     /// Terminate the server. Best-effort: the child is killed and
     /// reaped, and the reader task exits when stdout closes.
     pub async fn shutdown(self) {
-        let mut child = self.child.lock().await;
-        let _ = child.start_kill();
-        let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+        // T2-M7: SIGTERM, wait up to 2 s, then SIGKILL. The pre-fix
+        // shape issued SIGKILL immediately, giving a database or
+        // file-writing MCP server no chance to flush.
+        let mut guard = self.child.lock().await;
+        #[cfg(unix)]
+        if let Some(pid) = guard.id() {
+            // SAFETY: kill(2) with a positive pid we spawned.
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM); }
+        }
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            guard.wait(),
+        )
+        .await;
+        let _ = guard.start_kill();
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            guard.wait(),
+        )
+        .await;
     }
 
     // ------------------------------------------------------------------
