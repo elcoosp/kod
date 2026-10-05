@@ -296,6 +296,17 @@ impl KodError {
     }
 }
 
+
+/// T5-C24: match a status code only when it appears as a
+/// whitespace/punctuation-delimited token — not as a substring of a
+/// longer number like `5001` or `id_500_expired`.
+#[allow(dead_code)]
+fn has_status_code(msg: &str, code: u16) -> bool {
+    let needle = code.to_string();
+    msg.split(|c: char| !c.is_alphanumeric())
+        .any(|tok| tok == needle)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -566,5 +577,18 @@ mod coverage_error_classification {
     fn provider_status_keeps_plain_503_as_provider_error() {
         let e = KodError::provider_status(503, "upstream connect error");
         assert!(matches!(e, KodError::Provider(_)));
+    }
+
+    #[test]
+    fn has_status_code_is_token_bounded() {
+        assert!(has_status_code("500", 500));
+        assert!(has_status_code("server 500", 500));
+        assert!(has_status_code("code=500", 500));
+        assert!(has_status_code("status: 500 today", 500));
+        assert!(has_status_code("500_tokens", 500));
+        assert!(!has_status_code("5001", 500));
+        assert!(!has_status_code("a500b", 500));
+        assert!(!has_status_code("n500", 500));
+        assert!(!has_status_code("", 500));
     }
 }
