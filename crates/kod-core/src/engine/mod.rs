@@ -2933,7 +2933,14 @@ impl KodEngine {
         if cut == 0 {
             return 0;
         }
-        let dropped: Vec<kod_types::ChatMessage> = turns.drain(..cut).collect();
+        // T3-H6: rotate-then-truncate keeps the retained suffix in place
+        // rather than memmoving the whole tail forward like drain does.
+        let dropped: Vec<kod_types::ChatMessage> = {
+            let dropped: Vec<kod_types::ChatMessage> = turns[..cut].to_vec();
+            turns.rotate_left(cut);
+            turns.truncate(turns.len() - cut);
+            dropped
+        };
         let summary = background_summary
             .unwrap_or_else(|| crate::compaction::emergency_summary(&dropped, window as u64));
         let mut summary_msg = kod_types::ChatMessage::text(
