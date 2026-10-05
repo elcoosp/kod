@@ -545,7 +545,7 @@ async fn handle_connection(
                 // the server's gets `compatible: false` and can
                 // disconnect with a clear reason instead of failing on
                 // the first real request.
-                let client_min = req.params.get("min").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+                let client_min = req.params.get("min").and_then(|v| v.as_u64()).map(|n| n.min(u8::MAX as u64) as u8).unwrap_or(1);
                 let client_max = req
                     .params
                     .get("max")
