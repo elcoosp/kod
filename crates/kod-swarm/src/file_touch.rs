@@ -168,7 +168,7 @@ impl FileTouchService {
     /// that edited the same file three times produces one notice, not
     /// three — the point is awareness, not a log.
     pub fn conflicts_for(&self, path: &PathBuf, except: &str) -> Vec<PeerConflict> {
-        let guard = self.by_path.read().unwrap();
+        let guard = self.by_path.read().unwrap_or_else(|p| p.into_inner());
         let Some(accesses) = guard.get(path) else {
             return Vec::new();
         };
@@ -212,9 +212,9 @@ impl FileTouchService {
     /// without it a long run accumulates one dead agent's paths per
     /// subtask.
     pub fn clear_agent(&self, agent: &str) {
-        let paths = self.by_agent.write().unwrap().remove(agent);
+        let paths = self.by_agent.write().unwrap_or_else(|p| p.into_inner()).remove(agent);
         let Some(paths) = paths else { return };
-        let mut guard = self.by_path.write().unwrap();
+        let mut guard = self.by_path.write().unwrap_or_else(|p| p.into_inner());
         for p in paths {
             if let Some(v) = guard.get_mut(&p) {
                 v.retain(|t| t.agent_id != agent);
