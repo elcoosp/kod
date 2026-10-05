@@ -393,7 +393,7 @@ impl SpendWindow {
         while g.front().is_some_and(|(at, _)| *at < cutoff) {
             g.pop_front();
         }
-        let micro: u64 = g.iter().map(|(_, m)| *m).sum();
+        let micro: u64 = g.iter().map(|(_, m)| *m).fold(0u64, u64::saturating_add);
         micro as f64 / 1_000_000.0
     }
 
