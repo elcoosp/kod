@@ -767,13 +767,11 @@ fn resolve_path(working_dir: &Path, p: &str) -> PathBuf {
 fn glob_matches(pattern: &str, path: &Path, working_dir: &Path) -> bool {
     use globset::GlobBuilder;
 
-    let build = |pat: &str| -> Option<globset::GlobMatcher> {
-        GlobBuilder::new(pat)
-            .literal_separator(true)
-            .build()
-            .ok()
-            .map(|g| g.compile_matcher())
-    };
+            // T5-C32: use the process-wide compiled-glob cache instead of
+        // recompiling on every call.
+        let build = |pat: &str| -> Option<std::sync::Arc<globset::GlobMatcher>> {
+            compiled_glob(pat)
+        };
 
     let matcher = match build(pattern) {
         Some(m) => m,
