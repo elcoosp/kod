@@ -86,13 +86,28 @@ impl LspClient {
             // Keep stderr quiet by default. A future version could
             // pipe it and surface `window/logMessage` from it, but the
             // protocol already carries what we need.
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .map_err(|source| LspError::Spawn {
                 program: program.to_string(),
                 source,
             })?;
+
+        // T2-H12: pipe LSP server stderr to tracing.
+        if let Some(err) = child.stderr.take() {
+            let program_str = program.to_string();
+            tokio::spawn(async move {
+                use tokio::io::AsyncBufReadExt;
+                let mut reader = tokio::io::BufReader::new(err).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    tracing::debug!(target: "lsp::stderr", %program_str, "{line}");
+                }
+            });
+        }
+
+        // T2-H12: pipe LSP server stderr to tracing.
+        
 
         let stdin = child
             .stdin
