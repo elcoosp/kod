@@ -192,6 +192,11 @@ impl Telemetry {
     }
 
     fn spawn_post(&self, payload: serde_json::Value) {
+        // T5-C26: no queue cap. Under a chatty model + slow collector,
+        // each record spawns a task that can park for the client
+        // timeout (5s), accumulating hundreds of concurrent POSTs.
+        // A bounded mpsc + consumer task would fix this; the current
+        // shape is a single task per record. Documented for now.
         let url = self.inner.logs_url.clone();
         let client = self.inner.client.clone();
         let headers = self.inner.config.headers.clone();
