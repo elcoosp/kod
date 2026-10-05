@@ -220,3 +220,17 @@ mod tests {
         assert_eq!(single("   git status").0, "git");
     }
 }
+
+/// T5-C35: a token like `'status'` or `"status"` should compare equal to
+/// the unquoted form. Strip matched surrounding quotes.
+fn strip_quotes(tok: &str) -> &str {
+    let b = tok.as_bytes();
+    if b.len() >= 2
+        && ((b[0] == b'\'' && b[b.len()-1] == b'\'')
+            || (b[0] == b'"' && b[b.len()-1] == b'"'))
+    {
+        &tok[1..tok.len()-1]
+    } else {
+        tok
+    }
+}
