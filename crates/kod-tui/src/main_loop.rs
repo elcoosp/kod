@@ -2892,7 +2892,7 @@ impl TuiLoop {
                 // through files.
                 let max_chars: usize = parts.next().and_then(|s| s.parse().ok()).unwrap_or(16_000);
                 let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-                let map = kod_core::repomap::build_repo_map(&cwd);
+                let map = kod_core_quality::repomap::build_repo_map(&cwd);
                 let rendered = map.render(max_chars);
                 if rendered.trim().is_empty() {
                     self.app.push_system_message(&format!(
@@ -3246,13 +3246,13 @@ impl TuiLoop {
                             );
                             return Ok(());
                         };
-                        match kod_core::session_log::read_session(&path) {
+                        match kod_core_state::session_log::read_session(&path) {
                             Ok(entries) => {
                                 let mut total = 0_usize;
                                 let mut with_refs = 0_usize;
                                 let mut empty = 0_usize;
                                 for e in &entries {
-                                    if let kod_core::session_log::SessionEntry::MemoryRetrieval {
+                                    if let kod_core_state::session_log::SessionEntry::MemoryRetrieval {
                                         retrieved,
                                         referenced,
                                         ..
@@ -3647,11 +3647,11 @@ impl TuiLoop {
                 // that fired on one write; aggregate them.
                 if let Some(engine) = &self.engine
                     && let Some(path) = engine.session_log_path()
-                    && let Ok(entries) = kod_core::session_log::read_session(&path)
+                    && let Ok(entries) = kod_core_state::session_log::read_session(&path)
                 {
                     let mut by_rule: std::collections::BTreeMap<String, usize> = Default::default();
                     for e in &entries {
-                        if let kod_core::session_log::SessionEntry::Redaction { rules, .. } = e {
+                        if let kod_core_state::session_log::SessionEntry::Redaction { rules, .. } = e {
                             for r in rules {
                                 *by_rule.entry(r.rule.clone()).or_insert(0) += r.count;
                             }
@@ -4511,7 +4511,7 @@ impl TuiLoop {
                             );
                             return Ok(());
                         };
-                        match kod_core::session_log::read_session(&path) {
+                        match kod_core_state::session_log::read_session(&path) {
                             Ok(entries) => {
                                 let mut total: usize = 0;
                                 let mut by_source: std::collections::HashMap<String, usize> =
@@ -4521,7 +4521,7 @@ impl TuiLoop {
                                 let mut total_latency_ms: u64 = 0;
                                 let mut cached: usize = 0;
                                 for e in &entries {
-                                    if let kod_core::session_log::SessionEntry::JevDecision {
+                                    if let kod_core_state::session_log::SessionEntry::JevDecision {
                                         purpose,
                                         latency_ms,
                                         cached: c,
@@ -4759,7 +4759,7 @@ impl TuiLoop {
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(20)
                     .min(200);
-                match kod_core::session_log::read_session(&path) {
+                match kod_core_state::session_log::read_session(&path) {
                     Ok(entries) => {
                         if entries.is_empty() {
                             self.app.push_system_message(&format!(
@@ -6135,8 +6135,8 @@ fn format_turn_trace_verbose(t: &kod_core::TurnTrace) -> String {
     msg
 }
 
-fn format_entry_one_line(entry: &kod_core::session_log::SessionEntry) -> String {
-    use kod_core::session_log::SessionEntry;
+fn format_entry_one_line(entry: &kod_core_state::session_log::SessionEntry) -> String {
+    use kod_core_state::session_log::SessionEntry;
     match entry {
         SessionEntry::ToolCall {
             tool_name,

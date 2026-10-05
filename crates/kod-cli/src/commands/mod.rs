@@ -244,8 +244,8 @@ fn install_session_recorder(engine: &KodEngine, skip: bool) {
     if skip {
         return;
     }
-    if let Some(path) = kod_core::session_log::default_session_path()
-        && let Ok(recorder) = kod_core::session_log::SessionRecorder::open(path)
+    if let Some(path) = kod_core_state::session_log::default_session_path()
+        && let Ok(recorder) = kod_core_state::session_log::SessionRecorder::open(path)
     {
         engine.set_session_recorder(Arc::new(recorder));
     }

@@ -91,12 +91,12 @@ pub async fn run_budget_show(log: Option<std::path::PathBuf>) -> Result<()> {
             KodError::Config("no session log found under ~/.kod/sessions/".to_string())
         })?,
     };
-    let entries = kod_core::session_log::read_session(&path)?;
+    let entries = kod_core_state::session_log::read_session(&path)?;
     let mut total_cost = 0.0_f64;
     let mut per_endpoint: std::collections::BTreeMap<String, (usize, usize, f64)> =
         Default::default();
     for e in &entries {
-        if let kod_core::session_log::SessionEntry::Cost {
+        if let kod_core_state::session_log::SessionEntry::Cost {
             endpoint,
             prompt_tokens,
             completion_tokens,

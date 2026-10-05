@@ -64,7 +64,7 @@ impl std::fmt::Display for JobId {
 pub enum JobKind {
     /// Cross-model review of a completed turn.
     Review {
-        subject: crate::trace::TurnId,
+        subject: kod_core_state::trace::TurnId,
         endpoint: kod_provider::ModelRef,
     },
     /// An eval run against a recorded transcript.

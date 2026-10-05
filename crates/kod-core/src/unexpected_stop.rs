@@ -56,7 +56,7 @@
 //!
 //! * Not a tool-call classifier. A reply with tool calls is not a
 //!   candidate — the model is still working. Tool-call loops are
-//!   [`crate::tool_loop_guard`]'s concern.
+//!   [`kod_core_tools::tool_loop_guard`]'s concern.
 //!
 //! * Not a call to the model on every turn. The candidate predicate
 //!   is a free function, cheap to evaluate; a caller runs it first

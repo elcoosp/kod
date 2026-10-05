@@ -234,7 +234,7 @@ impl KodEngine {
         window_tokens: u64,
     ) -> usize {
         use crate::compaction_dispatcher::CompactionPlan;
-        use crate::prune::PruneAction;
+        use kod_core_quality::prune::PruneAction;
         use std::collections::HashMap;
 
         let mut history = self.history.write().await;
@@ -502,11 +502,11 @@ impl KodEngine {
     }
 
     pub(crate) fn apply_retry_adjustment(
-        action: crate::retry_strategy::RetryAction,
+        action: kod_core_routing::retry_strategy::RetryAction,
         options: &mut GenerationOptions,
         messages: &mut Vec<kod_types::ChatMessage>,
     ) -> bool {
-        use crate::retry_strategy::RetryAction as A;
+        use kod_core_routing::retry_strategy::RetryAction as A;
         match action {
             A::SameEndpointLowerTemp => {
                 options.temperature = Some((options.temperature.unwrap_or(0.7) * 0.5).max(0.0));

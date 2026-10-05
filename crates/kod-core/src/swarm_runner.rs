@@ -382,13 +382,13 @@ impl SwarmRunner {
         //    isolation and getting the opposite without being told is
         //    worse than failing. `Auto` keeps the runner's previous
         //    implicit policy.
-        let mut worktree_mgr: Option<crate::worktree::WorktreeManager> = match self.isolation {
+        let mut worktree_mgr: Option<kod_core_quality::worktree::WorktreeManager> = match self.isolation {
             kod_config::Isolation::Shared => {
                 tracing::info!("swarm: shared workspace (isolation = shared)");
                 None
             }
             kod_config::Isolation::Worktree => {
-                match crate::worktree::WorktreeManager::detect(self.engine.working_dir()) {
+                match kod_core_quality::worktree::WorktreeManager::detect(self.engine.working_dir()) {
                     Ok(Some(m)) => Some(m),
                     Ok(None) => {
                         return Err(KodError::Config(
@@ -406,7 +406,7 @@ impl SwarmRunner {
                 }
             }
             kod_config::Isolation::Auto => {
-                match crate::worktree::WorktreeManager::detect(self.engine.working_dir()) {
+                match kod_core_quality::worktree::WorktreeManager::detect(self.engine.working_dir()) {
                     Ok(Some(m)) => Some(m),
                     Ok(None) => None,
                     Err(e) => {
@@ -497,7 +497,7 @@ impl SwarmRunner {
         // 1b. Create one worktree per subtask. All-or-nothing: a
         //     failure on any worktree drops the manager (cleaning up
         //     whatever was created) and falls back to the shared root.
-        let mut worktree_created: Vec<crate::worktree::WorktreeInfo> = Vec::new();
+        let mut worktree_created: Vec<kod_core_quality::worktree::WorktreeInfo> = Vec::new();
         let mut worktree_failed = false;
         // M-23: `create` runs sync git with a `thread::sleep` poll loop
         // (up to `git_timeout_secs` per call). Move the whole manager
@@ -629,7 +629,7 @@ impl SwarmRunner {
             /// Worktree path this subtask runs in, if any. Set at
             /// dispatch time (not pool time) because the transcript
             /// key is subtask-scoped.
-            worktree: Option<crate::worktree::WorktreeInfo>,
+            worktree: Option<kod_core_quality::worktree::WorktreeInfo>,
         }
 
         // H-D1: the watchdog needs to reach every *dispatch* key
@@ -652,7 +652,7 @@ impl SwarmRunner {
         // capability do not share a directory.)
         let mut capability_worktree: std::collections::HashMap<
             Capability,
-            crate::worktree::WorktreeInfo,
+            kod_core_quality::worktree::WorktreeInfo,
         > = std::collections::HashMap::new();
         for (i, st) in subtasks.iter().enumerate() {
             if let Some(wt) = worktree_created.get(i) {
@@ -828,7 +828,7 @@ impl SwarmRunner {
                         engine
                             .steer_interrupt_for(
                                 &observer,
-                                crate::steer::SoftInterrupt::swarm(notice),
+                                kod_core_state::steer::SoftInterrupt::swarm(notice),
                             )
                             .await;
                     }
@@ -1680,7 +1680,7 @@ impl SwarmRunner {
                                 .engine
                                 .steer_interrupt_for(
                                     crate::engine::DEFAULT_TRANSCRIPT_KEY,
-                                    crate::steer::SoftInterrupt::swarm(format!(
+                                    kod_core_state::steer::SoftInterrupt::swarm(format!(
                                         "[{name}] followup: {f_up}"
                                     )),
                                 )
@@ -1705,9 +1705,9 @@ impl SwarmRunner {
                             .add_decision(
                                 "",
                                 0,
-                                crate::decisions::DecisionKind::Approach,
+                                kod_core_state::decisions::DecisionKind::Approach,
                                 fact.clone(),
-                                crate::decisions::DecisionAuthor::Assistant,
+                                kod_core_state::decisions::DecisionAuthor::Assistant,
                             )
                             .await;
                     }
@@ -1715,7 +1715,7 @@ impl SwarmRunner {
                         self.engine
                             .steer_interrupt_for(
                                 crate::engine::DEFAULT_TRANSCRIPT_KEY,
-                                crate::steer::SoftInterrupt::swarm(format!("[{name}] {q}")),
+                                kod_core_state::steer::SoftInterrupt::swarm(format!("[{name}] {q}")),
                             )
                             .await;
                     }

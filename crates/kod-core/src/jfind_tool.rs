@@ -1,6 +1,6 @@
 //! Delta §7.4: the `jfind` tool — semantic code search.
 //!
-//! Wraps [`crate::jfind::search`] with a real [`Judge`] backed by the
+//! Wraps [`kod_core_tools::jfind::search`] with a real [`Judge`] backed by the
 //! engine's Jev client, and a `Tool` impl the model calls. The judge
 //! asks Jev, for each candidate, "does this relate to the query?" and
 //! maps the probability onto the cascade's `[0, 1]` score.
@@ -21,7 +21,7 @@ use kod_error::Result;
 use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use serde_json::Value;
 
-use crate::jfind::{self, Judge, Query};
+use kod_core_tools::jfind::{self, Judge, Query};
 use crate::jev::JevDecider;
 use kod_tools::{Tool, ToolContext};
 

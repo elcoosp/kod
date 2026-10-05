@@ -7,6 +7,10 @@ authors.workspace = true
 build = "build.rs"
 
 [dependencies]
+kod-core-tools = { path = "../kod-core-tools" }
+kod-core-quality = { path = "../kod-core-quality" }
+kod-core-routing = { path = "../kod-core-routing" }
+kod-core-state = { path = "../kod-core-state" }
 libc = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde = { workspace = true }

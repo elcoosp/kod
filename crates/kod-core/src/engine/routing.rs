@@ -16,9 +16,9 @@ impl KodEngine {
     pub(crate) fn filter_chain_by_trust(
         chain: &[kod_provider::ModelRef],
         trust_map: &std::collections::HashMap<String, String>,
-        sensitivity: crate::sensitivity::Sensitivity,
+        sensitivity: kod_core_state::sensitivity::Sensitivity,
     ) -> Vec<kod_provider::ModelRef> {
-        let req = crate::sensitivity::TrustRequirement::for_sensitivity(sensitivity);
+        let req = kod_core_state::sensitivity::TrustRequirement::for_sensitivity(sensitivity);
         if req.0.is_none() {
             return chain.to_vec();
         }
@@ -275,12 +275,12 @@ impl KodEngine {
         &self,
         input: &str,
         _history: &str,
-    ) -> std::result::Result<crate::budget::Allocation, crate::budget::BudgetError> {
+    ) -> std::result::Result<kod_core_state::budget::Allocation, kod_core_state::budget::BudgetError> {
         // Hygiene: read the cached (window, max_out). `set_registry`
         // populates it from the effective endpoint; a caller that
         // never installed a registry sees the built-in default.
         let (window, max_out) = *self.budget_hint.read().unwrap_or_else(|e| e.into_inner());
-        let budget = crate::budget::PromptBudget::from_tokens(window, max_out);
+        let budget = kod_core_state::budget::PromptBudget::from_tokens(window, max_out);
         // H-E3: subtract the parts the engine appends outside the four
         // budgeted sections — the environment/tool-use trailer, the
         // structured system prompt, and the tool JSON schemas. The
@@ -757,7 +757,7 @@ impl KodEngine {
             }
         };
         let supported = self.supported_efforts_for(model_ref);
-        let classifier = crate::auto_thinking::AutoThinking::new(client);
+        let classifier = kod_core_quality::auto_thinking::AutoThinking::new(client);
         match classifier.classify(input, &supported).await {
             Ok(level) => {
                 tracing::debug!(
@@ -978,7 +978,7 @@ impl KodEngine {
                 .unwrap_or(0);
             let cost = pricing.cost_for_usage(usage);
             self.cost_tracker.record(cost);
-            let entry = crate::session_log::SessionEntry::Cost {
+            let entry = kod_core_state::session_log::SessionEntry::Cost {
                 timestamp_ms: now_ms,
                 holder: holder.to_string(),
                 endpoint: model_ref.endpoint.clone(),
@@ -1005,7 +1005,7 @@ impl KodEngine {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
-            let entry = crate::session_log::SessionEntry::SessionExit {
+            let entry = kod_core_state::session_log::SessionEntry::SessionExit {
                 timestamp_ms: now_ms,
                 holder: DEFAULT_TRANSCRIPT_KEY.to_string(),
                 reason: reason.to_string(),
@@ -1028,7 +1028,7 @@ impl KodEngine {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
-            let entry = crate::session_log::SessionEntry::ToolExecutionStart {
+            let entry = kod_core_state::session_log::SessionEntry::ToolExecutionStart {
                 timestamp_ms: now_ms,
                 holder: holder.to_string(),
                 tool_name: tool_name.to_string(),
@@ -1057,7 +1057,7 @@ impl KodEngine {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
-            let entry = crate::session_log::SessionEntry::ModelFallback {
+            let entry = kod_core_state::session_log::SessionEntry::ModelFallback {
                 timestamp_ms: now_ms,
                 holder: holder.to_string(),
                 from: from.display(),

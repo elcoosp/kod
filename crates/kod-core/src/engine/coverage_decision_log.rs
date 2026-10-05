@@ -1,7 +1,7 @@
 #![cfg(test)]
     //! Pins the engine's decision-log accessors (Tier 3.4).
     use super::*;
-    use crate::decisions::{DecisionAuthor, DecisionKind, DecisionLog};
+    use kod_core_state::decisions::{DecisionAuthor, DecisionKind, DecisionLog};
 
     async fn engine() -> KodEngine {
         let tmp = tempfile::TempDir::new().unwrap();

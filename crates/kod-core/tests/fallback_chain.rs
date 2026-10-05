@@ -166,7 +166,7 @@ async fn retryable_error_falls_back_to_next_endpoint() {
 
     // Attach a session log to the temp dir so we can assert on it.
     let log_path = temp.path().join("session.jsonl");
-    let recorder = kod_core::session_log::SessionRecorder::open(log_path.clone()).unwrap();
+    let recorder = kod_core_state::session_log::SessionRecorder::open(log_path.clone()).unwrap();
     engine.set_session_recorder(Arc::new(recorder));
 
     engine.start().await.unwrap();
@@ -179,11 +179,11 @@ async fn retryable_error_falls_back_to_next_endpoint() {
 
     // The JSONL log must contain exactly one ModelFallback line
     // recording the primary -> secondary transition.
-    let entries = kod_core::session_log::read_session(&log_path).unwrap();
+    let entries = kod_core_state::session_log::read_session(&log_path).unwrap();
     let fallbacks: Vec<_> = entries
         .iter()
         .filter_map(|e| match e {
-            kod_core::session_log::SessionEntry::ModelFallback {
+            kod_core_state::session_log::SessionEntry::ModelFallback {
                 from, to, error, ..
             } => Some((from.clone(), to.clone(), error.clone())),
             _ => None,

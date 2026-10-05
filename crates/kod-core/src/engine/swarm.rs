@@ -147,7 +147,7 @@ impl KodEngine {
     /// could be determined. `None` means the engine cannot snapshot
     /// (no home directory); a caller that offers `/rollback` should
     /// say so rather than silently no-op.
-    pub fn checkpoints(&self) -> Option<&Arc<crate::checkpoint::CheckpointManager>> {
+    pub fn checkpoints(&self) -> Option<&Arc<kod_core_state::checkpoint::CheckpointManager>> {
         self.checkpoints.as_ref()
     }
 

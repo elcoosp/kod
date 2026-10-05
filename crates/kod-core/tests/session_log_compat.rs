@@ -14,7 +14,7 @@
 //! recorder round-trip would not exercise the unknown-kind path at
 //! all.
 
-use kod_core::session_log::{SessionEntry, read_session};
+use kod_core_state::session_log::{SessionEntry, read_session};
 use tempfile::TempDir;
 
 /// Every current variant plus a synthetic `future_kind` line the

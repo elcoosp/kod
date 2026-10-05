@@ -6,6 +6,10 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+kod-core-tools = { path = "../kod-core-tools" }
+kod-core-quality = { path = "../kod-core-quality" }
+kod-core-routing = { path = "../kod-core-routing" }
+kod-core-state = { path = "../kod-core-state" }
 unicode-width = "0.2"
 kod-provider = { path = "../kod-provider" }
 ratatui = { workspace = true }

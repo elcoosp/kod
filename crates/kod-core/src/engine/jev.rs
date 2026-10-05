@@ -81,7 +81,7 @@ impl KodEngine {
             Some(p) => p.read_protection().clone(),
             None => kod_config::ReadProtection::default(),
         };
-        let s = crate::sensitivity::classify(
+        let s = kod_core_state::sensitivity::classify(
             &paths,
             |p| protected.matches(p),
             |p| protected.matches(p),
@@ -104,16 +104,16 @@ impl KodEngine {
     /// Set the current turn's sensitivity (P7). Callers set this
     /// before a prompt so the routing gate can filter endpoints by
     /// their declared trust tier.
-    pub async fn set_sensitivity(&self, s: crate::sensitivity::Sensitivity) {
+    pub async fn set_sensitivity(&self, s: kod_core_state::sensitivity::Sensitivity) {
         *self.current_sensitivity.write().await = s;
     }
 
     /// The current turn's sensitivity.
-    pub async fn current_sensitivity(&self) -> crate::sensitivity::Sensitivity {
+    pub async fn current_sensitivity(&self) -> kod_core_state::sensitivity::Sensitivity {
         *self.current_sensitivity.read().await
     }
 
-    pub(crate) fn next_turn_id(&self) -> crate::trace::TurnId {
+    pub(crate) fn next_turn_id(&self) -> kod_core_state::trace::TurnId {
         self.next_turn_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
@@ -121,7 +121,7 @@ impl KodEngine {
     /// Emit a completed trace, if a writer is installed. Failure to
     /// write is logged but never propagated — the trace is
     /// diagnostic, not functional.
-    pub(crate) fn emit_turn_trace(&self, trace: &crate::trace::TurnTrace) {
+    pub(crate) fn emit_turn_trace(&self, trace: &kod_core_state::trace::TurnTrace) {
         if let Ok(guard) = self.turn_trace_writer.read()
             && let Some(w) = guard.as_ref()
             && let Err(e) = w.record(trace)
@@ -461,7 +461,7 @@ impl KodEngine {
         let Some(jev) = self.jev_client() else {
             return text.to_string();
         };
-        let citations = crate::citations::extract_citations(text);
+        let citations = kod_core_state::citations::extract_citations(text);
         if citations.is_empty() {
             return text.to_string();
         }
@@ -1204,7 +1204,7 @@ impl KodEngine {
         if let Ok(guard) = self.session_recorder.read()
             && let Some(rec) = guard.as_ref()
         {
-            let entry = crate::session_log::SessionEntry::JevDecision {
+            let entry = kod_core_state::session_log::SessionEntry::JevDecision {
                 timestamp_ms: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)

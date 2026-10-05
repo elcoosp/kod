@@ -96,11 +96,11 @@ impl KodEngine {
             .await
             .ok();
         let kind = match kind_decision.as_ref().map(|d| d.value.as_str()) {
-            Some("user_preference") => crate::decisions::DecisionKind::UserPreference,
-            Some("approach") => crate::decisions::DecisionKind::Approach,
-            Some("file_change") => crate::decisions::DecisionKind::FileChange,
-            Some("constraint") => crate::decisions::DecisionKind::Constraint,
-            _ => crate::decisions::DecisionKind::Other,
+            Some("user_preference") => kod_core_state::decisions::DecisionKind::UserPreference,
+            Some("approach") => kod_core_state::decisions::DecisionKind::Approach,
+            Some("file_change") => kod_core_state::decisions::DecisionKind::FileChange,
+            Some("constraint") => kod_core_state::decisions::DecisionKind::Constraint,
+            _ => kod_core_state::decisions::DecisionKind::Other,
         };
         let text = format!(
             "{} → {}",
@@ -126,7 +126,7 @@ impl KodEngine {
             turn_id,
             kind,
             text,
-            crate::decisions::DecisionAuthor::Assistant,
+            kod_core_state::decisions::DecisionAuthor::Assistant,
         )
         .await;
         1
@@ -493,7 +493,7 @@ impl KodEngine {
         if let Ok(guard) = self.session_recorder.read()
             && let Some(rec) = guard.as_ref()
         {
-            let entry = crate::session_log::SessionEntry::ToolOutcome {
+            let entry = kod_core_state::session_log::SessionEntry::ToolOutcome {
                 timestamp_ms: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
@@ -1230,8 +1230,8 @@ impl KodEngine {
         &self,
         holder: &str,
         input: &str,
-        base: &crate::budget::Allocation,
-    ) -> crate::budget::Allocation {
+        base: &kod_core_state::budget::Allocation,
+    ) -> kod_core_state::budget::Allocation {
         let Some(jev) = self.jev_client() else {
             return *base;
         };
@@ -1286,7 +1286,7 @@ impl KodEngine {
         let per_section = total_share / yes_count;
         let mut leftover = total_share - per_section * yes_count;
 
-        let mut out = crate::budget::Allocation {
+        let mut out = kod_core_state::budget::Allocation {
             request: base.request,
             history: 0,
             skills: 0,

@@ -55,7 +55,7 @@ impl KodEngine {
         if steps.is_empty() {
             return;
         }
-        let plan = crate::plan::Plan::new(input, steps);
+        let plan = kod_core_state::plan::Plan::new(input, steps);
         let step_count = plan.steps.len();
         // Delta §11.10: autosave before moving the plan into the
         // map. The working-dir override for a swarm transcript is
@@ -82,7 +82,7 @@ impl KodEngine {
             .get(key)
             .cloned()
             .unwrap_or_else(|| self.working_dir.clone());
-        let path = crate::plan::autosave_plan(&plan, &working_dir);
+        let path = kod_core_state::plan::autosave_plan(&plan, &working_dir);
         if let Some(p) = &path {
             tracing::debug!(path = %p.display(), "plan autosaved");
         }
@@ -114,7 +114,7 @@ impl KodEngine {
             h ^= *b as u64;
             h = h.wrapping_mul(0x0000_0100_0000_01b3);
         }
-        let entry = crate::session_log::SessionEntry::MemoryRetrieval {
+        let entry = kod_core_state::session_log::SessionEntry::MemoryRetrieval {
             timestamp_ms: now_ms,
             turn_id,
             query_hash: format!("{h:016x}"),
@@ -166,7 +166,7 @@ impl KodEngine {
             .unwrap_or_default()
     }
 
-    pub async fn decisions_for(&self, key: &str) -> crate::decisions::DecisionLog {
+    pub async fn decisions_for(&self, key: &str) -> kod_core_state::decisions::DecisionLog {
         self.decision_logs
             .read()
             .await
@@ -176,7 +176,7 @@ impl KodEngine {
     }
 
     /// Replace the entire decision log for a transcript.
-    pub async fn set_decision_log(&self, key: &str, log: crate::decisions::DecisionLog) {
+    pub async fn set_decision_log(&self, key: &str, log: kod_core_state::decisions::DecisionLog) {
         self.decision_logs
             .write()
             .await
@@ -189,9 +189,9 @@ impl KodEngine {
         &self,
         key: &str,
         turn_id: u64,
-        kind: crate::decisions::DecisionKind,
+        kind: kod_core_state::decisions::DecisionKind,
         text: String,
-        author: crate::decisions::DecisionAuthor,
+        author: kod_core_state::decisions::DecisionAuthor,
     ) -> u64 {
         let mut g = self.decision_logs.write().await;
         let log = g.entry(key.to_string()).or_default();
@@ -219,7 +219,7 @@ impl KodEngine {
     /// (a downhill walk).
     pub async fn arm_prewalk(&self, key: &str, target_model: impl Into<String>) {
         let target = target_model.into();
-        let mut prewalk = crate::prewalk::Prewalk::arm(target);
+        let mut prewalk = kod_core_tools::prewalk::Prewalk::arm(target);
         // Inject the nudge as a user message and note its id, so the
         // fire step can splice it out by id.
         let msg_id = kod_types::MessageId::new();
@@ -239,7 +239,7 @@ impl KodEngine {
     }
 
     /// Delta §11.12: whether a transcript has an armed prewalk.
-    pub async fn prewalk_state(&self, key: &str) -> Option<crate::prewalk::PrewalkState> {
+    pub async fn prewalk_state(&self, key: &str) -> Option<kod_core_tools::prewalk::PrewalkState> {
         self.prewalks.read().await.get(key).map(|p| p.state.clone())
     }
 
@@ -268,7 +268,7 @@ impl KodEngine {
     /// prewalk, an unarmed one, a read-only tool, or a done one
     /// each returns immediately.
     pub(crate) async fn maybe_fire_prewalk(&self, key: &str, tool_name: &str) {
-        if !crate::prewalk::Prewalk::is_mutating_tool(tool_name) {
+        if !kod_core_tools::prewalk::Prewalk::is_mutating_tool(tool_name) {
             return;
         }
         // Take the prewalk out so a racing call does not double-fire.
@@ -348,12 +348,12 @@ impl KodEngine {
     }
 
     /// The plan for a transcript, if one has been created (Tier 2.1).
-    pub async fn plan_for(&self, key: &str) -> Option<crate::plan::Plan> {
+    pub async fn plan_for(&self, key: &str) -> Option<kod_core_state::plan::Plan> {
         self.plans.read().await.get(key).cloned()
     }
 
     /// Replace the plan for a transcript.
-    pub async fn set_plan(&self, key: &str, plan: crate::plan::Plan) {
+    pub async fn set_plan(&self, key: &str, plan: kod_core_state::plan::Plan) {
         self.plans.write().await.insert(key.to_string(), plan);
         self.persist_state().await;
     }
@@ -401,7 +401,7 @@ impl KodEngine {
     /// Apply a `PlanUpdate` to the transcript's plan, if one exists.
     /// Returns the human-readable description from `Plan::apply`, or
     /// a message saying no plan exists.
-    pub async fn apply_plan_update(&self, key: &str, update: crate::plan::PlanUpdate) -> String {
+    pub async fn apply_plan_update(&self, key: &str, update: kod_core_state::plan::PlanUpdate) -> String {
         // Delta §11.10: a ReferencePath update changes both the plan's
         // own list and the engine's protected-path set. The set is
         // derived from the plan, so a caller reads a single source of

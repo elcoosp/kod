@@ -1,6 +1,6 @@
 #![cfg(test)]
     use super::*;
-    use crate::sensitivity::Sensitivity;
+    use kod_core_state::sensitivity::Sensitivity;
     use kod_provider::{ModelInfo, ModelRef};
     use std::collections::HashMap;
 

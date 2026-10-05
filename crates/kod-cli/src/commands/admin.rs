@@ -580,7 +580,7 @@ pub async fn run_tests() -> Result<()> {
 pub async fn run_map(max_chars: usize) -> Result<()> {
     let cwd = std::env::current_dir()
         .map_err(|e| KodError::Config(format!("Could not determine working directory: {}", e)))?;
-    let map = kod_core::repomap::build_repo_map(&cwd);
+    let map = kod_core_quality::repomap::build_repo_map(&cwd);
     let rendered = map.render(max_chars);
     print!("{}", rendered);
     eprintln!(
@@ -804,7 +804,7 @@ pub async fn run_doctor_fix(json: bool) -> Result<()> {
 
     // Checkpoints dir for cwd.
     if let Ok(cwd) = std::env::current_dir()
-        && let Some(cp) = kod_core::checkpoint::CheckpointManager::for_working_dir(&cwd)
+        && let Some(cp) = kod_core_state::checkpoint::CheckpointManager::for_working_dir(&cwd)
     {
         let dir = cp.dir();
         if !dir.exists()
@@ -1066,14 +1066,14 @@ pub async fn run_jev_stats(log: Option<std::path::PathBuf>) -> Result<()> {
             KodError::Config("no session log found under ~/.kod/sessions/".to_string())
         })?,
     };
-    let entries = kod_core::session_log::read_session(&path)?;
+    let entries = kod_core_state::session_log::read_session(&path)?;
     let mut total = 0_usize;
     let mut cached = 0_usize;
     let mut total_latency_ms: u64 = 0;
     let mut by_source: std::collections::BTreeMap<String, usize> = Default::default();
     let mut by_purpose: std::collections::BTreeMap<String, usize> = Default::default();
     for e in &entries {
-        if let kod_core::session_log::SessionEntry::JevDecision {
+        if let kod_core_state::session_log::SessionEntry::JevDecision {
             purpose,
             latency_ms,
             cached: c,

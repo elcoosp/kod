@@ -565,7 +565,7 @@ impl TaskRouter {
     pub fn project_key_for(working_dir: &std::path::Path) -> String {
         let canonical =
             std::fs::canonicalize(working_dir).unwrap_or_else(|_| working_dir.to_path_buf());
-        crate::checkpoint::fnv1a_hex(&canonical.to_string_lossy())
+        kod_core_state::checkpoint::fnv1a_hex(&canonical.to_string_lossy())
     }
 
     /// Load skills from a directory (matcher uses interior mutability,
@@ -1068,7 +1068,7 @@ impl TaskRouter {
         }
         let built = {
             let dir = dir.clone();
-            tokio::task::spawn_blocking(move || crate::repomap::build_repo_map(&dir))
+            tokio::task::spawn_blocking(move || kod_core_quality::repomap::build_repo_map(&dir))
                 .await
                 .ok()?
         };
@@ -1078,7 +1078,7 @@ impl TaskRouter {
             }
             return None;
         }
-        let rendered = std::sync::Arc::new(built.render(crate::repomap::DEFAULT_MAP_CHARS));
+        let rendered = std::sync::Arc::new(built.render(kod_core_quality::repomap::DEFAULT_MAP_CHARS));
         let languages = std::sync::Arc::new(built.languages.iter().cloned().collect::<Vec<_>>());
         if let Ok(mut guard) = cache.inner.write() {
             *guard = Some(CachedRepoMap {
@@ -1121,7 +1121,7 @@ impl TaskRouter {
             .await
     }
 
-    /// Full form: caller passes an explicit [`crate::budget::Allocation`]
+    /// Full form: caller passes an explicit [`kod_core_state::budget::Allocation`]
     /// so each section is truncated to its share. The engine computes
     /// the allocation from the endpoint's window and the request size;
     /// a caller that does not care (a test, the CLI's plain path) uses
@@ -1132,7 +1132,7 @@ impl TaskRouter {
         task_type: &TaskType,
         history: &str,
         memory_context: Option<MemoryContext>,
-        budget: Option<&crate::budget::Allocation>,
+        budget: Option<&kod_core_state::budget::Allocation>,
     ) -> Result<String> {
         // Truncate the request when it is over its share. The engine
         // refuses an over-budget request before reaching this point;
@@ -1392,7 +1392,7 @@ impl TaskRouter {
         task_type: &TaskType,
         history: &str,
         memory_context: Option<MemoryContext>,
-        budget: Option<&crate::budget::Allocation>,
+        budget: Option<&kod_core_state::budget::Allocation>,
     ) -> Result<PromptPlan> {
         let rendered = self
             .build_prompt_with_budget(input, task_type, history, memory_context, budget)
@@ -1479,14 +1479,14 @@ impl RepoMapCache {
         // Slow path: rebuild under the write lock. A concurrent reader
         // that wins the race sees the previous value (safe, may be
         // stale for one prompt — the next prompt re-checks).
-        let map = crate::repomap::build_repo_map(working_dir);
+        let map = kod_core_quality::repomap::build_repo_map(working_dir);
         if map.file_count() == 0 {
             if let Ok(mut guard) = self.inner.write() {
                 *guard = None;
             }
             return None;
         }
-        let rendered = std::sync::Arc::new(map.render(crate::repomap::DEFAULT_MAP_CHARS));
+        let rendered = std::sync::Arc::new(map.render(kod_core_quality::repomap::DEFAULT_MAP_CHARS));
         let languages = std::sync::Arc::new(map.languages.iter().cloned().collect::<Vec<_>>());
         if let Ok(mut guard) = self.inner.write() {
             *guard = Some(CachedRepoMap {
@@ -1527,7 +1527,7 @@ fn fingerprint_of(root: &std::path::Path) -> u64 {
     // once). The alternative — walking `$HOME` on every prompt to
     // decide whether an empty map is stale — is exactly the bug this
     // guard exists to prevent.
-    if !crate::repomap::looks_like_a_repo(root) {
+    if !kod_core_quality::repomap::looks_like_a_repo(root) {
         return 0;
     }
 
@@ -1561,7 +1561,7 @@ fn fingerprint_of(root: &std::path::Path) -> u64 {
     // would not invalidate. Stopping at the same limit keeps the two
     // walks consistent and bounds this one too.
     for (i, entry) in builder.build().filter_map(|e| e.ok()).enumerate() {
-        if i >= crate::repomap::MAX_REPO_FILES {
+        if i >= kod_core_quality::repomap::MAX_REPO_FILES {
             break;
         }
         let path = entry.path();

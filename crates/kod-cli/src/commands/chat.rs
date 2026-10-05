@@ -221,9 +221,9 @@ pub async fn run_chat(
     if let Some(path) = std::env::var("KOD_SESSION_LOG")
         .ok()
         .map(std::path::PathBuf::from)
-        .or_else(kod_core::session_log::default_session_path)
+        .or_else(kod_core_state::session_log::default_session_path)
     {
-        match kod_core::session_log::SessionRecorder::open(path.clone()) {
+        match kod_core_state::session_log::SessionRecorder::open(path.clone()) {
             Ok(recorder) => {
                 engine.set_session_recorder(Arc::new(recorder));
                 eprintln!("Session log: {}", path.display());

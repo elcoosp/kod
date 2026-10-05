@@ -412,7 +412,7 @@ impl KodEngine {
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_millis() as u64)
                             .unwrap_or(0);
-                        let entry = crate::session_log::SessionEntry::MemoryWrite {
+                        let entry = kod_core_state::session_log::SessionEntry::MemoryWrite {
                             timestamp_ms: now_ms,
                             memory_id: id.as_uuid().to_string(),
                             channel: "extraction".to_string(),

@@ -1,7 +1,7 @@
 #![cfg(test)]
     use super::*;
     use crate::router::RouterConfig;
-    use crate::session_log::{SessionEntry, SessionRecorder};
+    use kod_core_state::session_log::{SessionEntry, SessionRecorder};
     use tempfile::TempDir;
 
     fn fixture_config(dir: &std::path::Path) -> RouterConfig {

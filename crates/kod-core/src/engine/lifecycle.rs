@@ -125,22 +125,22 @@ impl KodEngine {
         // for the file's language. `engine.start()` takes `&self`, so
         // the tools take the slot Arc, not the engine Arc.
         self.tools
-            .register(Box::new(crate::lsp_tools::LspDiagnosticsTool::new(
+            .register(Box::new(kod_core_tools::lsp_tools::LspDiagnosticsTool::new(
                 Arc::clone(&self.lsp_manager),
             )))
             .await;
         self.tools
-            .register(Box::new(crate::lsp_tools::LspDefinitionTool::new(
+            .register(Box::new(kod_core_tools::lsp_tools::LspDefinitionTool::new(
                 Arc::clone(&self.lsp_manager),
             )))
             .await;
         self.tools
-            .register(Box::new(crate::lsp_tools::LspReferencesTool::new(
+            .register(Box::new(kod_core_tools::lsp_tools::LspReferencesTool::new(
                 Arc::clone(&self.lsp_manager),
             )))
             .await;
         self.tools
-            .register(Box::new(crate::lsp_tools::LspHoverTool::new(Arc::clone(
+            .register(Box::new(kod_core_tools::lsp_tools::LspHoverTool::new(Arc::clone(
                 &self.lsp_manager,
             ))))
             .await;
@@ -287,7 +287,7 @@ impl KodEngine {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        let entry = crate::session_log::SessionEntry::SessionInit {
+        let entry = kod_core_state::session_log::SessionEntry::SessionInit {
             timestamp_ms: now_ms,
             holder: String::new(),
             endpoint: model.endpoint.clone(),

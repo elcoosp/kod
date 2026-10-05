@@ -4,7 +4,7 @@ impl KodEngine {
     /// Install an on-disk state store (Tier 3.4). Loads any
     /// previously-saved plans and decision logs into memory. Call
     /// once at engine startup.
-    pub async fn set_state_store(&self, store: crate::state::StateStore) {
+    pub async fn set_state_store(&self, store: kod_core_state::state::StateStore) {
         // Load whatever is on disk before installing the store, so
         // a caller sees the persisted plans and decisions
         // immediately.
@@ -38,8 +38,8 @@ impl KodEngine {
         };
         let plans = self.plans.read().await.clone();
         let logs = self.decision_logs.read().await.clone();
-        let state = crate::state::EngineState {
-            schema_version: crate::state::STATE_SCHEMA_VERSION,
+        let state = kod_core_state::state::EngineState {
+            schema_version: kod_core_state::state::STATE_SCHEMA_VERSION,
             plans,
             decision_logs: logs,
         };
@@ -107,7 +107,7 @@ impl KodEngine {
         }
     }
 
-    pub fn cost_tracker(&self) -> &crate::cost::CostTracker {
+    pub fn cost_tracker(&self) -> &kod_core_state::cost::CostTracker {
         &self.cost_tracker
     }
 
@@ -226,7 +226,7 @@ impl KodEngine {
         log_path: &std::path::Path,
         holder: &str,
     ) -> kod_error::Result<Option<(String, String, Vec<String>, u64)>> {
-        crate::session_log::session_init_for(log_path, holder)
+        kod_core_state::session_log::session_init_for(log_path, holder)
     }
 
     /// Delta §10: enable or disable speculative reads. On by default.
@@ -458,7 +458,7 @@ impl KodEngine {
     }
 
     /// Delta §11.6: the current goal, if any. A UI readout.
-    pub async fn current_goal(&self) -> Option<crate::goals::Goal> {
+    pub async fn current_goal(&self) -> Option<kod_core_state::goals::Goal> {
         self.goal_runtime.read().await.current().cloned()
     }
 

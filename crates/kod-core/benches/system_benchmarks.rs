@@ -298,8 +298,8 @@ fn benchmark_repo_map(c: &mut Criterion) {
     let mut group = c.benchmark_group("repo_map");
     group.bench_function("build_and_render", |b| {
         b.iter(|| {
-            let map = kod_core::repomap::build_repo_map(&root);
-            let rendered = map.render(kod_core::repomap::DEFAULT_MAP_CHARS);
+            let map = kod_core_quality::repomap::build_repo_map(&root);
+            let rendered = map.render(kod_core_quality::repomap::DEFAULT_MAP_CHARS);
             black_box(map.file_count());
             black_box(rendered.len());
         });

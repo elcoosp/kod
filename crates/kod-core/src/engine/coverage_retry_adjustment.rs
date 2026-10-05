@@ -16,7 +16,7 @@
 
     #[test]
     fn lower_temp_halves_the_temperature() {
-        use crate::retry_strategy::RetryAction;
+        use kod_core_routing::retry_strategy::RetryAction;
         let mut o = empty_opts();
         o.temperature = Some(0.8);
         let mut m = empty_msgs();
@@ -29,7 +29,7 @@
 
     #[test]
     fn lower_temp_defaults_when_unset() {
-        use crate::retry_strategy::RetryAction;
+        use kod_core_routing::retry_strategy::RetryAction;
         let mut o = empty_opts();
         o.temperature = None;
         let mut m = empty_msgs();
@@ -42,7 +42,7 @@
 
     #[test]
     fn reinject_tools_appends_a_system_nudge() {
-        use crate::retry_strategy::RetryAction;
+        use kod_core_routing::retry_strategy::RetryAction;
         let mut o = empty_opts();
         let mut m = empty_msgs();
         let ok = KodEngine::apply_retry_adjustment(RetryAction::ReinjectTools, &mut o, &mut m);
@@ -54,7 +54,7 @@
 
     #[test]
     fn constrained_appends_a_json_nudge() {
-        use crate::retry_strategy::RetryAction;
+        use kod_core_routing::retry_strategy::RetryAction;
         let mut o = empty_opts();
         let mut m = empty_msgs();
         let ok =
@@ -66,7 +66,7 @@
 
     #[test]
     fn shrink_history_refuses_short_conversations() {
-        use crate::retry_strategy::RetryAction;
+        use kod_core_routing::retry_strategy::RetryAction;
         let mut o = empty_opts();
         let mut m = vec![
             kod_types::ChatMessage::text(
@@ -89,7 +89,7 @@
 
     #[test]
     fn shrink_history_drops_oldest_half() {
-        use crate::retry_strategy::RetryAction;
+        use kod_core_routing::retry_strategy::RetryAction;
         let mut o = empty_opts();
         let mut m: Vec<kod_types::ChatMessage> = (0..6)
             .map(|i| {
@@ -109,7 +109,7 @@
 
     #[test]
     fn next_endpoint_is_not_handled_here() {
-        use crate::retry_strategy::RetryAction;
+        use kod_core_routing::retry_strategy::RetryAction;
         let mut o = empty_opts();
         let mut m = empty_msgs();
         assert!(!KodEngine::apply_retry_adjustment(

@@ -82,7 +82,7 @@ pub trait AdvisorSink: Send + Sync {
 /// exists and no `Weak` is needed.
 pub struct SteerQueueSink {
     pub steers: Arc<
-        tokio::sync::RwLock<std::collections::HashMap<String, Vec<crate::steer::SoftInterrupt>>>,
+        tokio::sync::RwLock<std::collections::HashMap<String, Vec<kod_core_state::steer::SoftInterrupt>>>,
     >,
     pub is_running: Arc<tokio::sync::RwLock<bool>>,
 }
@@ -113,7 +113,7 @@ impl AdvisorSink for SteerQueueSink {
             advice.severity.as_str(),
             advice.note,
         );
-        let interrupt = crate::steer::SoftInterrupt::swarm(body);
+        let interrupt = kod_core_state::steer::SoftInterrupt::swarm(body);
         let mut q = self.steers.write().await;
         q.entry(target_key.to_string()).or_default().push(interrupt);
     }

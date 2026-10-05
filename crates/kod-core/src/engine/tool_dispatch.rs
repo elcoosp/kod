@@ -69,7 +69,7 @@ impl KodEngine {
                 }
                 Err(e) => serde_json::json!({ "error": e.to_string() }),
             };
-            let entry = crate::session_log::SessionEntry::ToolCall {
+            let entry = kod_core_state::session_log::SessionEntry::ToolCall {
                 timestamp_ms: now_ms,
                 holder: holder.to_string(),
                 tool_name: call.tool_name.clone(),
@@ -413,7 +413,7 @@ impl KodEngine {
                 kod_config::Decision::Deny => "deny",
                 kod_config::Decision::Ask => "ask",
             };
-            let entry = crate::session_log::SessionEntry::PolicyDecision {
+            let entry = kod_core_state::session_log::SessionEntry::PolicyDecision {
                 timestamp_ms: now_ms,
                 holder: holder.to_string(),
                 tool_name: call.tool_name.clone(),
@@ -556,7 +556,7 @@ impl KodEngine {
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_millis() as u64)
                             .unwrap_or(0);
-                        let entry = crate::session_log::SessionEntry::Approval {
+                        let entry = kod_core_state::session_log::SessionEntry::Approval {
                             timestamp_ms: now_ms,
                             holder: holder.to_string(),
                             tool_name: call.tool_name.clone(),
@@ -690,7 +690,7 @@ impl KodEngine {
                     .map(|d| d.as_millis() as u64)
                     .unwrap_or(0);
                 let edit_snapshot = edited_args.get(&i).cloned();
-                let entry = crate::session_log::SessionEntry::Approval {
+                let entry = kod_core_state::session_log::SessionEntry::Approval {
                     timestamp_ms: now_ms,
                     holder: holder.to_string(),
                     tool_name: tool_name.clone(),
@@ -749,7 +749,7 @@ impl KodEngine {
         let mut guards = self.tool_loop_guards.write().await;
         let guard = guards
             .entry(key.to_string())
-            .or_insert_with(crate::tool_loop_guard::ToolLoopGuard::new);
+            .or_insert_with(kod_core_tools::tool_loop_guard::ToolLoopGuard::new);
         let Some(corrective) = guard.observe_round(calls, results) else {
             return;
         };
@@ -816,7 +816,7 @@ impl KodEngine {
         calls: &[ToolCall],
         holder: &str,
         chunk_tx: Option<&tokio::sync::mpsc::Sender<String>>,
-        speculations: &[Option<crate::speculation::SpeculativeRead>],
+        speculations: &[Option<kod_core_tools::speculation::SpeculativeRead>],
     ) -> ToolRound {
         // Delta §9.8: the pause gate's tool-round boundary.
         self.pause_gate.wait_if_paused().await;
@@ -928,7 +928,7 @@ impl KodEngine {
             std::collections::HashMap::new();
         for (i, spec) in speculations.iter().enumerate() {
             let Some(spec) = spec.as_ref() else { continue };
-            match crate::speculation::validate(&spec.path, &spec.evidence) {
+            match kod_core_tools::speculation::validate(&spec.path, &spec.evidence) {
                 Ok(true) => {
                     prefetches.insert(
                         i,
@@ -1276,7 +1276,7 @@ impl KodEngine {
             if call.tool_name != "plan_update" {
                 continue;
             }
-            let update = serde_json::from_value::<crate::plan::PlanUpdate>(call.arguments.clone());
+            let update = serde_json::from_value::<kod_core_state::plan::PlanUpdate>(call.arguments.clone());
             let answer = match update {
                 Ok(u) => self.apply_plan_update(effective_holder, u).await,
                 Err(e) => format!("plan_update: invalid arguments: {e}"),
@@ -1862,7 +1862,7 @@ impl KodEngine {
                             .map(|d| d.as_millis() as u64)
                             .unwrap_or(0);
                         for (file, (errs, warns)) in per_file {
-                            let entry = crate::session_log::SessionEntry::Diagnostics {
+                            let entry = kod_core_state::session_log::SessionEntry::Diagnostics {
                                 timestamp_ms: now_ms,
                                 file,
                                 error_count: errs,
@@ -1909,7 +1909,7 @@ impl KodEngine {
                             .collect()
                     })
                     .unwrap_or_default();
-                let entry = crate::session_log::SessionEntry::MemoryWrite {
+                let entry = kod_core_state::session_log::SessionEntry::MemoryWrite {
                     timestamp_ms: now_ms,
                     memory_id: id.to_string(),
                     channel: "tool".to_string(),

@@ -33,7 +33,7 @@ impl KodEngine {
         history: &str,
         memory_context: Option<kod_types::MemoryContext>,
     ) -> Result<(
-        std::result::Result<crate::budget::Allocation, crate::budget::BudgetError>,
+        std::result::Result<kod_core_state::budget::Allocation, kod_core_state::budget::BudgetError>,
         Vec<kod_types::ToolDefinition>,
         String,
     )> {
@@ -429,8 +429,8 @@ impl KodEngine {
                             // collected path has no chunk channel, so
                             // the wait is silent apart from the trace log.
                             let busy = matches!(
-                                crate::retry_strategy::TurnFailure::classify(&e.to_string()),
-                                crate::retry_strategy::TurnFailure::TransportServerBusy { .. }
+                                kod_core_routing::retry_strategy::TurnFailure::classify(&e.to_string()),
+                                kod_core_routing::retry_strategy::TurnFailure::TransportServerBusy { .. }
                             ) || matches!(e, KodError::ServerBusy { .. });
                             let cap = if busy {
                                 MAX_SERVER_BUSY_RETRIES
@@ -465,14 +465,14 @@ impl KodEngine {
                                 continue;
                             }
                             let failure =
-                                crate::retry_strategy::TurnFailure::classify(&e.to_string());
-                            let action = crate::retry_strategy::choose_action(&failure);
+                                kod_core_routing::retry_strategy::TurnFailure::classify(&e.to_string());
+                            let action = kod_core_routing::retry_strategy::choose_action(&failure);
                             let is_same_endpoint = matches!(
                                 action,
-                                crate::retry_strategy::RetryAction::SameEndpointLowerTemp
-                                    | crate::retry_strategy::RetryAction::SameEndpointConstrained
-                                    | crate::retry_strategy::RetryAction::ReinjectTools
-                                    | crate::retry_strategy::RetryAction::ShrinkHistory
+                                kod_core_routing::retry_strategy::RetryAction::SameEndpointLowerTemp
+                                    | kod_core_routing::retry_strategy::RetryAction::SameEndpointConstrained
+                                    | kod_core_routing::retry_strategy::RetryAction::ReinjectTools
+                                    | kod_core_routing::retry_strategy::RetryAction::ShrinkHistory
                             );
                             if is_same_endpoint
                                 && same_endpoint_attempts < 2
@@ -525,19 +525,19 @@ impl KodEngine {
                         // immediately; recoverable ones decide whether
                         // to retry the same endpoint (with an
                         // adjustment) or fall through to the next.
-                        let failure = crate::retry_strategy::TurnFailure::classify(&e.to_string());
-                        let action = crate::retry_strategy::choose_action(&failure);
+                        let failure = kod_core_routing::retry_strategy::TurnFailure::classify(&e.to_string());
+                        let action = kod_core_routing::retry_strategy::choose_action(&failure);
                         let has_next = i + 1 < chain.len();
                         let should_fall_through = failure.recoverable()
                             && has_next
                             && matches!(
                                 action,
-                                crate::retry_strategy::RetryAction::NextEndpoint
-                                    | crate::retry_strategy::RetryAction::SameEndpointBackoff
-                                    | crate::retry_strategy::RetryAction::SameEndpointLowerTemp
-                                    | crate::retry_strategy::RetryAction::ShrinkHistory
-                                    | crate::retry_strategy::RetryAction::ReinjectTools
-                                    | crate::retry_strategy::RetryAction::SameEndpointConstrained
+                                kod_core_routing::retry_strategy::RetryAction::NextEndpoint
+                                    | kod_core_routing::retry_strategy::RetryAction::SameEndpointBackoff
+                                    | kod_core_routing::retry_strategy::RetryAction::SameEndpointLowerTemp
+                                    | kod_core_routing::retry_strategy::RetryAction::ShrinkHistory
+                                    | kod_core_routing::retry_strategy::RetryAction::ReinjectTools
+                                    | kod_core_routing::retry_strategy::RetryAction::SameEndpointConstrained
                             );
                         if should_fall_through {
                             let next = &chain[i + 1];
@@ -577,12 +577,12 @@ impl KodEngine {
                         if failure.recoverable()
                             && matches!(
                                 action,
-                                crate::retry_strategy::RetryAction::NextEndpoint
-                                    | crate::retry_strategy::RetryAction::SameEndpointBackoff
-                                    | crate::retry_strategy::RetryAction::SameEndpointLowerTemp
-                                    | crate::retry_strategy::RetryAction::ShrinkHistory
-                                    | crate::retry_strategy::RetryAction::ReinjectTools
-                                    | crate::retry_strategy::RetryAction::SameEndpointConstrained
+                                kod_core_routing::retry_strategy::RetryAction::NextEndpoint
+                                    | kod_core_routing::retry_strategy::RetryAction::SameEndpointBackoff
+                                    | kod_core_routing::retry_strategy::RetryAction::SameEndpointLowerTemp
+                                    | kod_core_routing::retry_strategy::RetryAction::ShrinkHistory
+                                    | kod_core_routing::retry_strategy::RetryAction::ReinjectTools
+                                    | kod_core_routing::retry_strategy::RetryAction::SameEndpointConstrained
                             )
                         {
                             let extra = self
@@ -685,7 +685,7 @@ impl KodEngine {
             // citation fails to verify; a clean reply stays clean.
             let final_text = if matches!(task_type, crate::router::TaskType::Research) {
                 let syntactic =
-                    crate::citations::check_and_annotate(&final_text, &self.working_dir).text;
+                    kod_core_state::citations::check_and_annotate(&final_text, &self.working_dir).text;
                 // P4.5 — after the syntactic check, run the semantic
                 // pass. The two are additive: the syntactic block
                 // reports missing/out-of-range citations, the
@@ -836,10 +836,10 @@ impl KodEngine {
         self.tool_counts.begin_turn();
         // Tier 1.4 — open a turn trace. Emitted when this call returns.
         let trace_id = self.next_turn_id();
-        let mut trace_builder = crate::trace::TurnTraceBuilder::new(trace_id, key);
+        let mut trace_builder = kod_core_state::trace::TurnTraceBuilder::new(trace_id, key);
         trace_builder.set_user_prompt(input);
         let trace = std::sync::Mutex::new(trace_builder);
-        let trace_ref: Option<&std::sync::Mutex<crate::trace::TurnTraceBuilder>> = Some(&trace);
+        let trace_ref: Option<&std::sync::Mutex<kod_core_state::trace::TurnTraceBuilder>> = Some(&trace);
         self.cost_tracker.begin_turn();
         // P3.3 — ask Jev whether the request is ambiguous; if so and
         // a streaming consumer is attached, prompt for clarification
@@ -1064,17 +1064,17 @@ impl KodEngine {
                         // config for additional candidates; append
                         // and keep walking if it supplies any.
                         let failure =
-                            crate::retry_strategy::TurnFailure::classify(&e.to_string());
-                        let action = crate::retry_strategy::choose_action(&failure);
+                            kod_core_routing::retry_strategy::TurnFailure::classify(&e.to_string());
+                        let action = kod_core_routing::retry_strategy::choose_action(&failure);
                         if failure.recoverable()
                             && matches!(
                                 action,
-                                crate::retry_strategy::RetryAction::NextEndpoint
-                                    | crate::retry_strategy::RetryAction::SameEndpointBackoff
-                                    | crate::retry_strategy::RetryAction::SameEndpointLowerTemp
-                                    | crate::retry_strategy::RetryAction::ShrinkHistory
-                                    | crate::retry_strategy::RetryAction::ReinjectTools
-                                    | crate::retry_strategy::RetryAction::SameEndpointConstrained
+                                kod_core_routing::retry_strategy::RetryAction::NextEndpoint
+                                    | kod_core_routing::retry_strategy::RetryAction::SameEndpointBackoff
+                                    | kod_core_routing::retry_strategy::RetryAction::SameEndpointLowerTemp
+                                    | kod_core_routing::retry_strategy::RetryAction::ShrinkHistory
+                                    | kod_core_routing::retry_strategy::RetryAction::ReinjectTools
+                                    | kod_core_routing::retry_strategy::RetryAction::SameEndpointConstrained
                             )
                         {
                             let extra = self
@@ -1181,7 +1181,7 @@ impl KodEngine {
             // a separate message. A clean reply emits nothing.
             let final_text = if matches!(task_type, crate::router::TaskType::Research) {
                 let annotated =
-                    crate::citations::check_and_annotate(&final_text, &self.working_dir);
+                    kod_core_state::citations::check_and_annotate(&final_text, &self.working_dir);
                 if let Some(block) = &annotated.block {
                     let _ = chunk_tx.send(format!("\n\n{block}")).await;
                 }
@@ -1579,7 +1579,7 @@ impl KodEngine {
                         )
                         .await;
                 }
-                if status == Some(crate::goals::GoalStatus::BudgetLimited) {
+                if status == Some(kod_core_state::goals::GoalStatus::BudgetLimited) {
                     all_text.push_str(
                         "\n\n(Goal loop stopped — budget exhausted. \
                          Raise the budget to continue.)",

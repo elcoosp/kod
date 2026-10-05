@@ -1,7 +1,7 @@
 #![cfg(test)]
     use crate::engine::KodEngine;
     use crate::router::RouterConfig;
-    use crate::session_log::{RehydrationMode, SessionEntry, SessionRecorder};
+    use kod_core_state::session_log::{RehydrationMode, SessionEntry, SessionRecorder};
 
     fn engine_in(dir: &std::path::Path) -> KodEngine {
         let cfg = RouterConfig {

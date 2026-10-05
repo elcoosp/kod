@@ -395,11 +395,11 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
 }
 
 pub async fn run_replay(path: std::path::PathBuf, execute: bool, yes: bool) -> Result<()> {
-    let entries = kod_core::session_log::read_session(&path)?;
+    let entries = kod_core_state::session_log::read_session(&path)?;
     let tool_calls: Vec<_> = entries
         .iter()
         .filter_map(|e| match e {
-            kod_core::session_log::SessionEntry::ToolCall {
+            kod_core_state::session_log::SessionEntry::ToolCall {
                 tool_name,
                 arguments,
                 result,
@@ -556,7 +556,7 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool, yes: bool) -> R
 }
 
 pub async fn run_checkpoint(action: CheckpointAction) -> Result<()> {
-    use kod_core::checkpoint::CheckpointManager;
+    use kod_core_state::checkpoint::CheckpointManager;
 
     let cwd = std::env::current_dir()
         .map_err(|e| KodError::Config(format!("Could not determine working directory: {e}")))?;

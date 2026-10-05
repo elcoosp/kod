@@ -47,7 +47,7 @@ async fn a_background_command_delivers_an_interrupt_on_completion() {
         let steers = engine.pending_steers_for("session").await;
         if steers
             .iter()
-            .any(|s| matches!(s.source, kod_core::steer::InterruptSource::BackgroundTask))
+            .any(|s| matches!(s.source, kod_core_state::steer::InterruptSource::BackgroundTask))
         {
             delivered = true;
             break;

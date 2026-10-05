@@ -233,7 +233,7 @@ impl KodEngine {
                 let mut q = self.steers.write().await;
                 q.entry(key.to_string())
                     .or_default()
-                    .push(crate::steer::SoftInterrupt::background(m));
+                    .push(kod_core_state::steer::SoftInterrupt::background(m));
             }
         }
         for interrupt in self.take_steers_for(key).await {
@@ -687,7 +687,7 @@ impl KodEngine {
         options: &GenerationOptions,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
         holder: &str,
-        round_trace: Option<&std::sync::Mutex<crate::trace::TurnTraceBuilder>>,
+        round_trace: Option<&std::sync::Mutex<kod_core_state::trace::TurnTraceBuilder>>,
         fallback: Option<&ModelRef>,
     ) -> Result<StreamRoundOutcome> {
         use futures::StreamExt;
@@ -744,7 +744,7 @@ impl KodEngine {
         // remaining generation tail.
         let mut speculation_handles: BTreeMap<
             usize,
-            tokio::task::JoinHandle<Option<crate::speculation::SpeculativeRead>>,
+            tokio::task::JoinHandle<Option<kod_core_tools::speculation::SpeculativeRead>>,
         > = BTreeMap::new();
         // Only speculate when the caller has not disabled it. The
         // engine's `speculative_reads` flag defaults on: the design's
@@ -900,7 +900,7 @@ impl KodEngine {
                     // skip the rest of the arm.
                     if let Some(name) = entry.name.clone() {
                         let partial_path =
-                            crate::speculation::extract_path_from_partial(&entry.args);
+                            kod_core_tools::speculation::extract_path_from_partial(&entry.args);
                         let mut engine = self.ttsr.write().await;
                         let fired =
                             engine.observe_tool(&name, partial_path.as_deref(), &entry.args);
@@ -932,7 +932,7 @@ impl KodEngine {
                         && entry.name.as_deref() == Some("read_file")
                         && !speculation_handles.contains_key(&index)
                         && let Some(rel) =
-                            crate::speculation::extract_path_from_partial(&entry.args)
+                            kod_core_tools::speculation::extract_path_from_partial(&entry.args)
                     {
                         // Resolve relative to the transcript's working
                         // dir, matching what `read_file` will do. A
@@ -950,8 +950,8 @@ impl KodEngine {
                             continue;
                         }
                         let handle = tokio::spawn(async move {
-                            match crate::speculation::read_with_evidence(&abs) {
-                                Ok((text, evidence)) => Some(crate::speculation::SpeculativeRead {
+                            match kod_core_tools::speculation::read_with_evidence(&abs) {
+                                Ok((text, evidence)) => Some(kod_core_tools::speculation::SpeculativeRead {
                                     path: abs,
                                     text,
                                     evidence,
@@ -994,7 +994,7 @@ impl KodEngine {
         // consumer (`run_tool_calls`) validates the speculation
         // against the live file before using it and falls back to a
         // fresh read on any mismatch.
-        let mut speculations: Vec<Option<crate::speculation::SpeculativeRead>> =
+        let mut speculations: Vec<Option<kod_core_tools::speculation::SpeculativeRead>> =
             Vec::with_capacity(partials.len());
         for (index, p) in partials {
             let Some(name) = p.name else { continue };
@@ -1133,8 +1133,8 @@ impl KodEngine {
             if prev != fingerprint {
                 // Late MCP registration is the expected cause. Anything
                 // else is worth a look at the journal.
-                crate::cache_journal::record(
-                    crate::cache_journal::InvalidationCause::ToolSurfaceChanged {
+                kod_core_state::cache_journal::record(
+                    kod_core_state::cache_journal::InvalidationCause::ToolSurfaceChanged {
                         previous_fingerprint: prev,
                         current_fingerprint: fingerprint,
                         reason: format!("{} definitions on this request", definitions.len()),
@@ -1200,10 +1200,10 @@ impl KodEngine {
             };
             let frame = match cached {
                 Some(f) => f,
-                None => match crate::snapcompact::rasterize_to_png(&m.content) {
+                None => match kod_core_quality::snapcompact::rasterize_to_png(&m.content) {
                     Ok(png) => {
                         let f = kod_types::RasterizedImage {
-                            png_base64: crate::snapcompact::base64_encode(&png),
+                            png_base64: kod_core_quality::snapcompact::base64_encode(&png),
                             media_type: "image/png".to_string(),
                             source_lines: m.content.lines().count(),
                         };

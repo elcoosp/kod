@@ -115,15 +115,15 @@ impl KodEngine {
         // query makes every out-of-tail turn score by recency alone,
         // which is the previous FIFO-equivalent behavior.
         let query_text = self.current_request(key).await.unwrap_or_default();
-        let query = crate::context_engine::Query::from_text(&query_text);
-        let scorer = crate::context_engine::LexicalScorer::new().with_tail(10); // P2: recent-10 stay Full; older score by relevance
+        let query = kod_core_routing::context_engine::Query::from_text(&query_text);
+        let scorer = kod_core_routing::context_engine::LexicalScorer::new().with_tail(10); // P2: recent-10 stay Full; older score by relevance
 
         let mut cache_guard = self.fidelity_cache.write().await;
         let cache = cache_guard
             .entry(key.to_string())
-            .or_insert_with(crate::context_engine::FidelityCache::new);
+            .or_insert_with(kod_core_routing::context_engine::FidelityCache::new);
 
-        let (out, consult) = crate::context_engine::render_scored(
+        let (out, consult) = kod_core_routing::context_engine::render_scored(
             turns, query, &scorer, cache, budget,
             true, // skip tool rows and empty tool-call assistants
         );
@@ -160,7 +160,7 @@ impl KodEngine {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
-            let entry = crate::session_log::SessionEntry::MemoryWrite {
+            let entry = kod_core_state::session_log::SessionEntry::MemoryWrite {
                 timestamp_ms: now_ms,
                 memory_id: memory_id.to_string(),
                 channel: "user".to_string(),
@@ -211,12 +211,12 @@ impl KodEngine {
     /// `PromptTrace::alloc` is what `/debug tokens` renders as the
     /// budget table; `PromptTrace::text` is byte-identical to what
     /// `last_prompt` returns.
-    pub async fn last_prompt_trace(&self) -> Option<crate::budget::PromptTrace> {
+    pub async fn last_prompt_trace(&self) -> Option<kod_core_state::budget::PromptTrace> {
         self.last_prompt_trace_for(DEFAULT_TRANSCRIPT_KEY).await
     }
 
     /// The full prompt trace for `key`.
-    pub async fn last_prompt_trace_for(&self, key: &str) -> Option<crate::budget::PromptTrace> {
+    pub async fn last_prompt_trace_for(&self, key: &str) -> Option<kod_core_state::budget::PromptTrace> {
         self.last_prompt.read().await.get(key).cloned()
     }
 
@@ -268,9 +268,9 @@ impl KodEngine {
         &self,
         key: &str,
         clean_source: bool,
-    ) -> Result<crate::worktree::WorktreeInfo> {
+    ) -> Result<kod_core_quality::worktree::WorktreeInfo> {
         let repo = self.working_dir_for(key).await;
-        let mut mgr = crate::worktree::WorktreeManager::detect(&repo)
+        let mut mgr = kod_core_quality::worktree::WorktreeManager::detect(&repo)
             .map_err(|e| {
                 KodError::Internal(format!(
                     "could not inspect {} for worktree support: {e}",

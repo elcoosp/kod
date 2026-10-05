@@ -125,7 +125,7 @@ impl KodEngine {
         // per-working-directory, so two sessions on different projects
         // do not see each other's checkpoints.
         let checkpoints =
-            crate::checkpoint::CheckpointManager::for_working_dir(&working_dir).map(Arc::new);
+            kod_core_state::checkpoint::CheckpointManager::for_working_dir(&working_dir).map(Arc::new);
 
         Ok(Self {
             router: router_for_handler,
@@ -142,7 +142,7 @@ impl KodEngine {
             steers: std::sync::Arc::new(RwLock::new(HashMap::new())),
             cancels: parking_lot::RwLock::new(std::collections::HashMap::new()),
             pause_gate: std::sync::Arc::new(crate::pause_gate::PauseGate::new()),
-            goal_runtime: RwLock::new(crate::goals::GoalRuntime::new()),
+            goal_runtime: RwLock::new(kod_core_state::goals::GoalRuntime::new()),
             async_delivery: std::sync::Arc::new(parking_lot::Mutex::new(
                 crate::async_delivery::AsyncDelivery::new(),
             )),
@@ -157,7 +157,7 @@ impl KodEngine {
             ttsr: RwLock::new(kod_provider::ttsr::TtsrEngine::new(Vec::new())),
             retention_cursors: RwLock::new(HashMap::new()),
             deferred_diagnostics: std::sync::Arc::new(
-                crate::deferred_diagnostics::DeferredDiagnostics::new(),
+                kod_core_state::deferred_diagnostics::DeferredDiagnostics::new(),
             ),
             decisions_cursors: RwLock::new(HashMap::new()),
             behavioral: std::sync::Arc::new(parking_lot::Mutex::new(
@@ -203,7 +203,7 @@ impl KodEngine {
                     // rungs go first, and handoff catches the case
                     // where neither mechanical rung can reduce.
                     Box::new(crate::compaction_dispatcher::ShakeMethod::new(
-                        crate::shake::ShakeConfig::aggressive(),
+                        kod_core_quality::shake::ShakeConfig::aggressive(),
                     )),
                     // Prune keeps its defaults: a supersede prune
                     // only fires when a read is provably replaced by
@@ -213,7 +213,7 @@ impl KodEngine {
                     // shake's is. Shrinking it would blank reads
                     // whose only failing is being recent.
                     Box::new(crate::compaction_dispatcher::PruneMethod::new(
-                        crate::prune::PruneConfig::default(),
+                        kod_core_quality::prune::PruneConfig::default(),
                     )),
                     // The LLM rung last: it runs only when the
                     // mechanical rungs found nothing to elide, which
@@ -264,17 +264,17 @@ impl KodEngine {
             speculative_reads: RwLock::new(true),
             image_frames: RwLock::new(HashMap::new()),
             secret_vault: RwLock::new(None),
-            cost_tracker: crate::cost::CostTracker::new(),
+            cost_tracker: kod_core_state::cost::CostTracker::new(),
             state_store: std::sync::RwLock::new(None),
             tool_counts: std::sync::Arc::new(crate::tool_quota::ToolCounts::new()),
             tool_quotas: std::sync::RwLock::new(None),
             tool_filter_states: RwLock::new(HashMap::new()),
             tool_surface_fingerprint: RwLock::new(HashMap::new()),
-            cache_ledger: std::sync::Mutex::new(crate::cache_ledger::CacheLedger::new()),
-            current_sensitivity: RwLock::new(crate::sensitivity::Sensitivity::Public),
+            cache_ledger: std::sync::Mutex::new(kod_core_state::cache_ledger::CacheLedger::new()),
+            current_sensitivity: RwLock::new(kod_core_state::sensitivity::Sensitivity::Public),
             endpoint_trust: RwLock::new(std::collections::HashMap::new()),
             endpoint_health: std::sync::Mutex::new(
-                crate::endpoint_health::EndpointHealth::default(),
+                kod_core_state::endpoint_health::EndpointHealth::default(),
             ),
             rate_limit_wait_budget_secs: std::sync::atomic::AtomicU64::new(
                 kod_config::DEFAULT_RATE_LIMIT_WAIT_SECS,

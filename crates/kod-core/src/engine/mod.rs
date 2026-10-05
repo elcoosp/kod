@@ -753,7 +753,7 @@ fn shorten_path(path: &str) -> String {
 
 /// Push a background notice onto a transcript's steer queue.
 async fn push_background_interrupt(
-    steers: &std::sync::Arc<tokio::sync::RwLock<HashMap<String, Vec<crate::steer::SoftInterrupt>>>>,
+    steers: &std::sync::Arc<tokio::sync::RwLock<HashMap<String, Vec<kod_core_state::steer::SoftInterrupt>>>>,
     holder: &str,
     content: String,
 ) {
@@ -765,7 +765,7 @@ async fn push_background_interrupt(
         .await
         .entry(holder.to_string())
         .or_default()
-        .push(crate::steer::SoftInterrupt::background(content));
+        .push(kod_core_state::steer::SoftInterrupt::background(content));
 }
 
 /// A cheap non-cryptographic hash for the image-render cache key.
@@ -1207,7 +1207,7 @@ struct RoundContext<'a> {
     holder: &'a str,
     /// Turn trace builder (Tier 1.4). `None` when no trace writer is
     /// installed — every trace call is a no-op in that case.
-    trace: Option<&'a std::sync::Mutex<crate::trace::TurnTraceBuilder>>,
+    trace: Option<&'a std::sync::Mutex<kod_core_state::trace::TurnTraceBuilder>>,
     /// Next endpoint in the chain after this one (P5.6). The
     /// streaming loop uses it for mid-stream switching: when Jev
     /// flags the reply off-track, `stream_round` swaps to this
@@ -1244,7 +1244,7 @@ struct StreamRoundOutcome {
     calls: Vec<ToolCall>,
     usage: Option<kod_provider::TokenUsage>,
     retry_suggested: bool,
-    speculations: Vec<Option<crate::speculation::SpeculativeRead>>,
+    speculations: Vec<Option<kod_core_tools::speculation::SpeculativeRead>>,
     /// The provider's `stop_reason` for the round, when reported
     /// (`"end_turn"`, `"max_tokens"`, `"tool_use"`, …). Threaded out
     /// so the run collector's stop-reason histogram is populated.
@@ -1432,7 +1432,7 @@ pub struct KodEngine {
     /// their own key.
     /// Arc-shared so a spawned background watcher can deliver an
     /// interrupt without holding a reference to the engine.
-    steers: std::sync::Arc<RwLock<HashMap<String, Vec<crate::steer::SoftInterrupt>>>>,
+    steers: std::sync::Arc<RwLock<HashMap<String, Vec<kod_core_state::steer::SoftInterrupt>>>>,
     /// Set by [`KodEngine::request_cancel`]; loops check it between
     /// rounds. Keyed by transcript (D4-D4): a cancel for
     /// `swarm:{agent-id}` stops only that agent, not the whole swarm.
@@ -1458,7 +1458,7 @@ pub struct KodEngine {
     /// objective, with a token and wall-clock budget. The goal loop
     /// accounts each turn's usage against it and stops when the
     /// budget is spent.
-    goal_runtime: RwLock<crate::goals::GoalRuntime>,
+    goal_runtime: RwLock<kod_core_state::goals::GoalRuntime>,
     /// Delta §11.4: owner-routed, batched delivery of finished-job
     /// results. A spawned background task enqueues here; the round
     /// boundary drains it into one steer per owner.
@@ -1491,7 +1491,7 @@ pub struct KodEngine {
     /// and appended to the system prompt under
     /// `## LSP diagnostics (late)`. `Arc` so the spawned watcher can
     /// hold it independently of `self`.
-    deferred_diagnostics: std::sync::Arc<crate::deferred_diagnostics::DeferredDiagnostics>,
+    deferred_diagnostics: std::sync::Arc<kod_core_state::deferred_diagnostics::DeferredDiagnostics>,
     /// WS-B: per-transcript count of eligible user prompts seen since
     /// the last sharpshooter extraction. Mirrors the retention cursor:
     /// the decision extractor gets its own cadence counter so
@@ -1560,7 +1560,7 @@ pub struct KodEngine {
     /// compaction (messages removed), transcript forget, model switch.
     /// A stale anchor would make `estimate` lie about the size of the
     /// bytes the provider is charging for.
-    context_gauges: RwLock<HashMap<String, crate::context_gauge::ContextGauge>>,
+    context_gauges: RwLock<HashMap<String, kod_core_state::context_gauge::ContextGauge>>,
     /// Delta §4.4: per-transcript provider-native compaction blocks.
     /// Key is the transcript key (same key `history` uses); value is
     /// the opaque `encrypted_content` the provider returned. Attached
@@ -1590,9 +1590,9 @@ pub struct KodEngine {
     /// model issues the same tool call (same name, same arguments)
     /// `DEFAULT_LOOP_THRESHOLD` rounds in a row, the guard emits a
     /// corrective that the round loop injects as a System message
-    /// before the next model call. See `crate::tool_loop_guard` for
+    /// before the next model call. See `kod_core_tools::tool_loop_guard` for
     /// the fingerprint rules.
-    tool_loop_guards: RwLock<HashMap<String, crate::tool_loop_guard::ToolLoopGuard>>,
+    tool_loop_guards: RwLock<HashMap<String, kod_core_tools::tool_loop_guard::ToolLoopGuard>>,
     /// Delta §11.7: per-transcript todo nudge trackers. Counts
     /// mutating tool calls since the last todo touch, caps mid-run
     /// nudges, and latches the completion reminder.
@@ -1608,7 +1608,7 @@ pub struct KodEngine {
     /// Per-transcript plan (Tier 2.1). Populated by the model on the
     /// first turn of a Complex/MultiStep task, re-rendered in every
     /// subsequent system prompt. Absent when the task is simple.
-    plans: RwLock<HashMap<String, crate::plan::Plan>>,
+    plans: RwLock<HashMap<String, kod_core_state::plan::Plan>>,
     /// Delta §12.3: set by the periodic memory-consolidation task
     /// when its tick produced a report worth acting on; drained by
     /// the next turn's `process_for` / streaming path so the
@@ -1620,7 +1620,7 @@ pub struct KodEngine {
     /// injects a "plan deliberately" nudge once, and the first
     /// mutating tool call fires the handoff (switch the model,
     /// scrub the nudge, push a checklist).
-    prewalks: RwLock<HashMap<String, crate::prewalk::Prewalk>>,
+    prewalks: RwLock<HashMap<String, kod_core_tools::prewalk::Prewalk>>,
     /// Delta §11.10: transcripts currently in explicit plan mode. A
     /// transcript in plan mode restricts the tool set to read-only
     /// tools (read_file / grep / list_files / file_info / web_search)
@@ -1639,7 +1639,7 @@ pub struct KodEngine {
     /// Per-transcript durable decisions (Tier 3.4). Populated on
     /// every turn from the classifier; rendered into the prompt after
     /// the plan.
-    decision_logs: RwLock<HashMap<String, crate::decisions::DecisionLog>>,
+    decision_logs: RwLock<HashMap<String, kod_core_state::decisions::DecisionLog>>,
     /// Delta §12.3: per-session friction-gated decision deltas. Each
     /// entry has been admitted through the grounding gate (evidence
     /// is an exact substring of the user prompt it was extracted
@@ -1674,7 +1674,7 @@ pub struct KodEngine {
     ///
     /// Overwritten each call; bounded by the prompt builder's own caps.
     /// Same keying as `history`.
-    last_prompt: RwLock<HashMap<String, crate::budget::PromptTrace>>,
+    last_prompt: RwLock<HashMap<String, kod_core_state::budget::PromptTrace>>,
     /// Provider options captured from `LlmConfig` at engine construction.
     /// Transitional until D1 (endpoint config per ModelRef). Kept in an
     /// `RwLock<Option<...>>` so `set_generation_defaults` works through
@@ -1684,7 +1684,7 @@ pub struct KodEngine {
     /// are appended as one JSONL entry, `kod replay`-able. `None` (the
     /// default) is the right shape for a test or a one-shot command.
     session_recorder:
-        std::sync::RwLock<Option<std::sync::Arc<crate::session_log::SessionRecorder>>>,
+        std::sync::RwLock<Option<std::sync::Arc<kod_core_state::session_log::SessionRecorder>>>,
     /// The active user request per transcript key (P3.1). Set
     /// at the top of `process_streaming_with_model_for` and
     /// `process_for` so tool-call helpers that fire deep in the
@@ -1727,11 +1727,11 @@ pub struct KodEngine {
     secret_vault: RwLock<Option<std::sync::Arc<kod_types::secret_placeholder::SecretVault>>>,
     /// Session cost accumulator (Tier 1.2). Clone the engine to
     /// share it with a UI.
-    cost_tracker: crate::cost::CostTracker,
+    cost_tracker: kod_core_state::cost::CostTracker,
     /// On-disk persistence for plans and decision logs (Tier 3.4).
     /// `None` until `set_state_store` installs one — the default for
     /// a test or an embedder that does not want disk state.
-    state_store: std::sync::RwLock<Option<crate::state::StateStore>>,
+    state_store: std::sync::RwLock<Option<kod_core_state::state::StateStore>>,
     /// Per-tool quota counters (Tier 2.5). Reset per turn and per
     /// session; enforced before every dispatch.
     tool_counts: std::sync::Arc<crate::tool_quota::ToolCounts>,
@@ -1757,12 +1757,12 @@ pub struct KodEngine {
     /// P1 cache ledger. One per engine (not per transcript): a
     /// swarm agent and the interactive session may share an endpoint,
     /// and sharing one warm cache across both is the point.
-    cache_ledger: std::sync::Mutex<crate::cache_ledger::CacheLedger>,
+    cache_ledger: std::sync::Mutex<kod_core_state::cache_ledger::CacheLedger>,
     /// P7: the current turn's sensitivity. Set at the start of each
     /// turn by the caller (a TUI/CLI knows the user's @-references;
     /// a swarm subtask has its brief's expected writes). The gate
     /// reads it when filtering the endpoint chain.
-    current_sensitivity: RwLock<crate::sensitivity::Sensitivity>,
+    current_sensitivity: RwLock<kod_core_state::sensitivity::Sensitivity>,
 
     /// P7: per-endpoint trust tier, from `EndpointConfig::trust`. An
     /// endpoint that declared no tier is treated as `standard`, which
@@ -1800,7 +1800,7 @@ pub struct KodEngine {
     /// Circuit breaker for endpoint health (hygiene 3.2). A
     /// chronically failing endpoint is skipped in the chain for a
     /// cooldown instead of being retried as primary every turn.
-    endpoint_health: std::sync::Mutex<crate::endpoint_health::EndpointHealth>,
+    endpoint_health: std::sync::Mutex<kod_core_state::endpoint_health::EndpointHealth>,
     /// H-RL1: the longest provider-suggested rate-limit window (secs)
     /// the engine may sleep out before re-driving the failed request.
     /// Installed from the endpoint's `rate_limit_wait_secs` (default
@@ -1820,7 +1820,7 @@ pub struct KodEngine {
     /// entry remembers what fidelity a turn was last scored at and
     /// against which query, so a call on the same topic does not
     /// re-score (and a topic change does).
-    fidelity_cache: RwLock<HashMap<String, crate::context_engine::FidelityCache>>,
+    fidelity_cache: RwLock<HashMap<String, kod_core_routing::context_engine::FidelityCache>>,
 
     /// P3: the live tool inventory that `tool_search` reads. Shared
     /// between the tool and the engine so a registry change (MCP
@@ -1831,7 +1831,7 @@ pub struct KodEngine {
     /// Append-only writer for `turns.jsonl`, next to the session log.
     /// `None` — the default — is the right shape for a test or a
     /// one-shot command that does not want a trace file.
-    turn_trace_writer: std::sync::RwLock<Option<std::sync::Arc<crate::trace_writer::TraceWriter>>>,
+    turn_trace_writer: std::sync::RwLock<Option<std::sync::Arc<kod_core_state::trace_writer::TraceWriter>>>,
     /// The current round's taint level (Tier 1.1). Escalated by every
     /// untrusted tool call; reset at the start of every user turn.
     taint: std::sync::RwLock<kod_types::trust::TrustLevel>,
@@ -1955,8 +1955,8 @@ pub struct KodEngine {
     /// File checkpoint snapshots. `Some` when a checkpoint directory
     /// could be determined from the working directory; `None` when
     /// the home directory is unavailable (a stripped container, a
-    /// test that has unset HOME). See [`crate::checkpoint`].
-    checkpoints: Option<Arc<crate::checkpoint::CheckpointManager>>,
+    /// test that has unset HOME). See [`kod_core_state::checkpoint`].
+    checkpoints: Option<Arc<kod_core_state::checkpoint::CheckpointManager>>,
     /// The background consolidation task (design D2.5), when
     /// `memory.compaction_interval_secs > 0` and memory is enabled.
     /// Aborted and awaited in `shutdown()` BEFORE the redb close so
@@ -2177,7 +2177,7 @@ pub(crate) struct TurnPreparation {
     pub response: crate::router::TaskResponse,
     pub task_type: crate::router::TaskType,
     pub refined_skills: Vec<String>,
-    pub alloc: std::result::Result<crate::budget::Allocation, crate::budget::BudgetError>,
+    pub alloc: std::result::Result<kod_core_state::budget::Allocation, kod_core_state::budget::BudgetError>,
     pub definitions: Vec<kod_types::ToolDefinition>,
     pub pending: String,
     pub system_text: String,
@@ -2213,9 +2213,9 @@ impl KodEngine {
         &self,
         key: &str,
         pending: &str,
-        alloc: &std::result::Result<crate::budget::Allocation, crate::budget::BudgetError>,
+        alloc: &std::result::Result<kod_core_state::budget::Allocation, kod_core_state::budget::BudgetError>,
     ) {
-        let trace = crate::budget::PromptTrace {
+        let trace = kod_core_state::budget::PromptTrace {
             text: pending.to_string(),
             alloc: alloc.as_ref().ok().copied(),
         };
@@ -3161,20 +3161,20 @@ impl KodEngine {
     /// Restore the transcript for `key` from a session log.
     ///
     /// This is the P2 rehydration entry point: it reads the JSONL
-    /// written by a prior process (via [`crate::session_log::read_session`]),
+    /// written by a prior process (via [`kod_core_state::session_log::read_session`]),
     /// rebuilds the tool calls that ran under `key` as prose turns,
     /// and appends them to the live history. The messages are
     /// User-role summaries so they survive the text-protocol
     /// `render_history` filter that deliberately skips Tool-role
-    /// rows; see [`crate::session_log::rehydrate_prose_turns`] for
+    /// rows; see [`kod_core_state::session_log::rehydrate_prose_turns`] for
     /// the rationale and the structured sibling
-    /// [`crate::session_log::rehydrate_turns`] for the future
+    /// [`kod_core_state::session_log::rehydrate_turns`] for the future
     /// `CompletionRequest` path.
     ///
     /// Returns the number of messages appended. A missing or empty
     /// log yields `Ok(0)` and leaves history untouched.
     pub async fn rehydrate_from_log_for(&self, key: &str, path: &std::path::Path) -> Result<usize> {
-        self.rehydrate_from_log_with(key, path, crate::session_log::RehydrationMode::Prose)
+        self.rehydrate_from_log_with(key, path, kod_core_state::session_log::RehydrationMode::Prose)
             .await
     }
 
@@ -3184,15 +3184,15 @@ impl KodEngine {
         &self,
         key: &str,
         path: &std::path::Path,
-        mode: crate::session_log::RehydrationMode,
+        mode: kod_core_state::session_log::RehydrationMode,
     ) -> Result<usize> {
-        let entries = crate::session_log::read_session(path)?;
+        let entries = kod_core_state::session_log::read_session(path)?;
         let messages = match mode {
-            crate::session_log::RehydrationMode::Prose => {
-                crate::session_log::rehydrate_prose_turns(&entries, key)
+            kod_core_state::session_log::RehydrationMode::Prose => {
+                kod_core_state::session_log::rehydrate_prose_turns(&entries, key)
             }
-            crate::session_log::RehydrationMode::Structured => {
-                crate::session_log::rehydrate_turns(&entries, key)
+            kod_core_state::session_log::RehydrationMode::Structured => {
+                kod_core_state::session_log::rehydrate_turns(&entries, key)
             }
         };
         let count = messages.len();

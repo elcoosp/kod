@@ -310,7 +310,7 @@ pub async fn run_fixture_save(name: &str, turns_path: &std::path::Path) -> Resul
                 });
                 tool_results.push(kod_core::ToolResultFixture {
                     tool_name: c.name.clone(),
-                    is_error: matches!(c.outcome, kod_core::trace::ToolOutcomeKind::Error),
+                    is_error: matches!(c.outcome, kod_core_state::trace::ToolOutcomeKind::Error),
                     value: serde_json::json!({
                         "duration_ms": c.duration_ms,
                         "output_bytes": c.output_bytes,

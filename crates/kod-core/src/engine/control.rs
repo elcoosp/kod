@@ -130,11 +130,11 @@ impl KodEngine {
         let hint_secs = match err {
             KodError::RateLimited { retry_after_secs } => *retry_after_secs,
             KodError::ServerBusy { retry_after_secs } => *retry_after_secs,
-            other => match crate::retry_strategy::TurnFailure::classify(&other.to_string()) {
-                crate::retry_strategy::TurnFailure::TransportRateLimit { retry_after_secs } => {
+            other => match kod_core_routing::retry_strategy::TurnFailure::classify(&other.to_string()) {
+                kod_core_routing::retry_strategy::TurnFailure::TransportRateLimit { retry_after_secs } => {
                     retry_after_secs?
                 }
-                crate::retry_strategy::TurnFailure::TransportServerBusy { retry_after_secs } => {
+                kod_core_routing::retry_strategy::TurnFailure::TransportServerBusy { retry_after_secs } => {
                     retry_after_secs?
                 }
                 _ => return None,
@@ -174,8 +174,8 @@ impl KodEngine {
             err,
             KodError::ServerBusy { .. }
         ) || matches!(
-            crate::retry_strategy::TurnFailure::classify(&err.to_string()),
-            crate::retry_strategy::TurnFailure::TransportServerBusy { .. }
+            kod_core_routing::retry_strategy::TurnFailure::classify(&err.to_string()),
+            kod_core_routing::retry_strategy::TurnFailure::TransportServerBusy { .. }
         );
         // Overload gets four waits per turn, rate limits two.
         let cap = if busy {
@@ -353,7 +353,7 @@ impl KodEngine {
     /// Queue a steering note on `key`. Injected into that transcript's
     /// conversation after the current tool round finishes.
     pub async fn steer_for(&self, key: &str, note: &str) {
-        self.steer_interrupt_for(key, crate::steer::SoftInterrupt::user(note))
+        self.steer_interrupt_for(key, kod_core_state::steer::SoftInterrupt::user(note))
             .await;
     }
 
@@ -366,7 +366,7 @@ impl KodEngine {
     /// An empty body is dropped — an interrupt with no content would
     /// render a bare header into the transcript, which is noise the
     /// model has to read past.
-    pub async fn steer_interrupt_for(&self, key: &str, interrupt: crate::steer::SoftInterrupt) {
+    pub async fn steer_interrupt_for(&self, key: &str, interrupt: kod_core_state::steer::SoftInterrupt) {
         if interrupt.content.trim().is_empty() {
             return;
         }
@@ -380,7 +380,7 @@ impl KodEngine {
     /// draining. A caller that wants to display or test what is
     /// pending reads here; the round-boundary drain is
     /// [`Self::take_steers_for`].
-    pub async fn pending_steers_for(&self, key: &str) -> Vec<crate::steer::SoftInterrupt> {
+    pub async fn pending_steers_for(&self, key: &str) -> Vec<kod_core_state::steer::SoftInterrupt> {
         self.steers
             .read()
             .await
@@ -389,7 +389,7 @@ impl KodEngine {
             .unwrap_or_default()
     }
 
-    pub(crate) async fn take_steers_for(&self, key: &str) -> Vec<crate::steer::SoftInterrupt> {
+    pub(crate) async fn take_steers_for(&self, key: &str) -> Vec<kod_core_state::steer::SoftInterrupt> {
         let mut guard = self.steers.write().await;
         guard.remove(key).unwrap_or_default()
     }

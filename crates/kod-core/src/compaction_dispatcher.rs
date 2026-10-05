@@ -23,7 +23,7 @@
 //! `Unavailable`, so the ladder shape is correct and a future pass
 //! that implements any of them slots in without a dispatcher change.
 //!
-//! `shake` is real: [`ShakeMethod`] wraps [`crate::shake::plan_shake`].
+//! `shake` is real: [`ShakeMethod`] wraps [`kod_core_quality::shake::plan_shake`].
 //!
 //! `soft` (local LLM summarize) is stubbed as well — the summarizer
 //! pipeline is a separate slice.
@@ -32,8 +32,8 @@
 //!
 //! [`CompactionDispatcher::compact`] returns a [`CompactionPlan`] —
 //! a description of the transcript mutations to make — not a mutated
-//! transcript. That matches the shape of [`crate::shake::plan_shake`]
-//! and [`crate::prune::plan_prune`]: pure functions returning action
+//! transcript. That matches the shape of [`kod_core_quality::shake::plan_shake`]
+//! and [`kod_core_quality::prune::plan_prune`]: pure functions returning action
 //! lists, testable without an engine. The caller applies the plan
 //! through the same code path it already uses for either primitive.
 //!
@@ -44,7 +44,7 @@
 //! window, 16_384)`, so a compaction fires when
 //! `used_tokens + reserve > window_tokens`. The `used_tokens`
 //! argument is the caller's provider-anchored count where one exists
-//! (see [`crate::context_gauge::ContextGauge`]) and a char-arithmetic
+//! (see [`kod_core_state::context_gauge::ContextGauge`]) and a char-arithmetic
 //! estimate where it does not.
 //!
 //! # What this is NOT
@@ -63,8 +63,8 @@
 use async_trait::async_trait;
 use kod_types::ChatMessage;
 
-use crate::prune::PrunePlan;
-use crate::shake::{ShakeConfig, ShakePlan, plan_shake};
+use kod_core_quality::prune::PrunePlan;
+use kod_core_quality::shake::{ShakeConfig, ShakePlan, plan_shake};
 
 /// The doc's reserve rule: `max(15% of window, 16_384)`.
 pub fn resolve_reserve(window_tokens: u64) -> u64 {
@@ -489,11 +489,11 @@ impl CompactionMethod for ShakeMethod {
 /// lowest-cost option: blanking a superseded result is cheaper than
 /// eliding a region.
 pub struct PruneMethod {
-    config: crate::prune::PruneConfig,
+    config: kod_core_quality::prune::PruneConfig,
 }
 
 impl PruneMethod {
-    pub fn new(config: crate::prune::PruneConfig) -> Self {
+    pub fn new(config: kod_core_quality::prune::PruneConfig) -> Self {
         Self { config }
     }
 }
@@ -520,7 +520,7 @@ impl CompactionMethod for PruneMethod {
                 .extend(ctx.protected_paths.iter().cloned());
             c
         };
-        let plan = crate::prune::plan_prune(
+        let plan = kod_core_quality::prune::plan_prune(
             ctx.transcript,
             &merged,
             |i| estimator(i),
@@ -778,17 +778,17 @@ impl CompactionMethod for SnapcompactMethod {
             return MethodOutcome::NoChange;
         }
 
-        match crate::snapcompact::rasterize_to_png(&text) {
+        match kod_core_quality::snapcompact::rasterize_to_png(&text) {
             Ok(png) => {
                 let source_lines = text.lines().count();
-                let base64 = crate::snapcompact::base64_encode(&png);
+                let base64 = kod_core_quality::snapcompact::base64_encode(&png);
                 MethodOutcome::Plan(CompactionPlan::Image {
                     covers_through: split.saturating_sub(1),
                     png_base64: base64,
                     source_lines,
                 })
             }
-            Err(crate::snapcompact::RasterizeError::Empty) => MethodOutcome::NoChange,
+            Err(kod_core_quality::snapcompact::RasterizeError::Empty) => MethodOutcome::NoChange,
             Err(e) => MethodOutcome::Failed(format!("snapcompact rasterize failed: {e}")),
         }
     }
@@ -966,7 +966,7 @@ impl CompactionMethod for SoftMethod {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prune::SUPERSEDED_PLACEHOLDER;
+    use kod_core_quality::prune::SUPERSEDED_PLACEHOLDER;
     use kod_types::{MessageId, MessageRole, ToolCall};
     use std::sync::Arc;
     use std::sync::Mutex;
@@ -1318,7 +1318,7 @@ mod tests {
         let d = CompactionDispatcher::new(vec![
             Box::new(ScriptedMethod::new(
                 "first",
-                MethodOutcome::Plan(CompactionPlan::Prune(crate::prune::PrunePlan::default())),
+                MethodOutcome::Plan(CompactionPlan::Prune(kod_core_quality::prune::PrunePlan::default())),
             )),
             Box::new(ScriptedMethod::new(
                 "second",
@@ -1392,7 +1392,7 @@ mod tests {
             assistant_with_read("c2", "a.rs"),
             tool_result("c2", "fresh"),
         ];
-        let method = PruneMethod::new(crate::prune::PruneConfig {
+        let method = PruneMethod::new(kod_core_quality::prune::PruneConfig {
             minimum_savings: 0,
             ..Default::default()
         });
@@ -1405,7 +1405,7 @@ mod tests {
                 // The placeholder matches the workspace's constant.
                 assert!(matches!(
                     p.actions[0].1,
-                    crate::prune::PruneAction::Blank { .. }
+                    kod_core_quality::prune::PruneAction::Blank { .. }
                 ));
                 let _ = SUPERSEDED_PLACEHOLDER;
             }
@@ -1416,7 +1416,7 @@ mod tests {
     #[tokio::test]
     async fn the_prune_method_returns_no_change_on_a_fresh_transcript() {
         let transcript = vec![user("no reads here")];
-        let method = PruneMethod::new(crate::prune::PruneConfig::default());
+        let method = PruneMethod::new(kod_core_quality::prune::PruneConfig::default());
         let est = big_suffix();
         let c = ctx(&transcript, &est);
         assert!(matches!(method.run(&c).await, MethodOutcome::NoChange,));

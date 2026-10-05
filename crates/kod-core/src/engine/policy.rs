@@ -150,7 +150,7 @@ impl KodEngine {
     /// Install a session log. Every tool call and its result is
     /// appended to the file the recorder holds. A caller that never
     /// calls this gets no log.
-    pub fn set_session_recorder(&self, recorder: Arc<crate::session_log::SessionRecorder>) {
+    pub fn set_session_recorder(&self, recorder: Arc<kod_core_state::session_log::SessionRecorder>) {
         if let Ok(mut slot) = self.session_recorder.write() {
             *slot = Some(recorder);
         }
@@ -158,7 +158,7 @@ impl KodEngine {
 
     /// Install a turn-trace writer (Tier 1.4). One `TurnTrace` per
     /// `process_*` call is appended to the file the writer holds.
-    pub fn set_turn_trace_writer(&self, writer: std::sync::Arc<crate::trace_writer::TraceWriter>) {
+    pub fn set_turn_trace_writer(&self, writer: std::sync::Arc<kod_core_state::trace_writer::TraceWriter>) {
         if let Ok(mut slot) = self.turn_trace_writer.write() {
             *slot = Some(writer);
         }
@@ -181,7 +181,7 @@ impl KodEngine {
     /// Spawn a cross-model review of a completed turn (P6).
     pub async fn spawn_background_review(
         &self,
-        subject: crate::trace::TurnId,
+        subject: kod_core_state::trace::TurnId,
         subject_text: String,
     ) -> crate::background::JobId {
         let id = self.background.allocate_id();
