@@ -189,6 +189,17 @@ impl std::error::Error for DefError {}
 /// Every stage is a pure `String -> String`. The function is
 /// `pub(crate)` — callers go through [`crate::Minimizer::minimize`].
 pub(crate) fn run(stages: &[Stage], raw: &str) -> Result<String, PipelineError> {
+    run_with_options(stages, raw, false)
+}
+
+/// T5-C13: run with an explicit `allow_empty_result`. A def that
+/// legitimately strips everything passes `true`; the default `run`
+/// passes `false` and preserves the safety valve.
+pub(crate) fn run_with_options(
+    stages: &[Stage],
+    raw: &str,
+    allow_empty_result: bool,
+) -> Result<String, PipelineError> {
     let mut text = raw.to_string();
     for stage in stages {
         text = run_one(stage, text)?;
@@ -217,6 +228,7 @@ pub(crate) fn run(stages: &[Stage], raw: &str) -> Result<String, PipelineError> 
     // so the pre-fix behavior is preserved for existing defs.
     if text.trim().is_empty()
         && !raw.trim().is_empty()
+        && !allow_empty_result
     {
         return Ok(raw.to_string());
     }
@@ -594,5 +606,48 @@ stages = []
         let (_name, text) = crate::BUILTIN_DEFS[0];
         let d = Def::from_toml(text).unwrap();
         assert_eq!(d.id, "git-status");
+    }
+
+    #[test]
+    fn allow_empty_result_passes_empty_through() {
+        // Build a Def with a stage that strips every line.
+        let def = Def {
+            schema_version: 1,
+            id: "strip-all".to_string(),
+            program: "echo".to_string(),
+            subcommands: vec![],
+            only_on_exit: None,
+            stages: vec![Stage::StripLines {
+                patterns: vec![".".to_string()],
+            }],
+            allow_empty_result: true,
+        };
+        let raw = "alpha\nbeta\n";
+        let out = run_with_options(&def.stages, raw, def.allow_empty_result).unwrap();
+        assert!(
+            out.trim().is_empty(),
+            "allow_empty_result=true must pass empty through, got: {out:?}",
+        );
+    }
+
+    #[test]
+    fn default_valve_returns_raw_when_a_def_empties_input() {
+        let def = Def {
+            schema_version: 1,
+            id: "strip-all".to_string(),
+            program: "echo".to_string(),
+            subcommands: vec![],
+            only_on_exit: None,
+            stages: vec![Stage::StripLines {
+                patterns: vec![".".to_string()],
+            }],
+            allow_empty_result: false,
+        };
+        let raw = "alpha\nbeta\n";
+        let out = run_with_options(&def.stages, raw, def.allow_empty_result).unwrap();
+        assert_eq!(
+            out, raw,
+            "without opt-out, the safety valve must return the raw input",
+        );
     }
 }
