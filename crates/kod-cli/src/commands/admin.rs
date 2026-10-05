@@ -34,7 +34,7 @@ pub async fn run_doctor(json: bool) -> Result<()> {
             .map_err(|e| KodError::Serialization(e.to_string()))?;
         println!("{}", pretty);
         if report.has_failures() {
-            std::process::exit(1);
+            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
         }
         return Ok(());
     }
@@ -53,7 +53,7 @@ pub async fn run_doctor(json: bool) -> Result<()> {
 
     if report.has_failures() {
         println!("One or more checks failed — review the items marked ✗ above.");
-        std::process::exit(1);
+        return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
     }
 
     println!("All checks passed.");
@@ -161,7 +161,7 @@ pub async fn run_models(filter: Option<String>) -> Result<()> {
                 default_model.display(),
                 e
             );
-            std::process::exit(1);
+            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
         }
     };
 
@@ -176,7 +176,7 @@ pub async fn run_models(filter: Option<String>) -> Result<()> {
             eprintln!();
             eprintln!("Check that the server is running and `base_url` in the config is correct.");
             eprintln!("For Ollama: `ollama serve`, then retry.");
-            std::process::exit(1);
+            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
         }
     };
 
@@ -258,7 +258,7 @@ pub async fn run_update() -> Result<()> {
             eprintln!("a proxy, this command cannot help — check");
             eprintln!("  https://github.com/{repo}/releases");
             eprintln!("manually.");
-            std::process::exit(1);
+            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
         }
     };
 
@@ -271,7 +271,7 @@ pub async fn run_update() -> Result<()> {
             body
         };
         eprintln!("GitHub returned {status}: {short}");
-        std::process::exit(1);
+        return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
     }
 
     let body: serde_json::Value = resp
@@ -285,7 +285,7 @@ pub async fn run_update() -> Result<()> {
 
     if tag_clean.is_empty() {
         eprintln!("Release metadata is missing tag_name; cannot compare versions.");
-        std::process::exit(1);
+        return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
     }
 
     if versions_equal(current, tag_clean) || version_is_older(tag_clean, current) {
@@ -735,7 +735,7 @@ pub async fn run_sandbox_check() -> Result<()> {
         Ok(None) => {
             // Only returned for Disabled, which we do not ask for here.
             println!("Status:   disabled (unexpected)");
-            std::process::exit(1);
+            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
         }
         Err(e) => {
             println!("Status:   unavailable");
@@ -756,7 +756,7 @@ pub async fn run_sandbox_check() -> Result<()> {
                 println!("reinstall the Command Line Tools:");
                 println!("  xcode-select --install");
             }
-            std::process::exit(1);
+            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
         }
     }
     Ok(())
@@ -850,7 +850,7 @@ pub async fn run_doctor_fix(json: bool) -> Result<()> {
     }
 
     if report.has_failures() || !failed.is_empty() {
-        std::process::exit(1);
+        return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
     }
     Ok(())
 }
@@ -1013,7 +1013,7 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
                 }
                 None => {
                     eprintln!("No tool named {:?}. Try `kod tools`.", name);
-                    std::process::exit(1);
+                    return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
                 }
             }
         }
@@ -1137,7 +1137,7 @@ pub async fn run_if_bench(
                 default_model.display(),
                 e
             );
-            std::process::exit(1);
+            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
         }
     };
 
@@ -1216,7 +1216,7 @@ pub async fn run_if_bench(
     if pass {
         Ok(())
     } else {
-        std::process::exit(1);
+        return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
     }
 }
 
@@ -1255,11 +1255,11 @@ pub async fn run_commit_check(
         Ok(o) => {
             let err = String::from_utf8_lossy(&o.stderr);
             eprintln!("git diff --cached failed: {}", err.trim());
-            std::process::exit(1);
+            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
         }
         Err(e) => {
             eprintln!("Could not run git: {e} — is git on PATH?");
-            std::process::exit(1);
+            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
         }
     };
 
