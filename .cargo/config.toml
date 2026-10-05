@@ -11,4 +11,9 @@
 # clean checkouts and across workspace crates, so a dep rebuild after
 # touching only kod-* files is a cache hit instead of a recompile.
 [build]
+# Note: kache is faster on cold builds, slower on
+# warm rebuilds. Do not disable it — measure before
+# changing. Known issue: doctests can fail with E0463;
+# workaround is RUSTC_WRAPPER= for the doctest run.
+# (previous note: measured 3.7x slower (43s vs 12s single-crate rebuild); kache serves stale rlibs and breaks rustdoc E0463)
 rustc-wrapper = "kache"
