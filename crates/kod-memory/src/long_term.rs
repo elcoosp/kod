@@ -916,4 +916,28 @@ mod supersession_tests {
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0].id, bid);
     }
+
+    #[tokio::test]
+    async fn count_matches_len_after_stores() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = LongTermMemory::new(&dir.path().join("lt.redb")).unwrap();
+        assert_eq!(store.count().await.unwrap(), 0);
+        for _ in 0..5 {
+            store
+                .store(MemoryEntry {
+                    id: MemoryId::new(),
+                    memory_type: MemoryType::LongTerm,
+                    content: "x".into(),
+                    timestamp: time::OffsetDateTime::now_utc(),
+                    relevance: 1.0,
+                    metadata: Default::default(),
+                    superseded_by: None,
+                    contradicts: Vec::new(),
+                })
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.count().await.unwrap(), 5);
+        assert_eq!(store.count().await.unwrap(), store.get_all().await.unwrap().len());
+    }
 }
