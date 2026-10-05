@@ -350,7 +350,10 @@ impl LlmProvider for AnthropicProvider {
                                 .map(|s| (k.as_str().to_string(), s.to_string()))
                         })
                         .collect();
-                    let text = resp.text().await.unwrap_or_default();
+                    let text = resp.text().await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "anthropic: could not read error body");
+            String::new()
+        });
                     let hints = kod_provider::retry::extract_retry_hints(
                         Some(status.as_u16()),
                         &hint_headers,
@@ -460,7 +463,10 @@ impl LlmProvider for AnthropicProvider {
                     })?;
                 let status = resp.status();
                 if !status.is_success() {
-                    let text = resp.text().await.unwrap_or_default();
+                    let text = resp.text().await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "anthropic: could not read error body");
+            String::new()
+        });
                     return Err(KodError::provider_status(status.as_u16(), &text));
                 }
                 resp.json::<serde_json::Value>().await.map_err(|e| {
@@ -623,7 +629,10 @@ impl LlmProvider for AnthropicProvider {
                                 .map(|s| (k.as_str().to_string(), s.to_string()))
                         })
                         .collect();
-                    let text = resp.text().await.unwrap_or_default();
+                    let text = resp.text().await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "anthropic: could not read error body");
+            String::new()
+        });
                     let hints = kod_provider::retry::extract_retry_hints(
                         Some(status.as_u16()),
                         &hint_headers,
