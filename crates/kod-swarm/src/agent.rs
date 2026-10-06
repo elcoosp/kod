@@ -587,4 +587,24 @@ mod coverage_agent_builder {
         // generous window.
         assert!(!a.is_timed_out(std::time::Duration::from_secs(60)));
     }
+
+    #[test]
+    fn is_timed_out_false_without_heartbeat() {
+        // T5-C18: a freshly-built agent has never started, so it has
+        // no heartbeat. The pre-fix shape returned true (timed out)
+        // which meant a watchdog killed idle agents it had just
+        // registered.
+        let a = Agent::new(
+            "a".to_string(),
+            Default::default(),
+        );
+        assert!(
+            a.last_heartbeat().is_none(),
+            "fresh agent must have no heartbeat",
+        );
+        assert!(
+            !a.is_timed_out(std::time::Duration::from_secs(1)),
+            "a never-started agent is not timed out",
+        );
+    }
 }
