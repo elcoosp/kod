@@ -248,7 +248,7 @@ mod tests {
         assert_eq!(default_ref.model, "llama3.1");
     }
 
-#[serial_test::serial]
+    #[serial_test::serial]
     #[test]
     fn anthropic_endpoint_requires_an_api_key() {
         let _guard = anthropic_env_lock();
@@ -288,7 +288,7 @@ mod tests {
         assert!(msg.contains("ANTHROPIC_API_KEY"), "got: {msg}");
     }
 
-#[serial_test::serial]
+    #[serial_test::serial]
     #[test]
     fn anthropic_endpoint_builds_when_api_key_is_present() {
         let _guard = anthropic_env_lock();
