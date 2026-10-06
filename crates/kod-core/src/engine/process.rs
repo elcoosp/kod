@@ -33,7 +33,10 @@ impl KodEngine {
         history: &str,
         memory_context: Option<kod_types::MemoryContext>,
     ) -> Result<(
-        std::result::Result<kod_core_state::budget::Allocation, kod_core_state::budget::BudgetError>,
+        std::result::Result<
+            kod_core_state::budget::Allocation,
+            kod_core_state::budget::BudgetError,
+        >,
         Vec<kod_types::ToolDefinition>,
         String,
     )> {
@@ -358,10 +361,7 @@ impl KodEngine {
             let attempt_history_base = self.history_len_for(key).await;
             while i < chain.len() {
                 let model_ref: ModelRef = chain[i].clone();
-                let this_provider = match self
-                    .resolve_provider_for_model_ref(&model_ref)
-                    .await
-                {
+                let this_provider = match self.resolve_provider_for_model_ref(&model_ref).await {
                     Ok(p) => p,
                     Err(e) => {
                         tracing::warn!(
@@ -464,8 +464,9 @@ impl KodEngine {
                                 tokio::time::sleep(hint).await;
                                 continue;
                             }
-                            let failure =
-                                kod_core_routing::retry_strategy::TurnFailure::classify(&e.to_string());
+                            let failure = kod_core_routing::retry_strategy::TurnFailure::classify(
+                                &e.to_string(),
+                            );
                             let action = kod_core_routing::retry_strategy::choose_action(&failure);
                             let is_same_endpoint = matches!(
                                 action,
@@ -525,7 +526,8 @@ impl KodEngine {
                         // immediately; recoverable ones decide whether
                         // to retry the same endpoint (with an
                         // adjustment) or fall through to the next.
-                        let failure = kod_core_routing::retry_strategy::TurnFailure::classify(&e.to_string());
+                        let failure =
+                            kod_core_routing::retry_strategy::TurnFailure::classify(&e.to_string());
                         let action = kod_core_routing::retry_strategy::choose_action(&failure);
                         let has_next = i + 1 < chain.len();
                         let should_fall_through = failure.recoverable()
@@ -685,7 +687,8 @@ impl KodEngine {
             // citation fails to verify; a clean reply stays clean.
             let final_text = if matches!(task_type, crate::router::TaskType::Research) {
                 let syntactic =
-                    kod_core_state::citations::check_and_annotate(&final_text, &self.working_dir).text;
+                    kod_core_state::citations::check_and_annotate(&final_text, &self.working_dir)
+                        .text;
                 // P4.5 — after the syntactic check, run the semantic
                 // pass. The two are additive: the syntactic block
                 // reports missing/out-of-range citations, the
@@ -718,8 +721,9 @@ impl KodEngine {
             // and run it as synthetic `patch_file` calls through the
             // normal approval path.
             if tool_calls.is_empty()
-                && let Some(note) =
-                    self.maybe_recover_inline_patch(key, &final_text, None).await
+                && let Some(note) = self
+                    .maybe_recover_inline_patch(key, &final_text, None)
+                    .await
             {
                 tracing::info!(holder = %key, note = %note, "recovered inline patch");
             }
@@ -839,7 +843,8 @@ impl KodEngine {
         let mut trace_builder = kod_core_state::trace::TurnTraceBuilder::new(trace_id, key);
         trace_builder.set_user_prompt(input);
         let trace = std::sync::Mutex::new(trace_builder);
-        let trace_ref: Option<&std::sync::Mutex<kod_core_state::trace::TurnTraceBuilder>> = Some(&trace);
+        let trace_ref: Option<&std::sync::Mutex<kod_core_state::trace::TurnTraceBuilder>> =
+            Some(&trace);
         self.cost_tracker.begin_turn();
         // P3.3 — ask Jev whether the request is ambiguous; if so and
         // a streaming consumer is attached, prompt for clarification
@@ -920,10 +925,7 @@ impl KodEngine {
             let attempt_history_base = self.history_len_for(key).await;
             while i < chain.len() {
                 let model_ref: ModelRef = chain[i].clone();
-                let this_provider = match self
-                    .resolve_provider_for_model_ref(&model_ref)
-                    .await
-                {
+                let this_provider = match self.resolve_provider_for_model_ref(&model_ref).await {
                     Ok(p) => p,
                     Err(e) => {
                         tracing::warn!(
@@ -1005,13 +1007,8 @@ impl KodEngine {
                                 to = %next.display(),
                                 "Jev flagged the reply off-track; trying next endpoint"
                             );
-                            self.record_model_fallback(
-                                key,
-                                &model_ref,
-                                next,
-                                "jev quality gate",
-                            )
-                            .await;
+                            self.record_model_fallback(key, &model_ref, next, "jev quality gate")
+                                .await;
                             last_err = None;
                             i += 1;
                             continue;
@@ -1038,13 +1035,8 @@ impl KodEngine {
                             error = %e,
                             "retryable provider error; falling back"
                         );
-                        self.record_model_fallback(
-                            key,
-                            &model_ref,
-                            next,
-                            &e.to_string(),
-                        )
-                        .await;
+                        self.record_model_fallback(key, &model_ref, next, &e.to_string())
+                            .await;
                         // Hygiene 3.2: record the endpoint failure.
                         if let Ok(mut h) = self.endpoint_health.lock()
                             && h.record_failure(&model_ref.endpoint, e.to_string())
@@ -1216,10 +1208,12 @@ impl KodEngine {
             {
                 tracing::info!(holder = %key, note = %note, "recovered inline patch");
                 let _ = chunk_tx
-                    .send(format!("
+                    .send(format!(
+                        "
 
 {note}
-"))
+"
+                    ))
                     .await;
             }
             self.remember_turn_for(key, false, &final_text).await;
