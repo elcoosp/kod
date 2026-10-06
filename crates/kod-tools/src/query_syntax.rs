@@ -286,7 +286,11 @@ mod tests {
     fn a_url_is_not_mistaken_for_an_operator() {
         // `https://x` must not parse as `key: https` + `//x`.
         let q = parse("https://example.com/page");
-        assert!(q.terms.iter().any(|t| t.contains("https://example.com")), "got: {:?}", q.terms);
+        assert!(
+            q.terms.iter().any(|t| t.contains("https://example.com")),
+            "got: {:?}",
+            q.terms
+        );
         assert!(q.site.is_none());
     }
 
