@@ -246,7 +246,18 @@ pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
             let sender = server.pending.lock().await.remove(&id);
             if let Some(tx) = sender {
                 let result = frame.get("result").cloned().unwrap_or(Value::Null);
-                let _ = tx.send(result);
+                // Bug-hunt: a dropped send here means the requester's
+                // `rx` was already dropped — the usual cause is the
+                // 120s `request()` timeout firing before the client
+                // answered. Not actionable, but worth a debug line so
+                // a "client answers but agent ignores it" report has a
+                // hook.
+                if tx.send(result).is_err() {
+                    tracing::debug!(
+                        id,
+                        "acp: response arrived for a request whose receiver was already gone",
+                    );
+                }
             }
         } else if has_method {
             // Client → agent notification (no response expected).
@@ -539,7 +550,16 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
         for item in batch.items {
             let Some(item_id) = item.id else { continue };
             let decision = request_permission(server, session_id, &item).await;
-            let _ = server.engine.respond_to_approval(item_id, decision).await;
+            // The engine may have given up on this id (a stale marker,
+            // a batch the engine already partially cancelled). Match
+            // the CLI/TUI handling and log a warn rather than dropping
+            // the response silently.
+            if !server.engine.respond_to_approval(item_id, decision).await {
+                tracing::warn!(
+                    item_id,
+                    "acp: approval decision was not delivered (engine already gave up on this id)",
+                );
+            }
         }
         return Ok(());
     }
@@ -550,13 +570,23 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
     // the engine continues; the model sees a "(no answer) from the
     // editor" string and can adapt.
     if let Some((qid, _json)) = kod_core::engine::parse_question(chunk) {
-        server
+        // Placeholder answer for a question ACP cannot route; the
+        // engine gets a "no answer" so the turn continues. If the id
+        // is stale (already removed), log a warn — the engine will
+        // time the pending question out, and the caller wants to know.
+        let delivered = server
             .engine
             .respond_to_question(
                 qid,
                 "(the editor client has no answer channel for this question)".to_string(),
             )
             .await;
+        if !delivered {
+            tracing::warn!(
+                qid,
+                "acp: placeholder answer for ask_user was not delivered (stale id)",
+            );
+        }
         return Ok(());
     }
 
