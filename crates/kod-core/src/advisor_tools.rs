@@ -82,7 +82,9 @@ pub trait AdvisorSink: Send + Sync {
 /// exists and no `Weak` is needed.
 pub struct SteerQueueSink {
     pub steers: Arc<
-        tokio::sync::RwLock<std::collections::HashMap<String, Vec<kod_core_state::steer::SoftInterrupt>>>,
+        tokio::sync::RwLock<
+            std::collections::HashMap<String, Vec<kod_core_state::steer::SoftInterrupt>>,
+        >,
     >,
     pub is_running: Arc<tokio::sync::RwLock<bool>>,
 }
