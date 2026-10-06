@@ -114,7 +114,12 @@ pub fn is_useless(tool_name: &str, result: &Value) -> bool {
     }
     // Tool-specific empty checks.
     match tool_name {
-        "grep" => return result.get("results").and_then(|v| v.as_array()).is_some_and(|a| a.is_empty()),
+        "grep" => {
+            return result
+                .get("results")
+                .and_then(|v| v.as_array())
+                .is_some_and(|a| a.is_empty());
+        }
         "list_files" => {
             return result
                 .get("files")
@@ -233,7 +238,10 @@ mod tests {
 
     #[test]
     fn a_nonempty_read_is_not_useless() {
-        assert!(!is_useless("read_file", &json!({"content": "fn main() {}"})));
+        assert!(!is_useless(
+            "read_file",
+            &json!({"content": "fn main() {}"})
+        ));
     }
 
     #[test]
@@ -252,6 +260,9 @@ mod tests {
     #[test]
     fn a_clean_git_diff_is_useless() {
         assert!(is_useless("git_diff", &json!({"diff": "  "})));
-        assert!(!is_useless("git_diff", &json!({"diff": "diff --git a/x b/x"})));
+        assert!(!is_useless(
+            "git_diff",
+            &json!({"diff": "diff --git a/x b/x"})
+        ));
     }
 }
