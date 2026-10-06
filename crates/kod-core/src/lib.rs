@@ -19,19 +19,21 @@ pub mod swarm_adapters;
 pub mod swarm_runner;
 pub mod tool_quota;
 pub mod unexpected_stop;
-pub use kod_core_state::cost::{CostSnapshot, CostTracker, SoftWarningTrigger};
-pub use kod_core_state::decisions::{DecisionAuthor, DecisionKind, DecisionLog, DecisionRecord};
 pub use engine::KodEngine;
 pub use fixture::{
     Fixture, RequestSummary, ResponseFixture, RoundFixture, ToolResultFixture, diff_rounds,
 };
 pub use jev::{Decision, DecisionSource, JevClient, JevError};
-pub use kod_core_state::plan::{Plan, PlanStatus, PlanStep, PlanUpdate};
 pub use kod_core_routing::retry_strategy::{RetryAction, TurnFailure, choose_action};
+pub use kod_core_state::cost::{CostSnapshot, CostTracker, SoftWarningTrigger};
+pub use kod_core_state::decisions::{DecisionAuthor, DecisionKind, DecisionLog, DecisionRecord};
+pub use kod_core_state::plan::{Plan, PlanStatus, PlanStep, PlanUpdate};
 pub use kod_core_state::state::{EngineState, STATE_SCHEMA_VERSION, StateStore};
-pub use tool_quota::{QuotaVerdict, ToolCounts, check as check_quota};
-pub use kod_core_state::trace::{RoundKind, ToolOutcomeKind, TurnId, TurnOutcome, TurnTrace, TurnTraceBuilder};
+pub use kod_core_state::trace::{
+    RoundKind, ToolOutcomeKind, TurnId, TurnOutcome, TurnTrace, TurnTraceBuilder,
+};
 pub use kod_core_state::trace_writer::{TraceWriter, read_traces};
+pub use tool_quota::{QuotaVerdict, ToolCounts, check as check_quota};
 
 /// Build a `JevClient` from config and install it on `engine`.
 ///
@@ -53,19 +55,19 @@ pub fn install_jev_from_config(
         Ok(false)
     }
 }
-pub use memory_tools::{MemorySaveTool, MemorySearchTool};
+pub use kod_core_quality::worktree::{MergeReport, WorktreeInfo, WorktreeManager};
 pub use kod_core_routing::provider_setup::build_registry;
+pub use memory_tools::{MemorySaveTool, MemorySearchTool};
 pub use router::{RouterConfig, TaskResponse, TaskRouter, TaskType};
 pub use swarm_runner::{
     AgentOutcome, AgentResult, Subtask, SwarmEvent, SwarmResponse, SwarmRunner,
     WorktreeMergeOutcome,
 };
-pub use kod_core_quality::worktree::{MergeReport, WorktreeInfo, WorktreeManager};
-pub mod router;
-pub mod mcp_adapters;
-pub mod memory_handler;
-pub mod memory_tools;
 pub mod advisor_tools;
 pub mod hub_tool;
 pub mod jfind_tool;
+pub mod mcp_adapters;
+pub mod memory_handler;
+pub mod memory_tools;
 pub mod overnight;
+pub mod router;
