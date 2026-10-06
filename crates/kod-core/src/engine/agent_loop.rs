@@ -427,9 +427,7 @@ impl KodEngine {
                     );
                     messages.push(msg.clone());
                     let mut hist = self.history.write().await;
-                    hist.entry(round.holder.to_string())
-                        .or_default()
-                        .push(msg);
+                    hist.entry(round.holder.to_string()).or_default().push(msg);
                 }
                 // M-13 remainder: the round assembled complete tool
                 // calls before the stream died. When this error is NOT
@@ -442,9 +440,7 @@ impl KodEngine {
                 // and they execute there. Executing here as well would
                 // run the same tools twice — real side effects, not a
                 // transcript blemish — so we deliberately skip.
-                if !err.is_retryable()
-                    && !calls.is_empty()
-                {
+                if !err.is_retryable() && !calls.is_empty() {
                     let section = self
                         .run_tool_calls_with_speculations(
                             &calls,
@@ -951,11 +947,13 @@ impl KodEngine {
                         }
                         let handle = tokio::spawn(async move {
                             match kod_core_tools::speculation::read_with_evidence(&abs) {
-                                Ok((text, evidence)) => Some(kod_core_tools::speculation::SpeculativeRead {
-                                    path: abs,
-                                    text,
-                                    evidence,
-                                }),
+                                Ok((text, evidence)) => {
+                                    Some(kod_core_tools::speculation::SpeculativeRead {
+                                        path: abs,
+                                        text,
+                                        evidence,
+                                    })
+                                }
                                 Err(_) => None,
                             }
                         });
@@ -1124,7 +1122,11 @@ impl KodEngine {
     /// serialized `parameters_schema` per tool, in registry order.
     /// That order is sorted (see `registry.rs`) so a re-registration
     /// of the same set produces the same fingerprint.
-    pub(crate) async fn note_tool_surface_fingerprint(&self, key: &str, definitions: &[ToolDefinition]) {
+    pub(crate) async fn note_tool_surface_fingerprint(
+        &self,
+        key: &str,
+        definitions: &[ToolDefinition],
+    ) {
         // T3-C1: FNV-1a instead of `DefaultHasher::new()`. The latter
         // is seeded randomly per call, so the same tool surface
         // produced a different fingerprint on every prompt — the
@@ -1405,7 +1407,10 @@ impl KodEngine {
 
     /// Append the environment + tool inventory grounding to a router prompt.
     /// Look up the trust level of a tool by name (Tier 1.1).
-    pub(crate) async fn tool_trust_level(&self, name: &str) -> Option<kod_types::trust::TrustLevel> {
+    pub(crate) async fn tool_trust_level(
+        &self,
+        name: &str,
+    ) -> Option<kod_types::trust::TrustLevel> {
         let defs = self.tools.get_definitions().await;
         defs.into_iter()
             .find(|d| d.name == name)
