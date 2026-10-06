@@ -285,7 +285,12 @@ pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
     // client's EOF is a shutdown signal for the reader, not a hard
     // kill of an in-flight turn.
     drop(server);
-    let _ = writer_task.await;
+    // Bug-hunt: a panic in `write_frame` or a cancellation of the
+    // writer task would previously be lost. Log it so a truncated
+    // ACP session leaves a trace instead of appearing clean.
+    if let Err(e) = writer_task.await {
+        tracing::warn!(error = %e, "acp: writer task panicked or was cancelled");
+    }
     Ok(())
 }
 

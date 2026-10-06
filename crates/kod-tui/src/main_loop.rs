@@ -697,7 +697,22 @@ impl TuiLoop {
             std::sync::Arc::try_unwrap(default_hook).unwrap_or_else(|_| std::panic::take_hook());
         std::panic::set_hook(default_hook);
 
-        let _ = self.restore_terminal().await;
+        // Bug-hunt: `restore_terminal` returns a Result because any of
+        // its three crossterm calls — show_cursor, LeaveAlternateScreen,
+        // disable_raw_mode — can fail. The pre-fix shape dropped that
+        // failure, which is the worst possible case: the process then
+        // exits with the user's terminal still in raw mode and the
+        // alternate screen still active, and every subsequent shell
+        // command renders garbage until the user runs `reset`. Log the
+        // error (best-effort at this point; we cannot retry once the
+        // process is unwinding) so the cause is at least on record
+        // under RUST_LOG=warn.
+        if let Err(e) = self.restore_terminal().await {
+            tracing::warn!(
+                error = %e,
+                "restore_terminal failed; the terminal may be left in raw mode",
+            );
+        }
         result
     }
 

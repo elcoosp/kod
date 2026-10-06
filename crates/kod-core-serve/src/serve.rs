@@ -765,7 +765,23 @@ async fn handle_connection(
     // queued. Without the timeout a hung streaming task would keep
     // the connection handler alive forever.
     drop(out_tx);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), writer_task).await;
+    // Bug-hunt: the pre-fix shape dropped the timeout result, so a
+    // hung spawned pump (a streaming task whose provider never
+    // returned) was indistinguishable from a clean drain. Log the
+    // timeout so a "why did my connection close mid-stream?" report
+    // has an answer in the logs.
+    match tokio::time::timeout(std::time::Duration::from_secs(5), writer_task).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "serve: writer task panicked or was cancelled");
+        }
+        Err(_) => {
+            tracing::warn!(
+                "serve: writer task did not drain within 5s; \
+                 a spawned pump is likely still holding a sender",
+            );
+        }
+    }
     Ok(())
 }
 
