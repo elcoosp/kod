@@ -92,7 +92,9 @@ impl RetryPolicy {
             h.finish()
         };
         let mut state = nanos ^ tid ^ (std::process::id() as u64);
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let jitter = ((state >> 33) as f64) / (u32::MAX as f64) * 2.0 - 1.0;
         let factor = 1.0 + jitter * self.jitter_fraction;
         let secs = capped.as_secs_f64() * factor;
