@@ -72,7 +72,7 @@ pub struct TuiLoop {
 
     /// T4-H4: handles to spawned background tasks. Aborted on
     /// quit so they cannot mutate shared state after teardown.
-    bg_tasks: Vec<tokio::task::JoinHandle<()>>
+    bg_tasks: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl TuiLoop {
@@ -757,7 +757,7 @@ impl TuiLoop {
 
             const MAX_EVENTS_PER_FRAME: usize = 256;
             let mut _yield_counter: usize = 0;
-for _ in 0..MAX_EVENTS_PER_FRAME {
+            for _ in 0..MAX_EVENTS_PER_FRAME {
                 // T4-H3: yield to the runtime every 32 events so a
                 // burst of ResponseChunks cannot starve other tasks.
                 _yield_counter += 1;
@@ -1361,10 +1361,8 @@ for _ in 0..MAX_EVENTS_PER_FRAME {
                     Ok(body) => {
                         const MAX_ATTACH_BYTES: usize = 64 * 1024;
                         let shown = if body.len() > MAX_ATTACH_BYTES {
-                            let cut = kod_types::strutil::floor_char_boundary(
-                                &body,
-                                MAX_ATTACH_BYTES,
-                            );
+                            let cut =
+                                kod_types::strutil::floor_char_boundary(&body, MAX_ATTACH_BYTES);
                             format!("{}…\n[truncated]", &body[..cut])
                         } else {
                             body
@@ -2952,15 +2950,20 @@ for _ in 0..MAX_EVENTS_PER_FRAME {
                     .as_ref()
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(16_000);
-                let explicit_path = if first.as_ref().and_then(|s| s.parse::<usize>().ok()).is_some() {
+                let explicit_path = if first
+                    .as_ref()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .is_some()
+                {
                     parts.next()
                 } else {
                     first
                 };
                 let cwd = match explicit_path {
                     Some(p) => std::path::PathBuf::from(p),
-                    None => std::env::current_dir()
-                        .unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                    None => {
+                        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    }
                 };
                 let map = kod_core_quality::repomap::build_repo_map(&cwd);
                 let rendered = map.render(max_chars);
@@ -3721,7 +3724,10 @@ for _ in 0..MAX_EVENTS_PER_FRAME {
                 {
                     let mut by_rule: std::collections::BTreeMap<String, usize> = Default::default();
                     for e in &entries {
-                        if let kod_core_state::session_log::SessionEntry::Redaction { rules, .. } = e {
+                        if let kod_core_state::session_log::SessionEntry::Redaction {
+                            rules, ..
+                        } = e
+                        {
                             for r in rules {
                                 *by_rule.entry(r.rule.clone()).or_insert(0) += r.count;
                             }
@@ -3894,8 +3900,9 @@ for _ in 0..MAX_EVENTS_PER_FRAME {
                         ));
                     }
                     Err(e) => {
-                        self.app
-                            .push_system_message(&format!("Could not create a session worktree: {e}"));
+                        self.app.push_system_message(&format!(
+                            "Could not create a session worktree: {e}"
+                        ));
                     }
                 }
             }
@@ -4933,67 +4940,65 @@ for _ in 0..MAX_EVENTS_PER_FRAME {
                             cwd.display()
                         ));
                     } else {
-                    self.app.push_system_message(&format!(
-                        "Running project check in {} …",
-                        cwd.display()
-                    ));
-                    // H-15: /check can take 120s. Running it inline froze
-                    // the event loop (no key handling, no Esc, no stream
-                    // repaint). Run it on a task and deliver the result as
-                    // a System event so the loop keeps flowing.
-                    let cwd_for_task = cwd.clone();
-                    let tx = self.event_handler.sender();
-                    tokio::spawn(async move {
-                        let outcome =
-                            kod_tools::CheckTool::run_check(&cwd_for_task, 120).await;
-                        let text = match outcome {
-                            Ok(o) if o.diagnostics.is_empty() => format!(
-                                "{}: clean ({} · exit {})",
-                                o.kind, o.command, o.exit_code,
-                            ),
-                            Ok(o) => {
-                                let mut msg = format!(
-                                    "{}: {} diagnostic(s) ({} · exit {})\n",
-                                    o.kind,
-                                    o.diagnostics.len(),
-                                    o.command,
-                                    o.exit_code,
-                                );
-                                for d in o.diagnostics.iter().take(30) {
-                                    let code = d
-                                        .code
-                                        .as_deref()
-                                        .map(|c| format!("[{c}]"))
-                                        .unwrap_or_default();
-                                    let short = if d.message.chars().count() > 120 {
-                                        let s: String =
-                                            d.message.chars().take(120).collect();
-                                        format!("{s}…")
-                                    } else {
-                                        d.message.clone()
-                                    };
-                                    msg.push_str(&format!(
-                                        "  {} {} {}:{}:{} — {}\n",
-                                        d.severity, code, d.file, d.line, d.column, short,
-                                    ));
+                        self.app.push_system_message(&format!(
+                            "Running project check in {} …",
+                            cwd.display()
+                        ));
+                        // H-15: /check can take 120s. Running it inline froze
+                        // the event loop (no key handling, no Esc, no stream
+                        // repaint). Run it on a task and deliver the result as
+                        // a System event so the loop keeps flowing.
+                        let cwd_for_task = cwd.clone();
+                        let tx = self.event_handler.sender();
+                        tokio::spawn(async move {
+                            let outcome = kod_tools::CheckTool::run_check(&cwd_for_task, 120).await;
+                            let text = match outcome {
+                                Ok(o) if o.diagnostics.is_empty() => format!(
+                                    "{}: clean ({} · exit {})",
+                                    o.kind, o.command, o.exit_code,
+                                ),
+                                Ok(o) => {
+                                    let mut msg = format!(
+                                        "{}: {} diagnostic(s) ({} · exit {})\n",
+                                        o.kind,
+                                        o.diagnostics.len(),
+                                        o.command,
+                                        o.exit_code,
+                                    );
+                                    for d in o.diagnostics.iter().take(30) {
+                                        let code = d
+                                            .code
+                                            .as_deref()
+                                            .map(|c| format!("[{c}]"))
+                                            .unwrap_or_default();
+                                        let short = if d.message.chars().count() > 120 {
+                                            let s: String = d.message.chars().take(120).collect();
+                                            format!("{s}…")
+                                        } else {
+                                            d.message.clone()
+                                        };
+                                        msg.push_str(&format!(
+                                            "  {} {} {}:{}:{} — {}\n",
+                                            d.severity, code, d.file, d.line, d.column, short,
+                                        ));
+                                    }
+                                    if o.diagnostics.len() > 30 {
+                                        msg.push_str(&format!(
+                                            "  … and {} more\n",
+                                            o.diagnostics.len() - 30
+                                        ));
+                                    }
+                                    if o.truncated {
+                                        msg.push_str("(raw output truncated)\n");
+                                    }
+                                    msg.trim_end().to_string()
                                 }
-                                if o.diagnostics.len() > 30 {
-                                    msg.push_str(&format!(
-                                        "  … and {} more\n",
-                                        o.diagnostics.len() - 30
-                                    ));
-                                }
-                                if o.truncated {
-                                    msg.push_str("(raw output truncated)\n");
-                                }
-                                msg.trim_end().to_string()
-                            }
-                            Err(e) => format!("check failed: {e}"),
-                        };
-                        let _ = tx
-                            .send(Event::System(crate::event::EventPriority::Normal, text))
-                            .await;
-                    });
+                                Err(e) => format!("check failed: {e}"),
+                            };
+                            let _ = tx
+                                .send(Event::System(crate::event::EventPriority::Normal, text))
+                                .await;
+                        });
                     }
                 }
             }
@@ -6353,9 +6358,7 @@ fn format_entry_one_line(entry: &kod_core_state::session_log::SessionEntry) -> S
             }
         }
         SessionEntry::ToolExecutionStart {
-            holder,
-            tool_name,
-            ..
+            holder, tool_name, ..
         } => format!("  {holder:>8}  start    {tool_name}"),
     }
 }
@@ -6528,8 +6531,7 @@ mod tests {
         tui.handle_command("/wt").await.unwrap();
         let last = tui.app().messages().last().unwrap();
         assert!(
-            last.content.contains("not a git repository")
-                || last.content.contains("worktree"),
+            last.content.contains("not a git repository") || last.content.contains("worktree"),
             "expected a worktree-unavailable message, got: {}",
             last.content,
         );
@@ -6636,7 +6638,9 @@ mod tests {
         // dependency on cwd-mutating siblings entirely.
         let crate_dir = env!("CARGO_MANIFEST_DIR");
         let mut tui = TuiLoop::new();
-        tui.handle_command(&format!("/map 16000 {crate_dir}")).await.unwrap();
+        tui.handle_command(&format!("/map 16000 {crate_dir}"))
+            .await
+            .unwrap();
         let last = tui.app().messages().last().unwrap();
         assert!(
             last.content.contains("Repository map"),
@@ -6660,7 +6664,9 @@ mod tests {
         // S10 follow-up: same CWD_LOCK reason as `test_map_command_produces_output`.
         let crate_dir = env!("CARGO_MANIFEST_DIR");
         let mut tui = TuiLoop::new();
-        tui.handle_command(&format!("/map 1 {crate_dir}")).await.unwrap();
+        tui.handle_command(&format!("/map 1 {crate_dir}"))
+            .await
+            .unwrap();
         let last = tui.app().messages().last().unwrap();
         // A 1-char budget is smaller than any line; the map is either
         // empty (unlikely with a `.rs` in cwd) or truncated.
@@ -7555,14 +7561,17 @@ mod tests {
         let mut tui = TuiLoop::new();
         tui.app_mut().begin_generation();
         tui.handle_event(Event::ServerBusy {
-            message: "Server busy — waiting 10m00s before automatic retry (attempt 1/4) · Esc cancels".to_string(),
+            message:
+                "Server busy — waiting 10m00s before automatic retry (attempt 1/4) · Esc cancels"
+                    .to_string(),
             wait_secs: 600,
         })
         .await
         .unwrap();
         let label = tui.app().phase_label().unwrap_or_default();
         assert!(
-            label.starts_with("server-busy — retry in 9m") || label.starts_with("server-busy — retry in 10m"),
+            label.starts_with("server-busy — retry in 9m")
+                || label.starts_with("server-busy — retry in 10m"),
             "countdown label, got: {label}"
         );
         let bodies: Vec<&str> = tui
