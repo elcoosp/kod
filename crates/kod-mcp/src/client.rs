@@ -330,14 +330,12 @@ impl McpClient {
             // own group at spawn time).
             if unsafe { libc::kill(-pid, libc::SIGTERM) } != 0 {
                 // SAFETY: fall back to the direct pid.
-                unsafe { libc::kill(pid, libc::SIGTERM); }
+                unsafe {
+                    libc::kill(pid, libc::SIGTERM);
+                }
             }
         }
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            guard.wait(),
-        )
-        .await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), guard.wait()).await;
         // Escalate to SIGKILL for the whole group, then the direct
         // child as a belt-and-braces fallback. If the child exited
         // cleanly within the 2 s window, `guard.id()` is None and the
@@ -346,14 +344,12 @@ impl McpClient {
         if let Some(pid) = guard.id() {
             let pid = pid as libc::pid_t;
             // SAFETY: as above.
-            unsafe { libc::kill(-pid, libc::SIGKILL); }
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
         }
         let _ = guard.start_kill();
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            guard.wait(),
-        )
-        .await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), guard.wait()).await;
     }
 
     // ------------------------------------------------------------------
@@ -427,8 +423,6 @@ impl McpClient {
         }
     }
 }
-
-
 
 /// Background reader: parse one JSON object per line, dispatch by id.
 async fn read_loop(
@@ -826,4 +820,3 @@ mod t2_c6_regression {
         );
     }
 }
-
