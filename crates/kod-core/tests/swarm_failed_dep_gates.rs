@@ -91,7 +91,13 @@ async fn failed_dependency_gates_dependents() {
     let db = tmp.path().join("t.redb");
     let engine = Arc::new(KodEngine::new(cfg, db).unwrap());
     let order = Arc::new(Order::default());
-    install_test_provider(&engine, Arc::new(ChainProvider { order: order.clone() })).await;
+    install_test_provider(
+        &engine,
+        Arc::new(ChainProvider {
+            order: order.clone(),
+        }),
+    )
+    .await;
     engine.start().await.unwrap();
 
     let runner = SwarmRunner::new(engine.clone(), 4, false).await.unwrap();
