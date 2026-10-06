@@ -1276,7 +1276,8 @@ impl KodEngine {
             if call.tool_name != "plan_update" {
                 continue;
             }
-            let update = serde_json::from_value::<kod_core_state::plan::PlanUpdate>(call.arguments.clone());
+            let update =
+                serde_json::from_value::<kod_core_state::plan::PlanUpdate>(call.arguments.clone());
             let answer = match update {
                 Ok(u) => self.apply_plan_update(effective_holder, u).await,
                 Err(e) => format!("plan_update: invalid arguments: {e}"),
@@ -1521,8 +1522,7 @@ impl KodEngine {
                 // settle per file would cost N times the wait.
                 let last_write = writes.last().expect("writes is non-empty");
                 let batch = writes.len() > 1;
-                let lsp_eligible =
-                    lsp_wanted && Self::lsp_binary_for(&last_write.0).is_some();
+                let lsp_eligible = lsp_wanted && Self::lsp_binary_for(&last_write.0).is_some();
 
                 let diags: Vec<kod_tools::check::Diagnostic>;
                 let source: String;
