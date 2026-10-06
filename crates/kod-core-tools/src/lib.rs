@@ -5,6 +5,6 @@
 
 pub mod jfind;
 pub mod lsp_tools;
-pub mod tool_loop_guard;
-pub mod speculation;
 pub mod prewalk;
+pub mod speculation;
+pub mod tool_loop_guard;
