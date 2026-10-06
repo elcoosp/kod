@@ -382,13 +382,16 @@ impl SwarmRunner {
         //    isolation and getting the opposite without being told is
         //    worse than failing. `Auto` keeps the runner's previous
         //    implicit policy.
-        let mut worktree_mgr: Option<kod_core_quality::worktree::WorktreeManager> = match self.isolation {
+        let mut worktree_mgr: Option<kod_core_quality::worktree::WorktreeManager> = match self
+            .isolation
+        {
             kod_config::Isolation::Shared => {
                 tracing::info!("swarm: shared workspace (isolation = shared)");
                 None
             }
             kod_config::Isolation::Worktree => {
-                match kod_core_quality::worktree::WorktreeManager::detect(self.engine.working_dir()) {
+                match kod_core_quality::worktree::WorktreeManager::detect(self.engine.working_dir())
+                {
                     Ok(Some(m)) => Some(m),
                     Ok(None) => {
                         return Err(KodError::Config(
@@ -406,7 +409,8 @@ impl SwarmRunner {
                 }
             }
             kod_config::Isolation::Auto => {
-                match kod_core_quality::worktree::WorktreeManager::detect(self.engine.working_dir()) {
+                match kod_core_quality::worktree::WorktreeManager::detect(self.engine.working_dir())
+                {
                     Ok(Some(m)) => Some(m),
                     Ok(None) => None,
                     Err(e) => {
@@ -667,8 +671,14 @@ impl SwarmRunner {
             let slug = format!("agent-{}-{}", i + 1, sanitize(cap.as_str()));
             let agent = AgentBuilder::new(&slug).with_capability(*cap).build();
             let id = agent.id().clone();
-            if let Err(e) = swarm.add_agent(agent).await { self.engine.uninstall_swarm_file_bus().await; return Err(e); }
-            if let Err(e) = swarm.start_agent(&id).await { self.engine.uninstall_swarm_file_bus().await; return Err(e); }
+            if let Err(e) = swarm.add_agent(agent).await {
+                self.engine.uninstall_swarm_file_bus().await;
+                return Err(e);
+            }
+            if let Err(e) = swarm.start_agent(&id).await {
+                self.engine.uninstall_swarm_file_bus().await;
+                return Err(e);
+            }
 
             // Point this agent's transcript at its own worktree, if one
             // was created. The per-transcript working_dir override
@@ -764,8 +774,14 @@ impl SwarmRunner {
 
             let task = Task::new(st.description.clone(), Priority::Medium);
             let task_id = task.id.clone();
-            if let Err(e) = swarm.coordinator().register_task(task).await { self.engine.uninstall_swarm_file_bus().await; return Err(e); }
-            if let Err(e) = swarm.coordinator().assign_task(&task_id, &chosen).await { self.engine.uninstall_swarm_file_bus().await; return Err(e); }
+            if let Err(e) = swarm.coordinator().register_task(task).await {
+                self.engine.uninstall_swarm_file_bus().await;
+                return Err(e);
+            }
+            if let Err(e) = swarm.coordinator().assign_task(&task_id, &chosen).await {
+                self.engine.uninstall_swarm_file_bus().await;
+                return Err(e);
+            }
 
             // H-D1: mint a *fresh* dispatch id for this subtask. The
             // engine keys its per-transcript state (history, cancel
@@ -1715,7 +1731,9 @@ impl SwarmRunner {
                         self.engine
                             .steer_interrupt_for(
                                 crate::engine::DEFAULT_TRANSCRIPT_KEY,
-                                kod_core_state::steer::SoftInterrupt::swarm(format!("[{name}] {q}")),
+                                kod_core_state::steer::SoftInterrupt::swarm(format!(
+                                    "[{name}] {q}"
+                                )),
                             )
                             .await;
                     }
