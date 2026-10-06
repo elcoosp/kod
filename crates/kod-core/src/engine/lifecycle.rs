@@ -125,9 +125,9 @@ impl KodEngine {
         // for the file's language. `engine.start()` takes `&self`, so
         // the tools take the slot Arc, not the engine Arc.
         self.tools
-            .register(Box::new(kod_core_tools::lsp_tools::LspDiagnosticsTool::new(
-                Arc::clone(&self.lsp_manager),
-            )))
+            .register(Box::new(
+                kod_core_tools::lsp_tools::LspDiagnosticsTool::new(Arc::clone(&self.lsp_manager)),
+            ))
             .await;
         self.tools
             .register(Box::new(kod_core_tools::lsp_tools::LspDefinitionTool::new(
@@ -140,9 +140,9 @@ impl KodEngine {
             )))
             .await;
         self.tools
-            .register(Box::new(kod_core_tools::lsp_tools::LspHoverTool::new(Arc::clone(
-                &self.lsp_manager,
-            ))))
+            .register(Box::new(kod_core_tools::lsp_tools::LspHoverTool::new(
+                Arc::clone(&self.lsp_manager),
+            )))
             .await;
 
         // MCP tools (D6.1). Every enabled server is spawned once
