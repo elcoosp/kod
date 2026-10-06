@@ -23,7 +23,10 @@ impl KodEngine {
     /// hash. The tools are sorted by name here even though the
     /// registry already sorts them, because the ledger must be
     /// robust to a caller that hands it an unsorted list.
-    pub(crate) fn cache_head_fingerprint(system_text: &str, definitions: &[kod_types::ToolDefinition]) -> u64 {
+    pub(crate) fn cache_head_fingerprint(
+        system_text: &str,
+        definitions: &[kod_types::ToolDefinition],
+    ) -> u64 {
         const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
         const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
         let mut h = FNV_OFFSET;
