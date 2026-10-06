@@ -478,11 +478,10 @@ impl KodEngine {
             // F2c-11: read off the async worker — this fn is awaited
             // on the turn path and the path is model-derived.
             let abs_for_read = abs.clone();
-            let Ok(content) = tokio::task::spawn_blocking(move || {
-                std::fs::read_to_string(&abs_for_read)
-            })
-            .await
-            .unwrap_or_else(|_| Err(std::io::Error::other("read task panicked")))
+            let Ok(content) =
+                tokio::task::spawn_blocking(move || std::fs::read_to_string(&abs_for_read))
+                    .await
+                    .unwrap_or_else(|_| Err(std::io::Error::other("read task panicked")))
             else {
                 continue;
             };
@@ -887,7 +886,11 @@ impl KodEngine {
     /// The caller uses the returned answer as the tool result
     /// instead of emitting a question marker, so the model proceeds
     /// without interrupting the user. Logged as a JevDecision.
-    pub(crate) async fn try_answer_question_from_context(&self, key: &str, question: &str) -> Option<String> {
+    pub(crate) async fn try_answer_question_from_context(
+        &self,
+        key: &str,
+        question: &str,
+    ) -> Option<String> {
         let jev = self.jev_client()?;
         let request = self.current_request(key).await?;
         // Recent history gives Jev enough state to answer "what file"
@@ -1046,7 +1049,11 @@ impl KodEngine {
     ///
     /// Fail-open: disabled or errored Jev returns `false` and the
     /// stream continues to the model's natural terminator.
-    pub(crate) async fn should_early_terminate(&self, key: &str, accumulated: &str) -> EarlyTermination {
+    pub(crate) async fn should_early_terminate(
+        &self,
+        key: &str,
+        accumulated: &str,
+    ) -> EarlyTermination {
         let Some(jev) = self.jev_client() else {
             return EarlyTermination::None;
         };
