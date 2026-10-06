@@ -1521,6 +1521,35 @@ mod coverage_policy_deny_rules {
         // A `..` above an absolute root stays at the root.
         assert_eq!(resolve_path(wd, "/.."), PathBuf::from("/"));
     }
+
+    #[test]
+    fn compiled_glob_returns_the_same_arc() {
+        // T5-C32: the cache must hand back the same Arc for the same
+        // pattern, so call sites do not recompile on every decide.
+        let a = compiled_glob("**/*.rs").expect("compiles");
+        let b = compiled_glob("**/*.rs").expect("compiles");
+        assert!(
+            std::sync::Arc::ptr_eq(&a, &b),
+            "compiled_glob must return the same Arc for the same pattern",
+        );
+    }
+
+    #[test]
+    fn compiled_glob_distinguishes_patterns() {
+        let a = compiled_glob("**/*.rs").unwrap();
+        let b = compiled_glob("**/*.toml").unwrap();
+        assert!(
+            !std::sync::Arc::ptr_eq(&a, &b),
+            "different patterns must produce different matchers",
+        );
+    }
+
+    #[test]
+    fn compiled_glob_handles_an_invalid_pattern() {
+        // An unparseable pattern returns None (the cache stores None).
+        let v = compiled_glob("[[[");
+        assert!(v.is_none());
+    }
 }
 
 /// T5-C7: return every binary name we can identify in a command line,
