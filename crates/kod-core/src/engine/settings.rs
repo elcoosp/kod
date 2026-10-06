@@ -93,12 +93,11 @@ impl KodEngine {
                 move |id: String, text: String, mime: String, owner: String| {
                     let handler = Arc::clone(&handler);
                     Box::pin(async move {
-                        handler
-                            .store_for(id, text, mime, owner)
-                            .await
-                            .map_err(|e| KodError::InvalidParameters {
+                        handler.store_for(id, text, mime, owner).await.map_err(|e| {
+                            KodError::InvalidParameters {
                                 reason: format!("artifact store: {e}"),
-                            })
+                            }
+                        })
                     })
                 },
             )
@@ -125,7 +124,8 @@ impl KodEngine {
         // per-working-directory, so two sessions on different projects
         // do not see each other's checkpoints.
         let checkpoints =
-            kod_core_state::checkpoint::CheckpointManager::for_working_dir(&working_dir).map(Arc::new);
+            kod_core_state::checkpoint::CheckpointManager::for_working_dir(&working_dir)
+                .map(Arc::new);
 
         Ok(Self {
             router: router_for_handler,
