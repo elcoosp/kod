@@ -198,9 +198,8 @@ pub fn tokenize(command: &str) -> Vec<String> {
                     i += 1;
                 }
                 if !term.is_empty() {
-                    heredoc_terminator = Some(
-                        term.trim_matches(|c| c == '\'' || c == '"').to_string(),
-                    );
+                    heredoc_terminator =
+                        Some(term.trim_matches(|c| c == '\'' || c == '"').to_string());
                 }
                 continue;
             }
@@ -212,10 +211,7 @@ pub fn tokenize(command: &str) -> Vec<String> {
                 if !current.is_empty() {
                     tokens.push(std::mem::take(&mut current));
                 }
-                if (c == '&' || c == '|')
-                    && i + 1 < chars.len()
-                    && chars[i + 1] == c
-                {
+                if (c == '&' || c == '|') && i + 1 < chars.len() && chars[i + 1] == c {
                     tokens.push(format!("{c}{c}"));
                     i += 1;
                 } else {
@@ -473,7 +469,9 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
                     let mut iter = args.iter();
                     while let Some(a) = iter.next() {
                         let a_unq = unquote(a);
-                        if a_unq.starts_with('-') { continue; }
+                        if a_unq.starts_with('-') {
+                            continue;
+                        }
                         let wrapped_base = a_unq.rsplit('/').next().unwrap_or(&a_unq).to_string();
                         if DESTRUCTIVE.contains(&wrapped_base.as_str()) {
                             for rest in iter.by_ref() {
@@ -605,7 +603,10 @@ mod tests {
     fn fd_prefixed_redirect_to_a_source_file_confirms() {
         // F2a-11: `2>file` truncates the file just like `>file`; it
         // must not slip past the truncating-write check.
-        for cmd in ["cargo build 2> /work/proj/src/main.rs", "cmd &> /work/proj/src/main.rs"] {
+        for cmd in [
+            "cargo build 2> /work/proj/src/main.rs",
+            "cmd &> /work/proj/src/main.rs",
+        ] {
             let a = assess(cmd, &ctx());
             assert!(
                 a.level >= RiskLevel::Confirm,
@@ -693,7 +694,8 @@ mod t5_regression {
         assert!(
             r.level >= RiskLevel::Confirm,
             "expected Confirm+, got {:?}: {:?}",
-            r.level, r.findings,
+            r.level,
+            r.findings,
         );
     }
 
@@ -703,7 +705,8 @@ mod t5_regression {
         assert!(
             r.level >= RiskLevel::Confirm,
             "expected Confirm+, got {:?}: {:?}",
-            r.level, r.findings,
+            r.level,
+            r.findings,
         );
     }
 
@@ -712,8 +715,11 @@ mod t5_regression {
         let r = assess("cat foo <<EOF\nbody\nEOF\n", &ctx());
         // No trailing destructive command — must not fire the sentinel.
         assert!(
-            r.findings.iter().all(|f| !f.reason.contains("closing terminator")),
-            "terminated heredoc should not escalate: {:?}", r.findings,
+            r.findings
+                .iter()
+                .all(|f| !f.reason.contains("closing terminator")),
+            "terminated heredoc should not escalate: {:?}",
+            r.findings,
         );
     }
 
@@ -733,4 +739,3 @@ mod t5_regression {
         assert!(!Justification(String::new()).is_substantive());
     }
 }
-
