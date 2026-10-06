@@ -76,7 +76,9 @@ fn node_kind(lang: Lang, node: tree_sitter::Node) -> Option<&'static str> {
             // also folds together.
             "variable_declarator" => {
                 // Require a value, matching the regex's trailing `=`.
-                node.child_by_field_name("value").is_some().then_some("const")
+                node.child_by_field_name("value")
+                    .is_some()
+                    .then_some("const")
             }
             _ => None,
         },
