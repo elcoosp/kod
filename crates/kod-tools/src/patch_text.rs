@@ -142,10 +142,7 @@ pub fn extract(text: &str) -> Option<Vec<FilePatch>> {
                 // space stripped by the terminal or the model.
                 if line.is_empty() {
                     hunk.lines.push(" ".to_string());
-                } else if line.starts_with(' ')
-                    || line.starts_with('-')
-                    || line.starts_with('+')
-                {
+                } else if line.starts_with(' ') || line.starts_with('-') || line.starts_with('+') {
                     hunk.lines.push(line.to_string());
                 }
                 // Anything else: tolerated as a context line without
@@ -222,12 +219,14 @@ pub fn to_unified_diff(patch: &FilePatch, original: &str) -> Result<String, Stri
             let mut new_side_offset: isize = 0;
             for hunk in hunks {
                 let (old_lines, new_lines) = split_hunk(&hunk.lines);
-                let (start, count) = find_unique_block(&file_lines, &old_lines)
-                    .ok_or_else(|| format!(
-                        "hunk not found exactly once in {path}: \
+                let (start, count) =
+                    find_unique_block(&file_lines, &old_lines).ok_or_else(|| {
+                        format!(
+                            "hunk not found exactly once in {path}: \
                          search for {} context/removed line(s)",
-                        old_lines.len()
-                    ))?;
+                            old_lines.len()
+                        )
+                    })?;
                 let old_count = count;
                 let new_count = new_lines.len();
                 let new_start = (start as isize + new_side_offset).max(0) as usize;
@@ -468,11 +467,7 @@ mod tests {
             path: "f.rs".to_string(),
             hunks: vec![Hunk {
                 section: String::new(),
-                lines: vec![
-                    " a".to_string(),
-                    " b".to_string(),
-                    " c".to_string(),
-                ],
+                lines: vec![" a".to_string(), " b".to_string(), " c".to_string()],
             }],
         };
         assert!(to_unified_diff(&patch, original).is_err());
