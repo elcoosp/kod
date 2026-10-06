@@ -787,7 +787,10 @@ mod tests {
 
     #[test]
     fn pending_is_empty_when_a_call_completed() {
-        let e = vec![exit_start("", "read_file", None), exit_done("", "read_file")];
+        let e = vec![
+            exit_start("", "read_file", None),
+            exit_done("", "read_file"),
+        ];
         assert!(pending_tool_calls(&e, "").is_empty());
     }
 
