@@ -8,25 +8,25 @@
 
 #![allow(clippy::all)]
 
-pub mod session_log;
-pub mod checkpoint;
-pub mod trace;
-pub mod trace_writer;
-pub mod cost;
 pub mod budget;
 pub mod cache_journal;
 pub mod cache_ledger;
 pub mod cache_tracker;
-pub mod context_gauge;
-pub mod decisions;
-pub mod plan;
-pub mod state;
-pub mod goals;
-pub mod presence;
+pub mod checkpoint;
 pub mod citations;
-pub mod endpoint_health;
 pub mod commit_lock;
+pub mod context_gauge;
+pub mod cost;
+pub mod decisions;
 pub mod deferred_diagnostics;
+pub mod endpoint_health;
+pub mod goals;
+pub mod plan;
+pub mod presence;
 pub mod sensitivity;
-pub mod steer;
+pub mod session_log;
 pub mod socket_path;
+pub mod state;
+pub mod steer;
+pub mod trace;
+pub mod trace_writer;
