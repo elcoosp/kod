@@ -359,4 +359,28 @@ mod tests {
         let peers: Vec<&str> = conflicts.iter().map(|c| c.peer.as_str()).collect();
         assert_eq!(peers, vec!["b", "c"]);
     }
+
+
+    #[test]
+    fn file_touch_service_recovers_from_a_poisoned_lock() {
+        // T5-C17: FileTouchService's locks use
+        // `unwrap_or_else(|p| p.into_inner())` on every site, so a
+        // panicking holder does not cascade. This test poisons the
+        // lock and asserts subsequent reads/writes still work.
+        use std::sync::Arc;
+        let svc = Arc::new(FileTouchService::new());
+        let svc2 = Arc::clone(&svc);
+        // Panic while holding by_path's write lock.
+        let _ = std::thread::spawn(move || {
+            let _g = svc2.by_path.write().unwrap();
+            panic!("intentional poison");
+        })
+        .join();
+        // Every subsequent call must not panic.
+        let path = std::path::PathBuf::from("/tmp/x");
+        let conflicts = svc.conflicts_for(&path, "me");
+        assert!(conflicts.is_empty());
+        assert!(!svc.has_touched("me", &path));
+        svc.clear_agent("me");
+    }
 }
