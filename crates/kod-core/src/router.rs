@@ -1084,7 +1084,8 @@ impl TaskRouter {
             }
             return None;
         }
-        let rendered = std::sync::Arc::new(built.render(kod_core_quality::repomap::DEFAULT_MAP_CHARS));
+        let rendered =
+            std::sync::Arc::new(built.render(kod_core_quality::repomap::DEFAULT_MAP_CHARS));
         let languages = std::sync::Arc::new(built.languages.iter().cloned().collect::<Vec<_>>());
         if let Ok(mut guard) = cache.inner.write() {
             *guard = Some(CachedRepoMap {
@@ -1492,7 +1493,8 @@ impl RepoMapCache {
             }
             return None;
         }
-        let rendered = std::sync::Arc::new(map.render(kod_core_quality::repomap::DEFAULT_MAP_CHARS));
+        let rendered =
+            std::sync::Arc::new(map.render(kod_core_quality::repomap::DEFAULT_MAP_CHARS));
         let languages = std::sync::Arc::new(map.languages.iter().cloned().collect::<Vec<_>>());
         if let Ok(mut guard) = self.inner.write() {
             *guard = Some(CachedRepoMap {
