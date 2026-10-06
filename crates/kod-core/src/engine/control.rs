@@ -126,19 +126,24 @@ impl KodEngine {
     /// paths; the typed `RateLimited`/`ServerBusy` variants are matched
     /// first and the string classifier only catches providers that
     /// surface the 429/503 as a formatted message.
-    pub(crate) fn rate_limit_hint_within_budget(&self, err: &KodError) -> Option<std::time::Duration> {
+    pub(crate) fn rate_limit_hint_within_budget(
+        &self,
+        err: &KodError,
+    ) -> Option<std::time::Duration> {
         let hint_secs = match err {
             KodError::RateLimited { retry_after_secs } => *retry_after_secs,
             KodError::ServerBusy { retry_after_secs } => *retry_after_secs,
-            other => match kod_core_routing::retry_strategy::TurnFailure::classify(&other.to_string()) {
-                kod_core_routing::retry_strategy::TurnFailure::TransportRateLimit { retry_after_secs } => {
-                    retry_after_secs?
+            other => {
+                match kod_core_routing::retry_strategy::TurnFailure::classify(&other.to_string()) {
+                    kod_core_routing::retry_strategy::TurnFailure::TransportRateLimit {
+                        retry_after_secs,
+                    } => retry_after_secs?,
+                    kod_core_routing::retry_strategy::TurnFailure::TransportServerBusy {
+                        retry_after_secs,
+                    } => retry_after_secs?,
+                    _ => return None,
                 }
-                kod_core_routing::retry_strategy::TurnFailure::TransportServerBusy { retry_after_secs } => {
-                    retry_after_secs?
-                }
-                _ => return None,
-            },
+            }
         };
         if hint_secs == 0 {
             return None;
@@ -170,13 +175,11 @@ impl KodEngine {
         holder: &str,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
     ) -> Result<Option<()>> {
-        let busy = matches!(
-            err,
-            KodError::ServerBusy { .. }
-        ) || matches!(
-            kod_core_routing::retry_strategy::TurnFailure::classify(&err.to_string()),
-            kod_core_routing::retry_strategy::TurnFailure::TransportServerBusy { .. }
-        );
+        let busy = matches!(err, KodError::ServerBusy { .. })
+            || matches!(
+                kod_core_routing::retry_strategy::TurnFailure::classify(&err.to_string()),
+                kod_core_routing::retry_strategy::TurnFailure::TransportServerBusy { .. }
+            );
         // Overload gets four waits per turn, rate limits two.
         let cap = if busy {
             MAX_SERVER_BUSY_RETRIES
@@ -366,7 +369,11 @@ impl KodEngine {
     /// An empty body is dropped — an interrupt with no content would
     /// render a bare header into the transcript, which is noise the
     /// model has to read past.
-    pub async fn steer_interrupt_for(&self, key: &str, interrupt: kod_core_state::steer::SoftInterrupt) {
+    pub async fn steer_interrupt_for(
+        &self,
+        key: &str,
+        interrupt: kod_core_state::steer::SoftInterrupt,
+    ) {
         if interrupt.content.trim().is_empty() {
             return;
         }
@@ -389,7 +396,10 @@ impl KodEngine {
             .unwrap_or_default()
     }
 
-    pub(crate) async fn take_steers_for(&self, key: &str) -> Vec<kod_core_state::steer::SoftInterrupt> {
+    pub(crate) async fn take_steers_for(
+        &self,
+        key: &str,
+    ) -> Vec<kod_core_state::steer::SoftInterrupt> {
         let mut guard = self.steers.write().await;
         guard.remove(key).unwrap_or_default()
     }
