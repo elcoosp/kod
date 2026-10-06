@@ -34,7 +34,9 @@ pub async fn run_doctor(json: bool) -> Result<()> {
             .map_err(|e| KodError::Serialization(e.to_string()))?;
         println!("{}", pretty);
         if report.has_failures() {
-            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+            return Err(kod_error::KodError::Internal(
+                "admin: fatal check failed".to_string(),
+            ));
         }
         return Ok(());
     }
@@ -53,7 +55,9 @@ pub async fn run_doctor(json: bool) -> Result<()> {
 
     if report.has_failures() {
         println!("One or more checks failed — review the items marked ✗ above.");
-        return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+        return Err(kod_error::KodError::Internal(
+            "admin: fatal check failed".to_string(),
+        ));
     }
 
     println!("All checks passed.");
@@ -161,7 +165,9 @@ pub async fn run_models(filter: Option<String>) -> Result<()> {
                 default_model.display(),
                 e
             );
-            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+            return Err(kod_error::KodError::Internal(
+                "admin: fatal check failed".to_string(),
+            ));
         }
     };
 
@@ -176,7 +182,9 @@ pub async fn run_models(filter: Option<String>) -> Result<()> {
             eprintln!();
             eprintln!("Check that the server is running and `base_url` in the config is correct.");
             eprintln!("For Ollama: `ollama serve`, then retry.");
-            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+            return Err(kod_error::KodError::Internal(
+                "admin: fatal check failed".to_string(),
+            ));
         }
     };
 
@@ -258,7 +266,9 @@ pub async fn run_update() -> Result<()> {
             eprintln!("a proxy, this command cannot help — check");
             eprintln!("  https://github.com/{repo}/releases");
             eprintln!("manually.");
-            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+            return Err(kod_error::KodError::Internal(
+                "admin: fatal check failed".to_string(),
+            ));
         }
     };
 
@@ -271,7 +281,9 @@ pub async fn run_update() -> Result<()> {
             body
         };
         eprintln!("GitHub returned {status}: {short}");
-        return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+        return Err(kod_error::KodError::Internal(
+            "admin: fatal check failed".to_string(),
+        ));
     }
 
     let body: serde_json::Value = resp
@@ -285,7 +297,9 @@ pub async fn run_update() -> Result<()> {
 
     if tag_clean.is_empty() {
         eprintln!("Release metadata is missing tag_name; cannot compare versions.");
-        return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+        return Err(kod_error::KodError::Internal(
+            "admin: fatal check failed".to_string(),
+        ));
     }
 
     if versions_equal(current, tag_clean) || version_is_older(tag_clean, current) {
@@ -742,7 +756,9 @@ pub async fn run_sandbox_check() -> Result<()> {
         Ok(None) => {
             // Only returned for Disabled, which we do not ask for here.
             println!("Status:   disabled (unexpected)");
-            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+            return Err(kod_error::KodError::Internal(
+                "admin: fatal check failed".to_string(),
+            ));
         }
         Err(e) => {
             println!("Status:   unavailable");
@@ -763,7 +779,9 @@ pub async fn run_sandbox_check() -> Result<()> {
                 println!("reinstall the Command Line Tools:");
                 println!("  xcode-select --install");
             }
-            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+            return Err(kod_error::KodError::Internal(
+                "admin: fatal check failed".to_string(),
+            ));
         }
     }
     Ok(())
@@ -857,7 +875,9 @@ pub async fn run_doctor_fix(json: bool) -> Result<()> {
     }
 
     if report.has_failures() || !failed.is_empty() {
-        return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+        return Err(kod_error::KodError::Internal(
+            "admin: fatal check failed".to_string(),
+        ));
     }
     Ok(())
 }
@@ -1020,7 +1040,9 @@ pub async fn run_tools(action: Option<ToolsAction>) -> Result<()> {
                 }
                 None => {
                     eprintln!("No tool named {:?}. Try `kod tools`.", name);
-                    return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+                    return Err(kod_error::KodError::Internal(
+                        "admin: fatal check failed".to_string(),
+                    ));
                 }
             }
         }
@@ -1144,7 +1166,9 @@ pub async fn run_if_bench(
                 default_model.display(),
                 e
             );
-            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+            return Err(kod_error::KodError::Internal(
+                "admin: fatal check failed".to_string(),
+            ));
         }
     };
 
@@ -1223,7 +1247,9 @@ pub async fn run_if_bench(
     if pass {
         Ok(())
     } else {
-        return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+        return Err(kod_error::KodError::Internal(
+            "admin: fatal check failed".to_string(),
+        ));
     }
 }
 
@@ -1262,11 +1288,15 @@ pub async fn run_commit_check(
         Ok(o) => {
             let err = String::from_utf8_lossy(&o.stderr);
             eprintln!("git diff --cached failed: {}", err.trim());
-            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+            return Err(kod_error::KodError::Internal(
+                "admin: fatal check failed".to_string(),
+            ));
         }
         Err(e) => {
             eprintln!("Could not run git: {e} — is git on PATH?");
-            return Err(kod_error::KodError::Internal("admin: fatal check failed".to_string()));
+            return Err(kod_error::KodError::Internal(
+                "admin: fatal check failed".to_string(),
+            ));
         }
     };
 
