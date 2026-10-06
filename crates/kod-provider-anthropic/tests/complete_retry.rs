@@ -39,18 +39,6 @@ fn request_with(messages: Vec<ChatMessage>) -> CompletionRequest {
     req
 }
 
-fn anthropic_text_response() -> String {
-    r#"{
-        "id": "msg_1",
-        "type": "message",
-        "role": "assistant",
-        "content": [{"type": "text", "text": "ok"}],
-        "stop_reason": "end_turn",
-        "usage": {"input_tokens": 5, "output_tokens": 2}
-    }"#
-    .to_string()
-}
-
 #[tokio::test]
 async fn complete_surfaces_a_permanent_503_after_retries() {
     // A server that only ever returns 503: `complete()` must retry

@@ -521,6 +521,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn obfuscate_longest_first_after_cache_build() {
         // The cached vector must still be longest-first: a shorter
         // secret registered after a longer one must not eat its prefix.
@@ -536,7 +537,8 @@ mod tests {
         );
     }
 
-        fn obfuscate_replaces_a_registered_secret() {
+    #[test]
+    fn obfuscate_replaces_a_registered_secret() {
         let v = vault();
         let p = v.register("sk-abc123");
         let out = v.obfuscate("the key is sk-abc123 ok");
