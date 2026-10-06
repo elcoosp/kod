@@ -91,10 +91,25 @@ impl KodEngine {
             "constraint",
             "other",
         ];
-        let kind_decision = jev
+        // Bug-hunt: a Jev failure used to collapse silently to
+        // `DecisionKind::Other`. That is the right fallback, but a
+        // persistent failure is a signal worth surfacing — otherwise
+        // every extracted decision is mislabelled "other" and nobody
+        // notices the model is down. Log at debug; the decision itself
+        // is already recorded by `log_jev_decision` with `kind: None`.
+        let kind_decision = match jev
             .evaluate_score(&state, "What kind of durable decision is this?", labels)
             .await
-            .ok();
+        {
+            Ok(d) => Some(d),
+            Err(e) => {
+                tracing::debug!(
+                    error = %e,
+                    "jev_advisor: decision-kind classification failed; defaulting to Other",
+                );
+                None
+            }
+        };
         let kind = match kind_decision.as_ref().map(|d| d.value.as_str()) {
             Some("user_preference") => kod_core_state::decisions::DecisionKind::UserPreference,
             Some("approach") => kod_core_state::decisions::DecisionKind::Approach,

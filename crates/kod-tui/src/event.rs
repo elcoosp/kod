@@ -341,8 +341,6 @@ pub struct EventHandler {
     event_rx: TokioMutex<mpsc::Receiver<Event>>,
     event_tx: mpsc::Sender<Event>,
     tick_rate: Duration,
-    #[allow(dead_code)]
-    last_tick: StdMutex<Instant>,
     is_running: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// F2g-15: the spawned input-loop task. `stop()` aborts it so a
     /// task parked on `reader.next().await` (which the `is_running`
@@ -359,7 +357,6 @@ impl EventHandler {
             event_rx: TokioMutex::new(rx),
             event_tx: tx,
             tick_rate,
-            last_tick: StdMutex::new(Instant::now()),
             is_running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             input_task: StdMutex::new(None),
         }

@@ -141,6 +141,12 @@ pub async fn run_skills_new(name: &str) -> Result<()> {
 
     // Prefer a project-local path if the cwd is inside one; else the
     // first home-level path.
+    //
+    // A failed `current_dir()` (the directory was deleted under us, a
+    // permissions change, a chroot boundary) falls back to the
+    // home-level path. The fallback is deliberate and correct; the
+    // failure itself is rare enough not to earn a new `tracing`
+    // dependency on `kod-cli`, so it stays silent.
     let cwd = std::env::current_dir().ok();
     let target_dir = dirs
         .iter()

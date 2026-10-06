@@ -2076,7 +2076,23 @@ for _ in 0..MAX_EVENTS_PER_FRAME {
                     match found {
                         Some((n, d)) => {
                             // Read the file for the full content.
-                            let config = KodConfig::load_default().ok();
+                            //
+                            // Bug-hunt: the pre-fix shape silently dropped a
+                            // config-load error, so `/skills <name>` would
+                            // print just the one-line description with no
+                            // explanation for why the file body was missing.
+                            // Keep the fallback but make the cause visible
+                            // under RUST_LOG=debug.
+                            let config = match KodConfig::load_default() {
+                                Ok(c) => Some(c),
+                                Err(e) => {
+                                    tracing::debug!(
+                                        error = %e,
+                                        "skills: config load failed; falling back to description only",
+                                    );
+                                    None
+                                }
+                            };
                             let mut body: Option<String> = None;
                             if let Some(cfg) = &config
                                 && let Ok(dirs) = cfg.skills_dirs()
@@ -5144,7 +5160,21 @@ for _ in 0..MAX_EVENTS_PER_FRAME {
                 // A `/foo` that is not a builtin is looked up by name;
                 // a match expands `{args}` and `{cwd}` and dispatches
                 // as a normal prompt.
-                let config = KodConfig::load_default().ok();
+                // Bug-hunt: a config-load error here made every user-defined
+                // `[commands]` entry silently vanish — the user typed a
+                // valid custom command and got the "unknown command" hint
+                // with no clue that the config file failed to parse. Keep
+                // the graceful fallthrough; log the cause.
+                let config = match KodConfig::load_default() {
+                    Ok(c) => Some(c),
+                    Err(e) => {
+                        tracing::debug!(
+                            error = %e,
+                            "custom command: config load failed; no user commands available",
+                        );
+                        None
+                    }
+                };
                 let custom = config.as_ref().and_then(|c| {
                     let key = cmd.trim_start_matches('/');
                     c.commands.get(key).cloned()
