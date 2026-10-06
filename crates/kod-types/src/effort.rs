@@ -164,4 +164,14 @@ mod tests {
     fn an_unknown_effort_is_medium() {
         assert_eq!(EffortLevel::parse("turbo"), EffortLevel::Medium);
     }
+
+    #[test]
+    fn unknown_effort_maps_to_medium() {
+        // T5-C40: the fallback stays for forward-compat, but the
+        // parse must not panic and must land on Medium.
+        assert_eq!(EffortLevel::parse("turbo"), EffortLevel::Medium);
+        assert_eq!(EffortLevel::parse("hight"), EffortLevel::Medium);
+        assert_eq!(EffortLevel::parse(""), EffortLevel::Medium);
+        assert_eq!(EffortLevel::parse("  "), EffortLevel::Medium);
+    }
 }
