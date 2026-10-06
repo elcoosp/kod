@@ -142,7 +142,11 @@ impl HubTool {
         };
         let body = match params.get("body").and_then(|v| v.as_str()) {
             Some(s) if !s.trim().is_empty() => s.trim().to_string(),
-            _ => return Ok(ToolResult::Error("hub send: 'body' is required".to_string())),
+            _ => {
+                return Ok(ToolResult::Error(
+                    "hub send: 'body' is required".to_string(),
+                ));
+            }
         };
         let priority = match params
             .get("priority")
@@ -249,7 +253,10 @@ mod tests {
             match r {
                 ToolResult::Error(e) => {
                     assert!(e.contains("unavailable"), "op {op}: {e}");
-                    assert!(e.contains("run_in_background"), "op {op} should suggest the real path: {e}");
+                    assert!(
+                        e.contains("run_in_background"),
+                        "op {op} should suggest the real path: {e}"
+                    );
                 }
                 other => panic!("op {op}: expected unavailable, got {other:?}"),
             }
