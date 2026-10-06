@@ -620,10 +620,7 @@ mod tests {
         let err = h.resolve("artifact://abc", &other).await.unwrap_err();
         match err {
             ProtocolError::Handler { message, .. } => {
-                assert!(
-                    message.contains("another session"),
-                    "got: {message}"
-                );
+                assert!(message.contains("another session"), "got: {message}");
             }
             other => panic!("expected Handler, got {other:?}"),
         }
@@ -650,10 +647,7 @@ mod tests {
             .unwrap_err();
         match err {
             ProtocolError::Handler { message, .. } => {
-                assert!(
-                    message.contains("another session"),
-                    "got: {message}"
-                );
+                assert!(message.contains("another session"), "got: {message}");
             }
             other => panic!("expected Handler, got {other:?}"),
         }
