@@ -309,7 +309,6 @@ impl KodError {
     }
 }
 
-
 /// T5-C24: match a status code only when it appears as a
 /// whitespace/punctuation-delimited token — not as a substring of a
 /// longer number like `5001` or `id_500_expired`.
@@ -361,12 +360,7 @@ mod tests {
         }
         // False positives the pre-fix matcher produced: `500` is a
         // substring of a larger number, not a status code.
-        for body in [
-            "server error 5001",
-            "task_5003_failed",
-            "a500b",
-            "n500",
-        ] {
+        for body in ["server error 5001", "task_5003_failed", "a500b", "n500"] {
             assert!(
                 !is_transient_transport_error(body),
                 "{body:?} must NOT be transient (500 is not a token)",
