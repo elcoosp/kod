@@ -501,8 +501,16 @@ pub async fn run_replay(path: std::path::PathBuf, execute: bool, yes: bool) -> R
     // on the read-only allowlist requires `--yes`. A denylist ages
     // badly (git_commit shipped after the old three-name list).
     const READ_ONLY_TOOLS: &[&str] = &[
-        "read_file", "grep", "search_files", "list_files", "file_info",
-        "git_status", "git_diff", "lsp_diagnostics", "check", "web_fetch",
+        "read_file",
+        "grep",
+        "search_files",
+        "list_files",
+        "file_info",
+        "git_status",
+        "git_diff",
+        "lsp_diagnostics",
+        "check",
+        "web_fetch",
     ];
     let destructive: Vec<_> = tool_calls
         .iter()
