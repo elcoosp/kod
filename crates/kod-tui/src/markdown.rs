@@ -229,11 +229,23 @@ enum Block {
         lang: Option<String>,
         lines: Vec<String>,
     },
-    Header { level: u8, text: String },
-    Bullet { text: String },
-    Numbered { num: usize, text: String },
-    Quote { text: String },
-    Paragraph { text: String },
+    Header {
+        level: u8,
+        text: String,
+    },
+    Bullet {
+        text: String,
+    },
+    Numbered {
+        num: usize,
+        text: String,
+    },
+    Quote {
+        text: String,
+    },
+    Paragraph {
+        text: String,
+    },
     Blank,
 }
 
@@ -266,7 +278,11 @@ fn parse(markdown: &str) -> Vec<Block> {
             flush_para(&mut blocks, &mut para);
             in_code = true;
             let info = info.trim();
-            code_lang = if info.is_empty() { None } else { Some(info.to_string()) };
+            code_lang = if info.is_empty() {
+                None
+            } else {
+                Some(info.to_string())
+            };
             continue;
         }
 
@@ -755,7 +771,9 @@ fn char_width(c: char) -> usize {
     if c.is_control() {
         0
     } else {
-        unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).max(1)
+        unicode_width::UnicodeWidthChar::width(c)
+            .unwrap_or(1)
+            .max(1)
     }
 }
 
@@ -899,11 +917,20 @@ mod tests {
 
     #[test]
     fn fenced_rust_block_is_highlighted_per_token() {
-        let out = render("```rust\nfn main() { let x = \"s\"; } // c\n```", 60, &theme());
+        let out = render(
+            "```rust\nfn main() { let x = \"s\"; } // c\n```",
+            60,
+            &theme(),
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(rendered_text(&out), " fn main() { let x = \"s\"; } // c");
         assert!(distinct(&out[0]) >= 4, "{:?}", fgs(&out[0]));
-        assert!(out[0].spans.iter().all(|s| s.style.bg == Some(crate::highlight::CODE_BG)));
+        assert!(
+            out[0]
+                .spans
+                .iter()
+                .all(|s| s.style.bg == Some(crate::highlight::CODE_BG))
+        );
     }
 
     #[test]
