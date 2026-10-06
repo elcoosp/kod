@@ -671,4 +671,39 @@ mod hint_tests {
     fn the_cap_is_the_documented_sixty_seconds() {
         assert_eq!(HINT_CAP, Duration::from_secs(60));
     }
+
+    #[test]
+    fn jitter_varies_across_successive_calls() {
+        // T2-H11: the pre-fix shape used SystemTime::subsec_nanos() as
+        // the only jitter source, so a swarm of agents retrying the
+        // same attempt at the same wall-clock instant computed
+        // identical delays and retried in lockstep. This test checks
+        // the delay is not constant across a tight loop.
+        let policy = RetryPolicy::default();
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..40 {
+            seen.insert(policy.delay_for(1).as_nanos());
+        }
+        assert!(
+            seen.len() >= 2,
+            "jitter must vary; got {} distinct values out of 40",
+            seen.len(),
+        );
+    }
+
+    #[test]
+    fn jitter_stays_inside_the_configured_band() {
+        let policy = RetryPolicy::default();
+        let base = policy.base_delay.as_nanos() as f64;
+        let j = policy.jitter_fraction;
+        for _ in 0..40 {
+            let d = policy.delay_for(1).as_nanos() as f64;
+            assert!(
+                d >= base * (1.0 - j) - 1.0 && d <= base * (1.0 + j) + 1.0,
+                "delay {d} outside [{}, {}]",
+                base * (1.0 - j),
+                base * (1.0 + j),
+            );
+        }
+    }
 }
