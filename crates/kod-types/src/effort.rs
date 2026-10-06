@@ -53,7 +53,8 @@ impl EffortLevel {
                 );
                 Self::Medium
             }
-        }    }
+        }
+    }
 
     /// The idle-timeout multiplier for this effort.
     ///
