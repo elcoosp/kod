@@ -1236,10 +1236,7 @@ impl Tool for ExecuteCommandTool {
                             let id = format!("cmd-{:016x}", h.finish());
                             let text = raw_stdout.clone();
                             let owner = context.holder.clone();
-                            match store
-                                .call(id, text, "text/plain".to_string(), owner)
-                                .await
-                            {
+                            match store.call(id, text, "text/plain".to_string(), owner).await {
                                 Ok(u) => Some(u),
                                 Err(e) => {
                                     tracing::warn!(error = %e, "artifact store failed; continuing without raw");
@@ -1623,8 +1620,7 @@ impl Tool for PatchFileTool {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let new_file_patch = crate::patch::parse_unified_diff(patch)
                     .map(|hs| {
-                        !hs.is_empty()
-                            && hs.iter().all(|h| h.old_start == 0 && h.old_lines == 0)
+                        !hs.is_empty() && hs.iter().all(|h| h.old_start == 0 && h.old_lines == 0)
                     })
                     .unwrap_or(false);
                 if new_file_patch {
@@ -1663,7 +1659,8 @@ impl Tool for PatchFileTool {
         if fresh != original {
             return Ok(ToolResult::Error(format!(
                 "patch_file: file changed between read and write ({} bytes -> {} bytes); re-read and re-apply",
-                original.len(), fresh.len()
+                original.len(),
+                fresh.len()
             )));
         }
         if let Err(e) = atomic_write(&resolved, patched.as_bytes()) {
@@ -2088,7 +2085,10 @@ mod tests {
         let patch = "--- a/nope.txt\n+++ b/nope.txt\n@@ -1,1 +1,1 @@\n-old\n+new\n";
         let args = serde_json::json!({ "path": "nope.txt", "patch": patch });
         let r = tool.execute(&args, &ctx).await.unwrap();
-        assert!(matches!(r, ToolResult::Error(_)), "expected error, got {r:?}");
+        assert!(
+            matches!(r, ToolResult::Error(_)),
+            "expected error, got {r:?}"
+        );
     }
 
     fn full_context(dir: &std::path::Path) -> ToolContext {
@@ -2298,9 +2298,8 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         let path = temp.path().join("code.rs");
         std::fs::write(&path, "fn a() {}\nfn b() {}\n").unwrap();
-        let store = std::sync::Arc::new(std::sync::Mutex::new(
-            crate::edit_hashline::EditStore::new(),
-        ));
+        let store =
+            std::sync::Arc::new(std::sync::Mutex::new(crate::edit_hashline::EditStore::new()));
         let mut ctx = crate::context::ToolContext::new(temp.path());
         ctx.permissions.read_files = true;
         ctx.edit_store = Some(std::sync::Arc::clone(&store));
