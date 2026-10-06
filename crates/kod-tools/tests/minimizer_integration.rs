@@ -61,12 +61,11 @@ fn make_context_with_minimizer(
         ArtifactStoreHook::new(move |id, text, mime, owner| {
             let handler = Arc::clone(&handler);
             Box::pin(async move {
-                handler
-                    .store_for(id, text, mime, owner)
-                    .await
-                    .map_err(|e| kod_error::KodError::InvalidParameters {
+                handler.store_for(id, text, mime, owner).await.map_err(|e| {
+                    kod_error::KodError::InvalidParameters {
                         reason: format!("artifact store: {e}"),
-                    })
+                    }
+                })
             })
         })
     };
