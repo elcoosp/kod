@@ -4,8 +4,8 @@
 
 #![allow(clippy::all)]
 
-pub mod retry_strategy;
-pub mod provider_setup;
 pub mod config;
 pub mod context;
 pub mod context_engine;
+pub mod provider_setup;
+pub mod retry_strategy;
