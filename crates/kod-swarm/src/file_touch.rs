@@ -212,7 +212,11 @@ impl FileTouchService {
     /// without it a long run accumulates one dead agent's paths per
     /// subtask.
     pub fn clear_agent(&self, agent: &str) {
-        let paths = self.by_agent.write().unwrap_or_else(|p| p.into_inner()).remove(agent);
+        let paths = self
+            .by_agent
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(agent);
         let Some(paths) = paths else { return };
         let mut guard = self.by_path.write().unwrap_or_else(|p| p.into_inner());
         for p in paths {
@@ -359,7 +363,6 @@ mod tests {
         let peers: Vec<&str> = conflicts.iter().map(|c| c.peer.as_str()).collect();
         assert_eq!(peers, vec!["b", "c"]);
     }
-
 
     #[test]
     fn file_touch_service_recovers_from_a_poisoned_lock() {
