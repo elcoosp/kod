@@ -31,7 +31,6 @@
 //! same tools under its own id via the tool registry it inherits
 //! from the engine.
 
-use crate::engine::KodEngine;
 use kod_error::Result;
 use kod_swarm::{AgentCommunicationHub, MessageContent};
 use kod_tools::{Tool, ToolContext};
@@ -253,10 +252,6 @@ impl Tool for SwarmReadTool {
         })))
     }
 }
-
-// Silence an unused-import warning while the module is small.
-#[allow(dead_code)]
-fn _engine_marker(_: &KodEngine) {}
 
 #[cfg(test)]
 mod tests {

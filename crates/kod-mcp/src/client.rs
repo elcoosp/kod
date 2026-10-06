@@ -80,10 +80,26 @@ pub struct McpClient {
 impl McpClient {
     /// Spawn a server and start the reader task. Does not perform the
     /// MCP handshake — call [`McpClient::initialize`] next.
+    /// Spawn a server in the parent's working directory. Equivalent to
+    /// [`spawn_stdio_in`] with `cwd = None`.
     pub async fn spawn_stdio(
         cmd: &str,
         args: &[String],
         env: &BTreeMap<String, String>,
+    ) -> Result<Self, McpError> {
+        Self::spawn_stdio_in(cmd, args, env, None).await
+    }
+
+    /// Spawn a server with an explicit working directory. A relative
+    /// `cmd` (e.g. `./tools/server.py`) is resolved against `cwd` by
+    /// the OS; without it, the child inherits the parent's cwd, which
+    /// is kod's own directory, not the embedder's — the bug that left
+    /// [`crate::McpHost::working_dir`] a dead field.
+    pub async fn spawn_stdio_in(
+        cmd: &str,
+        args: &[String],
+        env: &BTreeMap<String, String>,
+        cwd: Option<&std::path::Path>,
     ) -> Result<Self, McpError> {
         let mut command = Command::new(cmd);
         command
@@ -96,6 +112,9 @@ impl McpClient {
             // to `tracing` when we need to debug a misbehaving server.
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if let Some(dir) = cwd {
+            command.current_dir(dir);
+        }
         // W14 (mirrors crates/kod-tools/src/tools.rs): put the child
         // in its own process group so `shutdown` below can reach a
         // grandchild the server forked (an `npx` launcher spawning

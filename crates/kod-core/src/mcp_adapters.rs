@@ -74,7 +74,11 @@ pub fn split_mcp_tool_name(full: &str) -> Option<(&str, &str)> {
 /// is internally `Send + Sync`).
 pub struct McpHost {
     specs: BTreeMap<String, kod_config::McpServerConfig>,
-    #[allow(dead_code)]
+    /// The engine's working directory. Passed to every server as its
+    /// `current_dir`, so a relative `command` in a server spec
+    /// (`./tools/server.py`) resolves against the project the user is
+    /// in, not against whatever directory the kod process happens to
+    /// have been launched from.
     working_dir: std::path::PathBuf,
     servers: tokio::sync::RwLock<HashMap<String, Arc<McpClient>>>,
 }
@@ -214,7 +218,12 @@ impl McpHost {
             )));
         }
 
-        let client = McpClient::spawn_stdio(&spec.command, &spec.args, &spec.env)
+        let client = McpClient::spawn_stdio_in(
+            &spec.command,
+            &spec.args,
+            &spec.env,
+            Some(&self.working_dir),
+        )
             .await
             .map_err(|e| {
                 KodError::Internal(format!(
