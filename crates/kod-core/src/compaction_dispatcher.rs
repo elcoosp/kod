@@ -1318,7 +1318,9 @@ mod tests {
         let d = CompactionDispatcher::new(vec![
             Box::new(ScriptedMethod::new(
                 "first",
-                MethodOutcome::Plan(CompactionPlan::Prune(kod_core_quality::prune::PrunePlan::default())),
+                MethodOutcome::Plan(CompactionPlan::Prune(
+                    kod_core_quality::prune::PrunePlan::default(),
+                )),
             )),
             Box::new(ScriptedMethod::new(
                 "second",
