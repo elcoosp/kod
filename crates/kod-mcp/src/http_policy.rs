@@ -100,7 +100,7 @@ pub enum RedirectDecision {
 pub fn decide_redirect(from: &str, to: &str, status: u16, method: Method) -> RedirectDecision {
     // Only the redirect statuses the spec defines are followed.
     let method_preserving = matches!(status, 307 | 308);
-    let method_changing = matches!(status, 301 | 302 | 303);
+    let method_changing = matches!(status, 301..=303);
     if !method_preserving && !method_changing {
         return RedirectDecision::Refuse {
             reason: "not a redirect status",

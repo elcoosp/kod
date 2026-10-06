@@ -1367,7 +1367,7 @@ impl MemoryManager {
                             );
                             continue;
                         }
-                        for (slot, v) in missing_slots.iter().zip(fresh.into_iter()) {
+                        for (slot, v) in missing_slots.iter().zip(fresh) {
                             vectors[*slot] = v;
                         }
                     }

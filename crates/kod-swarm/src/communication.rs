@@ -175,7 +175,7 @@ impl AgentCommunicationHub {
         let agents = self.agents.read().await;
         let mut out: Vec<(AgentId, bool)> =
             agents.iter().map(|(id, info)| (id.clone(), info.online)).collect();
-        out.sort_by(|a, b| a.0.to_string().cmp(&b.0.to_string()));
+        out.sort_by_key(|e| e.0.to_string());
         out
     }
 

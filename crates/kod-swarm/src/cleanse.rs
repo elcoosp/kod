@@ -134,7 +134,7 @@ impl CleanseScheduler {
         }
         let total: usize = self.pending.values().map(|v| v.len()).sum();
         let share = total / self.max_agents;
-        share.min(DEFAULT_BATCH_BUDGET).max(1)
+        share.clamp(1, DEFAULT_BATCH_BUDGET)
     }
 
     /// Take a batch for `worker`: the files this worker may edit.

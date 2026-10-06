@@ -3744,7 +3744,7 @@ for _ in 0..MAX_EVENTS_PER_FRAME {
                 if let Some(engine) = &self.engine {
                     let report = engine.run_report();
                     if !report.is_empty() {
-                        msg.push_str("\n");
+                        msg.push('\n');
                         msg.push_str(&report);
                     }
                 }

@@ -236,7 +236,7 @@ pub fn collect_ranked(paths: &[PathBuf], limit: usize) -> Vec<PathBuf> {
             Some((p.clone(), mtime))
         })
         .collect();
-    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    scored.sort_by_key(|e| std::cmp::Reverse(e.1));
     scored.into_iter().take(limit).map(|(p, _)| p).collect()
 }
 

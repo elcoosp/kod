@@ -473,7 +473,7 @@ impl ChatWidget {
         #[allow(unstable_name_collisions)]
         let rows = Paragraph::new(Text::from(lines))
             .wrap(Wrap { trim: false })
-            .line_count(width_u16) as usize;
+            .line_count(width_u16);
         crate::render_cache::with_cache(|c| {
             c.insert(m.id.clone(), content_hash, width_u16, rows, tail_blank);
         });
@@ -549,7 +549,7 @@ impl ChatWidget {
                 #[allow(unstable_name_collisions)]
                 let rows = Paragraph::new(Text::from(block))
                     .wrap(Wrap { trim: false })
-                    .line_count(narrow_width as u16) as usize;
+                    .line_count(narrow_width as u16);
                 probe_rows += rows;
                 probe_rendered = true;
             }
@@ -666,7 +666,7 @@ impl ChatWidget {
                 {
                     rows += Paragraph::new(Text::from(block))
                         .wrap(Wrap { trim: false })
-                        .line_count(text_width as u16) as usize;
+                        .line_count(text_width as u16);
                 }
                 rendered = true;
             }
@@ -693,7 +693,7 @@ impl ChatWidget {
                 #[allow(unstable_name_collisions)]
                 let prefix_rows = Paragraph::new(prefix)
                     .wrap(Wrap { trim: false })
-                    .line_count(text_width as u16) as usize;
+                    .line_count(text_width as u16);
                 let desired = prefix_rows.saturating_sub(height / 2);
                 desired.min(max_offset).min(u16::MAX as usize) as u16
             } else {

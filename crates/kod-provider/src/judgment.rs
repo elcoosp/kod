@@ -920,7 +920,7 @@ mod tests {
         // prefix of the other. Instead verify the more relevant
         // property: with both labels present, the reply picks the
         // one that appears as a whole word.
-        let a = parse_response("q: foo", &[q.clone()]);
+        let a = parse_response("q: foo", std::slice::from_ref(&q));
         assert_eq!(a.get("q"), Some("foo"));
         let b = parse_response("q: foobar", &[q]);
         assert_eq!(b.get("q"), Some("foobar"));
@@ -937,7 +937,7 @@ mod tests {
                 ("beta".to_string(), "b".to_string()),
             ],
         };
-        let a = parse_response("q: beta then alpha", &[q.clone()]);
+        let a = parse_response("q: beta then alpha", std::slice::from_ref(&q));
         assert_eq!(a.get("q"), Some("beta"));
         let b = parse_response("q: alpha then beta", &[q]);
         assert_eq!(b.get("q"), Some("alpha"));

@@ -243,7 +243,7 @@ impl BackgroundJobRunner {
             .iter()
             .map(|e| (*e.key(), e.value().clone()))
             .collect();
-        out.sort_by(|a, b| b.0.cmp(&a.0));
+        out.sort_by_key(|e| std::cmp::Reverse(e.0));
         out
     }
 

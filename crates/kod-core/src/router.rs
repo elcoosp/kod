@@ -1347,7 +1347,7 @@ impl TaskRouter {
         if !rendered_instructions.is_empty() {
             prompt.push_str("## Project instructions\n\n");
             prompt.push_str(&rendered_instructions);
-            prompt.push_str("\n");
+            prompt.push('\n');
         }
 
         // Add user input

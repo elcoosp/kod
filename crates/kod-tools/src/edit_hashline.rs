@@ -299,7 +299,7 @@ fn stage(text: &str, ops: &[Op]) -> Result<String, EditError> {
     // Sort ops by start, descending, so earlier line numbers stay
     // valid as later edits shift the buffer. Appends go last.
     let mut indexed: Vec<(usize, &Op)> = ops.iter().enumerate().map(|(i, o)| (i, o)).collect();
-    indexed.sort_by(|a, b| b.1.start.cmp(&a.1.start));
+    indexed.sort_by_key(|e| std::cmp::Reverse(e.1.start));
 
     let mut lines: Vec<String> = text.lines().map(|s| s.to_string()).collect();
     for (_, op) in &indexed {
