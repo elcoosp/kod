@@ -11,7 +11,7 @@ use kod_error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Mutex as StdMutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 
 /// T4-C2: a process-wide wake signal shared by `EventHandler` and
