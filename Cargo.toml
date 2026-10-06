@@ -266,7 +266,7 @@ crossterm = { version = "0.28.1", features = ["event-stream"] }
 # `default-themes` bundle the common languages (Rust, Python, JS, TS,
 # Go, …) — pulling them in avoids a runtime file-system lookup that a
 # sandboxed binary might not be able to satisfy.
-syntect = { version = "5.2", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
+syntect = { version = "5.2", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
 
 # Testing
 proptest = "1.11.0"
