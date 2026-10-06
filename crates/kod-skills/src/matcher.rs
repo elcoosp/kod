@@ -152,8 +152,7 @@ impl SkillMatcher {
             // M-10: the reversed check (tag contains query) needs a
             // length floor, or a 2-char query like "ui" matched "build"
             // and injected unrelated skills at 0.4 >= the 0.3 threshold.
-            let reverse_hit = query.len() >= MIN_TAG_MATCH_CHARS
-                && tag_lower.contains(query);
+            let reverse_hit = query.len() >= MIN_TAG_MATCH_CHARS && tag_lower.contains(query);
             if query.contains(&tag_lower) || reverse_hit {
                 score += 0.4;
                 reasons.push(MatchReason::TagMatch { tag: tag.clone() });
@@ -203,8 +202,7 @@ impl SkillMatcher {
                 desc_hits += 1;
             }
         }
-        let query_words: std::collections::HashSet<&str> =
-            query.split_whitespace().collect();
+        let query_words: std::collections::HashSet<&str> = query.split_whitespace().collect();
         for word in desc_lower.split(|c: char| !c.is_alphanumeric()) {
             if word.len() > 4 && query_words.contains(word) && !seen.contains(&word) {
                 seen.push(word);
