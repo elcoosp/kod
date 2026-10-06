@@ -1186,9 +1186,8 @@ fn is_session_busy(err: &kod_error::KodError) -> bool {
             // Rejects "4096 tokens", mid-token digits in timestamps,
             // and "tcp 40901" while still matching every real 409
             // status surfaced by tab-bridge or a proxy.
-            msg.split_whitespace().any(|w| {
-                w.trim_matches(|c: char| !c.is_ascii_digit()) == "409"
-            })
+            msg.split_whitespace()
+                .any(|w| w.trim_matches(|c: char| !c.is_ascii_digit()) == "409")
         }
         _ => false,
     }
