@@ -120,10 +120,9 @@ pub fn classify(cmd: &str) -> CommandPlan {
 fn strip_quotes(tok: &str) -> &str {
     let b = tok.as_bytes();
     if b.len() >= 2
-        && ((b[0] == b'\'' && b[b.len()-1] == b'\'')
-            || (b[0] == b'"' && b[b.len()-1] == b'"'))
+        && ((b[0] == b'\'' && b[b.len() - 1] == b'\'') || (b[0] == b'"' && b[b.len() - 1] == b'"'))
     {
-        &tok[1..tok.len()-1]
+        &tok[1..tok.len() - 1]
     } else {
         tok
     }
@@ -248,4 +247,3 @@ mod tests {
         assert_eq!(strip_quotes("'abc\""), "'abc\"");
     }
 }
-
