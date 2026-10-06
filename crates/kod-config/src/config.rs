@@ -311,7 +311,13 @@ impl KodConfig {
     pub fn load_cached() -> Result<std::sync::Arc<Self>> {
         use std::sync::{Mutex, OnceLock};
         static CACHE: OnceLock<
-            Mutex<Option<(PathBuf, Option<std::time::SystemTime>, std::sync::Arc<KodConfig>)>>,
+            Mutex<
+                Option<(
+                    PathBuf,
+                    Option<std::time::SystemTime>,
+                    std::sync::Arc<KodConfig>,
+                )>,
+            >,
         > = OnceLock::new();
         let path = match Self::config_dir() {
             Ok(d) => d.join("config.toml"),
@@ -534,19 +540,15 @@ impl KodConfig {
     /// directory and exists for backwards compatibility with callers
     /// that predate multi-directory discovery.
     pub fn skills_dir(&self) -> Result<PathBuf> {
-        Ok(self
-            .skills_dirs()?
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| {
-                // T5-C39: warn when home is unresolvable rather than
-                // silently falling back to a cwd-relative path.
-                tracing::warn!(
-                    "home directory is unresolvable; falling back to \
+        Ok(self.skills_dirs()?.into_iter().next().unwrap_or_else(|| {
+            // T5-C39: warn when home is unresolvable rather than
+            // silently falling back to a cwd-relative path.
+            tracing::warn!(
+                "home directory is unresolvable; falling back to \
                      ./.kod/skills (relative to the current working dir)",
-                );
-                PathBuf::from(".kod/skills")
-            }))
+            );
+            PathBuf::from(".kod/skills")
+        }))
     }
 
     /// Every directory KOD scans for skills, in load order.
