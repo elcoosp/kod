@@ -86,7 +86,10 @@ pub enum EditError {
     BadRange { s: usize, e: usize },
     /// Two ops address overlapping line ranges — applying both would
     /// splice against shifted indices.
-    Overlap { first: (usize, usize), second: (usize, usize) },
+    Overlap {
+        first: (usize, usize),
+        second: (usize, usize),
+    },
     /// The op text did not parse.
     Malformed(String),
 }
@@ -193,12 +196,7 @@ impl EditStore {
     /// Apply `ops` to `path` under the tag guard. Returns the new tag
     /// on success (the model chains edits on it). All-or-nothing:
     /// nothing is written if any op fails validation.
-    pub fn apply(
-        &mut self,
-        path: &Path,
-        tag: Tag,
-        ops: &[Op],
-    ) -> Result<(Tag, String), EditError> {
+    pub fn apply(&mut self, path: &Path, tag: Tag, ops: &[Op]) -> Result<(Tag, String), EditError> {
         let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let snap = self.snapshots.get(&key).ok_or(EditError::NeverRead)?;
         if snap.tag != tag {
@@ -210,9 +208,8 @@ impl EditStore {
         // Guard against the FILE, not just the snapshot: an external
         // edit since the read (sed -i, a git op, a peer) would otherwise
         // be silently clobbered by the staged splice.
-        let current = std::fs::read_to_string(path).map_err(|e| {
-            EditError::Malformed(format!("re-read before edit failed: {e}"))
-        })?;
+        let current = std::fs::read_to_string(path)
+            .map_err(|e| EditError::Malformed(format!("re-read before edit failed: {e}")))?;
         // W12: compare exact bytes, not the 16-bit tag. `tag_of` folds
         // FNV-1a to two bytes; two different contents can collide
         // (1/65536), and a collision here would green-light a splice
@@ -240,10 +237,7 @@ impl EditStore {
             }
             let len = snap.text.lines().count();
             if op.end > len {
-                return Err(EditError::OutOfRange {
-                    line: op.end,
-                    len,
-                });
+                return Err(EditError::OutOfRange { line: op.end, len });
             }
             // W4: every line the op touches must have been seen, not
             // just the first. `CUT 1.=5` with only line 1 read deleted
@@ -466,8 +460,18 @@ mod tests {
         let mut store = EditStore::new();
         let tag = store.record_snapshot(&f, "a\nb\nc\nd\n", seen_all(4));
         let ops = vec![
-            Op { start: 2, end: 3, payload: vec!["B".into()], append: false },
-            Op { start: 3, end: 4, payload: vec!["C".into()], append: false },
+            Op {
+                start: 2,
+                end: 3,
+                payload: vec!["B".into()],
+                append: false,
+            },
+            Op {
+                start: 3,
+                end: 4,
+                payload: vec!["C".into()],
+                append: false,
+            },
         ];
         let err = store.apply(&f, tag, &ops).unwrap_err();
         assert!(matches!(err, EditError::Overlap { .. }), "got {err:?}");
@@ -483,8 +487,18 @@ mod tests {
         let mut store = EditStore::new();
         let tag = store.record_snapshot(&f, "a\nb\nc\n", seen_all(3));
         let ops = vec![
-            Op { start: 2, end: 2, payload: vec!["FIRST".into()], append: false },
-            Op { start: 2, end: 2, payload: vec!["SECOND".into()], append: false },
+            Op {
+                start: 2,
+                end: 2,
+                payload: vec!["FIRST".into()],
+                append: false,
+            },
+            Op {
+                start: 2,
+                end: 2,
+                payload: vec!["SECOND".into()],
+                append: false,
+            },
         ];
         assert!(matches!(
             store.apply(&f, tag, &ops).unwrap_err(),
@@ -502,7 +516,12 @@ mod tests {
         let mut seen = vec![false; 6];
         seen[1] = true;
         let tag = store.record_snapshot(&f, "a\nb\nc\nd\ne\n", seen);
-        let ops = vec![Op { start: 1, end: 5, payload: vec![], append: false }];
+        let ops = vec![Op {
+            start: 1,
+            end: 5,
+            payload: vec![],
+            append: false,
+        }];
         let err = store.apply(&f, tag, &ops).unwrap_err();
         assert!(matches!(err, EditError::UnseenAnchor { .. }), "got {err:?}");
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "a\nb\nc\nd\ne\n");
@@ -517,7 +536,12 @@ mod tests {
         let tag = store.record_snapshot(&f, "a\nb\n", seen_all(2));
         // External edit since the read.
         std::fs::write(&f, "a\nCHANGED\n").unwrap();
-        let ops = vec![Op { start: 2, end: 2, payload: vec!["X".into()], append: false }];
+        let ops = vec![Op {
+            start: 2,
+            end: 2,
+            payload: vec!["X".into()],
+            append: false,
+        }];
         let err = store.apply(&f, tag, &ops).unwrap_err();
         assert!(matches!(err, EditError::StaleTag { .. }), "got {err:?}");
     }
@@ -580,7 +604,16 @@ mod tests {
         std::fs::write(&f, "one\nCHANGED\n").unwrap();
         let wrong = [0xff, 0xff];
         let err = store
-            .apply(&f, wrong, &[Op { start: 2, end: 2, payload: vec!["x".into()], append: false }])
+            .apply(
+                &f,
+                wrong,
+                &[Op {
+                    start: 2,
+                    end: 2,
+                    payload: vec!["x".into()],
+                    append: false,
+                }],
+            )
             .unwrap_err();
         assert!(matches!(err, EditError::StaleTag { .. }), "got {err:?}");
         // The file is untouched.
@@ -599,9 +632,21 @@ mod tests {
         seen[1] = true;
         let tag = store.record_snapshot(&f, "one\ntwo\nthree\n", seen);
         let err = store
-            .apply(&f, tag, &[Op { start: 3, end: 3, payload: vec!["x".into()], append: false }])
+            .apply(
+                &f,
+                tag,
+                &[Op {
+                    start: 3,
+                    end: 3,
+                    payload: vec!["x".into()],
+                    append: false,
+                }],
+            )
             .unwrap_err();
-        assert!(matches!(err, EditError::UnseenAnchor { line: 3 }), "got {err:?}");
+        assert!(
+            matches!(err, EditError::UnseenAnchor { line: 3 }),
+            "got {err:?}"
+        );
         // Untouched.
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "one\ntwo\nthree\n");
     }
@@ -620,8 +665,18 @@ mod tests {
         let tag2 = store.current_tag(&f).unwrap();
         let _ = tag;
         let ops = vec![
-            Op { start: 1, end: 1, payload: vec!["ONE".into()], append: false },
-            Op { start: 2, end: 2, payload: vec!["TWO".into()], append: false },
+            Op {
+                start: 1,
+                end: 1,
+                payload: vec!["ONE".into()],
+                append: false,
+            },
+            Op {
+                start: 2,
+                end: 2,
+                payload: vec!["TWO".into()],
+                append: false,
+            },
         ];
         assert!(store.apply(&f, tag2, &ops).is_err());
         // No partial write.
@@ -652,7 +707,16 @@ mod tests {
         std::fs::write(&f, "x\n").unwrap();
         let mut store = EditStore::new();
         let err = store
-            .apply(&f, [0, 0], &[Op { start: 1, end: 1, payload: vec![], append: false }])
+            .apply(
+                &f,
+                [0, 0],
+                &[Op {
+                    start: 1,
+                    end: 1,
+                    payload: vec![],
+                    append: false,
+                }],
+            )
             .unwrap_err();
         assert_eq!(err, EditError::NeverRead);
     }
@@ -685,7 +749,16 @@ mod tests {
         let _ = store.apply(&f, [0, 0], &[]);
         // Right tag still works.
         let (_, text) = store
-            .apply(&f, tag, &[Op { start: 1, end: 1, payload: vec!["ONE".into()], append: false }])
+            .apply(
+                &f,
+                tag,
+                &[Op {
+                    start: 1,
+                    end: 1,
+                    payload: vec!["ONE".into()],
+                    append: false,
+                }],
+            )
             .unwrap();
         assert_eq!(text, "ONE\ntwo\n");
     }
