@@ -25,8 +25,7 @@ const MEMORY_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("memori
 /// without deserializing the whole `MEMORY_TABLE`. A miss falls back to
 /// the full scan, so an entry written before this index existed still
 /// dedups correctly.
-const HASH_INDEX_TABLE: TableDefinition<&[u8], &[u8]> =
-    TableDefinition::new("content_hash_index");
+const HASH_INDEX_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("content_hash_index");
 
 /// Persistent long-term memory storage.
 pub struct LongTermMemory {
@@ -182,17 +181,17 @@ impl LongTermMemory {
         // `block_in_place` would panic. Just do the redb work
         // synchronously; it is a one-time startup cost.
         {
-            let read_txn = db.begin_read().map_err(|e| {
-                KodError::MemoryDatabase(format!("migration read txn: {}", e))
-            })?;
+            let read_txn = db
+                .begin_read()
+                .map_err(|e| KodError::MemoryDatabase(format!("migration read txn: {}", e)))?;
             let idx_table = match read_txn.open_table(HASH_INDEX_TABLE) {
                 Ok(t) => t,
                 Err(_) => return Ok(()), // no index table yet — nothing to migrate
             };
             let idx_len = idx_table.len().unwrap_or(0);
-            let mem_table = read_txn.open_table(MEMORY_TABLE).map_err(|e| {
-                KodError::MemoryDatabase(format!("migration mem table: {}", e))
-            })?;
+            let mem_table = read_txn
+                .open_table(MEMORY_TABLE)
+                .map_err(|e| KodError::MemoryDatabase(format!("migration mem table: {}", e)))?;
             let mem_len = mem_table.len().unwrap_or(0);
             drop(idx_table);
             drop(mem_table);
@@ -204,20 +203,20 @@ impl LongTermMemory {
                 entries = mem_len,
                 "content-hash index empty; migrating pre-index entries"
             );
-            let write_txn = db.begin_write().map_err(|e| {
-                KodError::MemoryDatabase(format!("migration write txn: {}", e))
-            })?;
+            let write_txn = db
+                .begin_write()
+                .map_err(|e| KodError::MemoryDatabase(format!("migration write txn: {}", e)))?;
             let mut inserted = 0usize;
             {
-                let mem = write_txn.open_table(MEMORY_TABLE).map_err(|e| {
-                    KodError::MemoryDatabase(format!("migration open mem: {}", e))
-                })?;
-                let mut idx = write_txn.open_table(HASH_INDEX_TABLE).map_err(|e| {
-                    KodError::MemoryDatabase(format!("migration open idx: {}", e))
-                })?;
-                let iter = mem.iter().map_err(|e| {
-                    KodError::MemoryDatabase(format!("migration iter: {}", e))
-                })?;
+                let mem = write_txn
+                    .open_table(MEMORY_TABLE)
+                    .map_err(|e| KodError::MemoryDatabase(format!("migration open mem: {}", e)))?;
+                let mut idx = write_txn
+                    .open_table(HASH_INDEX_TABLE)
+                    .map_err(|e| KodError::MemoryDatabase(format!("migration open idx: {}", e)))?;
+                let iter = mem
+                    .iter()
+                    .map_err(|e| KodError::MemoryDatabase(format!("migration iter: {}", e)))?;
                 for entry in iter {
                     let Ok((_k, v)) = entry else { continue };
                     let Ok(e) = serde_json::from_slice::<MemoryEntry>(v.value()) else {
@@ -234,14 +233,13 @@ impl LongTermMemory {
                     }
                 }
             }
-            write_txn.commit().map_err(|e| {
-                KodError::MemoryDatabase(format!("migration commit: {}", e))
-            })?;
+            write_txn
+                .commit()
+                .map_err(|e| KodError::MemoryDatabase(format!("migration commit: {}", e)))?;
             tracing::info!(inserted, "content-hash index migrated");
             Ok(())
         }
     }
-
 
     /// Store an entry persistently. Overwrites any existing entry with
     /// the same id.
@@ -404,14 +402,12 @@ impl LongTermMemory {
                     let _ = table.remove(key.as_slice());
                 }
             }
-            txn.commit().map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to commit: {}", e))
-            })?;
+            txn.commit()
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {}", e)))?;
             Ok(keys.len())
         })
         .await
     }
-
 
     /// Get every entry in the table (order unspecified).
     pub async fn get_all(&self) -> Result<Vec<MemoryEntry>> {
@@ -428,15 +424,13 @@ impl LongTermMemory {
                 .map_err(|e| KodError::MemoryDatabase(format!("Failed to iterate: {}", e)))?
             {
                 match entry {
-                    Ok((_, value)) => {
-                        match serde_json::from_slice::<MemoryEntry>(value.value()) {
-                            Ok(memory_entry) => entries.push(memory_entry),
-                            Err(e) => tracing::warn!(
-                                error = %e,
-                                "get_all: corrupt entry skipped — schema migration may be needed"
-                            ),
-                        }
-                    }
+                    Ok((_, value)) => match serde_json::from_slice::<MemoryEntry>(value.value()) {
+                        Ok(memory_entry) => entries.push(memory_entry),
+                        Err(e) => tracing::warn!(
+                            error = %e,
+                            "get_all: corrupt entry skipped — schema migration may be needed"
+                        ),
+                    },
                     Err(e) => {
                         tracing::warn!("Failed to read entry: {}", e);
                     }
@@ -529,9 +523,9 @@ impl LongTermMemory {
             let txn = db.begin_read().map_err(|e| {
                 KodError::MemoryDatabase(format!("Failed to start transaction: {}", e))
             })?;
-            let table = txn.open_table(MEMORY_TABLE).map_err(|e| {
-                KodError::MemoryDatabase(format!("Failed to open table: {}", e))
-            })?;
+            let table = txn
+                .open_table(MEMORY_TABLE)
+                .map_err(|e| KodError::MemoryDatabase(format!("Failed to open table: {}", e)))?;
             let n = table.len().map_err(|e| {
                 KodError::MemoryDatabase(format!("Failed to read table len: {}", e))
             })?;
@@ -639,12 +633,15 @@ mod tests {
         let id = stored.id.clone();
         m.store(stored.clone()).await.unwrap();
         let hit = m
-            .find_by_content_hash({
-                use std::hash::{Hash, Hasher};
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                stored.content.hash(&mut h);
-                h.finish()
-            }, stored.memory_type)
+            .find_by_content_hash(
+                {
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    stored.content.hash(&mut h);
+                    h.finish()
+                },
+                stored.memory_type,
+            )
             .await
             .unwrap();
         assert_eq!(hit, Some(id), "index must return the stored id");
@@ -938,6 +935,9 @@ mod supersession_tests {
                 .unwrap();
         }
         assert_eq!(store.count().await.unwrap(), 5);
-        assert_eq!(store.count().await.unwrap(), store.get_all().await.unwrap().len());
+        assert_eq!(
+            store.count().await.unwrap(),
+            store.get_all().await.unwrap().len()
+        );
     }
 }
