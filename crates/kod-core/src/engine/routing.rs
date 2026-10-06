@@ -275,7 +275,8 @@ impl KodEngine {
         &self,
         input: &str,
         _history: &str,
-    ) -> std::result::Result<kod_core_state::budget::Allocation, kod_core_state::budget::BudgetError> {
+    ) -> std::result::Result<kod_core_state::budget::Allocation, kod_core_state::budget::BudgetError>
+    {
         // Hygiene: read the cached (window, max_out). `set_registry`
         // populates it from the effective endpoint; a caller that
         // never installed a registry sees the built-in default.
@@ -673,7 +674,10 @@ impl KodEngine {
     /// for a provider that does not report a ladder — the classifier
     /// has only one label to pick, so the answer is deterministically
     /// `Medium`.
-    pub(crate) fn supported_efforts_for(&self, model_ref: &ModelRef) -> Vec<kod_types::effort::EffortLevel> {
+    pub(crate) fn supported_efforts_for(
+        &self,
+        model_ref: &ModelRef,
+    ) -> Vec<kod_types::effort::EffortLevel> {
         if let Ok(guard) = self.model_catalog.read()
             && let Some(info) = guard.get(&(model_ref.endpoint.clone(), model_ref.model.clone()))
             && let Some(ladder) = info.efforts.as_ref()
@@ -1020,7 +1024,12 @@ impl KodEngine {
     /// Delta §14.5: append a `ToolExecutionStart`. Pairs with the later
     /// `ToolCall` completion; an unmatched start is what a resume
     /// reports as an interrupted call.
-    pub(crate) fn record_tool_execution_start(&self, holder: &str, tool_name: &str, call_id: Option<&str>) {
+    pub(crate) fn record_tool_execution_start(
+        &self,
+        holder: &str,
+        tool_name: &str,
+        call_id: Option<&str>,
+    ) {
         if let Ok(guard) = self.session_recorder.read()
             && let Some(rec) = guard.as_ref()
         {
