@@ -236,8 +236,14 @@ mod coverage_clipboard {
         // try the same three. Pre-fix the write path omitted wl-copy.
         let src = include_str!("clipboard.rs");
         // Both the write list and the read list mention wl-.
-        assert!(src.contains("\"wl-copy\""), "write path must include wl-copy");
-        assert!(src.contains("\"wl-paste\""), "read path must include wl-paste");
+        assert!(
+            src.contains("\"wl-copy\""),
+            "write path must include wl-copy"
+        );
+        assert!(
+            src.contains("\"wl-paste\""),
+            "read path must include wl-paste"
+        );
     }
 
     #[test]
@@ -267,4 +273,3 @@ mod coverage_clipboard {
         assert_eq!(result, Some(true));
     }
 }
-
