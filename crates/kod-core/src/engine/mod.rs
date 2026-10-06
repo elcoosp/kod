@@ -140,7 +140,7 @@ pub fn is_stream_reset_marker(chunk: &str) -> bool {
 ///
 /// `None` is the common case: keep streaming.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EarlyTermination {
+pub(crate) enum EarlyTermination {
     None,
     Complete,
     OffTrack,
@@ -1199,7 +1199,7 @@ impl LearnedAllow {
     }
 }
 
-struct RoundContext<'a> {
+pub(crate) struct RoundContext<'a> {
     system_text: &'a str,
     model_ref: &'a ModelRef,
     definitions: &'a [ToolDefinition],
@@ -1224,7 +1224,7 @@ struct RoundContext<'a> {
 /// decisions, the deny set, the ask set, and the two locks the gate
 /// acquired (so the caller's later code can reuse them without
 /// re-acquiring).
-struct PolicyGateResult {
+pub(crate) struct PolicyGateResult {
     denied: std::collections::HashMap<usize, String>,
     need_approval: std::collections::HashSet<usize>,
     decisions: Vec<(usize, kod_config::PolicyDecision)>,
@@ -1239,7 +1239,7 @@ struct PolicyGateResult {
 /// is the pre-fetched read for `calls[i]`, or `None` when no
 /// speculation was made (the call is not a read, the read failed, or
 /// speculation is disabled).
-struct StreamRoundOutcome {
+pub(crate) struct StreamRoundOutcome {
     text: String,
     calls: Vec<ToolCall>,
     usage: Option<kod_provider::TokenUsage>,
@@ -1256,7 +1256,7 @@ struct StreamRoundOutcome {
     partial_error: Option<kod_error::KodError>,
 }
 
-struct ToolRound {
+pub(crate) struct ToolRound {
     results: Vec<ToolResult>,
     prompt_block: String,
     elapsed_ms: Vec<u64>,

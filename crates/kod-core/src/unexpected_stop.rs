@@ -69,7 +69,6 @@ use kod_provider::judgment::{JudgmentClient, JudgmentError, Question};
 // primitives (ToolCall, ToolResult, ChatMessage), while the assembled
 // response shape is what a provider hands back.
 use kod_provider::GenerationResponse;
-use kod_types::ToolResult;
 
 /// The doc's threshold, restated for the label-based judge.
 ///
