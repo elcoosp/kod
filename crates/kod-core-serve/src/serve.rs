@@ -134,7 +134,6 @@ pub const MAX_PROTOCOL_VERSION: u8 = 1;
 
 /// Default socket path for this user.
 
-
 /// A request line.
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -274,12 +273,8 @@ async fn bind_listener(path: &Path) -> Result<UnixListener> {
             // Removing is safe *under the lock*: no sibling can bind
             // between the probe and the unlink.
             let _ = std::fs::remove_file(path);
-            UnixListener::bind(path).map_err(|e| {
-                KodError::Internal(format!(
-                    "could not bind {}: {e}",
-                    path.display()
-                ))
-            })
+            UnixListener::bind(path)
+                .map_err(|e| KodError::Internal(format!("could not bind {}: {e}", path.display())))
         }
     }
 }
@@ -557,7 +552,12 @@ async fn handle_connection(
                 // the server's gets `compatible: false` and can
                 // disconnect with a clear reason instead of failing on
                 // the first real request.
-                let client_min = req.params.get("min").and_then(|v| v.as_u64()).map(|n| n.min(u8::MAX as u64) as u8).unwrap_or(1);
+                let client_min = req
+                    .params
+                    .get("min")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n.min(u8::MAX as u64) as u8)
+                    .unwrap_or(1);
                 let client_max = req
                     .params
                     .get("max")
@@ -604,9 +604,7 @@ async fn handle_connection(
                             // drop the error frame if the writer channel
                             // had closed, leaving the caller waiting
                             // until its own timeout fired (if any).
-                            if let Err(write_err) =
-                                write_error(&out, &id, &e.to_string()).await
-                            {
+                            if let Err(write_err) = write_error(&out, &id, &e.to_string()).await {
                                 tracing::warn!(
                                     error = %write_err,
                                     engine_error = %e,
@@ -873,8 +871,10 @@ async fn run_swarm(
     max_agents: usize,
     merge: bool,
 ) -> Result<()> {
-    let runner = kod_core::swarm_runner::SwarmRunner::new(engine.clone(), max_agents, merge).await?;
-    let (evt_tx, mut evt_rx) = tokio::sync::mpsc::channel::<kod_core::swarm_runner::SwarmEvent>(256);
+    let runner =
+        kod_core::swarm_runner::SwarmRunner::new(engine.clone(), max_agents, merge).await?;
+    let (evt_tx, mut evt_rx) =
+        tokio::sync::mpsc::channel::<kod_core::swarm_runner::SwarmEvent>(256);
     let goal_owned = goal.to_string();
     let run_handle = tokio::spawn(async move { runner.run(&goal_owned, &evt_tx).await });
     while let Some(evt) = evt_rx.recv().await {
