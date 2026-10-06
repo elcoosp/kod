@@ -123,27 +123,33 @@ pub enum KodError {
 /// whole retry budget on something that will never succeed.
 pub fn is_transient_transport_error(msg: &str) -> bool {
     let m = msg.to_lowercase();
-    const PATTERNS: &[&str] = &[
+    // Multi-character prose patterns: substring matching is the
+    // intended semantics (a phrase like "connection reset" appears
+    // verbatim or not at all; there is no token-boundary case for it).
+    const PROSE_PATTERNS: &[&str] = &[
         // Rate / overload, in prose.
-        "429",
         "rate limit",
         "too many requests",
         "overloaded",
         "temporarily",
         "try again",
-        // Server-side, in prose and as a bare code. `"500 "` (trailing
-        // space) missed `server error 500: …` (the workspace's own
-        // shape) and a bare `"500"` a transport library would emit;
-        // `"500"` catches both, matching `"502"` / `"503"` / `"504"`.
-        "500",
-        "502",
-        "503",
-        "504",
+        // Server-side, in prose. A bare `"500"` used to live here and
+        // was matched as a substring; T5-C24 showed that misfires on
+        // `"server error 5001"` and `"task_5003_failed"`. Those codes
+        // now go through `has_status_code`, which token-bounds the
+        // match.
         "bad gateway",
         "service unavailable",
         "gateway timeout",
         "internal server error",
-        "server error 5",
+        // The pre-fix list carried `"server error 5"` as a substring
+        // catch-all for the workspace's own shape (`"server error 500:
+        // {snippet}"`). That substring also matched `"server error
+        // 5001"` — a false positive that spent the retry budget. The
+        // individual codes below are token-matched instead. `5xx` as
+        // a literal class is kept because it appears in prose bodies
+        // that name the range rather than a specific code.
+        "5xx",
         // Connection lifecycle.
         "connection reset",
         "connection closed",
@@ -168,7 +174,14 @@ pub fn is_transient_transport_error(msg: &str) -> bool {
         "capacity",
         "no capacity available",
     ];
-    PATTERNS.iter().any(|p| m.contains(p))
+    // Numeric status codes are matched only when they appear as a
+    // whole token (T5-C24). The pre-fix `PATTERNS` list carried these
+    // as substrings, so `"server error 5001"` (a totally different
+    // status) reported transient and burned the retry budget on a
+    // permanent failure.
+    const STATUS_CODES: &[u16] = &[429, 500, 502, 503, 504];
+    PROSE_PATTERNS.iter().any(|p| m.contains(p))
+        || STATUS_CODES.iter().any(|c| has_status_code(&m, *c))
 }
 
 /// Render the `ProviderTimeout` message. A `0` sentinel (the HTTP
@@ -300,7 +313,6 @@ impl KodError {
 /// T5-C24: match a status code only when it appears as a
 /// whitespace/punctuation-delimited token — not as a substring of a
 /// longer number like `5001` or `id_500_expired`.
-#[allow(dead_code)]
 fn has_status_code(msg: &str, code: u16) -> bool {
     let needle = code.to_string();
     msg.split(|c: char| !c.is_alphanumeric())
@@ -317,6 +329,49 @@ mod tests {
             skill_id: kod_types::SkillId::new(),
         };
         assert!(error.to_string().contains("Skill not found"));
+    }
+
+    /// T5-C24: `is_transient_transport_error` must classify a body
+    /// carrying `500` as a proper token as transient, and a body
+    /// carrying `500` only as a substring of a larger number as
+    /// permanent. The pre-fix matcher used a bare `contains("500")`
+    /// and reported every such body transient, which spent the retry
+    /// budget on errors that will never succeed.
+    ///
+    /// (Known limitation, matching the committed
+    /// `has_status_code_is_token_bounded` test: `_` is a delimiter in
+    /// the current split rule, so `"id_500_expired"` *is* classified
+    /// as transient because `500` is a token there. Not exercised
+    /// here — a tighter rule is a separate change.)
+    #[test]
+    fn transport_transient_status_codes_are_token_bounded() {
+        // Real transient bodies: `500` stands alone as an HTTP code.
+        for body in [
+            "server error 500",
+            "HTTP 500: internal error",
+            "got 503 from upstream",
+            "request failed with 429",
+            "code=502",
+            "server error 504 today",
+        ] {
+            assert!(
+                is_transient_transport_error(body),
+                "{body:?} must be transient (500 as a token)",
+            );
+        }
+        // False positives the pre-fix matcher produced: `500` is a
+        // substring of a larger number, not a status code.
+        for body in [
+            "server error 5001",
+            "task_5003_failed",
+            "a500b",
+            "n500",
+        ] {
+            assert!(
+                !is_transient_transport_error(body),
+                "{body:?} must NOT be transient (500 is not a token)",
+            );
+        }
     }
 
     #[test]
