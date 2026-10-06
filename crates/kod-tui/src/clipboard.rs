@@ -209,6 +209,16 @@ mod coverage_clipboard {
             ),
         }
     }
+
+    #[test]
+    fn wayland_write_uses_wl_copy() {
+        // T4-H2: read_clipboard tries xclip, xsel, wl-paste; write must
+        // try the same three. Pre-fix the write path omitted wl-copy.
+        let src = include_str!("clipboard.rs");
+        // Both the write list and the read list mention wl-.
+        assert!(src.contains("\"wl-copy\""), "write path must include wl-copy");
+        assert!(src.contains("\"wl-paste\""), "read path must include wl-paste");
+    }
 }
 
 /// T4-H1: wait for `child` to exit, up to `d`. Kill and reap on
