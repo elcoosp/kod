@@ -4,12 +4,12 @@
 
 #![allow(clippy::all)]
 
-pub mod repomap;
+pub mod auto_thinking;
+pub mod preflight;
 pub mod prune;
+pub mod repomap;
 pub mod shake;
+pub mod snapcompact;
+pub mod transcript_coherence;
 pub mod worktree;
 pub mod worktree_isolation_ownership;
-pub mod preflight;
-pub mod transcript_coherence;
-pub mod auto_thinking;
-pub mod snapcompact;
