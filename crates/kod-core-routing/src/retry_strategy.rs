@@ -261,18 +261,36 @@ mod tests {
         let variants: [TurnFailure; 14] = [
             TurnFailure::TransportTimeout,
             TurnFailure::TransportNetwork,
-            TurnFailure::TransportRateLimit { retry_after_secs: Some(1) },
-            TurnFailure::TransportServerBusy { retry_after_secs: Some(600) },
-            TurnFailure::ProviderRefused { reason: "x".to_string() },
-            TurnFailure::ProviderAuthError { detail: "x".to_string() },
+            TurnFailure::TransportRateLimit {
+                retry_after_secs: Some(1),
+            },
+            TurnFailure::TransportServerBusy {
+                retry_after_secs: Some(600),
+            },
+            TurnFailure::ProviderRefused {
+                reason: "x".to_string(),
+            },
+            TurnFailure::ProviderAuthError {
+                detail: "x".to_string(),
+            },
             TurnFailure::ContextWindowExceeded { over_by: None },
-            TurnFailure::MalformedJson { snippet: "x".to_string() },
-            TurnFailure::HallucinatedTool { name: "x".to_string() },
-            TurnFailure::ContentFiltered { category: "x".to_string() },
+            TurnFailure::MalformedJson {
+                snippet: "x".to_string(),
+            },
+            TurnFailure::HallucinatedTool {
+                name: "x".to_string(),
+            },
+            TurnFailure::ContentFiltered {
+                category: "x".to_string(),
+            },
             TurnFailure::UserCancelled,
             TurnFailure::BudgetExhausted,
-            TurnFailure::PolicyDenied { rule: "x".to_string() },
-            TurnFailure::Unknown { raw: "x".to_string() },
+            TurnFailure::PolicyDenied {
+                rule: "x".to_string(),
+            },
+            TurnFailure::Unknown {
+                raw: "x".to_string(),
+            },
         ];
         for v in &variants {
             let n = v.class_name();
@@ -282,11 +300,17 @@ mod tests {
             );
         }
         assert_eq!(
-            TurnFailure::TransportRateLimit { retry_after_secs: None }.class_name(),
+            TurnFailure::TransportRateLimit {
+                retry_after_secs: None
+            }
+            .class_name(),
             "TransportRateLimit",
         );
         assert_eq!(
-            TurnFailure::TransportServerBusy { retry_after_secs: None }.class_name(),
+            TurnFailure::TransportServerBusy {
+                retry_after_secs: None
+            }
+            .class_name(),
             "TransportServerBusy",
         );
     }
