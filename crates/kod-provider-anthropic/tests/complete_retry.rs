@@ -83,7 +83,10 @@ async fn complete_does_not_retry_a_hard_error() {
 
     let provider = provider_for(&mock);
     let req = request_with(vec![user("hello")]);
-    let err = provider.complete(&req).await.expect_err("401 is not retryable");
+    let err = provider
+        .complete(&req)
+        .await
+        .expect_err("401 is not retryable");
     let _ = err;
     assert_eq!(
         endpoint.hits_async().await,
