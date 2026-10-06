@@ -429,4 +429,23 @@ mod window_tests {
         t.reset();
         assert_eq!(t.spend_in(std::time::Duration::from_secs(3600)), 0.0);
     }
+
+    #[test]
+    fn saturating_sum_does_not_wrap() {
+        // T3-H9: two u64::MAX entries in the window must saturate the
+        // sum, not wrap to a small value.
+        //
+        // `record` takes micro USD; `spend_in` returns USD. Two
+        // u64::MAX micro entries sum (saturating) to u64::MAX micro,
+        // which is ~1.8e13 USD.
+        let w = SpendWindow::new(16);
+        w.record(u64::MAX);
+        w.record(u64::MAX);
+        let total = w.spend_in(std::time::Duration::from_secs(3600));
+        let expected = u64::MAX as f64 / 1_000_000.0;
+        assert!(
+            (total - expected).abs() < 1.0,
+            "saturating sum must equal u64::MAX/1e6 = {expected}, got {total}",
+        );
+    }
 }
