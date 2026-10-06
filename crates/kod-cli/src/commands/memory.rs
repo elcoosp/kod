@@ -64,11 +64,31 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
             if matching.is_empty() {
                 println!("No entries match {:?} (id prefix or tag).", key);
             } else {
-                let n = matching.len();
+                // Bug-hunt: the pre-fix shape used `let _ = manager.remove(...)`
+                // and printed the number of matches as if every removal had
+                // succeeded. A redb write error left the entry on disk while
+                // the CLI told the user it was forgotten. Count real
+                // successes and surface failures.
+                let mut deleted = 0usize;
+                let mut failed = 0usize;
                 for e in &matching {
-                    let _ = manager.remove(kod_types::MemoryType::LongTerm, &e.id).await;
+                    match manager.remove(kod_types::MemoryType::LongTerm, &e.id).await {
+                        Ok(()) => deleted += 1,
+                        Err(err) => {
+                            eprintln!(
+                                "Could not forget {}: {err}",
+                                &e.id.as_uuid().to_string()[..8]
+                            );
+                            failed += 1;
+                        }
+                    }
                 }
-                println!("Forgot {} entr{}.", n, if n == 1 { "y" } else { "ies" },);
+                println!(
+                    "Forgot {} entr{} ({} failed).",
+                    deleted,
+                    if deleted == 1 { "y" } else { "ies" },
+                    failed,
+                );
             }
             Ok(())
         }
@@ -117,19 +137,29 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
             };
             let arr: Vec<serde_json::Value> =
                 serde_json::from_str(&raw).map_err(|e| KodError::Deserialization(e.to_string()))?;
+            // Bug-hunt: same shape as `Forget` — a failed `store` still
+            // incremented `added`. Count successes and surface failures.
             let mut added = 0usize;
+            let mut failed = 0usize;
             for v in &arr {
                 if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
-                    let _ = manager
+                    match manager
                         .store(kod_types::MemoryType::LongTerm, content)
-                        .await;
-                    added += 1;
+                        .await
+                    {
+                        Ok(_) => added += 1,
+                        Err(err) => {
+                            eprintln!("Could not import entry: {err}");
+                            failed += 1;
+                        }
+                    }
                 }
             }
             println!(
-                "Imported {} long-term entr{}.",
+                "Imported {} long-term entr{} ({} failed).",
                 added,
-                if added == 1 { "y" } else { "ies" }
+                if added == 1 { "y" } else { "ies" },
+                failed,
             );
             Ok(())
         }
@@ -199,13 +229,29 @@ pub async fn run_memory(action: MemoryAction) -> Result<()> {
                 }
             }
             let all = manager.get_all_long_term().await?;
+            // Bug-hunt: pre-fix shape dropped each `remove` error and
+            // printed `all.len()` — the number of entries seen, not the
+            // number actually deleted. A partial failure reported full
+            // success. Count real deletions and surface failures.
+            let mut deleted = 0usize;
+            let mut failed = 0usize;
             for e in &all {
-                let _ = manager.remove(kod_types::MemoryType::LongTerm, &e.id).await;
+                match manager.remove(kod_types::MemoryType::LongTerm, &e.id).await {
+                    Ok(()) => deleted += 1,
+                    Err(err) => {
+                        eprintln!(
+                            "Could not delete {}: {err}",
+                            &e.id.as_uuid().to_string()[..8]
+                        );
+                        failed += 1;
+                    }
+                }
             }
             println!(
-                "Deleted {} entr{}.",
-                all.len(),
-                if all.len() == 1 { "y" } else { "ies" }
+                "Deleted {} entr{} ({} failed).",
+                deleted,
+                if deleted == 1 { "y" } else { "ies" },
+                failed,
             );
             Ok(())
         }
