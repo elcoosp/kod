@@ -107,7 +107,6 @@ impl LspClient {
         }
 
         // T2-H12: pipe LSP server stderr to tracing.
-        
 
         let stdin = child
             .stdin
@@ -267,11 +266,9 @@ impl LspClient {
         // the worker.
         let key = {
             let p = path.to_path_buf();
-            tokio::task::spawn_blocking(move || {
-                std::fs::canonicalize(&p).unwrap_or(p)
-            })
-            .await
-            .unwrap_or_else(|_| path.to_path_buf())
+            tokio::task::spawn_blocking(move || std::fs::canonicalize(&p).unwrap_or(p))
+                .await
+                .unwrap_or_else(|_| path.to_path_buf())
         };
         let sent_version = match self.opened.get_mut(&key) {
             Some(version) => {
@@ -382,9 +379,7 @@ impl LspClient {
                 let read = tokio::time::timeout(wait, self.read_handling_server_requests()).await;
                 match read {
                     Ok(Ok(m)) => m,
-                    Ok(Err(LspError::Io(e)))
-                        if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-                    {
+                    Ok(Err(LspError::Io(e))) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                         break;
                     }
                     Ok(Err(e)) => return Err(e),
