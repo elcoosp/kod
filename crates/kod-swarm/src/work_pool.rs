@@ -445,8 +445,14 @@ mod tests {
             }
         }
         // Both slots must appear — the cursor rotates among the tie.
-        assert!(picks.contains(&"a".to_string()), "a never picked: {picks:?}");
-        assert!(picks.contains(&"b".to_string()), "b never picked: {picks:?}");
+        assert!(
+            picks.contains(&"a".to_string()),
+            "a never picked: {picks:?}"
+        );
+        assert!(
+            picks.contains(&"b".to_string()),
+            "b never picked: {picks:?}"
+        );
     }
 
     fn item(id: &str) -> WorkItem {
