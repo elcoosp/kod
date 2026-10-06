@@ -646,7 +646,8 @@ impl MemoryManager {
             }
             impl Drop for _Guard {
                 fn drop(&mut self) {
-                    self.inflight.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    self.inflight
+                        .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                     self.notify.notify_one();
                 }
             }
@@ -2502,8 +2503,12 @@ mod contradiction_resolution_tests {
         struct PanicEmbedder;
         #[async_trait]
         impl crate::embedding::EmbeddingClient for PanicEmbedder {
-            fn name(&self) -> &str { "panic" }
-            fn dims(&self) -> usize { 2 }
+            fn name(&self) -> &str {
+                "panic"
+            }
+            fn dims(&self) -> usize {
+                2
+            }
             async fn embed(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>> {
                 panic!("T1-H1 regression fixture: embed panics");
             }
@@ -2516,11 +2521,7 @@ mod contradiction_resolution_tests {
 
         // Store: spawns a background embed that will panic.
         let _ = m
-            .store_with_metadata(
-                MemoryType::LongTerm,
-                "trigger embed",
-                Default::default(),
-            )
+            .store_with_metadata(MemoryType::LongTerm, "trigger embed", Default::default())
             .await;
 
         // T1-H1: flush_embeddings must return within a bounded time
