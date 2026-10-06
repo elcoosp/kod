@@ -75,7 +75,12 @@ mod tests {
 
     #[test]
     fn the_map_disables_the_dangerous_vars() {
-        let get = |name: &str| NON_INTERACTIVE.iter().find(|(k, _)| *k == name).map(|(_, v)| *v);
+        let get = |name: &str| {
+            NON_INTERACTIVE
+                .iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| *v)
+        };
         assert_eq!(get("PAGER"), Some("cat"));
         assert_eq!(get("GIT_PAGER"), Some("cat"));
         assert_eq!(get("GIT_EDITOR"), Some("true"));
