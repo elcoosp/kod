@@ -111,12 +111,20 @@ pub fn map_reduce(diff: &str, summarize: &dyn Fn(&str) -> String) -> String {
         let prompt = format!(
             "Summarize this file's change in one sentence. \
              Path: {}\n\n{body}",
-            if f.path.is_empty() { "(unknown)" } else { &f.path },
+            if f.path.is_empty() {
+                "(unknown)"
+            } else {
+                &f.path
+            },
         );
         let s = summarize(&prompt);
         per_file.push(format!(
             "{}: {}",
-            if f.path.is_empty() { "(unknown)" } else { &f.path },
+            if f.path.is_empty() {
+                "(unknown)"
+            } else {
+                &f.path
+            },
             s.trim(),
         ));
     }
