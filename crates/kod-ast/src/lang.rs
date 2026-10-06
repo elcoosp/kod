@@ -123,8 +123,15 @@ mod tests {
         // A grammar that fails to load panics in `language()`; this
         // proves all nine are wired.
         for l in [
-            Lang::Rust, Lang::Python, Lang::TypeScript, Lang::Tsx,
-            Lang::JavaScript, Lang::Go, Lang::Ruby, Lang::Java, Lang::C,
+            Lang::Rust,
+            Lang::Python,
+            Lang::TypeScript,
+            Lang::Tsx,
+            Lang::JavaScript,
+            Lang::Go,
+            Lang::Ruby,
+            Lang::Java,
+            Lang::C,
         ] {
             let _ = l.language();
             assert!(!l.name().is_empty());
