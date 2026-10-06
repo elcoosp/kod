@@ -25,7 +25,6 @@ fn wake_notify() -> &'static tokio::sync::Notify {
     W.get_or_init(tokio::sync::Notify::new)
 }
 
-
 /// Key codes we care about
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum KeyCode {
