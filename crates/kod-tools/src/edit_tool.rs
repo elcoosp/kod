@@ -153,9 +153,8 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let f = tmp.path().join("a.txt");
         std::fs::write(&f, "one\ntwo\n").unwrap();
-        let store = std::sync::Arc::new(std::sync::Mutex::new(
-            crate::edit_hashline::EditStore::new(),
-        ));
+        let store =
+            std::sync::Arc::new(std::sync::Mutex::new(crate::edit_hashline::EditStore::new()));
         // Record the snapshot as a `read_file` would.
         let tag = {
             let mut g = store.lock().unwrap();
@@ -183,9 +182,8 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let f = tmp.path().join("a.txt");
         std::fs::write(&f, "one\ntwo\n").unwrap();
-        let store = std::sync::Arc::new(std::sync::Mutex::new(
-            crate::edit_hashline::EditStore::new(),
-        ));
+        let store =
+            std::sync::Arc::new(std::sync::Mutex::new(crate::edit_hashline::EditStore::new()));
         {
             let mut g = store.lock().unwrap();
             g.record_snapshot(&f, "one\ntwo\n", vec![true, true, true]);
