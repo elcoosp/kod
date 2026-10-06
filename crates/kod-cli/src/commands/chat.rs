@@ -597,8 +597,7 @@ pub async fn run_chat(
                     continue;
                 }
                 // Overload: same one-line contract, distinct wording.
-                if let Some((secs, attempt, max)) =
-                    kod_core::engine::parse_server_busy_wait(&chunk)
+                if let Some((secs, attempt, max)) = kod_core::engine::parse_server_busy_wait(&chunk)
                 {
                     println!(
                         "\nServer busy — waiting {} before automatic retry (attempt {attempt}/{max})…",
