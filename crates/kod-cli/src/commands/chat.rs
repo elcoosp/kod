@@ -402,10 +402,20 @@ pub async fn run_chat(
         // borrow the engine across the response loop.
         let (approval_tx, mut approval_rx) =
             tokio::sync::mpsc::channel::<(u64, kod_core::engine::ApprovalDecision)>(16);
+        // Bug-hunt: `respond_to_approval` returns `false` when the id has
+        // already been removed (a stale id after an engine-side timeout).
+        // The pre-fix `let _ =` shape silently dropped the user's answer:
+        // the user pressed `y`, the engine had already given up, and the
+        // CLI said nothing. Surface a line so the loss is visible.
         let engine_for_approvals = engine.clone();
         let approval_forwarder = tokio::spawn(async move {
             while let Some((id, decision)) = approval_rx.recv().await {
-                let _ = engine_for_approvals.respond_to_approval(id, decision).await;
+                if !engine_for_approvals.respond_to_approval(id, decision).await {
+                    eprintln!(
+                        "kod: approval decision for item {id} was not delivered \
+                         (the engine already gave up on this request)",
+                    );
+                }
             }
         });
         // Clone so the outer scope retains its own sender: dropping it
@@ -413,10 +423,17 @@ pub async fn run_chat(
         // clone is dropped with the task. Without the clone, the outer
         // `drop(approval_tx)` is a use-after-move.
         let (question_tx, mut question_rx) = tokio::sync::mpsc::channel::<(u64, String)>(16);
+        // Bug-hunt: same shape as the approval forwarder above — a
+        // stale question id silently dropped the user's typed answer.
         let engine_for_questions = engine.clone();
         let question_forwarder = tokio::spawn(async move {
             while let Some((id, answer)) = question_rx.recv().await {
-                let _ = engine_for_questions.respond_to_question(id, answer).await;
+                if !engine_for_questions.respond_to_question(id, answer).await {
+                    eprintln!(
+                        "kod: answer for question {id} was not delivered \
+                         (the engine already gave up on this request)",
+                    );
+                }
             }
         });
         let approval_tx_pump = approval_tx.clone();
