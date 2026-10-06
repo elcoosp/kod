@@ -457,22 +457,18 @@ impl LlmProvider for AnthropicProvider {
                     .send()
                     .await
                     .map_err(|e| {
-                        KodError::Provider(format!(
-                            "anthropic native_compact: POST {url}: {e}"
-                        ))
+                        KodError::Provider(format!("anthropic native_compact: POST {url}: {e}"))
                     })?;
                 let status = resp.status();
                 if !status.is_success() {
                     let text = resp.text().await.unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "anthropic: could not read error body");
-            String::new()
-        });
+                        tracing::warn!(error = %e, "anthropic: could not read error body");
+                        String::new()
+                    });
                     return Err(KodError::provider_status(status.as_u16(), &text));
                 }
                 resp.json::<serde_json::Value>().await.map_err(|e| {
-                    KodError::Provider(format!(
-                        "anthropic native_compact: invalid JSON: {e}"
-                    ))
+                    KodError::Provider(format!("anthropic native_compact: invalid JSON: {e}"))
                 })
             }
         })
