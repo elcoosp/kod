@@ -297,7 +297,9 @@ mod tests {
             (Lang::C, "int main() { return 0; }\n"),
         ];
         for (lang, src) in samples {
-            let tree = c.parse(lang, src).unwrap_or_else(|| panic!("parse {lang:?}"));
+            let tree = c
+                .parse(lang, src)
+                .unwrap_or_else(|| panic!("parse {lang:?}"));
             assert!(
                 !tree.root_node().has_error(),
                 "{lang:?} hello-world should parse cleanly",
