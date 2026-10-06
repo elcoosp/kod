@@ -193,9 +193,13 @@ async fn failed_endpoint_does_not_leave_its_round_in_the_transcript() {
         .filter(|m| matches!(m.role, MessageRole::Tool))
         .count();
     assert_eq!(
-        tool_rounds, 0,
+        tool_rounds,
+        0,
         "endpoint a's tool round must not survive into the transcript; \
          history roles: {:?}",
-        history.iter().map(|m| format!("{:?}", m.role)).collect::<Vec<_>>(),
+        history
+            .iter()
+            .map(|m| format!("{:?}", m.role))
+            .collect::<Vec<_>>(),
     );
 }
