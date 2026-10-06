@@ -342,7 +342,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn removing_every_line_yields_an_empty_file() {
         // W8: a patch that removes every line must produce "", not "\n".
