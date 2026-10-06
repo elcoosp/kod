@@ -21,8 +21,8 @@ use kod_error::Result;
 use kod_types::{ToolCategory, ToolDefinition, ToolId, ToolPermissions, ToolResult};
 use serde_json::Value;
 
-use kod_core_tools::jfind::{self, Judge, Query};
 use crate::jev::JevDecider;
+use kod_core_tools::jfind::{self, Judge, Query};
 use kod_tools::{Tool, ToolContext};
 
 /// A lexical fallback judge: score by query-word overlap. Used when no
