@@ -48,12 +48,7 @@ impl CommitLock {
         > = OnceLock::new();
         let key = git_common_dir(path)?;
         let reg = REGISTRY.get_or_init(|| StdMutex::new(StdMap::new()));
-        let inner = reg
-            .lock()
-            .ok()?
-            .entry(key.clone())
-            .or_default()
-            .clone();
+        let inner = reg.lock().ok()?.entry(key.clone()).or_default().clone();
         Some(Self { key, inner })
     }
 
