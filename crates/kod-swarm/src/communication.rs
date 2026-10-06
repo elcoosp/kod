@@ -173,8 +173,10 @@ impl AgentCommunicationHub {
     /// `(id, online)` pairs, sorted by id for stable output.
     pub async fn list_agents(&self) -> Vec<(AgentId, bool)> {
         let agents = self.agents.read().await;
-        let mut out: Vec<(AgentId, bool)> =
-            agents.iter().map(|(id, info)| (id.clone(), info.online)).collect();
+        let mut out: Vec<(AgentId, bool)> = agents
+            .iter()
+            .map(|(id, info)| (id.clone(), info.online))
+            .collect();
         out.sort_by_key(|e| e.0.to_string());
         out
     }
