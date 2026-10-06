@@ -99,9 +99,7 @@ pub fn parse_agents_md(src: &str, from: &Path) -> Vec<InstructionSection> {
             buf.push('\n');
             continue;
         }
-        if !in_code_fence
-            && let Some(rest) = trimmed.strip_prefix(":::")
-        {
+        if !in_code_fence && let Some(rest) = trimmed.strip_prefix(":::") {
             let rest = rest.trim();
             if rest.is_empty() {
                 flush(
@@ -128,7 +126,10 @@ pub fn parse_agents_md(src: &str, from: &Path) -> Vec<InstructionSection> {
             }
             continue;
         }
-        if !in_code_fence && !in_fence && let Some(name) = trimmed.strip_prefix("## ") {
+        if !in_code_fence
+            && !in_fence
+            && let Some(name) = trimmed.strip_prefix("## ")
+        {
             flush(
                 &mut out,
                 current_when.clone(),
