@@ -215,7 +215,10 @@ impl ChatWidget {
     /// Reflow one styled line into rows of at most `width` cells, keeping
     /// each char's style. Breaks mid-word like the plain wrapper so mixed
     /// Markdown/code rows measure exactly.
-    #[allow(dead_code)]
+    /// Only used by this module's tests today. Gated to `cfg(test)` so
+    /// production carries no dead code; the tests keep the helper.
+    /// A future production caller un-gates it by dropping the attribute.
+    #[cfg(test)]
     fn reflow_line<'a>(line: Line<'a>, width: usize) -> Vec<Line<'a>> {
         let width = width.max(1);
         let mut rows: Vec<Vec<Span<'a>>> = vec![Vec::new()];

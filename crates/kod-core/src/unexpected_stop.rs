@@ -233,21 +233,6 @@ impl From<bool> for UnexpectedVerdict {
     }
 }
 
-/// A no-op sanitizer for tool results — a caller that wants to log
-/// the classifier's view of a round without spending a call.
-///
-/// Exists because `ToolResult` is a wire type from `kod-types` and
-/// the classifier does not otherwise need it; this function keeps
-/// the import honest by giving the module a real use for it.
-#[allow(dead_code)]
-fn summarize_result(r: &ToolResult) -> &'static str {
-    match r {
-        ToolResult::Success(_) => "success",
-        ToolResult::Error(_) => "error",
-        ToolResult::RequiresConfirmation { .. } => "requires_confirmation",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -613,24 +598,6 @@ mod tests {
     // -----------------------------------------------------------------
     // Sanity: the summarizer is reachable
     // -----------------------------------------------------------------
-
-    #[test]
-    fn summarize_result_labels_every_variant() {
-        // A trivial smoke test: the function exists, matches every
-        // variant, and does not panic.
-        assert_eq!(
-            summarize_result(&ToolResult::Success(serde_json::json!({}))),
-            "success"
-        );
-        assert_eq!(summarize_result(&ToolResult::Error("x".into())), "error");
-        assert_eq!(
-            summarize_result(&ToolResult::RequiresConfirmation {
-                description: "d".into(),
-                callback_id: "c".into(),
-            }),
-            "requires_confirmation",
-        );
-    }
 
     /// A test that a `ChatMessage` constructor is reachable, so the
     /// import does not rot. The classifier does not otherwise touch
