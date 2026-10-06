@@ -388,8 +388,7 @@ fn sanitize_in_place(
         // `$ref` reduced a ref-only schema to `{}`, which widens it to
         // accept anything.
         let structural = matches!(key.as_str(), "$ref" | "$schema" | "$id" | "$defs");
-        let safe = !structural
-            && matches!(role_of(&key), KeywordRole::Data | KeywordRole::Unknown);
+        let safe = !structural && matches!(role_of(&key), KeywordRole::Data | KeywordRole::Unknown);
         if safe {
             obj.remove(&key);
             applied.push(AppliedTransform::Removed {
@@ -419,7 +418,13 @@ fn sanitize_in_place(
             KeywordRole::SubschemaArray => {
                 if let Some(Value::Array(arr)) = obj.get_mut(&key) {
                     for (i, sub) in arr.iter_mut().enumerate() {
-                        sanitize_in_place(sub, spec, &format!("{child_path}/{i}"), applied, depth + 1);
+                        sanitize_in_place(
+                            sub,
+                            spec,
+                            &format!("{child_path}/{i}"),
+                            applied,
+                            depth + 1,
+                        );
                     }
                 }
             }
