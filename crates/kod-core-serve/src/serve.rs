@@ -503,7 +503,13 @@ async fn handle_connection(
         let req: Request = match serde_json::from_str(trimmed) {
             Ok(r) => r,
             Err(e) => {
-                let _ = send_response(
+                // Bad request frame. A failed send here would have
+                // been silent; log it so a closed writer channel is
+                // visible in the logs rather than as a client waiting
+                // on a reply that will never arrive. `id: ""` is the
+                // JSON-RPC convention for a request that could not be
+                // parsed far enough to extract an id.
+                if let Err(write_err) = send_response(
                     &out_tx,
                     &Response {
                         id: "",
@@ -511,7 +517,13 @@ async fn handle_connection(
                         data: Some(serde_json::json!({"message": format!("bad request: {e}")})),
                     },
                 )
-                .await;
+                .await
+                {
+                    tracing::warn!(
+                        error = %write_err,
+                        "serve: could not deliver the bad-request error frame",
+                    );
+                }
                 continue;
             }
         };
@@ -579,10 +591,28 @@ async fn handle_connection(
                 tokio::spawn(async move {
                     match engine.process_for(&key, &input).await {
                         Ok(resp) => {
-                            let _ = write_done(&out, &id, &resp).await;
+                            if let Err(write_err) = write_done(&out, &id, &resp).await {
+                                tracing::warn!(
+                                    error = %write_err,
+                                    "serve: could not deliver the process_for done frame",
+                                );
+                            }
                         }
                         Err(e) => {
-                            let _ = write_error(&out, &id, &e.to_string()).await;
+                            // The engine errored; the client needs to
+                            // know. The pre-fix `let _ =` would silently
+                            // drop the error frame if the writer channel
+                            // had closed, leaving the caller waiting
+                            // until its own timeout fired (if any).
+                            if let Err(write_err) =
+                                write_error(&out, &id, &e.to_string()).await
+                            {
+                                tracing::warn!(
+                                    error = %write_err,
+                                    engine_error = %e,
+                                    "serve: could not deliver the process_for error frame",
+                                );
+                            }
                         }
                     }
                 });
@@ -595,7 +625,11 @@ async fn handle_connection(
                 let key = string_param(&req.params, "transcript_key");
                 tokio::spawn(async move {
                     if let Err(e) = run_streaming(&engine, &out, &id, &input, &key).await {
-                        let _ = send_response(
+                        // The streaming pump failed mid-turn. Try to
+                        // hand the client an error frame; a failure to
+                        // deliver *that* is a second, independent
+                        // problem and is logged rather than dropped.
+                        if let Err(write_err) = send_response(
                             &out,
                             &Response {
                                 id: &id,
@@ -603,7 +637,14 @@ async fn handle_connection(
                                 data: Some(serde_json::json!({"message": e.to_string()})),
                             },
                         )
-                        .await;
+                        .await
+                        {
+                            tracing::warn!(
+                                error = %write_err,
+                                engine_error = %e,
+                                "serve: could not deliver the process_streaming error frame",
+                            );
+                        }
                     }
                 });
             }
@@ -688,7 +729,7 @@ async fn handle_connection(
                 let id = req.id.clone();
                 tokio::spawn(async move {
                     if let Err(e) = run_swarm(&engine, &out, &id, &goal, max_agents, merge).await {
-                        let _ = send_response(
+                        if let Err(write_err) = send_response(
                             &out,
                             &Response {
                                 id: &id,
@@ -696,7 +737,14 @@ async fn handle_connection(
                                 data: Some(serde_json::json!({"message": e.to_string()})),
                             },
                         )
-                        .await;
+                        .await
+                        {
+                            tracing::warn!(
+                                error = %write_err,
+                                engine_error = %e,
+                                "serve: could not deliver the swarm error frame",
+                            );
+                        }
                     }
                 });
             }
