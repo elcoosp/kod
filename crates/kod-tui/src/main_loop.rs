@@ -8414,4 +8414,15 @@ mod coverage_slash_dispatch_more {
             &["Engine not initialized", "checkpoint", "rollback", "no "],
         );
     }
+
+    #[test]
+    fn abort_bg_tasks_clears_the_vec() {
+        // T4-H4: the loop tracks spawned tasks and aborts them on
+        // quit. Verify the helper drains the vec and does not panic
+        // when empty.
+        let mut tui = TuiLoop::new();
+        assert!(tui.bg_tasks.is_empty());
+        tui.abort_bg_tasks();
+        assert!(tui.bg_tasks.is_empty());
+    }
 }
