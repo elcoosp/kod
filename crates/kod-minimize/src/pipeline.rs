@@ -296,6 +296,19 @@ fn compile_patterns(
 /// whole-text anchors; a text pipeline wants per-line anchors. An
 /// author who genuinely wants whole-text anchors writes `\A` / `\z`
 /// explicitly, which are unaffected by the flag.
+/// T5-C12: test-only counter mirroring the regex cache size. The
+/// static in `compile` is fn-local, so the module-level accessor
+/// reads this mirror; `compile` bumps it on every insert.
+#[cfg(test)]
+static COMPILE_CACHE_LEN: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// T5-C12: test-only accessor for the regex cache length.
+#[cfg(test)]
+pub(crate) fn cache_len_for_test() -> usize {
+    COMPILE_CACHE_LEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn compile(pattern: &str, stage: &'static str) -> Result<regex::Regex, PipelineError> {
     // F2a-13: cache compiled regexes process-wide, keyed by the
     // pattern text. A def is applied to every command's output; the
@@ -333,6 +346,8 @@ fn compile(pattern: &str, stage: &'static str) -> Result<regex::Regex, PipelineE
             }
         }
         g.insert(pattern.to_string(), re.clone());
+            #[cfg(test)]
+            COMPILE_CACHE_LEN.store(g.len(), std::sync::atomic::Ordering::Relaxed);
     }
     Ok(re)
 }
@@ -650,4 +665,19 @@ stages = []
             "without opt-out, the safety valve must return the raw input",
         );
     }
+
+    #[test]
+    fn regex_cache_is_bounded() {
+        // T5-C12: 300 distinct patterns must not grow the cache past
+        // 256 entries. This exercises the eviction path.
+        for i in 0..300 {
+            let pat = format!("^unique_{i}_pattern$");
+            let _ = compile(&pat, "test");
+        }
+        // The next compile will reflect the post-eviction length.
+        let _ = compile("^trigger$", "test");
+        let n = crate::pipeline::cache_len_for_test();
+        assert!(n <= 256, "regex cache must be bounded at 256; got {n}");
+    }
 }
+
