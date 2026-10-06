@@ -45,10 +45,12 @@ async fn a_background_command_delivers_an_interrupt_on_completion() {
     for _ in 0..200 {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         let steers = engine.pending_steers_for("session").await;
-        if steers
-            .iter()
-            .any(|s| matches!(s.source, kod_core_state::steer::InterruptSource::BackgroundTask))
-        {
+        if steers.iter().any(|s| {
+            matches!(
+                s.source,
+                kod_core_state::steer::InterruptSource::BackgroundTask
+            )
+        }) {
             delivered = true;
             break;
         }
