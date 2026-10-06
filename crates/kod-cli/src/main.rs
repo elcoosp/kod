@@ -56,7 +56,8 @@ fn main() -> kod_error::Result<()> {
         .with_writer(kod_cli::logging::SessionSafeWriter::default())
         .with_ansi(false)
         .with_target(false)
-        .try_init() {
+        .try_init()
+    {
         eprintln!("kod: could not install tracing subscriber ({e}); logs will be lost.");
     }
 
