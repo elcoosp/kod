@@ -321,8 +321,7 @@ impl ProtocolHandler for ConflictHandler {
             let id = stable_id(&path, b.start, body);
             let mut registered = b.clone();
             registered.id = id.clone();
-            self.store
-                .register(&path, registered, body.to_string());
+            self.store.register(&path, registered, body.to_string());
             listing.push_str(&format!(
                 "conflict://{id}\n  ours ({}): {} line(s)\n  theirs ({}): {} line(s)\n\n",
                 b.ours_label,
@@ -344,12 +343,12 @@ impl ProtocolHandler for ConflictHandler {
         content: &str,
         _ctx: &ResolveContext,
     ) -> std::result::Result<(), ProtocolError> {
-        let id = url.strip_prefix("conflict://").ok_or_else(|| {
-            ProtocolError::Malformed {
+        let id = url
+            .strip_prefix("conflict://")
+            .ok_or_else(|| ProtocolError::Malformed {
                 url: url.to_string(),
                 reason: "not a conflict:// url".to_string(),
-            }
-        })?;
+            })?;
         let Some(reg) = self.store.take(id) else {
             return Err(ProtocolError::Handler {
                 url: url.to_string(),
@@ -479,7 +478,11 @@ mid
         let listing = rt
             .block_on(h.resolve("conflict://c.txt", &ctx))
             .expect("resolve");
-        assert!(listing.text.contains("conflict://"), "got: {}", listing.text);
+        assert!(
+            listing.text.contains("conflict://"),
+            "got: {}",
+            listing.text
+        );
         assert_eq!(store.len(), 1);
 
         // Grab the id and write a resolution.
