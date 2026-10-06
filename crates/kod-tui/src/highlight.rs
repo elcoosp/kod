@@ -86,7 +86,10 @@ pub fn code_style(theme: &Theme) -> Style {
 }
 
 fn flat_row(line: &str, width: usize, theme: &Theme) -> Vec<Span<'static>> {
-    truncate(vec![Span::styled(line.to_string(), code_style(theme))], width)
+    truncate(
+        vec![Span::styled(line.to_string(), code_style(theme))],
+        width,
+    )
 }
 
 fn highlight_rows(
@@ -170,11 +173,19 @@ fn diff_row(
     theme: &Theme,
 ) -> Vec<Span<'static>> {
     if is_hunk(line) {
-        let st = Style::default().fg(theme.accent).add_modifier(Modifier::BOLD);
+        let st = Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD);
         return truncate(vec![Span::styled(line.to_string(), st)], width);
     }
     let Some((m, content)) = split_marker(line) else {
-        return truncate(vec![Span::styled(line.to_string(), Style::default().fg(theme.dim))], width);
+        return truncate(
+            vec![Span::styled(
+                line.to_string(),
+                Style::default().fg(theme.dim),
+            )],
+            width,
+        );
     };
     let (ms, tint, cs) = match m {
         '+' => (
@@ -183,7 +194,9 @@ fn diff_row(
             Style::default().fg(theme.user),
         ),
         '-' => (
-            Style::default().fg(theme.error).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.error)
+                .add_modifier(Modifier::BOLD),
             Some(DEL_BG),
             Style::default().fg(theme.error),
         ),
@@ -251,17 +264,31 @@ fn syntax_from_path(path: &str) -> Option<&'static SyntaxReference> {
     let p = path.trim();
     let p = p.split(' ').next().unwrap_or(p);
     let p = p.split(':').next().unwrap_or(p);
-    let p = p.strip_prefix("a/").or_else(|| p.strip_prefix("b/")).unwrap_or(p);
+    let p = p
+        .strip_prefix("a/")
+        .or_else(|| p.strip_prefix("b/"))
+        .unwrap_or(p);
     let name = p.rsplit('/').next().unwrap_or(p);
     let (_, ext) = name.rsplit_once('.')?;
-    if ext.is_empty() || !ext.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '_')) {
+    if ext.is_empty()
+        || !ext
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '_'))
+    {
         return None;
     }
     syntax_for(&ext.to_ascii_lowercase())
 }
 
 fn fence_token(info: &str) -> String {
-    info.split_whitespace().next().unwrap_or("").split(',').next().unwrap_or("").trim().to_ascii_lowercase()
+    info.split_whitespace()
+        .next()
+        .unwrap_or("")
+        .split(',')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
 }
 fn convert_style(st: SyntectStyle) -> Style {
     let fg = st.foreground;
@@ -422,13 +449,19 @@ mod tests {
 
     #[test]
     fn comment_colour_carries_across_rows() {
-        let rows = code_rows(&["/* start", "still comment */"], Some("rust"), 80, &theme());
+        let rows = code_rows(
+            &["/* start", "still comment */"],
+            Some("rust"),
+            80,
+            &theme(),
+        );
         assert_eq!(rows[0][0].style.fg, rows[1][0].style.fg);
     }
 
     #[test]
     fn tool_row_body_parses() {
-        let d = DiffBody::parse("src/main.rs:\n@@ -1 +1,2 @@\n let a = 1;\n+let b = 2;").expect("diff");
+        let d =
+            DiffBody::parse("src/main.rs:\n@@ -1 +1,2 @@\n let a = 1;\n+let b = 2;").expect("diff");
         assert_eq!(d.lead, vec!["src/main.rs:"]);
         assert_eq!(d.lines[0], "@@ -1 +1,2 @@");
         assert!(d.syntax.is_some_and(|s| s.name.contains("Rust")));
@@ -443,7 +476,13 @@ mod tests {
 
     #[test]
     fn prose_is_not_a_diff() {
-        for b in ["hello", "the token @@ is used", "1. list\n- bullet", "---", "--- rule, no +++ line"] {
+        for b in [
+            "hello",
+            "the token @@ is used",
+            "1. list\n- bullet",
+            "---",
+            "--- rule, no +++ line",
+        ] {
             assert!(DiffBody::parse(b).is_none(), "{b:?}");
         }
     }
@@ -458,7 +497,12 @@ mod tests {
     #[test]
     fn add_remove_hunk_colours() {
         let t = theme();
-        let rows = diff_rows(&["-gone", "+added", "@@ -1 +1 @@", "diff --git a/x b/x"], None, 40, &t);
+        let rows = diff_rows(
+            &["-gone", "+added", "@@ -1 +1 @@", "diff --git a/x b/x"],
+            None,
+            40,
+            &t,
+        );
         assert_eq!(rows[0][0].style.fg, Some(t.error));
         assert_eq!(rows[1][0].style.fg, Some(t.user));
         assert!(rows[1][0].style.add_modifier.contains(Modifier::BOLD));
@@ -480,7 +524,8 @@ mod tests {
     #[test]
     fn diff_code_is_highlighted_and_text_survives() {
         let t = theme();
-        let d = DiffBody::parse("main.rs:\n@@ -1,1 +1,2 @@\n+fn main() { let x = \"s\"; // c\n+}").expect("diff");
+        let d = DiffBody::parse("main.rs:\n@@ -1,1 +1,2 @@\n+fn main() { let x = \"s\"; // c\n+}")
+            .expect("diff");
         let rows = diff_rows(&d.lines, d.syntax, 80, &t);
         assert_eq!(rows.len(), 3);
         assert_eq!(txt(&rows[1]), "+fn main() { let x = \"s\"; // c");
