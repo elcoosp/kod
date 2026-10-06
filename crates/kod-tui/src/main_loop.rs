@@ -5462,8 +5462,19 @@ for _ in 0..MAX_EVENTS_PER_FRAME {
                     if let Some(q) = self.app.pending_question() {
                         let id = q.id;
                         let answer = self.app.clear_pending_question();
-                        if let Some(engine) = &self.engine {
-                            engine.respond_to_question(id, answer).await;
+                        // Bug-hunt: a stale question id (`respond_to_question`
+                        // returns `false`) means the engine already gave up
+                        // on the ask and the user's typed answer was silently
+                        // discarded. Surface a line so the loss is visible.
+                        let delivered = if let Some(engine) = &self.engine {
+                            engine.respond_to_question(id, answer).await
+                        } else {
+                            true
+                        };
+                        if !delivered {
+                            self.app.push_system_message(&format!(
+                                "Answer for question {id} was not delivered (the engine already gave up).",
+                            ));
                         }
                     }
                 }
@@ -5471,10 +5482,17 @@ for _ in 0..MAX_EVENTS_PER_FRAME {
                     if let Some(q) = self.app.pending_question() {
                         let id = q.id;
                         self.app.clear_pending_question();
-                        if let Some(engine) = &self.engine {
+                        let delivered = if let Some(engine) = &self.engine {
                             engine
                                 .respond_to_question(id, "(cancelled)".to_string())
-                                .await;
+                                .await
+                        } else {
+                            true
+                        };
+                        if !delivered {
+                            self.app.push_system_message(&format!(
+                                "Cancel for question {id} was not delivered (the engine already gave up).",
+                            ));
                         }
                     }
                 }
@@ -5614,8 +5632,15 @@ for _ in 0..MAX_EVENTS_PER_FRAME {
                     batch.advance();
                     (id, batch.current_item().is_none())
                 };
-                if let Some(engine) = &self.engine {
-                    engine.respond_to_approval(id, d).await;
+                let delivered = if let Some(engine) = &self.engine {
+                    engine.respond_to_approval(id, d).await
+                } else {
+                    true
+                };
+                if !delivered {
+                    self.app.push_system_message(&format!(
+                        "Approval for item {id} was not delivered (the engine already gave up).",
+                    ));
                 }
                 if done {
                     self.app.clear_pending_approval();
