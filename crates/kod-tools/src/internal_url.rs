@@ -488,6 +488,12 @@ impl ArtifactHandler {
     pub async fn len(&self) -> usize {
         self.store.read().await.len()
     }
+
+    /// True when no artifacts are stored. Pairs with [`Self::len`]
+    /// so the type does not trip `clippy::len_without_is_empty`.
+    pub async fn is_empty(&self) -> bool {
+        self.store.read().await.is_empty()
+    }
 }
 
 impl Default for ArtifactHandler {

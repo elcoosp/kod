@@ -1408,6 +1408,7 @@ mod version_tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn version_range_constants_are_ordered() {
         assert!(MIN_PROTOCOL_VERSION <= PROTOCOL_VERSION);
         assert!(PROTOCOL_VERSION <= MAX_PROTOCOL_VERSION);

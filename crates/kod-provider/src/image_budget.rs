@@ -84,7 +84,7 @@ impl BudgetReport {
 
 /// Cheap PNG base64 check: prefix + length ≡ 0 (mod 4).
 pub fn is_likely_png_base64(body: &str) -> bool {
-    body.starts_with(PNG_BASE64_PREFIX) && body.len() % 4 == 0
+    body.starts_with(PNG_BASE64_PREFIX) && body.len().is_multiple_of(4)
 }
 
 /// Apply `policy` to `frames` in place. Returns a report.

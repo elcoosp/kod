@@ -759,6 +759,7 @@ mod t2_c6_regression {
     use crate::McpClient;
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn max_line_bytes_is_bounded() {
         assert!(
             MAX_LINE_BYTES <= 64 * 1024 * 1024,

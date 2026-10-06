@@ -319,7 +319,7 @@ impl SecretVault {
                     Ok(g) => g.iter().map(|(s, p)| (s.clone(), p.clone())).collect(),
                     Err(_) => return text.to_string(),
                 };
-                v.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+                v.sort_by_key(|e| std::cmp::Reverse(e.0.len()));
                 let v = std::sync::Arc::new(v);
                 if let Ok(mut g) = self.inner.sorted.write() {
                     *g = Some(v.clone());

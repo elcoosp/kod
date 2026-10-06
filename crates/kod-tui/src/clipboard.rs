@@ -115,6 +115,26 @@ pub fn read_clipboard() -> Option<String> {
     None
 }
 
+/// T4-H1: wait for `child` to exit, up to `d`. Kill and reap on
+/// timeout so a wedged pbcopy/xclip cannot freeze the TUI.
+fn wait_with_timeout(mut child: std::process::Child, d: std::time::Duration) -> Option<bool> {
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(s)) => return Some(s.success()),
+            Ok(None) if start.elapsed() < d => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod coverage_clipboard {
     //! The clipboard module is a best-effort shim over platform
@@ -248,22 +268,3 @@ mod coverage_clipboard {
     }
 }
 
-/// T4-H1: wait for `child` to exit, up to `d`. Kill and reap on
-/// timeout so a wedged pbcopy/xclip cannot freeze the TUI.
-fn wait_with_timeout(mut child: std::process::Child, d: std::time::Duration) -> Option<bool> {
-    let start = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(s)) => return Some(s.success()),
-            Ok(None) if start.elapsed() < d => {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-            Err(_) => return None,
-        }
-    }
-}

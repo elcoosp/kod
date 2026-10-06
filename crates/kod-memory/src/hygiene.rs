@@ -54,10 +54,7 @@ pub fn strip_memory_tags(text: &str) -> String {
     const CLOSE: &str = "</memories>";
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
-    loop {
-        let Some(open) = rest.find(OPEN) else {
-            break;
-        };
+    while let Some(open) = rest.find(OPEN) {
         out.push_str(&rest[..open]);
         let after_open = &rest[open + OPEN.len()..];
         match after_open.find(CLOSE) {

@@ -1,5 +1,4 @@
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     #[test]
     fn tokens_per_sec_none_before_second_chunk() {

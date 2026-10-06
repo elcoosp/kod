@@ -6888,11 +6888,6 @@ mod tests {
         assert_eq!(tui.app().input_mode(), &InputMode::Normal);
     }
 
-    /// Every entry in `SLASH_COMMANDS` must appear in `SLASH_HELP`, so
-    /// adding a command to the autocomplete without documenting it
-    /// fails this test. The previous SLASH_HELP was missing `/debug`
-    /// for several commits — this pins the invariant.
-
     /// The idle hint line must name `f` as the search key, matching the
     /// default keybinding, and must not claim `/` starts a search.
     #[tokio::test]
