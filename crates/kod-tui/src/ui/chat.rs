@@ -365,7 +365,11 @@ impl ChatWidget {
                 };
                 let total = rows.len();
                 let expanded = app.is_tool_expanded(&message.id);
-                let shown = if expanded { total } else { total.min(TOOL_DISPLAY_LINES) };
+                let shown = if expanded {
+                    total
+                } else {
+                    total.min(TOOL_DISPLAY_LINES)
+                };
                 for row in rows.into_iter().take(shown) {
                     let mut spans = vec![Span::raw("    ")];
                     spans.extend(row.spans);
@@ -394,7 +398,8 @@ impl ChatWidget {
                 .metadata
                 .turn_duration_ms
                 .map(|ms| KodApp::format_friendly_duration(std::time::Duration::from_millis(ms)));
-            let lines = Self::assistant_block(&message.content, width, assistant_style, app, duration);
+            let lines =
+                Self::assistant_block(&message.content, width, assistant_style, app, duration);
             return Self::apply_search(app, lines);
         }
 
@@ -411,7 +416,12 @@ impl ChatWidget {
         )])];
         // `/diff` output is a system message with a prose lead and a patch;
         // it gets the same diff colouring as a tool row.
-        for row in Self::body_rows(&message.content, width.saturating_sub(2).max(1), style, theme) {
+        for row in Self::body_rows(
+            &message.content,
+            width.saturating_sub(2).max(1),
+            style,
+            theme,
+        ) {
             let mut spans = vec![Span::raw("  ")];
             spans.extend(row.spans);
             lines.push(Line::from(spans));
@@ -990,7 +1000,11 @@ mod coverage_chat_widget {
         assert_eq!(lead[1].style.fg, Some(Color::Gray));
         let added = row_spans(&lines, "+let b = 2;");
         assert_eq!(added[1].style.fg, Some(t.user));
-        assert!(added.iter().any(|s| matches!(s.style.fg, Some(c) if c != t.user)));
+        assert!(
+            added
+                .iter()
+                .any(|s| matches!(s.style.fg, Some(c) if c != t.user))
+        );
         let removed = row_spans(&lines, "-let c = 3;");
         assert_eq!(removed[1].style.fg, Some(t.error));
         assert_ne!(added[1].style.bg, removed[1].style.bg);
@@ -1078,11 +1092,17 @@ mod coverage_chat_widget {
         assert_eq!(line_text(caption), "  took 4.2s");
         let style = caption.spans[1].style;
         assert_eq!(style.fg, Some(app.theme().dim));
-        assert!(style.add_modifier.contains(Modifier::ITALIC), "caption is dim + italic");
+        assert!(
+            style.add_modifier.contains(Modifier::ITALIC),
+            "caption is dim + italic"
+        );
 
         // Directly under the bubble's closing border, never inside it.
         let border = line_text(&lines[lines.len() - 2]);
-        assert!(border.starts_with('╰'), "caption must sit below the frame: {border}");
+        assert!(
+            border.starts_with('╰'),
+            "caption must sit below the frame: {border}"
+        );
 
         // And the whole thing survives the widget's render path.
         push_message(&mut app, MessageRole::User, "next");
