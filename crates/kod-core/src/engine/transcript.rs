@@ -216,7 +216,10 @@ impl KodEngine {
     }
 
     /// The full prompt trace for `key`.
-    pub async fn last_prompt_trace_for(&self, key: &str) -> Option<kod_core_state::budget::PromptTrace> {
+    pub async fn last_prompt_trace_for(
+        &self,
+        key: &str,
+    ) -> Option<kod_core_state::budget::PromptTrace> {
         self.last_prompt.read().await.get(key).cloned()
     }
 
