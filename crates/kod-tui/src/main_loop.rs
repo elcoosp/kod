@@ -2910,8 +2910,27 @@ for _ in 0..MAX_EVENTS_PER_FRAME {
                 // useful mid-session to remind the model (and the user)
                 // what the repository looks like without scrolling
                 // through files.
-                let max_chars: usize = parts.next().and_then(|s| s.parse().ok()).unwrap_or(16_000);
-                let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                //
+                // T4-map-flake: `/map [max_chars] [path]` — the optional
+                // trailing path lets the tests (and a curious user) point
+                // the map at a specific root instead of relying on the
+                // process cwd. Parallel tests that chdir elsewhere used
+                // to make `/map` walk the wrong tree.
+                let first = parts.next();
+                let max_chars: usize = first
+                    .as_ref()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(16_000);
+                let explicit_path = if first.as_ref().and_then(|s| s.parse::<usize>().ok()).is_some() {
+                    parts.next()
+                } else {
+                    first
+                };
+                let cwd = match explicit_path {
+                    Some(p) => std::path::PathBuf::from(p),
+                    None => std::env::current_dir()
+                        .unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                };
                 let map = kod_core_quality::repomap::build_repo_map(&cwd);
                 let rendered = map.render(max_chars);
                 if rendered.trim().is_empty() {
@@ -6542,9 +6561,12 @@ mod tests {
         // cwd under the shared `CWD_LOCK`; a parallel run of this
         // test without the lock saw the tmp dir those tests chdir'd
         // into. Take the same lock.
-        let _guard = cwd_lock();
+        // T4-map-flake: pass the crate dir explicitly instead of
+        // relying on the process cwd. This removes the test's
+        // dependency on cwd-mutating siblings entirely.
+        let crate_dir = env!("CARGO_MANIFEST_DIR");
         let mut tui = TuiLoop::new();
-        tui.handle_command("/map").await.unwrap();
+        tui.handle_command(&format!("/map 16000 {crate_dir}")).await.unwrap();
         let last = tui.app().messages().last().unwrap();
         assert!(
             last.content.contains("Repository map"),
@@ -6566,9 +6588,9 @@ mod tests {
         // proves the argument reaches the renderer.
         //
         // S10 follow-up: same CWD_LOCK reason as `test_map_command_produces_output`.
-        let _guard = cwd_lock();
+        let crate_dir = env!("CARGO_MANIFEST_DIR");
         let mut tui = TuiLoop::new();
-        tui.handle_command("/map 1").await.unwrap();
+        tui.handle_command(&format!("/map 1 {crate_dir}")).await.unwrap();
         let last = tui.app().messages().last().unwrap();
         // A 1-char budget is smaller than any line; the map is either
         // empty (unlikely with a `.rs` in cwd) or truncated.
