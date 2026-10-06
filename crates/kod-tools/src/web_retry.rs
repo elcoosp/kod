@@ -24,7 +24,11 @@ pub const MAX_UA_ROTATIONS: usize = 3;
 /// The user agents tried in order. The first is kod's own identifier;
 /// the rest are common desktop strings a naive wall lets through.
 pub const USER_AGENTS: &[&str] = &[
-    concat!("kod/", env!("CARGO_PKG_VERSION"), " (+https://github.com/elcoosp/kod)"),
+    concat!(
+        "kod/",
+        env!("CARGO_PKG_VERSION"),
+        " (+https://github.com/elcoosp/kod)"
+    ),
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
      (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0",
@@ -114,10 +118,7 @@ mod tests {
 
     #[test]
     fn a_429_retries_once() {
-        assert_eq!(
-            decide(429, "", 0),
-            Next::RetrySameAgent { wait_secs: 1 },
-        );
+        assert_eq!(decide(429, "", 0), Next::RetrySameAgent { wait_secs: 1 },);
         // Second attempt: no more 429 retries.
         assert_eq!(decide(429, "", 1), Next::Return);
     }
@@ -131,7 +132,9 @@ mod tests {
         // Over the cap: clamped.
         assert_eq!(
             decide_with_retry_after(429, "", 0, Some(3600)),
-            Next::RetrySameAgent { wait_secs: RETRY_AFTER_CAP_SECS },
+            Next::RetrySameAgent {
+                wait_secs: RETRY_AFTER_CAP_SECS
+            },
         );
     }
 
@@ -147,7 +150,10 @@ mod tests {
     fn a_plain_403_is_not_a_bot_block() {
         // A 403 with no wall marker is a real authorization failure;
         // rotating the UA would not help.
-        assert_eq!(decide(403, "Forbidden: you lack permission", 0), Next::Return);
+        assert_eq!(
+            decide(403, "Forbidden: you lack permission", 0),
+            Next::Return
+        );
     }
 
     #[test]
@@ -161,10 +167,7 @@ mod tests {
     #[test]
     fn bot_block_rotations_are_bounded() {
         // Past MAX_UA_ROTATIONS, no more rotation.
-        assert_eq!(
-            decide(403, "cloudflare", MAX_UA_ROTATIONS),
-            Next::Return,
-        );
+        assert_eq!(decide(403, "cloudflare", MAX_UA_ROTATIONS), Next::Return,);
     }
 
     #[test]
