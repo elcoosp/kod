@@ -196,7 +196,11 @@ fn lexical_rank(files: &[PathBuf], keywords: &[String], limit: usize) -> Vec<Pat
 /// Wave 2: batch the candidates and ask the judge which filenames
 /// look relevant. A filename scoring above zero is kept (the filename
 /// is a coarse signal; the window wave does the fine work).
-async fn judge_filenames(question: &str, candidates: &[PathBuf], judge: &dyn Judge) -> Vec<PathBuf> {
+async fn judge_filenames(
+    question: &str,
+    candidates: &[PathBuf],
+    judge: &dyn Judge,
+) -> Vec<PathBuf> {
     let mut kept: Vec<PathBuf> = Vec::new();
     for batch in candidates.chunks(FILENAME_BATCH) {
         let names: Vec<String> = batch
@@ -287,14 +291,7 @@ mod tests {
             text: String::new(),
             grep_keywords: Vec::new(),
         };
-        let hits = search(
-            Path::new("/r"),
-            &q,
-            Arc::new(KeywordJudge),
-            &no_read,
-            &[],
-        )
-        .await;
+        let hits = search(Path::new("/r"), &q, Arc::new(KeywordJudge), &no_read, &[]).await;
         assert!(hits.is_empty());
     }
 
@@ -311,7 +308,10 @@ mod tests {
 
     #[test]
     fn cut_windows_splits_on_size() {
-        let text = (1..=50).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let text = (1..=50)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let ws = cut_windows(&text, 24);
         assert_eq!(ws.len(), 3, "50 lines / 24 = 3 windows");
         assert_eq!(ws[0].0, 1);
@@ -333,9 +333,7 @@ mod tests {
     async fn a_relevant_file_becomes_a_hit() {
         let files = vec![PathBuf::from("retry.rs")];
         let content = "fn backoff(attempt) {\n    // exponential retry delay\n}\n";
-        let read = |p: &Path| {
-            (p == Path::new("retry.rs")).then(|| content.to_string())
-        };
+        let read = |p: &Path| (p == Path::new("retry.rs")).then(|| content.to_string());
         let q = Query {
             text: "retry backoff".to_string(),
             grep_keywords: vec!["retry".to_string()],
