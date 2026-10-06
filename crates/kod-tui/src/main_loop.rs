@@ -761,7 +761,7 @@ for _ in 0..MAX_EVENTS_PER_FRAME {
                 // T4-H3: yield to the runtime every 32 events so a
                 // burst of ResponseChunks cannot starve other tasks.
                 _yield_counter += 1;
-                if _yield_counter % 32 == 0 {
+                if _yield_counter.is_multiple_of(32) {
                     tokio::task::yield_now().await;
                 }
                 let Some(next) = self.event_handler.try_next_event() else {

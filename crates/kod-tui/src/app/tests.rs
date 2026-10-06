@@ -1,4 +1,9 @@
 #[cfg(test)]
+// The inner module name matches the file it lives in (`app/tests.rs`),
+// which trips `clippy::module_inception`. Renaming the module would
+// force a matching rename of the `mod tests;` declaration in `app/mod.rs`
+// for no runtime benefit; the allow is the idiomatic escape hatch.
+#[allow(clippy::module_inception)]
 mod tests {
     #[test]
     fn tokens_per_sec_none_before_second_chunk() {
