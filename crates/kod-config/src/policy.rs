@@ -214,7 +214,11 @@ impl ReadProtection {
             } else {
                 (basename, pat.as_str())
             };
-            if let Some(glob) = globset::GlobBuilder::new(pat_use).literal_separator(true).build().ok().map(|g| g.compile_matcher())
+            if let Some(glob) = globset::GlobBuilder::new(pat_use)
+                .literal_separator(true)
+                .build()
+                .ok()
+                .map(|g| g.compile_matcher())
                 && glob.is_match(target)
             {
                 return true;
@@ -549,9 +553,7 @@ impl PolicyEngine {
                     };
                 }
                 if let Some(allow) = &tp.binaries
-                    && candidates
-                        .iter()
-                        .any(|c| !allow.iter().any(|b| b == c))
+                    && candidates.iter().any(|c| !allow.iter().any(|b| b == c))
                 {
                     let hit = candidates
                         .iter()
@@ -679,9 +681,16 @@ fn preset_decision(preset: Preset, tool: &str) -> Decision {
 /// Extract the `path` or `file` argument from a tool call, if any.
 fn extract_path_arg(args: &Value) -> Option<String> {
     const PATH_KEYS: &[&str] = &[
-        "path", "file", "file_path", "filename",
-        "target", "destination", "to",
-        "directory", "dir", "output",
+        "path",
+        "file",
+        "file_path",
+        "filename",
+        "target",
+        "destination",
+        "to",
+        "directory",
+        "dir",
+        "output",
     ];
     for key in PATH_KEYS {
         if let Some(s) = args.get(key).and_then(|v| v.as_str()) {
@@ -765,12 +774,9 @@ fn resolve_path(working_dir: &Path, p: &str) -> PathBuf {
 /// `*` does not cross `/` and `**` does — the same semantics git
 /// uses for `.gitignore`.
 fn glob_matches(pattern: &str, path: &Path, working_dir: &Path) -> bool {
-    
-            // T5-C32: use the process-wide compiled-glob cache instead of
-        // recompiling on every call.
-        let build = |pat: &str| -> Option<std::sync::Arc<globset::GlobMatcher>> {
-            compiled_glob(pat)
-        };
+    // T5-C32: use the process-wide compiled-glob cache instead of
+    // recompiling on every call.
+    let build = |pat: &str| -> Option<std::sync::Arc<globset::GlobMatcher>> { compiled_glob(pat) };
 
     let matcher = match build(pattern) {
         Some(m) => m,
