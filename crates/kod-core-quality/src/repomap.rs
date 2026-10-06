@@ -596,9 +596,7 @@ fn extract_rust(content: &str) -> Vec<Symbol> {
     //
     // F2d-13: split the content into lines ONCE here rather than
     // re-collecting it inside the filter for every symbol.
-    .filter(|sym| {
-        !(sym.kind == "fn" && has_test_attribute(&lines, sym.line))
-    })
+    .filter(|sym| !(sym.kind == "fn" && has_test_attribute(&lines, sym.line)))
     .collect()
 }
 
@@ -740,7 +738,10 @@ async fn an_async_test() {}
             .collect();
         assert_eq!(a, r, "AST and regex paths must agree");
         // And the test filter applied on both: no test fns.
-        assert!(!r.iter().any(|(_, n, _)| n == "a_test" || n == "an_async_test"));
+        assert!(
+            !r.iter()
+                .any(|(_, n, _)| n == "a_test" || n == "an_async_test")
+        );
     }
 
     #[test]
@@ -777,15 +778,19 @@ async fn an_async_test() {}
                 "c" => extract_c(content),
                 _ => unreachable!(),
             };
-            let ast = ast_or_regex(content, ext, match *ext {
-                "py" => extract_python,
-                "js" => extract_js,
-                "go" => extract_go,
-                "rb" => extract_ruby,
-                "java" => extract_java,
-                "c" => extract_c,
-                _ => unreachable!(),
-            });
+            let ast = ast_or_regex(
+                content,
+                ext,
+                match *ext {
+                    "py" => extract_python,
+                    "js" => extract_js,
+                    "go" => extract_go,
+                    "rb" => extract_ruby,
+                    "java" => extract_java,
+                    "c" => extract_c,
+                    _ => unreachable!(),
+                },
+            );
             let r: Vec<(&str, String, usize)> = regex
                 .iter()
                 .map(|s| (s.kind, s.name.clone(), s.line))
