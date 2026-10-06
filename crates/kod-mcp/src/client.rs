@@ -96,8 +96,12 @@ impl McpClient {
             // to `tracing` when we need to debug a misbehaving server.
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        #[cfg(unix)]
-        command.process_group(0);
+        // W14 (mirrors crates/kod-tools/src/tools.rs): put the child
+        // in its own process group so `shutdown` below can reach a
+        // grandchild the server forked (an `npx` launcher spawning
+        // node, a Python wrapper spawning the real implementation).
+        // The pre-fix shape called this twice — a copy-paste bug with
+        // no effect, but a lie about intent.
         #[cfg(unix)]
         command.process_group(0);
         for (k, v) in env {
@@ -289,17 +293,42 @@ impl McpClient {
         // T2-M7: SIGTERM, wait up to 2 s, then SIGKILL. The pre-fix
         // shape issued SIGKILL immediately, giving a database or
         // file-writing MCP server no chance to flush.
+        //
+        // W14: the child was spawned in its own process group
+        // (`process_group(0)` in `spawn_stdio`). A server that forks —
+        // an `npx` launcher, a Python wrapper — leaves the grandchild
+        // holding the stdin / stdout pipes, so signalling only the
+        // direct pid orphans it and the pipes never close. Signal the
+        // whole group instead; fall back to the direct pid if the
+        // group kill fails (non-unix, or a child that re-joined the
+        // parent's group).
         let mut guard = self.child.lock().await;
         #[cfg(unix)]
         if let Some(pid) = guard.id() {
-            // SAFETY: kill(2) with a positive pid we spawned.
-            unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM); }
+            let pid = pid as libc::pid_t;
+            // SAFETY: kill(2) with a negative pid targets the process
+            // group whose id equals `pid` (the child was placed in its
+            // own group at spawn time).
+            if unsafe { libc::kill(-pid, libc::SIGTERM) } != 0 {
+                // SAFETY: fall back to the direct pid.
+                unsafe { libc::kill(pid, libc::SIGTERM); }
+            }
         }
         let _ = tokio::time::timeout(
             std::time::Duration::from_secs(2),
             guard.wait(),
         )
         .await;
+        // Escalate to SIGKILL for the whole group, then the direct
+        // child as a belt-and-braces fallback. If the child exited
+        // cleanly within the 2 s window, `guard.id()` is None and the
+        // group-kill block is skipped.
+        #[cfg(unix)]
+        if let Some(pid) = guard.id() {
+            let pid = pid as libc::pid_t;
+            // SAFETY: as above.
+            unsafe { libc::kill(-pid, libc::SIGKILL); }
+        }
         let _ = guard.start_kill();
         let _ = tokio::time::timeout(
             std::time::Duration::from_secs(1),
@@ -354,13 +383,29 @@ impl McpClient {
         self.send(&msg).await
     }
 
+    /// Send one JSON-RPC message. Bounded by `SEND_TIMEOUT` so a
+    /// wedged server whose stdin buffer is full cannot hang
+    /// `request()` forever. Matches the ACP bridge's `SEND_TIMEOUT`
+    /// (H-R2). `send` also holds the shared stdin mutex, so a
+    /// blocked send stalls the reader's server-reply path too — the
+    /// timeout releases the guard and lets the caller recover.
     async fn send(&self, msg: &serde_json::Value) -> Result<(), McpError> {
+        const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
         let mut line = serde_json::to_string(msg)?;
         line.push('\n');
         let mut stdin = self.stdin.lock().await;
-        stdin.write_all(line.as_bytes()).await?;
-        stdin.flush().await?;
-        Ok(())
+        let write = async {
+            tokio::io::AsyncWriteExt::write_all(&mut *stdin, line.as_bytes()).await?;
+            tokio::io::AsyncWriteExt::flush(&mut *stdin).await?;
+            Ok::<(), std::io::Error>(())
+        };
+        match tokio::time::timeout(SEND_TIMEOUT, write).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(McpError::Io(e)),
+            Err(_) => Err(McpError::Protocol(
+                "send timed out; server likely wedged on a full stdin buffer".to_string(),
+            )),
+        }
     }
 }
 
