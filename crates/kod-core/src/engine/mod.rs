@@ -3,14 +3,14 @@
 //! Coordinates the task router, LLM providers, skills, and memory
 //! to process user requests end-to-end.
 
-mod jev_advisor;
-mod markers;
 mod agent_loop;
 mod compaction;
 mod control;
 mod jev;
+mod jev_advisor;
 mod lifecycle;
 mod lsp;
+mod markers;
 mod memory;
 mod plans;
 mod policy;
@@ -145,7 +145,6 @@ pub(crate) enum EarlyTermination {
     Complete,
     OffTrack,
 }
-
 
 /// Marker announcing an automatic rate-limit wait on the streaming
 /// chunk channel: `\0kod-rate-limit:<secs>\0<attempt>\0<max>`.
@@ -753,7 +752,9 @@ fn shorten_path(path: &str) -> String {
 
 /// Push a background notice onto a transcript's steer queue.
 async fn push_background_interrupt(
-    steers: &std::sync::Arc<tokio::sync::RwLock<HashMap<String, Vec<kod_core_state::steer::SoftInterrupt>>>>,
+    steers: &std::sync::Arc<
+        tokio::sync::RwLock<HashMap<String, Vec<kod_core_state::steer::SoftInterrupt>>>,
+    >,
     holder: &str,
     content: String,
 ) {
@@ -864,7 +865,11 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
             return format!("git diff ({}): no changes", scope.join(" "));
         }
         let body = cap_lines(diff.trim_end(), TOOL_DIFF_LINES);
-        let trunc = if v.get("truncated").and_then(|t| t.as_bool()).unwrap_or(false) {
+        let trunc = if v
+            .get("truncated")
+            .and_then(|t| t.as_bool())
+            .unwrap_or(false)
+        {
             "\n… [truncated at the tool's 64 KB cap — narrow with `path` or `stat`]"
         } else {
             ""
@@ -1831,7 +1836,8 @@ pub struct KodEngine {
     /// Append-only writer for `turns.jsonl`, next to the session log.
     /// `None` — the default — is the right shape for a test or a
     /// one-shot command that does not want a trace file.
-    turn_trace_writer: std::sync::RwLock<Option<std::sync::Arc<kod_core_state::trace_writer::TraceWriter>>>,
+    turn_trace_writer:
+        std::sync::RwLock<Option<std::sync::Arc<kod_core_state::trace_writer::TraceWriter>>>,
     /// The current round's taint level (Tier 1.1). Escalated by every
     /// untrusted tool call; reset at the start of every user turn.
     taint: std::sync::RwLock<kod_types::trust::TrustLevel>,
@@ -2177,7 +2183,10 @@ pub(crate) struct TurnPreparation {
     pub response: crate::router::TaskResponse,
     pub task_type: crate::router::TaskType,
     pub refined_skills: Vec<String>,
-    pub alloc: std::result::Result<kod_core_state::budget::Allocation, kod_core_state::budget::BudgetError>,
+    pub alloc: std::result::Result<
+        kod_core_state::budget::Allocation,
+        kod_core_state::budget::BudgetError,
+    >,
     pub definitions: Vec<kod_types::ToolDefinition>,
     pub pending: String,
     pub system_text: String,
@@ -2213,7 +2222,10 @@ impl KodEngine {
         &self,
         key: &str,
         pending: &str,
-        alloc: &std::result::Result<kod_core_state::budget::Allocation, kod_core_state::budget::BudgetError>,
+        alloc: &std::result::Result<
+            kod_core_state::budget::Allocation,
+            kod_core_state::budget::BudgetError,
+        >,
     ) {
         let trace = kod_core_state::budget::PromptTrace {
             text: pending.to_string(),
@@ -2771,18 +2783,16 @@ impl KodEngine {
                         }
                     }
                 }
-                let status = match tokio::time::timeout(
-                    std::time::Duration::from_secs(60),
-                    child.wait(),
-                )
-                .await
-                {
-                    Ok(s) => s,
-                    Err(_) => {
-                        let _ = child.start_kill();
-                        child.wait().await
-                    }
-                };
+                let status =
+                    match tokio::time::timeout(std::time::Duration::from_secs(60), child.wait())
+                        .await
+                    {
+                        Ok(s) => s,
+                        Err(_) => {
+                            let _ = child.start_kill();
+                            child.wait().await
+                        }
+                    };
                 let preview = spool.preview();
                 let summary = match status {
                     Ok(s) if s.success() => format!(
@@ -3060,7 +3070,6 @@ impl KodEngine {
     }
 }
 
-
 // (The `which` helper moved to `kod_lsp::binary_for_path` when the
 // LSP pool was introduced; `lsp_binary_for` now delegates there.)
 
@@ -3181,8 +3190,12 @@ impl KodEngine {
     /// Returns the number of messages appended. A missing or empty
     /// log yields `Ok(0)` and leaves history untouched.
     pub async fn rehydrate_from_log_for(&self, key: &str, path: &std::path::Path) -> Result<usize> {
-        self.rehydrate_from_log_with(key, path, kod_core_state::session_log::RehydrationMode::Prose)
-            .await
+        self.rehydrate_from_log_with(
+            key,
+            path,
+            kod_core_state::session_log::RehydrationMode::Prose,
+        )
+        .await
     }
 
     /// Rehydrate with an explicit mode. `rehydrate_from_log_for` is
