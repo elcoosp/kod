@@ -248,7 +248,7 @@ fn expand_imports_rec(
         if let Some(rest) = line.trim().strip_prefix('@') {
             if !rest.is_empty()
                 && !rest.chars().any(char::is_whitespace)
-                && depth + 1 <= MAX_IMPORT_DEPTH
+                && depth < MAX_IMPORT_DEPTH
             {
                 if let Some(expanded) = try_expand_import(rest, base_dir, depth + 1, visited) {
                     out.push_str(&expanded);

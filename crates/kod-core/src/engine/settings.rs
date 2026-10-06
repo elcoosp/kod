@@ -291,7 +291,7 @@ impl KodEngine {
                 let ep = d.default_endpoint();
                 (ep.context_window, ep.max_tokens.unwrap_or(2048))
             }),
-            config_window: config_window,
+            config_window,
 
             // Empty until a caller fetches `list_models()`. Every
             // `budget_hint_for` lookup degrades to the endpoint
