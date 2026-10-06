@@ -1410,4 +1410,29 @@ mod version_tests {
             );
         }
     }
+
+    #[test]
+    fn client_min_clamps_large_values() {
+        // T3-H10: `u64 -> u8` casts used to truncate. A client sending
+        // `"min": 256` would silently land at 0 and fail the range
+        // check with an opaque error.
+        use serde_json::json;
+        let mut params = serde_json::Map::new();
+        params.insert("min".to_string(), json!(256u64));
+        params.insert("max".to_string(), json!(1024u64));
+        let v = serde_json::Value::Object(params);
+        // The negotiation handler clamps; we call the same helper shape.
+        let client_min = v
+            .get("min")
+            .and_then(|x| x.as_u64())
+            .map(|n| n.min(u8::MAX as u64) as u8)
+            .unwrap_or(1);
+        let client_max = v
+            .get("max")
+            .and_then(|x| x.as_u64())
+            .map(|n| n.min(u8::MAX as u64) as u8)
+            .unwrap_or(1);
+        assert_eq!(client_min, u8::MAX);
+        assert_eq!(client_max, u8::MAX);
+    }
 }

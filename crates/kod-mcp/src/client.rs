@@ -692,6 +692,7 @@ for line in sys.stdin:
 #[cfg(test)]
 mod t2_c6_regression {
     use super::MAX_LINE_BYTES;
+    use crate::McpClient;
 
     #[test]
     fn max_line_bytes_is_bounded() {
@@ -702,6 +703,61 @@ mod t2_c6_regression {
         assert!(
             MAX_LINE_BYTES >= 64 * 1024,
             "MAX_LINE_BYTES = {MAX_LINE_BYTES}; below 64 KiB rejects real frames",
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn shutdown_sends_sigterm_before_sigkill() {
+        // T2-M7: a child that traps SIGTERM and writes a sentinel file
+        // proves shutdown() used SIGTERM rather than SIGKILL. The
+        // pre-fix shape called start_kill() (SIGKILL) immediately.
+        let dir = tempfile::TempDir::new().unwrap();
+        let sentinel = dir.path().join("got-term");
+        let script = format!(
+            "trap 'echo caught > {s}; exit 0' TERM; while true; do sleep 0.05; done",
+            s = sentinel.display(),
+        );
+        let args = vec!["-c".to_string(), script];
+        let client = McpClient::spawn_stdio("sh", &args, &std::collections::BTreeMap::new())
+            .await
+            .expect("spawn");
+
+        // Give the shell a moment to install the trap before we signal.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        client.shutdown().await;
+
+        let content = std::fs::read_to_string(&sentinel).unwrap_or_default();
+        assert!(
+            content.contains("caught"),
+            "shutdown must send SIGTERM first; sentinel contents: {content:?}",
+        );
+    }
+
+    #[test]
+    fn child_stderr_is_piped_to_tracing() {
+        // T2-H12: asserting the actual trace output is awkward — the
+        // stderr reader runs on a tokio worker thread and cannot see a
+        // test-local subscriber; a process-wide subscriber collides
+        // with other tests. Instead, this test pins the code shape:
+        //   - stderr is Stdio::piped()
+        //   - the child's stderr is taken and a reader task spawned
+        //   - the reader emits `tracing::debug!` under target mcp::stderr
+        // If any of these are removed the test fails and the reviewer
+        // can inspect the diff.
+        let src = include_str!("client.rs");
+        assert!(
+            src.contains("stderr(Stdio::piped())"),
+            "stderr must be piped, not discarded",
+        );
+        assert!(
+            src.contains(r#""mcp::stderr""#),
+            "stderr must be logged under the mcp::stderr tracing target",
+        );
+        assert!(
+            src.contains("child.stderr.take()"),
+            "the reader must take the child's stderr handle",
         );
     }
 }

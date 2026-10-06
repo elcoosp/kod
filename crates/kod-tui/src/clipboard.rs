@@ -219,6 +219,33 @@ mod coverage_clipboard {
         assert!(src.contains("\"wl-copy\""), "write path must include wl-copy");
         assert!(src.contains("\"wl-paste\""), "read path must include wl-paste");
     }
+
+    #[test]
+    #[cfg(unix)]
+    fn wait_with_timeout_returns_none_on_wedged_child() {
+        // T4-H1: a child that never exits (a wedged xclip, a stuck
+        // pbcopy) must be killed after the timeout instead of
+        // freezing the TUI.
+        use std::process::Command;
+        let child = Command::new("sleep").arg("60").spawn().unwrap();
+        let start = std::time::Instant::now();
+        let result = super::wait_with_timeout(child, std::time::Duration::from_millis(500));
+        assert!(result.is_none(), "expected timeout, got {result:?}");
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "wait_with_timeout must return in under 2s, took {elapsed:?}",
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn wait_with_timeout_returns_some_on_fast_child() {
+        use std::process::Command;
+        let child = Command::new("true").spawn().unwrap();
+        let result = super::wait_with_timeout(child, std::time::Duration::from_secs(2));
+        assert_eq!(result, Some(true));
+    }
 }
 
 /// T4-H1: wait for `child` to exit, up to `d`. Kill and reap on

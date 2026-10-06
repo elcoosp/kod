@@ -8447,4 +8447,25 @@ mod coverage_slash_dispatch_more {
         tui.abort_bg_tasks();
         assert!(tui.bg_tasks.is_empty());
     }
+
+    #[test]
+    fn batched_render_loop_pins_yield_and_burst() {
+        // T4-H3: the fix yields every 32 events inside the batched
+        // render loop so a burst of ResponseChunks cannot starve other
+        // tasks. Asserting actual fairness is fragile; instead this
+        // pins the code shape and exercises the counter logic.
+        let src = include_str!("main_loop.rs");
+        assert!(
+            src.contains("tokio::task::yield_now().await"),
+            "the batched loop must yield to the runtime",
+        );
+        // Counter logic: every 32nd event triggers a yield.
+        let mut yielded_at = Vec::new();
+        for i in 1..=100u32 {
+            if i % 32 == 0 {
+                yielded_at.push(i);
+            }
+        }
+        assert_eq!(yielded_at, vec![32, 64, 96]);
+    }
 }

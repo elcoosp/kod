@@ -140,7 +140,6 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SessionSafeWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
 
     /// Sequential on purpose: the terminal-ownership flag is global,
     /// so parallel tests would race on it.

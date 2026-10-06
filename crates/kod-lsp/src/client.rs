@@ -1318,4 +1318,22 @@ mod coverage_lsp_parsers {
     fn uri_to_path_without_scheme_is_kept_verbatim() {
         assert_eq!(uri_to_path("/tmp/x.rs"), PathBuf::from("/tmp/x.rs"));
     }
+
+    #[test]
+    fn child_stderr_is_piped_to_tracing() {
+        // T2-H12: same shape assertion as the MCP test.
+        let src = include_str!("client.rs");
+        assert!(
+            src.contains("stderr(Stdio::piped())"),
+            "stderr must be piped, not discarded",
+        );
+        assert!(
+            src.contains(r#""lsp::stderr""#),
+            "stderr must be logged under the lsp::stderr tracing target",
+        );
+        assert!(
+            src.contains("child.stderr.take()"),
+            "the reader must take the child's stderr handle",
+        );
+    }
 }

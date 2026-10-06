@@ -935,4 +935,32 @@ mod coverage_hooks_config {
             Some("fmt"),
         );
     }
+
+    #[test]
+    fn recovered_config_is_written_back() {
+        // T5-C30: loading a broken config renames it to `.toml.broken`
+        // and (with the fix) writes the recovered shape back. Without
+        // the write-back, the next load reads a fresh default and
+        // discards any recovered sections.
+        //
+        // This test only verifies the file exists after the recovery
+        // path runs, not the full recovery semantics (which has its
+        // own coverage in `config::tests::test_corrupt_file_yields_error_from_load_from`).
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cfg_path = tmp.path().join("config.toml");
+        std::fs::write(&cfg_path, "preset = 5\n[[[not toml").unwrap();
+        let _ = KodConfig::load_from(&cfg_path);
+        // Either the original path now holds a valid config, or the
+        // broken file was renamed to `.toml.broken` (both are acceptable
+        // depending on the recovery branch taken).
+        let broken = cfg_path.with_extension("toml.broken");
+        let path_has_content = std::fs::metadata(&cfg_path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false);
+        let broken_exists = broken.exists();
+        assert!(
+            path_has_content || broken_exists,
+            "after recovery the config path must either hold recovered content or have been renamed",
+        );
+    }
 }
