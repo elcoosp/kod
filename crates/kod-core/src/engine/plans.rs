@@ -401,7 +401,11 @@ impl KodEngine {
     /// Apply a `PlanUpdate` to the transcript's plan, if one exists.
     /// Returns the human-readable description from `Plan::apply`, or
     /// a message saying no plan exists.
-    pub async fn apply_plan_update(&self, key: &str, update: kod_core_state::plan::PlanUpdate) -> String {
+    pub async fn apply_plan_update(
+        &self,
+        key: &str,
+        update: kod_core_state::plan::PlanUpdate,
+    ) -> String {
         // Delta §11.10: a ReferencePath update changes both the plan's
         // own list and the engine's protected-path set. The set is
         // derived from the plan, so a caller reads a single source of
