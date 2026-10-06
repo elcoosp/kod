@@ -278,9 +278,10 @@ impl Agent {
     pub fn is_timed_out(&self, timeout: Duration) -> bool {
         match self.last_heartbeat() {
             Some(last) => last.elapsed() > timeout,
-            // T5-C18: a never-started agent is not "timed out".
-            // T5-C18: a never-started agent is not "timed out".
-            None => true, // No heartbeat means timed out
+            // T5-C18: a never-started agent has no heartbeat yet — it
+            // is idle, not timed out. The pre-fix `true` meant a
+            // watchdog killed freshly-registered agents.
+            None => false,
         }
     }
 
@@ -580,12 +581,20 @@ mod coverage_agent_builder {
     fn heartbeat_is_none_before_start_and_some_after() {
         let a = Agent::new("x").build();
         assert!(a.last_heartbeat().is_none());
-        assert!(a.is_timed_out(std::time::Duration::from_millis(0)));
+        // T5-C18: with the corrected semantics, a never-started agent
+        // is NOT timed out even under a zero window. Before the fix
+        // this assertion was inverted, which is exactly why a
+        // watchdog would kill freshly-registered agents.
+        assert!(!a.is_timed_out(std::time::Duration::from_millis(0)));
         a.record_heartbeat();
         assert!(a.last_heartbeat().is_some());
         // A freshly-recorded heartbeat is not "timed out" under a
         // generous window.
         assert!(!a.is_timed_out(std::time::Duration::from_secs(60)));
+        // But a zero window on a just-recorded heartbeat IS timed out
+        // (elapsed > 0 after any real delay).
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(a.is_timed_out(std::time::Duration::from_millis(0)));
     }
 
     #[test]
@@ -594,10 +603,7 @@ mod coverage_agent_builder {
         // no heartbeat. The pre-fix shape returned true (timed out)
         // which meant a watchdog killed idle agents it had just
         // registered.
-        let a = Agent::new(
-            "a".to_string(),
-            Default::default(),
-        );
+        let a = Agent::new("a").build();
         assert!(
             a.last_heartbeat().is_none(),
             "fresh agent must have no heartbeat",
