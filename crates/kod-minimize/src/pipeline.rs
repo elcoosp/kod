@@ -226,10 +226,7 @@ pub(crate) fn run_with_options(
     // legitimately wants to produce empty output (a strip-everything
     // filter) needs an opt-out. `allow_empty_result` defaults false
     // so the pre-fix behavior is preserved for existing defs.
-    if text.trim().is_empty()
-        && !raw.trim().is_empty()
-        && !allow_empty_result
-    {
+    if text.trim().is_empty() && !raw.trim().is_empty() && !allow_empty_result {
         return Ok(raw.to_string());
     }
     Ok(text)
@@ -300,8 +297,7 @@ fn compile_patterns(
 /// static in `compile` is fn-local, so the module-level accessor
 /// reads this mirror; `compile` bumps it on every insert.
 #[cfg(test)]
-static COMPILE_CACHE_LEN: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+static COMPILE_CACHE_LEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// T5-C12: test-only accessor for the regex cache length.
 #[cfg(test)]
@@ -346,8 +342,8 @@ fn compile(pattern: &str, stage: &'static str) -> Result<regex::Regex, PipelineE
             }
         }
         g.insert(pattern.to_string(), re.clone());
-            #[cfg(test)]
-            COMPILE_CACHE_LEN.store(g.len(), std::sync::atomic::Ordering::Relaxed);
+        #[cfg(test)]
+        COMPILE_CACHE_LEN.store(g.len(), std::sync::atomic::Ordering::Relaxed);
     }
     Ok(re)
 }
@@ -680,4 +676,3 @@ stages = []
         assert!(n <= 256, "regex cache must be bounded at 256; got {n}");
     }
 }
-
