@@ -27,7 +27,7 @@ pub mod lang;
 pub mod parse_cache;
 pub mod rust;
 
+pub use extract::symbols;
 pub use lang::Lang;
 pub use parse_cache::{ParseCache, global};
-pub use extract::symbols;
 pub use rust::AstSymbol;
