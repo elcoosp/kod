@@ -539,7 +539,14 @@ pub(super) async fn drive_prompt_through_fresh_engine(
         return (Vec::new(), Some(format!("start: {e}")));
     }
     let _ = engine.process_for("session", prompt).await;
-    let _ = engine.shutdown().await;
+    // Bug-hunt: the pre-fix shape dropped a shutdown
+    // failure. A failed shutdown leaves MCP children and
+    // background tasks to be killed by process exit rather
+    // than torn down cleanly. The process is about to end
+    // either way, but the user should see the failure.
+    if let Err(e) = engine.shutdown().await {
+        eprintln!("warning: engine shutdown failed: {e}");
+    }
     // The concrete handle is what `captured()` lives on; the
     // provider we gave the registry shares the same inner state.
     let captured = replay_concrete.captured();

@@ -125,7 +125,14 @@ pub async fn run_fixture_replay(name: &str, strict: bool, first_round_only: bool
             continue;
         }
     }
-    let _ = engine.shutdown().await;
+    // Bug-hunt: the pre-fix shape dropped a shutdown
+    // failure. A failed shutdown leaves MCP children and
+    // background tasks to be killed by process exit rather
+    // than torn down cleanly. The process is about to end
+    // either way, but the user should see the failure.
+    if let Err(e) = engine.shutdown().await {
+        eprintln!("warning: engine shutdown failed: {e}");
+    }
     // Best-effort cleanup of the scratch directory.
     let _ = std::fs::remove_dir_all(&tmp_root);
 

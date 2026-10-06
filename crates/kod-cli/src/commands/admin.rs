@@ -660,7 +660,14 @@ pub async fn run_serve(stop: bool, socket: Option<std::path::PathBuf>) -> Result
     let result = kod_core_serve::serve::serve(engine.clone(), socket_path.clone()).await;
 
     // Graceful engine shutdown after the accept loop exits.
-    let _ = engine.shutdown().await;
+    // Bug-hunt: the pre-fix shape dropped a shutdown
+    // failure. A failed shutdown leaves MCP children and
+    // background tasks to be killed by process exit rather
+    // than torn down cleanly. The process is about to end
+    // either way, but the user should see the failure.
+    if let Err(e) = engine.shutdown().await {
+        eprintln!("warning: engine shutdown failed: {e}");
+    }
     result
 }
 

@@ -811,7 +811,14 @@ pub async fn run_agent(
     // pre-fix `?` skipped `engine.shutdown()`, leaving MCP children
     // and the redb handle to be torn down by process exit.
     let response_result = engine.process(&goal).await;
-    let _ = engine.shutdown().await;
+    // Bug-hunt: the pre-fix shape dropped a shutdown
+    // failure. A failed shutdown leaves MCP children and
+    // background tasks to be killed by process exit rather
+    // than torn down cleanly. The process is about to end
+    // either way, but the user should see the failure.
+    if let Err(e) = engine.shutdown().await {
+        eprintln!("warning: engine shutdown failed: {e}");
+    }
     let response = response_result?;
 
     if let Some(text) = response.text {

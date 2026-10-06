@@ -188,7 +188,14 @@ pub async fn run_swarm(
         Ok(r) => r.with_max_agents(requested_agents),
         Err(e) => {
             // H-C9: shut down before propagating.
-            let _ = engine.shutdown().await;
+            // Bug-hunt: the pre-fix shape dropped a shutdown
+            // failure. A failed shutdown leaves MCP children and
+            // background tasks to be killed by process exit rather
+            // than torn down cleanly. The process is about to end
+            // either way, but the user should see the failure.
+            if let Err(e) = engine.shutdown().await {
+                eprintln!("warning: engine shutdown failed: {e}");
+            }
             return Err(e);
         }
     };
@@ -310,7 +317,14 @@ pub async fn run_swarm(
     let resp = match result {
         Ok(r) => r,
         Err(e) => {
-            let _ = engine.shutdown().await;
+            // Bug-hunt: the pre-fix shape dropped a shutdown
+            // failure. A failed shutdown leaves MCP children and
+            // background tasks to be killed by process exit rather
+            // than torn down cleanly. The process is about to end
+            // either way, but the user should see the failure.
+            if let Err(e) = engine.shutdown().await {
+                eprintln!("warning: engine shutdown failed: {e}");
+            }
             return Err(e);
         }
     };
