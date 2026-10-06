@@ -401,17 +401,72 @@ fn install_seccomp_filter() -> Result<()> {
     // .arch; nr is u32 at offset 0, arch at offset 4.
     #[allow(clippy::cast_possible_truncation)]
     let mut filter: Vec<libc::sock_filter> = vec![
-        libc::sock_filter { code: 0x20, jt: 0, jf: 0, k: 4 },                 // BPF_LD|BPF_W|BPF_ABS, arch
-        libc::sock_filter { code: 0x15, jt: 0, jf: 1, k: AUDIT_ARCH },        // jeq ARCH, next, kill
-        libc::sock_filter { code: 0x06, jt: 0, jf: 0, k: SECCOMP_RET_KILL_PROCESS }, // ret KILL
-        libc::sock_filter { code: 0x20, jt: 0, jf: 0, k: 0 },                 // ld nr
-        libc::sock_filter { code: 0x15, jt: 0, jf: 1, k: nr_ptrace },
-        libc::sock_filter { code: 0x06, jt: 0, jf: 0, k: SECCOMP_RET_KILL_PROCESS },
-        libc::sock_filter { code: 0x15, jt: 0, jf: 1, k: nr_pvm_read },
-        libc::sock_filter { code: 0x06, jt: 0, jf: 0, k: SECCOMP_RET_KILL_PROCESS },
-        libc::sock_filter { code: 0x15, jt: 0, jf: 1, k: nr_pvm_write },
-        libc::sock_filter { code: 0x06, jt: 0, jf: 0, k: SECCOMP_RET_KILL_PROCESS },
-        libc::sock_filter { code: 0x06, jt: 0, jf: 0, k: SECCOMP_RET_ALLOW },
+        libc::sock_filter {
+            code: 0x20,
+            jt: 0,
+            jf: 0,
+            k: 4,
+        }, // BPF_LD|BPF_W|BPF_ABS, arch
+        libc::sock_filter {
+            code: 0x15,
+            jt: 0,
+            jf: 1,
+            k: AUDIT_ARCH,
+        }, // jeq ARCH, next, kill
+        libc::sock_filter {
+            code: 0x06,
+            jt: 0,
+            jf: 0,
+            k: SECCOMP_RET_KILL_PROCESS,
+        }, // ret KILL
+        libc::sock_filter {
+            code: 0x20,
+            jt: 0,
+            jf: 0,
+            k: 0,
+        }, // ld nr
+        libc::sock_filter {
+            code: 0x15,
+            jt: 0,
+            jf: 1,
+            k: nr_ptrace,
+        },
+        libc::sock_filter {
+            code: 0x06,
+            jt: 0,
+            jf: 0,
+            k: SECCOMP_RET_KILL_PROCESS,
+        },
+        libc::sock_filter {
+            code: 0x15,
+            jt: 0,
+            jf: 1,
+            k: nr_pvm_read,
+        },
+        libc::sock_filter {
+            code: 0x06,
+            jt: 0,
+            jf: 0,
+            k: SECCOMP_RET_KILL_PROCESS,
+        },
+        libc::sock_filter {
+            code: 0x15,
+            jt: 0,
+            jf: 1,
+            k: nr_pvm_write,
+        },
+        libc::sock_filter {
+            code: 0x06,
+            jt: 0,
+            jf: 0,
+            k: SECCOMP_RET_KILL_PROCESS,
+        },
+        libc::sock_filter {
+            code: 0x06,
+            jt: 0,
+            jf: 0,
+            k: SECCOMP_RET_ALLOW,
+        },
     ];
     let prog = libc::sock_fprog {
         len: filter.len() as u16,
