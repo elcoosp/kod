@@ -642,4 +642,54 @@ impl KodEngine {
         self.auto_lsp_atomic
             .load(std::sync::atomic::Ordering::Relaxed)
     }
+    /// Restore the transcript for `key` from a session log.
+    ///
+    /// This is the P2 rehydration entry point: it reads the JSONL
+    /// written by a prior process (via [`kod_core_state::session_log::read_session`]),
+    /// rebuilds the tool calls that ran under `key` as prose turns,
+    /// and appends them to the live history. The messages are
+    /// User-role summaries so they survive the text-protocol
+    /// `render_history` filter that deliberately skips Tool-role
+    /// rows; see [`kod_core_state::session_log::rehydrate_prose_turns`] for
+    /// the rationale and the structured sibling
+    /// [`kod_core_state::session_log::rehydrate_turns`] for the future
+    /// `CompletionRequest` path.
+    ///
+    /// Returns the number of messages appended. A missing or empty
+    /// log yields `Ok(0)` and leaves history untouched.
+    pub async fn rehydrate_from_log_for(&self, key: &str, path: &std::path::Path) -> Result<usize> {
+        self.rehydrate_from_log_with(
+            key,
+            path,
+            kod_core_state::session_log::RehydrationMode::Prose,
+        )
+        .await
+    }
+
+    /// Rehydrate with an explicit mode. `rehydrate_from_log_for` is
+    /// the `Prose` convenience.
+    pub async fn rehydrate_from_log_with(
+        &self,
+        key: &str,
+        path: &std::path::Path,
+        mode: kod_core_state::session_log::RehydrationMode,
+    ) -> Result<usize> {
+        let entries = kod_core_state::session_log::read_session(path)?;
+        let messages = match mode {
+            kod_core_state::session_log::RehydrationMode::Prose => {
+                kod_core_state::session_log::rehydrate_prose_turns(&entries, key)
+            }
+            kod_core_state::session_log::RehydrationMode::Structured => {
+                kod_core_state::session_log::rehydrate_turns(&entries, key)
+            }
+        };
+        let count = messages.len();
+        if count == 0 {
+            return Ok(0);
+        }
+        let mut guard = self.history.write().await;
+        guard.entry(key.to_string()).or_default().extend(messages);
+        Ok(count)
+    }
+
 }

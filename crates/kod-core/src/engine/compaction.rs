@@ -574,4 +574,214 @@ impl KodEngine {
             .collect();
         if steps.is_empty() { None } else { Some(steps) }
     }
+
+    /// P2-a: compact `key`'s transcript before the next render when
+    /// the observed token count has crossed the hard threshold.
+    ///
+    /// Called from `prepare_turn` immediately before
+    /// `render_history_for`, so the compacted transcript is what gets
+    /// rendered and the current turn pays the smaller prompt. Returns
+    /// the number of messages dropped (0 when no compaction ran).
+    ///
+    /// This is the *emergency* path only: it drops the oldest safe
+    /// block and inserts a factual no-LLM summary. The background
+    /// LLM summarization that replaces the dropped block with real
+    /// prose is a follow-up; what matters here is that the transcript
+    /// never grows past the window and never splits a tool pair.
+    /// P2-a: spawn the background summarization for a transcript
+    /// whose size has crossed the soft threshold.
+    ///
+    /// The task clones the provider (an `Arc`, cheap) and the two
+    /// `Arc`-shared state maps, builds a prompt from the block that
+    /// would be dropped, and writes the result to `pending_summaries`.
+    /// When the hard threshold is crossed on a later turn,
+    /// `maybe_compact_for` uses that text in place of the emergency
+    /// summary: real prose rather than counts and file names.
+    ///
+    /// Fire-and-forget. A failure clears the in-flight mark so the
+    /// next soft-threshold turn retries; the emergency path still
+    /// bounds the context meanwhile, which is the property that has
+    /// to hold.
+    pub(crate) async fn spawn_compaction_summary(&self, key: &str, dropped: Vec<kod_types::ChatMessage>) {
+        // One task per transcript; a second call while one is running
+        // is a no-op rather than a duplicate request.
+        {
+            let mut in_flight = self.summaries_in_flight.write().await;
+            if !in_flight.insert(key.to_string()) {
+                return;
+            }
+        }
+
+        let Some(provider) = self.current_provider().await else {
+            self.summaries_in_flight.write().await.remove(key);
+            return;
+        };
+        let options = self.generation_defaults.read().await.to_options();
+        let prompt = build_summary_prompt(&dropped);
+
+        // Clone the shared state; the task never touches `self`.
+        let pending = self.pending_summaries.clone();
+        let in_flight = self.summaries_in_flight.clone();
+        let engine_key = key.to_string();
+
+        tokio::spawn(async move {
+            let result = provider.generate(&prompt, &options).await;
+            match result {
+                Ok(text) if !text.trim().is_empty() => {
+                    pending
+                        .write()
+                        .await
+                        .insert(engine_key.clone(), text.trim().to_string());
+                }
+                Ok(_) => {
+                    tracing::warn!(key = %engine_key,
+                        "compaction summary returned empty; emergency path will be used");
+                }
+                Err(e) => {
+                    tracing::warn!(key = %engine_key, error = %e,
+                        "compaction summary failed; emergency path will be used");
+                }
+            }
+            in_flight.write().await.remove(&engine_key);
+        });
+    }
+
+    pub(crate) async fn maybe_compact_for(&self, key: &str) -> usize {
+        // Budget from the cached window; the `0` case (no registry
+        // installed) makes `decide` return `None` and nothing runs.
+        let (window, _max_out) = self.budget_hint.read().map(|g| *g).unwrap_or((0, 0));
+        if window == 0 {
+            return 0;
+        }
+
+        // Delta §2.4 (adoption): prefer the provider-anchored gauge.
+        // Its value is the anchor's `prompt_tokens` (the exact number
+        // the provider last charged for — system prompt, tools, and
+        // messages) plus a char-arithmetic tail for messages appended
+        // since. The `observed_usage` fallback below records only
+        // `prompt + completion` from the last call, so it under-counts
+        // by whatever the provider charged for the prompt *scaffolding*
+        // (identity block, tool schemas, repo map). The gauge is the
+        // more accurate of the two; the fallback exists for the first
+        // turn of a session, when no anchor has been established yet,
+        // and for a resumed session whose transcript was loaded from
+        // disk without a preceding call.
+        let used = match self.anchored_context_tokens(key).await {
+            Some(n) => n,
+            None => match self.observed_usage.read().await.get(key) {
+                Some(&n) => n,
+                None => {
+                    let guard = self.history.read().await;
+                    let chars: usize = guard
+                        .get(key)
+                        .map(|t| t.iter().map(|m| m.content.len()).sum())
+                        .unwrap_or(0);
+                    (chars / 4) as u64
+                }
+            },
+        };
+
+        let action = crate::compaction::decide(used, window as u64);
+        if action == crate::compaction::Action::None {
+            return 0;
+        }
+
+        // Delta §4.1: reduction before summarization. Try a mechanical
+        // pass first — shake and prune are pure functions that do not
+        // need the model, and a successful plan avoids the summary
+        // call entirely. Only when the mechanical rungs find nothing
+        // (or fall short) does the summary path run.
+        if let Some(plan) = self.try_mechanical_compaction(key, window as u64).await {
+            let affected = self.apply_compaction_plan(key, plan, window as u64).await;
+            if affected > 0 {
+                tracing::info!(
+                    holder = key,
+                    affected,
+                    "mechanical compaction reduced the transcript before summarization",
+                );
+                return affected;
+            }
+        }
+
+        // Compute the cut once, using a read guard, so both the
+        // StartBackground and CompactNow paths agree on which
+        // messages are in play.
+        let (_cut, dropped_for_summary) = {
+            let guard = self.history.read().await;
+            let Some(turns) = guard.get(key) else {
+                return 0;
+            };
+            let Some(cut) =
+                crate::compaction::safe_cutoff(turns, crate::compaction::RECENT_TURNS_TO_KEEP)
+            else {
+                return 0;
+            };
+            if cut == 0 {
+                // No safe cut drops anything: one enormous
+                // un-splittable block. Leave it; the request is
+                // rejected and the caller sees the real limit.
+                return 0;
+            }
+            (cut, turns[..cut].to_vec())
+        };
+
+        if action == crate::compaction::Action::StartBackground {
+            // Queue a background summary for the block that *would*
+            // be dropped. It lands in `pending_summaries` for the turn
+            // that later crosses the hard threshold.
+            self.spawn_compaction_summary(key, dropped_for_summary)
+                .await;
+            return 0;
+        }
+
+        // CompactNow: take the pending summary if the background task
+        // has finished, else fall back to the emergency text.
+        let background_summary = self.pending_summaries.write().await.remove(key);
+
+        let mut guard = self.history.write().await;
+        let Some(turns) = guard.get_mut(key) else {
+            return 0;
+        };
+        // Recompute against the live transcript; it may have grown
+        // since the read-guard pass above.
+        let Some(cut) =
+            crate::compaction::safe_cutoff(turns, crate::compaction::RECENT_TURNS_TO_KEEP)
+        else {
+            return 0;
+        };
+        if cut == 0 {
+            return 0;
+        }
+        // T3-H6: rotate-then-truncate keeps the retained suffix in place
+        // rather than memmoving the whole tail forward like drain does.
+        let dropped: Vec<kod_types::ChatMessage> = {
+            let dropped: Vec<kod_types::ChatMessage> = turns[..cut].to_vec();
+            turns.rotate_left(cut);
+            turns.truncate(turns.len() - cut);
+            dropped
+        };
+        let summary = background_summary
+            .unwrap_or_else(|| crate::compaction::emergency_summary(&dropped, window as u64));
+        let mut summary_msg = kod_types::ChatMessage::text(
+            kod_types::MessageId::new(),
+            kod_types::MessageRole::User,
+            format!("## Previous Conversation Summary\n{summary}"),
+            time::OffsetDateTime::now_utc(),
+        );
+        // Pinned so the render path never drops the summary for
+        // budget reasons — losing it would lose the only record of
+        // what was compacted away.
+        summary_msg.metadata.pinned = true;
+        turns.insert(0, summary_msg);
+
+        tracing::info!(
+            key,
+            dropped = cut,
+            used_tokens = used,
+            window,
+            "P2-a: emergency compaction ran",
+        );
+        cut
+    }
+
 }
