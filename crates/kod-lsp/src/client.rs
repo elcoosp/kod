@@ -654,16 +654,40 @@ impl LspClient {
     }
 
     async fn read_message(&mut self) -> Result<serde_json::Value, LspError> {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt};
         // Headers: `Content-Length: N\r\n` possibly with others, then
         // a blank line.
+        //
+        // Bug-hunt: the pre-fix shape called `read_line` unbounded — a
+        // peer that sent a header line with no `\n` grew the line
+        // buffer until OOM, and the `content_length` check below was
+        // only consulted after the header loop ended. Bound each read
+        // at the reader with `.take()`, then accumulate a byte counter
+        // across the header block; either bound trips before the buffer
+        // can grow past the cap.
+        const MAX_HEADER_BYTES: usize = 64 * 1024;
+        let mut header_bytes: usize = 0;
         let mut content_length: Option<usize> = None;
         loop {
+            let remaining = MAX_HEADER_BYTES.saturating_sub(header_bytes);
+            if remaining == 0 {
+                return Err(LspError::Protocol(format!(
+                    "LSP header exceeded {MAX_HEADER_BYTES} bytes",
+                )));
+            }
             let mut line = String::new();
-            let n = self.stdout.read_line(&mut line).await?;
+            let mut limited = (&mut self.stdout).take((remaining + 1) as u64);
+            let n = limited.read_line(&mut line).await?;
             if n == 0 {
                 return Err(LspError::Io(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
                     "server closed stdout",
+                )));
+            }
+            header_bytes = header_bytes.saturating_add(n);
+            if header_bytes > MAX_HEADER_BYTES {
+                return Err(LspError::Protocol(format!(
+                    "LSP header exceeded {MAX_HEADER_BYTES} bytes",
                 )));
             }
             let trimmed = line.trim_end_matches(['\r', '\n']);
@@ -680,11 +704,6 @@ impl LspClient {
         let n = content_length
             .ok_or_else(|| LspError::Protocol("missing Content-Length header".to_string()))?;
         const MAX_MESSAGE_BYTES: usize = 50 * 1024 * 1024;
-        if n > MAX_MESSAGE_BYTES {
-            return Err(LspError::Protocol(format!(
-                "Content-Length {n} exceeds the {MAX_MESSAGE_BYTES}-byte cap"
-            )));
-        }
         if n > MAX_MESSAGE_BYTES {
             return Err(LspError::Protocol(format!(
                 "Content-Length {n} exceeds the {MAX_MESSAGE_BYTES}-byte cap"
