@@ -434,8 +434,16 @@ async fn read_loop(
     let mut line_buf: Vec<u8> = Vec::new();
     loop {
         line_buf.clear();
+        // Bug-hunt: `read_until` grows `line_buf` until `\n` or EOF,
+        // so the pre-fix `MAX_LINE_BYTES` check only fired after the
+        // buffer had already allocated the whole line. A server that
+        // never emits `\n` (or emits megabytes without one) drove the
+        // process to OOM. Bound the read with `.take()`; the length
+        // check below stays as a secondary guard.
+        use tokio::io::AsyncReadExt;
+        let mut limited = (&mut reader).take((MAX_LINE_BYTES + 1) as u64);
         let next_line: std::io::Result<Option<String>> =
-            match reader.read_until(b'\n', &mut line_buf).await {
+            match limited.read_until(b'\n', &mut line_buf).await {
                 Ok(0) => Ok(None),
                 Ok(_) => {
                     if line_buf.len() > MAX_LINE_BYTES {
