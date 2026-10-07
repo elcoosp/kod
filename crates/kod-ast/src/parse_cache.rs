@@ -215,53 +215,46 @@ pub fn global() -> &'static ParseCache {
 #[cfg(test)]
 mod tests {
 
+    use super::*;
+
     /// T-ast-collision: `probe` must compare the source bytes, not just
-    /// the FNV hash + length. A synthetic collision crafted by mutating
-    /// one byte of a cached source — with the length preserved — must
-    /// NOT return the cached tree for the original key.
+    /// the FNV hash + length. Two sources of the same length, cached
+    /// under the same (hand-picked) hash, must not alias: the second
+    /// must miss because its bytes differ.
+    ///
+    /// Pre-fix, `probe` matched on `hash == hash && lang == lang &&
+    /// len == len` and returned the cached tree for the *first*
+    /// source — a real correctness bug the moment two sources of equal
+    /// length collide in the 64-bit FNV hash (which is not
+    /// cryptographic). This test exercises the exact shape that
+    /// bug took: two sources of equal length, one cache entry, one
+    /// hash — and asserts the wrong source misses.
     #[test]
     fn probe_rejects_a_hash_collision_with_matching_length() {
-        // We cannot force FNV to collide without a full hash-cracking
-        // pass, so this test pins the *shape* of the check: a source
-        // whose bytes differ from a cached entry must miss even when
-        // the caller supplies the colliding hash explicitly. We drive
-        // `probe` directly with a hand-picked hash and two sources of
-        // equal length.
-        let cache = ParseCache::new();
         let lang = Lang::Rust;
-        // Insert a known source under an arbitrary hash.
-        let original = b"fn a() {}\n";
-        let mut mutated = original.to_vec();
-        // Same length, different bytes.
-        mutated[3] = b'b';
-        assert_eq!(original.len(), mutated.len());
-        // Use a fake tree — we cannot build a real `Tree` here without
-        // the grammar; the point of the test is the byte comparison
-        // above the tree clone. `ParseCache::probe` is called through
-        // the public wrapper `parse_or_cached` in real code; for the
-        // unit test we exercise the private `probe`/`insert` pair.
-        //
-        // (This test relies on the fact that `insert` also compares
-        // bytes — a duplicate key is replaced, not appended — so
-        // inserting `original` twice is idempotent and the probe below
-        // sees exactly one entry.)
-        //
-        // We only assert the collision case cannot match; the "same
-        // bytes hit" case is covered by the module's existing tests.
-        // `probe` returns `None` on the mutated source because the
-        // bytes differ, even though we pass the same hash and length.
-        // The exact hash value is arbitrary — the point is that the
-        // byte check must gate the hit.
-        //
-        // NOTE: this test is written against the fixed shape. It is
-        // intentionally unable to pass against the pre-fix shape (which
-        // ignored the bytes and would return `Some(_)`).
-        //
-        // Because we cannot synthesize a `Tree`, the assertion checks
-        // only that a *miss* is returned when a byte differs:
-        let _ = (cache, lang, original, mutated); // see comment above
+        let source_a = "fn a() {}\n"; // 10 bytes
+        let source_b = "fn b() {}\n"; // 10 bytes, differs at index 4
+        assert_eq!(source_a.len(), source_b.len());
+
+        let c = ParseCache::new();
+        let tree_a = c.parse(lang, source_a).expect("parse a");
+
+        // Re-insert under a hand-picked hash so the test does not
+        // depend on the real xxh3 value.
+        let fake_hash: u64 = 0xDEAD_BEEF_CAFE_BABE;
+        c.insert(fake_hash, lang, source_a.as_bytes(), tree_a);
+
+        // Wrong bytes, same length, same hash: MUST miss.
+        assert!(
+            c.probe(fake_hash, lang, source_b.as_bytes()).is_none(),
+            "a hash collision with the same length must miss, not return the wrong tree",
+        );
+        // The real source still hits.
+        assert!(
+            c.probe(fake_hash, lang, source_a.as_bytes()).is_some(),
+            "the same source must hit",
+        );
     }
-    use super::*;
 
     #[test]
     fn a_parse_is_cached_and_reused() {
