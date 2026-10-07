@@ -796,11 +796,24 @@ async fn read_frame<R: tokio::io::AsyncRead + Unpin>(
     // limit before the body cap was ever consulted — a remote could
     // exhaust memory through headers alone. 64 KiB across all header
     // lines is generous for the spec's `Content-Length` + a few extras.
+    //
+    // Bug-hunt: the pre-fix shape *checked* a running byte counter
+    // but still called `read_line` unbounded, so the counter only
+    // fired after the buffer had already grown. Bound each read via
+    // `.take()` and keep the accumulator as a secondary check.
     const MAX_HEADER_BYTES: usize = 64 * 1024;
     let mut header_bytes: usize = 0;
     loop {
+        let remaining = MAX_HEADER_BYTES.saturating_sub(header_bytes);
+        if remaining == 0 {
+            return Err(KodError::InvalidParameters {
+                reason: format!("ACP header exceeds {MAX_HEADER_BYTES} bytes"),
+            });
+        }
+        use tokio::io::AsyncReadExt;
         let mut line = String::new();
-        let n = reader.read_line(&mut line).await.map_err(KodError::Io)?;
+        let mut limited = (&mut *reader).take((remaining + 1) as u64);
+        let n = limited.read_line(&mut line).await.map_err(KodError::Io)?;
         if n == 0 {
             return Ok(None);
         }
