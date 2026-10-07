@@ -25,9 +25,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-#[path = "common/install_test_provider.rs"]
-mod install_test_provider_mod;
-use install_test_provider_mod::install_test_provider;
+use crate::common::install_test_provider::install_test_provider;
 
 /// A provider that emits a fixed tool-call sequence on the first call,
 /// then a plain-text reply. `calls` is consumed in order: one entry

@@ -4,9 +4,7 @@ use kod_core::{
 };
 use tempfile::TempDir;
 
-#[path = "common/install_test_provider.rs"]
-mod install_test_provider_mod;
-use install_test_provider_mod::install_test_provider;
+use crate::common::install_test_provider::install_test_provider;
 
 /// A provider that returns a canned reply without touching the
 /// network. `KodEngine::process` requires an installed provider — the

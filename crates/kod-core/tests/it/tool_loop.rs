@@ -10,9 +10,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-#[path = "common/install_test_provider.rs"]
-mod install_test_provider_mod;
-use install_test_provider_mod::install_test_provider;
+use crate::common::install_test_provider::install_test_provider;
 
 /// Scripted provider: first round requests a real `list_files` call,
 /// second round answers in text.
