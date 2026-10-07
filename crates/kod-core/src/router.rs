@@ -664,6 +664,18 @@ impl TaskRouter {
         if already {
             return Ok(());
         }
+        // Bug-hunt: the pre-fix shape pushed the directory into the
+        // watched list BEFORE the watcher was created. If
+        // `SkillWatcher::new` or `start()` failed (a missing inotify
+        // handle, a permissions error), the directory stayed in the
+        // list — the next call saw `already = true` and short-
+        // circuited, so the directory was never watched and the
+        // error was never surfaced on a retry. Create the watcher
+        // first; only publish the directory into the watched lists
+        // after it actually exists.
+        let (watcher, mut event_rx) = kod_skills::SkillWatcher::new(skills_dir)?;
+        watcher.start()?;
+
         {
             let Ok(mut guard) = self.watched_dirs.lock() else {
                 return Ok(());
@@ -673,9 +685,6 @@ impl TaskRouter {
         if let Ok(mut shared) = self.watched_dirs_shared.lock() {
             shared.push(skills_dir.to_path_buf());
         }
-
-        let (watcher, mut event_rx) = kod_skills::SkillWatcher::new(skills_dir)?;
-        watcher.start()?;
 
         // Every reload task shares the ONE registry, read live at
         // event time — not a per-task snapshot frozen here.
