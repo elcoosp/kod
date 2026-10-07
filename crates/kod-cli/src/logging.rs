@@ -86,7 +86,21 @@ impl SessionSafeWriter {
                     {
                         let _ = std::fs::remove_file(&path);
                     }
-                    OpenOptions::new().create(true).append(true).open(path).ok()
+                    // Bug-hunt: the session log carries the same
+                    // sensitive payload as the session/trace files
+                    // (`RUST_LOG=debug` includes prompt and tool
+                    // framing). Default 0644 is world-readable on a
+                    // shared host; make the new file owner-only.
+                    {
+                        let mut opts = OpenOptions::new();
+                        opts.create(true).append(true);
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::OpenOptionsExt;
+                            opts.mode(0o600);
+                        }
+                        opts.open(path).ok()
+                    }
                 }
             });
         }
