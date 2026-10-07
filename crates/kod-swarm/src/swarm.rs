@@ -68,7 +68,17 @@ impl AgentSwarm {
         }
         agents.insert(agent_id.clone(), agent);
         drop(agents);
-        self.communication.register_agent(agent_id.clone()).await?;
+        // Bug-hunt: if the hub's registration fails — reachable
+        // when a caller registered directly on the hub and then
+        // asked the swarm to add the same agent id — the swarm's
+        // own map kept the entry, so a retry returned "already
+        // in swarm" and the caller could not reconcile. Roll the
+        // map insert back before returning the error.
+        if let Err(e) = self.communication.register_agent(agent_id.clone()).await {
+            let mut agents = self.agents.write().await;
+            agents.remove(&agent_id);
+            return Err(e);
+        }
         Ok(())
     }
 
