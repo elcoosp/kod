@@ -28,7 +28,15 @@ CHANGELOG.md.bak
 # --- fuzz (cargo-fuzz) ---
 # libFuzzer's evolving corpus: regenerated on every `cargo fuzz run`
 # and by `cargo fuzz tmin`; enormous, machine-local, never checked in.
-fuzz/corpus/
+# The libFuzzer-generated corpus is machine-local and huge. But the
+# hand-written seeds for the SSE target — the ones we checked in to
+# give the fuzzer a head start (see the seed commit for the reasoning)
+# — are tracked. They use a `NN_name` prefix; everything else stays
+# ignored.
+fuzz/corpus/*
+!fuzz/corpus/sse/
+fuzz/corpus/sse/*
+!fuzz/corpus/sse/[0-9][0-9]_*
 # Crash/minimization artifacts: belong in the bug report or a test.
 fuzz/artifacts/
 # libFuzzer's build state (already excluded by the workspace

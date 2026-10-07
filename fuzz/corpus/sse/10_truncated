@@ -1,0 +1,2 @@
+data: {"type":"message_start","message":{"id":"m6","role":"assistant","content":[],"usage":{"input_tokens":5,"output_tokens":0}}}
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello wor

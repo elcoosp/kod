@@ -1,0 +1,4 @@
+data: {"type":"message_start","message":{"id":"a","role":"assistant","content":[],"usage":{"input_tokens":1,"output_tokens":0}}}
+data: {"type":"message_stop"}
+data: {"type":"message_start","message":{"id":"b","role":"assistant","content":[],"usage":{"input_tokens":2,"output_tokens":0}}}
+data: {"type":"message_stop"}

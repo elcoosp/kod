@@ -1,0 +1,2 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"m5","role":"assistant","content":[],"usage":{"input_tokens":1,"output_tokens":0}}}

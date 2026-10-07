@@ -1,0 +1,2 @@
+data: {"type":"message_start","message":{"id":"m3","role":"assistant","content":[],"usage":{"input_tokens":100,"output_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":300,"ephemeral_1h_input_tokens":700}}}}
+data: {"type":"message_stop"}
