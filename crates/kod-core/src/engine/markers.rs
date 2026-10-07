@@ -242,3 +242,88 @@ pub fn thinking_marker() -> String {
 pub fn is_thinking_marker(chunk: &str) -> bool {
     chunk == THINKING_MARKER
 }
+
+/// Sent on the chunk channel when the engine abandons the current
+/// endpoint mid-stream because Jev judged the partial response
+/// off-track (P5.6). The TUI drops whatever it accumulated for
+/// the current attempt so the retry against the next endpoint
+/// starts from a clean bubble. Emitted only from `stream_round`
+/// on the very first round, before any tool call has run, so no
+/// tool row can exist to clean up.
+pub const STREAM_RESET_MARKER: &str = "\0kod-stream-reset\0";
+
+/// The reset-marker chunk.
+pub fn stream_reset_marker() -> String {
+    STREAM_RESET_MARKER.to_string()
+}
+
+/// True for exactly the reset marker (no id, no JSON).
+pub fn is_stream_reset_marker(chunk: &str) -> bool {
+    chunk == STREAM_RESET_MARKER
+}
+
+/// Marker prefix for an interactive question on the streaming chunk
+/// channel: `\0kod-question:<id>:<json>\0`. Same shape as the
+/// approval marker; re-exported here so consumers do not have to reach
+/// into kod-tools.
+pub const QUESTION_MARKER: &str = kod_tools::ask::QUESTION_MARKER;
+
+/// Build a question marker for `id` with the JSON-encoded request.
+pub fn question_marker(id: u64, json: &str) -> String {
+    kod_tools::ask::question_marker(id, json)
+}
+
+/// Parse a question marker, returning `(id, json)`.
+pub fn parse_question(chunk: &str) -> Option<(u64, &str)> {
+    kod_tools::ask::parse_question(chunk)
+}
+
+/// Marker prefix for approval requests inside the `process_streaming`
+/// chunk channel: `\0kod-approval:<id>:<json>\0`. The consumer (TUI,
+/// CLI) renders a diff dialog and calls
+/// [`KodEngine::respond_to_approval`] with the id.
+pub const TOOL_APPROVAL_MARKER: &str = "\0kod-approval:";
+
+/// Build an approval-request chunk carrying the JSON-encoded request.
+/// The id is prepended as a decimal string so the parser does not need
+/// to decode the JSON to know which pending request the chunk is for.
+pub fn tool_approval_marker(id: u64, request_json: &str) -> String {
+    // Sanitize NULs; the request JSON is user-tool-adjacent (paths,
+    // arguments) and could contain anything.
+    let clean = request_json.replace('\0', " ");
+    format!("{TOOL_APPROVAL_MARKER}{id}:{clean}\0")
+}
+
+/// If `chunk` is an approval-request marker, return `(id, json)`.
+pub fn parse_tool_approval(chunk: &str) -> Option<(u64, &str)> {
+    let rest = chunk.strip_prefix(TOOL_APPROVAL_MARKER)?;
+    let body = rest.strip_suffix('\0')?;
+    let (id_str, json) = body.split_once(':')?;
+    let id = id_str.parse::<u64>().ok()?;
+    Some((id, json))
+}
+
+/// Marker prefix for a batch of approval requests: one marker per
+/// round, carrying every `Ask`-gated call the round produced.
+/// `\0kod-approval-batch:<batch_id>:<json>\0`, where `<json>` decodes
+/// to [`ApprovalBatch`].
+///
+/// A batch of exactly one item is protocol-identical to the old
+/// single-item marker from the user's point of view: a consumer that
+/// special-cases `items.len() == 1` renders the familiar dialog.
+pub const TOOL_APPROVAL_BATCH_MARKER: &str = "\0kod-approval-batch:";
+
+/// Build a batch-approval chunk carrying the JSON-encoded batch.
+pub fn tool_approval_batch_marker(batch_id: u64, batch_json: &str) -> String {
+    let clean = batch_json.replace('\0', " ");
+    format!("{TOOL_APPROVAL_BATCH_MARKER}{batch_id}:{clean}\0")
+}
+
+/// If `chunk` is a batch-approval marker, return `(batch_id, json)`.
+pub fn parse_tool_approval_batch(chunk: &str) -> Option<(u64, &str)> {
+    let rest = chunk.strip_prefix(TOOL_APPROVAL_BATCH_MARKER)?;
+    let body = rest.strip_suffix('\0')?;
+    let (id_str, json) = body.split_once(':')?;
+    let id = id_str.parse::<u64>().ok()?;
+    Some((id, json))
+}
