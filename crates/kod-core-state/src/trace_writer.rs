@@ -21,19 +21,7 @@ pub struct TraceWriter {
 impl TraceWriter {
     /// Open `path` for append, creating parents if needed.
     pub fn open(path: PathBuf) -> Result<Self> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(KodError::Io)?;
-        }
-        // Bug-hunt: same reasoning as `session_log.rs` — trace files
-        // carry prompts, tool calls, and outcomes. Keep them owner-only.
-        let mut opts = std::fs::OpenOptions::new();
-        opts.create(true).append(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
-        }
-        let file = opts.open(&path).map_err(KodError::Io)?;
+        let file = crate::open_owner_only_append(&path)?;
         Ok(Self {
             path,
             writer: Mutex::new(file),
