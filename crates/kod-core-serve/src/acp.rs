@@ -113,7 +113,14 @@ impl Server {
             "method": method,
             "params": params,
         });
-        let _ = tokio::time::timeout(SEND_TIMEOUT, self.out.send(msg)).await;
+        // Bug-hunt: a dropped notification was invisible. Log at debug
+        // so "the client stopped hearing events" has a hook.
+        if !matches!(
+            tokio::time::timeout(SEND_TIMEOUT, self.out.send(msg)).await,
+            Ok(Ok(())),
+        ) {
+            tracing::debug!(method, "acp: notify send failed or timed out");
+        }
     }
 
     /// Send a request to the client and await its response.
@@ -170,7 +177,12 @@ impl Server {
             "id": id,
             "result": result,
         });
-        let _ = tokio::time::timeout(SEND_TIMEOUT, self.out.send(msg)).await;
+        if !matches!(
+            tokio::time::timeout(SEND_TIMEOUT, self.out.send(msg)).await,
+            Ok(Ok(())),
+        ) {
+            tracing::debug!("acp: respond send failed or timed out");
+        }
     }
 
     /// Send an error response to a client→agent request.
@@ -181,7 +193,12 @@ impl Server {
             "id": id,
             "error": { "code": code, "message": message },
         });
-        let _ = tokio::time::timeout(SEND_TIMEOUT, self.out.send(msg)).await;
+        if !matches!(
+            tokio::time::timeout(SEND_TIMEOUT, self.out.send(msg)).await,
+            Ok(Ok(())),
+        ) {
+            tracing::debug!("acp: respond_error send failed or timed out");
+        }
     }
 }
 
