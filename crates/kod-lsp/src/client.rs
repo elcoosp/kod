@@ -654,7 +654,6 @@ impl LspClient {
     }
 
     async fn read_message(&mut self) -> Result<serde_json::Value, LspError> {
-        use tokio::io::{AsyncBufReadExt, AsyncReadExt};
         // Headers: `Content-Length: N\r\n` possibly with others, then
         // a blank line.
         //
