@@ -721,9 +721,13 @@ impl ChatWidget {
                 .saturating_sub(offset)
                 .min(u16::MAX as usize) as u16
         };
+        // Bug-hunt: `area.width - 1` panics on a 0-width rect (a
+        // terminal still being resized, an embedded render). The
+        // sibling arithmetic above already uses saturating_sub; this
+        // matches that discipline. A width of 0 is a no-op render.
         let text_area = if show_bar {
             Rect {
-                width: area.width - 1,
+                width: area.width.saturating_sub(1),
                 ..area
             }
         } else {
