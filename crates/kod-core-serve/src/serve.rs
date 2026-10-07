@@ -558,11 +558,16 @@ async fn handle_connection(
                     .and_then(|v| v.as_u64())
                     .map(|n| n.min(u8::MAX as u64) as u8)
                     .unwrap_or(1);
+                // Bug-hunt: a client sending `max = 300` used to be
+                // truncated to `44` (300 as u8), breaking version
+                // negotiation silently. The `min` handler two lines
+                // above already does this correctly; mirror it here.
                 let client_max = req
                     .params
                     .get("max")
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(client_min as u64) as u8;
+                    .map(|n| n.min(u8::MAX as u64) as u8)
+                    .unwrap_or(client_min);
                 let lo = client_min.max(MIN_PROTOCOL_VERSION);
                 let hi = client_max.min(MAX_PROTOCOL_VERSION);
                 let compatible = lo <= hi;
