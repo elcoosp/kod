@@ -41,7 +41,7 @@ impl KodEngine {
 
     /// S10 phase 2: append one JSONL entry per tool call. Best-effort —
     /// a write failure is logged and the run continues.
-    pub(crate) fn record_session_tool_calls(
+    fn record_session_tool_calls(
         &self,
         calls: &[ToolCall],
         raw_results: &[(Result<ToolResult>, u64)],
@@ -92,7 +92,7 @@ impl KodEngine {
     /// snapshot. Failures are silent skips — a missing snapshot, an
     /// unreadable file, or a binary diff just means "no diff on this
     /// row", not a broken round.
-    pub(crate) fn attach_write_diffs(
+    fn attach_write_diffs(
         &self,
         calls: &[ToolCall],
         snapshot_ids: &[Option<String>],
@@ -139,7 +139,7 @@ impl KodEngine {
     /// H-E2 caps each tool result before it goes on the wire so a
     /// 256 KB `read_file` repeated over 40 rounds cannot grow the
     /// transcript past the endpoint's window.
-    pub(crate) fn build_round_messages(
+    fn build_round_messages(
         calls: &[ToolCall],
         results: &[ToolResult],
     ) -> Vec<kod_types::ChatMessage> {
@@ -390,7 +390,7 @@ impl KodEngine {
     /// S10 phase 5 (cont.): write one `SessionEntry::PolicyDecision`
     /// per gate result so the JSONL carries the audit trail even if
     /// the run is interrupted mid-way.
-    pub(crate) fn log_policy_decisions(
+    fn log_policy_decisions(
         &self,
         calls: &[ToolCall],
         holder: &str,

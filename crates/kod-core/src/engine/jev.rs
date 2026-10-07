@@ -1246,7 +1246,7 @@ impl KodEngine {
 ///     dev / query binaries
 ///   - no arguments that look like script injection (`eval`, `exec`,
 ///     `source`, `.`, `:`)
-pub(crate) fn command_is_sandbox_downgrade_safe(command: &str) -> bool {
+fn command_is_sandbox_downgrade_safe(command: &str) -> bool {
     let trimmed = command.trim();
     if trimmed.is_empty() {
         return false;

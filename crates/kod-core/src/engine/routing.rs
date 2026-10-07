@@ -674,7 +674,7 @@ impl KodEngine {
     /// for a provider that does not report a ladder — the classifier
     /// has only one label to pick, so the answer is deterministically
     /// `Medium`.
-    pub(crate) fn supported_efforts_for(
+    fn supported_efforts_for(
         &self,
         model_ref: &ModelRef,
     ) -> Vec<kod_types::effort::EffortLevel> {
