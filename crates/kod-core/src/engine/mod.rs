@@ -31,6 +31,7 @@ pub use render::*;
 pub use at_refs::*;
 pub(crate) use types::*;
 pub use approval::*;
+pub use settings::GenerationDefaults;
 
 use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
@@ -150,32 +151,6 @@ fn strip_conversation_tail(system_text: &str) -> String {
     match system_text.find(MARKER) {
         Some(i) => system_text[..i].trim_end().to_string(),
         None => system_text.to_string(),
-    }
-}
-
-/// Default generation options captured from `LlmConfig`.
-/// Transitional until D1 replaces this with per-endpoint config.
-#[derive(Debug, Clone, Default)]
-pub struct GenerationDefaults {
-    pub temperature: Option<f32>,
-    pub max_tokens: Option<usize>,
-}
-
-impl GenerationDefaults {
-    fn to_options(&self) -> GenerationOptions {
-        GenerationOptions {
-            model: None,
-            max_tokens: self.max_tokens,
-            temperature: self.temperature,
-            top_p: None,
-            stop_sequences: Vec::new(),
-            // No preference: the caller's own timeout applies
-            // unchanged. A swarm worker's effort is set at its
-            // dispatch, not here.
-            effort: None,
-            // No tool-choice directive: the model decides.
-            tool_choice: None,
-        }
     }
 }
 
