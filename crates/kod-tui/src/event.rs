@@ -320,7 +320,7 @@ impl PrioritySender {
     /// Push an event at the given priority. The priority queue is
     /// unbounded, so this never blocks.
     pub fn send_priority(&self, event: Event, priority: EventPriority) {
-        let mut queue = self.queue.lock().unwrap();
+        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
         let insert_pos = queue
             .iter()
             .position(|(p, _)| *p < priority)
@@ -368,7 +368,7 @@ impl EventHandler {
 
     /// Get number of pending events
     pub fn pending_events(&self) -> usize {
-        self.event_queue.lock().unwrap().len()
+        self.event_queue.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Push an event to the queue
@@ -384,7 +384,7 @@ impl EventHandler {
 
     /// Push a high-priority event
     pub fn push_priority_event(&self, event: Event, priority: EventPriority) {
-        let mut queue = self.event_queue.lock().unwrap();
+        let mut queue = self.event_queue.lock().unwrap_or_else(|e| e.into_inner());
 
         let insert_pos = queue
             .iter()
@@ -408,7 +408,7 @@ impl EventHandler {
             // iteration so a key pushed while we were parked in the
             // select! is returned immediately.
             {
-                let mut queue = self.event_queue.lock().unwrap();
+                let mut queue = self.event_queue.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some((_, event)) = queue.pop_front() {
                     return event;
                 }
@@ -442,7 +442,7 @@ impl EventHandler {
     /// token rate.
     pub fn try_next_event(&self) -> Option<Event> {
         {
-            let mut queue = self.event_queue.lock().unwrap();
+            let mut queue = self.event_queue.lock().unwrap_or_else(|e| e.into_inner());
             if let Some((_, event)) = queue.pop_front() {
                 return Some(event);
             }
