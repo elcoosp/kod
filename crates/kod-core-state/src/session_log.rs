@@ -301,11 +301,18 @@ impl SessionRecorder {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(KodError::Io)?;
         }
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(KodError::Io)?;
+        // Bug-hunt: session logs contain the user's prompts and the
+        // model's tool calls (including argument values). The default
+        // mode on Unix is 0644, which is world-readable on a shared
+        // host. Set 0600 so only the owner reads them.
+        let mut opts = std::fs::OpenOptions::new();
+        opts.create(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let file = opts.open(&path).map_err(KodError::Io)?;
         Ok(Self {
             path,
             writer: Mutex::new(file),
