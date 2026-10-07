@@ -11,7 +11,7 @@ mod jev_advisor;
 mod lifecycle;
 mod lsp;
 mod markers;
-mod render;
+pub mod render;
 mod memory;
 mod plans;
 mod policy;
@@ -25,7 +25,6 @@ mod transcript;
 
 pub use markers::*;
 pub use render::*;
-pub(crate) use render::*;
 
 use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
