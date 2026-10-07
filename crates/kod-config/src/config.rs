@@ -266,10 +266,15 @@ impl KodConfig {
         // deserialize. Unknown keys are ignored (a warning is the
         // job of a later `kod config validate` pass).
         let mut cfg = Self::default();
+        // Bug-hunt (pedantic): `n as u32` truncates an `i64` and
+        // loses the sign. A user writing `config_version = -1` used
+        // to get `4294967295` silently. `try_from` rejects both the
+        // negative and the out-of-range cases; the default survives
+        // in either.
         cfg.config_version = table
             .get("config_version")
             .and_then(|v| v.as_integer())
-            .map(|n| n as u32)
+            .and_then(|n| u32::try_from(n).ok())
             .unwrap_or(cfg.config_version);
 
         macro_rules! recover {
