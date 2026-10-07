@@ -220,7 +220,13 @@ impl KodEngine {
             if self.is_cancelled_for(holder) {
                 return Err(KodError::InvalidState("cancelled by user".to_string()));
             }
-            let step = std::time::Duration::from_secs(1).min(hint - waited);
+            // Bug-hunt (pedantic): `hint - waited` is safe under
+            // the loop guard above (`waited < hint`), but a future
+            // refactor of that guard would silently underflow. Use
+            // `saturating_sub` so the arithmetic cannot panic even if
+            // the guard moves.
+            let remaining = hint.saturating_sub(waited);
+            let step = std::time::Duration::from_secs(1).min(remaining);
             tokio::time::sleep(step).await;
             waited += step;
         }
