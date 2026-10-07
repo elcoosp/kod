@@ -32,6 +32,7 @@ pub use at_refs::*;
 pub(crate) use types::*;
 pub use approval::*;
 pub use settings::GenerationDefaults;
+pub(crate) use policy::LearnedAllow;
 
 use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
@@ -216,46 +217,6 @@ pub const DEFAULT_HISTORY_CHAR_BUDGET: usize = 32_000;
 /// worse than the small-window default it is trying to protect, so we
 /// clamp instead of silently dropping every turn.
 const MIN_HISTORY_CHAR_BUDGET: usize = 4_000;
-
-/// The turn-scoped parameters every round of the agentic loop needs.
-///
-/// Bundled because the two loop methods (`run_collected_loop`,
-/// `run_streaming_loop`) received the same five parameters on every
-/// call, pushing both signatures past the eight-argument limit
-/// `clippy::too_many_arguments` enforces and making the parameter list
-/// hard to read. Bundling loses nothing — the fields do not vary
-/// between rounds of a turn — and the caller builds the bundle once.
-/// A session-scoped learned approval (Tier 2.3). Populated by the
-/// "always approve" action; two calls match when their tool name and
-/// arguments' hash are identical.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct LearnedAllow {
-    pub tool_name: String,
-    /// FNV-1a hash of the call's arguments in their canonical JSON
-    /// form. Whitespace and key order are not normalized — a
-    /// differing call is a new request for approval.
-    pub args_hash: String,
-}
-
-impl LearnedAllow {
-    pub fn from_call(call: &ToolCall) -> Self {
-        let bytes = serde_json::to_vec(&call.arguments).unwrap_or_default();
-        // T3-C3: SHA-256-derived u64 instead of FNV-1a so collisions are
-        // cryptographically hard rather than trivially brute-forceable.
-        use sha2::{Digest, Sha256};
-        let mut sha = Sha256::new();
-        sha.update(&bytes);
-        let digest = sha.finalize();
-        let mut h: u64 = 0;
-        for b in &digest[..8] {
-            h = (h << 8) | (*b as u64);
-        }
-        Self {
-            tool_name: call.tool_name.clone(),
-            args_hash: format!("{h:016x}"),
-        }
-    }
-}
 
 /// Default transcript key: the interactive session. Public methods
 /// without an explicit key operate on this. Swarm agents use a
