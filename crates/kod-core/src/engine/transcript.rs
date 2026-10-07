@@ -526,7 +526,6 @@ impl KodEngine {
             .insert(key.to_string(), trace);
     }
 
-
     /// Build the hook `execute_command` calls when the model sets
     /// `run_in_background` (P2-d).
     ///

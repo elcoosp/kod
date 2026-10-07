@@ -4,11 +4,11 @@
 //! Cargo builds exactly one test binary from `tests/it/main.rs`,
 //! instead of one per file.
 
-pub mod common;
 mod background_shell;
 mod capability_routing;
 mod characterization_history;
 mod characterization_prompts;
+pub mod common;
 mod compaction_admission;
 mod config_integration;
 mod context;

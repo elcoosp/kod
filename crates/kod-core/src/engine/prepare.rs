@@ -5,7 +5,6 @@
 use super::*;
 
 impl KodEngine {
-
     pub(crate) async fn prepare_turn(
         &self,
         key: &str,

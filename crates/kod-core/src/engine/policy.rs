@@ -274,7 +274,6 @@ impl KodEngine {
 // LearnedAllow — moved from mod.rs
 // ---------------------------------------------------------------------------
 
-
 /// The turn-scoped parameters every round of the agentic loop needs.
 ///
 /// Bundled because the two loop methods (`run_collected_loop`,
@@ -294,7 +293,6 @@ pub struct LearnedAllow {
     /// differing call is a new request for approval.
     pub args_hash: String,
 }
-
 
 impl LearnedAllow {
     pub fn from_call(call: &ToolCall) -> Self {

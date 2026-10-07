@@ -368,7 +368,10 @@ impl EventHandler {
 
     /// Get number of pending events
     pub fn pending_events(&self) -> usize {
-        self.event_queue.lock().unwrap_or_else(|e| e.into_inner()).len()
+        self.event_queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 
     /// Push an event to the queue

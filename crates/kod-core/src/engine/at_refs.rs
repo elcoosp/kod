@@ -3,7 +3,6 @@
 //! spool directory. Extracted from `engine/mod.rs`. Free functions,
 //! no engine state.
 
-
 /// Expand `@path` references in `input` into fenced code blocks
 /// containing the referenced file's content.
 ///
@@ -71,7 +70,6 @@ pub fn expand_at_references(input: &str, working_dir: &std::path::Path) -> Strin
     out
 }
 
-
 /// F2c-9: keep `~/.kod/background/` from growing without bound. The
 /// spool files are per-job output captures; a session that runs many
 /// background commands leaves one file each, never removed. Sweep to
@@ -106,7 +104,6 @@ pub(crate) fn sweep_background_spools(dir: &std::path::Path) {
         let _ = std::fs::remove_file(&p);
     }
 }
-
 
 /// Try to expand one `@path` token. Returns the fenced block on
 /// success, `None` when the file cannot be read or the path is not
@@ -161,4 +158,3 @@ fn expand_one_at_ref(
         notice,
     ))
 }
-

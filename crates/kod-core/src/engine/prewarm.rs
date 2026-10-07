@@ -5,7 +5,6 @@
 use super::*;
 
 impl KodEngine {
-
     /// WS-C: whether the default endpoint is a tab bridge. The TUI
     /// and [`Self::prewarm`] consult this for the prewarm policy, and
     /// WS-A consults it for background-session stamping. Approximation:
@@ -17,7 +16,6 @@ impl KodEngine {
             Err(_) => false,
         }
     }
-
 
     /// WS-C: whether the keystroke prewarm probe may run. `auto`
     /// (default) disables it on tab-bridge endpoints, where the probe
@@ -34,7 +32,6 @@ impl KodEngine {
             kod_config::llm::PrewarmMode::Auto => !tab_bridge,
         }
     }
-
 
     pub async fn prewarm(&self, key: &str) {
         // WS-C: policy gate first (defense in depth — the TUI checks
@@ -121,7 +118,6 @@ impl KodEngine {
         let _ =
             tokio::time::timeout(std::time::Duration::from_secs(5), provider.complete(&req)).await;
     }
-
 
     /// Clear the prewarm latch so the next keystroke of a new turn
     /// warms again.

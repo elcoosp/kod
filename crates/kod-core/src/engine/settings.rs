@@ -437,7 +437,6 @@ impl KodEngine {
 // GenerationDefaults — moved from mod.rs
 // ---------------------------------------------------------------------------
 
-
 /// Default generation options captured from `LlmConfig`.
 /// Transitional until D1 replaces this with per-endpoint config.
 #[derive(Debug, Clone, Default)]
@@ -445,7 +444,6 @@ pub struct GenerationDefaults {
     pub temperature: Option<f32>,
     pub max_tokens: Option<usize>,
 }
-
 
 impl GenerationDefaults {
     pub(crate) fn to_options(&self) -> GenerationOptions {

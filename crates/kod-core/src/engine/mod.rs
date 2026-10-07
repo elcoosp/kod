@@ -8,19 +8,19 @@ mod approval;
 mod at_refs;
 mod compaction;
 mod control;
-mod jev;
 mod hook;
+mod jev;
 mod jev_advisor;
 mod lifecycle;
 mod lsp;
 mod markers;
-pub mod render;
 mod memory;
 mod plans;
 mod policy;
 mod prepare;
 mod prewarm;
 mod process;
+pub mod render;
 mod routing;
 mod settings;
 mod state;
@@ -29,14 +29,14 @@ mod tool_dispatch;
 mod transcript;
 mod types;
 
-pub use markers::*;
-pub use render::*;
-pub use at_refs::*;
-pub(crate) use types::*;
 pub use approval::*;
-pub use settings::GenerationDefaults;
-pub(crate) use policy::LearnedAllow;
+pub use at_refs::*;
 pub(crate) use hook::BaselineRefresher;
+pub use markers::*;
+pub(crate) use policy::LearnedAllow;
+pub use render::*;
+pub use settings::GenerationDefaults;
+pub(crate) use types::*;
 
 use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};
@@ -890,8 +890,7 @@ pub struct KodEngine {
     mcp: RwLock<Option<Arc<crate::mcp_adapters::McpHost>>>,
 }
 
-impl KodEngine {
-}
+impl KodEngine {}
 
 // (The `which` helper moved to `kod_lsp::binary_for_path` when the
 // LSP pool was introduced; `lsp_binary_for` now delegates there.)
@@ -932,8 +931,7 @@ mod coverage_tool_result_redaction;
 #[cfg(test)]
 mod coverage_tool_inventory_cache;
 
-impl KodEngine {
-}
+impl KodEngine {}
 
 #[cfg(test)]
 mod rehydrate_integration_tests;

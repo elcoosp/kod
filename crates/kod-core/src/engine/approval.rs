@@ -7,7 +7,6 @@
 
 use super::*;
 
-
 /// The serialized shape of an approval request. Sent as JSON inside an
 /// [`tool_approval_marker`] chunk, decoded by the consumer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,14 +32,12 @@ pub struct ApprovalRequest {
     pub id: Option<u64>,
 }
 
-
 /// A single round's worth of approvals, emitted together so a
 /// consumer can present them as one batch.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ApprovalBatch {
     pub items: Vec<ApprovalRequest>,
 }
-
 
 /// What the consumer decides.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,7 +56,6 @@ pub enum ApprovalDecision {
     DenyAlways,
 }
 
-
 impl ApprovalDecision {
     /// True for both `Approve` and `ApproveWith`.
     pub fn is_approve(&self) -> bool {
@@ -69,7 +65,6 @@ impl ApprovalDecision {
         )
     }
 }
-
 
 /// Hysteresis state for the per-turn Jev tool-category filter (P0).
 ///
@@ -109,7 +104,6 @@ pub(crate) struct ToolFilterState {
     /// may not survive the next round either.
     pub suppress_marker_once: bool,
 }
-
 
 impl ToolFilterState {
     /// A fresh state with no committed signature: the first call
@@ -155,4 +149,3 @@ impl ToolFilterState {
         self.turns_since_change = 0;
     }
 }
-

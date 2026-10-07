@@ -602,7 +602,11 @@ impl KodEngine {
     /// next soft-threshold turn retries; the emergency path still
     /// bounds the context meanwhile, which is the property that has
     /// to hold.
-    pub(crate) async fn spawn_compaction_summary(&self, key: &str, dropped: Vec<kod_types::ChatMessage>) {
+    pub(crate) async fn spawn_compaction_summary(
+        &self,
+        key: &str,
+        dropped: Vec<kod_types::ChatMessage>,
+    ) {
         // One task per transcript; a second call while one is running
         // is a no-op rather than a duplicate request.
         {
@@ -783,5 +787,4 @@ impl KodEngine {
         );
         cut
     }
-
 }

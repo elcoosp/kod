@@ -4,8 +4,8 @@
 //! Cargo builds exactly one test binary from `tests/it/main.rs`,
 //! instead of one per file.
 
-pub mod common;
 mod acp_handshake;
+pub mod common;
 mod config_migrate;
 mod integration_tests;
 mod policy_explain;

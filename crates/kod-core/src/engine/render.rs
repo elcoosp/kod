@@ -9,18 +9,15 @@
 
 use kod_types::ToolResult;
 
-
 /// Bytes of headroom reserved when capping a JSON tool result: enough
 /// room for the surrounding `{"path": "…", "content": "…", "truncated":
 /// …}` scaffolding after we trim the big string fields.
 const JSON_CAP_HEADROOM: usize = 512;
 
-
 /// Fields in a tool-result JSON object that are typically the reason
 /// a rendered result exceeds the prompt cap. Trimmed in place so the
 /// surrounding JSON stays valid.
 const CAPPABLE_FIELDS: [&str; 3] = ["content", "stdout", "stderr"];
-
 
 /// Cap a rendered `ToolResult::Success` to at most `cap` bytes without
 /// cutting mid-JSON.
@@ -106,7 +103,6 @@ pub(crate) fn cap_rendered_result(
     )
 }
 
-
 /// Does this reply declare the goal met?
 ///
 /// The goal prompt instructs the model to "end your reply with a line
@@ -140,7 +136,6 @@ pub(crate) fn reply_declares_goal_met(text: &str) -> bool {
     candidates.iter().any(|l| line_is_goal_marker(l))
 }
 
-
 /// Single-line GOAL MET check shared by the first/last-line scan.
 fn line_is_goal_marker(line: &str) -> bool {
     // Strip surrounding emphasis and leading quote / list markers.
@@ -169,7 +164,6 @@ fn line_is_goal_marker(line: &str) -> bool {
     false
 }
 
-
 /// Delta §12.7: render a mental model's entries into a stable bullet
 /// block. The block is what gets frozen into the prompt for the
 /// session; the bytes must be deterministic given a set of entries,
@@ -180,7 +174,10 @@ fn line_is_goal_marker(line: &str) -> bool {
 /// token heuristic the rest of the codebase uses for prompt budget).
 /// A single entry longer than the cap is dropped, not truncated, so
 /// a half-sentence never enters the frozen block.
-pub(crate) fn render_mental_model_block(entries: &[kod_types::MemoryEntry], max_tokens: usize) -> String {
+pub(crate) fn render_mental_model_block(
+    entries: &[kod_types::MemoryEntry],
+    max_tokens: usize,
+) -> String {
     let budget_chars = max_tokens.saturating_mul(4);
     let mut out = String::new();
     let mut used = 0usize;
@@ -198,7 +195,6 @@ pub(crate) fn render_mental_model_block(entries: &[kod_types::MemoryEntry], max_
     }
     out.trim_end().to_string()
 }
-
 
 /// Truncate a UTF-8 string to at most `max` bytes, rounding down to the
 /// nearest char boundary. Returns the input unchanged when it already
@@ -233,7 +229,6 @@ pub(crate) fn append_round_text(buf: &mut String, text: &str) {
     buf.push_str(text);
 }
 
-
 /// One-line brief for a tool call: `execute_command cargo test …`,
 /// `read_file path=…`. Used for the live "running" indicator.
 /// The model-declared reason for a tool call, from the top-level
@@ -257,7 +252,6 @@ pub(crate) fn tool_intent(args: &serde_json::Value) -> Option<String> {
     }
 }
 
-
 /// Suffix a formatted tool display with the model's intent, when it
 /// sent one. Appended — never prepended: row matching
 /// (`tool_row_matches_header`, the execution ledger) keys on the
@@ -268,7 +262,6 @@ fn append_intent(base: &str, args: &serde_json::Value) -> String {
         None => base.to_string(),
     }
 }
-
 
 fn format_call_brief_base(name: &str, args: &serde_json::Value) -> String {
     if name == "execute_command" {
@@ -320,7 +313,6 @@ fn format_call_brief_base(name: &str, args: &serde_json::Value) -> String {
     format!("{name} {short}")
 }
 
-
 /// One-line "what + why" for the running indicator: the argument
 /// excerpt plus the model's declared intent, when it sent one
 /// (`execute_command cargo test — verify the fix`).
@@ -328,10 +320,8 @@ pub fn format_call_brief(name: &str, args: &serde_json::Value) -> String {
     append_intent(&format_call_brief_base(name, args), args)
 }
 
-
 /// Max result lines kept per tool message; the rest collapses to a counter.
 pub const TOOL_RESULT_LINES: usize = 12;
-
 
 /// Human-readable tool header: `list_files path=.` instead of raw JSON.
 /// `complete_tool_execution` wraps it in `[...]`, so no brackets here.
@@ -370,7 +360,6 @@ pub fn format_tool_header(name: &str, args: &serde_json::Value) -> String {
     append_intent(&parts.join(" "), args)
 }
 
-
 /// Keep the tail of a long path: `/a/b/c` → `…/b/c`.
 fn shorten_path(path: &str) -> String {
     const KEEP: usize = 2;
@@ -382,7 +371,6 @@ fn shorten_path(path: &str) -> String {
     format!("…/{}", segments.join("/"))
 }
 
-
 /// A cheap non-cryptographic hash for the image-render cache key.
 pub(crate) fn simple_hash(s: &str) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -392,7 +380,6 @@ pub(crate) fn simple_hash(s: &str) -> u64 {
     }
     h
 }
-
 
 pub(crate) fn build_summary_prompt(dropped: &[kod_types::ChatMessage]) -> String {
     const CAP: usize = 32_000;
@@ -416,7 +403,6 @@ pub(crate) fn build_summary_prompt(dropped: &[kod_types::ChatMessage]) -> String
     )
 }
 
-
 pub fn summarize_tool_result(name: &str, result: &ToolResult) -> String {
     match result {
         ToolResult::Success(v) => summarize_success(name, v),
@@ -427,12 +413,10 @@ pub fn summarize_tool_result(name: &str, result: &ToolResult) -> String {
     }
 }
 
-
 /// Cap on the diff body shown for a write_file / patch_file row. A
 /// small edit is 5–30 lines; a large one is 200+. The TUI's `o` key
 /// expands the full body, so the summary preview can stay tight.
 const TOOL_DIFF_LINES: usize = 40;
-
 
 fn summarize_success(name: &str, v: &serde_json::Value) -> String {
     // write_file / patch_file with a diff field: show the unified diff
@@ -698,7 +682,6 @@ fn summarize_success(name: &str, v: &serde_json::Value) -> String {
     }
 }
 
-
 /// Keep the first `max` lines; append an explicit remainder counter.
 fn cap_lines(text: &str, max: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
@@ -711,7 +694,6 @@ fn cap_lines(text: &str, max: usize) -> String {
         lines.len() - max
     )
 }
-
 
 /// H-E7: pinned-aware turn cap. Drop the oldest unpinned turns until
 /// the vector has at most `max` entries. A `turns.drain(..excess)` on
@@ -752,7 +734,6 @@ pub(crate) fn cap_transcript(turns: &mut Vec<kod_types::ChatMessage>, max: usize
     turns.retain(|_| it.next().unwrap_or(true));
 }
 
-
 /// Identity of a diagnostic for diffing between two check runs.
 /// Ignores line and column: an edit that shifts a later error down by
 /// a line did not create a new error.
@@ -760,10 +741,13 @@ pub(crate) fn diag_key(d: &kod_tools::check::Diagnostic) -> (String, Option<Stri
     (d.file.clone(), d.code.clone(), d.message.clone())
 }
 
-
 /// Append up to `max` diagnostics to `block`, one per line, in the
 /// format `severity [code] file:line:col — message`.
-pub(crate) fn render_diagnostics(block: &mut String, diags: &[kod_tools::check::Diagnostic], max: usize) {
+pub(crate) fn render_diagnostics(
+    block: &mut String,
+    diags: &[kod_tools::check::Diagnostic],
+    max: usize,
+) {
     for d in diags.iter().take(max) {
         let code = d
             .code
@@ -785,4 +769,3 @@ pub(crate) fn render_diagnostics(block: &mut String, diags: &[kod_tools::check::
         block.push_str(&format!("  … and {} more.\n", diags.len() - max));
     }
 }
-

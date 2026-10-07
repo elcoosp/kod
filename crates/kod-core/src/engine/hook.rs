@@ -5,7 +5,6 @@
 use super::*;
 
 impl KodEngine {
-
     pub fn build_background_hook(&self) -> kod_tools::context::BackgroundSpawnHook {
         let steers = std::sync::Arc::clone(&self.steers);
         let runner = std::sync::Arc::clone(&self.background);
@@ -184,7 +183,6 @@ impl KodEngine {
         )
     }
 
-
     /// Delta §11.4: build the child-adoption hook. A command that
     /// outlived its deadline and is still running is moved here. The
     /// hook registers a job, spawns a task that drains both pipes
@@ -326,14 +324,12 @@ impl KodEngine {
         })
     }
 
-
     /// Install the hook on a per-call context.
     pub(crate) fn install_background_hook(&self, ctx: &mut ToolContext) {
         ctx.on_background_command = Some(self.build_background_hook());
         ctx.on_background_adopt = Some(self.build_background_adopt_hook());
     }
 }
-
 
 /// Small owned snapshot of the parts of `KodEngine` that the baseline
 /// refresh needs. Exists because `KodEngine::start` takes `&self` and
@@ -342,7 +338,6 @@ pub(crate) struct BaselineRefresher {
     pub(crate) working_dir: std::path::PathBuf,
     pub(crate) check_baseline: Arc<RwLock<Option<Vec<kod_tools::check::Diagnostic>>>>,
 }
-
 
 impl BaselineRefresher {
     pub(crate) async fn refresh_check_baseline(&self) {

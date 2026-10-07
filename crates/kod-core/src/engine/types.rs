@@ -7,7 +7,6 @@
 
 use super::*;
 
-
 /// Why `stream_round` decided to stop reading chunks (P1.2 + P5.6).
 ///
 /// `Complete` is the classic early termination: the response
@@ -26,7 +25,6 @@ pub(crate) enum EarlyTermination {
     OffTrack,
 }
 
-
 pub(crate) struct RoundContext<'a> {
     pub(crate) system_text: &'a str,
     pub(crate) model_ref: &'a ModelRef,
@@ -44,7 +42,6 @@ pub(crate) struct RoundContext<'a> {
     pub(crate) fallback: Option<&'a ModelRef>,
 }
 
-
 /// Outcome of one tool-execution round: results for the response plus a
 /// prompt block feeding them back to the model. `elapsed_ms` parallels
 /// `results` — per-call wall time for the live done-markers.
@@ -59,7 +56,6 @@ pub(crate) struct PolicyGateResult {
     pub(crate) decisions: Vec<(usize, kod_config::PolicyDecision)>,
     pub(crate) policy: Option<std::sync::Arc<kod_config::PolicyEngine>>,
 }
-
 
 /// What one streaming round produced. A struct rather than the tuple
 /// the method used to return: the speculation vector is a fifth
@@ -86,7 +82,6 @@ pub(crate) struct StreamRoundOutcome {
     pub(crate) partial_error: Option<kod_error::KodError>,
 }
 
-
 pub(crate) struct ToolRound {
     pub(crate) results: Vec<ToolResult>,
     pub(crate) prompt_block: String,
@@ -102,7 +97,6 @@ pub(crate) struct ToolRound {
     pub(crate) messages: Vec<kod_types::ChatMessage>,
 }
 
-
 /// The bus and registry shared by every agent in a swarm run.
 ///
 /// Installed by [`KodEngine::install_swarm_file_bus`] before the
@@ -115,7 +109,6 @@ pub(crate) struct SwarmFileBus {
     pub bus: std::sync::Arc<kod_swarm::file_touch::FileTouchBus>,
     pub service: std::sync::Arc<kod_swarm::file_touch::FileTouchService>,
 }
-
 
 /// Delta §11.2: what a cold-revive surface check found.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,7 +129,6 @@ pub enum ColdReviveVerdict {
         added: Vec<String>,
     },
 }
-
 
 /// Bundle of values the three `process_*` entry points need after
 /// classification, prompt build, and system-text construction.
@@ -160,4 +152,3 @@ pub(crate) struct TurnPreparation {
     pub system_text: String,
     pub initial_messages: Vec<kod_types::ChatMessage>,
 }
-
