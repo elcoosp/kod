@@ -8,9 +8,10 @@
 //! - Configuration file usage
 //! - Error handling
 
-mod common;
+// `common` is a sibling module under `tests/it/`, declared in
+// `main.rs` as `pub mod common;`. Reference it via `crate::`.
 
-use common::{TestEnvironment, run_kod_command};
+use crate::common::{TestEnvironment, run_kod_command};
 
 // ---- CLI command tests ----
 
@@ -254,7 +255,7 @@ async fn test_engine_process_input() {
     // Install a no-op provider. Without one the engine rejects the
     // call — see the `no_provider_error` doc in kod-core. This test
     // exercises the real processing path with a canned reply.
-    common::install_test_provider(
+    crate::common::install_test_provider(
         &engine,
         std::sync::Arc::new(NoOpProvider {
             reply: "I can help with code.".to_string(),
