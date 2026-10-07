@@ -439,7 +439,7 @@ fn extract_symbols_and_imports(path: &Path) -> (Vec<Symbol>, Vec<String>) {
 fn extract_imports(ext: &str, content: &str) -> Vec<String> {
     use regex::Regex;
     // A small set of patterns keyed by language family.
-    let patterns: &[&str] = match ext {
+    let patterns: &[&'static str] = match ext {
         "rs" => &[
             r"(?m)^\s*use\s+([a-zA-Z_][a-zA-Z0-9_:]*)\s*[;{]",
             r"(?m)^\s*(?:pub\s+)?mod\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*;",
@@ -464,15 +464,36 @@ fn extract_imports(ext: &str, content: &str) -> Vec<String> {
         _ => return Vec::new(),
     };
 
+    // Bug-hunt: the pre-fix shape compiled every pattern on every
+    // call. `extract_imports` runs per file during a repo-map walk —
+    // a 5,000-file repo paid ~15,000 redundant `Regex::new` calls per
+    // rebuild. The pattern table is a hard-coded static; compile each
+    // one once per process and reuse it. A pattern that fails to
+    // compile is skipped for the rest of the process (it would fail
+    // every time anyway).
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<&'static str, Regex>>,
+    > = std::sync::OnceLock::new();
+
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+
     let mut out: Vec<String> = Vec::new();
     for pat in patterns {
-        if let Ok(re) = Regex::new(pat) {
-            for cap in re.captures_iter(content) {
-                if let Some(m) = cap.get(1) {
-                    let s = m.as_str().trim().to_string();
-                    if !s.is_empty() && !out.contains(&s) {
-                        out.push(s);
-                    }
+        if !guard.contains_key(pat) {
+            match Regex::new(pat) {
+                Ok(re) => {
+                    guard.insert(pat, re);
+                }
+                Err(_) => continue,
+            }
+        }
+        let re = guard.get(pat).expect("just inserted");
+        for cap in re.captures_iter(content) {
+            if let Some(m) = cap.get(1) {
+                let s = m.as_str().trim().to_string();
+                if !s.is_empty() && !out.contains(&s) {
+                    out.push(s);
                 }
             }
         }
