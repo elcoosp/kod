@@ -164,7 +164,19 @@ fn parse_color(s: &str) -> Option<Color> {
         "white" => Some(Color::White),
         "gray" | "grey" => Some(Color::Gray),
         "darkgray" | "dark-gray" | "dark_grey" => Some(Color::DarkGray),
-        s if s.starts_with('#') && s.len() == 7 => {
+        // Bug-hunt: the guard was `s.starts_with('#') && s.len() == 7`
+        // followed by fixed-offset slices `&s[1..3]`, `&s[3..5]`,
+        // `&s[5..7]`. Byte 7 length does not imply the string is
+        // ASCII — `"#aébcd"` is 7 bytes (the `é` is 2) and byte index
+        // 3 lands inside `é`, panicking with "byte index 3 is not a
+        // char boundary".
+        //
+        // Hex digits are always ASCII, so any non-ASCII payload would
+        // fail `from_str_radix(_, 16)` below anyway. Gating on
+        // `is_ascii()` makes the early-return path identical to the
+        // eventual parse failure while making the slices safe by
+        // construction.
+        s if s.starts_with('#') && s.len() == 7 && s.is_ascii() => {
             let r = u8::from_str_radix(&s[1..3], 16).ok()?;
             let g = u8::from_str_radix(&s[3..5], 16).ok()?;
             let b = u8::from_str_radix(&s[5..7], 16).ok()?;
@@ -278,6 +290,24 @@ mod coverage_color_parsing {
         assert_eq!(parse_color("#FF0000"), Some(Color::Rgb(255, 0, 0)));
         assert_eq!(parse_color("#Ff0000"), Some(Color::Rgb(255, 0, 0)));
     }
+
+    /// Guard: `parse_color` must not slice mid-char. The pre-fix
+    /// shape guarded with `s.len() == 7` then sliced `&s[1..3]`,
+    /// `&s[3..5]`, `&s[5..7]`. A 7-byte string that starts with
+    /// `#` but contains a multibyte char at bytes 2..4 (e.g. `é` =
+    /// `0xC3 0xA9`) makes byte 3 a mid-char offset — the slice
+    /// panics with "byte index 3 is not a char boundary".
+    #[test]
+    fn parse_color_handles_non_ascii_length_7_strings() {
+        // `#` (1) + `a` (1) + `é` (2 bytes, 0xC3 0xA9) + `bcd` (3) = 7 bytes.
+        let _ = parse_color("#a\u{00E9}bcd");
+        // A few more 7-byte shapes with a multibyte char at each of the
+        // three interior boundaries.
+        let _ = parse_color("#\u{00E9}12345");
+        let _ = parse_color("#12\u{00E9}45");
+        let _ = parse_color("#1234\u{00E9}");
+    }
+
 
     #[test]
     fn unknown_name_returns_none() {
