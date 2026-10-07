@@ -32,12 +32,12 @@ mod types;
 
 pub use approval::*;
 pub use at_refs::*;
-pub(crate) use hook::BaselineRefresher;
 pub(crate) use constants::*;
+pub(crate) use hook::BaselineRefresher;
 pub use markers::*;
 pub(crate) use policy::LearnedAllow;
-pub use render::*;
 pub(crate) use render::strip_conversation_tail;
+pub use render::*;
 pub use settings::GenerationDefaults;
 pub(crate) use types::*;
 
