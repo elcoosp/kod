@@ -77,7 +77,6 @@ pub struct MessageDigest(pub u64);
 
 /// FNV-1a 64-bit offset basis and prime.
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 impl MessageDigest {
     /// Digest `msg` over the fields that reach a provider's wire.
@@ -126,23 +125,10 @@ impl MessageDigest {
     }
 }
 
-/// Feed one length-prefixed byte slice into an FNV-1a-64 accumulator.
-///
-/// Length-prefixing makes the encoding injective: `("ab", "c")` and
-/// `("a", "bc")` produce different digests. The alternative — a NUL
-/// separator — is not injective because NUL is a valid byte inside a
-/// `String`, and a message body that happened to contain one would
-/// collide with a differently-split field sequence.
-fn feed(h: &mut u64, bytes: &[u8]) {
-    for b in (bytes.len() as u64).to_le_bytes() {
-        *h ^= b as u64;
-        *h = h.wrapping_mul(FNV_PRIME);
-    }
-    for &b in bytes {
-        *h ^= b as u64;
-        *h = h.wrapping_mul(FNV_PRIME);
-    }
-}
+// The length-prefixed FNV-1a-64 feed lives in `kod-types` so the
+// workspace has one implementation. Aliasing it to `feed` keeps the
+// call sites in this module unchanged.
+use kod_types::hash::fnv1a_64_feed as feed;
 
 /// A stable, wire-relevant tag for a role.
 ///

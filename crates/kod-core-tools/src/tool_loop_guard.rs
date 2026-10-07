@@ -187,22 +187,11 @@ impl ToolLoopGuard {
 
 /// FNV-1a 64-bit offset basis and prime.
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
-/// Length-prefixed FNV-1a-64 feed. Length prefixing makes the
-/// encoding injective: `("ab", "c")` and `("a", "bc")` produce
-/// different digests. A NUL separator would not, since NUL is a
-/// valid byte inside a JSON string.
-fn feed(h: &mut u64, bytes: &[u8]) {
-    for b in (bytes.len() as u64).to_le_bytes() {
-        *h ^= b as u64;
-        *h = h.wrapping_mul(FNV_PRIME);
-    }
-    for &b in bytes {
-        *h ^= b as u64;
-        *h = h.wrapping_mul(FNV_PRIME);
-    }
-}
+// The length-prefixed FNV-1a-64 feed lives in `kod-types` so the
+// workspace has one implementation. Aliasing it to `feed` keeps the
+// call sites in this module unchanged.
+use kod_types::hash::fnv1a_64_feed as feed;
 
 /// Fingerprint one round: sort the calls by `(name, canonical_args)`,
 /// hash each component with length prefixes.

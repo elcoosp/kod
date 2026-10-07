@@ -20,3 +20,4 @@ pub use tool::*;
 pub use tool_result_meta::*;
 pub use trust::{TRUST_INVARIANT, TrustLevel, taint_of};
 pub mod effort;
+pub mod hash;
