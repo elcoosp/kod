@@ -284,10 +284,26 @@ impl ChatWidget {
                 matched = true;
                 let start = rest + pos;
                 let end = start + q.len();
-                // Map byte offsets back through the lowercase string. ASCII
-                // text keeps offsets identical; anything else tints the
-                // remainder once instead of slicing mid-char.
-                let (before, hit) = if text.len() == lower.len() {
+                // Bug-hunt: the pre-fix guard compared *byte lengths*
+                // (`text.len() == lower.len()`) and sliced `text` at
+                // offsets taken from `lower`. Equal length does not
+                // imply equal char boundaries. `İ` (U+0130, 2 bytes)
+                // lowercases to `i̇` (3 bytes); `ẞ` (U+1E9E, 3 bytes)
+                // lowercases to `ß` (2 bytes). Together `"İẞ"` and its
+                // lowercase `"i̇ß"` are both 5 bytes, but the offset
+                // where `ß` starts in `lower` (3) is not a char
+                // boundary in `text` — `text[3..5]` panics mid-`ẞ`.
+                //
+                // The correct test is `is_char_boundary` on every
+                // offset we're about to slice at, plus a bounds check
+                // on `end`. If any fails, fall back to tinting the
+                // remainder once — the same degradation the pre-fix
+                // code took for non-equal-length transforms.
+                let (before, hit) = if text.is_char_boundary(rest)
+                    && text.is_char_boundary(start)
+                    && text.is_char_boundary(end)
+                    && end <= text.len()
+                {
                     (text[rest..start].to_string(), text[start..end].to_string())
                 } else {
                     (text[rest..].to_string(), String::new())
@@ -1301,6 +1317,31 @@ mod coverage_chat_widget {
         assert_eq!(rows[0].spans[0].style.fg, Some(Color::Red));
         assert_eq!(rows[3].spans[0].style.fg, Some(Color::Blue));
     }
+
+    /// Guard: `highlight_line` must not panic when the lowercased copy
+    /// has the same *byte length* as the original but different char
+    /// boundaries. `İ` (U+0130, 2 bytes) lowercases to `i̇` (3 bytes);
+    /// `ẞ` (U+1E9E, 3 bytes) lowercases to `ß` (2 bytes). Together the
+    /// lengths balance, but the boundaries diverge.
+    ///
+    /// The pre-fix shape used `text[start..end]` with offsets taken
+    /// from `lower`, guarded only by `text.len() == lower.len()`.
+    /// Those offsets were never char boundaries in `text` for this
+    /// input, so the slice panicked.
+    #[test]
+    fn highlight_line_survives_length_balanced_lowercase() {
+        // The specific length-balanced pair.
+        let line = Line::from("İẞ");
+        let _ = ChatWidget::highlight_line(line, "ß");
+
+        // A few more patterns in the same family.
+        for text in ["İẞ", "ẞİ", "aİẞb", "İİẞẞ", "İxẞ", "xİẞy"] {
+            for q in ["ß", "i", "İ", "ẞ"] {
+                let _ = ChatWidget::highlight_line(Line::from(text), q);
+            }
+        }
+    }
+
 
     // ---- §14.5 follow-up: tool preview + rule between turns --------
 
