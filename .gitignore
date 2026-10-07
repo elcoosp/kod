@@ -37,6 +37,9 @@ fuzz/corpus/*
 !fuzz/corpus/sse/
 fuzz/corpus/sse/*
 !fuzz/corpus/sse/[0-9][0-9]_*
+!fuzz/corpus/html/
+fuzz/corpus/html/*
+!fuzz/corpus/html/[0-9][0-9]_*
 # Crash/minimization artifacts: belong in the bug report or a test.
 fuzz/artifacts/
 # libFuzzer's build state (already excluded by the workspace

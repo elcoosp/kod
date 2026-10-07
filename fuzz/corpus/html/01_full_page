@@ -1,0 +1,13 @@
+=== Pre-flight ===
+(empty = clean)
+
+=== Record current coverage ===
+no prior log; last known: 321 edges
+
+=== Create HTML seed files ===
+<html><head><title>t</title></head><body>\
+<h1>Hello</h1>\
+<script>alert("x")</script>\
+<p>World &amp; friends</p>\
+<style>body{}</style>\
+</body></html>
