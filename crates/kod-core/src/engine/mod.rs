@@ -887,48 +887,6 @@ pub struct KodEngine {
 }
 
 impl KodEngine {
-    /// Shared classification + prompt-build pipeline used by every
-    /// `process_*` entry point.
-    ///
-    /// `retrieval_log_turn_id` is threaded through to
-    /// [`KodEngine::classify_and_filter`]; `None` skips the retrieval
-    /// log write (the goal path's choice), `Some(0)` is the collected
-    /// path's placeholder, `Some(real_id)` is the streaming path.
-    ///
-    /// `create_plan` controls the Tier 2.1 model-authored plan. Only
-    /// the collected path asks the model to plan on the first turn of
-    /// a Complex/MultiStep task; the streaming paths rely on the model
-    /// to reach for tools itself. See `process_for` for rationale.
-    ///
-    /// Ordering matters: the plan (if created) must be written to
-    /// `self.plans` *before* `build_prompt_plan` renders `system_text`,
-    /// otherwise the plan never reaches the model.
-    /// Write the per-turn `PromptTrace` that powers `/debug last-prompt`
-    /// and `/debug tokens`.
-    ///
-    /// Kept separate from `prepare_turn` because the goal path augments
-    /// the prompt with a `## Goal` block *after* the pipeline runs — the
-    /// snapshot must reflect what the model actually sees on turn 1, not
-    /// what it saw before the goal was prepended. Callers pass their own
-    /// final `pending` text and the allocation the pipeline produced.
-    pub(crate) async fn snapshot_prompt(
-        &self,
-        key: &str,
-        pending: &str,
-        alloc: &std::result::Result<
-            kod_core_state::budget::Allocation,
-            kod_core_state::budget::BudgetError,
-        >,
-    ) {
-        let trace = kod_core_state::budget::PromptTrace {
-            text: pending.to_string(),
-            alloc: alloc.as_ref().ok().copied(),
-        };
-        self.last_prompt
-            .write()
-            .await
-            .insert(key.to_string(), trace);
-    }
 
     /// P2-a: compact `key`'s transcript before the next render when
     /// the observed token count has crossed the hard threshold.
@@ -999,90 +957,6 @@ impl KodEngine {
             }
             in_flight.write().await.remove(&engine_key);
         });
-    }
-
-    /// Build the hook `execute_command` calls when the model sets
-    /// `run_in_background` (P2-d).
-    ///
-    /// The hook spawns the command with its output going to a spool
-    /// file, registers a job, and launches a watcher that fires a
-    /// `SoftInterrupt::background` on completion or — when the caller
-    /// set `stall_wake_seconds` — on a silence long enough to mean the
-    /// command is wedged. The interrupt rides the same steer channel a
-    /// user note does, so it lands at the next round boundary without
-    /// the watcher needing the engine.
-    ///
-    /// Returns `None` when the spool cannot be created or the spawn
-    /// fails, which the tool reads as "run it inline."
-
-    /// Fire a speculative request that warms the provider's connection
-    /// and its KV-cache prefix.
-    ///
-    /// Called when the user starts typing a fresh turn, so the real
-    /// request — seconds later, once they finish composing — reads a
-    /// cache that is already written. For a local model the same
-    /// request keeps the weights resident, which is the larger win:
-    /// `ollama` unloads after five idle minutes and the first real
-    /// turn otherwise pays a full reload.
-    ///
-    /// **The economics are not free.** A request that writes the cache
-    /// pays ~1.25x on the prefix; the real turn then reads at ~0.1x.
-    /// That is a loss if the turn follows immediately and a win once
-    /// the user has typed for a few seconds — which is why the caller
-    /// fires on the first keystroke of a fresh turn, not on submit.
-    ///
-    /// One-shot per transcript: the latch is set here and cleared when
-    /// a real turn begins. A run of keystrokes warms once.
-    ///
-    /// Never awaited by the caller. The request is discarded: this
-    /// exists for its side effects on the provider, not for its
-    /// output.
-
-    /// A read-only snapshot of a transcript, for a client that wants
-    /// to see what a session is doing **without attaching to it**.
-    ///
-    /// Attaching would disturb the very session being previewed — the
-    /// peek must not touch the history, the steers, or the cancel
-    /// flag. This reads the history under a shared lock, renders the
-    /// last few turns, and returns. Nothing is mutated.
-    ///
-    /// `max_chars` bounds the tail: a peek is for orientation, and a
-    /// caller that wants the whole transcript can read the session
-    /// log.
-    pub async fn peek_transcript(&self, key: &str, max_chars: usize) -> serde_json::Value {
-        let (count, tail) = {
-            let guard = self.history.read().await;
-            let turns = guard.get(key);
-            let count = turns.map(|t| t.len()).unwrap_or(0);
-            let mut out = String::new();
-            if let Some(turns) = turns {
-                // The last 20 turns, newest-last, matching the order
-                // the model would see them.
-                for m in turns.iter().rev().take(20).rev() {
-                    // Tool rows are structural; a peek shows prose.
-                    if matches!(m.role, kod_types::MessageRole::Tool) {
-                        continue;
-                    }
-                    out.push_str(&m.render_text());
-                    out.push('\n');
-                }
-            }
-            (count, out)
-        };
-
-        let total = tail.chars().count();
-        let tail = if total > max_chars {
-            tail.chars().skip(total - max_chars).collect::<String>()
-        } else {
-            tail
-        };
-
-        serde_json::json!({
-            "key": key,
-            "messages": count,
-            "tail": tail,
-            "truncated": total > max_chars,
-        })
     }
 
     /// WS-C: whether the default endpoint is a tab bridge. The TUI
