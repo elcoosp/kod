@@ -1545,8 +1545,14 @@ impl MemoryManager {
 
     /// Clear all memories
     pub async fn clear_all(&self) -> Result<()> {
-        self.short_term.clear();
+        // Bug-hunt: `long_term.clear()` is the fallible half;
+        // `short_term` is an in-memory Vec. Clear long-term first
+        // so a redb error leaves the short-term working set intact
+        // for a retry. The pre-fix shape cleared short-term first,
+        // throwing away recoverable state before an operation that
+        // could fail.
         self.long_term.clear().await?;
+        self.short_term.clear();
         Ok(())
     }
 
