@@ -1230,3 +1230,73 @@ impl KodEngine {
         }
     }
 }
+
+/// Main engine for KOD
+/// H-S13: a conservative static allowlist for the Jev-driven sandbox
+/// downgrade. A command that fails any of these tests keeps its
+/// sandbox regardless of what Jev said, because Jev classified
+/// model-authored text and a prompt injection can flip its own
+/// verdict.
+///
+/// The check is structural, not textual:
+///   - no redirection or pipe characters
+///   - no shell chaining operators
+///   - no command substitution
+///   - the first token must be one of a small set of common
+///     dev / query binaries
+///   - no arguments that look like script injection (`eval`, `exec`,
+///     `source`, `.`, `:`)
+pub(crate) fn command_is_sandbox_downgrade_safe(command: &str) -> bool {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Structural: any of these means we cannot cheaply reason about
+    // what the command does.
+    const UNSAFE_TOKENS: &[&str] = &[";", "&&", "||", "|", ">", "<", "`", "$(", "${", "\n", "\r"];
+    if UNSAFE_TOKENS.iter().any(|t| trimmed.contains(t)) {
+        return false;
+    }
+    // First whitespace-separated token, allowing a full path.
+    let first = trimmed
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .rsplit('/')
+        .next()
+        .unwrap_or("");
+    // A curated list of binaries that are read-only or trivially
+    // auditable. `git` is on the list only with a read-only
+    // subcommand (checked below).
+    const ALLOW: &[&str] = &[
+        "ls", "cat", "head", "tail", "grep", "find", "pwd", "which", "echo", "true", "false", "wc",
+        "sort", "uniq", "diff", "file", "stat", "tree", "du", "df", "date", "env", "printenv",
+        "id", "whoami", "cargo", "rustc", "rustup", "go", "gofmt", "python", "python3", "node",
+        "npm", "npx", "tsc", "ruff", "pytest", "make", "cmake",
+    ];
+    if !ALLOW.iter().any(|b| b == &first) {
+        // `git` needs the subcommand check.
+        if first != "git" {
+            return false;
+        }
+        let sub = trimmed
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or("")
+            .rsplit('/')
+            .next()
+            .unwrap_or("");
+        return matches!(
+            sub,
+            "status" | "diff" | "log" | "show" | "branch" | "remote" | "blame"
+        );
+    }
+    // Reject a couple of argument shapes that are still unsafe even
+    // when the first token is allowlisted.
+    for tok in ["eval", "exec", "source"] {
+        if trimmed.split_whitespace().any(|w| w == tok) {
+            return false;
+        }
+    }
+    true
+}

@@ -7,6 +7,7 @@ mod agent_loop;
 mod approval;
 mod at_refs;
 mod compaction;
+mod constants;
 mod control;
 mod hook;
 mod jev;
@@ -32,9 +33,11 @@ mod types;
 pub use approval::*;
 pub use at_refs::*;
 pub(crate) use hook::BaselineRefresher;
+pub(crate) use constants::*;
 pub use markers::*;
 pub(crate) use policy::LearnedAllow;
 pub use render::*;
+pub(crate) use render::strip_conversation_tail;
 pub use settings::GenerationDefaults;
 pub(crate) use types::*;
 
@@ -55,109 +58,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Max agentic tool rounds per `process()` call before forcing a
-/// summary. A single agentic pass typically uses 3–15 rounds for a
-/// non-trivial task; 40 is a generous safety margin that catches a
-/// runaway loop (a small model that keeps re-calling `read_file` on
-/// the same path, unable to recognize it is done) well before the
-/// user has waited minutes for nothing.
-const MAX_TOOL_ROUNDS: usize = 40;
-
-/// H-RL1: how many times the engine may sleep out a provider rate-limit
-/// window and re-drive the same request within one turn (streaming and
-/// collected paths share the cap). A second full window inside one turn
-/// means the provider's quota is not coming back soon enough to be
-/// worth parking the session again — the error surfaces instead.
-const MAX_RATE_LIMIT_RETRIES: u32 = 2;
-
-/// How many times the engine may sleep out a provider *overload*
-/// (`server_busy`, ~10 min cooldown) and re-drive the same request
-/// within one turn. Higher than [`MAX_RATE_LIMIT_RETRIES`]: overload
-/// clears faster than a send-frequency quota, so two extra waits are
-/// still worth parking the session for.
-const MAX_SERVER_BUSY_RETRIES: u32 = 4;
-
-/// Delta §4.5: the minimum token count a tool result must have
-/// before the inline-imaging pass considers rasterizing it.
-const MIN_INLINE_IMAGE_TOKENS: u64 = 3_000;
-
-/// Notice appended to the conversation when the tool loop hits
-/// [`MAX_TOOL_ROUNDS`] without a text-only reply. The loop calls the
-/// provider one more time afterwards to request a summary; this note
-/// is what steers that summary toward "what got done and what
-/// remains" instead of "the model answers as if nothing unusual
-/// happened." Without it the last tool-result block is the only
-/// context for the summary, and a small model tends to summarize
-/// that one result rather than the whole run.
-const TOOL_ROUNDS_EXHAUSTED_NOTE: &str = "\n\n[tool-round limit reached — no further tool calls will run this turn. \
-     Summarize what has been done so far and what remains.]";
-/// Max turns of the `/goal` loop before it stops and reports progress.
-const MAX_GOAL_TURNS: usize = 6;
-
-/// How long a write approval waits for an answer before defaulting to
-/// deny. A dialog nobody answers — the user closed the terminal, walked
-/// away, or a script that cannot answer ran unattended — must not hang
-/// the tool loop forever. Denying is the safe default: the file is not
-/// written, the model sees the denial, and the user can re-run with
-/// `tools.confirm_writes = false` to skip the prompt entirely.
-const AWAIT_APPROVAL_SECS: u64 = 120;
-
-/// Streaming chunk count between Jev early-termination checks
-/// (P1.2). Every check is a Jev round-trip; running one per
-/// chunk would double the stream's wall time on a fast
-/// provider. Five is the empirical sweet spot: enough
-/// coverage that we rarely miss a completion, few enough
-/// that the network cost stays under 10% of streaming time.
-const EARLY_TERM_CHECK_EVERY_CHUNKS: usize = 5;
-
-/// Minimum accumulated response length (in chars) before an
-/// early-termination check runs. A model that has emitted
-/// fewer than this many characters has not yet said anything
-/// a completion check could meaningfully judge. 400 chars ≈
-/// 100 tokens — the same floor the design document cites.
-const EARLY_TERM_MIN_CHARS: usize = 400;
-
-/// Probability at or above which Jev is considered certain
-/// the response is complete (P1.2). Below `[jev.thresholds]
-/// .early_termination_min`, the stream continues. The default
-/// matches `JevThresholds::default().early_termination_min`.
-const EARLY_TERM_DEFAULT_MIN: f32 = 0.9;
-
 /// Marker announcing an automatic rate-limit wait on the streaming
 /// chunk channel: `\0kod-rate-limit:<secs>\0<attempt>\0<max>`.
 #[cfg(test)]
 mod rate_limit_marker_tests;
-
-/// Strip the transcript section the router appends to its plan.
-///
-/// The router's `build_prompt_with_budget` ends with:
-///
-/// ```text
-/// ## Conversation so far
-///
-/// {history}
-///
-/// ## User Request
-///
-/// {input}
-/// ```
-///
-/// Both sections are already passed as structured messages on the
-/// `CompletionRequest` path. Keeping them in the system prompt would
-/// duplicate the user's turn on every call — a token waste and a
-/// source of confusion for the model.
-///
-/// The cut is at the FIRST occurrence of `## Conversation so far` so a
-/// later mention in the model's own text does not truncate mid-reply.
-/// A prompt without the marker is returned unchanged (the router
-/// changed its shape, or a caller built a custom one).
-fn strip_conversation_tail(system_text: &str) -> String {
-    const MARKER: &str = "## Conversation so far";
-    match system_text.find(MARKER) {
-        Some(i) => system_text[..i].trim_end().to_string(),
-        None => system_text.to_string(),
-    }
-}
 
 /// Render a tool result for chat: file lists become counts + names,
 /// command output keeps its lines, everything caps at [`TOOL_RESULT_LINES`]
@@ -196,113 +100,6 @@ async fn push_background_interrupt(
 // a system prompt that is not a fake user turn. The rendering is
 // preserved byte-for-byte via `ChatMessage::render_text`, guarded by
 // `crates/kod-core/tests/characterization_history.rs`.
-
-/// Cap the remembered transcript: last turns, each truncated, total render
-/// capped so history can never blow the context window on its own.
-const MAX_HISTORY_TURNS: usize = 40;
-
-/// Per-turn cap. A single turn can hold a code snippet, an error trace,
-/// or a tool-result excerpt without being chopped. Was 1500, which was
-/// smaller than a typical `read_file` output — every turn past the first
-/// got truncated.
-const MAX_TURN_CHARS: usize = 4_000;
-
-/// Default total rendered-history budget, in chars. ~8k tokens at the
-/// rough 4-chars-per-token approximation, which fits comfortably
-/// alongside the prompt scaffolding (identity, environment, tool
-/// inventory, skill inventory, user request) even on an 8k-context
-/// model. Larger models should raise this via
-/// [`KodEngine::set_history_budget`]; the TUI and CLI derive the value
-/// from `LlmConfig::context_window` at startup.
-pub const DEFAULT_HISTORY_CHAR_BUDGET: usize = 32_000;
-
-/// Floor for a caller-supplied budget. Below this, history is so short
-/// that the model effectively has no memory of past turns — that is
-/// worse than the small-window default it is trying to protect, so we
-/// clamp instead of silently dropping every turn.
-const MIN_HISTORY_CHAR_BUDGET: usize = 4_000;
-
-/// Default transcript key: the interactive session. Public methods
-/// without an explicit key operate on this. Swarm agents use a
-/// `swarm:<agent-id>` key so concurrent agents do not interleave their
-/// turns into one shared history.
-/// §7.3: how long a memory entry stays out of the prompt after being
-/// injected once. 45 minutes: long enough that a working session does
-/// not repeat itself, short enough that a fact is refreshed before it
-/// is forgotten.
-const MEMORY_INJECTION_TTL_MS: u64 = 45 * 60 * 1000;
-
-pub(crate) const DEFAULT_TRANSCRIPT_KEY: &str = "";
-
-/// Main engine for KOD
-/// H-S13: a conservative static allowlist for the Jev-driven sandbox
-/// downgrade. A command that fails any of these tests keeps its
-/// sandbox regardless of what Jev said, because Jev classified
-/// model-authored text and a prompt injection can flip its own
-/// verdict.
-///
-/// The check is structural, not textual:
-///   - no redirection or pipe characters
-///   - no shell chaining operators
-///   - no command substitution
-///   - the first token must be one of a small set of common
-///     dev / query binaries
-///   - no arguments that look like script injection (`eval`, `exec`,
-///     `source`, `.`, `:`)
-fn command_is_sandbox_downgrade_safe(command: &str) -> bool {
-    let trimmed = command.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    // Structural: any of these means we cannot cheaply reason about
-    // what the command does.
-    const UNSAFE_TOKENS: &[&str] = &[";", "&&", "||", "|", ">", "<", "`", "$(", "${", "\n", "\r"];
-    if UNSAFE_TOKENS.iter().any(|t| trimmed.contains(t)) {
-        return false;
-    }
-    // First whitespace-separated token, allowing a full path.
-    let first = trimmed
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .rsplit('/')
-        .next()
-        .unwrap_or("");
-    // A curated list of binaries that are read-only or trivially
-    // auditable. `git` is on the list only with a read-only
-    // subcommand (checked below).
-    const ALLOW: &[&str] = &[
-        "ls", "cat", "head", "tail", "grep", "find", "pwd", "which", "echo", "true", "false", "wc",
-        "sort", "uniq", "diff", "file", "stat", "tree", "du", "df", "date", "env", "printenv",
-        "id", "whoami", "cargo", "rustc", "rustup", "go", "gofmt", "python", "python3", "node",
-        "npm", "npx", "tsc", "ruff", "pytest", "make", "cmake",
-    ];
-    if !ALLOW.iter().any(|b| b == &first) {
-        // `git` needs the subcommand check.
-        if first != "git" {
-            return false;
-        }
-        let sub = trimmed
-            .split_whitespace()
-            .nth(1)
-            .unwrap_or("")
-            .rsplit('/')
-            .next()
-            .unwrap_or("");
-        return matches!(
-            sub,
-            "status" | "diff" | "log" | "show" | "branch" | "remote" | "blame"
-        );
-    }
-    // Reject a couple of argument shapes that are still unsafe even
-    // when the first token is allowlisted.
-    for tok in ["eval", "exec", "source"] {
-        if trimmed.split_whitespace().any(|w| w == tok) {
-            return false;
-        }
-    }
-    true
-}
 
 pub struct KodEngine {
     router: Arc<TaskRouter>,
@@ -890,8 +687,6 @@ pub struct KodEngine {
     mcp: RwLock<Option<Arc<crate::mcp_adapters::McpHost>>>,
 }
 
-impl KodEngine {}
-
 // (The `which` helper moved to `kod_lsp::binary_for_path` when the
 // LSP pool was introduced; `lsp_binary_for` now delegates there.)
 
@@ -930,8 +725,6 @@ mod coverage_tool_result_redaction;
 
 #[cfg(test)]
 mod coverage_tool_inventory_cache;
-
-impl KodEngine {}
 
 #[cfg(test)]
 mod rehydrate_integration_tests;

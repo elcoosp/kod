@@ -769,3 +769,34 @@ pub(crate) fn render_diagnostics(
         block.push_str(&format!("  … and {} more.\n", diags.len() - max));
     }
 }
+
+/// Strip the transcript section the router appends to its plan.
+///
+/// The router's `build_prompt_with_budget` ends with:
+///
+/// ```text
+/// ## Conversation so far
+///
+/// {history}
+///
+/// ## User Request
+///
+/// {input}
+/// ```
+///
+/// Both sections are already passed as structured messages on the
+/// `CompletionRequest` path. Keeping them in the system prompt would
+/// duplicate the user's turn on every call — a token waste and a
+/// source of confusion for the model.
+///
+/// The cut is at the FIRST occurrence of `## Conversation so far` so a
+/// later mention in the model's own text does not truncate mid-reply.
+/// A prompt without the marker is returned unchanged (the router
+/// changed its shape, or a caller built a custom one).
+pub(crate) fn strip_conversation_tail(system_text: &str) -> String {
+    const MARKER: &str = "## Conversation so far";
+    match system_text.find(MARKER) {
+        Some(i) => system_text[..i].trim_end().to_string(),
+        None => system_text.to_string(),
+    }
+}
