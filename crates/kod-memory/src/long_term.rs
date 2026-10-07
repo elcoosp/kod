@@ -489,13 +489,30 @@ impl LongTermMemory {
             .get(b)
             .await?
             .ok_or_else(|| KodError::InvalidState(format!("no entry {b}")))?;
+        // Bug-hunt: the two updates are not atomic. If the first
+        // succeeds and the second fails, `a` carries a link to `b`
+        // but `b` does not carry one back — the doc-comment's
+        // "symmetric" contract is broken, and the caller has no
+        // signal that it happened. Roll the first update back on
+        // the second's failure so the pair stays consistent.
+        let mut updated_a = false;
         if !ea.contradicts.contains(b) {
             ea.contradicts.push(b.clone());
             self.update(ea).await?;
+            updated_a = true;
         }
         if !eb.contradicts.contains(a) {
             eb.contradicts.push(a.clone());
-            self.update(eb).await?;
+            if let Err(e) = self.update(eb).await {
+                if updated_a {
+                    // Best-effort rollback of the first write.
+                    if let Ok(Some(mut ea)) = self.get(a).await {
+                        ea.contradicts.retain(|x| x != b);
+                        let _ = self.update(ea).await;
+                    }
+                }
+                return Err(e);
+            }
         }
         Ok(())
     }
