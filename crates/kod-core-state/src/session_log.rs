@@ -423,10 +423,39 @@ impl SessionRecorder {
     }
 }
 
+/// Hard cap on a session log a single `read_session` will load.
+/// A long-lived session can write hundreds of thousands of lines;
+/// the file is read whole into a String (JSONL split is per-line),
+/// so an attacker (or a runaway log) can otherwise OOM the process.
+/// 256 MiB is two orders of magnitude above any legitimate log a
+/// user would replay.
+const MAX_SESSION_LOG_BYTES: u64 = 256 * 1024 * 1024;
+
 /// Read every entry in `path`, in file order. A malformed line is a
 /// hard error — the file is machine-written, and a partial line means
 /// the log is corrupt, not that the reader should skip.
+///
+/// Refuses a log larger than [`MAX_SESSION_LOG_BYTES`] with a clear
+/// error rather than allocating past the cap. The `metadata` check
+/// runs before any read, so a sparse or hostile file cannot force a
+/// multi-GB allocation.
 pub fn read_session(path: &Path) -> Result<Vec<SessionEntry>> {
+    // Check the on-disk size before reading. `metadata` is cheap and
+    // does not follow the read into memory.
+    let size = match std::fs::metadata(path) {
+        Ok(m) => m.len(),
+        // A missing file is the caller's to interpret (some callers
+        // distinguish `NotFound` from a real I/O error).
+        Err(e) => return Err(KodError::Io(e)),
+    };
+    if size > MAX_SESSION_LOG_BYTES {
+        return Err(KodError::InvalidParameters {
+            reason: format!(
+                "session log {} is {size} bytes; refusing to load (cap {MAX_SESSION_LOG_BYTES} bytes)",
+                path.display(),
+            ),
+        });
+    }
     let raw = std::fs::read_to_string(path).map_err(KodError::Io)?;
     let mut out = Vec::new();
     // H-D10: a crash-truncated final line (no trailing newline) is the
@@ -810,6 +839,43 @@ mod tests {
     }
 
     use super::*;
+
+    /// A session log larger than `MAX_SESSION_LOG_BYTES` must be
+    /// refused with a clear error rather than reading the whole file
+    /// into memory. Verified by writing a sparse file just over the
+    /// cap: `set_len` allocates no blocks, so the test itself is
+    /// cheap; only the metadata check runs before the (rejected)
+    /// read.
+    #[test]
+    fn oversized_session_log_is_refused() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("huge.jsonl");
+        {
+            let f = std::fs::File::create(&path).unwrap();
+            f.set_len(super::MAX_SESSION_LOG_BYTES + 1).unwrap();
+        }
+        let err = super::read_session(&path).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("refusing to load") && msg.contains("cap"),
+            "got: {msg}",
+        );
+    }
+
+    /// A missing file still surfaces the OS `NotFound` so callers
+    /// that distinguish it can keep doing so.
+    #[test]
+    fn missing_session_log_is_a_not_found_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("never-written.jsonl");
+        let err = super::read_session(&path).unwrap_err();
+        match err {
+            kod_error::KodError::Io(e) => {
+                assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
+            }
+            other => panic!("expected Io(NotFound), got {other:?}"),
+        }
+    }
     use tempfile::TempDir;
 
     fn sample_entry() -> SessionEntry {
