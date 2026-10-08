@@ -295,6 +295,28 @@ pub async fn serve(engine: Arc<KodEngine>) -> Result<()> {
         }
     }
 
+    // The read loop has exited (EOF or a protocol error). Any
+    // `Server::request` still waiting for a response will never get
+    // one: the client that would send it has gone away. Drain the
+    // pending map and drop every sender — a parked `rx.await` in
+    // `request()` then resolves to `Err(RecvError)` immediately, and
+    // the existing handler maps that to
+    // `KodError::Internal("client dropped the pending request")`. The
+    // pre-fix shape left the map untouched, so an in-flight
+    // `session/request_permission` blocked the whole turn for the
+    // full 120s before giving up.
+    {
+        let mut pending = server.pending.lock().await;
+        let n = pending.len();
+        pending.clear();
+        if n > 0 {
+            tracing::debug!(
+                count = n,
+                "acp: read loop exited with pending requests; failing them",
+            );
+        }
+    }
+
     drop(out_tx);
     // `server` also holds a clone of the `out_tx` sender (see the
     // `Server` construction above). Dropping only `out_tx` leaves
@@ -869,6 +891,35 @@ async fn write_frame<W: tokio::io::AsyncWrite + Unpin>(writer: &mut W, msg: &Val
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// When the read loop exits, any request parked in `pending`
+    /// must fail fast — not wait for the full 120s `request()`
+    /// timeout. Verified directly on the map: the drain is a
+    /// one-liner in `serve()`'s exit path, and this pins the
+    /// contract that `pending.clear()` drops the senders, which
+    /// makes `rx.await` return `Err(RecvError)`.
+    #[tokio::test]
+    async fn reader_exit_fails_pending_requests() {
+        let map: Mutex<std::collections::HashMap<i64, tokio::sync::oneshot::Sender<Value>>> =
+            Mutex::new(std::collections::HashMap::new());
+        let (tx, rx) = tokio::sync::oneshot::channel::<Value>();
+        map.lock().await.insert(1, tx);
+
+        // Simulate the drain.
+        {
+            let mut g = map.lock().await;
+            g.clear();
+        }
+
+        // The parked receiver resolves immediately with a
+        // `RecvError` instead of waiting.
+        let r = tokio::time::timeout(std::time::Duration::from_millis(100), rx).await;
+        match r {
+            Ok(Err(_recv_error)) => {}
+            Ok(Ok(_)) => panic!("receiver should not get a value after drain"),
+            Err(_) => panic!("receiver must resolve immediately after drain"),
+        }
+    }
 
     #[tokio::test]
     async fn frame_roundtrip() {
