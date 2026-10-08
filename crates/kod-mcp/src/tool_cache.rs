@@ -142,7 +142,20 @@ pub fn write_to(dir: &Path, key: &str, tools: &[McpToolDef]) -> io::Result<()> {
     let json = serde_json::to_string(&entry)
         .map_err(|e| io::Error::other(format!("serialize cache entry: {e}")))?;
     let path = dir.join(format!("{key}.json"));
-    let tmp = dir.join(format!(".{key}.json.tmp"));
+    // Unique temp per process + nanosecond clock. A fixed
+    // `.{key}.json.tmp` raced two writers on the same inode: the
+    // second `rename` returned ENOENT and the caller lost its
+    // cache write. The pid + nanos suffix gives each writer its
+    // own file; the rename-to-target is atomic and last-writer-wins.
+    let tmp = dir.join(format!(
+        ".{key}.json.tmp.{}.{}.{}",
+        std::process::id(),
+        next_temp_seq(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+    ));
     std::fs::write(&tmp, json)?;
     std::fs::rename(&tmp, &path)?;
     Ok(())
@@ -166,9 +179,53 @@ pub fn clear_from(dir: &Path, key: &str) -> io::Result<()> {
     }
 }
 
+/// Monotonic process-local counter used to break ties between
+/// concurrent atomic-replace writers in the same process. Combined
+/// with the pid and a nanosecond clock in the temp filename, this
+/// guarantees uniqueness for every writer.
+fn next_temp_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fixed temp filename raced concurrent writers on the same
+    /// key: the second `rename` returned ENOENT and the cache write
+    /// was lost. With the pid + nanos suffix, every writer has its
+    /// own temp; the rename-to-target is last-writer-wins and no
+    /// write fails.
+    #[test]
+    fn concurrent_writes_to_the_same_key_all_succeed() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path().to_path_buf();
+        let key = "shared-key";
+        let tools = vec![McpToolDef {
+            name: "noop".into(),
+            description: Some("noop".into()),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let dir_path = dir_path.clone();
+            let tools = tools.clone();
+            handles.push(std::thread::spawn(move || write_to(&dir_path, key, &tools)));
+        }
+        let mut failures = 0;
+        for h in handles {
+            if h.join().unwrap().is_err() {
+                failures += 1;
+            }
+        }
+        assert_eq!(failures, 0, "concurrent writes must not fail");
+        // The final file parses.
+        let got = read_from(&dir_path, key, Duration::from_secs(60)).expect("final read");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "noop");
+    }
 
     fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs

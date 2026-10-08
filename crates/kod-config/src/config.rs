@@ -468,7 +468,19 @@ impl KodConfig {
 
         // Atomic write: a crash/ENOSPC mid-write previously truncated
         // the user's config.toml. tmp + fsync + rename.
-        let tmp = path.with_extension("toml.tmp");
+        // Unique temp per process + nanosecond clock. A fixed
+        // `toml.tmp` raced two `kod` invocations on the same inode;
+        // the second rename returned ENOENT and surfaced as a
+        // "Failed to commit config" error.
+        let tmp = path.with_extension(format!(
+            "toml.tmp.{}.{}.{}",
+            std::process::id(),
+            next_temp_seq(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
         {
             use std::io::Write as _;
             let mut f = std::fs::File::create(&tmp)
@@ -621,6 +633,16 @@ impl KodConfig {
     pub fn needs_migration(&self) -> bool {
         self.effective_version() < 2
     }
+}
+
+/// Monotonic process-local counter used to break ties between
+/// concurrent atomic-replace writers in the same process. Combined
+/// with the pid and a nanosecond clock in the temp filename, this
+/// guarantees uniqueness for every writer.
+fn next_temp_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 #[cfg(test)]

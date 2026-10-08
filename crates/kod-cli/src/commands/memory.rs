@@ -391,7 +391,18 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
             }
             // Write via a temp + rename so a crash mid-write cannot
             // leave a partial session file.
-            let tmp = path.with_extension("json.import.tmp");
+            // Unique temp per process + nanosecond clock. See the
+            // `tool_cache::write_to` note for the fixed-temp race that
+            // this shape avoids.
+            let tmp = path.with_extension(format!(
+                "json.import.tmp.{}.{}.{}",
+                std::process::id(),
+                next_temp_seq(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0),
+            ));
             std::fs::write(&tmp, raw.as_bytes()).map_err(KodError::Io)?;
             std::fs::rename(&tmp, &path).map_err(KodError::Io)?;
             println!(
@@ -770,4 +781,14 @@ pub(super) fn preview_line(s: &str, max: usize) -> String {
         let cut: String = one.chars().take(max).collect();
         format!("{cut}…")
     }
+}
+
+/// Monotonic process-local counter used to break ties between
+/// concurrent atomic-replace writers in the same process. Combined
+/// with the pid and a nanosecond clock in the temp filename, this
+/// guarantees uniqueness for every writer.
+fn next_temp_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }
