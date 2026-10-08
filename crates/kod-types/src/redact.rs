@@ -121,8 +121,37 @@ impl Redactor {
                 result.push_str(&current[last..m.start()]);
                 let matched = m.as_str();
                 if rule.head > 0 || rule.tail > 0 {
-                    let head_end = rule.head.min(matched.len());
-                    let tail_start = matched.len().saturating_sub(rule.tail);
+                    // `head` / `tail` are documented as CHARACTER
+                    // counts. Convert to byte offsets via
+                    // `char_indices` so a non-ASCII match (a custom
+                    // rule whose pattern matches multibyte input,
+                    // or a future builtin) does not slice inside a
+                    // codepoint. The pre-fix code used `matched.len()`
+                    // and `&matched[..head_end]` byte arithmetic and
+                    // panicked on `é`/`日`/emoji at head or tail.
+                    let head_end = if rule.head == 0 {
+                        0
+                    } else {
+                        matched
+                            .char_indices()
+                            .nth(rule.head)
+                            .map(|(i, _)| i)
+                            .unwrap_or(matched.len())
+                    };
+                    let tail_start = if rule.tail == 0 {
+                        matched.len()
+                    } else {
+                        let chars = matched.chars().count();
+                        if rule.tail >= chars {
+                            0
+                        } else {
+                            matched
+                                .char_indices()
+                                .nth(chars - rule.tail)
+                                .map(|(i, _)| i)
+                                .unwrap_or(matched.len())
+                        }
+                    };
                     if head_end > 0 {
                         result.push_str(&matched[..head_end]);
                     }
@@ -463,6 +492,65 @@ mod tests {
         assert_eq!(v["count"], 42);
         assert_eq!(v["flag"], true);
         assert!(events.len() >= 2);
+    }
+
+    /// A rule's `head` / `tail` are CHARACTER counts. The pre-fix
+    /// code sliced by byte offset, so a non-ASCII match with head or
+    /// tail > 0 panicked inside `&matched[..head_end]`.
+    #[test]
+    fn custom_rule_head_tail_count_chars_not_bytes() {
+        // 1 head + 1 tail on a 3-char all-multibyte match.
+        let r = Redactor::with_rules(vec![RedactRule {
+            name: "custom".into(),
+            pattern: Regex::new(r"ééé").unwrap(),
+            head: 1,
+            tail: 1,
+        }]);
+        let (out, events) = r.redact("ééé");
+        assert!(events.iter().any(|e| e.rule == "custom"), "got {events:?}");
+        // Exactly one 'é' kept on each side.
+        assert!(out.starts_with('é'), "head kept wrong: {out:?}");
+        assert!(out.ends_with('é'), "tail kept wrong: {out:?}");
+        assert!(out.contains("[REDACTED:custom]"));
+    }
+
+    /// Same shape with CJK and an emoji: bytes-per-char vary (3 and
+    /// 4), so a byte-vs-char bug would surface differently.
+    #[test]
+    fn custom_rule_head_tail_on_cjk_and_emoji() {
+        for sample in ["日本語", "🔒🔑🗝"] {
+            let r = Redactor::with_rules(vec![RedactRule {
+                name: "custom".into(),
+                pattern: Regex::new(&regex::escape(sample)).unwrap(),
+                head: 1,
+                tail: 1,
+            }]);
+            let (out, _) = r.redact(sample);
+            assert!(
+                out.contains("[REDACTED:custom]"),
+                "sample {sample:?}: {out:?}"
+            );
+            // A leading and trailing char survive (the first and last
+            // char of the sample, exact byte shape depends on encoding).
+            assert!(out.starts_with(sample.chars().next().unwrap()));
+            assert!(out.ends_with(sample.chars().last().unwrap()));
+        }
+    }
+
+    /// head + tail >= matched char-count: the guard `tail_start >
+    /// head_end` must short-circuit to "head only, no tail".
+    #[test]
+    fn custom_rule_head_tail_exceed_match_length() {
+        let r = Redactor::with_rules(vec![RedactRule {
+            name: "custom".into(),
+            pattern: Regex::new(r"é").unwrap(),
+            head: 4,
+            tail: 4,
+        }]);
+        let (out, _) = r.redact("é");
+        assert!(out.contains("[REDACTED:custom]"), "got {out:?}");
+        // Only one 'é' total — not duplicated or re-inserted.
+        assert_eq!(out.matches('é').count(), 1, "got {out:?}");
     }
 
     #[test]
