@@ -75,6 +75,16 @@ pub struct McpClient {
     pending: PendingMap,
     server_info: OnceCell<ServerInfo>,
     program: String,
+    /// Set when a write times out mid-frame. `tokio::io::write_all`
+    /// is not cancellation-safe: a partial line remains in the pipe
+    /// and the next `send` would write a fresh JSON line on top,
+    /// permanently garbling the JSON-RPC stream. Once poisoned the
+    /// client refuses further sends rather than compounding the
+    /// corruption — the caller must drop the client and respawn.
+    ///
+    /// Shared with the reader task (`read_loop`) so a timed-out
+    /// reply write poisons the same flag the client checks.
+    poisoned: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl McpClient {
@@ -162,9 +172,12 @@ impl McpClient {
         let stdin_shared: std::sync::Arc<tokio::sync::Mutex<ChildStdin>> =
             std::sync::Arc::new(Mutex::new(stdin));
         let stdin_reader = stdin_shared.clone();
+        let poisoned: std::sync::Arc<std::sync::atomic::AtomicBool> =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let poisoned_reader = poisoned.clone();
 
         tokio::spawn(async move {
-            read_loop(stdout, pending_reader, stdin_reader).await;
+            read_loop(stdout, pending_reader, stdin_reader, poisoned_reader).await;
         });
 
         Ok(Self {
@@ -174,6 +187,7 @@ impl McpClient {
             pending,
             server_info: OnceCell::new(),
             program: cmd.to_string(),
+            poisoned,
         })
     }
 
@@ -405,10 +419,25 @@ impl McpClient {
     /// blocked send stalls the reader's server-reply path too — the
     /// timeout releases the guard and lets the caller recover.
     async fn send(&self, msg: &serde_json::Value) -> Result<(), McpError> {
+        use std::sync::atomic::Ordering;
+        if self.poisoned.load(Ordering::Relaxed) {
+            return Err(McpError::Protocol(
+                "MCP client poisoned: a previous write timed out mid-frame; \
+                 the JSON-RPC stream is no longer trustworthy"
+                    .to_string(),
+            ));
+        }
         const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
         let mut line = serde_json::to_string(msg)?;
         line.push('\n');
         let mut stdin = self.stdin.lock().await;
+        // `tokio::io::write_all` is NOT cancellation-safe: if the
+        // timeout below fires after a partial write, the bytes
+        // already handed to the OS pipe belong to a half-written
+        // line. The next `send` would then append a fresh JSON line
+        // after that fragment, corrupting every subsequent frame.
+        // Once a write times out, mark the client dead so no further
+        // frames are attempted.
         let write = async {
             tokio::io::AsyncWriteExt::write_all(&mut *stdin, line.as_bytes()).await?;
             tokio::io::AsyncWriteExt::flush(&mut *stdin).await?;
@@ -417,9 +446,15 @@ impl McpClient {
         match tokio::time::timeout(SEND_TIMEOUT, write).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(McpError::Io(e)),
-            Err(_) => Err(McpError::Protocol(
-                "send timed out; server likely wedged on a full stdin buffer".to_string(),
-            )),
+            Err(_) => {
+                self.poisoned.store(true, Ordering::Relaxed);
+                Err(McpError::Protocol(
+                    "send timed out; server likely wedged on a full stdin buffer. \
+                     The client is now poisoned: a subsequent send would splice a \
+                     fresh frame onto the partial one, corrupting the stream."
+                        .to_string(),
+                ))
+            }
         }
     }
 }
@@ -429,6 +464,7 @@ async fn read_loop(
     stdout: ChildStdout,
     pending: PendingMap,
     stdin: std::sync::Arc<tokio::sync::Mutex<ChildStdin>>,
+    poisoned_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     let mut reader = BufReader::new(stdout);
     let mut line_buf: Vec<u8> = Vec::new();
@@ -529,14 +565,35 @@ async fn read_loop(
                         let mut line =
                             serde_json::to_string(&reply).unwrap_or_else(|_| "{}".to_string());
                         line.push('\n');
+                        // Same bounded shape as `McpClient::send`. The
+                        // reader holds the shared stdin mutex; without
+                        // a timeout a wedged server whose stdin buffer
+                        // is full stalls the read loop forever and
+                        // every pending request times out with no
+                        // diagnostic. Poison the shared flag on
+                        // timeout so subsequent `send` calls fail fast
+                        // (see the note on `poisoned`).
+                        const REPLY_SEND_TIMEOUT: std::time::Duration =
+                            std::time::Duration::from_secs(10);
                         let mut guard = stdin.lock().await;
-                        if let Err(e) =
-                            tokio::io::AsyncWriteExt::write_all(&mut *guard, line.as_bytes()).await
-                        {
-                            tracing::warn!(error = %e, method, "MCP: reply write failed");
-                        }
-                        if let Err(e) = tokio::io::AsyncWriteExt::flush(&mut *guard).await {
-                            tracing::warn!(error = %e, method, "MCP: reply flush failed");
+                        let write = async {
+                            tokio::io::AsyncWriteExt::write_all(&mut *guard, line.as_bytes())
+                                .await?;
+                            tokio::io::AsyncWriteExt::flush(&mut *guard).await?;
+                            Ok::<(), std::io::Error>(())
+                        };
+                        match tokio::time::timeout(REPLY_SEND_TIMEOUT, write).await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                tracing::warn!(error = %e, method, "MCP: reply write failed");
+                            }
+                            Err(_) => {
+                                poisoned_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                                tracing::warn!(
+                                    method,
+                                    "MCP: reply write timed out; client poisoned",
+                                );
+                            }
                         }
                     } else {
                         tracing::debug!(method, "MCP: server notification");
