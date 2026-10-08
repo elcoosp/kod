@@ -238,6 +238,22 @@ fn token_matches(pid: u32, token: &str) -> bool {
     }
 }
 
+/// Monotonic process-local counter used to break ties between
+/// concurrent atomic-replace writers in the same process. Combined
+/// with the pid and a nanosecond clock in the temp filename, this
+/// guarantees uniqueness for every writer. The clock alone is not
+/// sufficient on macOS: `gettimeofday` there has microsecond
+/// resolution, so two threads inside the same process can read the
+/// same nanosecond value and collide on a fixed temp name.
+///
+/// Only used by the test helper below, so it is `cfg(test)`-gated.
+#[cfg(test)]
+fn next_temp_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,8 +261,9 @@ mod tests {
 
     fn tmpdir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "kod-iso-owner-{}-{}",
+            "kod-iso-owner-{}-{}-{}",
             std::process::id(),
+            next_temp_seq(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())

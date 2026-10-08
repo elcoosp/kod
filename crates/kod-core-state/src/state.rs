@@ -123,8 +123,9 @@ impl StateStore {
         let raw = serde_json::to_string_pretty(&to_write)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         let tmp = self.path.with_extension(format!(
-            "tmp.{}.{}",
+            "tmp.{}.{}.{}",
             std::process::id(),
+            next_temp_seq(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
@@ -137,6 +138,19 @@ impl StateStore {
         }
         Ok(())
     }
+}
+
+/// Monotonic process-local counter used to break ties between
+/// concurrent atomic-replace writers in the same process. Combined
+/// with the pid and a nanosecond clock in the temp filename, this
+/// guarantees uniqueness for every writer. The clock alone is not
+/// sufficient on macOS: `gettimeofday` there has microsecond
+/// resolution, so two threads inside the same process can read the
+/// same nanosecond value and collide on a fixed temp name.
+fn next_temp_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 #[cfg(test)]

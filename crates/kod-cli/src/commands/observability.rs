@@ -505,8 +505,9 @@ pub(super) async fn drive_prompt_through_fresh_engine(
     );
 
     let tmp = std::env::temp_dir().join(format!(
-        "kod-trace-replay-{}-{}",
+        "kod-trace-replay-{}-{}-{}",
         std::process::id(),
+        next_temp_seq(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -571,4 +572,17 @@ pub(super) fn truncate_field(s: &str, max: usize) -> String {
     let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
     out.push('…');
     out
+}
+
+/// Monotonic process-local counter used to break ties between
+/// concurrent atomic-replace writers in the same process. Combined
+/// with the pid and a nanosecond clock in the temp filename, this
+/// guarantees uniqueness for every writer. The clock alone is not
+/// sufficient on macOS: `gettimeofday` there has microsecond
+/// resolution, so two threads inside the same process can read the
+/// same nanosecond value and collide on a fixed temp name.
+fn next_temp_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }

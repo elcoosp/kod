@@ -99,10 +99,13 @@ impl KodApp {
         // The pid+suffix keeps two sessions from colliding on the
         // temp file itself.
         let tmp = parent.join(format!(
-            "tui_history.json.tmp.{}.{}",
+            "tui_history.json.tmp.{}.{}.{}",
             std::process::id(),
-            // Nanoseconds since the epoch, cheap unique-ish suffix
-            // without pulling in a random-number crate.
+            next_temp_seq(),
+            // Nanoseconds since the epoch. The counter above makes
+            // the suffix unique within this process; the clock
+            // keeps it unique across processes that happen to run
+            // in the same instant.
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
@@ -168,8 +171,9 @@ impl KodApp {
         // writing at once get different temps and the rename lets the
         // last one win; neither leaves a partial file behind.
         let tmp = parent.join(format!(
-            "tui_session.json.tmp.{}.{}",
+            "tui_session.json.tmp.{}.{}.{}",
             std::process::id(),
+            next_temp_seq(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
@@ -246,4 +250,17 @@ impl KodApp {
         self.scroll_to_bottom();
         n
     }
+}
+
+/// Monotonic process-local counter used to break ties between
+/// concurrent atomic-replace writers in the same process. Combined
+/// with the pid and a nanosecond clock in the temp filename, this
+/// guarantees uniqueness for every writer. The clock alone is not
+/// sufficient on macOS: `gettimeofday` there has microsecond
+/// resolution, so two threads inside the same process can read the
+/// same nanosecond value and collide on a fixed temp name.
+fn next_temp_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }

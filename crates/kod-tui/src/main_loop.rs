@@ -143,8 +143,9 @@ impl TuiLoop {
         // each other's scratch, and the suffix gives the editor a
         // language hint so syntax highlighting works.
         let tmp = std::env::temp_dir().join(format!(
-            "kod-edit-{}-{}.md",
+            "kod-edit-{}-{}-{}.md",
             std::process::id(),
+            next_temp_seq(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
@@ -6446,6 +6447,19 @@ fn parse_overnight_duration(s: &str) -> Option<Duration> {
         return None;
     }
     Some(total)
+}
+
+/// Monotonic process-local counter used to break ties between
+/// concurrent atomic-replace writers in the same process. Combined
+/// with the pid and a nanosecond clock in the temp filename, this
+/// guarantees uniqueness for every writer. The clock alone is not
+/// sufficient on macOS: `gettimeofday` there has microsecond
+/// resolution, so two threads inside the same process can read the
+/// same nanosecond value and collide on a fixed temp name.
+fn next_temp_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 #[cfg(test)]
