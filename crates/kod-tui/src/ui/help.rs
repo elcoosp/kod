@@ -85,7 +85,10 @@ impl HelpWidget {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.accent))
             .title(Span::styled(" help — Esc closes ", title));
-        let inner_h = (lines.len() as u16 + 2).min(area.height);
+        let inner_h = u16::try_from(lines.len())
+            .unwrap_or(u16::MAX)
+            .saturating_add(2)
+            .min(area.height);
         let popup = Self::centered(area, 64.min(area.width), inner_h);
         Clear.render(popup, buf);
         Paragraph::new(lines)

@@ -188,7 +188,10 @@ impl ApprovalWidget {
             " approval required ".to_string()
         };
 
-        let body_h = (lines.len() as u16 + 2).min(area.height);
+        let body_h = u16::try_from(lines.len())
+            .unwrap_or(u16::MAX)
+            .saturating_add(2)
+            .min(area.height);
         let x = area.x + area.width.saturating_sub(body_w) / 2;
         let y = area.y + area.height.saturating_sub(body_h) / 2;
         let popup = Rect::new(x, y, body_w, body_h);
