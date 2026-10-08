@@ -1342,7 +1342,6 @@ mod coverage_chat_widget {
         }
     }
 
-
     // ---- §14.5 follow-up: tool preview + rule between turns --------
 
     #[test]

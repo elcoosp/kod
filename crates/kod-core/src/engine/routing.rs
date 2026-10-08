@@ -674,10 +674,7 @@ impl KodEngine {
     /// for a provider that does not report a ladder — the classifier
     /// has only one label to pick, so the answer is deterministically
     /// `Medium`.
-    fn supported_efforts_for(
-        &self,
-        model_ref: &ModelRef,
-    ) -> Vec<kod_types::effort::EffortLevel> {
+    fn supported_efforts_for(&self, model_ref: &ModelRef) -> Vec<kod_types::effort::EffortLevel> {
         if let Ok(guard) = self.model_catalog.read()
             && let Some(info) = guard.get(&(model_ref.endpoint.clone(), model_ref.model.clone()))
             && let Some(ladder) = info.efforts.as_ref()

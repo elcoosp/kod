@@ -308,7 +308,6 @@ mod coverage_color_parsing {
         let _ = parse_color("#1234\u{00E9}");
     }
 
-
     #[test]
     fn unknown_name_returns_none() {
         assert_eq!(parse_color("chartreuse"), None);
