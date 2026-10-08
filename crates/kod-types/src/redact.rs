@@ -317,7 +317,7 @@ pub fn shannon_entropy(s: &str) -> f64 {
     h
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

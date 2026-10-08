@@ -247,10 +247,20 @@ impl KodError {
     ) -> Self {
         let snippet = kod_types::strutil::truncate_chars(body, 300);
         // T5-C9: strip secrets before embedding the body in Display.
+        //
+        // Under miri we skip the redaction step: it constructs a
+        // regex-automata set, and that crate is non-terminating under
+        // the miri interpreter (known limitation, not a kod bug). The
+        // redaction itself is covered exhaustively in kod-types's own
+        // test suite; what the kod-error tests exercise is the HTTP
+        // status classification below.
+        #[cfg(not(miri))]
         let snippet = {
             use kod_types::redact::Redactor;
             Redactor::default().redact(snippet).0
         };
+        #[cfg(miri)]
+        let snippet = snippet.to_string();
         match status {
             401 | 403 => KodError::Provider(format!("auth error {status}: {snippet}")),
             404 => KodError::Provider(format!("not found {status}: {snippet}")),
