@@ -30,7 +30,7 @@ use crate::types::Diagnostic;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 #[derive(Debug, thiserror::Error)]
@@ -55,6 +55,15 @@ pub struct LspClient {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    /// Cancellation-safe frame buffer. `read_message` accumulates
+    /// header + body bytes here rather than in locals: the call sites
+    /// wrap the read in `tokio::time::timeout`, and a timeout that
+    /// dropped a local buffer would lose the bytes already pulled
+    /// from the pipe. The next read would then treat leftover body
+    /// bytes as headers and mis-frame every subsequent message.
+    /// `stdout.read()` is documented cancel-safe (no bytes are lost),
+    /// so on cancel we resume cleanly from where the buffer left off.
+    read_buf: Vec<u8>,
     next_id: i64,
     workspace_root: PathBuf,
     /// The program we spawned — kept for logging and for
@@ -121,6 +130,7 @@ impl LspClient {
             child,
             stdin,
             stdout: BufReader::new(stdout),
+            read_buf: Vec::new(),
             next_id: 1,
             workspace_root: workspace_root.to_path_buf(),
             program: program.to_string(),
@@ -654,63 +664,57 @@ impl LspClient {
     }
 
     async fn read_message(&mut self) -> Result<serde_json::Value, LspError> {
-        // Headers: `Content-Length: N\r\n` possibly with others, then
-        // a blank line.
+        // LSP framing: `Content-Length: N\r\n` headers terminated by
+        // a blank line, then N body bytes.
         //
-        // Bug-hunt: the pre-fix shape called `read_line` unbounded — a
-        // peer that sent a header line with no `\n` grew the line
-        // buffer until OOM, and the `content_length` check below was
-        // only consulted after the header loop ended. Bound each read
-        // at the reader with `.take()`, then accumulate a byte counter
-        // across the header block; either bound trips before the buffer
-        // can grow past the cap.
+        // Cancellation safety: this method is awaited inside
+        // `tokio::time::timeout` at three call sites (initialize,
+        // collect_diagnostics, request_with_response). The
+        // pre-fix shape read header lines into a local `String` and
+        // the body into a local `Vec<u8>`. If the timeout fired
+        // mid-read, those local buffers were dropped and the bytes
+        // already pulled from the pipe were lost — the next call
+        // read leftover body bytes as headers and mis-framed every
+        // subsequent message. `collect_diagnostics` treats a
+        // timeout as recoverable (`Err(_) => break`), so a slow
+        // server permanently desynced the client.
+        //
+        // The fix: accumulate all partial state in `self.read_buf`,
+        // which survives cancellation. `stdout.read()` is
+        // documented cancel-safe — on cancel, no bytes are lost —
+        // so we resume cleanly on the next call.
         const MAX_HEADER_BYTES: usize = 64 * 1024;
-        let mut header_bytes: usize = 0;
-        let mut content_length: Option<usize> = None;
+        const MAX_MESSAGE_BYTES: usize = 50 * 1024 * 1024;
         loop {
-            let remaining = MAX_HEADER_BYTES.saturating_sub(header_bytes);
-            if remaining == 0 {
+            if let Some((value, consumed)) =
+                try_parse_frame(&self.read_buf, MAX_HEADER_BYTES, MAX_MESSAGE_BYTES)?
+            {
+                self.read_buf.drain(..consumed);
+                return Ok(value);
+            }
+            // Guard against unbounded growth on a peer that never
+            // terminates its header block. `try_parse_frame` already
+            // errors once a header overruns MAX_HEADER_BYTES; this
+            // secondary check bounds the total buffer when no header
+            // terminator has arrived yet.
+            if self.read_buf.len() > MAX_HEADER_BYTES
+                && !self.read_buf.windows(4).any(|w| w == b"\r\n\r\n")
+            {
                 return Err(LspError::Protocol(format!(
                     "LSP header exceeded {MAX_HEADER_BYTES} bytes",
                 )));
             }
-            let mut line = String::new();
-            let mut limited = (&mut self.stdout).take((remaining + 1) as u64);
-            let n = limited.read_line(&mut line).await?;
+            let mut chunk = [0u8; 8192];
+            use tokio::io::AsyncReadExt;
+            let n = self.stdout.read(&mut chunk).await?;
             if n == 0 {
                 return Err(LspError::Io(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
                     "server closed stdout",
                 )));
             }
-            header_bytes = header_bytes.saturating_add(n);
-            if header_bytes > MAX_HEADER_BYTES {
-                return Err(LspError::Protocol(format!(
-                    "LSP header exceeded {MAX_HEADER_BYTES} bytes",
-                )));
-            }
-            let trimmed = line.trim_end_matches(['\r', '\n']);
-            if trimmed.is_empty() {
-                break;
-            }
-            if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
-                content_length =
-                    Some(rest.trim().parse().map_err(|_| {
-                        LspError::Protocol(format!("bad Content-Length: {rest:?}"))
-                    })?);
-            }
+            self.read_buf.extend_from_slice(&chunk[..n]);
         }
-        let n = content_length
-            .ok_or_else(|| LspError::Protocol("missing Content-Length header".to_string()))?;
-        const MAX_MESSAGE_BYTES: usize = 50 * 1024 * 1024;
-        if n > MAX_MESSAGE_BYTES {
-            return Err(LspError::Protocol(format!(
-                "Content-Length {n} exceeds the {MAX_MESSAGE_BYTES}-byte cap"
-            )));
-        }
-        let mut buf = vec![0u8; n];
-        self.stdout.read_exact(&mut buf).await?;
-        Ok(serde_json::from_slice(&buf)?)
     }
 }
 
@@ -923,6 +927,65 @@ fn hex_val(b: u8) -> Option<u8> {
         b'A'..=b'F' => Some(b - b'A' + 10),
         _ => None,
     }
+}
+
+/// Try to parse a complete LSP frame from the front of `buf`.
+///
+/// Returns `Ok(Some((value, consumed)))` when a full frame is
+/// available (`consumed` includes the header block and the body),
+/// `Ok(None)` when more bytes are needed, or an error on a malformed
+/// header / oversized body.
+///
+/// Pure so the caller can keep the buffered bytes across a
+/// cancellation without any hidden state.
+fn try_parse_frame(
+    buf: &[u8],
+    max_header_bytes: usize,
+    max_message_bytes: usize,
+) -> Result<Option<(serde_json::Value, usize)>, LspError> {
+    // Locate the header/body separator.
+    let header_end = match buf.windows(4).position(|w| w == b"\r\n\r\n") {
+        Some(i) => i,
+        None => {
+            if buf.len() > max_header_bytes {
+                return Err(LspError::Protocol(format!(
+                    "LSP header exceeded {max_header_bytes} bytes",
+                )));
+            }
+            return Ok(None);
+        }
+    };
+    if header_end > max_header_bytes {
+        return Err(LspError::Protocol(format!(
+            "LSP header exceeded {max_header_bytes} bytes",
+        )));
+    }
+    let header_text = std::str::from_utf8(&buf[..header_end])
+        .map_err(|e| LspError::Protocol(format!("header not UTF-8: {e}")))?;
+    let mut content_length: Option<usize> = None;
+    for line in header_text.split("\r\n") {
+        if let Some(rest) = line.strip_prefix("Content-Length:") {
+            content_length = Some(
+                rest.trim()
+                    .parse()
+                    .map_err(|_| LspError::Protocol(format!("bad Content-Length: {rest:?}")))?,
+            );
+        }
+    }
+    let n = content_length
+        .ok_or_else(|| LspError::Protocol("missing Content-Length header".to_string()))?;
+    if n > max_message_bytes {
+        return Err(LspError::Protocol(format!(
+            "Content-Length {n} exceeds the {max_message_bytes}-byte cap",
+        )));
+    }
+    let body_start = header_end + 4;
+    let body_end = body_start + n;
+    if buf.len() < body_end {
+        return Ok(None);
+    }
+    let value = serde_json::from_slice(&buf[body_start..body_end])?;
+    Ok(Some((value, body_end)))
 }
 
 #[cfg(test)]
@@ -1348,5 +1411,84 @@ mod coverage_lsp_parsers {
             src.contains("child.stderr.take()"),
             "the reader must take the child's stderr handle",
         );
+    }
+}
+
+#[cfg(test)]
+mod cancellation_safe_framing {
+    use super::try_parse_frame;
+
+    const MAX_HDR: usize = 64 * 1024;
+    const MAX_MSG: usize = 50 * 1024 * 1024;
+
+    fn framed(body: &str) -> Vec<u8> {
+        let mut v = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
+        v.extend_from_slice(body.as_bytes());
+        v
+    }
+
+    #[test]
+    fn a_complete_frame_parses_and_reports_its_length() {
+        let buf = framed(r#"{"id":1}"#);
+        let (v, consumed) = try_parse_frame(&buf, MAX_HDR, MAX_MSG)
+            .expect("well-formed")
+            .expect("complete");
+        assert_eq!(v["id"], 1);
+        assert_eq!(consumed, buf.len());
+    }
+
+    #[test]
+    fn a_partial_frame_returns_none_so_the_caller_reads_more() {
+        // Only the header, body not yet arrived.
+        let buf = b"Content-Length: 10\r\n\r\n";
+        let r = try_parse_frame(buf, MAX_HDR, MAX_MSG).expect("well-formed header");
+        assert!(r.is_none(), "partial frame must report None");
+
+        // Header + half the body.
+        let full = framed(r#"{"id":1}"#);
+        let half = &full[..full.len() - 3];
+        let r = try_parse_frame(half, MAX_HDR, MAX_MSG).expect("well-formed header");
+        assert!(r.is_none(), "partial body must report None");
+    }
+
+    #[test]
+    fn two_frames_in_one_buffer_parse_the_first() {
+        let mut buf = framed(r#"{"id":1}"#);
+        let second = framed(r#"{"id":2}"#);
+        buf.extend_from_slice(&second);
+        let (v, consumed) = try_parse_frame(&buf, MAX_HDR, MAX_MSG)
+            .expect("well-formed")
+            .expect("complete");
+        assert_eq!(v["id"], 1);
+        assert_eq!(consumed, buf.len() - second.len());
+        // The remainder still parses as the second frame.
+        let (v2, _) = try_parse_frame(&buf[consumed..], MAX_HDR, MAX_MSG)
+            .expect("well-formed")
+            .expect("complete");
+        assert_eq!(v2["id"], 2);
+    }
+
+    #[test]
+    fn an_oversized_header_errors_instead_of_buffering_forever() {
+        let buf = vec![b'X'; MAX_HDR + 1];
+        let err = try_parse_frame(&buf, MAX_HDR, MAX_MSG).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("header exceeded"), "got: {msg}");
+    }
+
+    #[test]
+    fn an_oversized_content_length_errors() {
+        let buf = format!("Content-Length: {}\r\n\r\n", MAX_MSG + 1).into_bytes();
+        let err = try_parse_frame(&buf, MAX_HDR, MAX_MSG).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("exceeds"), "got: {msg}");
+    }
+
+    #[test]
+    fn a_missing_content_length_errors() {
+        let buf = b"X-Foo: bar\r\n\r\n";
+        let err = try_parse_frame(buf, MAX_HDR, MAX_MSG).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("missing Content-Length"), "got: {msg}");
     }
 }
