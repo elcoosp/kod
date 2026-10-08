@@ -31,6 +31,13 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncWriteExt, BufReader};
+
+/// Cap on `LspClient::pending_notifications`. Chosen to hold several
+/// files' worth of `publishDiagnostics` plus a burst of `$/progress`
+/// without letting a chatty (or hostile) server grow the buffer past
+/// a few hundred KB. A notification is a few KB at most, so 1024 is
+/// comfortably under 10 MiB in the worst case.
+const MAX_PENDING_NOTIFICATIONS: usize = 1024;
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 #[derive(Debug, thiserror::Error)]
@@ -81,7 +88,17 @@ pub struct LspClient {
     /// read, fails the id match, and is dropped — the engine then
     /// reports "no diagnostics" for a file that has fresh ones.
     /// `collect_diagnostics` drains this before reading new frames.
-    pending_notifications: Vec<serde_json::Value>,
+    ///
+    /// Bounded at [`MAX_PENDING_NOTIFICATIONS`]. A misbehaving or
+    /// hostile server can emit an unbounded stream of `$/progress` /
+    /// `window/logMessage` notifications while the client is waiting
+    /// for a specific response id; without a cap the buffer grew by
+    /// one entry per notification for the whole 30s request deadline,
+    /// and only `collect_diagnostics` ever drained it. On overflow the
+    /// **oldest** entry is dropped — a newer diagnostic supersedes an
+    /// older one for the same URI, and progress notifications are
+    /// meaningless once stale.
+    pending_notifications: std::collections::VecDeque<serde_json::Value>,
 }
 
 impl LspClient {
@@ -135,7 +152,7 @@ impl LspClient {
             workspace_root: workspace_root.to_path_buf(),
             program: program.to_string(),
             opened: std::collections::HashMap::new(),
-            pending_notifications: Vec::new(),
+            pending_notifications: std::collections::VecDeque::new(),
         })
     }
 
@@ -383,7 +400,7 @@ impl LspClient {
             // before reading the wire. A `publishDiagnostics` that
             // landed while the caller awaited a specific id is now in
             // this queue, not on the socket.
-            let msg = if let Some(buffered) = self.pending_notifications.pop() {
+            let msg = if let Some(buffered) = self.pending_notifications.pop_back() {
                 buffered
             } else {
                 let read = tokio::time::timeout(wait, self.read_handling_server_requests()).await;
@@ -591,7 +608,16 @@ impl LspClient {
             // a response to a request we did not send; drop it silently
             // (it is either a duplicate or a server bug).
             if msg.get("method").and_then(|v| v.as_str()).is_some() {
-                self.pending_notifications.push(msg);
+                // Bound the buffer. A server that streams
+                // notifications faster than we consume them would
+                // otherwise grow this without limit for the whole
+                // request deadline (30s). Drop the oldest: a stale
+                // diagnostic is less useful than a fresh one, and a
+                // stale `$/progress` is meaningless.
+                if self.pending_notifications.len() >= MAX_PENDING_NOTIFICATIONS {
+                    self.pending_notifications.pop_front();
+                }
+                self.pending_notifications.push_back(msg);
             }
         }
     }
@@ -1416,6 +1442,32 @@ mod coverage_lsp_parsers {
 
 #[cfg(test)]
 mod cancellation_safe_framing {
+    /// The buffer that holds non-matching notifications must be
+    /// bounded. A hostile (or very chatty) server can spam
+    /// `$/progress` / `window/logMessage` frames while the client is
+    /// waiting for a specific response id; without a cap the buffer
+    /// grew by one entry per notification for the full 30s request
+    /// deadline.
+    #[test]
+    fn notification_buffer_is_bounded() {
+        let mut q: std::collections::VecDeque<serde_json::Value> =
+            std::collections::VecDeque::new();
+        for i in 0..(super::MAX_PENDING_NOTIFICATIONS + 100) {
+            if q.len() >= super::MAX_PENDING_NOTIFICATIONS {
+                q.pop_front();
+            }
+            q.push_back(serde_json::json!({"method": "x", "n": i}));
+        }
+        assert_eq!(q.len(), super::MAX_PENDING_NOTIFICATIONS);
+        // The oldest entries are the ones that were dropped: the
+        // oldest still present is index 100.
+        let oldest = q.front().unwrap()["n"].as_u64().unwrap();
+        assert_eq!(oldest, 100);
+        // The newest is the last one pushed.
+        let newest = q.back().unwrap()["n"].as_u64().unwrap();
+        assert_eq!(newest, (super::MAX_PENDING_NOTIFICATIONS + 99) as u64);
+    }
+
     use super::try_parse_frame;
 
     const MAX_HDR: usize = 64 * 1024;
