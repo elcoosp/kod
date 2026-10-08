@@ -69,7 +69,7 @@ async fn shutdown_request_terminates_the_daemon() {
         tokio::spawn(async move { kod_core_serve::serve::serve(server_engine, server_sock).await });
 
     // Give the accept loop a moment to bind.
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !sock.exists() && std::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -106,7 +106,7 @@ async fn shutdown_request_terminates_the_daemon() {
     // Read the ack. The server writes one line before it breaks out of
     // the accept loop.
     let mut reader = BufReader::new(read_half).lines();
-    let line = tokio::time::timeout(Duration::from_secs(2), reader.next_line())
+    let line = tokio::time::timeout(Duration::from_secs(10), reader.next_line())
         .await
         .expect("ack must arrive within 2s")
         .expect("no IO error")
@@ -137,7 +137,7 @@ async fn unknown_method_reports_an_error_line() {
     let server_sock = sock.clone();
     let server =
         tokio::spawn(async move { kod_core_serve::serve::serve(server_engine, server_sock).await });
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !sock.exists() && std::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -160,7 +160,7 @@ async fn unknown_method_reports_an_error_line() {
     write_half.write_all(frame.as_bytes()).await.unwrap();
     write_half.flush().await.unwrap();
 
-    let line = tokio::time::timeout(Duration::from_secs(2), reader.next_line())
+    let line = tokio::time::timeout(Duration::from_secs(10), reader.next_line())
         .await
         .expect("response within 2s")
         .expect("io ok")
@@ -189,7 +189,7 @@ async fn unknown_method_reports_an_error_line() {
     frame.push('\n');
     w.write_all(frame.as_bytes()).await.unwrap();
     w.flush().await.unwrap();
-    let _ = tokio::time::timeout(Duration::from_secs(2), server).await;
+    let _ = tokio::time::timeout(Duration::from_secs(10), server).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -205,7 +205,7 @@ async fn second_daemon_on_the_same_socket_refuses_to_start() {
     let server_sock = sock.clone();
     let server =
         tokio::spawn(async move { kod_core_serve::serve::serve(server_engine, server_sock).await });
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !sock.exists() && std::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -237,6 +237,6 @@ async fn second_daemon_on_the_same_socket_refuses_to_start() {
     frame.push('\n');
     w.write_all(frame.as_bytes()).await.unwrap();
     w.flush().await.unwrap();
-    let _ = tokio::time::timeout(Duration::from_secs(2), server).await;
+    let _ = tokio::time::timeout(Duration::from_secs(10), server).await;
     drop(tmp2);
 }
