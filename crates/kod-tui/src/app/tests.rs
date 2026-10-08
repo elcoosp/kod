@@ -169,6 +169,71 @@ mod tests {
     }
     use crate::app::*;
 
+    /// `tool_executions` must be bounded: a long session mints
+    /// thousands of tool calls and the ledger is scanned per call.
+    /// Cap is `TOOL_EXECUTIONS_CAP`; the oldest *settled* entry is
+    /// evicted on overflow.
+    #[test]
+    fn tool_executions_cap_is_enforced() {
+        let mut app = KodApp::new();
+        for i in 0..(KodApp::TOOL_EXECUTIONS_CAP * 3) {
+            let id = format!("call{i}");
+            app.start_tool_execution(&id, "noop");
+            app.complete_tool_execution(&id, "noop", "ok");
+        }
+        assert_eq!(app.tool_executions().len(), KodApp::TOOL_EXECUTIONS_CAP);
+        // The oldest survivors are the tail of the run: nothing
+        // still shows as Running (every entry was completed).
+        assert!(
+            app.tool_executions()
+                .iter()
+                .all(|e| e.status != crate::app::ToolStatus::Running),
+            "no phantom running entries after eviction",
+        );
+    }
+
+    /// `completed_calls` must be bounded too: it is consulted once
+    /// per marker with no removal path in the pre-fix shape.
+    /// Cap is `COMPLETED_CALLS_CAP`; the oldest id is evicted first.
+    #[test]
+    fn completed_calls_cap_is_enforced() {
+        let mut app = KodApp::new();
+        for i in 0..(KodApp::COMPLETED_CALLS_CAP * 2) {
+            let id = format!("call{i}");
+            app.start_tool_execution(&id, "noop");
+            app.complete_tool_execution(&id, "noop", "ok");
+        }
+        assert_eq!(app.completed_calls.len(), KodApp::COMPLETED_CALLS_CAP);
+        // The oldest id is gone; a duplicate marker for it can no
+        // longer be recognized — that is the eviction contract.
+        assert!(!app.completed_calls.contains("call0"));
+        // The newest id survives.
+        let newest = format!("call{}", KodApp::COMPLETED_CALLS_CAP * 2 - 1);
+        assert!(app.completed_calls.contains(&newest));
+    }
+
+    /// A duplicate marker for a *recent* id must still be idempotent
+    /// after the caps have kicked in.
+    #[test]
+    fn duplicate_marker_for_a_recent_call_is_still_idempotent() {
+        let mut app = KodApp::new();
+        for i in 0..(KodApp::COMPLETED_CALLS_CAP + 10) {
+            let id = format!("call{i}");
+            app.start_tool_execution(&id, "noop");
+            app.complete_tool_execution(&id, "noop", "ok");
+        }
+        let recent = format!("call{}", KodApp::COMPLETED_CALLS_CAP + 9);
+        // A duplicate complete must be a no-op: the row must keep
+        // its original "ok" body, not become "should-not-overwrite".
+        app.complete_tool_execution(&recent, "noop", "should-not-overwrite");
+        assert!(
+            !app.messages()
+                .iter()
+                .any(|m| m.content.contains("should-not-overwrite")),
+            "duplicate marker must not rewrite the settled row",
+        );
+    }
+
     #[test]
     fn test_context_limit_overrides_default() {
         let mut app = KodApp::new();

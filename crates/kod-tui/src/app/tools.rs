@@ -12,6 +12,60 @@
 use super::*;
 
 impl KodApp {
+    /// Bound on `tool_executions`. A long session can mint hundreds
+    /// of thousands of tool rows; `/stats` only shows recent history,
+    /// and the ledger's only other use is "is any entry still
+    /// Running?", which only the recent tail can answer. 512 is
+    /// several sessions' worth of recent calls.
+    pub(crate) const TOOL_EXECUTIONS_CAP: usize = 512;
+
+    /// Bound on `completed_calls`. A duplicate `ToolCompleted` /
+    /// `ToolFailed` for the same id is only meaningful within the
+    /// same engine round (a few hundred calls); 4096 is comfortably
+    /// beyond that and keeps the set from growing without limit.
+    pub(crate) const COMPLETED_CALLS_CAP: usize = 4096;
+
+    /// Record a call id in `completed_calls`, evicting the oldest if
+    /// the cap is reached. The order queue mirrors the set's
+    /// insertion order; both are kept in sync.
+    fn record_completed_call(&mut self, id: &str) {
+        let id = id.to_string();
+        if !self.completed_calls.insert(id.clone()) {
+            return;
+        }
+        self.completed_calls_order.push_back(id);
+        while self.completed_calls_order.len() > Self::COMPLETED_CALLS_CAP {
+            if let Some(old) = self.completed_calls_order.pop_front() {
+                self.completed_calls.remove(&old);
+            }
+        }
+    }
+
+    /// Push a tool-execution ledger entry, evicting the oldest if the
+    /// cap is reached. A still-Running entry in the eviction window
+    /// is settled first (`Failed` with a "evicted" note) so the
+    /// running-tool counter stays accurate.
+    fn push_tool_execution(&mut self, execution: ToolExecution) {
+        if self.tool_executions.len() >= Self::TOOL_EXECUTIONS_CAP {
+            // Find the oldest non-Running entry to evict. If every
+            // entry is Running (pathological), evict the oldest
+            // anyway after marking it settled so the counter is
+            // honest.
+            let evict_idx = self
+                .tool_executions
+                .iter()
+                .position(|e| e.status != ToolStatus::Running)
+                .unwrap_or(0);
+            if self.tool_executions[evict_idx].status == ToolStatus::Running {
+                self.tool_executions[evict_idx].status = ToolStatus::Failed;
+                self.tool_executions[evict_idx].result =
+                    Some("evicted from the execution ledger at the cap".to_string());
+            }
+            self.tool_executions.remove(evict_idx);
+        }
+        self.tool_executions.push(execution);
+    }
+
     pub fn current_tool(&self) -> Option<&String> {
         self.current_tool.as_ref()
     }
@@ -53,7 +107,7 @@ impl KodApp {
         self.current_tool = Some(tool_name.to_string());
         self.set_phase(GenPhase::ExecutingTool(tool_name.to_string()));
 
-        self.tool_executions.push(ToolExecution {
+        self.push_tool_execution(ToolExecution {
             tool_name: tool_name.to_string(),
             status: ToolStatus::Running,
             start_time: Utc::now(),
@@ -257,7 +311,7 @@ impl KodApp {
 
         if !id.is_empty() {
             self.tool_rows_by_call.remove(id);
-            self.completed_calls.insert(id.to_string());
+            self.record_completed_call(id);
         }
         // Errors must be unmistakable: auto-expand so the full message is
         // visible and never hidden behind the preview cap.
@@ -322,7 +376,7 @@ impl KodApp {
         };
         if !id.is_empty() {
             self.tool_rows_by_call.remove(id);
-            self.completed_calls.insert(id.to_string());
+            self.record_completed_call(id);
         }
         // Always expand errors — same rationale as complete_tool_execution.
         self.expanded_tools.insert(msg_id);

@@ -574,7 +574,18 @@ pub struct KodApp {
     tool_rows_by_call: HashMap<String, MessageId>,
     /// Call ids whose rows are filled. The task-end `ToolCompleted`
     /// fallback for such an id is a no-op (no duplicate rows).
+    ///
+    /// Bounded: a long session can mint hundreds of thousands of
+    /// call ids, and the set is consulted once per call with no
+    /// removal path. `completed_calls_order` holds insertion order
+    /// so the oldest id can be evicted when the cap is reached; a
+    /// call id that old can no longer receive a duplicate marker
+    /// (the engine's task-end fallback is emitted within the same
+    /// round, which is at most a few hundred calls).
     completed_calls: HashSet<String>,
+    /// Insertion order for `completed_calls`, so the oldest id is
+    /// evictable at the cap. Kept in sync on every insert.
+    completed_calls_order: std::collections::VecDeque<String>,
     current_tool: Option<String>,
 
     current_response: String,
@@ -965,6 +976,7 @@ impl KodApp {
             tool_executions: Vec::new(),
             tool_rows_by_call: std::collections::HashMap::new(),
             completed_calls: std::collections::HashSet::new(),
+            completed_calls_order: std::collections::VecDeque::new(),
             current_tool: None,
 
             current_response: String::new(),
