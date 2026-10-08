@@ -110,3 +110,35 @@ impl Default for HelpWidget {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod popup_height_tests {
+    /// A popup body with more lines than `u16::MAX` must clamp to
+    /// `area.height` (the `.min()` intent), not wrap to a tiny value.
+    /// Pre-fix `lines.len() as u16` truncated: `200_000 as u16` is
+    /// 34464, so `+ 2` then `.min(area.height)` returned 34466, not
+    /// `area.height`. On any terminal smaller than 34466 the popup
+    /// rendered off-screen.
+    #[test]
+    fn popup_height_saturates_instead_of_wrapping() {
+        let area_height = 40u16;
+        // Small bodies: h = n + 2, not clamped by area_height.
+        assert_eq!(
+            u16::try_from(5)
+                .unwrap_or(u16::MAX)
+                .saturating_add(2)
+                .min(area_height),
+            7
+        );
+        // Bodies larger than area_height: h must equal area_height.
+        // The pre-fix `n as u16` truncated in the 65534..=131070
+        // window, so the clamp never fired.
+        for n in [41usize, 65533, 65534, 65535, 65536, 100_000, usize::MAX] {
+            let h = u16::try_from(n)
+                .unwrap_or(u16::MAX)
+                .saturating_add(2)
+                .min(area_height);
+            assert_eq!(h, area_height, "n={n} produced h={h}");
+        }
+    }
+}
