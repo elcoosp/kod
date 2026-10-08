@@ -89,8 +89,19 @@ fn clean_call_id(cid: &str) -> String {
 }
 
 /// Build a tool-start marker chunk for call `cid` carrying `name`.
+///
+/// Both fields are sanitized: a `:` in the id would split the wrong
+/// way (see [`clean_call_id`]), and a `\0` in either field would
+/// terminate the marker early and leak the rest into the next
+/// chunk's parse. `name` is nominally a plugin-controlled string;
+/// sanitizing it here is the same discipline [`tool_done_marker`]
+/// applies to its header and summary.
 pub fn tool_start_marker(cid: &str, name: &str) -> String {
-    format!("{TOOL_START_MARKER}{}:{name}\0", clean_call_id(cid))
+    format!(
+        "{TOOL_START_MARKER}{}:{}\0",
+        clean_call_id(cid),
+        name.replace('\0', " "),
+    )
 }
 
 /// If `chunk` is a tool-start marker, return `(call_id, tool_name)`.
@@ -108,8 +119,17 @@ pub fn parse_tool_start(chunk: &str) -> Option<(&str, &str)> {
 pub const TOOL_ARGS_MARKER: &str = "\0kod-args:";
 
 /// Build a tool-args marker chunk carrying a one-line display string.
+///
+/// `display` is user-tool-adjacent (it echoes command lines and file
+/// paths from the model's tool call) and could contain a `\0` — which
+/// would terminate the marker early. Sanitize it the same way
+/// [`tool_done_marker`] sanitizes its header and summary.
 pub fn tool_args_marker(cid: &str, display: &str) -> String {
-    format!("{TOOL_ARGS_MARKER}{}:{display}\0", clean_call_id(cid))
+    format!(
+        "{TOOL_ARGS_MARKER}{}:{}\0",
+        clean_call_id(cid),
+        display.replace('\0', " "),
+    )
 }
 
 /// If `chunk` is a tool-args marker, return `(call_id, display)`.
@@ -326,4 +346,59 @@ pub fn parse_tool_approval_batch(chunk: &str) -> Option<(u64, &str)> {
     let (id_str, json) = body.split_once(':')?;
     let id = id_str.parse::<u64>().ok()?;
     Some((id, json))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `\0` in the tool name must not leak past the marker's
+    /// trailing terminator. Pre-fix, a name carrying a NUL rendered
+    /// `\0kod-tool:c1:read\0file\0`; a naive split on the first
+    /// `\0` after the marker would return `read` and treat `file`
+    /// as the next chunk's bytes.
+    #[test]
+    fn tool_start_marker_strips_nul_from_name() {
+        let m = tool_start_marker("c1", "read\0file");
+        // Exactly two NULs: the marker's leading and trailing byte.
+        assert_eq!(m.matches('\0').count(), 2, "got {m:?}");
+        let (cid, name) = parse_tool_start(&m).unwrap();
+        assert_eq!(cid, "c1");
+        assert_eq!(name, "read file");
+        assert!(!name.contains('\0'));
+    }
+
+    /// Same for the args display: a NUL in the one-line command
+    /// excerpt must not survive. Tool args are model-authored and
+    /// can carry a `\u0000` escape from JSON.
+    #[test]
+    fn tool_args_marker_strips_nul_from_display() {
+        let m = tool_args_marker("c2", "cmd \0 rm -rf /");
+        assert_eq!(m.matches('\0').count(), 2, "got {m:?}");
+        let (cid, display) = parse_tool_args(&m).unwrap();
+        assert_eq!(cid, "c2");
+        assert_eq!(display, "cmd   rm -rf /");
+        assert!(!display.contains('\0'));
+    }
+
+    /// A `:` in the call id must not split the marker wrong. The id
+    /// is sanitized to `_`, so the first `:` in the body is the
+    /// field separator.
+    #[test]
+    fn call_id_colons_are_replaced() {
+        let m = tool_start_marker("c1:xyz", "read_file");
+        let (cid, name) = parse_tool_start(&m).unwrap();
+        assert_eq!(cid, "c1_xyz");
+        assert_eq!(name, "read_file");
+    }
+
+    /// Empty call id (legacy v1 provider) must round-trip as `("",
+    /// name)` — the pre-v2 shape.
+    #[test]
+    fn empty_call_id_round_trips_as_legacy() {
+        let m = tool_start_marker("", "read_file");
+        let (cid, name) = parse_tool_start(&m).unwrap();
+        assert_eq!(cid, "");
+        assert_eq!(name, "read_file");
+    }
 }
