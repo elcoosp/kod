@@ -95,7 +95,22 @@ impl RetryPolicy {
         state = state
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
-        let jitter = ((state >> 33) as f64) / (u32::MAX as f64) * 2.0 - 1.0;
+        // T2-H11 follow-up: the pre-fix formula was
+        //     let jitter = ((state >> 33) as f64) / (u32::MAX as f64) * 2.0 - 1.0;
+        // `state >> 33` keeps 31 bits (0 ..= 2^31 - 1), but it was
+        // divided by `u32::MAX` (2^32 - 1). The numerator was always
+        // at most half the denominator, so the ratio was in [0, 0.5)
+        // and the jitter — after `* 2 - 1` — was ALWAYS NEGATIVE,
+        // in [-1, 0). Backoff was biased 25 % short on every attempt
+        // instead of ±25 % centered, and every retry hit the same
+        // sign of jitter.
+        //
+        // Fixed by taking the top 32 bits and dividing by `2^32` (the
+        // precise count, not `u32::MAX`). `2^32` is a power of two, so
+        // the division is exact in f64, and the range is the intended
+        // `[0, 1)`.
+        let top32 = (state >> 32) as u32;
+        let jitter = (top32 as f64) / (u32::MAX as f64 + 1.0) * 2.0 - 1.0;
         let factor = 1.0 + jitter * self.jitter_fraction;
         let secs = capped.as_secs_f64() * factor;
         Duration::from_secs_f64(secs.max(0.0))
@@ -174,6 +189,54 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pseudo-jitter must be centered: the sample mean of many
+    /// `delay_for` calls at a fixed attempt approaches the capped
+    /// delay, not 0.75 of it. Pre-fix, `(state >> 33) as f64 /
+    /// (u32::MAX as f64) * 2.0 - 1.0` yielded values in `[-1, 0)`
+    /// because 31 bits were divided by 2^32-1, so *every* retry was
+    /// 25 % short and all retries had the same sign.
+    ///
+    /// The test exercises the actual formula through `delay_for`
+    /// with a large sample: the sample min must be below the capped
+    /// delay (some negative jitter) and the sample max must be above
+    /// it (some positive jitter).
+    #[test]
+    fn jitter_is_centered_and_signed() {
+        let policy = RetryPolicy {
+            max_attempts: 3,
+            base_delay: Duration::from_millis(1000),
+            max_delay: Duration::from_secs(2),
+            jitter_fraction: 0.25,
+            max_rate_limit_wait: Duration::ZERO,
+            sleep_fn: Arc::new(|_: Duration| -> SleepFuture { Box::pin(async {}) }),
+        };
+        // Sample many delays. Because the jitter seed varies by
+        // wall-clock nanos, each call's value differs.
+        let mut min_ms = u128::MAX;
+        let mut max_ms: u128 = 0;
+        for _ in 0..1000 {
+            let d = policy.delay_for(1); // attempt 1 -> 1000 ms capped
+            let ms = d.as_millis();
+            if ms < min_ms {
+                min_ms = ms;
+            }
+            if ms > max_ms {
+                max_ms = ms;
+            }
+        }
+        // The capped base is 1000 ms. With ±25 % jitter and 1000
+        // samples the observed min should be meaningfully below
+        // 1000 and the observed max meaningfully above.
+        assert!(
+            min_ms < 900,
+            "sample min must be below base (some -jitter); got {min_ms}",
+        );
+        assert!(
+            max_ms > 1100,
+            "sample max must be above base (some +jitter); got {max_ms}",
+        );
+    }
     use std::sync::Arc as StdArc;
     use std::sync::atomic::{AtomicU32, Ordering};
 
