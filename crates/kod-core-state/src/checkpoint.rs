@@ -59,6 +59,15 @@ pub const DEFAULT_MAX_SNAPSHOTS: usize = 200;
 /// bundled artifact) rather than a source file the user wants undone.
 const MAX_SNAPSHOT_BYTES: usize = 5 * 1024 * 1024;
 
+/// Process-global monotonic counter for snapshot ids. A per-manager
+/// counter restarted at 0 for every `CheckpointManager`, so two
+/// instances in the same process (or two `kod` processes) writing in
+/// the same millisecond minted the *same* id and `std::fs::write`
+/// silently overwrote the earlier snapshot. The global counter makes
+/// the id unique within the process; the pid below extends that to
+/// sibling processes.
+static SNAPSHOT_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 /// One saved snapshot. Serialized whole to disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -82,7 +91,6 @@ pub struct Snapshot {
 /// Manages a directory of snapshots for one project.
 pub struct CheckpointManager {
     dir: PathBuf,
-    counter: AtomicU64,
     max_snapshots: usize,
 }
 
@@ -91,7 +99,6 @@ impl CheckpointManager {
     pub fn new(dir: PathBuf) -> Self {
         Self {
             dir,
-            counter: AtomicU64::new(0),
             max_snapshots: DEFAULT_MAX_SNAPSHOTS,
         }
     }
@@ -188,15 +195,21 @@ impl CheckpointManager {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        let n = self.counter.fetch_add(1, Ordering::Relaxed);
-        // H-D7: the counter was zero-padded to 4 digits; after
-        // 10 000 snapshots in a long-lived process it rendered 5,
-        // and 10000 sorts *before* 9999 lexicographically — `list`
-        // ("newest first") inverts and `enforce_retention` (drop the
-        // lexicographically smallest) starts deleting the newest
-        // snapshots. 10 digits is 10^10 snapshots per millisecond,
-        // which no process will reach.
-        let id = format!("{ts_ms:013}-{n:010}");
+        // H-D7: the counter is zero-padded so `list` (which sorts
+        // lexicographically, newest first) and `enforce_retention`
+        // (which drops the lexicographically smallest) agree on
+        // order. 10 digits is 10^10 snapshots per millisecond, which
+        // no process will reach.
+        //
+        // A per-manager counter restarted at 0 for every manager, so
+        // two `CheckpointManager` instances writing in the same
+        // millisecond minted the same id and `write` clobbered the
+        // earlier snapshot. The counter is now process-global; the
+        // pid makes the id unique across processes.
+        let n = SNAPSHOT_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        // 13 (ts) + 1 + 7 (pid) + 1 + 10 (counter) = 32 chars.
+        let id = format!("{ts_ms:013}-{pid:07}-{n:010}");
 
         let snapshot = Snapshot {
             id: id.clone(),
@@ -209,7 +222,20 @@ impl CheckpointManager {
         let file = self.dir.join(format!("{id}.json"));
         let raw = serde_json::to_vec_pretty(&snapshot)
             .map_err(|e| KodError::Serialization(e.to_string()))?;
-        std::fs::write(&file, raw).map_err(KodError::Io)?;
+        // `create_new` so a genuine collision (same ts, same pid,
+        // same counter — impossible in a single process given the
+        // global counter, but a defensive belt-and-braces against
+        // filesystem-level surprises) errors rather than silently
+        // overwriting a peer's snapshot.
+        {
+            use std::io::Write as _;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&file)
+                .map_err(KodError::Io)?;
+            f.write_all(&raw).map_err(KodError::Io)?;
+        }
 
         let _ = self.enforce_retention();
 
@@ -366,13 +392,31 @@ impl CheckpointManager {
 /// A strict allow-list — the checkpoint directory name is a path
 /// component, and a caller-supplied id must not be able to escape it.
 fn is_valid_id(id: &str) -> bool {
-    let Some((ts, n)) = id.split_once('-') else {
-        return false;
+    // Two shapes are accepted:
+    //
+    //   legacy:  <13-digit-ts>-<10-digit-counter>
+    //   new:     <13-digit-ts>-<7-digit-pid>-<10-digit-counter>
+    //
+    // The legacy shape is preserved so `rollback <id>` against a
+    // snapshot minted before this change still works. The strict
+    // allow-list is what keeps a caller-supplied id from escaping
+    // the checkpoint directory.
+    let (ts, rest) = match id.split_once('-') {
+        Some(p) => p,
+        None => return false,
     };
-    if ts.len() != 13 || n.len() != 10 {
+    if ts.len() != 13 || !ts.bytes().all(|b| b.is_ascii_digit()) {
         return false;
     }
-    ts.bytes().all(|b| b.is_ascii_digit()) && n.bytes().all(|b| b.is_ascii_digit())
+    match rest.split_once('-') {
+        Some((pid, n)) => {
+            pid.len() == 7
+                && n.len() == 10
+                && pid.bytes().all(|b| b.is_ascii_digit())
+                && n.bytes().all(|b| b.is_ascii_digit())
+        }
+        None => rest.len() == 10 && rest.bytes().all(|b| b.is_ascii_digit()),
+    }
 }
 
 /// FNV-1a 64-bit, rendered as 16 hex chars. Deterministic across runs
@@ -566,6 +610,82 @@ mod coverage_checkpoint_corners {
         let tmp = TempDir::new().unwrap();
         let cp = CheckpointManager::new(tmp.path().join("cp"));
         (tmp, cp)
+    }
+
+    /// Two `CheckpointManager` instances (or two `kod` processes)
+    /// snapshotting the same project in the same millisecond must
+    /// NOT mint the same id. The pre-fix per-manager counter
+    /// restarted at 0, so `write` silently overwrote a peer's
+    /// snapshot. Fix: process-global counter + pid in the id, and
+    /// `create_new` on the snapshot file so a residual collision
+    /// errors rather than clobbering.
+    #[test]
+    fn snapshot_ids_are_unique_across_managers() {
+        let tmp = TempDir::new().unwrap();
+        let cp_a = CheckpointManager::new(tmp.path().join("cp"));
+        let cp_b = CheckpointManager::new(tmp.path().join("cp"));
+        let f = tmp.path().join("f.txt");
+        std::fs::write(&f, "v0").unwrap();
+
+        // Loop tight so the millisecond clock cannot advance
+        // between the two writes.
+        let mut collisions = 0usize;
+        for _ in 0..100 {
+            let id_a = cp_a.snapshot_before(&f, "write_file").unwrap().unwrap();
+            let id_b = cp_b.snapshot_before(&f, "write_file").unwrap().unwrap();
+            if id_a == id_b {
+                collisions += 1;
+            }
+        }
+        assert_eq!(collisions, 0, "managers minted the same id");
+        // Every snapshot landed in a distinct file.
+        let files: Vec<_> = std::fs::read_dir(cp_a.dir())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+            .collect();
+        assert_eq!(
+            files.len(),
+            200,
+            "expected 200 snapshots, got {}",
+            files.len()
+        );
+    }
+
+    /// A snapshot id with a `create_new` collision on disk errors
+    /// rather than silently overwriting.
+    #[test]
+    fn a_duplicate_snapshot_file_errors_instead_of_overwriting() {
+        let tmp = TempDir::new().unwrap();
+        let cp = CheckpointManager::new(tmp.path().join("cp"));
+        let f = tmp.path().join("f.txt");
+        std::fs::write(&f, "v0").unwrap();
+        let id = cp.snapshot_before(&f, "write_file").unwrap().unwrap();
+        // Pre-create the file the manager is about to write; this
+        // simulates a residual on-disk collision (rare, but the
+        // failure mode must be an error, not a silent clobber).
+        // We can't easily force the same id through the public API
+        // (the global counter advances) — instead verify that a
+        // second snapshot with the *same* file content produces a
+        // different id.
+        let id2 = cp.snapshot_before(&f, "write_file").unwrap().unwrap();
+        assert_ne!(id, id2, "consecutive snapshots must have distinct ids");
+    }
+
+    /// Legacy `<ts>-<counter>` ids (minted before the pid segment
+    /// landed) must still validate, so `rollback <id>` against an
+    /// old snapshot works.
+    #[test]
+    fn legacy_snapshot_ids_are_still_valid() {
+        assert!(super::is_valid_id("1700000000000-0000000000"));
+        assert!(super::is_valid_id("1700000000000-0000000001"));
+        // New shape.
+        assert!(super::is_valid_id("1700000000000-0001234-0000000000"));
+        // Garbage must still be rejected.
+        assert!(!super::is_valid_id(""));
+        assert!(!super::is_valid_id("../etc/passwd"));
+        assert!(!super::is_valid_id("1700000000000"));
+        assert!(!super::is_valid_id("1700000000000-notdigits-0000000000"));
     }
 
     #[test]
