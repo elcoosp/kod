@@ -555,14 +555,32 @@ fn ast_or_regex(content: &str, ext: &str, fallback: fn(&str) -> Vec<Symbol>) -> 
     };
     // F2d-13: one line split for the filter pass.
     let lines: Vec<&str> = content.lines().collect();
-    syms.into_iter()
+    let mut out: Vec<Symbol> = syms
+        .into_iter()
         .map(|s| Symbol {
             kind: s.kind,
             name: s.name,
             line: s.line,
         })
-        .filter(|sym| !(sym.kind == "fn" && has_test_attribute(&lines, sym.line)))
-        .collect()
+        .collect();
+    // Mirror `scan`'s post-processing exactly, in `scan`'s order:
+    // sort-by-line, dedup by (name, kind), then truncate to 200.
+    // The AST path bypasses `scan`, so without this the two paths
+    // disagreed for any file with >200 symbols — the module's own
+    // "the two paths produce the same tuples" contract was false.
+    //
+    // Ordering matters. The regex path is
+    //     scan(content, …)   // = sort + dedup + truncate(200)
+    //         .filter(…)     // then drop test fns from the survivors
+    // and if the AST path filters *before* truncating, a file with
+    // >200 symbols and some test fns in the first 200 emits a
+    // different set. Sort + dedup + truncate first, filter second —
+    // the exact `extract_rust` shape.
+    out.sort_by_key(|s| s.line);
+    out.dedup_by(|a, b| a.name == b.name && a.kind == b.kind);
+    out.truncate(200);
+    out.retain(|sym| !(sym.kind == "fn" && has_test_attribute(&lines, sym.line)));
+    out
 }
 
 /// Kept for the Rust agreement test; delegates to `ast_or_regex`.
@@ -822,6 +840,38 @@ async fn an_async_test() {}
                 .collect();
             assert_eq!(a, r, "AST and regex disagree for .{ext}");
         }
+    }
+
+    /// The two paths must agree on the *cap*. A file with more than
+    /// 200 symbols and some `#[test]` fns inside the first 200 lines
+    /// is exactly the case where ordering matters: the regex path
+    /// sorts, dedups, truncates to 200, then filters test fns out of
+    /// the survivors; an AST path that filters first then truncates
+    /// keeps different symbols.
+    #[test]
+    fn the_paths_agree_past_the_symbol_cap() {
+        // 250 production fns (line-interleaved with 60 test fns near
+        // the top) so the 200-symbol cap bites while test fns are
+        // still in the mix.
+        let mut src = String::new();
+        for i in 0..60 {
+            src.push_str(&format!("#[test]\nfn t{i}() {{}}\n"));
+        }
+        for i in 0..250 {
+            src.push_str(&format!("fn f{i}() {{}}\n"));
+        }
+        let regex = extract_rust(&src);
+        let ast = ast_or_regex(&src, "rs", extract_rust);
+        let r: Vec<(&str, String, usize)> = regex
+            .iter()
+            .map(|s| (s.kind, s.name.clone(), s.line))
+            .collect();
+        let a: Vec<(&str, String, usize)> = ast
+            .iter()
+            .map(|s| (s.kind, s.name.clone(), s.line))
+            .collect();
+        assert_eq!(a.len(), r.len(), "same cap after post-processing");
+        assert_eq!(a, r, "AST and regex disagree past the cap");
     }
 
     #[test]
