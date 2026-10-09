@@ -274,7 +274,7 @@ pub async fn run_update() -> Result<()> {
 
     if !resp.status().is_success() {
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = read_bounded_error_body(resp).await;
         let short = if body.len() > 300 {
             format!("{}…", kod_types::strutil::truncate_chars(&body, 300))
         } else {
@@ -1344,4 +1344,23 @@ pub async fn run_commit_check(
             })
         }
     }
+}
+
+/// Read a bounded slice of a non-2xx response body. See
+/// `kod-provider-openai`'s sibling for the full rationale.
+async fn read_bounded_error_body(mut resp: reqwest::Response) -> String {
+    const MAX_ERROR_BODY_BYTES: usize = 8 * 1024;
+    let mut bytes: Vec<u8> = Vec::with_capacity(1024);
+    while let Ok(Some(chunk)) = resp.chunk().await {
+        let room = MAX_ERROR_BODY_BYTES.saturating_sub(bytes.len());
+        if chunk.len() > room {
+            bytes.extend_from_slice(&chunk[..room]);
+            break;
+        }
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() >= MAX_ERROR_BODY_BYTES {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }

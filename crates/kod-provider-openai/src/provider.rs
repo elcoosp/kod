@@ -568,7 +568,7 @@ impl LlmProvider for OpenAICompatProvider {
             })?;
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body = read_bounded_error_body(response).await;
             // Trim the body: an HTML error page from a wrong port is
             // hundreds of lines, and the first few carry the meaning.
             let body_short = if body.len() > 400 {
@@ -1215,6 +1215,33 @@ fn tool_declarations(tools: &[ToolDefinition]) -> HashMap<String, serde_json::Va
             )
         })
         .collect()
+}
+
+/// Read a bounded slice of a non-2xx response body.
+///
+/// `reqwest::Response::text()` buffers the entire body before
+/// returning. On an error path the body is controlled by the server
+/// that just failed; a misbehaving endpoint can send hundreds of
+/// megabytes and the caller allocates all of it before it ever gets
+/// to truncate the display string. This helper streams the body via
+/// `reqwest::Response::chunk()` and stops at
+/// `MAX_ERROR_BODY_BYTES` (8 KiB), which is several orders of
+/// magnitude more than the useful text of any real error page.
+async fn read_bounded_error_body(mut resp: reqwest::Response) -> String {
+    const MAX_ERROR_BODY_BYTES: usize = 8 * 1024;
+    let mut bytes: Vec<u8> = Vec::with_capacity(1024);
+    while let Ok(Some(chunk)) = resp.chunk().await {
+        let room = MAX_ERROR_BODY_BYTES.saturating_sub(bytes.len());
+        if chunk.len() > room {
+            bytes.extend_from_slice(&chunk[..room]);
+            break;
+        }
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() >= MAX_ERROR_BODY_BYTES {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 #[cfg(test)]

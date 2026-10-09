@@ -350,10 +350,7 @@ impl LlmProvider for AnthropicProvider {
                                 .map(|s| (k.as_str().to_string(), s.to_string()))
                         })
                         .collect();
-                    let text = resp.text().await.unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "anthropic: could not read error body");
-            String::new()
-        });
+                    let text = read_bounded_error_body(resp).await;
                     let hints = kod_provider::retry::extract_retry_hints(
                         Some(status.as_u16()),
                         &hint_headers,
@@ -461,10 +458,7 @@ impl LlmProvider for AnthropicProvider {
                     })?;
                 let status = resp.status();
                 if !status.is_success() {
-                    let text = resp.text().await.unwrap_or_else(|e| {
-                        tracing::warn!(error = %e, "anthropic: could not read error body");
-                        String::new()
-                    });
+                    let text = read_bounded_error_body(resp).await;
                     return Err(KodError::provider_status(status.as_u16(), &text));
                 }
                 resp.json::<serde_json::Value>().await.map_err(|e| {
@@ -625,10 +619,7 @@ impl LlmProvider for AnthropicProvider {
                                 .map(|s| (k.as_str().to_string(), s.to_string()))
                         })
                         .collect();
-                    let text = resp.text().await.unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "anthropic: could not read error body");
-            String::new()
-        });
+                    let text = read_bounded_error_body(resp).await;
                     let hints = kod_provider::retry::extract_retry_hints(
                         Some(status.as_u16()),
                         &hint_headers,
@@ -1137,6 +1128,28 @@ fn parse_response(v: &serde_json::Value) -> Result<GenerationResponse> {
             usage,
         })
     }
+}
+
+/// Read a bounded slice of a non-2xx response body. See the sibling
+/// in `kod-provider-openai` for the full rationale: `resp.text()`
+/// buffers the whole body before returning, so a hostile or broken
+/// endpoint can make the client allocate hundreds of megabytes
+/// before we ever truncate for display.
+async fn read_bounded_error_body(mut resp: reqwest::Response) -> String {
+    const MAX_ERROR_BODY_BYTES: usize = 8 * 1024;
+    let mut bytes: Vec<u8> = Vec::with_capacity(1024);
+    while let Ok(Some(chunk)) = resp.chunk().await {
+        let room = MAX_ERROR_BODY_BYTES.saturating_sub(bytes.len());
+        if chunk.len() > room {
+            bytes.extend_from_slice(&chunk[..room]);
+            break;
+        }
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() >= MAX_ERROR_BODY_BYTES {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 #[cfg(test)]
