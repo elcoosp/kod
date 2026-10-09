@@ -89,12 +89,16 @@ struct Server {
     /// ACP session id → engine transcript key. The engine keys its
     /// own transcripts by a string; the ACP session id is one.
     sessions: Mutex<HashMap<String, String>>,
-    /// Most recent tool-call id per session. The engine's chunk
-    /// stream carries a start, zero or more args updates, and a done,
-    /// none of which carry a correlation id; the tool_call /
-    /// tool_call_update notifications need one, so the id is tracked
-    /// per session between the start and the done.
-    last_tool_call_id: Mutex<HashMap<String, String>>,
+    /// ACP `toolCallId` per (session, engine call id). The engine's
+    /// chunk stream tags its tool-start/args/done markers with the
+    /// provider's call id (`cid`); the ACP `toolCallId` is a UUID the
+    /// bridge mints at the start. Keying by session alone meant two
+    /// parallel tool calls in one turn clobbered each other — the
+    /// second start overwrote the first call's UUID, so the first
+    /// call's `tool_call_update`s went out under the second call's
+    /// id and the first stayed `pending` in the client forever.
+    /// The key is now `(session_id, engine_cid)`.
+    last_tool_call_id: Mutex<HashMap<(String, String), String>>,
     /// H-R3: sessions with a prompt currently running. A second
     /// `session/prompt` on the same id is rejected with
     /// `-32002 session is busy` instead of interleaving history,
@@ -630,13 +634,12 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
     }
 
     // Tool lifecycle.
-    if let Some((_cid, name)) = kod_core::engine::parse_tool_start(chunk) {
+    if let Some((cid, name)) = kod_core::engine::parse_tool_start(chunk) {
         let tool_call_id = format!("tc-{}", uuid::Uuid::new_v4());
-        server
-            .last_tool_call_id
-            .lock()
-            .await
-            .insert(session_id.to_string(), tool_call_id.clone());
+        server.last_tool_call_id.lock().await.insert(
+            (session_id.to_string(), cid.to_string()),
+            tool_call_id.clone(),
+        );
         server
             .notify(
                 "session/update",
@@ -655,12 +658,12 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
             .await;
         return Ok(());
     }
-    if let Some((_cid, brief)) = kod_core::engine::parse_tool_args(chunk) {
+    if let Some((cid, brief)) = kod_core::engine::parse_tool_args(chunk) {
         if let Some(tool_call_id) = server
             .last_tool_call_id
             .lock()
             .await
-            .get(session_id)
+            .get(&(session_id.to_string(), cid.to_string()))
             .cloned()
         {
             server
@@ -680,12 +683,12 @@ async fn handle_chunk(server: &Arc<Server>, session_id: &str, chunk: &str) -> Re
         }
         return Ok(());
     }
-    if let Some((_cid, header, summary, _ms)) = kod_core::engine::parse_tool_done(chunk) {
+    if let Some((cid, header, summary, _ms)) = kod_core::engine::parse_tool_done(chunk) {
         if let Some(tool_call_id) = server
             .last_tool_call_id
             .lock()
             .await
-            .get(session_id)
+            .get(&(session_id.to_string(), cid.to_string()))
             .cloned()
         {
             let is_error = summary.trim_start().starts_with("Error:");
@@ -737,13 +740,17 @@ async fn request_permission(
     session_id: &str,
     item: &kod_core::engine::ApprovalRequest,
 ) -> ApprovalDecision {
-    let tool_call_id = server
-        .last_tool_call_id
-        .lock()
-        .await
-        .get(session_id)
-        .cloned()
-        .unwrap_or_else(|| format!("tc-{}", uuid::Uuid::new_v4()));
+    // The approval path has no engine call id at hand. Pick the
+    // freshest id the session owns — an approval is per-call and
+    // the engine runs mutating rounds serially.
+    let tool_call_id = {
+        let g = server.last_tool_call_id.lock().await;
+        g.iter()
+            .filter(|((s, _), _)| s == session_id)
+            .map(|(_, v)| v.clone())
+            .last()
+            .unwrap_or_else(|| format!("tc-{}", uuid::Uuid::new_v4()))
+    };
 
     // Four options, matching the ACP `PermissionOption` kinds:
     // `allow_once`, `allow_always`, `reject_once`, `reject_always`.
@@ -891,6 +898,64 @@ async fn write_frame<W: tokio::io::AsyncWrite + Unpin>(writer: &mut W, msg: &Val
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two parallel tool calls in the same session must be tracked
+    /// under distinct ACP `toolCallId`s. Pre-fix the map was keyed by
+    /// session alone, so the second start overwrote the first call's
+    /// UUID: the first call's `tool_args` and `tool_done` markers
+    /// then went out under the second call's id, and the first stayed
+    /// `pending` in the client forever.
+    #[test]
+    fn parallel_tool_calls_keep_distinct_tool_call_ids() {
+        // Exercise the key shape directly. This is the invariant the
+        // handler relies on.
+        let mut map: std::collections::HashMap<(String, String), String> =
+            std::collections::HashMap::new();
+        let session = "s1".to_string();
+        map.insert((session.clone(), "call_a".to_string()), "tc-a".to_string());
+        map.insert((session.clone(), "call_b".to_string()), "tc-b".to_string());
+        assert_eq!(
+            map.get(&(session.clone(), "call_a".to_string())),
+            Some(&"tc-a".to_string()),
+        );
+        assert_eq!(
+            map.get(&(session.clone(), "call_b".to_string())),
+            Some(&"tc-b".to_string()),
+        );
+        // Distinct sessions do not collide even with the same engine id.
+        let session2 = "s2".to_string();
+        map.insert((session2.clone(), "call_a".to_string()), "tc-c".to_string());
+        assert_ne!(
+            map.get(&(session.clone(), "call_a".to_string())),
+            map.get(&(session2, "call_a".to_string())),
+        );
+    }
+
+    /// The engine emits `tool_start`, `tool_args`, `tool_done` markers
+    /// each carrying the provider's call id. The markers round-trip
+    /// that id, so the ACP handler can look up the right ACP-side
+    /// UUID. This pins the round-trip through the marker helpers the
+    /// handler uses.
+    #[test]
+    fn acp_marker_round_trip_carries_the_engine_call_id() {
+        use kod_core::engine::{parse_tool_args, parse_tool_done, parse_tool_start};
+        let start = kod_core::engine::tool_start_marker("call_a", "read_file");
+        let (cid, name) = parse_tool_start(&start).unwrap();
+        assert_eq!(cid, "call_a");
+        assert_eq!(name, "read_file");
+
+        let args = kod_core::engine::tool_args_marker("call_a", "read_file path=x");
+        let (cid, brief) = parse_tool_args(&args).unwrap();
+        assert_eq!(cid, "call_a");
+        assert_eq!(brief, "read_file path=x");
+
+        let done = kod_core::engine::tool_done_marker("call_a", "read_file path=x", "ok", 42);
+        let (cid, header, summary, ms) = parse_tool_done(&done).unwrap();
+        assert_eq!(cid, "call_a");
+        assert_eq!(header, "read_file path=x");
+        assert_eq!(summary, "ok");
+        assert_eq!(ms, 42);
+    }
 
     /// When the read loop exits, any request parked in `pending`
     /// must fail fast — not wait for the full 120s `request()`
