@@ -1006,6 +1006,11 @@ impl OpenAICompatProvider {
                     );
                     empty_retry.observe_retry();
                     let delay_ms = empty_retry.next_delay_ms();
+                    // Drop the admission permit before sleeping; the
+                    // semaphore bounds concurrent HTTP requests and
+                    // this branch has no request in flight. Matches
+                    // the transport-error branch above.
+                    drop(permit);
                     if delay_ms > 0 {
                         tokio::time::sleep(std::time::Duration::from_millis(
                             delay_ms,

@@ -865,6 +865,14 @@ impl LlmProvider for AnthropicProvider {
                     );
                     empty_retry.observe_retry();
                     let delay_ms = empty_retry.next_delay_ms();
+                    // Drop the admission permit before sleeping: the
+                    // semaphore bounds concurrent HTTP requests, and
+                    // this branch has no request in flight. The
+                    // comment on `let permit` above explicitly says
+                    // the branch can drop it before any sleep; the
+                    // transport- and status-error branches already
+                    // do, this one did not.
+                    drop(permit);
                     if delay_ms > 0 {
                         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                     }
