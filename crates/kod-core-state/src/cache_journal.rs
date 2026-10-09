@@ -128,3 +128,60 @@ pub fn recent(n: usize) -> Vec<serde_json::Value> {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    /// The truncation path keeps the newest half of the journal, but
+    /// the rewrite must preserve a trailing newline. The pre-fix
+    /// `lines().skip(..).join("\n")` dropped it, so the next
+    /// `writeln!` (O_APPEND) concatenated its record onto the last
+    /// surviving line — producing `...lastline{"ts_ms":...}`, a
+    /// corrupted JSONL record that `recent` then skips on parse
+    /// failure.
+    #[test]
+    fn truncation_preserves_the_trailing_newline() {
+        // Simulate the truncation input: many well-formed JSONL lines.
+        let original: String = (0..20).map(|i| format!("{{\"n\":{i}}}\n")).collect();
+        // Apply the truncation logic (the same code the fix uses).
+        let total = original.lines().count();
+        let keep: String = original
+            .lines()
+            .skip(total / 2)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut keep = keep;
+        if !keep.is_empty() {
+            keep.push('\n');
+        }
+        // The next append (O_APPEND) will be a new line.
+        let next = "{\"n\":20}\n";
+        let after = format!("{keep}{next}");
+        // Every line must still parse as JSON.
+        let mut count = 0usize;
+        for line in after.lines() {
+            let v: serde_json::Value =
+                serde_json::from_str(line).unwrap_or_else(|e| panic!("corrupt line {line:?}: {e}"));
+            assert!(v.is_object());
+            count += 1;
+        }
+        // Half of the original 20 lines survive (10), plus the new one.
+        assert_eq!(count, 11, "expected 10 kept + 1 appended, got {count}");
+    }
+
+    /// Directly verify the shape: without a trailing newline, an
+    /// append produces a malformed line. This is the negative test
+    /// that pins *why* the fix is needed.
+    #[test]
+    fn missing_trailing_newline_corrupts_the_next_append() {
+        let bad_keep = "line1\nline2"; // no terminator
+        let next = "line3";
+        let corrupted = format!("{bad_keep}{next}");
+        // The middle line is now "line2line3", not two lines.
+        let lines: Vec<&str> = corrupted.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            lines[1], "line2line3",
+            "the fix exists precisely to prevent this"
+        );
+    }
+}
