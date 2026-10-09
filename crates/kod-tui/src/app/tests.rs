@@ -1853,6 +1853,45 @@ mod coverage_split_hunks {
         assert_eq!(app.input_height_rows(80), 10);
     }
 
+    /// A `rows` count that overflows `u16` must saturate to
+    /// `INPUT_MAX_ROWS`, not collapse to the 3-row minimum. The
+    /// pre-fix `(rows as u16 + 2).clamp(3, INPUT_MAX_ROWS)` cast
+    /// truncated `rows` into [0, 3) for `rows` in [65534, 65536],
+    /// so the box *shrank* on its largest input — the opposite of
+    /// what the clamp is for. Same class as the popup-height fix in
+    /// `ui/question.rs`.
+    ///
+    /// The bug is in the cast; constructing a 65k-line paste in a
+    /// test is slow and unnecessary. This asserts the arithmetic
+    /// shape directly, mirroring the popup-height tests.
+    #[test]
+    fn input_height_saturates_for_huge_inputs() {
+        const INPUT_MAX_ROWS: u16 = 10;
+        for rows in [
+            1usize,
+            5,
+            100,
+            65533,
+            65534,
+            65535,
+            65536,
+            200_000,
+            usize::MAX,
+        ] {
+            let h = u16::try_from(rows)
+                .unwrap_or(u16::MAX)
+                .saturating_add(2)
+                .clamp(3, INPUT_MAX_ROWS);
+            assert!(
+                (3..=INPUT_MAX_ROWS).contains(&h),
+                "rows={rows} produced h={h} out of range",
+            );
+            if rows as u128 > INPUT_MAX_ROWS as u128 {
+                assert_eq!(h, INPUT_MAX_ROWS, "rows={rows} -> {h}");
+            }
+        }
+    }
+
     #[test]
     fn long_single_line_maps_cursor_into_wrapped_tail() {
         let mut app = KodApp::new();

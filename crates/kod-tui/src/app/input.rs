@@ -112,7 +112,17 @@ impl KodApp {
     pub fn input_height_rows(&self, total_width: u16) -> u16 {
         let inner = total_width.saturating_sub(2) as usize;
         let rows = self.input_view(inner).rows.len().max(1);
-        (rows as u16 + 2).clamp(3, INPUT_MAX_ROWS)
+        // Saturate on the cast, not on `as u16`. A bracketed paste of
+        // 65536+ newlines makes `rows` a value that `rows as u16`
+        // truncates into [0, 3) — `+ 2` then clamps to 3, i.e. the
+        // box collapses from `INPUT_MAX_ROWS` (10) to the minimum
+        // height on the largest inputs, the exact opposite of what
+        // the clamp is for. Same shape as the popup-height fix in
+        // `ui/question.rs` and its siblings.
+        u16::try_from(rows)
+            .unwrap_or(u16::MAX)
+            .saturating_add(2)
+            .clamp(3, INPUT_MAX_ROWS)
     }
 
     pub fn is_multiline_input(&self) -> bool {
