@@ -714,6 +714,22 @@ impl LlmProvider for AnthropicProvider {
                     match chunk {
                         Ok(bytes) => {
                             buf.extend_from_slice(&bytes);
+                            // Cap the accumulated buffer: an SSE
+                            // line that never terminates must not
+                            // grow `buf` without bound. A hostile or
+                            // broken server that streams bytes with
+                            // no `\n` would otherwise OOM the
+                            // client. Same shape as the LSP and MCP
+                            // reader bounds; 64 MiB is generous for
+                            // any real Anthropic SSE frame (a large
+                            // tool-use JSON is a few hundred KB).
+                            const MAX_SSE_LINE_BYTES: usize = 64 * 1024 * 1024;
+                            if buf.len() > MAX_SSE_LINE_BYTES {
+                                transport_error = Some(KodError::Provider(format!(
+                                    "anthropic stream: SSE line exceeded {MAX_SSE_LINE_BYTES} bytes without a newline"
+                                )));
+                                break 'read;
+                            }
                             while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
                                 let mut line_bytes: Vec<u8> = buf.drain(..=nl).collect();
                                 line_bytes.pop();
