@@ -121,7 +121,14 @@ impl EmbeddingClient for OllamaEmbedder {
                 .map_err(|e| KodError::Network(format!("ollama embedder: POST {url}: {e}")))?;
             let status = resp.status();
             if !status.is_success() {
-                let text = resp.text().await.unwrap_or_default();
+                // Cap the error body: a misconfigured or hostile
+                // endpoint can return an arbitrarily large error
+                // body, and `resp.text()` reads it whole before we
+                // get to truncate. Read a bounded slice instead.
+                // Same discipline as the provider error paths (see
+                // `kod-provider-openai/src/provider.rs`, which
+                // truncates its read error to 400 chars).
+                let text = crate::embedding::read_bounded_error_body(resp).await;
                 return Err(KodError::Provider(format!(
                     "ollama embedder: {url} returned {status}: {text}"
                 )));
@@ -208,7 +215,8 @@ impl EmbeddingClient for OpenAIEmbedder {
                 .map_err(|e| KodError::Network(format!("openai embedder: POST {url}: {e}")))?;
             let status = resp.status();
             if !status.is_success() {
-                let text = resp.text().await.unwrap_or_default();
+                // Bounded read; see the ollama site above.
+                let text = crate::embedding::read_bounded_error_body(resp).await;
                 return Err(KodError::Provider(format!(
                     "openai embedder: {url} returned {status}: {text}"
                 )));
@@ -381,6 +389,37 @@ pub fn parse_float_array(v: &serde_json::Value) -> Result<Vec<f32>> {
 #[doc(hidden)]
 pub fn parse_float_array_for_fuzz(v: &serde_json::Value) -> Result<Vec<f32>> {
     parse_float_array(v)
+}
+
+/// Read a bounded slice of an HTTP error body.
+///
+/// `resp.text()` reads the whole body into memory before we can
+/// truncate; a misconfigured or hostile embedding endpoint can
+/// return an arbitrarily large error body and OOM the client before
+/// the error is even constructed. The other error-body read paths
+/// in the workspace truncate after reading — that shape has the
+/// same problem, just smaller numbers. This helper streams the
+/// body and stops at `MAX_ERROR_BODY_BYTES`.
+async fn read_bounded_error_body(mut resp: reqwest::Response) -> String {
+    /// 8 KiB is more than enough for any real error page; the useful
+    /// text is the first line or two.
+    const MAX_ERROR_BODY_BYTES: usize = 8 * 1024;
+    let mut bytes: Vec<u8> = Vec::with_capacity(1024);
+    // `reqwest::Response::chunk()` yields one chunk at a time
+    // without pulling in the `futures` crate (which `kod-memory`
+    // does not depend on).
+    while let Ok(Some(chunk)) = resp.chunk().await {
+        let room = MAX_ERROR_BODY_BYTES.saturating_sub(bytes.len());
+        if chunk.len() > room {
+            bytes.extend_from_slice(&chunk[..room]);
+            break;
+        }
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() >= MAX_ERROR_BODY_BYTES {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 #[cfg(test)]
@@ -615,5 +654,68 @@ mod coverage_embedding_parsing {
             derive_ollama_root("https://proxy.example/ollama/v1"),
             "https://proxy.example/ollama",
         );
+    }
+}
+
+#[cfg(test)]
+mod bounded_error_body_tests {
+    /// A tiny TCP server that accepts one connection, sends a
+    /// pre-baked HTTP response, and drops. Enough to exercise
+    /// `read_bounded_error_body` against a real `reqwest::Response`
+    /// without adding `httpmock` (or any HTTP test crate) to the
+    /// workspace.
+    async fn serve_one_response(body: Vec<u8>) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                use tokio::io::AsyncReadExt;
+                use tokio::io::AsyncWriteExt;
+                // Read the request (ignore it) — a small buffer
+                // suffices for our shape.
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf).await;
+                let header = format!(
+                    "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = sock.write_all(header.as_bytes()).await;
+                let _ = sock.write_all(&body).await;
+                let _ = sock.shutdown().await;
+            }
+        });
+        addr
+    }
+
+    /// The helper must return a slice capped at `MAX_ERROR_BODY_BYTES`
+    /// (8 KiB) even when the server sends far more. Pre-fix, the
+    /// call sites used `resp.text().await`, which reads the whole
+    /// body first — a misbehaving endpoint could OOM the client on
+    /// the error path.
+    #[tokio::test]
+    async fn bounded_error_body_reads_a_capped_slice() {
+        // 100 KiB body, ~12x the cap.
+        let body = vec![b'A'; 100 * 1024];
+        let addr = serve_one_response(body).await;
+        let url = format!("http://{addr}/");
+        let resp = reqwest::Client::new().get(&url).send().await.unwrap();
+        let text = super::read_bounded_error_body(resp).await;
+        assert!(
+            text.len() <= 8 * 1024 + 16,
+            "response body must be bounded, got {} bytes",
+            text.len(),
+        );
+        assert!(text.starts_with('A'));
+    }
+
+    /// A short body is returned unchanged.
+    #[tokio::test]
+    async fn bounded_error_body_returns_short_bodies_verbatim() {
+        let body = b"not found".to_vec();
+        let addr = serve_one_response(body).await;
+        let url = format!("http://{addr}/");
+        let resp = reqwest::Client::new().get(&url).send().await.unwrap();
+        let text = super::read_bounded_error_body(resp).await;
+        assert_eq!(text, "not found");
     }
 }
