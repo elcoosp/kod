@@ -499,6 +499,16 @@ impl Tool for ReadFileTool {
 
         // Tier 1.3 — sanitize the content when the path matched a
         // read-protection pattern and the mode is `Redact`.
+        //
+        // The *raw* bytes are kept as `raw_content` and snapshotted
+        // for the edit-store tag guard. Pre-fix the snapshot recorded
+        // the redacted string, but `edit_hashline::apply` re-reads
+        // the raw file from disk and compares byte-for-byte against
+        // the snapshot. A file whose path matched a read-protection
+        // pattern therefore failed the guard on every edit with a
+        // misleading "stale edit" error — the file was never stale,
+        // the snapshot was just the wrong bytes.
+        let raw_content = content.clone();
         let content = redact_read_content(&content, context, &resolved);
 
         // Delta §7.1: numbered mode emits `N:line` rows and records a
@@ -527,16 +537,24 @@ impl Tool for ReadFileTool {
             })));
         }
         if numbered && !truncated {
-            let line_count = content.lines().count();
+            // Count and snapshot the RAW content, not the redacted
+            // copy: the edit store's tag guard compares against the
+            // on-disk bytes, and only the raw bytes match.
+            let line_count = raw_content.lines().count();
             // Everything the read returned is "seen"; a truncated
             // read is not (an unseen tail must not be editable).
             let seen = vec![true; line_count + 1];
             let tag = context.edit_store.as_ref().map(|store| {
                 store
                     .lock()
-                    .map(|mut g| g.record_snapshot(&resolved, &content, seen))
+                    .map(|mut g| g.record_snapshot(&resolved, &raw_content, seen))
                     .unwrap_or([0, 0])
             });
+            // The rendered `N:line` rows shown to the model use the
+            // REDACTED content — the model must not see a secret the
+            // policy redacted. The numbered output is regenerated from
+            // the redacted text so the line indices it shows match
+            // the redacted text the model sees.
             let numbered_text = crate::edit_hashline::render_numbered(&content, usize::MAX);
             return Ok(ToolResult::Success(serde_json::json!({
                 "path": resolved.to_string_lossy().to_string(),
@@ -2051,6 +2069,80 @@ fn redact_read_content(content: &str, context: &ToolContext, resolved: &std::pat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A numbered read on a path that matches read-protection redacts
+    /// the content the model sees, but the snapshot recorded for the
+    /// edit store must be the *raw* bytes on disk. Pre-fix the snapshot
+    /// captured the redacted string, so `edit_hashline::apply`'s
+    /// byte-for-byte guard against the on-disk content failed on every
+    /// edit with a misleading "stale edit" error — the file was never
+    /// stale, the snapshot was just the wrong bytes.
+    #[tokio::test]
+    async fn numbered_read_with_redaction_still_edits() {
+        use crate::context::ToolContext;
+        use crate::edit_hashline::EditStore;
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("secret.env");
+        // A file whose content contains a rule-matching secret.
+        let raw = "OPENAI=sk-abcdef1234567890ABCDEFGH\ncomment = \"x\"\n";
+        std::fs::write(&path, raw).unwrap();
+
+        // Build a context with a redactor and a read-protection policy
+        // that matches `secret.env`.
+        let mut ctx = ToolContext::new(temp.path()).with_permissions(ToolPermissions {
+            read_files: true,
+            write_files: true,
+            ..Default::default()
+        });
+        ctx.edit_store = Some(std::sync::Arc::new(std::sync::Mutex::new(EditStore::new())));
+        ctx.redactor = Some(std::sync::Arc::new(kod_types::redact::Redactor::default()));
+        ctx.read_protection = Some(kod_config::ReadProtection {
+            enabled: true,
+            mode: kod_config::ReadMode::Redact,
+            deny: vec!["**/*.env".to_string()],
+        });
+
+        let read_tool = ReadFileTool::new();
+        let params = serde_json::json!({ "path": "secret.env", "numbered": true });
+        let r = read_tool.execute(&params, &ctx).await.unwrap();
+        let v = match r {
+            ToolResult::Success(v) => v,
+            other => panic!("expected success, got {other:?}"),
+        };
+        // The model sees the redacted content, not the secret.
+        let shown = v["content"].as_str().unwrap();
+        assert!(
+            !shown.contains("sk-abcdef"),
+            "secret must not leak: {shown}"
+        );
+        assert!(
+            shown.contains("[REDACTED:"),
+            "expected a redaction marker: {shown}"
+        );
+        let tag_str = v["tag"].as_str().unwrap().to_string();
+
+        // Edit line 1 with the hashline op. The snapshot must have
+        // recorded the RAW bytes, so the tag guard passes.
+        let edit_tool = crate::edit_tool::EditHashlineTool::new();
+        let edit_input = format!("[secret.env#{tag_str}]\nPUT 2.=2:\n+new comment\n");
+        let params = serde_json::json!({ "input": edit_input });
+        let r = edit_tool.execute(&params, &ctx).await.unwrap();
+        match r {
+            ToolResult::Success(_) => {}
+            other => panic!("edit must succeed when redaction is in play, got {other:?}"),
+        }
+        // The file now carries the new line, and the secret is still
+        // present (editing line 2 does not touch line 1).
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            after.contains("OPENAI=sk-abcdef"),
+            "line 1 must be untouched: {after}"
+        );
+        assert!(
+            after.contains("new comment"),
+            "line 2 must be replaced: {after}"
+        );
+    }
     use kod_types::ToolPermissions;
 
     #[tokio::test]
