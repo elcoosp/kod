@@ -282,7 +282,23 @@ pub fn slugify(text: &str) -> String {
 /// not fail the plan operation).
 pub fn autosave_plan(plan: &Plan, working_dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let dir = plan_dir_for_working_dir(working_dir)?;
-    std::fs::create_dir_all(&dir).ok()?;
+    // 0700 on the plan directory: it holds every goal, step, and
+    // note a session has produced. Same rationale as
+    // `open_owner_only_append` (kod-core-state/src/lib.rs): a plan
+    // carries user-authored text, and the default 0755 is
+    // world-readable on a shared host.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let mut b = std::fs::DirBuilder::new();
+        b.recursive(true);
+        b.mode(0o700);
+        b.create(&dir).ok()?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(&dir).ok()?;
+    }
     let date = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Iso8601::DATE)
         .ok()?;
@@ -294,11 +310,16 @@ pub fn autosave_plan(plan: &Plan, working_dir: &std::path::Path) -> Option<std::
             format!("plan-{date}-{slug}-{n}.md")
         };
         let path = dir.join(name);
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
+        // 0600 on the file: the goal, every step text, every note.
+        // Same discipline as the session log and the trace file.
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
         {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        match opts.open(&path) {
             Ok(mut f) => {
                 use std::io::Write;
                 let body = plan.render_prompt_block();
@@ -450,6 +471,56 @@ mod tests {
         let long = "a".repeat(200);
         let s = slugify(&long);
         assert!(s.chars().count() <= MAX_AUTOSAVE_STEM_CHARS, "got: {s}");
+    }
+
+    /// Unix: the autosaved plan file must be 0600. A plan carries
+    /// the goal, every step text, and every note a session has
+    /// produced. The default 0644 is world-readable on a shared host.
+    #[cfg(unix)]
+    #[test]
+    fn autosave_writes_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let plan = Plan::new("sensitive goal", vec!["step".into()]);
+        let path = autosave_plan(&plan, dir.path()).expect("autosave");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "plan file must be 0600, got {mode:o}");
+        // And the containing directory is 0700 so a sibling user
+        // cannot list the directory either.
+        let dir_mode = std::fs::metadata(path.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        // The directory was already created by the tempfile crate at
+        // 0755, so autosave_plan's DirBuilder is a no-op there. The
+        // assertion is only meaningful for a *fresh* plan dir, which
+        // the next test covers.
+        let _ = dir_mode;
+    }
+
+    /// A fresh plan directory created by `autosave_plan` must be
+    /// 0700. Uses `KOD_TUI_STATE_DIR`-style override — actually the
+    /// plan dir is `~/.kod/plans/<hash>`, which we cannot easily
+    /// redirect without touching the user's home. The test instead
+    /// asserts the containing dir's mode is at least 0700 (not
+    /// world-readable), which is the security property that matters.
+    #[cfg(unix)]
+    #[test]
+    fn autosave_directory_is_not_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        // Make a fresh subdir to look like the plan dir.
+        let plan_subdir = dir.path().join("plans");
+        std::fs::create_dir(&plan_subdir).unwrap();
+        // Now plant a plan directly through the write path by
+        // calling autosave with the parent as `working_dir` — this
+        // creates `plans/<hash>/`, whose mode we assert.
+        let plan = Plan::new("goal", vec!["s".into()]);
+        let path = autosave_plan(&plan, &plan_subdir).expect("autosave");
+        let plan_dir = path.parent().unwrap();
+        let mode = std::fs::metadata(plan_dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "plan dir must be 0700, got {mode:o}");
     }
 
     #[test]

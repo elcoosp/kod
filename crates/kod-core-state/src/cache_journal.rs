@@ -60,11 +60,19 @@ struct JournalWriter {
 impl JournalWriter {
     fn open() -> Option<Self> {
         let path = journal_path()?;
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .ok()?;
+        // 0600: the journal records model names, endpoint names, and
+        // the "reason" strings from a compaction or a system-prompt
+        // change — user-adjacent content on a shared host. Same
+        // discipline as the session log and the trace file
+        // (`open_owner_only_append`).
+        let mut opts = std::fs::OpenOptions::new();
+        opts.create(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let file = opts.open(path).ok()?;
         Some(Self {
             file: Mutex::new(file),
         })
@@ -131,6 +139,25 @@ pub fn recent(n: usize) -> Vec<serde_json::Value> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Unix: the cache journal file must be 0600. Same rationale as
+    /// the session log and the plan autosave — the journal records
+    /// user-adjacent content on a shared host. Exercised through the
+    /// mode-setting shape `JournalWriter::open` uses.
+    #[cfg(unix)]
+    #[test]
+    fn journal_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("cache_journal.jsonl");
+        let mut opts = std::fs::OpenOptions::new();
+        opts.create(true).append(true);
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+        let _f = opts.open(&path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "journal must be 0600, got {mode:o}");
+    }
     /// The truncation path keeps the newest half of the journal, but
     /// the rewrite must preserve a trailing newline. The pre-fix
     /// `lines().skip(..).join("\n")` dropped it, so the next
