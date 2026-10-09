@@ -80,10 +80,20 @@ impl DeferredDiagnostics {
             .lock()
             .expect("deferred_diagnostics poisoned");
         let entry = g.entry(holder.to_string()).or_default();
-        let existing: std::collections::HashSet<_> = entry.iter().map(key).collect();
+        // The set starts as a snapshot of what is already queued and
+        // is *updated* as we push. The pre-fix shape only read
+        // `existing` once, so a batch that carried the same
+        // diagnostic twice (an LSP server that duplicates a
+        // diagnostic across a re-publish, or a splice of two server
+        // responses) pushed both copies. The dedup contract is "a
+        // diagnostic equal to one already queued is dropped", and a
+        // diagnostic earlier in the *same batch* counts as already
+        // queued after the first push.
+        let mut existing: std::collections::HashSet<_> = entry.iter().map(key).collect();
         let before = entry.len();
         for d in diags {
-            if !existing.contains(&key(d)) {
+            let k = key(d);
+            if existing.insert(k) {
                 entry.push(d.clone());
             }
         }
@@ -152,6 +162,26 @@ mod tests {
         assert_eq!(out.len(), 2);
         // Take drains.
         assert!(q.take("h").is_empty());
+    }
+
+    /// Duplicates *within* a single batch must be deduped too. The
+    /// pre-fix shape built `existing` once from the queue and never
+    /// added to it during the loop, so `[d, d]` pushed both copies.
+    /// An LSP server re-publishing its whole diagnostic list on
+    /// every change, spliced into one batch alongside the previous
+    /// call, was the common shape.
+    #[test]
+    fn duplicates_within_a_batch_are_dropped() {
+        let q = DeferredDiagnostics::new();
+        let one = d("a.rs", 3, "boom");
+        // Same diagnostic twice in one call.
+        assert_eq!(q.push("h", &[one.clone(), one.clone()]), 1);
+        assert_eq!(q.len_for("h"), 1);
+        // A second batch mixing a dup of the queued entry and a new
+        // one.
+        let two = d("b.rs", 7, "other");
+        assert_eq!(q.push("h", &[one, two]), 1);
+        assert_eq!(q.len_for("h"), 2);
     }
 
     #[test]
