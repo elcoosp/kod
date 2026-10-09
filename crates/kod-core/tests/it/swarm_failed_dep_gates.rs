@@ -109,10 +109,24 @@ async fn failed_dependency_gates_dependents() {
 
     // F2d-11: A failed, so B (depends on A) and C (depends on A and B)
     // must NOT run. Only A's prompt reaches the provider.
-    assert_eq!(
-        calls,
-        vec!["task A".to_string()],
-        "a failed dependency must gate its dependents; got {calls:?}"
+    //
+    // A itself retries per the runner's default `agent_retries = 1`:
+    // the first attempt fails, the retry runs, and the retry also
+    // fails (the test provider always fails for `task A`). Both
+    // attempts are A; no other subtask runs.
+    //
+    // (Pre-fix, the retry path was unreachable — a `request_cancel_for`
+    // before the `is_cancelled_for` check made the branch always
+    // return "a coordinator cancelled this agent". That is why the
+    // pre-fix test asserted a single call; it was describing the bug.)
+    let non_a: Vec<&String> = calls.iter().filter(|c| c.as_str() != "task A").collect();
+    assert!(
+        non_a.is_empty(),
+        "a failed dependency must gate its dependents; only A ran, got {calls:?}",
+    );
+    assert!(
+        !calls.is_empty(),
+        "A must have run (at least once) before failing: {calls:?}",
     );
 
     let r = resp.expect("run completes even when a subtask fails");

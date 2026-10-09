@@ -1431,11 +1431,6 @@ impl SwarmRunner {
                                     return (id, name, subtask, writes, Ok(text));
                                 }
                                 Err(err) => {
-                                    // Signal any in-flight loop to stop cleanly
-                                    // (the timeout already dropped the future,
-                                    // but a cooperative cancel is cheap and
-                                    // makes the next-attempt state unambiguous).
-                                    engine.request_cancel_for(&transcript_key);
                                     last_error = Some(err.clone());
                                     if attempt >= max_attempts {
                                         return (id, name, subtask, Vec::new(), Err(err));
@@ -1445,6 +1440,22 @@ impl SwarmRunner {
                                     // coordinator stopped this agent while it
                                     // ran. Do not retry — the stop outranks
                                     // the retry budget.
+                                    //
+                                    // The pre-fix code called
+                                    // `request_cancel_for` on the same key
+                                    // here, *before* this check. That call
+                                    // unconditionally sets the `fired` flag,
+                                    // so `is_cancelled_for` was always true
+                                    // on the next line and the retry path
+                                    // was unreachable: every failure was
+                                    // reported as "a coordinator cancelled
+                                    // this agent" and `agent_retries` was
+                                    // dead code. The call was also
+                                    // unnecessary — the previous attempt's
+                                    // future has already returned `Err`, and
+                                    // a `tokio::time::timeout` that fired has
+                                    // already dropped it. There is no
+                                    // in-flight loop left to signal.
                                     if engine.is_cancelled_for(&transcript_key) {
                                         return (
                                             id,
