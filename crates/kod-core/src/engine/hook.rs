@@ -85,6 +85,25 @@ impl KodEngine {
                 // whose caller waits forever.
                 let runner_for_watch = std::sync::Arc::clone(&runner_task);
                 runner_for_watch.spawn_guarded(job, async move {
+                    // Cap concurrency: hold a permit for the duration
+                    // of the pipe drain and finalize. The review job
+                    // path (`engine/policy.rs:235`) acquires the same
+                    // permit; without this, shell jobs bypassed
+                    // `max_concurrent` entirely.
+                    //
+                    // The child process is spawned by the sync hook
+                    // closure (which cannot await), so the permit is
+                    // acquired here — before the drain loop starts,
+                    // which is the earliest awaitable point. That
+                    // bounds concurrent *managed* shell jobs (the
+                    // drain tasks that hold a handle to the child
+                    // and race for CPU); a spawn beyond the cap
+                    // blocks here until a running job's drain
+                    // completes and the child is reaped. The
+                    // unmanaged case — a `run_in_background` request
+                    // that outlives its job — is bounded by
+                    // `prune_old` on the `/jobs` read path.
+                    let _permit = runner_task.acquire_permit().await;
                     use tokio::io::AsyncReadExt as _;
                     let mut buf = [0u8; 4096];
                     let mut stall_reported = false;
@@ -246,6 +265,9 @@ impl KodEngine {
 
             let runner_for_watch = std::sync::Arc::clone(&runner_task);
             runner_for_watch.spawn_guarded(job, async move {
+                // Same concurrency cap as the spawn hook. See that
+                // call for the full note.
+                let _permit = runner_task.acquire_permit().await;
                 use tokio::io::AsyncReadExt as _;
                 // Two buffers: the two `select!` arms must not borrow
                 // the same slice mutably.
