@@ -264,12 +264,36 @@ impl LongTermMemory {
                 let mut table = txn.open_table(MEMORY_TABLE).map_err(|e| {
                     KodError::MemoryDatabase(format!("Failed to open table: {}", e))
                 })?;
+                // Read the old entry *first* so a content or type change
+                // can retire the old index key. Without this, an update
+                // to an entry's content left the old `(hash, type)`
+                // entry pointing at the id: a later store of the *old*
+                // content got a false dedup hit that returned the
+                // *new* content, and the caller (seeing a "re-mention")
+                // silently dropped the user's fresh fact.
+                let old_idx_key = table
+                    .get(key.as_slice())
+                    .map_err(|e| {
+                        KodError::MemoryDatabase(format!("Failed to get old entry: {}", e))
+                    })?
+                    .and_then(|v| serde_json::from_slice::<MemoryEntry>(v.value()).ok())
+                    .map(|old| {
+                        use std::hash::{Hash, Hasher};
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        old.content.hash(&mut h);
+                        Self::index_key(h.finish(), old.memory_type)
+                    });
                 table
                     .insert(key.as_slice(), value.as_slice())
                     .map_err(|e| KodError::MemoryDatabase(format!("Failed to insert: {}", e)))?;
                 let mut idx = txn.open_table(HASH_INDEX_TABLE).map_err(|e| {
                     KodError::MemoryDatabase(format!("Failed to open table: {}", e))
                 })?;
+                if let Some(old) = old_idx_key
+                    && old.as_slice() != idx_key.as_slice()
+                {
+                    let _ = idx.remove(old.as_slice());
+                }
                 idx.insert(idx_key.as_slice(), idx_val.as_slice())
                     .map_err(|e| KodError::MemoryDatabase(format!("Failed to insert: {}", e)))?;
             }
@@ -363,9 +387,33 @@ impl LongTermMemory {
                 let mut table = txn.open_table(MEMORY_TABLE).map_err(|e| {
                     KodError::MemoryDatabase(format!("Failed to open table: {}", e))
                 })?;
+                // Read the entry first so its index key can be
+                // retired. Without this, a removed entry left its
+                // `(hash, type) -> id` row behind: `find_by_content_hash`
+                // then returned a stale id whose `get` returned `None`,
+                // and the index grew unbounded across a long session
+                // (the F2i-10 index is never otherwise pruned).
+                let old_idx_key = table
+                    .get(key.as_slice())
+                    .map_err(|e| {
+                        KodError::MemoryDatabase(format!("Failed to get old entry: {}", e))
+                    })?
+                    .and_then(|v| serde_json::from_slice::<MemoryEntry>(v.value()).ok())
+                    .map(|old| {
+                        use std::hash::{Hash, Hasher};
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        old.content.hash(&mut h);
+                        Self::index_key(h.finish(), old.memory_type)
+                    });
                 table
                     .remove(key.as_slice())
                     .map_err(|e| KodError::MemoryDatabase(format!("Failed to remove: {}", e)))?;
+                if let Some(old) = old_idx_key {
+                    let mut idx = txn.open_table(HASH_INDEX_TABLE).map_err(|e| {
+                        KodError::MemoryDatabase(format!("Failed to open table: {}", e))
+                    })?;
+                    let _ = idx.remove(old.as_slice());
+                }
             }
             txn.commit()
                 .map_err(|e| KodError::MemoryDatabase(format!("Failed to commit: {}", e)))?;
@@ -398,8 +446,32 @@ impl LongTermMemory {
                 let mut table = txn.open_table(MEMORY_TABLE).map_err(|e| {
                     KodError::MemoryDatabase(format!("Failed to open table: {}", e))
                 })?;
+                // Read every entry's index key first, then remove from
+                // both tables. Same rationale as `remove`: a batch
+                // removal that left the index behind grew it unbounded
+                // and left dangling ids that `find_by_content_hash`
+                // would hand back.
+                let mut idx_keys: Vec<[u8; 9]> = Vec::with_capacity(keys.len());
+                for key in &keys {
+                    if let Ok(Some(v)) = table.get(key.as_slice())
+                        && let Ok(e) = serde_json::from_slice::<MemoryEntry>(v.value())
+                    {
+                        use std::hash::{Hash, Hasher};
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        e.content.hash(&mut h);
+                        idx_keys.push(Self::index_key(h.finish(), e.memory_type));
+                    }
+                }
                 for key in &keys {
                     let _ = table.remove(key.as_slice());
+                }
+                if !idx_keys.is_empty() {
+                    let mut idx = txn.open_table(HASH_INDEX_TABLE).map_err(|e| {
+                        KodError::MemoryDatabase(format!("Failed to open table: {}", e))
+                    })?;
+                    for k in &idx_keys {
+                        let _ = idx.remove(k.as_slice());
+                    }
                 }
             }
             txn.commit()
@@ -858,6 +930,102 @@ mod supersession_tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let db = LongTermMemory::new(&tmp.path().join("mem.redb")).unwrap();
         (tmp, db)
+    }
+
+    /// An update that changes an entry's content must retire the old
+    /// `(hash, type)` index row. Otherwise a later store of the *old*
+    /// content gets a false dedup hit that returns the *new* content,
+    /// and the caller silently drops the fresh fact.
+    #[tokio::test]
+    async fn update_content_retires_the_old_index_key() {
+        let (_tmp, m) = fixture();
+        let mut e = entry("alpha content here");
+        let id = e.id.clone();
+        m.store(e.clone()).await.unwrap();
+
+        // Overwrite the same id with different content.
+        e.content = "beta content here".to_string();
+        m.store(e.clone()).await.unwrap();
+
+        // The old content must NOT be found by hash lookup; the id is
+        // still there, but it no longer carries that content.
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        "alpha content here".hash(&mut h);
+        let found = m
+            .find_by_content_hash(h.finish(), kod_types::MemoryType::LongTerm)
+            .await
+            .unwrap();
+        assert!(
+            found.is_none(),
+            "the old content must not resolve after the entry was rewritten: {found:?}",
+        );
+
+        // The new content resolves.
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        "beta content here".hash(&mut h);
+        let found = m
+            .find_by_content_hash(h.finish(), kod_types::MemoryType::LongTerm)
+            .await
+            .unwrap();
+        assert_eq!(found, Some(id));
+    }
+
+    /// A removed entry must not leave its `(hash, type)` index row
+    /// behind. The index otherwise grows unbounded and
+    /// `find_by_content_hash` keeps returning dangling ids.
+    #[tokio::test]
+    async fn remove_retires_the_index_key() {
+        let (_tmp, m) = fixture();
+        let e = entry("gamma content here");
+        let id = e.id.clone();
+        m.store(e.clone()).await.unwrap();
+
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        "gamma content here".hash(&mut h);
+        let key_hash = h.finish();
+
+        assert_eq!(
+            m.find_by_content_hash(key_hash, kod_types::MemoryType::LongTerm)
+                .await
+                .unwrap(),
+            Some(id.clone()),
+        );
+        m.remove(&id).await.unwrap();
+        assert_eq!(
+            m.find_by_content_hash(key_hash, kod_types::MemoryType::LongTerm)
+                .await
+                .unwrap(),
+            None,
+            "the index row for a removed entry must be gone",
+        );
+    }
+
+    /// `remove_batch` retires index keys too.
+    #[tokio::test]
+    async fn remove_batch_retires_index_keys() {
+        use std::hash::{Hash, Hasher};
+        let (_tmp, m) = fixture();
+        let mut ids = Vec::new();
+        let mut hashes = Vec::new();
+        for c in ["batch one x", "batch two x", "batch three x"] {
+            let e = entry(c);
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            c.hash(&mut h);
+            hashes.push(h.finish());
+            ids.push(e.id.clone());
+            m.store(e).await.unwrap();
+        }
+        m.remove_batch(&ids).await.unwrap();
+        for h in hashes {
+            assert_eq!(
+                m.find_by_content_hash(h, kod_types::MemoryType::LongTerm)
+                    .await
+                    .unwrap(),
+                None,
+            );
+        }
     }
 
     #[tokio::test]
