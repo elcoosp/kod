@@ -69,16 +69,10 @@ impl KodEngine {
                     if calls.is_empty() {
                         break;
                     }
-                    // Delta §14.1: deobfuscate placeholders in each
-                    // tool call's arguments before the tool runs.
-                    // Same pattern as the streaming path; the
-                    // `calls` binding is mutable so the local copy
-                    // carries raw values while the transcript's
-                    // assistant message keeps the placeholder.
-                    let mut calls = calls;
-                    for call in calls.iter_mut() {
-                        let _ = self.deobfuscate_json(&mut call.arguments).await;
-                    }
+                    // Delta §14.1: placeholder deobfuscation now
+                    // happens inside `run_tool_calls`, on the
+                    // *dispatch* copy — see the streaming-path note
+                    // above and `tool_dispatch.rs`.
                     let section = self.run_tool_calls(&calls, round.holder, None).await;
                     // Delta §9.4: check for a repeated tool round and,
                     // if the guard fires, append a corrective System
@@ -134,16 +128,10 @@ impl KodEngine {
                     if calls.is_empty() {
                         break;
                     }
-                    // Delta §14.1: deobfuscate placeholders in each
-                    // tool call's arguments before the tool runs.
-                    // Same pattern as the streaming path; the
-                    // `calls` binding is mutable so the local copy
-                    // carries raw values while the transcript's
-                    // assistant message keeps the placeholder.
-                    let mut calls = calls;
-                    for call in calls.iter_mut() {
-                        let _ = self.deobfuscate_json(&mut call.arguments).await;
-                    }
+                    // Delta §14.1: placeholder deobfuscation now
+                    // happens inside `run_tool_calls`, on the
+                    // *dispatch* copy — see the streaming-path note
+                    // above and `tool_dispatch.rs`.
                     let section = self.run_tool_calls(&calls, round.holder, None).await;
                     // Delta §9.4: check for a repeated tool round and,
                     // if the guard fires, append a corrective System
@@ -362,7 +350,7 @@ impl KodEngine {
             };
             let StreamRoundOutcome {
                 text,
-                mut calls,
+                calls,
                 usage,
                 retry_suggested: off_track,
                 speculations,
@@ -504,25 +492,15 @@ impl KodEngine {
                     ))
                     .await;
             }
-            // Delta §14.1: deobfuscate placeholders in every tool
-            // call's arguments before the tool runs. A model that
-            // read `«Credential-abc»` and writes that string back in
-            // an `edit`/`write_file` argument gets the raw value
-            // substituted here — the model never saw the bytes; the
-            // tool gets them. The mutation is on the local `calls`
-            // vec, so the assistant message's `tool_calls` field
-            // (which stays with the placeholder in the transcript)
-            // is unaffected.
-            for call in calls.iter_mut() {
-                let n = self.deobfuscate_json(&mut call.arguments).await;
-                if n > 0 {
-                    tracing::debug!(
-                        tool = %call.tool_name,
-                        count = n,
-                        "deobfuscated secret placeholders in tool arguments",
-                    );
-                }
-            }
+            // Delta §14.1: placeholder deobfuscation happens inside
+            // `run_tool_calls_with_speculations`, on the *dispatch*
+            // copy of the calls — not on `calls` itself. The
+            // pre-fix shape mutated `calls` here, which is the same
+            // vec that `build_round_messages` reads when it writes
+            // the assistant message into the transcript. The raw
+            // secret therefore ended up in the transcript, and the
+            // transcript is what the next provider request sends.
+            // See `tool_dispatch.rs` for the fix site.
             let section = self
                 .run_tool_calls_with_speculations(
                     &calls,

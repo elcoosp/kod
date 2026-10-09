@@ -312,3 +312,102 @@ async fn without_a_vault_a_placeholder_passes_through_unchanged() {
         "an unknown placeholder must pass through; got {written:?}",
     );
 }
+
+/// The transcript must preserve the placeholder — the exact bug the
+/// deobfuscation site once had. `deobfuscate_json` was called on the
+/// caller's `calls` vec in `agent_loop`, then `build_round_messages`
+/// (inside `run_tool_calls`) cloned the *deobfuscated* arguments into
+/// the assistant message it pushed into the transcript. On the next
+/// provider round the raw secret was in the request.
+///
+/// The fix moved the substitution into `run_tool_calls`, on the
+/// dispatch copy. `build_round_messages` still reads the untouched
+/// `calls`, so the transcript keeps the placeholder.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn placeholder_is_preserved_in_the_transcript() {
+    let (provider, seen) = RecordingProvider::new();
+    let tmp = TempDir::new().unwrap();
+    let cfg = fixture_config(tmp.path());
+    let engine = Arc::new(KodEngine::new(cfg, tmp.path().join("s.kod")).unwrap());
+
+    let vault = Arc::new(kod_types::secret_placeholder::SecretVault::with_key(
+        [1u8; 32],
+    ));
+    let placeholder = vault.register("super-secret-value-1234");
+    engine.set_secret_vault(vault).await;
+
+    // First round: the model asks for a write_file that carries the
+    // placeholder (the only form it ever saw). Second round: a plain
+    // text reply that ends the loop.
+    provider.script(GenerationResponse::ToolCalls {
+        calls: vec![ToolCall {
+            id: Some("call-1".into()),
+            tool_name: "write_file".into(),
+            arguments: serde_json::json!({
+                "path": "note.txt",
+                "content": format!("API_KEY={placeholder}"),
+            }),
+        }],
+        usage: None,
+    });
+    provider.script(GenerationResponse::Text {
+        content: "done".into(),
+        usage: None,
+    });
+
+    let provider = Arc::new(provider);
+    let mut reg = ProviderRegistry::new();
+    reg.insert(
+        "default",
+        provider as Arc<dyn LlmProvider>,
+        ProviderCapabilities::conservative(),
+        "",
+    );
+    engine
+        .set_registry(Arc::new(reg), ModelRef::new("default", ""), None)
+        .await;
+    engine.start().await.unwrap();
+
+    let _ = engine.process("write the api key to note.txt").await;
+
+    // Assert: no request that the provider ever saw carries the raw
+    // secret. The second round sends the full transcript, which
+    // includes the assistant message with the tool call's arguments.
+    let requests = seen.lock().unwrap();
+    assert!(
+        requests.len() >= 2,
+        "expected a second round after the tool call, got {}",
+        requests.len(),
+    );
+    for req in requests.iter() {
+        for m in &req.messages {
+            assert!(
+                !m.content.contains("super-secret-value-1234"),
+                "raw secret leaked into a message: {:?}",
+                m.content,
+            );
+            for tc in &m.tool_calls {
+                let args = tc.arguments.to_string();
+                assert!(
+                    !args.contains("super-secret-value-1234"),
+                    "raw secret leaked into a tool call's arguments: {args}",
+                );
+            }
+        }
+    }
+
+    // And the placeholder is there — proving the substitution did not
+    // simply drop the tool call.
+    let saw_placeholder = requests.iter().any(|r| {
+        r.messages.iter().any(|m| {
+            m.content.contains(&placeholder)
+                || m.tool_calls
+                    .iter()
+                    .any(|tc| tc.arguments.to_string().contains(&placeholder))
+        })
+    });
+    assert!(
+        saw_placeholder,
+        "the placeholder must survive in the transcript sent on the next round",
+    );
+}

@@ -984,7 +984,7 @@ impl KodEngine {
 
         // Tier 2.3 — apply any argument edits captured by the
         // approval loop. Empty map means "dispatch as proposed".
-        let calls_for_dispatch: Vec<ToolCall> = if edited_args.is_empty() {
+        let mut calls_for_dispatch: Vec<ToolCall> = if edited_args.is_empty() {
             calls.to_vec()
         } else {
             calls
@@ -1001,6 +1001,38 @@ impl KodEngine {
                 })
                 .collect()
         };
+        // Delta §14.1: deobfuscate placeholders in the *dispatch*
+        // copy of every call's arguments. A model that read
+        // `«Credential-abc»` and writes that string back in an
+        // `edit`/`write_file` argument gets the raw value
+        // substituted here — the tool sees the real bytes; the
+        // transcript does not.
+        //
+        // This MUST run on `calls_for_dispatch`, not on `calls`. The
+        // pre-fix shape mutated the caller's `calls` vec before
+        // calling this function, and `build_round_messages` (below)
+        // clones `calls_for_dispatch` into the assistant message it
+        // pushes into the transcript — so the raw secret ended up
+        // in the transcript and every subsequent provider request
+        // carried it. Running the substitution here means the raw
+        // secret lives only inside this function's dispatch loop;
+        // `calls` is untouched, so the message built at S10 phase 4
+        // still carries the placeholder.
+        for call in calls_for_dispatch.iter_mut() {
+            let n = self.deobfuscate_json(&mut call.arguments).await;
+            if n > 0 {
+                tracing::debug!(
+                    tool = %call.tool_name,
+                    count = n,
+                    "deobfuscated secret placeholders in tool arguments",
+                );
+            }
+        }
+        // `build_round_messages` reads the *original* `calls` vec, not
+        // the dispatch copy — the assistant message's `tool_calls`
+        // field stays with the placeholder.
+        let calls_for_transcript: &[ToolCall] = calls;
+        let _ = calls_for_transcript; // resolved below in build_round_messages call
         // Tier 2.3 — re-run the policy gate on every edited call. An
         // edit that would have been DENIED by the current policy is
         // refused even though the user pressed `e` then `Enter`. The
