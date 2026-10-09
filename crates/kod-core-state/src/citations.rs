@@ -32,7 +32,7 @@
 //! A clean reply stays clean.
 
 use regex::Regex;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Largest line number we will scan to. A file with more lines than
 /// this is either generated or is not the kind of file a citation
@@ -138,17 +138,59 @@ pub fn extract_citations(text: &str) -> Vec<Citation> {
 
 /// Verify one citation against `root`.
 ///
-/// A relative path is resolved against `root`; an absolute path is
-/// used as-is. Both are legal — a reply may cite the project
-/// (`src/lib.rs:1`) or a system file (`/etc/hosts:1`).
+/// **Path containment:** the resolved path must stay under `root`.
+/// The pre-fix shape joined an absolute citation as-is and joined a
+/// relative citation without canonicalizing, so a model that wrote
+/// `../../../../etc/passwd:1` had its existence and line count
+/// reported back in the reply's `## Citation check` block. That is
+/// an information-disclosure vector the model authors — it can probe
+/// for any file the process can read, bypassing `read_protection`
+/// entirely.
+///
+/// An absolute citation is now treated as relative to `root` (by
+/// stripping the leading `/`) so the containment check applies to
+/// both spellings; a citation the model genuinely wants from a
+/// system path it has read should carry the project-relative
+/// spelling the read produced.
+///
+/// `canonicalize` resolves symlinks before the prefix check, so a
+/// symlink under the working dir pointing outside it is caught too.
+/// A path that cannot be canonicalized (a missing file, a
+/// non-existent parent) is reported as `MissingFile` — the citation
+/// points at nothing.
 pub fn verify(citation: &Citation, root: &Path) -> Verification {
-    let candidate: PathBuf = if Path::new(&citation.raw_path).is_absolute() {
-        PathBuf::from(&citation.raw_path)
-    } else {
-        root.join(&citation.raw_path)
-    };
+    // Strip a leading `/` from an absolute citation so containment
+    // can apply uniformly. The empty string after stripping (a
+    // citation of just `/`) is not a file.
+    let stripped = citation
+        .raw_path
+        .strip_prefix('/')
+        .unwrap_or(&citation.raw_path);
+    if stripped.is_empty() {
+        return Verification::MissingFile;
+    }
+    let candidate = root.join(stripped);
 
-    let meta = match std::fs::metadata(&candidate) {
+    // Canonicalize both sides before the prefix check. A path that
+    // cannot be resolved (the citation points at a file that does
+    // not exist) is a miss, not an error.
+    let canonical_candidate = match std::fs::canonicalize(&candidate) {
+        Ok(p) => p,
+        Err(_) => return Verification::MissingFile,
+    };
+    let canonical_root = match std::fs::canonicalize(root) {
+        Ok(p) => p,
+        Err(_) => return Verification::MissingFile,
+    };
+    if !canonical_candidate.starts_with(&canonical_root) {
+        // A citation that resolves outside the working dir. The
+        // module's whole purpose is to help the user trust the
+        // reply; a path the process was not asked to read is not
+        // part of that.
+        return Verification::MissingFile;
+    }
+
+    let meta = match std::fs::metadata(&canonical_candidate) {
         Ok(m) => m,
         Err(_) => return Verification::MissingFile,
     };
@@ -156,7 +198,7 @@ pub fn verify(citation: &Citation, root: &Path) -> Verification {
         return Verification::MissingFile;
     }
 
-    let f = match std::fs::File::open(&candidate) {
+    let f = match std::fs::File::open(&canonical_candidate) {
         Ok(f) => f,
         Err(_) => return Verification::Unreadable,
     };
@@ -349,14 +391,68 @@ mod tests {
     }
 
     #[test]
-    fn absolute_path_citation_works() {
+    fn absolute_path_citation_is_contained_under_root() {
+        // An absolute citation is stripped of its leading `/` and
+        // resolved under `root` — same containment rule as a
+        // relative one. The pre-fix shape joined it as-is, which let
+        // a model probe arbitrary system paths via the citation
+        // block.
         let tmp = TempDir::new().unwrap();
-        let f = tmp.path().join("abs.rs");
-        std::fs::write(&f, "hello\n").unwrap();
-        let abs = f.to_string_lossy().to_string();
-        let text = format!("see {abs}:1");
-        let r = check_and_annotate(&text, Path::new("/"));
-        assert!(r.block.is_none(), "absolute citation should verify");
+        // Create `/abs.rs` under the *root* the citation will be
+        // checked against, then cite it as `/abs.rs`. With the
+        // strip-and-join rule, this resolves to `<tmp>/abs.rs`.
+        std::fs::write(tmp.path().join("abs.rs"), "hello\n").unwrap();
+        let r = check_and_annotate("see /abs.rs:1", tmp.path());
+        assert!(
+            r.block.is_none(),
+            "contained absolute citation should verify"
+        );
+    }
+
+    #[test]
+    fn parent_traversal_is_rejected() {
+        // A model that writes `../escape.rs:1` must not have its
+        // existence and line count reported. The containment check
+        // canonicalizes both sides, so an escaping path is a miss.
+        let parent = TempDir::new().unwrap();
+        std::fs::write(parent.path().join("escape.rs"), "secret\n").unwrap();
+        let root = parent.path().join("work");
+        std::fs::create_dir(&root).unwrap();
+        let r = check_and_annotate("see ../escape.rs:1", &root);
+        let b = r.block.expect("escaping citation must produce a block");
+        assert!(b.contains("file not found"), "got: {b}");
+        // The header always says "N/M verified"; assert the count
+        // is 0, not that the word is absent.
+        assert!(b.contains("(0/1 verified)"), "got: {b}");
+        assert!(
+            b.contains("\u{26a0}"),
+            "escaping citation must be flagged: {b}"
+        );
+    }
+
+    #[test]
+    fn a_symlink_outside_root_is_rejected() {
+        // The working dir contains a symlink to a file the process
+        // can read but the caller did not ask it to. `canonicalize`
+        // resolves the link before the containment check, so the
+        // citation is a miss.
+        let outside = TempDir::new().unwrap();
+        std::fs::write(outside.path().join("real.rs"), "a\nb\nc\n").unwrap();
+        let root_dir = TempDir::new().unwrap();
+        let link = root_dir.path().join("link.rs");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(outside.path().join("real.rs"), &link).unwrap();
+            let r = check_and_annotate("see link.rs:1", root_dir.path());
+            let b = r.block.expect("out-of-root symlink must produce a block");
+            assert!(b.contains("file not found"), "got: {b}");
+        }
+        // Non-unix: the containment canonicalizes; the test is a
+        // no-op. Skip silently.
+        #[cfg(not(unix))]
+        {
+            let _ = link;
+        }
     }
 
     #[test]
