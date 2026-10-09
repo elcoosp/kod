@@ -142,6 +142,15 @@ fn is_secret_like_env(name: &str) -> bool {
     PREFIXES.iter().any(|p| upper.starts_with(p))
 }
 
+/// Monotonic process-local counter used to break ties between
+/// concurrent atomic-replace writers in the same process. Same shape
+/// as the helpers in `kod-core-state`, `kod-config`, `kod-mcp`, and
+/// `kod-tui`.
+fn next_temp_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
+}
 /// H-R13: atomic file write. `std::fs::write` truncates in place; a
 /// crash or ENOSPC mid-write leaves a torn file that the engine then
 /// feeds back to the model. A same-directory temp file + fsync + rename
@@ -161,7 +170,16 @@ pub(crate) fn atomic_write(path: &std::path::Path, content: &[u8]) -> std::io::R
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let tmp = parent.join(format!(".kod-tmp-{}-{:x}", std::process::id(), nanos));
+    // Unique temp per process + a monotonic in-process counter +
+    // nanosecond clock. The pre-fix shape used only pid + nanos,
+    // which is not enough on macOS: `gettimeofday` has microsecond
+    // resolution, so two threads in the same process writing to the
+    // same directory can read the same nanosecond value and collide
+    // on the temp name. The rename then fails with ENOENT (the peer
+    // already renamed the temp away), and the second write is lost.
+    // Same shape as the tool_cache / state / persistence fixes.
+    let seq = next_temp_seq();
+    let tmp = parent.join(format!(".kod-tmp-{}-{seq}-{nanos:x}", std::process::id(),));
     // F2f-17: the rename replaces the inode, so the destination's
     // mode (notably the exec bit on a script overwrite) would be lost
     // — the temp file's default 0644 would win. Capture the existing
@@ -181,16 +199,10 @@ pub(crate) fn atomic_write(path: &std::path::Path, content: &[u8]) -> std::io::R
         }
         std::fs::rename(&tmp, path)?;
         // T1-C6: fsync the parent directory so the rename is durable.
-        if let Some(parent) = path.parent() {
-            if let Ok(dir) = std::fs::File::open(parent) {
-                let _ = dir.sync_all();
-            }
-        }
-        // T1-C6: fsync the parent directory so the rename is durable.
-        if let Some(parent) = path.parent() {
-            if let Ok(dir) = std::fs::File::open(parent) {
-                let _ = dir.sync_all();
-            }
+        if let Some(parent) = path.parent()
+            && let Ok(dir) = std::fs::File::open(parent)
+        {
+            let _ = dir.sync_all();
         }
         Ok(())
     })();
@@ -2069,6 +2081,52 @@ fn redact_read_content(content: &str, context: &ToolContext, resolved: &std::pat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Concurrent `atomic_write` calls to *different* files in the
+    /// same directory must all succeed. Pre-fix the temp filename
+    /// was `.{pid}-{nanos}` — same dir, same pid, same microsecond
+    /// on macOS — so two writers racing produced the same temp name,
+    /// one `rename` won, the other failed with ENOENT and its write
+    /// was lost.
+    ///
+    /// `write_file` holds a path lock on the *target*, but two
+    /// writers to `a.rs` and `b.rs` in the same directory hold
+    /// different locks while sharing a temp directory. This test
+    /// exercises that shape directly.
+    #[test]
+    fn atomic_write_from_concurrent_writers_all_succeed() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = Arc::new(tmp.path().to_path_buf());
+        let failures = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        for w in 0..8 {
+            let dir = dir.clone();
+            let failures = failures.clone();
+            handles.push(std::thread::spawn(move || {
+                for i in 0..200 {
+                    let target = dir.join(format!("w{w}-f{i}.rs"));
+                    let body = format!("// writer {w}, iter {i}\n").into_bytes();
+                    if let Err(_e) = super::atomic_write(&target, &body) {
+                        failures.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(
+            failures.load(Ordering::Relaxed),
+            0,
+            "concurrent atomic_write must not lose any file",
+        );
+        // Every file exists with the right content.
+        let count = std::fs::read_dir(dir.as_ref()).unwrap().count();
+        assert_eq!(count, 8 * 200, "every write produced its file, got {count}");
+    }
 
     /// A numbered read on a path that matches read-protection redacts
     /// the content the model sees, but the snapshot recorded for the
