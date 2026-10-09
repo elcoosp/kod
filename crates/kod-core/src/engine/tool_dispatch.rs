@@ -1031,8 +1031,6 @@ impl KodEngine {
         // `build_round_messages` reads the *original* `calls` vec, not
         // the dispatch copy — the assistant message's `tool_calls`
         // field stays with the placeholder.
-        let calls_for_transcript: &[ToolCall] = calls;
-        let _ = calls_for_transcript; // resolved below in build_round_messages call
         // Tier 2.3 — re-run the policy gate on every edited call. An
         // edit that would have been DENIED by the current policy is
         // refused even though the user pressed `e` then `Enter`. The
