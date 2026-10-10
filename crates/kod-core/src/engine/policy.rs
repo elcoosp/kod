@@ -139,6 +139,40 @@ impl KodEngine {
         }
     }
 
+    /// Test-only: how many approval requests are currently parked
+    /// awaiting a decision. A non-zero count after `shutdown()` (or
+    /// after a run's future was dropped) means the map leaked.
+    pub async fn pending_approval_count_for_tests(&self) -> usize {
+        self.pending_approvals.read().await.len()
+    }
+
+    /// Test-only: how many questions are currently parked awaiting
+    /// an answer. A non-zero count after `shutdown()` means the map
+    /// leaked.
+    pub async fn pending_question_count_for_tests(&self) -> usize {
+        self.pending_questions.read().await.len()
+    }
+
+    /// Test-only: plant an approval or question sender in the map so
+    /// a test can prove the shutdown drain works without running a
+    /// real tool call.
+    pub async fn plant_pending_approval_for_tests(&self) {
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let id = self
+            .next_approval_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.pending_approvals.write().await.insert(id, tx);
+    }
+
+    /// Test-only companion to `plant_pending_approval_for_tests`.
+    pub async fn plant_pending_question_for_tests(&self) {
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let id = self
+            .next_question_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.pending_questions.write().await.insert(id, tx);
+    }
+
     /// Install the shell hooks the engine runs around tool calls. A
     /// caller that never calls this gets a disabled runner.
     pub fn set_hooks(&self, config: kod_config::HooksConfig) {

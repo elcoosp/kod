@@ -1310,3 +1310,67 @@ async fn cancelled_swarm_run_leaves_no_agents_on_the_hub() {
 
     drop(drain);
 }
+
+/// Regression: `shutdown()` must drain the pending approval and
+/// question maps. Pre-fix, a prompt parked on an approval oneshot
+/// waited out the full `AWAIT_APPROVAL_SECS` (up to 120 s) after
+/// `/quit`, because nothing told the parked sender its counterpart
+/// was gone; and the entry itself lived until process teardown.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_drains_pending_approvals_and_questions() {
+    struct NullProvider;
+
+    #[async_trait]
+    impl LlmProvider for NullProvider {
+        fn name(&self) -> &str {
+            "null"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec![])
+        }
+        async fn generate(&self, _: &str, _: &GenerationOptions) -> kod_error::Result<String> {
+            Ok("ok".into())
+        }
+        async fn generate_with_tools(
+            &self,
+            _: &str,
+            _: &[ToolDefinition],
+            _: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::Text {
+                content: "ok".into(),
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _: &str,
+            _: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+    }
+
+    let provider: Arc<dyn LlmProvider> = Arc::new(NullProvider);
+    let (engine, _tmp) = build_engine(provider).await;
+
+    engine.plant_pending_approval_for_tests().await;
+    engine.plant_pending_approval_for_tests().await;
+    engine.plant_pending_question_for_tests().await;
+    assert_eq!(engine.pending_approval_count_for_tests().await, 2);
+    assert_eq!(engine.pending_question_count_for_tests().await, 1);
+
+    engine.shutdown().await.unwrap();
+
+    assert_eq!(
+        engine.pending_approval_count_for_tests().await,
+        0,
+        "shutdown must drain the pending-approval map",
+    );
+    assert_eq!(
+        engine.pending_question_count_for_tests().await,
+        0,
+        "shutdown must drain the pending-question map",
+    );
+}
