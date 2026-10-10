@@ -13,6 +13,16 @@ impl KodEngine {
         }
     }
 
+    /// Test-only: how many transcripts are currently subscribed as
+    /// blackboard viewers. A leaked subscription is a slow memory
+    /// leak on a long-lived engine (the daemon case); the swarm
+    /// runner's cleanup loop must clear the viewer for every handle
+    /// it created, including subtasks that were failed-out by a
+    /// failed dependency and never dispatched.
+    pub async fn blackboard_viewer_count_for_tests(&self) -> usize {
+        self.blackboard_viewers.read().await.len()
+    }
+
     /// The swarm blackboard (Tier 3.5).
     /// Install the shared file-touch bus for a swarm run.
     ///

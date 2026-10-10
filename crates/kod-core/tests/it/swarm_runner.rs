@@ -599,3 +599,91 @@ async fn swarm_max_agents_is_clamped_to_a_sane_range() {
     let runner = SwarmRunner::new(engine, 100, false).await.unwrap();
     assert_eq!(runner.max_agents(), 8);
 }
+
+/// Regression: a subtask with `expected_writes` that is failed-out by
+/// a failed dependency must not leak its blackboard-viewer
+/// subscription. Pre-fix, `set_blackboard_viewer(dispatch_key, true)`
+/// fired at dispatch time (for every subtask with a write set), the
+/// per-attempt cleanup never ran for a subtask gated out of a wave,
+/// and the end-of-run cleanup loop cleared `working_dir` and
+/// `write_globs` but not the viewer. On a daemon this leaks one entry
+/// per gated subtask per run.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gated_subtask_does_not_leak_blackboard_viewer() {
+    // Chain a → b. A fails; B declares a write set, so its viewer was
+    // subscribed at dispatch time. B is failed-out by the gate and
+    // must still have its viewer cleared by the end of the run.
+    struct ChainProvider;
+
+    #[async_trait]
+    impl LlmProvider for ChainProvider {
+        fn name(&self) -> &str {
+            "chain-leak"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec!["chain-leak".into()])
+        }
+        async fn generate(
+            &self,
+            prompt: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            if prompt.contains("Split this goal") {
+                return Ok(r#"[
+                    {"name":"a","description":"task A","depends_on":[],"expected_writes":[]},
+                    {"name":"b","description":"task B","depends_on":["a"],"expected_writes":["src/b.rs"]}
+                ]"#
+                .to_string());
+            }
+            if prompt.contains("Synthesize their work") {
+                return Ok("MERGED".to_string());
+            }
+            if prompt.contains("task A") {
+                return Err(kod_error::KodError::Provider("A failed".into()));
+            }
+            Ok("ok".to_string())
+        }
+        async fn generate_with_tools(
+            &self,
+            prompt: &str,
+            _t: &[ToolDefinition],
+            o: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::Text {
+                content: self.generate(prompt, o).await?,
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+    }
+
+    let provider: Arc<dyn LlmProvider> = Arc::new(ChainProvider);
+    let (engine, _tmp) = build_engine(provider).await;
+
+    assert_eq!(
+        engine.blackboard_viewer_count_for_tests().await,
+        0,
+        "no viewer before the run",
+    );
+
+    let runner = SwarmRunner::new(engine.clone(), 3, false).await.unwrap();
+    let (tx, mut rx) = mpsc::channel::<SwarmEvent>(256);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let _ = runner.run("do the chain", &tx).await;
+    drop(tx);
+    let _ = drain.await;
+
+    assert_eq!(
+        engine.blackboard_viewer_count_for_tests().await,
+        0,
+        "every dispatch's blackboard-viewer subscription must be cleared \
+         before the run returns, including the gated-out subtask",
+    );
+}

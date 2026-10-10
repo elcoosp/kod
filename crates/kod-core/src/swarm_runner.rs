@@ -1593,14 +1593,24 @@ impl SwarmRunner {
             None
         };
 
-        // 3c. Clear the per-transcript working dir overrides and
-        //     write sets so a reused engine (a second swarm run)
-        //     does not inherit a stale worktree path or a stale
-        //     claim.
+        // 3c. Clear the per-transcript working dir overrides, write
+        //     sets, and blackboard-viewer subscription so a reused
+        //     engine (a second swarm run) does not inherit a stale
+        //     worktree path, a stale claim, or a leaked viewer.
+        //
+        //     The blackboard viewer is set at dispatch time for every
+        //     subtask with non-empty `expected_writes`. A subtask that
+        //     is failed-out by a failed dependency never enters a
+        //     wave, so its per-attempt cleanup (which clears the
+        //     viewer) never runs — the only place the viewer can be
+        //     cleared for such a subtask is here. Without this, a
+        //     long-lived engine's `blackboard_viewers` set grows by
+        //     one entry per gated subtask per run.
         for h in &handles {
             let key = format!("swarm:{}", h.id);
             let _ = self.engine.clear_transcript_working_dir(&key).await;
             self.engine.clear_transcript_write_globs(&key).await;
+            self.engine.set_blackboard_viewer(&key, false).await;
         }
 
         // P1-c: stop the file-touch observers and drop their entries
