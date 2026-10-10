@@ -501,6 +501,21 @@ impl KodEngine {
                 affected = dropped.len();
             }
         }
+        // Delta §2.4: a compaction mutates the transcript's prefix —
+        // exactly the bytes the context gauge anchored on. Without
+        // this clear, `context_tokens_for` returns the pre-compaction
+        // prompt-token count plus the tail added since, overstating
+        // the provider's actual window by the dropped prefix. The
+        // context meter / compaction trigger rides on that number,
+        // so a downstream compaction would fire late and the next
+        // provider call would go out larger than the caller believes.
+        //
+        // `compact_history_for` (transcript.rs) already clears the
+        // gauge for the same reason. `apply_compaction_plan` — the
+        // mechanical + summary path — was the missing half.
+        if affected > 0 {
+            self.context_gauges.write().await.remove(key);
+        }
         affected
     }
 
@@ -785,6 +800,67 @@ impl KodEngine {
             window,
             "P2-a: emergency compaction ran",
         );
+        // Delta §2.4: same gauge clear as `apply_compaction_plan` —
+        // the emergency path drops the prefix the gauge anchored on.
+        self.context_gauges.write().await.remove(key);
         cut
+    }
+}
+
+/// Test-only accessors. `#[cfg(test)]` would exclude them from the
+/// `tests/it` integration binary (a separate crate), so they are
+/// always compiled; the `for_tests` suffix keeps the API intent
+/// visible.
+impl KodEngine {
+    /// Test-only: anchor the context gauge as if the provider had just
+    /// reported `prompt_tokens` covering the transcript through index
+    /// `covers_through`. Used by `gauge_invalidation_on_compaction`
+    /// to prove a compaction clears the anchor.
+    pub async fn gauge_observe_for_tests(
+        &self,
+        holder: &str,
+        covers_through: usize,
+        prompt_tokens: usize,
+    ) {
+        let usage = kod_provider::TokenUsage {
+            prompt_tokens,
+            completion_tokens: 0,
+            total_tokens: prompt_tokens,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            cache_creation_1h_tokens: None,
+        };
+        self.gauge_observe(holder, covers_through, &usage).await;
+    }
+
+    /// Test-only: the anchored context-token estimate, with no tail.
+    pub async fn anchored_context_tokens_for_tests(&self, holder: &str) -> Option<u64> {
+        self.anchored_context_tokens(holder).await
+    }
+
+    /// Test-only: run `compact_history_for` and return the number of
+    /// messages dropped. `compact_history_for` itself returns `()`.
+    pub async fn compact_history_for_tests(&self, key: &str, max_turns: usize) -> usize {
+        let before = self
+            .history
+            .read()
+            .await
+            .get(key)
+            .map(Vec::len)
+            .unwrap_or(0);
+        self.compact_history_for(key, max_turns).await;
+        let after = self
+            .history
+            .read()
+            .await
+            .get(key)
+            .map(Vec::len)
+            .unwrap_or(0);
+        before.saturating_sub(after)
+    }
+
+    /// Test-only: overwrite `key`'s transcript with `turns`.
+    pub async fn set_history_for_tests(&self, key: &str, turns: Vec<kod_types::ChatMessage>) {
+        self.history.write().await.insert(key.to_string(), turns);
     }
 }

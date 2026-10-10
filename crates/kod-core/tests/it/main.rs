@@ -16,6 +16,7 @@ mod context_gauge_adoption;
 mod engine;
 mod fallback_chain;
 mod fallback_no_duplicate_rounds;
+mod gauge_invalidation_on_compaction;
 mod git_tools;
 mod goal_loop_accumulates;
 mod golden_prefix;
