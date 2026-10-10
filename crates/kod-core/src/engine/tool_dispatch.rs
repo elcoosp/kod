@@ -860,7 +860,7 @@ impl KodEngine {
         // nothing. `swarm_file_bus` is `None` outside a swarm run
         // regardless of the holder, so this is a no-op then too.
         if effective_holder != "session"
-            && let Some(sfb) = self.swarm_file_bus.read().await.clone()
+            && let Some(sfb) = self.swarm_file_bus.read().clone()
         {
             tool_context.on_file_touch = Some(Self::build_swarm_file_hook(sfb.bus, sfb.service));
         }

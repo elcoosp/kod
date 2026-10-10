@@ -651,7 +651,16 @@ pub struct KodEngine {
     /// P1-c: the file-touch bus for the current swarm run, `None`
     /// outside one. Read by `run_tool_calls` to decide whether to
     /// install a per-call touch hook.
-    swarm_file_bus: RwLock<Option<SwarmFileBus>>,
+    ///
+    /// `parking_lot::RwLock` (not `tokio::sync`) because the cleanup
+    /// must run from `Drop`: a cancelled swarm run — the TUI aborts
+    /// `gen_task` on Esc, `serve` drops the task on client
+    /// disconnect — drops the run's future, and an `.await`ed
+    /// uninstall at the bottom of `run` never executes. The RAII
+    /// guard (`SwarmRunGuard`) holds an `Arc` clone of the slot so
+    /// it can clear the field from a synchronous `Drop` even after
+    /// the engine is no longer reachable from the dropped future.
+    swarm_file_bus: std::sync::Arc<parking_lot::RwLock<Option<SwarmFileBus>>>,
     /// Shared blackboard for the current swarm run (Tier 3.5).
     /// Auto-populated with write claims, discovered files, and
     /// completed subtasks; empty when no swarm is running.

@@ -44,23 +44,41 @@ impl KodEngine {
     }
 
     /// The swarm blackboard (Tier 3.5).
-    /// Install the shared file-touch bus for a swarm run.
+    /// Install the shared file-touch bus for a swarm run, and return
+    /// a `SwarmRunGuard` that clears it on drop.
     ///
-    /// Called once by the runner before it spawns agents. Removing it
-    /// (`uninstall_swarm_file_bus`) when the run ends is what keeps a
-    /// long-lived engine from observing touches on a later non-swarm
-    /// turn.
-    pub async fn install_swarm_file_bus(
+    /// Called once by the runner before it spawns agents. The bus
+    /// must be removed when the run ends, but "ends" includes
+    /// cancellation: the TUI aborts `gen_task` on Esc and `serve`
+    /// drops its `run_handle` on client disconnect, and both drop
+    /// the run's future without executing the async cleanup at the
+    /// bottom of `run`. The returned guard clears the slot from
+    /// `Drop` — synchronously — so a cancelled run cannot leave the
+    /// engine holding a stale bus whose subscribers are already
+    /// gone. Without the guard, the next non-swarm turn on that
+    /// engine would install a file-touch hook (see
+    /// `run_tool_calls`) that published on a bus nobody reads, and
+    /// an unrelated turn would be attributed to a phantom agent.
+    ///
+    /// Idempotent: calling twice replaces the bus and returns a new
+    /// guard. The runner only calls it once per run.
+    pub fn install_swarm_file_bus(
         &self,
         bus: std::sync::Arc<kod_swarm::file_touch::FileTouchBus>,
         service: std::sync::Arc<kod_swarm::file_touch::FileTouchService>,
-    ) {
-        *self.swarm_file_bus.write().await = Some(SwarmFileBus { bus, service });
+    ) -> SwarmRunGuard {
+        *self.swarm_file_bus.write() = Some(SwarmFileBus { bus, service });
+        SwarmRunGuard {
+            slot: std::sync::Arc::clone(&self.swarm_file_bus),
+        }
     }
 
     /// Remove the file-touch bus. Safe to call when none is installed.
-    pub async fn uninstall_swarm_file_bus(&self) {
-        *self.swarm_file_bus.write().await = None;
+    /// Kept as a manual escape hatch for tests and for the runner's
+    /// early-error paths that must release the bus before the guard
+    /// is dropped.
+    pub fn uninstall_swarm_file_bus(&self) {
+        *self.swarm_file_bus.write() = None;
     }
 
     /// Build the per-call file-touch hook for a swarm transcript.
@@ -197,5 +215,30 @@ pub struct SwarmSlotGuard {
 impl Drop for SwarmSlotGuard {
     fn drop(&mut self) {
         self.slot.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+impl KodEngine {
+    /// Test-only: is a swarm file-touch bus currently installed on
+    /// this engine? A cancelled swarm run (its future dropped
+    /// mid-flight) must leave this `false`; the pre-fix shape left
+    /// the bus behind because the async `uninstall_swarm_file_bus`
+    /// call sat after an `await` that a dropped future never
+    /// reaches.
+    pub fn swarm_file_bus_installed_for_tests(&self) -> bool {
+        self.swarm_file_bus.read().is_some()
+    }
+}
+
+/// RAII guard for the engine's swarm file-touch bus. Cleared on
+/// drop, so a cancelled swarm run (a dropped future) releases the
+/// slot even when its async cleanup path is never reached.
+pub struct SwarmRunGuard {
+    slot: std::sync::Arc<parking_lot::RwLock<Option<SwarmFileBus>>>,
+}
+
+impl Drop for SwarmRunGuard {
+    fn drop(&mut self) {
+        *self.slot.write() = None;
     }
 }

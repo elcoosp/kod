@@ -1050,3 +1050,121 @@ async fn concurrent_swarm_runs_on_one_engine_are_refused() {
         "a run after the first finished must be admitted: {resp_c:?}",
     );
 }
+
+/// Regression: a swarm run cancelled by dropping its future (the TUI
+/// aborts `gen_task` on Esc; `serve` drops the run handle on client
+/// disconnect) must not leave the engine holding a stale file-touch
+/// bus. Pre-fix, `uninstall_swarm_file_bus` sat after an `await` at
+/// the end of `run`, so a dropped future never reached it; the next
+/// non-swarm tool call would see `Some(bus)` and install a
+/// file-touch hook that published on a bus nobody was reading.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelled_swarm_run_leaves_no_bus_installed() {
+    struct BlockingProvider {
+        started: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for BlockingProvider {
+        fn name(&self) -> &str {
+            "blocking"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec!["blocking".into()])
+        }
+        async fn generate(
+            &self,
+            prompt: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            if prompt.contains("Split this goal") {
+                return Ok(r#"[{"name":"a","description":"do a"}]"#.to_string());
+            }
+            if prompt.contains("Synthesize their work") {
+                return Ok("MERGED".to_string());
+            }
+            self.started.notify_waiters();
+            self.release.notified().await;
+            Ok("done".to_string())
+        }
+        async fn generate_with_tools(
+            &self,
+            prompt: &str,
+            _t: &[ToolDefinition],
+            o: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::Text {
+                content: self.generate(prompt, o).await?,
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+        fn stream_with_tools<'a>(
+            &'a self,
+            p: &'a str,
+            _t: &'a [ToolDefinition],
+            o: &'a GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+        {
+            Box::pin(async_stream::stream! {
+                match self.generate(p, o).await {
+                    Ok(text) => {
+                        yield Ok(StreamChunk::Text(text));
+                        yield Ok(StreamChunk::Done);
+                    }
+                    Err(e) => yield Err(e),
+                }
+            })
+        }
+    }
+
+    let provider = Arc::new(BlockingProvider {
+        started: Arc::new(tokio::sync::Notify::new()),
+        release: Arc::new(tokio::sync::Notify::new()),
+    });
+    let (engine, _tmp) = build_engine(provider.clone()).await;
+
+    // Precondition: no bus installed.
+    assert!(!engine.swarm_file_bus_installed_for_tests());
+
+    let runner = Arc::new(SwarmRunner::new(engine.clone(), 2, false).await.unwrap());
+    let (tx, mut rx) = mpsc::channel::<SwarmEvent>(64);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let runner_for_task = runner.clone();
+    let run_handle = tokio::spawn(async move { runner_for_task.run("cancel me", &tx).await });
+
+    // Wait for the provider's per-agent call, which only fires after
+    // the bus is installed.
+    provider.started.notified().await;
+    assert!(
+        engine.swarm_file_bus_installed_for_tests(),
+        "the bus must be installed while a run is in-flight",
+    );
+
+    // Drop the run future mid-flight (TUI cancellation shape).
+    run_handle.abort();
+    let _ = run_handle.await;
+
+    // Give the drop-triggered cleanup a moment.
+    for _ in 0..50 {
+        if !engine.swarm_file_bus_installed_for_tests() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    assert!(
+        !engine.swarm_file_bus_installed_for_tests(),
+        "a dropped swarm-run future must uninstall the file-touch bus",
+    );
+
+    drop(drain);
+}

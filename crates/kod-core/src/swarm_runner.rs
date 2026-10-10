@@ -585,9 +585,15 @@ impl SwarmRunner {
         // non-swarm turn.
         let file_bus = std::sync::Arc::new(kod_swarm::file_touch::FileTouchBus::new());
         let file_service = std::sync::Arc::new(kod_swarm::file_touch::FileTouchService::new());
-        self.engine
-            .install_swarm_file_bus(file_bus.clone(), file_service.clone())
-            .await;
+        // RAII guard: clears the bus on drop, including when the run's
+        // future is dropped mid-flight (TUI Esc, serve disconnect).
+        // The pre-fix async uninstall sat after the last `await` in
+        // `run` and never ran for a cancelled run — the engine kept a
+        // stale bus that attributed the next non-swarm turn's file
+        // touches to a phantom agent.
+        let _swarm_run_guard = self
+            .engine
+            .install_swarm_file_bus(file_bus.clone(), file_service.clone());
         // Subscribers live as long as their agents. Aborted in the
         // cleanup block after the wave loop finishes.
         let mut file_subscribers: Vec<tokio::task::JoinHandle<()>> = Vec::new();
@@ -693,11 +699,11 @@ impl SwarmRunner {
             let agent = AgentBuilder::new(&slug).with_capability(*cap).build();
             let id = agent.id().clone();
             if let Err(e) = swarm.add_agent(agent).await {
-                self.engine.uninstall_swarm_file_bus().await;
+                self.engine.uninstall_swarm_file_bus();
                 return Err(e);
             }
             if let Err(e) = swarm.start_agent(&id).await {
-                self.engine.uninstall_swarm_file_bus().await;
+                self.engine.uninstall_swarm_file_bus();
                 return Err(e);
             }
 
@@ -796,11 +802,11 @@ impl SwarmRunner {
             let task = Task::new(st.description.clone(), Priority::Medium);
             let task_id = task.id.clone();
             if let Err(e) = swarm.coordinator().register_task(task).await {
-                self.engine.uninstall_swarm_file_bus().await;
+                self.engine.uninstall_swarm_file_bus();
                 return Err(e);
             }
             if let Err(e) = swarm.coordinator().assign_task(&task_id, &chosen).await {
-                self.engine.uninstall_swarm_file_bus().await;
+                self.engine.uninstall_swarm_file_bus();
                 return Err(e);
             }
 
@@ -1683,7 +1689,7 @@ impl SwarmRunner {
             let key = format!("swarm:{}", h.id);
             file_service.clear_agent(&key);
         }
-        self.engine.uninstall_swarm_file_bus().await;
+        self.engine.uninstall_swarm_file_bus();
 
         // 4. Report terminal status. The coordinator's load accounting
         //    needs the completion, and the events let a live UI update.

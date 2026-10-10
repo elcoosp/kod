@@ -314,7 +314,7 @@ impl KodEngine {
             pending_questions: RwLock::new(std::collections::HashMap::new()),
             next_question_id: std::sync::atomic::AtomicU64::new(1),
             swarm_hub: Arc::new(kod_swarm::AgentCommunicationHub::new()),
-            swarm_file_bus: RwLock::new(None),
+            swarm_file_bus: std::sync::Arc::new(parking_lot::RwLock::new(None)),
             blackboard: kod_swarm::Blackboard::new(),
             blackboard_viewers: RwLock::new(std::collections::HashSet::new()),
             session_id: kod_types::SessionId::new(),
