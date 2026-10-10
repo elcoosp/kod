@@ -63,7 +63,7 @@ impl KodEngine {
     /// Idempotent: calling twice replaces the bus and returns a new
     /// guard. The runner only calls it once per run.
     pub fn install_swarm_file_bus(
-        &self,
+        self: &Arc<Self>,
         bus: std::sync::Arc<kod_swarm::file_touch::FileTouchBus>,
         service: std::sync::Arc<kod_swarm::file_touch::FileTouchService>,
     ) -> SwarmRunGuard {
@@ -71,13 +71,15 @@ impl KodEngine {
         // Capture the runtime handle *now*, not at drop time: a
         // cancelled run's future may be dropped on a task that is
         // itself being torn down, and `Handle::current()` inside
-        // `Drop` would panic. Spawning the async hub cleanup on the
+        // `Drop` would panic. Spawning the async cleanup on the
         // captured handle schedules it on the live runtime
         // regardless of where the drop happens.
         SwarmRunGuard {
             slot: std::sync::Arc::clone(&self.swarm_file_bus),
             hub: Arc::clone(&self.swarm_hub),
             runtime: tokio::runtime::Handle::current(),
+            engine: Arc::clone(self),
+            dispatch_keys: std::sync::Arc::new(parking_lot::Mutex::new(Vec::new())),
         }
     }
 
@@ -245,18 +247,43 @@ pub struct SwarmRunGuard {
     slot: std::sync::Arc<parking_lot::RwLock<Option<SwarmFileBus>>>,
     hub: Arc<kod_swarm::AgentCommunicationHub>,
     runtime: tokio::runtime::Handle,
+    engine: Arc<KodEngine>,
+    dispatch_keys: std::sync::Arc<parking_lot::Mutex<Vec<String>>>,
+}
+
+impl SwarmRunGuard {
+    /// Register a dispatch's transcript key with this guard, so the
+    /// engine forgets it if the run's future is dropped before the
+    /// normal end-of-run cleanup runs. Idempotent.
+    ///
+    /// The runner calls this from the dispatch loop, before the
+    /// subtask's agent runs. On a successful run the same keys are
+    /// forgotten by the runner's own end-of-run loop, so a guard
+    /// that drops on success forgets nothing (already empty maps).
+    /// On cancellation the guard's `Drop` is the *only* place the
+    /// keys are forgotten, which is why this must be kept in sync
+    /// with the runner's normal cleanup.
+    pub fn track_dispatch_key(&self, key: &str) {
+        self.dispatch_keys.lock().push(key.to_string());
+    }
 }
 
 impl Drop for SwarmRunGuard {
     fn drop(&mut self) {
         *self.slot.write() = None;
-        // The hub's maps sit behind a tokio `RwLock`, which cannot
-        // be cleared from a sync `Drop`. Spawn the async cleanup on
+        // The engine's per-transcript maps, the hub's maps, and the
+        // bus slot's siblings all sit behind `tokio` `RwLock`s
+        // (sync `Drop` cannot `await`), so the cleanup is spawned on
         // the runtime handle captured at installation. The spawned
         // future is independent of the run's future tree, so a
-        // cancelled run still releases its agents.
+        // cancelled run still releases everything it set up.
         let hub = Arc::clone(&self.hub);
+        let engine = Arc::clone(&self.engine);
+        let keys: Vec<String> = self.dispatch_keys.lock().clone();
         self.runtime.spawn(async move {
+            for key in keys {
+                engine.forget_transcript(&key).await;
+            }
             hub.clear_all().await;
         });
     }

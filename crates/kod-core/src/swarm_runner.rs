@@ -591,7 +591,7 @@ impl SwarmRunner {
         // `run` and never ran for a cancelled run — the engine kept a
         // stale bus that attributed the next non-swarm turn's file
         // touches to a phantom agent.
-        let _swarm_run_guard = self
+        let swarm_run_guard = self
             .engine
             .install_swarm_file_bus(file_bus.clone(), file_service.clone());
         // Subscribers live as long as their agents. Aborted in the
@@ -818,6 +818,9 @@ impl SwarmRunner {
             // cannot collide.
             let dispatch_id = AgentId::new();
             let dispatch_key = format!("swarm:{dispatch_id}");
+            // Register with the run guard so a cancelled run forgets
+            // the transcript state this dispatch is about to create.
+            swarm_run_guard.track_dispatch_key(&dispatch_key);
 
             // Per-transcript working dir: the pool agent's worktree,
             // if any.

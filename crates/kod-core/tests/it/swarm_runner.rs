@@ -1297,6 +1297,16 @@ async fn cancelled_swarm_run_leaves_no_agents_on_the_hub() {
         "a cancelled swarm run must leave no agents registered on the \
          engine's shared hub",
     );
+    // Every transcript-scoped map on the engine must also be clear:
+    // a dropped run future never reaches the runner's normal
+    // end-of-run `forget_transcript` loop, so the guard's own
+    // cleanup has to be what forgets them.
+    assert_eq!(
+        engine.transcript_scoped_key_count_for_tests().await,
+        0,
+        "a cancelled swarm run must forget every per-transcript entry \
+         it created",
+    );
 
     drop(drain);
 }
