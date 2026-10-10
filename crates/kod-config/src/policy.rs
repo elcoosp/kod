@@ -1563,40 +1563,197 @@ mod coverage_policy_deny_rules {
 /// levels deep. The pre-fix check only looked at the first whitespace
 /// token, so `bash -c 'rm -rf /'` reported `bash` and the inner `rm`
 /// was never consulted against the forbidden/allow lists.
+///
+/// T5-C7 follow-up: the wrapper parser had three bypasses a
+/// configured `forbidden_binaries = ["rm"]` would miss:
+///
+/// * **Combined short flags.** `bash -xc 'rm -rf /'` was not
+///   recognised: the parser tested `p == "-c"`, not "the combined
+///   flag string contains `c`". Same for `sh -ec`, `bash -cx`.
+/// * **`--` separator.** `sh -c -- 'rm -rf /'` parsed `--` as the
+///   inner command, then stopped: the actual command was never
+///   unwrapped.
+/// * **Leading env assignments.** `FOO=bar bash -c 'rm'` reported
+///   `FOO=bar` as the first token and stopped; the wrapper name is
+///   the first token that does not look like `NAME=value`.
+///
+/// The wrapper set also grew to include the standard command-prefix
+/// tools (`sudo`, `env`, `nice`, `timeout`, `ionice`, `stdbuf`,
+/// `time`, `command`, `builtin`, `exec`, `xargs`) so a prefix chain
+/// walks through. The set is deliberately a subset of
+/// `kod_risk::classify`'s table — kod-config does not depend on
+/// kod-risk, and a shared table would be the right fix only after
+/// the two are wired together (a separate change). Until then the
+/// two tables are kept in sync by hand; the tests below pin the
+/// shapes that have historically diverged.
 fn binary_candidates(cmd: &str) -> Vec<String> {
-    const WRAPPERS: &[&str] = &["bash", "sh", "zsh", "dash", "ksh"];
+    // Wrapper table: name + flags that consume the following token.
+    // Two kinds of wrapper:
+    //
+    // * **Command-string wrappers** (`bash`, `sh`, ...): only unwrap
+    //   when a `-c` (or `--command`) flag is present — otherwise the
+    //   next token is a script file, not a command.
+    // * **Prefix wrappers** (`sudo`, `env`, `nice`, ...): always
+    //   unwrap; the first non-flag token begins the inner command.
+    //
+    // The table is deliberately a subset of `kod_risk::classify`'s
+    // table — kod-config does not depend on kod-risk, so the two are
+    // kept in sync by hand. The tests below pin the shapes that have
+    // historically diverged.
+    const COMMAND_STRING_WRAPPERS: &[&str] = &["bash", "sh", "zsh", "dash", "ksh"];
+    // (name, flags that consume a following token, count of leading
+    // positional arguments before the inner command). The third field
+    // is what `timeout 30 rm` needs: `30` is a duration, not the
+    // binary.
+    const PREFIX_WRAPPERS: &[(&str, &[&str], usize)] = &[
+        ("sudo", &["-u", "-g", "-p", "-h", "-r", "-t", "-C"], 0),
+        ("doas", &["-u"], 0),
+        ("env", &["-u", "-i", "-C", "-S"], 0),
+        ("nice", &["-n"], 0),
+        // `timeout [OPTION] DURATION COMMAND` — one positional
+        // (the duration) precedes the command.
+        ("timeout", &["-s", "-k"], 1),
+        ("stdbuf", &["-i", "-o", "-e"], 0),
+        ("ionice", &["-c", "-n", "-p"], 0),
+        ("time", &[], 0),
+        ("command", &[], 0),
+        ("builtin", &[], 0),
+        ("exec", &["-a", "-c"], 0),
+        (
+            "xargs",
+            &["-n", "-I", "-i", "-P", "-s", "-d", "-a", "-E"],
+            0,
+        ),
+    ];
+
+    fn unquote(t: &str) -> String {
+        let t = t.trim();
+        if (t.starts_with('"') && t.ends_with('"') && t.len() >= 2)
+            || (t.starts_with('\'') && t.ends_with('\'') && t.len() >= 2)
+        {
+            t[1..t.len() - 1].to_string()
+        } else {
+            t.to_string()
+        }
+    }
+
+    fn looks_like_env_assignment(t: &str) -> bool {
+        if t.starts_with('-') || t.starts_with('/') {
+            return false;
+        }
+        let Some((name, _)) = t.split_once('=') else {
+            return false;
+        };
+        !name.is_empty()
+            && name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
     let mut out = Vec::new();
     let mut cur: String = cmd.trim().to_string();
     for _ in 0..4 {
-        let first = cur
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .rsplit('/')
-            .next()
-            .unwrap_or("")
-            .to_string();
+        let raw: Vec<&str> = cur.split_whitespace().collect();
+        // Skip leading `NAME=value` env assignments.
+        let mut start = 0;
+        while start < raw.len() && looks_like_env_assignment(raw[start]) {
+            start += 1;
+        }
+        if start >= raw.len() {
+            break;
+        }
+        let first = unquote(raw[start].rsplit('/').next().unwrap_or(""));
         if first.is_empty() {
             break;
         }
         out.push(first.clone());
-        if !WRAPPERS.contains(&first.as_str()) {
+
+        let is_command_string_wrapper = COMMAND_STRING_WRAPPERS.contains(&first.as_str());
+        let prefix_entry = PREFIX_WRAPPERS
+            .iter()
+            .find(|(w, _, _)| *w == first.as_str());
+        let flag_args: &[&str] = prefix_entry.map(|(_, f, _)| *f).unwrap_or(&[]);
+        let positional_skip: usize = prefix_entry.map(|(_, _, n)| *n).unwrap_or(0);
+        let is_prefix_wrapper = prefix_entry.is_some();
+        if !is_command_string_wrapper && !is_prefix_wrapper {
             break;
         }
-        let mut parts = cur.split_whitespace().skip(1);
+
+        // Walk the wrapper's own args.
+        let mut i = start + 1;
         let mut inner: Option<String> = None;
-        while let Some(p) = parts.next() {
-            if p == "-c" {
-                inner = Some(parts.collect::<Vec<_>>().join(" "));
+        while i < raw.len() {
+            let t = unquote(raw[i]);
+            if t == "--" {
+                // Positional separator: skip it, keep scanning.
+                i += 1;
+                continue;
+            }
+            if t == "-c" || t == "--command" {
+                i += 1;
+                // Skip an optional `--` immediately after `-c`.
+                if i < raw.len() && unquote(raw[i]) == "--" {
+                    i += 1;
+                }
+                inner = Some(raw[i..].join(" "));
                 break;
             }
-        }
-        let Some(i) = inner else { break };
-        let cleaned = i.trim().trim_matches(|c| c == '\'' || c == '"').to_string();
-        if cleaned.is_empty() {
+            if let Some(rest) = t.strip_prefix("--command=") {
+                // `--command=STR`: STR is the command, then the tail
+                // is its arguments.
+                let mut all = vec![rest.to_string()];
+                for r in &raw[i + 1..] {
+                    all.push(r.to_string());
+                }
+                inner = Some(all.join(" "));
+                break;
+            }
+            if t.starts_with("--") {
+                // Unknown long flag; assume it consumes no argument.
+                i += 1;
+                continue;
+            }
+            if t.starts_with('-') && t.len() > 1 {
+                // Combined short flags. `-xc` contains the
+                // command-string flag `c`.
+                let letters = &t[1..];
+                if letters.contains('c') && !letters.contains('=') {
+                    i += 1;
+                    if i < raw.len() && unquote(raw[i]) == "--" {
+                        i += 1;
+                    }
+                    inner = Some(raw[i..].join(" "));
+                    break;
+                }
+                let consumes = flag_args.iter().any(|f| *f == t);
+                i += if consumes { 2 } else { 1 };
+                continue;
+            }
+            // First non-flag token.
             break;
         }
-        cur = cleaned;
+
+        if let Some(cmd_str) = inner {
+            let cleaned = unquote(cmd_str.trim());
+            if cleaned.is_empty() {
+                break;
+            }
+            cur = cleaned;
+        } else if is_command_string_wrapper {
+            // No `-c`: the next token is a script file, not a command.
+            break;
+        } else {
+            // Prefix wrapper: skip any leading positional arguments
+            // (`timeout 30 rm` → skip `30`), then the tail begins the
+            // inner command.
+            let skip_to = i + positional_skip;
+            if skip_to >= raw.len() {
+                break;
+            }
+            cur = raw[skip_to..].join(" ");
+        }
     }
     out
 }
@@ -1627,4 +1784,163 @@ fn compiled_glob(pattern: &str) -> Option<std::sync::Arc<globset::GlobMatcher>> 
         g.insert(pattern.to_string(), compiled.clone());
     }
     compiled
+}
+
+#[cfg(test)]
+mod binary_candidates_tests {
+    //! The forbidden-binary and binary allow-list checks ride on
+    //! `binary_candidates`'s ability to unwrap the wrapper chain in a
+    //! shell command. A wrapper form it cannot see through is a
+    //! policy bypass: a `forbidden_binaries = ["rm"]` never fires for
+    //! a command the parser reports only as `bash`.
+    //!
+    //! The tests pin each of the pre-fix bypasses.
+    use super::binary_candidates;
+
+    fn first(cmd: &str) -> Option<String> {
+        binary_candidates(cmd).into_iter().next()
+    }
+
+    fn contains(cmd: &str, what: &str) -> bool {
+        binary_candidates(cmd).iter().any(|c| c == what)
+    }
+
+    #[test]
+    fn a_plain_command_reports_its_binary() {
+        assert_eq!(first("rm -rf /x").as_deref(), Some("rm"));
+        assert_eq!(first("cargo test").as_deref(), Some("cargo"));
+    }
+
+    #[test]
+    fn a_path_prefixed_binary_reports_its_basename() {
+        assert_eq!(first("/usr/local/bin/rm -rf /x").as_deref(), Some("rm"));
+        assert_eq!(first("./build.sh").as_deref(), Some("build.sh"));
+    }
+
+    #[test]
+    fn bash_c_unwraps_to_the_inner_command() {
+        assert!(contains("bash -c 'rm -rf /x'", "rm"));
+    }
+
+    #[test]
+    fn bash_double_dash_command_unwraps() {
+        assert!(contains("bash --command 'rm -rf /x'", "rm"));
+    }
+
+    /// The pre-fix `p == "-c"` check missed combined short flags:
+    /// `bash -xc 'rm -rf /x'` reported only `bash`.
+    #[test]
+    fn bash_combined_short_flags_unwrap() {
+        for cmd in [
+            "bash -xc 'rm -rf /x'",
+            "bash -cx 'rm -rf /x'",
+            "bash -ec 'rm -rf /x'",
+            "sh -ec 'rm -rf /x'",
+            "zsh -xc 'rm -rf /x'",
+        ] {
+            assert!(
+                contains(cmd, "rm"),
+                "{cmd:?} must unwrap to `rm`: {:?}",
+                binary_candidates(cmd),
+            );
+        }
+    }
+
+    /// `sh -c -- 'rm'` used to parse `--` as the inner command and
+    /// stop. The `--` separator must be skipped, not consumed as the
+    /// command string.
+    #[test]
+    fn a_positional_separator_is_skipped() {
+        assert!(contains("sh -c -- 'rm -rf /x'", "rm"));
+    }
+
+    /// A leading env assignment (`FOO=bar bash -c 'rm'`) used to
+    /// report `FOO=bar` as the first token and stop. The assignment
+    /// must be skipped; the wrapper name is the first token that
+    /// does not look like `NAME=value`.
+    #[test]
+    fn env_assignments_are_skipped() {
+        assert!(contains("FOO=bar bash -c 'rm -rf /x'", "rm"));
+        assert!(contains("LC_ALL=C bash -c 'rm -rf /x'", "rm"));
+        assert!(contains("A=1 B=2 bash -c 'rm -rf /x'", "rm"));
+    }
+
+    /// A wrapper chain: `sudo bash -c 'rm'` must reach `rm`, and both
+    /// `sudo` and `bash` appear as candidates (a forbidden list that
+    /// names either fires).
+    #[test]
+    fn a_wrapper_chain_unwraps_to_the_inner_command() {
+        assert!(contains("sudo bash -c 'rm -rf /x'", "rm"));
+        assert!(contains("sudo bash -c 'rm -rf /x'", "sudo"));
+        assert!(contains("sudo bash -c 'rm -rf /x'", "bash"));
+    }
+
+    /// `sudo -u USER rm -rf /x` — the `-u` flag consumes `USER`, so
+    /// the parser must not mistake `USER` for the binary.
+    #[test]
+    fn a_wrapper_flag_that_consumes_its_arg_is_skipped() {
+        assert!(contains("sudo -u user rm -rf /x", "rm"));
+        assert!(contains("nice -n 5 rm -rf /x", "rm"));
+        assert!(contains("timeout -s KILL 30 rm -rf /x", "rm"));
+        // The consumed argument is NOT a candidate.
+        assert!(!contains("sudo -u user rm -rf /x", "user"));
+    }
+
+    /// `bash script.sh` — the next token is a script file, not a
+    /// command string. The parser must not treat the file path as the
+    /// inner binary.
+    #[test]
+    fn a_script_file_is_not_unwrapped() {
+        let c = binary_candidates("bash script.sh");
+        assert_eq!(c, vec!["bash".to_string()]);
+    }
+
+    /// `env -S 'command with args'` — the `-S` flag signals an
+    /// opaque single-string command; the parser cannot see through
+    /// it. The wrapper name is still reported so a forbidden-list
+    /// naming `env` still fires.
+    #[test]
+    fn an_opaque_command_string_stops_the_unwrap_but_reports_the_wrapper() {
+        let c = binary_candidates("env -S 'rm -rf /x'");
+        assert!(c.contains(&"env".to_string()), "got: {c:?}");
+    }
+
+    /// The end-to-end check: `decide` must deny a forbidden binary
+    /// through every unwrap form. This exercises the fix at the site
+    /// that matters.
+    #[test]
+    fn decide_denies_a_forbidden_binary_through_every_unwrap_form() {
+        use super::*;
+        use std::collections::HashSet;
+        let toml = r#"
+            [tools.execute_command]
+            forbidden_binaries = ["rm"]
+        "#;
+        let policy = Policy::from_toml(toml).unwrap();
+        let engine = PolicyEngine::from_effective_for_tests(policy);
+        let wd = Path::new("/tmp");
+        for cmd in [
+            "rm -rf /x",
+            "bash -c 'rm -rf /x'",
+            "bash -xc 'rm -rf /x'",
+            "sh -ec 'rm -rf /x'",
+            "sh -c -- 'rm -rf /x'",
+            "FOO=bar bash -c 'rm -rf /x'",
+            "sudo bash -c 'rm -rf /x'",
+        ] {
+            let d = engine.decide(
+                "execute_command",
+                &serde_json::json!({ "command": cmd }),
+                wd,
+                &HashSet::new(),
+            );
+            assert_eq!(
+                d.outcome,
+                Decision::Deny,
+                "{cmd:?} must be denied (got {:?}, rule: {})",
+                d.outcome,
+                d.rule,
+            );
+        }
+    }
 }
