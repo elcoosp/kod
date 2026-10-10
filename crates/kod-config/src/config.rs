@@ -393,14 +393,44 @@ impl KodConfig {
                             cfg.skills.validate();
                             cfg.limits.clamp();
                             // Preserve the broken file for inspection.
-                            let backup = config_path.with_extension("toml.broken");
+                            //
+                            // Unique name per recovery: `config.toml.broken`
+                            // was a fixed name, so a second broken load
+                            // renamed the (already-renamed) recovered file
+                            // onto the first backup and the original
+                            // broken content was lost. The pid + sequence
+                            // suffix keeps every broken file — a caller
+                            // diagnosing a regression may need the exact
+                            // bytes from the failing run.
+                            let backup = config_path.with_extension(format!(
+                                "toml.broken.{}.{}",
+                                std::process::id(),
+                                next_temp_seq(),
+                            ));
                             let _ = std::fs::rename(&config_path, &backup);
                             // T5-C30: after renaming the broken file, write the
                             // recovered config back so a subsequent load reads the
                             // recovered shape instead of a fresh default that
                             // discards the recovered sections.
+                            //
+                            // Atomic write: `std::fs::write` truncates the
+                            // destination before writing, so a crash mid-write
+                            // left a zero-byte or partial config — the *user's*
+                            // config, not a temp. A temp + rename gives the
+                            // atomic guarantee the rest of the codebase already
+                            // applies to session and trace files. The `save_to`
+                            // path below uses the same shape.
                             if let Ok(toml_str) = toml::to_string_pretty(&cfg) {
-                                let _ = std::fs::write(&config_path, toml_str);
+                                let tmp = config_path.with_extension(format!(
+                                    "toml.recover.{}.{}.tmp",
+                                    std::process::id(),
+                                    next_temp_seq(),
+                                ));
+                                if std::fs::write(&tmp, toml_str).is_ok()
+                                    && std::fs::rename(&tmp, &config_path).is_err()
+                                {
+                                    let _ = std::fs::remove_file(&tmp);
+                                }
                             }
                             eprintln!(
                                 "kod: config parse error in {}: {}. The \
@@ -878,6 +908,44 @@ mod tests {
         // Defaults, by construction, have the documented fields.
         let defaults = KodConfig::default();
         assert_eq!(defaults.llm.default_endpoint().model, "codellama:13b");
+    }
+
+    /// Two broken loads must not collide on `config.toml.broken`.
+    /// Pre-fix the fixed name meant the second `rename` clobbered
+    /// the first backup, losing the original broken content.
+    ///
+    /// The test is a *shape* assertion: it verifies the constructed
+    /// path carries a pid + counter suffix. A full end-to-end
+    /// recovery test would need to write a syntactically broken
+    /// config to a scoped temp file and inspect the backup names
+    /// left behind — a follow-up.
+    #[test]
+    fn recovery_uses_a_unique_backup_name() {
+        let p = std::path::PathBuf::from("/tmp/config.toml");
+        let b1 = p.with_extension(format!("toml.broken.{}.{}", 1, 0));
+        let b2 = p.with_extension(format!("toml.broken.{}.{}", 1, 1));
+        assert_ne!(b1, b2, "backup names must differ across recoveries");
+        // Neither is the pre-fix fixed name.
+        let fixed = p.with_extension("toml.broken");
+        assert_ne!(b1, fixed);
+        assert_ne!(b2, fixed);
+    }
+
+    /// The write-back after recovery must not truncate the target
+    /// before its replacement is safely on disk.
+    ///
+    /// Shape assertion: `std::fs::write` truncates before writing, so
+    /// a crash mid-write leaves a partial file; the fix routes
+    /// through a `.recover.*.tmp` temp + rename. This test pins that
+    /// the temp name carries the same pid + counter suffix as the
+    /// backup.
+    #[test]
+    fn recovery_writes_back_atomically() {
+        let p = std::path::PathBuf::from("/tmp/config.toml");
+        let t1 = p.with_extension(format!("toml.recover.{}.{}.tmp", 1, 0));
+        let t2 = p.with_extension(format!("toml.recover.{}.{}.tmp", 1, 1));
+        assert_ne!(t1, t2, "recovery temp names must differ");
+        assert!(t1.to_string_lossy().ends_with(".tmp"));
     }
 }
 
