@@ -1177,3 +1177,126 @@ async fn cancelled_swarm_run_leaves_no_bus_installed() {
 
     drop(drain);
 }
+
+/// Regression: a swarm run cancelled by dropping its future must
+/// leave no agents registered on the engine's shared hub. Pre-fix,
+/// `swarm.shutdown()` + `hub.clear_all()` sat at the bottom of
+/// `run()`; a dropped future never reached them, so every cancelled
+/// run left its pool agents on the engine hub for the life of the
+/// process — the blackboard kept returning the cancelled run's
+/// entries.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelled_swarm_run_leaves_no_agents_on_the_hub() {
+    struct BlockingProvider {
+        started: Arc<tokio::sync::Semaphore>,
+        release: Arc<tokio::sync::Semaphore>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for BlockingProvider {
+        fn name(&self) -> &str {
+            "blocking"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec!["blocking".into()])
+        }
+        async fn generate(
+            &self,
+            prompt: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            if prompt.contains("Split this goal") {
+                return Ok(r#"[{"name":"a","description":"do a"}]"#.to_string());
+            }
+            if prompt.contains("Synthesize their work") {
+                return Ok("MERGED".to_string());
+            }
+            self.started.add_permits(1);
+            let _ = self.release.acquire().await;
+            Ok("done".to_string())
+        }
+        async fn generate_with_tools(
+            &self,
+            prompt: &str,
+            _t: &[ToolDefinition],
+            o: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::Text {
+                content: self.generate(prompt, o).await?,
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+        fn stream_with_tools<'a>(
+            &'a self,
+            p: &'a str,
+            _t: &'a [ToolDefinition],
+            o: &'a GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+        {
+            Box::pin(async_stream::stream! {
+                match self.generate(p, o).await {
+                    Ok(text) => {
+                        yield Ok(StreamChunk::Text(text));
+                        yield Ok(StreamChunk::Done);
+                    }
+                    Err(e) => yield Err(e),
+                }
+            })
+        }
+    }
+
+    let provider = Arc::new(BlockingProvider {
+        started: Arc::new(tokio::sync::Semaphore::new(0)),
+        release: Arc::new(tokio::sync::Semaphore::new(0)),
+    });
+    let (engine, _tmp) = build_engine(provider.clone()).await;
+
+    // Precondition: hub has no agents registered.
+    assert_eq!(
+        engine.swarm_hub().list_agents().await.len(),
+        0,
+        "a fresh engine hub has no agents",
+    );
+
+    let runner = Arc::new(SwarmRunner::new(engine.clone(), 2, false).await.unwrap());
+    let (tx, mut rx) = mpsc::channel::<SwarmEvent>(64);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let runner_for_task = runner.clone();
+    let run_handle = tokio::spawn(async move { runner_for_task.run("cancel me", &tx).await });
+
+    // Wait for the per-agent call — by then the pool is on the hub.
+    let _ = provider.started.acquire().await;
+    assert!(
+        engine.swarm_hub().list_agents().await.len() > 0,
+        "a running swarm must have pool agents on the hub",
+    );
+
+    // Drop the run future mid-flight (TUI cancellation shape).
+    run_handle.abort();
+    let _ = run_handle.await;
+
+    // The guard's spawned cleanup runs on the same runtime; poll.
+    for _ in 0..50 {
+        if engine.swarm_hub().list_agents().await.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    assert_eq!(
+        engine.swarm_hub().list_agents().await.len(),
+        0,
+        "a cancelled swarm run must leave no agents registered on the \
+         engine's shared hub",
+    );
+
+    drop(drain);
+}

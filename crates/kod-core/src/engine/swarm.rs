@@ -68,8 +68,16 @@ impl KodEngine {
         service: std::sync::Arc<kod_swarm::file_touch::FileTouchService>,
     ) -> SwarmRunGuard {
         *self.swarm_file_bus.write() = Some(SwarmFileBus { bus, service });
+        // Capture the runtime handle *now*, not at drop time: a
+        // cancelled run's future may be dropped on a task that is
+        // itself being torn down, and `Handle::current()` inside
+        // `Drop` would panic. Spawning the async hub cleanup on the
+        // captured handle schedules it on the live runtime
+        // regardless of where the drop happens.
         SwarmRunGuard {
             slot: std::sync::Arc::clone(&self.swarm_file_bus),
+            hub: Arc::clone(&self.swarm_hub),
+            runtime: tokio::runtime::Handle::current(),
         }
     }
 
@@ -235,10 +243,21 @@ impl KodEngine {
 /// slot even when its async cleanup path is never reached.
 pub struct SwarmRunGuard {
     slot: std::sync::Arc<parking_lot::RwLock<Option<SwarmFileBus>>>,
+    hub: Arc<kod_swarm::AgentCommunicationHub>,
+    runtime: tokio::runtime::Handle,
 }
 
 impl Drop for SwarmRunGuard {
     fn drop(&mut self) {
         *self.slot.write() = None;
+        // The hub's maps sit behind a tokio `RwLock`, which cannot
+        // be cleared from a sync `Drop`. Spawn the async cleanup on
+        // the runtime handle captured at installation. The spawned
+        // future is independent of the run's future tree, so a
+        // cancelled run still releases its agents.
+        let hub = Arc::clone(&self.hub);
+        self.runtime.spawn(async move {
+            hub.clear_all().await;
+        });
     }
 }
