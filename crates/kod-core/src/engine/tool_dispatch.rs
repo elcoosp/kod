@@ -1,5 +1,22 @@
 use super::*;
 
+/// Outcome of [`KodEngine::await_decision`]. Three-way because the
+/// caller maps each variant to a different downstream message
+/// ("cancelled", "timeout", or the decision itself), and conflating
+/// `Cancelled` with `TimedOut` would tell a user their request timed
+/// out when they actually pressed Esc.
+enum DecisionWait<T> {
+    /// The peer answered.
+    Got(T),
+    /// The sender was dropped (shutdown drain, or the caller's future
+    /// was cancelled while the entry was still registered).
+    RecvClosed,
+    /// The transcript's cancel flag was set while we waited.
+    Cancelled,
+    /// `secs` elapsed with no answer.
+    TimedOut,
+}
+
 impl KodEngine {
     /// Execute one round of model-requested tool calls.
     ///
@@ -481,9 +498,7 @@ impl KodEngine {
             let (otx, orx) = tokio::sync::oneshot::channel();
             self.pending_questions.write().await.insert(id, otx);
             let _ = tx.send(question_marker(id, &json)).await;
-            let answer =
-                tokio::time::timeout(std::time::Duration::from_secs(AWAIT_APPROVAL_SECS), orx)
-                    .await;
+            let answer = self.await_decision(holder, orx, AWAIT_APPROVAL_SECS).await;
             // F2c-8: remove the oneshot sender once the wait resolves.
             // Pre-fix a timed-out (unanswered) question left its entry
             // in `pending_questions` forever — one leaked sender per
@@ -492,13 +507,13 @@ impl KodEngine {
             // for an id that has already timed out.
             self.pending_questions.write().await.remove(&id);
             match answer {
-                Ok(Ok(text)) => {
+                DecisionWait::Got(text) => {
                     answers.insert(i, text);
                 }
-                Ok(Err(_)) => {
+                DecisionWait::RecvClosed | DecisionWait::Cancelled => {
                     answers.insert(i, "(question cancelled)".to_string());
                 }
-                Err(_) => {
+                DecisionWait::TimedOut => {
                     answers.insert(
                         i,
                         format!(
@@ -661,9 +676,17 @@ impl KodEngine {
 
         // Phase 3 — await each in order.
         for (i, id, orx) in awaiting {
-            let decision =
-                tokio::time::timeout(std::time::Duration::from_secs(AWAIT_APPROVAL_SECS), orx)
-                    .await;
+            // The wait observes the transcript's cancel flag, not just
+            // the timeout. Pre-fix, `Esc`/`/cancel` on the transcript
+            // (TUI's cancel button, `kod serve`'s `cancel` method, the
+            // swarm watchdog's cooperative cancel) did nothing while an
+            // approval was pending — the loop parked on the oneshot
+            // until the 120 s `AWAIT_APPROVAL_SECS` fired, and only
+            // then noticed the cancel. A poll loop keyed on the same
+            // flag the round loop uses closes that gap; the sleep step
+            // is short enough that the user-visible latency is
+            // dominated by the poll interval, not the timeout.
+            let decision = self.await_decision(holder, orx, AWAIT_APPROVAL_SECS).await;
             // F2c-8: evict the oneshot sender once the wait resolves —
             // an unanswered approval otherwise leaked its map entry.
             self.pending_approvals.write().await.remove(&id);
@@ -672,15 +695,15 @@ impl KodEngine {
                 .map(|c| c.tool_name.clone())
                 .unwrap_or_default();
             let (log_decision, allow) = match decision {
-                Ok(Ok(ApprovalDecision::Approve)) => ("approve", true),
-                Ok(Ok(ApprovalDecision::ApproveWith { arguments })) => {
+                DecisionWait::Got(ApprovalDecision::Approve) => ("approve", true),
+                DecisionWait::Got(ApprovalDecision::ApproveWith { arguments }) => {
                     edited_args.insert(i, arguments);
                     ("approve-edited", true)
                 }
-                Ok(Ok(ApprovalDecision::Deny)) => ("deny", false),
-                Ok(Ok(ApprovalDecision::DenyAlways)) => ("deny-always", false),
-                Ok(Err(_)) => ("cancelled", false),
-                Err(_) => ("timeout", false),
+                DecisionWait::Got(ApprovalDecision::Deny) => ("deny", false),
+                DecisionWait::Got(ApprovalDecision::DenyAlways) => ("deny-always", false),
+                DecisionWait::RecvClosed | DecisionWait::Cancelled => ("cancelled", false),
+                DecisionWait::TimedOut => ("timeout", false),
             };
             if let Ok(guard) = self.session_recorder.read()
                 && let Some(rec) = guard.as_ref()
@@ -774,6 +797,52 @@ impl KodEngine {
             body,
             time::OffsetDateTime::now_utc(),
         ));
+    }
+
+    /// Await an approval or question decision, respecting the
+    /// transcript's cancel flag.
+    ///
+    /// The pre-fix shape was a bare `tokio::time::timeout(secs, rx)`,
+    /// which meant an Esc or a `kod serve` `cancel` while an approval
+    /// was pending did nothing until the timeout fired. The user saw
+    /// a frozen dialog for up to `AWAIT_APPROVAL_SECS` (120 s) after
+    /// already having asked to stop.
+    ///
+    /// A `select!` between the oneshot, the cancel flag's poll, and
+    /// the deadline would be cleaner but must not hold locks across
+    /// awaits; the polling loop below does the same job with a sleep
+    /// step short enough (100 ms) that the visible latency is the
+    /// poll interval. `secs` is the total budget, not a per-iteration
+    /// value.
+    async fn await_decision<T>(
+        &self,
+        holder: &str,
+        mut rx: tokio::sync::oneshot::Receiver<T>,
+        secs: u64,
+    ) -> DecisionWait<T> {
+        use tokio::time::{Duration, Instant};
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        let step = Duration::from_millis(100);
+        loop {
+            // Try the decision first; a reply that lands between
+            // cancel-checks should win.
+            match rx.try_recv() {
+                Ok(v) => return DecisionWait::Got(v),
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    return DecisionWait::RecvClosed;
+                }
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+            }
+            if self.is_cancelled_for(holder) {
+                return DecisionWait::Cancelled;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return DecisionWait::TimedOut;
+            }
+            let remaining = deadline - now;
+            tokio::time::sleep(step.min(remaining)).await;
+        }
     }
 
     /// Execute one round of model-requested tool calls.
