@@ -92,21 +92,35 @@ impl Justification {
 }
 
 /// Wrappers that run another program, with the flags that consume a
-/// following argument. A wrapper not in this table stops the unwrap —
-/// the classifier cannot see through it, which is a `Confirm`.
-const WRAPPERS: &[(&str, &[&str])] = &[
-    ("sudo", &["-u", "-g", "-p", "-h", "-r", "-t"]),
-    ("doas", &["-u"]),
-    ("env", &["-u", "-i", "-C", "-S"]),
-    ("nice", &["-n"]),
-    ("timeout", &["-s", "-k"]),
-    ("stdbuf", &["-i", "-o", "-e"]),
-    ("ionice", &["-c", "-n", "-p"]),
-    ("time", &[]),
-    ("command", &[]),
-    ("builtin", &[]),
-    ("exec", &["-a", "-c"]),
-    ("xargs", &["-n", "-I", "-i", "-P", "-s", "-d", "-a", "-E"]),
+/// following argument, and a count of leading positional arguments
+/// the wrapper takes before the inner command. A wrapper not in this
+/// table stops the unwrap — the classifier cannot see through it,
+/// which is a `Confirm`.
+///
+/// The third field is what `timeout 30 rm -rf /` needs: `30` is a
+/// duration, not the binary. Without it, `unwrap` reports
+/// `program = "30"`, `30` is not in `DESTRUCTIVE`, and the
+/// destructive half runs without risk classification. Same class as
+/// the env-assignment bypass fixed just above.
+const WRAPPERS: &[(&str, &[&str], usize)] = &[
+    ("sudo", &["-u", "-g", "-p", "-h", "-r", "-t"], 0),
+    ("doas", &["-u"], 0),
+    ("env", &["-u", "-i", "-C", "-S"], 0),
+    ("nice", &["-n"], 0),
+    // `timeout [OPTION] DURATION COMMAND` — one positional (the
+    // duration) precedes the inner command.
+    ("timeout", &["-s", "-k"], 1),
+    ("stdbuf", &["-i", "-o", "-e"], 0),
+    ("ionice", &["-c", "-n", "-p"], 0),
+    ("time", &[], 0),
+    ("command", &[], 0),
+    ("builtin", &[], 0),
+    ("exec", &["-a", "-c"], 0),
+    (
+        "xargs",
+        &["-n", "-I", "-i", "-P", "-s", "-d", "-a", "-E"],
+        0,
+    ),
 ];
 
 /// Commands that delete, and whose operand paths must be checked.
@@ -259,7 +273,8 @@ fn unwrap(tokens: &[String]) -> (Option<String>, Vec<String>, bool) {
             return (None, Vec::new(), true);
         }
         let tok = unquote(&tokens[i]);
-        let Some((_, flag_args)) = WRAPPERS.iter().find(|(w, _)| *w == tok) else {
+        let Some((_, flag_args, positional_skip)) = WRAPPERS.iter().find(|(w, _, _)| *w == tok)
+        else {
             // Not a wrapper: this is the program.
             return (Some(tok), tokens[i + 1..].to_vec(), true);
         };
@@ -286,6 +301,20 @@ fn unwrap(tokens: &[String]) -> (Option<String>, Vec<String>, bool) {
             } else {
                 break;
             }
+        }
+        // Skip leading positional arguments the wrapper takes before
+        // the command. `timeout 30 rm -rf /` has `30` as a duration,
+        // not the program.
+        let mut skipped = 0usize;
+        while skipped < *positional_skip && i < tokens.len() {
+            let a = unquote(&tokens[i]);
+            // A flag here means the parser has drifted; bail out to
+            // avoid skipping the command itself.
+            if a.starts_with('-') {
+                break;
+            }
+            i += 1;
+            skipped += 1;
         }
         // For `env -S`, the rest of the line is a single quoted
         // command; we cannot see through it.
@@ -855,6 +884,28 @@ mod tests {
             "env FOO=bar bash -c must Confirm; got {:?}",
             a.level,
         );
+    }
+
+    /// `timeout 30 rm -rf /Users/dev` — `30` is a duration, not the
+    /// binary. Pre-fix `unwrap` reported `program = "30"`, which is
+    /// neither in `DESTRUCTIVE` nor device-capable, so the risk
+    /// check was bypassed. Same class as the env-assignment bypass
+    /// just above.
+    #[test]
+    fn timeout_duration_positional_is_skipped() {
+        for cmd in [
+            "timeout 30 rm -rf /Users/dev",
+            "timeout 5 rm -rf /Users/dev",
+            "timeout -s KILL 30 rm -rf /Users/dev",
+            "timeout -k 5 30 rm -rf /Users/dev",
+        ] {
+            let a = assess(cmd, &ctx());
+            assert!(
+                a.level.is_absolute_deny(),
+                "{cmd:?} must deny; got {:?}",
+                a.level,
+            );
+        }
     }
 }
 
