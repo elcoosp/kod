@@ -223,14 +223,36 @@ pub async fn run_config_migrate(dry_run: bool) -> Result<()> {
         return Ok(());
     }
 
-    let ts = std::time::SystemTime::now()
+    // Unique suffix per writer: pid + a process-local counter + a
+    // nanosecond clock, inlined as three `{}` placeholders — the
+    // shape every other temp-then-rename site in the workspace uses.
+    // Pre-fix both names used a bare seconds-precision timestamp:
+    // two `kod config migrate` invocations in the same second
+    // produced the same backup path (one overwrote the other's
+    // pre-migration copy) and the same `.tmp` path (the first
+    // `rename` succeeded; the second returned ENOENT and lost its
+    // write entirely). The source lint in
+    // `kod-types/tests/it/source_lints.rs` now flags a `.tmp` name
+    // with fewer than two placeholders as a regression of this
+    // class.
+    let now_nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let backup = dir.join(format!("config.toml.bak-{ts}"));
+    let backup = dir.join(format!(
+        "config.toml.bak-{}.{}.{}",
+        std::process::id(),
+        next_temp_seq(),
+        now_nanos,
+    ));
     std::fs::write(&backup, original.as_bytes()).map_err(KodError::Io)?;
 
-    let tmp = dir.join(format!("config.toml.migrate-{ts}.tmp"));
+    let tmp = dir.join(format!(
+        "config.toml.migrate-{}.{}.{}.tmp",
+        std::process::id(),
+        next_temp_seq(),
+        now_nanos,
+    ));
     std::fs::write(&tmp, migrated.as_bytes()).map_err(KodError::Io)?;
     std::fs::rename(&tmp, &path).map_err(KodError::Io)?;
 
@@ -307,11 +329,20 @@ pub async fn run_config_init_from(name: &str) -> Result<()> {
 
     // Backup if a config already exists.
     if path.exists() {
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let backup = dir.join(format!("config.toml.bak-{ts}"));
+        // Same shape as `run_config_migrate`'s backup: pid +
+        // process-local counter + nanosecond clock, inlined as three
+        // placeholders. Two concurrent `config init-from` invocations
+        // in the same second used to share one backup path; the first
+        // writer lost its copy.
+        let backup = dir.join(format!(
+            "config.toml.bak-{}.{}.{}",
+            std::process::id(),
+            next_temp_seq(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
         std::fs::copy(&path, &backup).map_err(KodError::Io)?;
         println!("Backed up {} -> {}", path.display(), backup.display());
     }
@@ -388,4 +419,16 @@ pub async fn run_config_export(dest: std::path::PathBuf, force: bool) -> Result<
         dest.display()
     );
     Ok(())
+}
+
+/// Monotonic process-local counter used to break ties between
+/// concurrent temp-file / backup writers in the same process. The
+/// nanosecond clock alone is not sufficient on macOS (microsecond
+/// resolution) — two threads can read the same value. Paired with
+/// `std::process::id()` and the clock, this guarantees uniqueness
+/// for every writer in the process.
+fn next_temp_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }

@@ -107,7 +107,26 @@ fn no_fixed_temp_filenames_in_production() {
                 continue;
             }
             for lit in string_literals(&line) {
-                if lit.contains(".tmp") && !lit.contains('{') {
+                if !lit.contains(".tmp") {
+                    continue;
+                }
+                // Two shapes are broken:
+                //
+                // * A literal `.tmp` with no placeholder at all — the
+                //   fixed filename that raced two writers on the same
+                //   inode (the shape this lint was written to catch).
+                // * A `.tmp` name with only **one** placeholder. The
+                //   single placeholder in every such site has been a
+                //   wall-clock second (`{ts}`), which is not unique
+                //   across concurrent writers in the same second: two
+                //   `kod config migrate` invocations both write
+                //   `config.toml.migrate-{ts}.tmp`, the first `rename`
+                //   succeeds, and the second returns ENOENT. The fix
+                //   everywhere else in the workspace is pid + counter
+                //   + nanosecond clock, which is two or more
+                //   placeholders.
+                let braces = lit.matches('{').count();
+                if braces < 2 {
                     bad.push((path.clone(), lineno, lit));
                 }
             }
