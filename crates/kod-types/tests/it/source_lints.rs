@@ -237,6 +237,47 @@ fn as_u16_on_length_like_values_budget_is_not_exceeded() {
 }
 
 // ---------------------------------------------------------------------------
+// Class: seconds-only backup filename
+// ---------------------------------------------------------------------------
+//
+// Every backup name in the workspace carries a `bak-` marker with a
+// suffix that is meant to be unique per writer. A bare seconds
+// timestamp is not: two invocations in the same second produce the
+// same path, so the first writer's backup is overwritten by the
+// second's. The fix everywhere is pid + process-local counter +
+// nanosecond clock, which is three placeholders in the format
+// string. This lint flags a `bak-` literal with fewer than two.
+
+#[test]
+fn no_seconds_only_backup_filenames_in_production() {
+    let mut bad: Vec<(PathBuf, usize, String)> = Vec::new();
+    for path in all_production_sources() {
+        for (lineno, line) in production_lines(&path) {
+            if is_comment(&line) {
+                continue;
+            }
+            for lit in string_literals(&line) {
+                if !lit.contains("bak-") {
+                    continue;
+                }
+                if lit.matches('{').count() < 2 {
+                    bad.push((path.clone(), lineno, lit));
+                }
+            }
+        }
+    }
+    if !bad.is_empty() {
+        report(
+            &bad,
+            "seconds-only backup filename(s) in production — a bare \
+             timestamp is not unique across concurrent writers, so the \
+             first writer's backup is overwritten. Use pid + counter + \
+             nanosecond clock (three placeholders):",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Class: subtraction on `.len()` without a saturating shape
 // ---------------------------------------------------------------------------
 //

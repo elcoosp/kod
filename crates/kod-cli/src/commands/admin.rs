@@ -74,11 +74,22 @@ pub async fn run_init(force: bool) -> Result<()> {
     // user who ran it by mistake can restore their settings.
     if !path.exists() || force {
         if path.exists() {
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let backup = config_dir.join(format!("config.toml.bak-{ts}"));
+            // pid + process-local counter + nanosecond clock, inlined
+            // as three placeholders — the workspace convention. A
+            // bare seconds timestamp let two `kod init --force`
+            // invocations in the same second share one backup path,
+            // so the first one's backup of the *pre-force* config
+            // was overwritten by the second's. Same class as the
+            // `.tmp` names the source lint flags.
+            let backup = config_dir.join(format!(
+                "config.toml.bak-{}.{}.{}",
+                std::process::id(),
+                next_temp_seq(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0),
+            ));
             if let Err(e) = std::fs::copy(&path, &backup) {
                 eprintln!(
                     "Warning: could not back up {} to {}: {}",
@@ -1363,4 +1374,15 @@ async fn read_bounded_error_body(mut resp: reqwest::Response) -> String {
         }
     }
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Monotonic process-local counter used to break ties between
+/// concurrent backup-file writers in the same process. Same shape as
+/// the counter in `config.rs`; kept local because each `commands/*`
+/// module owns its own so a `use` change in one does not affect the
+/// others.
+fn next_temp_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }
