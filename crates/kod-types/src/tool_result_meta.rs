@@ -53,9 +53,25 @@ pub struct TruncationMeta {
 }
 
 impl TruncationMeta {
-    /// Bytes actually returned.
+    /// Bytes actually returned to the model: the smaller of the cap
+    /// (`limit_bytes`) and the original size. `limit_bytes` is
+    /// documented as "the cap that forced the truncation", so a
+    /// truncated result carries exactly `limit_bytes` bytes.
+    ///
+    /// The pre-fix shape returned `original_bytes - limit_bytes`,
+    /// which is the *dropped* count — the doc-comment on this method
+    /// said "bytes actually returned", so callers reading the doc got
+    /// the wrong number, and the two truncation-note arms that said
+    /// "showing last N of M bytes" (Head, Middle) rendered N as the
+    /// dropped count instead of the kept one.
     pub fn returned_bytes(&self) -> usize {
-        self.original_bytes.saturating_sub(self.limit_bytes)
+        self.limit_bytes.min(self.original_bytes)
+    }
+
+    /// Bytes dropped from the original. `original_bytes -
+    /// returned_bytes()`.
+    pub fn dropped_bytes(&self) -> usize {
+        self.original_bytes.saturating_sub(self.returned_bytes())
     }
 
     /// True when there is more to read (`next_offset` is before the
@@ -74,16 +90,20 @@ pub fn truncation_note(meta: &TruncationMeta) -> String {
         String::new()
     };
     match meta.direction {
+        // "truncated N of M bytes" — N is the *dropped* count; the
+        // reader is being told how much was cut.
         TruncationDirection::Tail => format!(
             "… [truncated {} of {} bytes{more}]",
-            meta.returned_bytes(),
+            meta.dropped_bytes(),
             meta.original_bytes,
         ),
+        // "showing last N of M bytes" — N is the *kept* count.
         TruncationDirection::Head => format!(
             "… [head truncated; showing last {} of {} bytes{more}]",
             meta.returned_bytes(),
             meta.original_bytes,
         ),
+        // "middle window of N bytes from an M byte body" — N is kept.
         TruncationDirection::Middle => format!(
             "… [middle window of {} bytes from a {} byte body{more}]",
             meta.returned_bytes(),
@@ -166,17 +186,60 @@ mod tests {
     }
 
     #[test]
-    fn a_tail_truncation_reports_returned_bytes() {
+    fn a_tail_truncation_reports_the_kept_and_dropped_counts() {
         let m = TruncationMeta {
             direction: TruncationDirection::Tail,
-            next_offset: 1000,
+            next_offset: 4000,
             original_bytes: 5000,
             limit_bytes: 4000,
             artifact_id: None,
         };
-        // 5000 - 4000 = 1000 returned; next offset is 1000.
-        assert_eq!(m.returned_bytes(), 1000);
+        // 5000-byte body, 4000-byte cap: 4000 kept (offset 0..4000),
+        // 1000 dropped (the tail). `next_offset` is where the
+        // continuation would read from — the first dropped byte.
+        assert_eq!(m.returned_bytes(), 4000);
+        assert_eq!(m.dropped_bytes(), 1000);
         assert!(m.has_continuation());
+    }
+
+    /// The note's arms must use the right count: Tail says
+    /// "truncated N" where N is the *dropped* count; Head / Middle
+    /// say "showing N" where N is the *kept* count. A regression
+    /// that used one `returned_bytes()` for all three (the pre-fix
+    /// shape, before the doc said which was which) renders Head as
+    /// "showing last 1000 of 5000 bytes" for a 4000-byte-kept
+    /// result.
+    #[test]
+    fn each_direction_reports_the_right_count_in_its_note() {
+        let tail = TruncationMeta {
+            direction: TruncationDirection::Tail,
+            next_offset: 4000,
+            original_bytes: 5000,
+            limit_bytes: 4000,
+            artifact_id: None,
+        };
+        let t = truncation_note(&tail);
+        assert!(t.contains("truncated 1000 of 5000"), "tail: {t}");
+
+        let head = TruncationMeta {
+            direction: TruncationDirection::Head,
+            next_offset: 0,
+            original_bytes: 5000,
+            limit_bytes: 4000,
+            artifact_id: None,
+        };
+        let h = truncation_note(&head);
+        assert!(h.contains("showing last 4000 of 5000"), "head: {h}");
+
+        let mid = TruncationMeta {
+            direction: TruncationDirection::Middle,
+            next_offset: 0,
+            original_bytes: 5000,
+            limit_bytes: 4000,
+            artifact_id: None,
+        };
+        let m = truncation_note(&mid);
+        assert!(m.contains("middle window of 4000 bytes"), "mid: {m}");
     }
 
     #[test]
@@ -185,10 +248,13 @@ mod tests {
             direction: TruncationDirection::Tail,
             next_offset: 5000,
             original_bytes: 5000,
-            limit_bytes: 0,
+            limit_bytes: 5000,
             artifact_id: None,
         };
         assert!(!m.has_continuation());
+        // The whole body was kept, so nothing was dropped.
+        assert_eq!(m.returned_bytes(), 5000);
+        assert_eq!(m.dropped_bytes(), 0);
     }
 
     #[test]
