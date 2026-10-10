@@ -274,6 +274,15 @@ fn unwrap(tokens: &[String]) -> (Option<String>, Vec<String>, bool) {
                 if consumes {
                     i += 1;
                 }
+            } else if looks_like_env_assignment(&a) {
+                // `env FOO=bar rm -rf /` — `FOO=bar` is a positional
+                // to `env`, not the program. Pre-fix the classifier
+                // reported `program = "FOO=bar"` (not in DESTRUCTIVE,
+                // not device-capable), so the wrapper bypassed the
+                // risk check entirely. A `NAME=value` token can only
+                // be a wrapper argument, never an executable name in
+                // the tokenizer's world.
+                i += 1;
             } else {
                 break;
             }
@@ -286,6 +295,25 @@ fn unwrap(tokens: &[String]) -> (Option<String>, Vec<String>, bool) {
             }
         }
     }
+}
+
+/// True for a token that looks like a `NAME=value` env assignment.
+/// Same shape as `kod-config::policy::binary_candidates`'s check —
+/// the two parsers keep their tables in sync by hand (kod-config does
+/// not depend on kod-risk).
+fn looks_like_env_assignment(t: &str) -> bool {
+    if t.starts_with('-') || t.starts_with('/') {
+        return false;
+    }
+    let Some((name, _)) = t.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Split a command on pipes and semicolons into independent segments.
@@ -790,6 +818,41 @@ mod tests {
         assert!(
             a.level >= RiskLevel::Confirm,
             "sudo bash -c must Confirm; got {:?}",
+            a.level,
+        );
+    }
+
+    /// `env FOO=bar rm -rf /` — `FOO=bar` is a positional argument
+    /// to `env`, not the program. Pre-fix `unwrap` reported
+    /// `program = "FOO=bar"`, which is neither in `DESTRUCTIVE` nor
+    /// device-capable, so the destructive half ran without any risk
+    /// classification. Same class as the `bash -c` bypass the
+    /// previous commit fixed: the wrapper parser must walk past
+    /// tokens that are *not* the program.
+    #[test]
+    fn env_assignment_is_skipped_not_treated_as_a_program() {
+        for cmd in [
+            "env FOO=bar rm -rf /Users/dev",
+            "env A=1 B=2 rm -rf /Users/dev",
+            "env LC_ALL=C rm -rf /Users/dev",
+        ] {
+            let a = assess(cmd, &ctx());
+            assert!(
+                a.level.is_absolute_deny(),
+                "{cmd:?} must deny; got {:?}",
+                a.level,
+            );
+        }
+    }
+
+    /// `env FOO=bar bash -c 'rm -rf /'` — same skip, then the shell
+    /// escalation fires on the unwrapped `bash`.
+    #[test]
+    fn env_assignment_then_bash_c_escalates() {
+        let a = assess("env FOO=bar bash -c 'rm -rf /'", &ctx());
+        assert!(
+            a.level >= RiskLevel::Confirm,
+            "env FOO=bar bash -c must Confirm; got {:?}",
             a.level,
         );
     }
