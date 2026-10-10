@@ -1199,6 +1199,7 @@ impl SwarmRunner {
                 let out = chunk_tx.clone();
                 let hub = hub.clone();
                 let swarm = swarm.clone();
+                let worktree = handles[i].worktree.clone();
                 let dispatch_keys = dispatch_keys.clone();
                 // H-D1: register this dispatch key before the task
                 // starts so the watchdog can find it. The task
@@ -1282,6 +1283,34 @@ impl SwarmRunner {
                         let mut attempt: u32 = 0;
                         loop {
                             attempt += 1;
+                            // Re-apply the per-dispatch engine state at
+                            // the top of every attempt. `forget_transcript`
+                            // (called at the end of the previous attempt)
+                            // wipes history, gauges, working-dir override,
+                            // write-set claim, and blackboard-viewer
+                            // subscription along with everything else; the
+                            // retry must re-establish the ones the runner
+                            // owns before the model runs, or the retry
+                            // runs without its worktree root, without its
+                            // write claim, and without the team's
+                            // blackboard.
+                            if let Some(wt) = &worktree {
+                                let _ = engine
+                                    .set_transcript_working_dir(
+                                        &transcript_key,
+                                        Some(wt.path.clone()),
+                                    )
+                                    .await;
+                            }
+                            if !subtask.expected_writes.is_empty() {
+                                let _ = engine
+                                    .set_transcript_write_globs(
+                                        &transcript_key,
+                                        Some(subtask.expected_writes.clone()),
+                                    )
+                                    .await;
+                                let _ = engine.set_blackboard_viewer(&transcript_key, true).await;
+                            }
                             let _ = out
                                 .send(SwarmEvent::AgentStarted {
                                     id: id.clone(),
@@ -1415,8 +1444,11 @@ impl SwarmRunner {
                             // before any retry reuses the key.
                             drop(tx);
                             let _ = pump.await;
+                            // `forget_transcript` clears the blackboard
+                            // subscription along with the rest of the
+                            // per-transcript state. The retry re-applies
+                            // it at the top of the next attempt.
                             engine.forget_transcript(&transcript_key).await;
-                            engine.set_blackboard_viewer(&transcript_key, false).await;
                             // Clear only cancels that predate this attempt. A
                             // coordinator cancel that landed *during* the
                             // attempt bumped the epoch, and this clear must

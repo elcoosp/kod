@@ -810,3 +810,104 @@ async fn swarm_run_leaves_no_per_transcript_state_behind() {
          forget_transcript)",
     );
 }
+
+/// Contract test for the pair of operations the retry loop relies on:
+/// `forget_transcript` clears *every* transcript-scoped map (including
+/// the per-dispatch subset — write-set claim, working-dir override,
+/// blackboard-viewer subscription), and re-applying that per-dispatch
+/// subset after a `forget_transcript` restores the exact state the
+/// retry needs.
+///
+/// Pre-fix, `forget_transcript` cleared only three maps, so a retry
+/// silently lost its `blackboard_viewer` subscription (and any other
+/// per-transcript entry the run had populated). The fix has two
+/// halves — make `forget_transcript` exhaustive, and re-apply the
+/// per-dispatch subset at the top of every retry attempt. This test
+/// pins both halves.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn forget_then_reapply_restores_per_dispatch_state() {
+    struct NullProvider;
+
+    #[async_trait]
+    impl LlmProvider for NullProvider {
+        fn name(&self) -> &str {
+            "null"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec![])
+        }
+        async fn generate(&self, _: &str, _: &GenerationOptions) -> kod_error::Result<String> {
+            Ok("ok".into())
+        }
+        async fn generate_with_tools(
+            &self,
+            _: &str,
+            _: &[ToolDefinition],
+            _: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::Text {
+                content: "ok".into(),
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _: &str,
+            _: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+    }
+
+    let provider: Arc<dyn LlmProvider> = Arc::new(NullProvider);
+    let (engine, _tmp) = build_engine(provider).await;
+
+    let key = "swarm:test-dispatch";
+    let globs = vec!["out/x.txt".to_string()];
+
+    // Pre-state: nothing set.
+    assert!(engine.write_globs_for(key).await.is_none());
+    assert!(engine.only_write_globs_for_tests().await.is_none());
+    assert_eq!(engine.blackboard_viewer_count_for_tests().await, 0);
+
+    // Apply per-dispatch state (what the runner does at dispatch time).
+    engine
+        .set_transcript_write_globs(key, Some(globs.clone()))
+        .await;
+    engine.set_blackboard_viewer(key, true).await;
+    assert_eq!(engine.write_globs_for(key).await, Some(globs.clone()));
+    assert_eq!(engine.blackboard_viewer_count_for_tests().await, 1);
+
+    // Forget — what the retry loop does between attempts.
+    engine.forget_transcript(key).await;
+
+    // Every transcript-scoped map is empty. This is the exhaustive
+    // half of the fix: pre-fix `blackboard_viewer` survived here.
+    assert!(engine.write_globs_for(key).await.is_none());
+    assert_eq!(
+        engine.blackboard_viewer_count_for_tests().await,
+        0,
+        "forget_transcript must clear the blackboard-viewer subscription",
+    );
+    assert_eq!(
+        engine.transcript_scoped_key_count_for_tests().await,
+        0,
+        "forget_transcript must clear every transcript-scoped map",
+    );
+
+    // Re-apply — what the retry loop does at the top of each attempt.
+    engine
+        .set_transcript_write_globs(key, Some(globs.clone()))
+        .await;
+    engine.set_blackboard_viewer(key, true).await;
+
+    // State is back, byte-for-byte.
+    assert_eq!(engine.write_globs_for(key).await, Some(globs));
+    assert_eq!(engine.blackboard_viewer_count_for_tests().await, 1);
+
+    // Clean up so the run's own end-of-run invariant (nothing left
+    // behind) is not affected by this test's scratch state.
+    engine.forget_transcript(key).await;
+    assert_eq!(engine.transcript_scoped_key_count_for_tests().await, 0);
+}

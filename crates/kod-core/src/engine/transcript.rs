@@ -720,3 +720,31 @@ impl KodEngine {
         n
     }
 }
+
+impl KodEngine {
+    /// Test-only: the single transcript key with a write-glob claim,
+    /// and the globs, when exactly one entry exists. `None` otherwise
+    /// (zero or more than one). Used by tests that drive one agent
+    /// and want to observe the engine's write-set state without
+    /// knowing the dispatch key.
+    pub async fn only_write_globs_for_tests(&self) -> Option<(String, Vec<String>)> {
+        let guard = self.transcript_write_globs.read().await;
+        if guard.len() != 1 {
+            return None;
+        }
+        let (k, v) = guard.iter().next()?;
+        let globs = v.clone()?;
+        Some((k.clone(), globs))
+    }
+
+    /// Test-only: the single transcript key with a working-dir
+    /// override, when exactly one entry exists. `None` otherwise.
+    pub async fn only_working_dir_for_tests(&self) -> Option<(String, PathBuf)> {
+        let guard = self.transcript_working_dirs.read().await;
+        if guard.len() != 1 {
+            return None;
+        }
+        let (k, v) = guard.iter().next()?;
+        Some((k.clone(), v.clone()))
+    }
+}
