@@ -847,11 +847,24 @@ impl SwarmRunner {
             // never saw is not this agent's business.
             {
                 let engine = self.engine.clone();
-                let bus = file_bus.clone();
                 let service = file_service.clone();
                 let observer = dispatch_key.clone();
+                // Subscribe *before* spawning and move only the
+                // receiver into the task. The task must not hold the
+                // bus: a broadcast sender lives as long as any clone
+                // exists, and a subscriber that also held the sender
+                // would keep its own `recv()` from ever seeing
+                // `Closed`. On cancellation (TUI Esc, serve
+                // disconnect) the outer future is dropped while the
+                // spawned subscriber keeps running, so a subscriber
+                // that holds the sender leaks for the life of the
+                // process — one per dispatch per cancelled run. With
+                // only the receiver inside, dropping the last sender
+                // (the engine's slot, cleared by `SwarmRunGuard`)
+                // closes the channel and the loop exits on the next
+                // poll.
+                let mut rx = file_bus.subscribe();
                 file_subscribers.push(tokio::spawn(async move {
-                    let mut rx = bus.subscribe();
                     while let Ok(ev) = rx.recv().await {
                         let kod_swarm::file_touch::SwarmBusEvent::FileTouch(t) = ev;
                         if t.agent_id == observer {
