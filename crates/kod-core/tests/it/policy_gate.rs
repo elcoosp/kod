@@ -289,3 +289,119 @@ async fn deny_always_registers_session_rule() {
 
     engine.shutdown().await.unwrap();
 }
+
+/// Regression: an approval wait must observe the transcript's cancel
+/// flag. Pre-fix, `run_tool_calls` awaited the oneshot with a bare
+/// `tokio::time::timeout(AWAIT_APPROVAL_SECS, rx)` — Esc / `kod serve
+/// cancel` while an approval was pending did nothing until the full
+/// 120 s window elapsed, then the loop's check on the way out finally
+/// noticed the cancel. The user saw a frozen dialog for two minutes
+/// after already having asked to stop.
+///
+/// This test starts a `process_streaming` call whose write_file is
+/// held at the approval gate, waits for the approval marker to reach
+/// the chunk channel, calls `request_cancel`, and then asserts the
+/// call returns well inside `AWAIT_APPROVAL_SECS`. A pre-fix build
+/// hangs here until the 120 s timeout fires.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancel_while_pending_approval_does_not_wait_the_timeout() {
+    use kod_core::engine::parse_tool_approval_batch;
+    use tokio::sync::mpsc;
+
+    let temp = TempDir::new().unwrap();
+    let engine = Arc::new(engine_in(temp.path()));
+    let provider = Arc::new(ScriptedProvider::new(vec![write_call("out.txt")]));
+    install_test_provider(&engine, provider).await;
+
+    let effective = Policy {
+        preset: Preset::Standard,
+        ..Policy::default()
+    };
+    let pe = PolicyEngine::from_effective_for_tests(effective);
+    engine.set_policy(Arc::new(pe)).await;
+    engine.start().await.unwrap();
+
+    let (tx, mut rx) = mpsc::channel::<String>(64);
+    let engine_for_task = Arc::clone(&engine);
+    let run = tokio::spawn(async move {
+        engine_for_task
+            .process_streaming("write out.txt", &tx)
+            .await
+    });
+
+    // Wait for the approval marker. The engine emits a single batch
+    // marker before parking on the per-item oneshot; seeing it means
+    // the await has started.
+    let mut saw_approval = false;
+    let wait_for_marker = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while let Some(chunk) = rx.recv().await {
+            if parse_tool_approval_batch(&chunk).is_some() {
+                saw_approval = true;
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        wait_for_marker.is_ok() && saw_approval,
+        "the engine must emit an approval batch marker for a Standard-preset write",
+    );
+
+    // Cancel. Pre-fix, the parked `timeout(rx)` ignores this.
+    engine.request_cancel();
+
+    // The call must return promptly. `AWAIT_APPROVAL_SECS` is 120 s;
+    // we budget 10 s, which is generous for the 100 ms poll interval
+    // plus scheduler noise.
+    let finished = tokio::time::timeout(std::time::Duration::from_secs(10), run).await;
+    assert!(
+        finished.is_ok(),
+        "process_streaming did not return within 10 s of request_cancel — \
+         the approval wait ignored the cancel flag",
+    );
+    // `run` is a `JoinHandle<Result<TaskResponse>>`, so unwrap the
+    // outer timeout and the join. The result itself is *expected to
+    // be an error* — the approval wait observes the cancel and
+    // returns `DecisionWait::Cancelled`, which the approval flow
+    // turns into a "cancelled" decision; the round loop then sees
+    // the still-set cancel flag on its next iteration and returns
+    // `InvalidState("cancelled by user")`. That is the same shape
+    // every other cancel path produces (see
+    // `tool_loop::test_cancel_stops_process`), so callers that
+    // already handle the cancel error keep working.
+    let joined = finished.expect("process_streaming returned inside the cancel budget");
+    let stream_result = joined.expect("spawned process_streaming task must not panic");
+    let err = match stream_result {
+        Ok(resp) => {
+            // A `Standard`-preset write_file should not have been
+            // allowed through: if the call somehow returned Ok, the
+            // cancel did not take effect and the approval must have
+            // been answered.
+            panic!(
+                "a cancelled approval must not resolve Ok; got {:?}",
+                resp.tool_calls
+            );
+        }
+        Err(e) => e,
+    };
+    assert!(
+        matches!(err, kod_error::KodError::InvalidState(_)),
+        "expected InvalidState, got {err:?}",
+    );
+    assert!(
+        err.to_string().contains("cancel"),
+        "error must name the cancel: {err}",
+    );
+
+    // The critical assertion: the write was never allowed through.
+    // A pre-fix build would have waited out the full 120s
+    // `AWAIT_APPROVAL_SECS` — the outer 10s timeout above already
+    // fails on that, but this pins the side-effect-free outcome
+    // independently.
+    assert!(
+        !temp.path().join("out.txt").exists(),
+        "a cancelled approval must not have allowed the write",
+    );
+
+    engine.shutdown().await.unwrap();
+}

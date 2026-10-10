@@ -452,6 +452,7 @@ impl KodEngine {
         &self,
         calls: &[ToolCall],
         holder: &str,
+        cancel_key: &str,
         chunk_tx: Option<&tokio::sync::mpsc::Sender<String>>,
     ) -> std::collections::HashMap<usize, String> {
         let mut answers: std::collections::HashMap<usize, String> =
@@ -498,7 +499,9 @@ impl KodEngine {
             let (otx, orx) = tokio::sync::oneshot::channel();
             self.pending_questions.write().await.insert(id, otx);
             let _ = tx.send(question_marker(id, &json)).await;
-            let answer = self.await_decision(holder, orx, AWAIT_APPROVAL_SECS).await;
+            let answer = self
+                .await_decision(cancel_key, orx, AWAIT_APPROVAL_SECS)
+                .await;
             // F2c-8: remove the oneshot sender once the wait resolves.
             // Pre-fix a timed-out (unanswered) question left its entry
             // in `pending_questions` forever — one leaked sender per
@@ -541,6 +544,7 @@ impl KodEngine {
         &self,
         calls: &[ToolCall],
         holder: &str,
+        cancel_key: &str,
         chunk_tx: Option<&tokio::sync::mpsc::Sender<String>>,
         snapshot_ids: &[Option<String>],
         mut need_approval: std::collections::HashSet<usize>,
@@ -686,7 +690,9 @@ impl KodEngine {
             // flag the round loop uses closes that gap; the sleep step
             // is short enough that the user-visible latency is
             // dominated by the poll interval, not the timeout.
-            let decision = self.await_decision(holder, orx, AWAIT_APPROVAL_SECS).await;
+            let decision = self
+                .await_decision(cancel_key, orx, AWAIT_APPROVAL_SECS)
+                .await;
             // F2c-8: evict the oneshot sender once the wait resolves —
             // an unanswered approval otherwise leaked its map entry.
             self.pending_approvals.write().await.remove(&id);
@@ -1038,6 +1044,7 @@ impl KodEngine {
             .run_approval_flow(
                 calls,
                 effective_holder,
+                holder,
                 chunk_tx,
                 &snapshot_ids,
                 need_approval,
@@ -1048,7 +1055,7 @@ impl KodEngine {
 
         // ask_user interception (S10 phase 6).
         let mut answers = self
-            .answer_ask_user_calls(calls, effective_holder, chunk_tx)
+            .answer_ask_user_calls(calls, effective_holder, holder, chunk_tx)
             .await;
 
         // Tier 2.3 — apply any argument edits captured by the
