@@ -424,12 +424,79 @@ impl KodEngine {
         }
     }
 
+    /// Drop every piece of state the engine holds for `key`.
+    ///
+    /// Called by the swarm runner before a retry reuses a transcript
+    /// key, and by the end-of-run cleanup for every dispatch. The
+    /// engine holds a *lot* of per-transcript maps — history,
+    /// gauges, tool-loop guards, todo trackers, plans, prewalks,
+    /// write globs, working dir overrides, blackboard-viewer
+    /// subscriptions, native-compaction blocks, image frames, and
+    /// more. If any one of them is not cleared here, a long-lived
+    /// daemon leaks one entry per dispatch per run.
+    ///
+    /// The one field this does *not* clear is `cancels`. Its
+    /// entries carry a fire epoch the retry path uses to distinguish
+    /// "a cancel that predates this attempt" from "a cancel that
+    /// arrived during it"; clearing it here would erase a
+    /// coordinator stop that landed mid-attempt and let a retry run
+    /// on an agent the user already stopped. Callers that need to
+    /// forget a cancel call [`Self::clear_cancel_for`] explicitly.
     pub async fn forget_transcript(&self, key: &str) {
+        // Transcript bodies and their rendered form.
         self.history.write().await.remove(key);
         self.last_prompt.write().await.remove(key);
-        // The transcript this gauge anchored on is gone; drop the
-        // anchor with it.
+
+        // Context accounting: the gauge anchored on a transcript that
+        // no longer exists.
         self.context_gauges.write().await.remove(key);
+        self.observed_usage.write().await.remove(key);
+
+        // Compaction: the summary that was going to be written, the
+        // in-flight marker, the provider-native block, the frame
+        // list.
+        self.pending_summaries.write().await.remove(key);
+        self.summaries_in_flight.write().await.remove(key);
+        self.native_compaction_blocks.write().await.remove(key);
+        self.image_frames.write().await.remove(key);
+
+        // Memory: the retention cursor and the injection-TTL map.
+        self.retention_cursors.write().await.remove(key);
+        self.injected_memory_at.write().await.remove(key);
+        self.decisions_cursors.write().await.remove(key);
+
+        // Prompt-building: prewarmed flag, tool surface fingerprint,
+        // Jev filter state, fidelity cache, current request text.
+        self.prewarmed.write().await.remove(key);
+        self.tool_surface_fingerprint.write().await.remove(key);
+        self.tool_filter_states.write().await.remove(key);
+        self.fidelity_cache.write().await.remove(key);
+        self.current_requests.write().await.remove(key);
+
+        // Round-loop guards and nudges.
+        self.tool_loop_guards.write().await.remove(key);
+        self.todo_trackers.write().await.remove(key);
+
+        // Plan mode, plans, and their reference paths.
+        self.plans.write().await.remove(key);
+        self.plan_reference_paths.write().await.remove(key);
+        self.plan_mode.write().await.remove(key);
+        self.prewalks.write().await.remove(key);
+
+        // Durable decisions for the transcript.
+        self.decision_logs.write().await.remove(key);
+
+        // Swarm dispatch state: per-transcript working-dir override,
+        // write-set claim, blackboard subscription.
+        self.transcript_working_dirs.write().await.remove(key);
+        self.transcript_write_globs.write().await.remove(key);
+        self.blackboard_viewers.write().await.remove(key);
+
+        // Pending soft interrupts queued for this transcript. A
+        // dispatch that failed mid-turn may have left a swarm
+        // conflict notice or a followup in the queue; the next
+        // attempt must not see it.
+        self.steers.write().await.remove(key);
     }
 
     /// Read-only snapshot of the stored transcript for `key`.
@@ -608,5 +675,48 @@ impl KodEngine {
             "tail": tail,
             "truncated": total > max_chars,
         })
+    }
+}
+
+impl KodEngine {
+    /// Test-only: total number of entries across every
+    /// transcript-scoped map on the engine. A non-zero count *for a
+    /// key that should have been forgotten* is the signal that a
+    /// leak exists; tests assert the total is zero after a run.
+    ///
+    /// Reads every map `forget_transcript` writes to (plus
+    /// `blackboard_viewers`, which is a set, not a map). Kept in sync
+    /// with `forget_transcript` by construction — the pair is the
+    /// point of the invariant.
+    pub async fn transcript_scoped_key_count_for_tests(&self) -> usize {
+        let mut n = 0usize;
+        n += self.history.read().await.len();
+        n += self.last_prompt.read().await.len();
+        n += self.context_gauges.read().await.len();
+        n += self.observed_usage.read().await.len();
+        n += self.pending_summaries.read().await.len();
+        n += self.summaries_in_flight.read().await.len();
+        n += self.native_compaction_blocks.read().await.len();
+        n += self.image_frames.read().await.len();
+        n += self.retention_cursors.read().await.len();
+        n += self.injected_memory_at.read().await.len();
+        n += self.decisions_cursors.read().await.len();
+        n += self.prewarmed.read().await.len();
+        n += self.tool_surface_fingerprint.read().await.len();
+        n += self.tool_filter_states.read().await.len();
+        n += self.fidelity_cache.read().await.len();
+        n += self.current_requests.read().await.len();
+        n += self.tool_loop_guards.read().await.len();
+        n += self.todo_trackers.read().await.len();
+        n += self.plans.read().await.len();
+        n += self.plan_reference_paths.read().await.len();
+        n += self.plan_mode.read().await.len();
+        n += self.prewalks.read().await.len();
+        n += self.decision_logs.read().await.len();
+        n += self.transcript_working_dirs.read().await.len();
+        n += self.transcript_write_globs.read().await.len();
+        n += self.blackboard_viewers.read().await.len();
+        n += self.steers.read().await.len();
+        n
     }
 }

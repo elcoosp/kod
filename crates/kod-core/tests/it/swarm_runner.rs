@@ -687,3 +687,126 @@ async fn gated_subtask_does_not_leak_blackboard_viewer() {
          before the run returns, including the gated-out subtask",
     );
 }
+
+/// Regression: `forget_transcript` must clear every transcript-scoped
+/// map on the engine, and the swarm's end-of-run cleanup must route
+/// through it. Pre-fix, `forget_transcript` cleared only three maps
+/// (history / last_prompt / context_gauges), the swarm's cleanup loop
+/// cleared three more by hand, and every other per-transcript map —
+/// tool_loop_guards, todo_trackers, plans, prewalks, write_globs,
+/// working_dirs, blackboard_viewers, native_compaction_blocks,
+/// image_frames, fidelity_cache, tool_filter_states, steers — leaked
+/// one entry per dispatch. On a long-lived daemon that is unbounded.
+///
+/// This test drives a swarm whose only subtask makes an actual tool
+/// call, so `tool_loop_guards`, `todo_trackers`, `steers`, and
+/// `blackboard_viewers` all get populated for the dispatch key, and
+/// asserts that none survive the run.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn swarm_run_leaves_no_per_transcript_state_behind() {
+    use kod_types::ToolCall;
+
+    // Provider that asks its single agent to run `list_files` once,
+    // then reply with text. `list_files` is enough to trip the
+    // tool-round path that touches `tool_loop_guards`, `todo_trackers`,
+    // and `steers`.
+    struct OneToolProvider;
+
+    #[async_trait]
+    impl LlmProvider for OneToolProvider {
+        fn name(&self) -> &str {
+            "one-tool"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec!["one-tool".into()])
+        }
+        async fn generate(
+            &self,
+            prompt: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            if prompt.contains("Split this goal") {
+                return Ok(r#"[{"name":"probe","description":"list the tree","expected_writes":["out/x.txt"]}]"#
+                    .to_string());
+            }
+            if prompt.contains("Synthesize their work") {
+                return Ok("MERGED".to_string());
+            }
+            Ok("done".to_string())
+        }
+        async fn generate_with_tools(
+            &self,
+            _p: &str,
+            _t: &[ToolDefinition],
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::ToolCalls {
+                calls: vec![ToolCall {
+                    id: None,
+                    tool_name: "list_files".to_string(),
+                    arguments: serde_json::json!({ "path": ".", "recursive": false }),
+                }],
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+        fn stream_with_tools<'a>(
+            &'a self,
+            _p: &'a str,
+            _t: &'a [ToolDefinition],
+            _o: &'a GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+        {
+            // Round one: a tool call. Round two: text and stop.
+            Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::ToolCallStart {
+                    index: 0,
+                    id: None,
+                    name: "list_files".to_string(),
+                }),
+                Ok(StreamChunk::ToolCallDelta {
+                    index: 0,
+                    arguments: serde_json::json!({
+                        "path": ".",
+                        "recursive": false
+                    })
+                    .to_string(),
+                }),
+                Ok(StreamChunk::Done),
+            ]))
+        }
+    }
+
+    let provider: Arc<dyn LlmProvider> = Arc::new(OneToolProvider);
+    let (engine, _tmp) = build_engine(provider).await;
+
+    let runner = SwarmRunner::new(engine.clone(), 2, false).await.unwrap();
+    let (tx, mut rx) = mpsc::channel::<SwarmEvent>(256);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let _ = runner.run("probe the tree", &tx).await;
+    drop(tx);
+    let _ = drain.await;
+
+    // Every transcript-scoped map on the engine must be empty — the
+    // dispatch created a fresh key, and the run's cleanup must have
+    // forgotten it.
+    let leaks = engine.transcript_scoped_key_count_for_tests().await;
+    assert_eq!(
+        leaks, 0,
+        "swarm run left {leaks} per-transcript entries behind; \
+         forget_transcript must clear every transcript-scoped map",
+    );
+    assert_eq!(
+        engine.blackboard_viewer_count_for_tests().await,
+        0,
+        "blackboard viewer subscription must be cleared (subsumed by \
+         forget_transcript)",
+    );
+}
