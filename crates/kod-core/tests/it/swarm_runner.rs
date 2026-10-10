@@ -925,8 +925,8 @@ async fn concurrent_swarm_runs_on_one_engine_are_refused() {
     // it, so the first run is still in-flight when the second tries
     // to start.
     struct BlockingProvider {
-        release: Arc<tokio::sync::Notify>,
-        started: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Semaphore>,
+        started: Arc<tokio::sync::Semaphore>,
     }
 
     #[async_trait]
@@ -949,8 +949,14 @@ async fn concurrent_swarm_runs_on_one_engine_are_refused() {
                 return Ok("MERGED".to_string());
             }
             // Per-agent call: signal the test, wait for release.
-            self.started.notify_waiters();
-            self.release.notified().await;
+            // Semaphore permits persist if nobody is waiting yet, so
+            // the signal is not lost when the provider reaches this
+            // line before the test has registered its waiter. A
+            // `Notify::notify_waiters` here was the source of a
+            // 120s+ flake: the signal fired, no waiter was registered,
+            // and the test then hung on `.notified()`.
+            self.started.add_permits(1);
+            let _ = self.release.acquire().await;
             Ok("done".to_string())
         }
         async fn generate_with_tools(
@@ -992,8 +998,8 @@ async fn concurrent_swarm_runs_on_one_engine_are_refused() {
     }
 
     let provider = Arc::new(BlockingProvider {
-        release: Arc::new(tokio::sync::Notify::new()),
-        started: Arc::new(tokio::sync::Notify::new()),
+        release: Arc::new(tokio::sync::Semaphore::new(0)),
+        started: Arc::new(tokio::sync::Semaphore::new(0)),
     });
     let (engine, _tmp) = build_engine(provider.clone()).await;
 
@@ -1008,8 +1014,9 @@ async fn concurrent_swarm_runs_on_one_engine_are_refused() {
         runner_a.run("first swarm", &tx_a).await
     });
     // Wait for the provider to see the per-agent call, which means
-    // run A has the slot.
-    provider.started.notified().await;
+    // run A has the slot. `acquire` consumes one permit; the
+    // provider's `add_permits(1)` is what produced it.
+    let _ = provider.started.acquire().await;
 
     // Second run on the same engine must be refused.
     let (tx_b, mut rx_b) = mpsc::channel::<SwarmEvent>(8);
@@ -1030,7 +1037,7 @@ async fn concurrent_swarm_runs_on_one_engine_are_refused() {
     );
 
     // Release run A and join it.
-    provider.release.notify_waiters();
+    provider.release.add_permits(1);
     let resp_a = handle_a.await.unwrap();
     assert!(
         resp_a.is_ok(),
@@ -1041,7 +1048,9 @@ async fn concurrent_swarm_runs_on_one_engine_are_refused() {
     let (tx_c, mut rx_c) = mpsc::channel::<SwarmEvent>(8);
     let drain_c = tokio::spawn(async move { while rx_c.recv().await.is_some() {} });
     // Immediately release the provider so this run does not block.
-    provider.release.notify_waiters();
+    // The third run may spawn multiple agents, each of which
+    // acquires one permit; issue enough to cover the wave.
+    provider.release.add_permits(16);
     let resp_c = runner.run("third swarm", &tx_c).await;
     drop(tx_c);
     let _ = drain_c.await;
