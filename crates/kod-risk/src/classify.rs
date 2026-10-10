@@ -352,6 +352,49 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
         let Some(prog) = program else { continue };
         let prog_base = prog.rsplit('/').next().unwrap_or(&prog).to_string();
 
+        // A shell with a command-string flag is a nested command the
+        // classifier cannot see through. `bash script.sh` is fine —
+        // no `-c`, the next token is a file. `bash -c 'rm -rf /'`
+        // is not: the inner command decides the risk and the
+        // classifier has no way to tokenize it here without
+        // recursing into `assess`. Escalate rather than return Safe
+        // on `bash`. The module doc's contract — "never refuses to
+        // run something it does not understand; it escalates" — is
+        // exactly this case.
+        //
+        // The `-c` detection covers the combined-flag form the
+        // wrapper parser in `kod-config::policy::binary_candidates`
+        // was recently fixed to recognise: `bash -xc 'rm'`, `sh -ec
+        // 'rm'`. Missing it here would be a second hole in the same
+        // shape.
+        const SHELLS: &[&str] = &["bash", "sh", "zsh", "dash", "ksh"];
+        if SHELLS.contains(&prog_base.as_str()) {
+            let has_command_flag = args.iter().any(|t| {
+                let t = unquote(t);
+                if t == "-c" || t == "--command" {
+                    return true;
+                }
+                // Combined short flags: `-xc`, `-cx`, `-ec`. The
+                // letter `c` anywhere in the flag cluster is the
+                // command-string flag; `=` excludes long-with-value
+                // forms already handled.
+                t.starts_with('-')
+                    && !t.starts_with("--")
+                    && t.len() > 1
+                    && !t.contains('=')
+                    && t[1..].contains('c')
+            });
+            if has_command_flag {
+                findings.push(RiskFinding {
+                    level: RiskLevel::Confirm,
+                    reason: "shell runs a nested command string the classifier cannot inspect statically"
+                        .to_string(),
+                    target: seg.join(" "),
+                });
+                continue;
+            }
+        }
+
         // Device-capable commands are catastrophic regardless of arg
         // shape: the operand may be a bare device path the path
         // classifier would miss inside a flag.
@@ -676,6 +719,78 @@ mod tests {
         assert!(
             Justification("removing the stale build cache under the project target dir".into())
                 .is_substantive()
+        );
+    }
+
+    /// A shell running a nested command string must never be `Safe`.
+    /// The classifier cannot tokenize `'rm -rf /'` (a single quoted
+    /// argument from `bash`'s perspective), so the design's rule —
+    /// "an unrecognised wrapper escalates" — applies. Pre-fix the
+    /// classifier reported `program = bash`, `bash` was not in
+    /// `DESTRUCTIVE`, and the assessment was `Safe`: a
+    /// `bash -c 'rm -rf /'` request passed the gate.
+    #[test]
+    fn bash_c_wrapping_a_destructive_command_escalates() {
+        for cmd in [
+            "bash -c 'rm -rf /'",
+            "sh -c 'rm -rf /'",
+            "zsh -c 'rm -rf /'",
+            "bash --command 'rm -rf /'",
+        ] {
+            let a = assess(cmd, &ctx());
+            assert!(
+                a.level >= RiskLevel::Confirm,
+                "{cmd:?} must at least Confirm; got {:?}",
+                a.level,
+            );
+        }
+    }
+
+    /// The combined-flag form: `bash -xc 'rm -rf /'` — the flag
+    /// cluster contains `c`. Same reasoning as
+    /// `binary_candidates`'s fix in kod-config.
+    #[test]
+    fn bash_combined_short_flags_escalate() {
+        for cmd in [
+            "bash -xc 'rm -rf /'",
+            "bash -cx 'rm -rf /'",
+            "sh -ec 'rm -rf /'",
+            "bash -euxc 'rm -rf /'",
+        ] {
+            let a = assess(cmd, &ctx());
+            assert!(
+                a.level >= RiskLevel::Confirm,
+                "{cmd:?} must at least Confirm; got {:?}",
+                a.level,
+            );
+        }
+    }
+
+    /// A shell *without* a command-string flag is not escalated: the
+    /// next token is a script file, and the script itself is not
+    /// analysed (out of scope for this classifier). A benign
+    /// `bash script.sh` must stay `Safe` — the shell wrapper itself
+    /// is not risky.
+    #[test]
+    fn a_shell_running_a_script_is_not_escalated_by_the_shell_rule() {
+        let a = assess("bash script.sh", &ctx());
+        assert!(
+            a.level < RiskLevel::Confirm,
+            "a script-file shell invocation should not escalate by itself: {:?}",
+            a.level,
+        );
+    }
+
+    /// `sudo bash -c 'rm -rf /'` — the outer wrapper is `sudo`, which
+    /// unwrap peels back to `bash`. The shell escalation must fire on
+    /// the unwrapped program too, not just on a leading token.
+    #[test]
+    fn sudo_bash_c_escalates_after_unwrap() {
+        let a = assess("sudo bash -c 'rm -rf /'", &ctx());
+        assert!(
+            a.level >= RiskLevel::Confirm,
+            "sudo bash -c must Confirm; got {:?}",
+            a.level,
         );
     }
 }
