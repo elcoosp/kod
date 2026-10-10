@@ -134,6 +134,7 @@ impl KodEngine {
             routing: RwLock::new(None),
             retry_config: RwLock::new(kod_config::RetryConfig::default()),
             is_running: Arc::new(RwLock::new(false)),
+            swarm_slot: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tools: tools_for_router,
             tool_context,
             artifact_handler,

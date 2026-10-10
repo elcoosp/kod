@@ -374,6 +374,27 @@ impl SwarmRunner {
         goal: &str,
         chunk_tx: &mpsc::Sender<SwarmEvent>,
     ) -> Result<SwarmResponse> {
+        // Exclusive swarm slot: two concurrent runs on the same
+        // engine would both call `install_swarm_file_bus` (the
+        // second silently overwrites the first), both use the shared
+        // `swarm_hub` (the second's `clear_all()` wipes the first's
+        // agents), and both drive the engine's per-transcript maps
+        // under dispatch ids that happen to be unique — but the
+        // shared bus and hub make the interference fatal regardless.
+        // `kod serve` spawns a task per `swarm` request, so this is
+        // reachable; the second call fails fast rather than
+        // corrupting the first run mid-flight.
+        //
+        // The guard is held for the whole run and released by `Drop`
+        // on every return path, including the early `?` returns below
+        // and the config-error branches before the first `await`.
+        let _swarm_slot_guard = self.engine.try_acquire_swarm_slot().ok_or_else(|| {
+            KodError::InvalidState(
+                "another swarm is already running on this engine; \
+                 wait for it to finish or cancel it before starting a second"
+                    .to_string(),
+            )
+        })?;
         // 0. Isolation policy (P1-c). `Shared` skips worktree
         //    detection entirely: one checkout, all agents, and the
         //    file-touch bus is the coordination mechanism. `Worktree`

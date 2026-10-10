@@ -23,6 +23,26 @@ impl KodEngine {
         self.blackboard_viewers.read().await.len()
     }
 
+    /// Try to become the engine's one active swarm. Returns a guard
+    /// that releases the slot on drop (all return paths, including
+    /// `?`), or `None` when a swarm is already running.
+    ///
+    /// `compare_exchange` is what makes this race-free: two callers
+    /// that arrive together see one success and one failure. A
+    /// `load` then `store` would let both proceed.
+    pub fn try_acquire_swarm_slot(&self) -> Option<SwarmSlotGuard> {
+        use std::sync::atomic::Ordering;
+        match self
+            .swarm_slot
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => Some(SwarmSlotGuard {
+                slot: std::sync::Arc::clone(&self.swarm_slot),
+            }),
+            Err(_) => None,
+        }
+    }
+
     /// The swarm blackboard (Tier 3.5).
     /// Install the shared file-touch bus for a swarm run.
     ///
@@ -164,5 +184,18 @@ impl KodEngine {
     /// The working directory tools are rooted at.
     pub fn working_dir(&self) -> &std::path::Path {
         &self.working_dir
+    }
+}
+
+/// RAII guard for the engine's exclusive swarm slot. Dropped by
+/// every `SwarmRunner::run` return path, including a `?` on an
+/// error, so a failed run does not deadlock the next one.
+pub struct SwarmSlotGuard {
+    slot: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for SwarmSlotGuard {
+    fn drop(&mut self) {
+        self.slot.store(false, std::sync::atomic::Ordering::Release);
     }
 }

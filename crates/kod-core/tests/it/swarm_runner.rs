@@ -911,3 +911,142 @@ async fn forget_then_reapply_restores_per_dispatch_state() {
     engine.forget_transcript(key).await;
     assert_eq!(engine.transcript_scoped_key_count_for_tests().await, 0);
 }
+
+/// Regression: two concurrent `SwarmRunner::run` on the same engine
+/// must not proceed. `kod serve` spawns a task per `swarm` request;
+/// without an exclusivity guard both runs call
+/// `install_swarm_file_bus` (the second overwrites the first) and
+/// both use the shared hub (the second's `clear_all()` wipes the
+/// first's agents). The fix takes an exclusive slot at the top of
+/// `run` and fails the second caller fast.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_swarm_runs_on_one_engine_are_refused() {
+    // Provider whose per-agent call blocks until the test releases
+    // it, so the first run is still in-flight when the second tries
+    // to start.
+    struct BlockingProvider {
+        release: Arc<tokio::sync::Notify>,
+        started: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for BlockingProvider {
+        fn name(&self) -> &str {
+            "blocking"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec!["blocking".into()])
+        }
+        async fn generate(
+            &self,
+            prompt: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            if prompt.contains("Split this goal") {
+                return Ok(r#"[{"name":"a","description":"do a"}]"#.to_string());
+            }
+            if prompt.contains("Synthesize their work") {
+                return Ok("MERGED".to_string());
+            }
+            // Per-agent call: signal the test, wait for release.
+            self.started.notify_waiters();
+            self.release.notified().await;
+            Ok("done".to_string())
+        }
+        async fn generate_with_tools(
+            &self,
+            prompt: &str,
+            _t: &[ToolDefinition],
+            o: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::Text {
+                content: self.generate(prompt, o).await?,
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+        fn stream_with_tools<'a>(
+            &'a self,
+            p: &'a str,
+            _t: &'a [ToolDefinition],
+            o: &'a GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+        {
+            Box::pin(async_stream::stream! {
+                match self.generate(p, o).await {
+                    Ok(text) => {
+                        yield Ok(StreamChunk::Text(text));
+                        yield Ok(StreamChunk::Done);
+                    }
+                    Err(e) => yield Err(e),
+                }
+            })
+        }
+    }
+
+    let provider = Arc::new(BlockingProvider {
+        release: Arc::new(tokio::sync::Notify::new()),
+        started: Arc::new(tokio::sync::Notify::new()),
+    });
+    let (engine, _tmp) = build_engine(provider.clone()).await;
+
+    let runner = Arc::new(SwarmRunner::new(engine.clone(), 2, false).await.unwrap());
+
+    // Start the first run in the background; it will block on the
+    // provider's per-agent call.
+    let runner_a = runner.clone();
+    let (tx_a, mut rx_a) = mpsc::channel::<SwarmEvent>(64);
+    let handle_a = tokio::spawn(async move {
+        let _drain = tokio::spawn(async move { while rx_a.recv().await.is_some() {} });
+        runner_a.run("first swarm", &tx_a).await
+    });
+    // Wait for the provider to see the per-agent call, which means
+    // run A has the slot.
+    provider.started.notified().await;
+
+    // Second run on the same engine must be refused.
+    let (tx_b, mut rx_b) = mpsc::channel::<SwarmEvent>(8);
+    let drain_b = tokio::spawn(async move { while rx_b.recv().await.is_some() {} });
+    let err = runner
+        .run("second swarm", &tx_b)
+        .await
+        .expect_err("second concurrent run must be refused");
+    drop(tx_b);
+    let _ = drain_b.await;
+    assert!(
+        matches!(err, kod_error::KodError::InvalidState(_)),
+        "expected InvalidState, got {err:?}",
+    );
+    assert!(
+        err.to_string().contains("already running"),
+        "error must name the conflict: {err}",
+    );
+
+    // Release run A and join it.
+    provider.release.notify_waiters();
+    let resp_a = handle_a.await.unwrap();
+    assert!(
+        resp_a.is_ok(),
+        "first run must complete once the provider is released: {resp_a:?}",
+    );
+
+    // Slot must be released, so a third run is admitted.
+    let (tx_c, mut rx_c) = mpsc::channel::<SwarmEvent>(8);
+    let drain_c = tokio::spawn(async move { while rx_c.recv().await.is_some() {} });
+    // Immediately release the provider so this run does not block.
+    provider.release.notify_waiters();
+    let resp_c = runner.run("third swarm", &tx_c).await;
+    drop(tx_c);
+    let _ = drain_c.await;
+    assert!(
+        resp_c.is_ok(),
+        "a run after the first finished must be admitted: {resp_c:?}",
+    );
+}

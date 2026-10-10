@@ -628,6 +628,26 @@ pub struct KodEngine {
     /// run leaked its agents.
     swarm_hub: Arc<kod_swarm::AgentCommunicationHub>,
 
+    /// Exclusive swarm slot. A `SwarmRunner::run` acquires this for
+    /// its lifetime (released by a `SwarmGuard` on every return
+    /// path, including early `?` returns); a second concurrent
+    /// `run` on the same engine fails fast with `InvalidState`.
+    ///
+    /// Without it, two concurrent runs — reachable from `kod serve`,
+    /// which `tokio::spawn`s a task per `swarm` request, and from
+    /// any embedder — would both call `install_swarm_file_bus` and
+    /// the second would silently overwrite the first's bus. The
+    /// first run's per-agent observers would then publish on a bus
+    /// nobody reads, and the first run's subscribers would hear
+    /// only the second run's touches.
+    ///
+    /// The swarm also holds shared state on the engine
+    /// (`blackboard_viewers`, `transcript_write_globs`,
+    /// `swarm_file_bus`) keyed by dispatch id, and `clear_all()` at
+    /// the end of `run` erases every agent on the shared hub —
+    /// concurrent runs each wipe the other's agents mid-flight.
+    swarm_slot: std::sync::Arc<std::sync::atomic::AtomicBool>,
+
     /// P1-c: the file-touch bus for the current swarm run, `None`
     /// outside one. Read by `run_tool_calls` to decide whether to
     /// install a per-call touch hook.
