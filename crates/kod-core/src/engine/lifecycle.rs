@@ -522,6 +522,29 @@ impl KodEngine {
             host.shutdown_all().await;
         }
 
+        // 3c. Fail every pending approval and question, so a turn
+        //     parked on the oneshot does not wait out its full
+        //     `AWAIT_APPROVAL_SECS` (up to 120 s) during shutdown,
+        //     and a turn whose future was dropped does not leave the
+        //     entry behind. Dropping the sender makes the parked
+        //     `rx.await` return `Err(RecvError)` immediately; the
+        //     tool-dispatch loop then falls into its
+        //     `Ok(Err(_))` branch — "approval cancelled" / "question
+        //     cancelled" — and exits cleanly.
+        //
+        //     Before this, a caller whose prompt was awaiting an
+        //     approval on the TUI thread saw the request hang for
+        //     the full timeout after `/quit` because nothing drained
+        //     the map.
+        {
+            let mut approvals = self.pending_approvals.write().await;
+            approvals.clear();
+        }
+        {
+            let mut questions = self.pending_questions.write().await;
+            questions.clear();
+        }
+
         // 4. Release path-lock cells. Outstanding guards keep their own
         //    Arc and release on drop.
         self.lock_table.release_all().await;
