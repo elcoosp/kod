@@ -1608,7 +1608,10 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
     const PREFIX_WRAPPERS: &[(&str, &[&str], usize)] = &[
         ("sudo", &["-u", "-g", "-p", "-h", "-r", "-t", "-C"], 0),
         ("doas", &["-u"], 0),
-        ("env", &["-u", "-i", "-C", "-S"], 0),
+        // `env -i` takes NO argument; `-u`, `-C`, `-S` each consume
+        // one. See the sibling table in `kod-risk::classify` for the
+        // full reasoning.
+        ("env", &["-u", "-C", "-S"], 0),
         ("nice", &["-n"], 0),
         // `timeout [OPTION] DURATION COMMAND` — one positional
         // (the duration) precedes the command.

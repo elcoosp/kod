@@ -105,7 +105,12 @@ impl Justification {
 const WRAPPERS: &[(&str, &[&str], usize)] = &[
     ("sudo", &["-u", "-g", "-p", "-h", "-r", "-t"], 0),
     ("doas", &["-u"], 0),
-    ("env", &["-u", "-i", "-C", "-S"], 0),
+    // `env -i` clears the environment and takes NO argument; `-u`,
+    // `-C`, `-S` each consume one. The pre-fix list had `-i` among
+    // the consuming flags, so `env -i $CMD -rf /` skipped `$CMD` as
+    // if it were `-i`'s argument and reported `/Users/dev` as the
+    // program — Safe, despite the runtime program being unbounded.
+    ("env", &["-u", "-C", "-S"], 0),
     ("nice", &["-n"], 0),
     // `timeout [OPTION] DURATION COMMAND` — one positional (the
     // duration) precedes the inner command.
@@ -424,6 +429,37 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
         // was recently fixed to recognise: `bash -xc 'rm'`, `sh -ec
         // 'rm'`. Missing it here would be a second hole in the same
         // shape.
+        // A program name the classifier cannot resolve is an escalation:
+        // the classifier does not know what will run, so it cannot
+        // conclude `Safe`. The module doc's contract — "never refuses
+        // to run something it does not understand; it escalates" — is
+        // exactly this case. Four forms:
+        //
+        // * A variable expansion as the program: `$CMD`, `${CMD}`.
+        //   The runtime value is unbounded.
+        // * A command substitution as the program: `$(echo rm)`,
+        //   `` `echo rm` ``.
+        // * `eval`, whose argument is run as a command.
+        // * A token that starts with `$` at all in the argument list
+        //   is caught by the variable rule below, not here.
+        //
+        // `env -i $CMD` unwraps to `$CMD` and escalates on the
+        // program check; the pre-fix classifier reported the literal
+        // `$CMD` string, which was neither in DESTRUCTIVE nor a
+        // device — Safe.
+        let unresolvable_program = prog_base.contains('$')
+            || prog_base.starts_with('`')
+            || prog_base.contains('`')
+            || prog_base == "eval";
+        if unresolvable_program {
+            findings.push(RiskFinding {
+                level: RiskLevel::Confirm,
+                reason: format!("program {prog_base:?} cannot be resolved statically",),
+                target: seg.join(" "),
+            });
+            continue;
+        }
+
         const SHELLS: &[&str] = &["bash", "sh", "zsh", "dash", "ksh"];
         if SHELLS.contains(&prog_base.as_str()) {
             let has_command_flag = args.iter().any(|t| {
@@ -903,6 +939,30 @@ mod tests {
             assert!(
                 a.level.is_absolute_deny(),
                 "{cmd:?} must deny; got {:?}",
+                a.level,
+            );
+        }
+    }
+
+    /// A program name the classifier cannot resolve — a variable
+    /// expansion, a command substitution, `eval` — must escalate.
+    /// Pre-fix the classifier reported `program = "$CMD"`, which is
+    /// neither in `DESTRUCTIVE` nor device-capable, so the assessment
+    /// was `Safe` and the runtime value ran unclassified.
+    #[test]
+    fn variable_as_program_escalates() {
+        for cmd in [
+            "$CMD -rf /Users/dev",
+            "${CMD} -rf /Users/dev",
+            "eval 'rm -rf /Users/dev'",
+            "$(echo rm) -rf /Users/dev",
+            "`echo rm` -rf /Users/dev",
+            "env -i $CMD -rf /Users/dev",
+        ] {
+            let a = assess(cmd, &ctx());
+            assert!(
+                a.level >= RiskLevel::Confirm,
+                "{cmd:?} must at least Confirm; got {:?}",
                 a.level,
             );
         }
