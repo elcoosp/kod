@@ -1,4 +1,5 @@
 use super::*;
+use kod_core_state::goals::GoalBudget;
 
 impl KodEngine {
     /// Process user input
@@ -1318,12 +1319,54 @@ impl KodEngine {
             .await
     }
 
-    /// Streaming goal loop on a named transcript.
+    /// Streaming goal loop with a budget, on the default transcript.
+    pub async fn process_goal_streaming_with_budget(
+        &self,
+        input: &str,
+        goal: &str,
+        budget: GoalBudget,
+        chunk_tx: &tokio::sync::mpsc::Sender<String>,
+    ) -> Result<TaskResponse> {
+        self.process_goal_streaming_for_with_budget(
+            DEFAULT_TRANSCRIPT_KEY,
+            input,
+            goal,
+            budget,
+            chunk_tx,
+        )
+        .await
+    }
+
+    /// Streaming goal loop on a named transcript. Uses the default
+    /// (empty) budget; see `process_goal_streaming_for_with_budget`
+    /// for the budget-carrying variant.
     pub async fn process_goal_streaming_for(
         &self,
         key: &str,
         input: &str,
         goal: &str,
+        chunk_tx: &tokio::sync::mpsc::Sender<String>,
+    ) -> Result<TaskResponse> {
+        self.process_goal_streaming_for_with_budget(
+            key,
+            input,
+            goal,
+            GoalBudget::default(),
+            chunk_tx,
+        )
+        .await
+    }
+
+    /// Streaming goal loop with an explicit budget. The goal starts
+    /// with `token` / `time_seconds` attached, so a turn that pushes
+    /// usage over either cap flips the runtime to `BudgetLimited`
+    /// and emits the one-shot steer below.
+    pub async fn process_goal_streaming_for_with_budget(
+        &self,
+        key: &str,
+        input: &str,
+        goal: &str,
+        budget: GoalBudget,
         chunk_tx: &tokio::sync::mpsc::Sender<String>,
     ) -> Result<TaskResponse> {
         {
@@ -1352,7 +1395,7 @@ impl KodEngine {
         if _provider_probe.is_some() {
             // Delta §11.6: start the goal in the runtime. A second
             // call replaces any previous goal (status Dropped).
-            self.goal_runtime.write().await.start(goal.to_string());
+            self.goal_runtime.write().await.start_with(goal.to_string(), budget);
             // S10 phase 3: same shared pipeline as the other two entry
             // points. The goal path is the one caller that does *not*
             // write a retrieval-log entry (`None`), and the one that
@@ -1415,6 +1458,12 @@ impl KodEngine {
             let mut tool_calls: Vec<ToolCall> = Vec::new();
             let mut tool_results: Vec<ToolResult> = Vec::new();
             let mut last_usage: Option<kod_provider::TokenUsage> = None;
+            // Delta §11.6: wall-clock bookkeeping for the goal's time
+            // budget. `last_observed_secs` remembers how much of the
+            // elapsed time has already been charged, so each turn only
+            // observes the delta.
+            let goal_started_at = std::time::Instant::now();
+            let mut last_observed_secs: u64 = 0;
             for turn in 1..=MAX_GOAL_TURNS {
                 // H-E8: cancel on the transcript's own key, not the
                 // default. A swarm agent's `request_cancel_for`
@@ -1541,6 +1590,17 @@ impl KodEngine {
                 // active goal before merging into the session total.
                 if let Some(u) = usage.as_ref() {
                     self.goal_runtime.write().await.observe_usage(u);
+                }
+                // Delta §11.6: account the wall time spent so far
+                // against the goal's time budget. `observe_time` is
+                // additive, so we charge only the delta since the
+                // previous turn — not the whole elapsed time each
+                // turn.
+                let elapsed = goal_started_at.elapsed().as_secs();
+                if elapsed > last_observed_secs {
+                    let delta = elapsed - last_observed_secs;
+                    self.goal_runtime.write().await.observe_time(delta);
+                    last_observed_secs = elapsed;
                 }
                 last_usage = match (last_usage, usage) {
                     (Some(prev), Some(next)) => Some(prev.merge(&next)),

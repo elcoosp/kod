@@ -1448,7 +1448,10 @@ impl TuiLoop {
         }
         // With an active `/goal`, the prompt runs the goal loop instead of
         // a single pass (moved into the task: `goal` must be owned).
-        let goal = self.app.goal().map(|g| g.to_string());
+        let goal = self
+            .app
+            .goal()
+            .map(|g| (g.to_string(), self.app.goal_budget()));
         let handle = tokio::spawn(async move {
             // Stream the answer: text chunks render live, tool-start
             // markers raise the "running …" indicator, and tool-args
@@ -1729,7 +1732,11 @@ impl TuiLoop {
                 }
             });
             let result = match goal {
-                Some(g) => engine.process_goal_streaming(&input, &g, &chunk_tx).await,
+                Some((g, b)) => {
+                    engine
+                        .process_goal_streaming_with_budget(&input, &g, b, &chunk_tx)
+                        .await
+                }
                 None => engine.process_streaming(&input, &chunk_tx).await,
             };
             drop(chunk_tx);
@@ -2233,36 +2240,49 @@ impl TuiLoop {
                 }
             }
             "/goal" => {
-                let rest: String = parts.collect::<Vec<_>>().join(" ");
-                let rest = rest.trim();
+                let mut rest: String = parts.collect::<Vec<_>>().join(" ");
+                rest = rest.trim().to_string();
+
+                // The flags can appear anywhere; strip them and keep
+                // the remaining words as the goal text. Flag grammar:
+                //   --budget <tokens>   token cap
+                //   --time <N[s|m|h]>   wall-clock cap; default unit s
+                // Both accept `--flag=<value>` and `--flag <value>`.
+                let (budget, remaining) = match Self::parse_goal_flags(&rest) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        self.app.push_system_message(&format!(
+                            "Invalid /goal flag: {e}\nUsage: /goal [--budget N] [--time 30m] <text>"
+                        ));
+                        return Ok(());
+                    }
+                };
+                rest = remaining;
+
                 if rest.eq_ignore_ascii_case("clear") || rest.eq_ignore_ascii_case("off") {
                     self.app.clear_goal();
                     self.app
                         .push_system_message("Goal cleared — prompts run once again.");
                 } else if rest.is_empty() {
                     match self.app.goal() {
-                        Some(g) => self.app.push_system_message(&format!(
-                            "Active goal: {g}\nPrompts keep working until GOAL MET. /goal clear stops it."
-                        )),
+                        Some(g) => {
+                            let b = self.app.goal_budget();
+                            let bdesc = Self::describe_goal_budget(&b);
+                            self.app.push_system_message(&format!(
+                                "Active goal: {g}\nBudget: {bdesc}\nPrompts keep working until GOAL MET. /goal clear stops it."
+                            ));
+                        }
                         None => self.app.push_system_message(
-                            "Usage: /goal <text> — the agent keeps working turn by turn until it writes GOAL MET. /goal clear stops it.",
+                            "Usage: /goal [--budget N] [--time 30m] <text> — the agent keeps working turn by turn until it writes GOAL MET. /goal clear stops it.",
                         ),
                     }
                 } else {
-                    self.app.set_goal(rest);
+                    self.app.set_goal_budget(budget);
+                    self.app.set_goal(&rest);
+                    let bdesc = Self::describe_goal_budget(&budget);
                     self.app.push_system_message(&format!(
-                        "Goal set: {rest}\nEvery prompt now works turn by turn until GOAL MET. Esc cancels; /steer redirects; /goal clear stops."
+                        "Goal set: {rest}\nBudget: {bdesc}\nEvery prompt now works turn by turn until GOAL MET. Esc cancels; /steer redirects; /goal clear stops."
                     ));
-                    // Start working immediately: the goal itself becomes
-                    // the first prompt. Call dispatch_prompt directly
-                    // instead of pushing a synthetic Enter into the event
-                    // queue — the previous approach relied on Enter's
-                    // Insert-mode binding and could misfire if the user
-                    // changed keybindings or was mid-typing.
-                    //
-                    // Box::pin breaks the dispatch → handle_command →
-                    // (goal arm) → dispatch recursion the same way
-                    // retry_generation does.
                     self.app.set_input(rest.to_string());
                     Box::pin(self.dispatch_prompt()).await?;
                 }
@@ -8585,4 +8605,98 @@ fn next_handoff_seq() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+impl TuiLoop {
+    /// Parse `/goal` flags. Recognised flags:
+    ///   --budget <tokens>   (also `--budget=<tokens>`)
+    ///   --time <N[s|m|h]>   (also `--time=<N>`)
+    /// Returns the budget and the text with the flags removed.
+    fn parse_goal_flags(
+        rest: &str,
+    ) -> std::result::Result<(kod_core::GoalBudget, String), String> {
+        let mut budget = kod_core::GoalBudget::default();
+        let mut remaining: Vec<&str> = Vec::new();
+        let tokens: Vec<&str> = rest.split_whitespace().collect();
+        let mut i = 0;
+        while i < tokens.len() {
+            let t = tokens[i];
+            let (name, inline_val) = if let Some(eq) = t.find('=') {
+                (&t[..eq], Some(&t[eq + 1..]))
+            } else {
+                (t, None)
+            };
+            let take_val =
+                |i: &mut usize, inline: Option<&str>| -> std::result::Result<String, String> {
+                if let Some(v) = inline {
+                    if v.is_empty() {
+                        return Err(format!("{name} needs a value"));
+                    }
+                    return Ok(v.to_string());
+                }
+                *i += 1;
+                tokens
+                    .get(*i)
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| format!("{name} needs a value"))
+            };
+            match name {
+                "--budget" => {
+                    let v = take_val(&mut i, inline_val)?;
+                    let n: u64 = v
+                        .parse()
+                        .map_err(|_| format!("--budget expects a non-negative integer, got `{v}`"))?;
+                    if n == 0 {
+                        return Err("--budget 0 would cap the goal at zero tokens; omit the flag for no cap".to_string());
+                    }
+                    budget.token = Some(n);
+                }
+                "--time" => {
+                    let v = take_val(&mut i, inline_val)?;
+                    let secs = parse_duration_secs(&v)?;
+                    if secs == 0 {
+                        return Err("--time 0 would cap the goal at zero seconds; omit the flag for no cap".to_string());
+                    }
+                    budget.time_seconds = Some(secs);
+                }
+                other if other.starts_with("--") => {
+                    return Err(format!("unknown flag `{other}`"));
+                }
+                _ => remaining.push(t),
+            }
+            i += 1;
+        }
+        Ok((budget, remaining.join(" ")))
+    }
+
+    fn describe_goal_budget(b: &kod_core::GoalBudget) -> String {
+        match (b.token, b.time_seconds) {
+            (None, None) => "none".to_string(),
+            (Some(t), None) => format!("{t} tokens"),
+            (None, Some(s)) => format!("{s}s wall-clock"),
+            (Some(t), Some(s)) => format!("{t} tokens, {s}s wall-clock"),
+        }
+    }
+}
+
+/// Parse a `--time` value into seconds. Suffixes: `s`, `m`, `h`.
+/// Bare integers are seconds.
+fn parse_duration_secs(v: &str) -> std::result::Result<u64, String> {
+    let v = v.trim();
+    if v.is_empty() {
+        return Err("--time needs a value".to_string());
+    }
+    let (num, mult): (&str, u64) = if let Some(n) = v.strip_suffix('s') {
+        (n, 1)
+    } else if let Some(n) = v.strip_suffix('m') {
+        (n, 60)
+    } else if let Some(n) = v.strip_suffix('h') {
+        (n, 3600)
+    } else {
+        (v, 1)
+    };
+    let n: u64 = num
+        .parse()
+        .map_err(|_| format!("--time expects N[s|m|h], got `{v}`"))?;
+    n.checked_mul(mult)
+        .ok_or_else(|| format!("--time {v} overflows u64 seconds"))
 }

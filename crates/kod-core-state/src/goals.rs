@@ -71,6 +71,17 @@ impl GoalStatus {
     }
 }
 
+/// Budget for a goal, applied at `start` time. Both fields are
+/// optional; `None` means "no cap on this dimension".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GoalBudget {
+    /// Token cap. Counted as `Δ(input − cache_read) + output` per
+    /// turn (see [`Goal::delta_tokens`]).
+    pub token: Option<u64>,
+    /// Wall-clock cap, in seconds.
+    pub time_seconds: Option<u64>,
+}
+
 /// One objective.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Goal {
@@ -232,6 +243,25 @@ impl GoalRuntime {
         let id = self.next_id;
         self.next_id += 1;
         self.current = Some(Goal::new(id, objective));
+        id
+    }
+
+    /// Start a new goal with a budget. Same as [`Self::start`] but
+    /// attaches the caller's caps to the fresh goal, so the runtime
+    /// can flip to `BudgetLimited` on a later `observe_usage` /
+    /// `observe_time` without a separate setter call.
+    pub fn start_with(&mut self, objective: impl Into<String>, budget: GoalBudget) -> u64 {
+        if let Some(prev) = self.current.as_mut()
+            && !prev.status.is_terminal()
+        {
+            prev.status = GoalStatus::Dropped;
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let mut g = Goal::new(id, objective);
+        g.token_budget = budget.token;
+        g.time_budget_seconds = budget.time_seconds;
+        self.current = Some(g);
         id
     }
 
@@ -484,5 +514,58 @@ mod tests {
         let r = g.report();
         assert!(r.contains("Complete"), "got: {r}");
         assert!(r.contains("600 / 1000 tokens"), "got: {r}");
+    }
+}
+
+#[cfg(test)]
+mod start_with_budget_tests {
+    use super::*;
+
+    #[test]
+    fn start_with_attaches_both_caps() {
+        let mut rt = GoalRuntime::new();
+        let id = rt.start_with(
+            "ship it",
+            GoalBudget {
+                token: Some(500),
+                time_seconds: Some(60),
+            },
+        );
+        let g = rt.current().expect("a goal exists");
+        assert_eq!(g.id, id);
+        assert_eq!(g.token_budget, Some(500));
+        assert_eq!(g.time_budget_seconds, Some(60));
+        assert_eq!(g.status, GoalStatus::Active);
+        assert_eq!(g.tokens_used, 0);
+        assert_eq!(g.time_used_seconds, 0);
+    }
+
+    #[test]
+    fn start_with_default_budget_matches_start() {
+        let mut rt = GoalRuntime::new();
+        rt.start_with("x", GoalBudget::default());
+        let g = rt.current().unwrap();
+        assert_eq!(g.token_budget, None);
+        assert_eq!(g.time_budget_seconds, None);
+    }
+
+    #[test]
+    fn start_with_can_flip_to_budget_limited_on_first_observation() {
+        let mut rt = GoalRuntime::new();
+        rt.start_with(
+            "x",
+            GoalBudget {
+                token: Some(100),
+                time_seconds: None,
+            },
+        );
+        let u = TokenUsage {
+            prompt_tokens: 200,
+            completion_tokens: 0,
+            ..Default::default()
+        };
+        rt.observe_usage(&u);
+        assert_eq!(rt.current().unwrap().status, GoalStatus::BudgetLimited);
+        assert!(rt.current_mut().unwrap().take_budget_steer());
     }
 }

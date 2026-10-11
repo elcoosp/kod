@@ -378,10 +378,25 @@ impl KodApp {
 
     pub fn clear_goal(&mut self) {
         self.goal = None;
+        self.goal_budget = GoalBudget::default();
     }
 
     pub fn goal(&self) -> Option<&str> {
         self.goal.as_deref()
+    }
+
+    /// Set the budget that the next `/goal <text>` call attaches to
+    /// the goal. Persisted alongside the goal until it is cleared or
+    /// replaced, so `/goal --budget N <text>` in any order works.
+    pub fn set_goal_budget(&mut self, budget: GoalBudget) {
+        self.goal_budget = budget;
+    }
+
+    /// The budget that will be (or has been) attached to the active
+    /// goal. Returns the default (all `None`) when no budget was
+    /// configured.
+    pub fn goal_budget(&self) -> GoalBudget {
+        self.goal_budget
     }
 
     pub fn is_generating(&self) -> bool {

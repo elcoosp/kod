@@ -9,6 +9,7 @@ use kod_types::{MessageId, MessageMetadata, MessageRole};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
+use kod_core::GoalBudget;
 
 /// Streaming response lifecycle (extracted from this file).
 mod streaming;
@@ -637,6 +638,10 @@ pub struct KodApp {
 
     /// Active goal set via `/goal` (see [`KodApp::set_goal`]).
     goal: Option<String>,
+    /// Budget attached to the next `/goal` call. Default is
+    /// `GoalBudget::default()` (no caps). Populated by the
+    /// `--budget N` / `--time 30m` flags on `/goal`.
+    goal_budget: GoalBudget,
 
     /// Stack of chats wiped by `/clear` — `/undo` restores the newest.
     cleared_stack: Vec<Vec<Message>>,
@@ -997,6 +1002,7 @@ impl KodApp {
             compacted_messages: 0,
             loaded_skills: Vec::new(),
             goal: None,
+            goal_budget: GoalBudget::default(),
             cleared_stack: Vec::new(),
             pending_confirm: None,
             search_query: None,

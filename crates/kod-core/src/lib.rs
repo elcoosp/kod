@@ -28,6 +28,7 @@ pub use kod_core_routing::retry_strategy::{RetryAction, TurnFailure, choose_acti
 pub use kod_core_state::cost::{CostSnapshot, CostTracker, SoftWarningTrigger};
 pub use kod_core_state::decisions::{DecisionAuthor, DecisionKind, DecisionLog, DecisionRecord};
 pub use kod_core_state::plan::{Plan, PlanStatus, PlanStep, PlanUpdate};
+pub use kod_core_state::goals::{Goal, GoalBudget, GoalStatus};
 pub use kod_core_state::state::{EngineState, STATE_SCHEMA_VERSION, StateStore};
 pub use kod_core_state::trace::{
     RoundKind, ToolOutcomeKind, TurnId, TurnOutcome, TurnTrace, TurnTraceBuilder,
