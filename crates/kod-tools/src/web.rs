@@ -44,6 +44,80 @@ const MAX_REDIRECTS: usize = 5;
 /// short enough that a hung server fails fast.
 const REQUEST_TIMEOUT_SECS: u64 = 30;
 
+/// What one attempt at the fetch produced. `Done` means the fetch
+/// succeeded and the loop is over; `Retryable` means the server
+/// declined and `web_retry` decides what to do next.
+pub(crate) enum FetchStep<R> {
+    Done(R),
+    Retryable {
+        status: u16,
+        retry_after_secs: Option<u64>,
+        body_preview: String,
+    },
+}
+
+/// Drive `fetch` per `web_retry`'s policy (delta §14.5).
+///
+/// Each iteration calls `fetch(attempt, user_agent)`; a `Done` returns
+/// its payload, and a `Retryable` consults
+/// [`crate::web_retry::decide_with_retry_after`] — a 429 retries once
+/// with the same UA (honoring `Retry-After`), a bot wall rotates the
+/// UA up to [`crate::web_retry::MAX_UA_ROTATIONS`] times, and anything
+/// else surfaces the error.
+///
+/// **Termination.** `attempt` only grows. `RetrySameAgent` requires
+/// `attempt == 0` and `RetryNextAgent` requires
+/// `attempt < MAX_UA_ROTATIONS`, so the loop is bounded by
+/// `MAX_UA_ROTATIONS + 1` iterations, whatever the fetch returns.
+///
+/// # Why the helper exists
+///
+/// The loop is the only place `web_retry` is *used*. Extracting it
+/// from `execute` lets a test drive the retry policy with a synthetic
+/// fetcher — no DNS, no SSRF filter, no network — and pin the wiring
+/// that was missing when `web_retry` first shipped.
+async fn run_retry_loop<F, Fut, R>(mut fetch: F) -> std::result::Result<R, String>
+where
+    F: FnMut(usize, &'static str) -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<FetchStep<R>, String>>,
+{
+    let mut attempt: usize = 0;
+    loop {
+        let user_agent = crate::web_retry::user_agent_for(attempt);
+        match fetch(attempt, user_agent).await? {
+            FetchStep::Done(r) => return Ok(r),
+            FetchStep::Retryable {
+                status,
+                retry_after_secs,
+                body_preview,
+            } => match crate::web_retry::decide_with_retry_after(
+                status,
+                &body_preview,
+                attempt,
+                retry_after_secs,
+            ) {
+                crate::web_retry::Next::RetrySameAgent { wait_secs } => {
+                    tracing::debug!(
+                        attempt,
+                        wait_secs,
+                        status,
+                        "web_fetch: rate limited; sleeping before retry",
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
+                    attempt += 1;
+                }
+                crate::web_retry::Next::RetryNextAgent => {
+                    tracing::debug!(attempt, status, "web_fetch: bot wall; rotating user agent");
+                    attempt += 1;
+                }
+                crate::web_retry::Next::Return => {
+                    return Err(format!("returned HTTP {}: {}", status, body_preview,));
+                }
+            },
+        }
+    }
+}
+
 /// Fetch a URL over HTTP/HTTPS and return its text content.
 pub struct WebFetchTool {
     pub definition: ToolDefinition,
@@ -115,6 +189,7 @@ impl WebFetchTool {
     async fn fetch_with_safe_redirects(
         &self,
         start: reqwest::Url,
+        user_agent: &str,
     ) -> std::result::Result<reqwest::Response, String> {
         let mut current = start.clone();
         for hop in 0..=MAX_REDIRECTS {
@@ -155,11 +230,11 @@ impl WebFetchTool {
             let pinned = lookup[0];
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
-                .user_agent(concat!(
-                    "kod/",
-                    env!("CARGO_PKG_VERSION"),
-                    " (+https://github.com/elcoosp/kod)"
-                ))
+                // Delta §14.5: the UA is the caller's — the retry
+                // loop in `execute` rotates it on a bot wall. The
+                // first entry of `web_retry::USER_AGENTS` is kod's
+                // own identifier, so the default path is unchanged.
+                .user_agent(user_agent)
                 // T1-C15: no auto-redirects — we follow them here so
                 // every hop goes through the checks above.
                 .redirect(reqwest::redirect::Policy::none())
@@ -305,34 +380,64 @@ impl Tool for WebFetchTool {
         // name into 169.254.169.254 and connected. Following the
         // redirect here means the SSRF check and the address pin both
         // run on every hop.
-        let response = match self.fetch_with_safe_redirects(url.clone()).await {
+        // Delta §14.5: the fetch is retried per `web_retry`'s policy.
+        // The `web_retry` module shipped with the delta but was never
+        // wired into this call site, so its promises — a 429 retried
+        // once honoring `Retry-After`, a bot wall retried with the
+        // next user agent, bounded at `MAX_UA_ROTATIONS` — never
+        // executed. `run_retry_loop` is that caller.
+        let url_for_retry = url.clone();
+        let response = match run_retry_loop(|_attempt, ua| {
+            let url = url_for_retry.clone();
+            let ua = ua.to_string();
+            async move {
+                let resp = match self.fetch_with_safe_redirects(url, &ua).await {
+                    Ok(r) => r,
+                    Err(msg) => return Err(msg),
+                };
+                let status = resp.status();
+                if status.is_success() {
+                    return Ok(FetchStep::Done(resp));
+                }
+                // M-33: cap the error body — a hostile server can
+                // stream forever before the 300-char preview. 4 KiB
+                // is enough for the bot-wall markers
+                // `is_bot_block` looks for.
+                let retry_after_secs = resp
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.trim().parse::<u64>().ok());
+                let mut resp = resp;
+                let mut body_bytes: Vec<u8> = Vec::new();
+                while body_bytes.len() < 4096 {
+                    match resp.chunk().await {
+                        Ok(Some(b)) => body_bytes.extend_from_slice(&b),
+                        Ok(None) | Err(_) => break,
+                    }
+                }
+                let body = String::from_utf8_lossy(&body_bytes).into_owned();
+                let preview = if body.len() > 300 {
+                    format!("{}…", kod_types::strutil::truncate_chars(&body, 300))
+                } else {
+                    body
+                };
+                Ok(FetchStep::Retryable {
+                    status: status.as_u16(),
+                    retry_after_secs,
+                    body_preview: preview,
+                })
+            }
+        })
+        .await
+        {
             Ok(r) => r,
-            Err(msg) => return Ok(ToolResult::Error(msg)),
+            Err(msg) => {
+                return Ok(ToolResult::Error(format!("{} {}", url, msg)));
+            }
         };
 
         let status = response.status();
-        if !status.is_success() {
-            // M-33: cap the error body — `.text()` reads everything a
-            // hostile server sends before the 300-char preview.
-            let mut body_bytes: Vec<u8> = Vec::new();
-            let mut response = response;
-            while body_bytes.len() < 4096 {
-                match response.chunk().await {
-                    Ok(Some(b)) => body_bytes.extend_from_slice(&b),
-                    Ok(None) | Err(_) => break,
-                }
-            }
-            let body = String::from_utf8_lossy(&body_bytes).into_owned();
-            let preview = if body.len() > 300 {
-                format!("{}…", kod_types::strutil::truncate_chars(&body, 300))
-            } else {
-                body
-            };
-            return Ok(ToolResult::Error(format!(
-                "{} returned HTTP {}: {}",
-                url, status, preview
-            )));
-        }
 
         let content_type = response
             .headers()
@@ -638,11 +743,119 @@ fn skip_element_at(lower: &str, i: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
 
+    /// Delta §14.5 wiring: a 429 retries once with the same UA, then
+    /// succeeds. Pre-fix, `web_retry` was never called, so this fetch
+    /// failed on the first 429.
+    #[tokio::test]
+    async fn retry_loop_retries_a_429_once() {
+        let calls: std::sync::Arc<std::sync::Mutex<Vec<usize>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let calls_for_closure = calls.clone();
+        let result: std::result::Result<(), String> = run_retry_loop(|attempt, _ua| {
+            let calls = calls_for_closure.clone();
+            async move {
+                calls.lock().unwrap().push(attempt);
+                if attempt == 0 {
+                    Ok(FetchStep::Retryable {
+                        status: 429,
+                        retry_after_secs: Some(0),
+                        body_preview: "rate limited".into(),
+                    })
+                } else {
+                    Ok(FetchStep::Done(()))
+                }
+            }
+        })
+        .await;
+        assert!(result.is_ok(), "429 must retry, then succeed: {result:?}");
+        assert_eq!(*calls.lock().unwrap(), vec![0, 1]);
+    }
+
+    /// A bot wall (403 + a marker word) rotates the UA up to
+    /// `MAX_UA_ROTATIONS`, then gives up. Pre-fix, the first 403 was
+    /// returned without a rotation.
+    #[tokio::test]
+    async fn retry_loop_rotates_ua_three_times_on_a_bot_block() {
+        let calls: std::sync::Arc<std::sync::Mutex<Vec<usize>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let calls_for_closure = calls.clone();
+        let result: std::result::Result<(), String> = run_retry_loop(|attempt, _ua| {
+            let calls = calls_for_closure.clone();
+            async move {
+                calls.lock().unwrap().push(attempt);
+                Ok(FetchStep::Retryable {
+                    status: 403,
+                    retry_after_secs: None,
+                    body_preview: "cloudflare captcha challenge".into(),
+                })
+            }
+        })
+        .await;
+        assert!(result.is_err(), "a persistent bot wall must give up");
+        // Initial request + MAX_UA_ROTATIONS (3) rotations.
+        assert_eq!(calls.lock().unwrap().len(), 4);
+    }
+
+    /// A plain 403 (no bot-wall marker) does not rotate: one request
+    /// and the error is surfaced.
+    #[tokio::test]
+    async fn retry_loop_gives_up_immediately_on_a_plain_403() {
+        let calls: std::sync::Arc<std::sync::Mutex<Vec<usize>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let calls_for_closure = calls.clone();
+        let result: std::result::Result<(), String> = run_retry_loop(|attempt, _ua| {
+            let calls = calls_for_closure.clone();
+            async move {
+                calls.lock().unwrap().push(attempt);
+                Ok(FetchStep::Retryable {
+                    status: 403,
+                    retry_after_secs: None,
+                    body_preview: "forbidden".into(),
+                })
+            }
+        })
+        .await;
+        assert!(result.is_err());
+        assert_eq!(calls.lock().unwrap().len(), 1, "no rotation on a plain 403");
+    }
+
+    /// The retry loop passes the correct UA for each attempt: the
+    /// first entry of `USER_AGENTS` on attempt 0, then successive
+    /// entries. Pre-fix, `fetch_with_safe_redirects` hardcoded the
+    /// UA, so this could not vary.
+    #[tokio::test]
+    async fn retry_loop_rotates_the_user_agent_argument() {
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<&'static str>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_for_closure = seen.clone();
+        let _: std::result::Result<(), String> = run_retry_loop(|attempt, ua| {
+            let seen = seen_for_closure.clone();
+            async move {
+                seen.lock().unwrap().push(ua);
+                if attempt < 2 {
+                    Ok(FetchStep::Retryable {
+                        status: 403,
+                        retry_after_secs: None,
+                        body_preview: "cloudflare".into(),
+                    })
+                } else {
+                    Ok(FetchStep::Done(()))
+                }
+            }
+        })
+        .await;
+        let uas = seen.lock().unwrap().clone();
+        assert_eq!(uas.len(), 3);
+        assert_eq!(uas[0], crate::web_retry::USER_AGENTS[0]);
+        assert_eq!(uas[1], crate::web_retry::USER_AGENTS[1]);
+        assert_eq!(uas[2], crate::web_retry::USER_AGENTS[2]);
+    }
+
     #[tokio::test]
     async fn safe_redirects_rejects_loopback() {
         let tool = WebFetchTool::new();
         let url = reqwest::Url::parse("http://127.0.0.1:1/").unwrap();
-        let result = tool.fetch_with_safe_redirects(url).await;
+        let result = tool.fetch_with_safe_redirects(url, "test-agent").await;
         assert!(result.is_err(), "loopback URL must be refused");
         let msg = result.unwrap_err();
         assert!(
@@ -655,7 +868,7 @@ mod tests {
     async fn safe_redirects_rejects_metadata_host() {
         let tool = WebFetchTool::new();
         let url = reqwest::Url::parse("http://metadata.google.internal/").unwrap();
-        let result = tool.fetch_with_safe_redirects(url).await;
+        let result = tool.fetch_with_safe_redirects(url, "test-agent").await;
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(msg.contains("metadata"), "got: {msg}");
