@@ -58,16 +58,7 @@ impl CommitLock {
     }
 
     /// Run `f` while holding the lock.
-    pub async fn with_lock<F, Fut, T>(&self, f: F) -> T
-    where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = T>,
-    {
-        let _guard = self.inner.lock().await;
-        f().await
-    }
-
-    /// Whether two locks would serialize against each other.
+        /// Whether two locks would serialize against each other.
     pub fn shares_repo_with(&self, other: &Self) -> bool {
         self.key == other.key
     }

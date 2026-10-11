@@ -230,11 +230,7 @@ impl KodEngine {
     }
 
     /// Delta §10: enable or disable speculative reads. On by default.
-    pub async fn set_speculative_reads(&self, on: bool) {
-        *self.speculative_reads.write().await = on;
-    }
-
-    /// Delta §4.4: the stored provider-native compaction block for a
+        /// Delta §4.4: the stored provider-native compaction block for a
     /// transcript, if any.
     pub async fn native_compaction_block(&self, key: &str) -> Option<String> {
         self.native_compaction_blocks.read().await.get(key).cloned()
@@ -278,11 +274,7 @@ impl KodEngine {
     }
 
     /// Delta §12.7: the concatenated model block, for a readout.
-    pub async fn mental_models_block(&self) -> String {
-        self.mental_models.read().await.render_block()
-    }
-
-    /// Delta §12.7: cross a transcript boundary, so a caller can
+        /// Delta §12.7: cross a transcript boundary, so a caller can
     /// re-fill models for a new session. The previous blocks are kept
     /// until re-filled (a stale-but-stable summary beats an empty one).
     pub async fn begin_transcript(&self) {
@@ -409,17 +401,7 @@ impl KodEngine {
     /// `router.consolidate_memory()`. A future change can wire the
     /// periodic task to call it via a channel; the primitive is what
     /// this lands.
-    pub async fn refresh_mental_models_after_consolidation(&self) {
-        if !self.router.has_memory() {
-            return;
-        }
-        self.fill_mental_models(Some(
-            kod_memory::mental_models::RefreshTrigger::AfterConsolidation,
-        ))
-        .await;
-    }
-
-    /// Delta §14.5: install the OTLP telemetry handle. A caller
+        /// Delta §14.5: install the OTLP telemetry handle. A caller
     /// that wants export calls this with an enabled handle built
     /// from `Telemetry::from_env`; the default (installed by
     /// `new()`) is disabled and pays nothing.
@@ -463,53 +445,16 @@ impl KodEngine {
     }
 
     /// Delta §11.6: pause the active goal.
-    pub async fn pause_goal(&self) {
-        self.goal_runtime.write().await.pause();
-    }
-
-    /// Delta §11.6: resume a paused goal.
-    pub async fn resume_goal(&self) {
-        self.goal_runtime.write().await.resume();
-    }
-
-    /// Delta §11.6: drop the active goal.
-    pub async fn drop_goal(&self) {
-        self.goal_runtime.write().await.drop_current();
-    }
-
-    /// Delta §11.6: set a token budget on the active goal. Returns
+        /// Delta §11.6: resume a paused goal.
+        /// Delta §11.6: drop the active goal.
+        /// Delta §11.6: set a token budget on the active goal. Returns
     /// `false` when there is no goal to attach it to.
-    pub async fn set_goal_token_budget(&self, tokens: u64) -> bool {
-        let mut rt = self.goal_runtime.write().await;
-        match rt.current_mut() {
-            Some(g) => {
-                g.token_budget = Some(tokens);
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Delta §14.1: replace every registered secret in `text` with
+        /// Delta §14.1: replace every registered secret in `text` with
     /// its placeholder. No-op when no vault is installed.
-    pub async fn obfuscate_secrets(&self, text: &str) -> String {
-        match self.secret_vault.read().await.as_ref() {
-            Some(v) => v.obfuscate(text),
-            None => text.to_string(),
-        }
-    }
-
-    /// Delta §14.1: replace every placeholder in `text` with the raw
+        /// Delta §14.1: replace every placeholder in `text` with the raw
     /// secret. Returns `(restored_text, count)`; count is zero when
     /// no vault is installed.
-    pub async fn deobfuscate_secrets(&self, text: &str) -> (String, usize) {
-        match self.secret_vault.read().await.as_ref() {
-            Some(v) => v.deobfuscate(text),
-            None => (text.to_string(), 0),
-        }
-    }
-
-    /// Delta §14.1: walk a JSON value recursively and deobfuscate
+        /// Delta §14.1: walk a JSON value recursively and deobfuscate
     /// every string. The tool-argument path uses this — arguments
     /// are arbitrary JSON, and the model may have put a placeholder
     /// in a nested field.
@@ -553,11 +498,7 @@ impl KodEngine {
     }
 
     /// The current read-protection, if any.
-    pub fn read_protection_setting(&self) -> Option<kod_config::ReadProtection> {
-        self.read_protection.read().ok().and_then(|g| g.clone())
-    }
-
-    /// The current redactor (shared handle).
+        /// The current redactor (shared handle).
     pub fn redactor(&self) -> std::sync::Arc<kod_types::redact::Redactor> {
         self.redactor.clone()
     }

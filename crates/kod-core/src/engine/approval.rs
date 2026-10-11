@@ -56,16 +56,6 @@ pub enum ApprovalDecision {
     DenyAlways,
 }
 
-impl ApprovalDecision {
-    /// True for both `Approve` and `ApproveWith`.
-    pub fn is_approve(&self) -> bool {
-        matches!(
-            self,
-            ApprovalDecision::Approve | ApprovalDecision::ApproveWith { .. },
-        )
-    }
-}
-
 /// Hysteresis state for the per-turn Jev tool-category filter (P0).
 ///
 /// The tool list sits in the cached prefix (Anthropic caches the

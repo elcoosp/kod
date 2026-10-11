@@ -456,6 +456,16 @@ impl KodEngine {
                         // sharpshooter's target files should be
                         // refreshed on the next turn.
                         sharpshooter_due.store(true, std::sync::atomic::Ordering::Relaxed);
+                        // Delta §12.7: the design also calls
+                        // for an `AfterConsolidation` refresh of
+                        // the mental models here. This task holds
+                        // only the router `Arc` — it cannot reach
+                        // the engine's `mental_models` map — so the
+                        // refresh is not wired. A future agent that
+                        // plumbs a `Weak<KodEngine>` into this task
+                        // closes the gap. The engine method that
+                        // would do it was removed in the same sweep
+                        // as this note.
                     }
                     Ok(_) => {
                         tracing::debug!("memory consolidation pass: nothing to do");

@@ -219,11 +219,7 @@ impl KodEngine {
     /// True when a Jev client is installed on this engine.
     /// Cheap — used by `/jev` and by any UI that wants to
     /// indicate the integration is live.
-    pub fn jev_enabled(&self) -> bool {
-        self.jev_client.read().map(|g| g.is_some()).unwrap_or(false)
-    }
-
-    /// A short status line for `/jev`. `None` when no client is
+        /// A short status line for `/jev`. `None` when no client is
     /// installed.
     pub fn jev_status(&self) -> Option<String> {
         let client = self.jev_client()?;

@@ -202,6 +202,10 @@ impl TurnTraceBuilder {
     }
 
     /// Mark this trace as belonging to a swarm subtask.
+    /// NOTE (wiring gap): nothing in production calls this. The
+    /// swarm runner creates a `TurnTraceBuilder` per dispatch but
+    /// never marks `parent`, so every swarm trace's `parent` is
+    /// `None`. The coordinator's turn id is the natural parent.
     pub fn with_parent(mut self, parent: TurnId) -> Self {
         self.trace.parent = Some(parent);
         self
@@ -252,6 +256,12 @@ impl TurnTraceBuilder {
         self.round_jev_cache_hits = 0;
     }
 
+    /// NOTE (wiring gap): nothing in production calls this.
+    /// `begin_round` (the engine's entry point) leaves `round_kind`
+    /// at its default `RoundKind::Unknown`, so every `RoundTrace` in
+    /// `turns.jsonl` is written with `kind: Unknown`. A caller that
+    /// wants the kind recorded classifies the round and calls this
+    /// from `begin_round`.
     pub fn set_round_kind(&mut self, kind: RoundKind) {
         self.round_kind = kind;
     }
