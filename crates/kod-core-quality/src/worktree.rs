@@ -278,7 +278,24 @@ impl WorktreeManager {
     /// past the worktree creation, the worktree and branch are rolled
     /// back so the repo is not left half-relocated.
     pub fn create_session(&mut self, clean_source: bool) -> Result<WorktreeInfo> {
-        let token = timestamp_token_utc();
+        // The token is second-precision. Two `/wt` invocations in
+        // the same second used to mint the same slug *and* the same
+        // git branch — `git worktree add -b wt/{token} ...` fails
+        // on the second because the branch already exists, and the
+        // destination path is already populated. pid + a process-
+        // local counter + a nanosecond clock makes the token unique
+        // per invocation; the human-readable date prefix is kept so
+        // a directory listing still sorts chronologically.
+        let token = format!(
+            "{}-{}-{}-{}",
+            timestamp_token_utc(),
+            std::process::id(),
+            next_worktree_seq(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0),
+        );
         let slug = format!("wt-{token}");
         let branch = format!("wt/{token}");
         let path = self.repo.join(".kod").join("worktrees").join(&slug);
@@ -887,6 +904,31 @@ mod tests {
     }
 
     #[test]
+    fn two_session_worktree_tokens_in_the_same_second_are_distinct() {
+        // Pre-fix, `create_session` built its slug and branch from
+        // `timestamp_token_utc()` alone — second precision. Two calls
+        // in the same second produced the same `wt-<token>` slug and
+        // the same `wt/<token>` branch, so the second `git worktree
+        // add` failed with "branch already exists". The fix mixes in
+        // pid + a process-local counter + sub-second nanos.
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..200 {
+            let token = format!(
+                "{}-{}-{}-{}",
+                timestamp_token_utc(),
+                std::process::id(),
+                next_worktree_seq(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.subsec_nanos())
+                    .unwrap_or(0),
+            );
+            seen.insert(token);
+        }
+        assert_eq!(seen.len(), 200, "every token in a burst must be unique");
+    }
+
+    #[test]
     fn timestamp_token_is_yyyymmdd_hhmmss() {
         let t = timestamp_token_utc();
         assert_eq!(t.len(), 15, "got: {t}");
@@ -1073,4 +1115,14 @@ mod tests {
         }
         assert!(!path_to_check.exists(), "Drop should have cleaned up");
     }
+}
+
+/// Monotonic process-local counter for unique session-worktree
+/// tokens. Paired with the date prefix, the process id, and a
+/// sub-second clock so two invocations in the same second cannot
+/// collide on a slug (a directory) or a branch name.
+fn next_worktree_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }
