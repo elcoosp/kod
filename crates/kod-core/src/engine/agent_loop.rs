@@ -862,6 +862,23 @@ impl KodEngine {
                                         )
                                         .await
                                 {
+                                    // Tier 1.4 — record the mid-stream
+                                    // switch in the trace. Pre-fix
+                                    // `add_retry` had no production
+                                    // caller, so the trace could not
+                                    // show which endpoint a turn began
+                                    // on and abandoned. A reader of
+                                    // `turns.jsonl` saw only the final
+                                    // endpoint's round.
+                                    if let Some(mutex) = round_trace
+                                        && let Ok(mut g) = mutex.lock()
+                                    {
+                                        g.add_retry(
+                                            &model_ref.display(),
+                                            &fb.display(),
+                                            "mid-stream off-track switch",
+                                        );
+                                    }
                                     stream = new_stream;
                                     // Reset the counter so the new
                                     // stream gets a fresh window
