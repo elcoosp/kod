@@ -278,6 +278,112 @@ fn no_seconds_only_backup_filenames_in_production() {
 }
 
 // ---------------------------------------------------------------------------
+// Class: bare wall-clock value used as a unique filename
+// ---------------------------------------------------------------------------
+//
+// A wall-clock value is not unique across concurrent writers in the
+// same clock tick. This session fixed four separate instances where a
+// filename (or a name from which a filename and a git branch are
+// built) was composed from a bare clock token:
+//
+//   * `~/.kod/sessions/{ts}.jsonl`            (session_log)
+//   * `.kod/handoff-{stamp}.md`               (TUI handoff)
+//   * `.kod/session-{ts}.html`                (TUI export)
+//   * worktree `wt-{token}` and `wt/{token}`  (kod-core-quality)
+//
+// Each produced a real collision when two writers ran in the same
+// tick: interleaved JSONL, a silently overwritten handoff document,
+// an export that clobbered its predecessor, and a `git worktree add`
+// that failed because the branch already existed.
+//
+// The fix everywhere is to mix in a per-writer discriminator — pid,
+// a process-local counter, or sub-second nanos. This lint flags a
+// format literal that ends in a filename extension, contains a
+// clock-shaped placeholder, and contains none of those
+// discriminators. It is deliberately narrow: a log line that names a
+// time is not flagged, only a filename.
+
+/// Placeholder names that read as "a wall clock".
+const CLOCK_TOKENS: &[&str] = &[
+    "{ts}",
+    "{stamp}",
+    "{now}",
+    "{timestamp}",
+    "{time}",
+    "{date}",
+    "{secs}",
+    "{ms}",
+    "{unix_ms}",
+    "{unix_secs}",
+    "{unix_nanos}",
+    "{ts_ms}",
+];
+
+/// Substrings that mean "this writer is distinguished from another".
+/// A literal containing any of these is not flagged.
+const DISCRIMINATORS: &[&str] = &[
+    "process::id",
+    "pid",
+    "seq",
+    "counter",
+    "uuid",
+    "nanos",
+    "subsec",
+    "{}-{}", // an extra positional placeholder
+];
+
+/// Filename extensions that mark a literal as "this is a filename".
+const FILENAME_EXTS: &[&str] = &[
+    ".json", ".jsonl", ".html", ".md", ".log", ".txt", ".toml", ".yaml", ".yml",
+];
+
+#[test]
+fn no_bare_wall_clock_filenames_in_production() {
+    let mut bad: Vec<(PathBuf, usize, String)> = Vec::new();
+    for path in all_production_sources() {
+        // Escape hatch: a file that opens with `create_new(true)`
+        // is explicitly refusing to overwrite, so the writer is
+        // already collision-aware — `plan::autosave_plan` walks a
+        // numbered candidate list under that flag and is correct.
+        // The class this lint guards against is a *silent* overwrite
+        // via `fs::write` / `create(true)`, which is what the four
+        // bugs this session all used.
+        let whole = std::fs::read_to_string(&path).unwrap_or_default();
+        if whole.contains("create_new(true)") {
+            continue;
+        }
+        for (lineno, line) in production_lines(&path) {
+            if is_comment(&line) {
+                continue;
+            }
+            for lit in string_literals(&line) {
+                let is_filename = FILENAME_EXTS.iter().any(|e| lit.ends_with(e));
+                if !is_filename {
+                    continue;
+                }
+                if !CLOCK_TOKENS.iter().any(|t| lit.contains(t)) {
+                    continue;
+                }
+                if DISCRIMINATORS.iter().any(|d| lit.contains(d)) {
+                    continue;
+                }
+                bad.push((path.clone(), lineno, lit));
+            }
+        }
+    }
+    if !bad.is_empty() {
+        report(
+            &bad,
+            "bare wall-clock filename(s) in production — a clock token is not \
+             unique across writers in the same tick. Mix in a discriminator \
+             (pid, a process-local counter, sub-second nanos) before the \
+             extension, or open the file with `create_new(true)` and handle \
+             `AlreadyExists` explicitly:",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Class: subtraction on `.len()` without a saturating shape
 // ---------------------------------------------------------------------------
 //
