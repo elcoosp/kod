@@ -614,11 +614,36 @@ pub fn default_session_path() -> Option<PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
+    // Two `kod chat` processes started in the same millisecond used
+    // to produce the same filename. `SessionRecorder::open` uses
+    // `create(true).append(true)` — no `create_new` — so both
+    // processes opened the same JSONL, appended interleaved lines,
+    // and `kod replay` rehydrated a mix of two sessions. A
+    // millisecond clock is too coarse: 1000 back-to-back calls in
+    // one process observe exactly one distinct value.
+    //
+    // pid + a process-local counter + the clock is the shape every
+    // other unique-named file in the workspace uses (`state.rs`,
+    // `tool_cache.rs`, `tui/persistence.rs`, the CLI's
+    // `next_temp_seq` callers). The JSONL is a destination rather
+    // than a temp, but the collision risk is identical.
+    let pid = std::process::id();
+    let seq = next_session_seq();
     Some(
         home.join(".kod")
             .join("sessions")
-            .join(format!("{ts}.jsonl")),
+            .join(format!("{ts}-{pid}-{seq}.jsonl")),
     )
+}
+
+/// Monotonic per-process counter used to break ties between two
+/// session-log paths minted in the same millisecond. Paired with
+/// `std::process::id()` and the wall clock, it guarantees a unique
+/// filename for every session in the process.
+fn next_session_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Which shape a rehydrated transcript takes.
@@ -1188,15 +1213,40 @@ mod coverage_session_paths {
 
     #[test]
     fn two_default_paths_differ_within_the_same_process() {
-        // The path includes a millisecond timestamp. Two calls in
-        // the same process are microseconds apart, so they may or
-        // may not differ — but they must both exist and be
-        // well-formed. The test records the contract rather than
-        // asserting non-determinism.
+        // The pre-fix shape used only a millisecond clock and the
+        // test waived the uniqueness invariant — "may or may not
+        // differ". A millisecond is far too coarse: 1000
+        // back-to-back calls observe one distinct value, so two
+        // `kod chat` invocations in the same millisecond opened
+        // the same JSONL and `kod replay` rehydrated an interleaved
+        // mix. pid + counter makes uniqueness a guarantee, and this
+        // test pins it.
         if let (Some(a), Some(b)) = (default_session_path(), default_session_path()) {
             assert!(a.extension().and_then(|s| s.to_str()) == Some("jsonl"));
             assert!(b.extension().and_then(|s| s.to_str()) == Some("jsonl"));
+            assert_ne!(
+                a, b,
+                "two sessions in the same process must not share a log path",
+            );
         }
+    }
+
+    #[test]
+    fn many_paths_in_one_burst_are_all_distinct() {
+        // A tight loop is where the timestamp-only shape failed; a
+        // burst of 200 calls must produce 200 distinct paths.
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..200 {
+            if let Some(p) = default_session_path() {
+                seen.insert(p);
+            }
+        }
+        // The `home_dir()` gate: if it returns `None` we cannot
+        // build a path at all, so skip.
+        if seen.is_empty() {
+            return;
+        }
+        assert_eq!(seen.len(), 200, "every path must be unique");
     }
 
     #[test]
