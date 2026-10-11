@@ -1275,7 +1275,7 @@ async fn cancelled_swarm_run_leaves_no_agents_on_the_hub() {
     // Wait for the per-agent call — by then the pool is on the hub.
     let _ = provider.started.acquire().await;
     assert!(
-        engine.swarm_hub().list_agents().await.len() > 0,
+        !engine.swarm_hub().list_agents().await.is_empty(),
         "a running swarm must have pool agents on the hub",
     );
 
