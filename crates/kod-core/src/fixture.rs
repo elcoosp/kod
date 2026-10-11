@@ -184,8 +184,41 @@ impl Fixture {
     }
 
     /// The default path for a fixture by name.
+    ///
+    /// Returns `None` for a name that is not a bare file stem:
+    /// empty, containing a path separator, containing `..`, or
+    /// absolute. The name arrives from the `kod fixture save
+    /// <NAME>` / `kod fixture replay <NAME>` CLI arguments, so a
+    /// caller can — deliberately or by accident — pass
+    /// `../../etc/passwd` and have `save_to` write outside the
+    /// fixtures directory. Restricting to a bare stem is the same
+    /// allow-list shape `checkpoint::find` uses for its ids.
     pub fn default_path(name: &str) -> Option<std::path::PathBuf> {
+        if !Self::is_valid_name(name) {
+            return None;
+        }
         Self::fixtures_dir().map(|d| d.join(format!("{name}.json")))
+    }
+
+    /// True iff `name` is a bare file stem: non-empty, no path
+    /// separator, no parent-directory segment, not absolute.
+    ///
+    /// Deliberately conservative: a fixture name is a label a user
+    /// types, not a path. Anything that looks like a path is
+    /// refused.
+    pub fn is_valid_name(name: &str) -> bool {
+        if name.is_empty() || name == "." || name == ".." {
+            return false;
+        }
+        if name.contains('/') || name.contains('\\') {
+            return false;
+        }
+        // On Windows an absolute path can carry a drive prefix
+        // (`C:foo`) without a separator; refuse a bare colon too.
+        if name.contains(':') {
+            return false;
+        }
+        true
     }
 
     /// Parse a fixture. Errors carry the field path when possible.
@@ -366,6 +399,24 @@ mod tests {
         let mut b = sample("x", 3);
         b.rounds[1].request_hash = "deadbeef".into();
         assert_eq!(a.first_divergence(&b), Some(1));
+    }
+
+    #[test]
+    fn default_path_rejects_a_name_that_escapes_the_fixtures_dir() {
+        // Pre-fix, `default_path("../../etc/foo")` joined the name
+        // verbatim: `~/.kod/fixtures/../../etc/foo.json` resolves
+        // to `~/.kod/../etc/foo.json` — a write outside the
+        // fixtures directory. The name comes straight from the
+        // `kod fixture save <NAME>` CLI argument, so a user (or a
+        // script) can name a traversal deliberately.
+        for bad in ["../escape", "..", "../../etc/foo", "a/b", "/abs"] {
+            let p = Fixture::default_path(bad);
+            assert!(
+                p.is_none(),
+                "name {bad:?} must be rejected, got {:?}",
+                p.map(|p| p.display().to_string()),
+            );
+        }
     }
 
     #[test]
