@@ -1450,3 +1450,138 @@ async fn clear_history_drops_queued_background_job_results() {
          queue intact",
     );
 }
+
+/// Regression: every tool call must appear in `turns.jsonl`. Pre-fix
+/// the engine called only `attach_results`, which *updates* an entry
+/// `add_tool_call` was supposed to create — but nothing in production
+/// ever called `add_tool_call`, so the entry never existed and the
+/// update loop found nothing. `tool_call_count` stayed zero and a
+/// fixture replay could not see the calls.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tool_calls_are_recorded_in_the_turn_trace() {
+    use kod_types::ToolCall;
+
+    struct OneToolProvider;
+
+    #[async_trait]
+    impl LlmProvider for OneToolProvider {
+        fn name(&self) -> &str {
+            "one-tool"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec!["one-tool".into()])
+        }
+        async fn generate(
+            &self,
+            prompt: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            // Split this goal -> a single-subtask JSON. We need the
+            // *first* call to produce a tool call, then a plain text
+            // reply once it has been dispatched.
+            if prompt.contains("Split this goal") {
+                return Ok(r#"[{"name":"probe","description":"list the tree","expected_writes":["out/x.txt"]}]"#
+                    .to_string());
+            }
+            if prompt.contains("Synthesize their work") {
+                return Ok("MERGED".to_string());
+            }
+            Ok("done".to_string())
+        }
+        async fn generate_with_tools(
+            &self,
+            _p: &str,
+            _t: &[ToolDefinition],
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::ToolCalls {
+                calls: vec![ToolCall {
+                    id: None,
+                    tool_name: "list_files".to_string(),
+                    arguments: serde_json::json!({ "path": ".", "recursive": false }),
+                }],
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+        fn stream_with_tools<'a>(
+            &'a self,
+            _p: &'a str,
+            _t: &'a [ToolDefinition],
+            _o: &'a GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+        {
+            Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::ToolCallStart {
+                    index: 0,
+                    id: None,
+                    name: "list_files".to_string(),
+                }),
+                Ok(StreamChunk::ToolCallDelta {
+                    index: 0,
+                    arguments: serde_json::json!({
+                        "path": ".",
+                        "recursive": false
+                    })
+                    .to_string(),
+                }),
+                Ok(StreamChunk::Done),
+            ]))
+        }
+    }
+
+    let provider: Arc<dyn LlmProvider> = Arc::new(OneToolProvider);
+    let (engine, _tmp) = build_engine(provider).await;
+
+    // Install a trace writer pointing into the tempdir so we can
+    // inspect what the engine recorded.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let trace_path = tmp.path().join("turns.jsonl");
+    let writer = std::sync::Arc::new(
+        kod_core::TraceWriter::open(trace_path.clone()).expect("open trace writer"),
+    );
+    engine.set_turn_trace_writer(writer);
+
+    // Run a swarm — any path that goes through process_streaming_*
+    // will do; the streaming loop is what the trace is written from.
+    let runner = SwarmRunner::new(engine.clone(), 2, false).await.unwrap();
+    let (tx, mut rx) = mpsc::channel::<SwarmEvent>(256);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let _ = runner.run("probe the tree", &tx).await;
+    drop(tx);
+    let _ = drain.await;
+    // Flush: the trace writer flushes on every record, so no wait is
+    // needed.
+
+    let traces = kod_core::read_traces(&trace_path).expect("read trace file");
+    assert!(
+        !traces.is_empty(),
+        "the engine must have written at least one turn trace",
+    );
+    let total_tool_calls: u32 = traces.iter().map(|t| t.tool_call_count).sum();
+    assert!(
+        total_tool_calls > 0,
+        "every dispatched tool call must appear in the trace; got {} traces \
+         with {} total tool calls",
+        traces.len(),
+        total_tool_calls,
+    );
+    // And the actual `ToolCallTrace` records must be present, not
+    // just the count.
+    let records: usize = traces
+        .iter()
+        .flat_map(|t| t.rounds.iter())
+        .map(|r| r.tool_calls.len())
+        .sum();
+    assert!(
+        records > 0,
+        "the trace must carry ToolCallTrace entries, not just a count",
+    );
+}

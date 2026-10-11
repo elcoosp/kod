@@ -321,6 +321,58 @@ impl TurnTraceBuilder {
         }
     }
 
+    /// Record one round's tool calls and their results.
+    ///
+    /// A single call rather than two (`add_tool_call` then
+    /// `attach_results`) because the two must not be able to drift
+    /// apart: a caller that only ran the second — which is exactly
+    /// what the engine did before this fix — silently produced zero
+    /// tool-call entries, because `attach_results` only *updates*
+    /// an entry that `add_tool_call` was supposed to create. The
+    /// engine's own comment claiming `add_tool_call` "already ran
+    /// before dispatch" was aspirational; nothing called it.
+    ///
+    /// `elapsed_ms` parallels `calls` and `results` (the dispatcher
+    /// returns one per call). A missing entry is recorded as zero;
+    /// a call with no paired result is still recorded, with an
+    /// outcome of `Error` and an empty summary — the tool ran and
+    /// the reader must see that it did, even if the result was
+    /// dropped by a cancellation.
+    pub fn record_tool_round(
+        &mut self,
+        calls: &[kod_types::ToolCall],
+        results: &[kod_types::ToolResult],
+        elapsed_ms: &[u64],
+    ) {
+        for (i, call) in calls.iter().enumerate() {
+            let (outcome, output_bytes, result_summary) = match results.get(i) {
+                Some(result) => (
+                    match result {
+                        kod_types::ToolResult::Success(_) => ToolOutcomeKind::Success,
+                        kod_types::ToolResult::Error(_) => ToolOutcomeKind::Error,
+                        kod_types::ToolResult::RequiresConfirmation { .. } => {
+                            ToolOutcomeKind::RequiresConfirmation
+                        }
+                    },
+                    rendered_len(result),
+                    summarize_result(result),
+                ),
+                None => (ToolOutcomeKind::Error, 0, String::new()),
+            };
+            self.round_tool_calls.push(ToolCallTrace {
+                name: call.tool_name.clone(),
+                args_hash: hash_short(&call.arguments),
+                arguments: call.arguments.clone(),
+                duration_ms: elapsed_ms.get(i).copied().unwrap_or(0),
+                outcome,
+                output_bytes,
+                elided_lines: None,
+                result_summary: Some(result_summary),
+            });
+            self.trace.tool_call_count += 1;
+        }
+    }
+
     pub fn add_retry(&mut self, from: &str, to: &str, reason: &str) {
         self.round_retries.push(RetryTrace {
             from_endpoint: from.to_string(),
@@ -364,6 +416,18 @@ fn now_ms() -> u64 {
 
 /// A short human-readable summary of a tool result, used by the
 /// fixture and the trace (Tier 1.5).
+/// Byte length of the tool result's rendered form. Used for
+/// `output_bytes` in the trace — the same value the minimizer and
+/// the transcript caps measure, so a reader sees the size the model
+/// actually saw.
+fn rendered_len(result: &kod_types::ToolResult) -> usize {
+    match result {
+        kod_types::ToolResult::Success(v) => v.to_string().len(),
+        kod_types::ToolResult::Error(e) => e.len(),
+        kod_types::ToolResult::RequiresConfirmation { description, .. } => description.len(),
+    }
+}
+
 fn summarize_result(result: &kod_types::ToolResult) -> String {
     match result {
         kod_types::ToolResult::Success(v) => {

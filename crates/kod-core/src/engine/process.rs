@@ -1253,6 +1253,12 @@ impl KodEngine {
             // Tier 1.4 — finish and emit the trace.
             if let Ok(mut g) = trace.lock() {
                 g.set_reply_chars(final_text.len());
+                // Tier 1.4 — record the terminal outcome. Pre-fix
+                // `set_outcome` had no production caller, so every
+                // trace line carried the `Default` value (`Completed`)
+                // regardless of how the turn actually ended. A reader
+                // filtering for cancelled or failed turns saw none.
+                g.set_outcome(kod_core_state::trace::TurnOutcome::Completed, None);
             }
             // We have to move the builder out of the Mutex to finish
             // it; since we are the only owner at this point, this is

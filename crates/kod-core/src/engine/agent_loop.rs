@@ -294,6 +294,19 @@ impl KodEngine {
             // Delta §9.11: per-round wall time, recorded into the run
             // collector after the round's outcome is known.
             let round_started = std::time::Instant::now();
+            // Tier 1.4 — open this round in the trace. Pre-fix nothing
+            // in production ever called `begin_round`, so
+            // `round_started_at_ms` stayed `None`, `close_round`
+            // early-returned, and *no* `RoundTrace` was ever pushed:
+            // every `turns.jsonl` line had an empty `rounds` vec and
+            // `tool_call_count == 0`. Opening the round here means
+            // `close_round` (from `begin_round` on the next iteration
+            // or from `finish`) has a start to close on.
+            if let Some(mutex) = round.trace
+                && let Ok(mut g) = mutex.lock()
+            {
+                g.begin_round(current_provider.name(), &current_model_ref.model);
+            }
             if self.is_cancelled_for(round.holder) {
                 return Err(KodError::InvalidState("cancelled by user".to_string()));
             }
@@ -342,7 +355,14 @@ impl KodEngine {
                 definitions: round.definitions,
                 options: round.options,
                 holder: round.holder,
-                trace: None,
+                // Tier 1.4 — the outer round owns the trace builder
+                // for the whole turn; the inner context must carry
+                // it through, or the per-round usage accounting in
+                // `stream_round` and the tool-call recording below
+                // never fire. Pre-fix this was hardcoded `None`,
+                // which silently dropped every per-round usage and
+                // every tool call from `turns.jsonl`.
+                trace: round.trace,
                 // P5.6 — carry the outer round's fallback through to
                 // the inner `stream_round` call so mid-stream
                 // switching has a target.
@@ -533,14 +553,20 @@ impl KodEngine {
                     .send(tool_done_marker(cid, &header, &summary, *ms))
                     .await;
             }
-            // Tier 1.5 — record the results we just got into the
-            // trace's tool-call records. `add_tool_call` already ran
-            // before dispatch; we retroactively attach the summary
-            // now that it exists.
+            // Tier 1.5 — record the tool round into the trace. Pre-fix
+            // this block only called `attach_results`, whose contract
+            // is to *update* an entry `add_tool_call` was supposed to
+            // have created — but nothing in production ever called
+            // `add_tool_call`, so the entry never existed and the loop
+            // inside `attach_results` found nothing. Every tool call
+            // was therefore absent from `turns.jsonl` (`tool_call_count`
+            // stayed zero and the fixture replay could not see the
+            // calls). `record_tool_round` is the single call that both
+            // creates and fills each entry.
             if let Some(mutex) = round.trace
                 && let Ok(mut g) = mutex.lock()
             {
-                g.attach_results(&section.results, &calls);
+                g.record_tool_round(&calls, &section.results, &section.elapsed_ms);
             }
             tool_calls.extend(calls);
             tool_results.extend(section.results.clone());
