@@ -139,6 +139,22 @@ impl AsyncDelivery {
             .push(result);
     }
 
+    /// Drop every queued result for `owner_id`. Called on a
+    /// transcript reset so a background job that finished before the
+    /// reset does not surface in the post-reset transcript.
+    ///
+    /// Per-owner rather than [`Self::bump_epoch`]: the epoch is a
+    /// process-wide counter, and bumping it from one transcript's
+    /// clear would also drop results queued for a sibling swarm
+    /// agent's transcript — which the doc on
+    /// [`Self::enqueue`] explicitly says must not happen. A clear is
+    /// a per-transcript event; the discard is too.
+    ///
+    /// Returns the number of results dropped.
+    pub fn discard_owner(&mut self, owner_id: &str) -> usize {
+        self.queues.remove(owner_id).map(|v| v.len()).unwrap_or(0)
+    }
+
     /// How many results are queued for an owner.
     pub fn queued_for(&self, owner_id: &str) -> usize {
         self.queues.get(owner_id).map(|v| v.len()).unwrap_or(0)
@@ -304,6 +320,28 @@ mod tests {
         let mut r = result("session", 1, "fresh");
         r.epoch = d.epoch();
         d.enqueue(r);
+        assert_eq!(d.queued_for("session"), 1);
+    }
+
+    #[test]
+    fn discard_owner_removes_only_that_owners_queue() {
+        let mut d = AsyncDelivery::new();
+        d.enqueue(result("session", 1, "s1"));
+        d.enqueue(result("session", 2, "s2"));
+        d.enqueue(result("swarm:agent-1", 3, "a1"));
+        assert_eq!(d.discard_owner("session"), 2);
+        assert_eq!(d.queued_for("session"), 0);
+        // The sibling owner's queue survives — this is what makes
+        // `discard_owner` correct where a process-wide `bump_epoch`
+        // would be wrong.
+        assert_eq!(d.queued_for("swarm:agent-1"), 1);
+    }
+
+    #[test]
+    fn discard_owner_on_an_unknown_owner_is_a_no_op() {
+        let mut d = AsyncDelivery::new();
+        d.enqueue(result("session", 1, "x"));
+        assert_eq!(d.discard_owner("nobody"), 0);
         assert_eq!(d.queued_for("session"), 1);
     }
 

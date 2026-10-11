@@ -393,6 +393,15 @@ impl KodEngine {
     pub async fn clear_history_for(&self, key: &str) {
         self.history.write().await.remove(key);
         self.last_prompt.write().await.remove(key);
+        // Delta §11.4: a clear is a session boundary for async
+        // delivery. Drop every background-job result queued for this
+        // owner — a job that finished before the clear must not
+        // surface in the post-reset transcript, which is the whole
+        // point of the epoch guard (`AsyncDelivery::bump_epoch`'s
+        // doc). The production code never bumped the epoch, so the
+        // guard was dead; per-owner discard is the fix, and it leaves
+        // a sibling swarm agent's queue intact.
+        self.async_delivery.lock().discard_owner(key);
         // Delta §12.7: a cleared transcript is a new session for the
         // mental models. Cross the transcript boundary so
         // `AfterConsolidation`-triggered models reload at the next
@@ -722,6 +731,27 @@ impl KodEngine {
 }
 
 impl KodEngine {
+    /// Test-only: how many async-job results are queued for `key`.
+    pub async fn queued_async_results_for_tests(&self, key: &str) -> usize {
+        self.async_delivery.lock().queued_for(key)
+    }
+
+    /// Test-only: enqueue a job result as if a background job had
+    /// just finished. Used to prove `clear_history_for` drops them.
+    pub async fn enqueue_async_result_for_tests(&self, owner_id: &str, job_id: u64, body: &str) {
+        let epoch = self.async_delivery.lock().epoch();
+        self.async_delivery
+            .lock()
+            .enqueue(crate::async_delivery::AsyncResult {
+                job_id,
+                owner_id: owner_id.to_string(),
+                kind: "test".to_string(),
+                body: body.to_string(),
+                artifact: None,
+                epoch,
+            });
+    }
+
     /// Test-only: the single transcript key with a write-glob claim,
     /// and the globs, when exactly one entry exists. `None` otherwise
     /// (zero or more than one). Used by tests that drive one agent

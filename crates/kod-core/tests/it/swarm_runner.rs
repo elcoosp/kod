@@ -1374,3 +1374,79 @@ async fn shutdown_drains_pending_approvals_and_questions() {
         "shutdown must drain the pending-question map",
     );
 }
+
+/// Regression: a background-job result queued before a `/clear`
+/// must not surface in the post-reset transcript. The `AsyncDelivery`
+/// epoch guard exists for exactly this, but `bump_epoch` was called
+/// only from the module's own tests — the engine's `clear_history`
+/// path never dropped queued results, so a job that finished before
+/// `/clear` still arrived on the next round boundary.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn clear_history_drops_queued_background_job_results() {
+    struct NullProvider;
+
+    #[async_trait]
+    impl LlmProvider for NullProvider {
+        fn name(&self) -> &str {
+            "null"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec![])
+        }
+        async fn generate(&self, _: &str, _: &GenerationOptions) -> kod_error::Result<String> {
+            Ok("ok".into())
+        }
+        async fn generate_with_tools(
+            &self,
+            _: &str,
+            _: &[ToolDefinition],
+            _: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::Text {
+                content: "ok".into(),
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _: &str,
+            _: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+    }
+
+    let provider: Arc<dyn LlmProvider> = Arc::new(NullProvider);
+    let (engine, _tmp) = build_engine(provider).await;
+
+    // A background job's result is queued for the interactive
+    // transcript (the default key, `""`).
+    engine
+        .enqueue_async_result_for_tests("", 1, "job one")
+        .await;
+    engine
+        .enqueue_async_result_for_tests("", 2, "job two")
+        .await;
+    assert_eq!(engine.queued_async_results_for_tests("").await, 2);
+
+    // A sibling transcript (a swarm agent) also has a queued result
+    // — `/clear` on the interactive session must NOT drop it.
+    engine
+        .enqueue_async_result_for_tests("swarm:agent-1", 3, "agent result")
+        .await;
+
+    engine.clear_history().await;
+
+    assert_eq!(
+        engine.queued_async_results_for_tests("").await,
+        0,
+        "clear_history must drop the session's queued job results",
+    );
+    assert_eq!(
+        engine.queued_async_results_for_tests("swarm:agent-1").await,
+        1,
+        "clear_history on the session must leave a sibling agent's \
+         queue intact",
+    );
+}
