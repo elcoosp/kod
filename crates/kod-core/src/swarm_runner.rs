@@ -840,6 +840,20 @@ impl SwarmRunner {
                 // Tier 3.5 — subscribe this agent to the shared
                 // blackboard so its prompt includes what the team knows.
                 let _ = self.engine.set_blackboard_viewer(&dispatch_key, true).await;
+                // Publish each write claim to the shared blackboard.
+                // `note_write_claim`'s doc says "called by the swarm
+                // runner before an agent runs" — pre-fix nothing in
+                // production called it, so a peer agent's prompt had
+                // no way to learn who claimed which path until a
+                // *collision* fired. The team block is bounded
+                // (`render_prompt_block("team", 30, 3000)`) so a
+                // claim-heavy swarm cannot crowd out the task, and
+                // claims are what a peer needs to avoid the
+                // coordination collision the file-touch bus only
+                // detects after the fact.
+                for glob in &st.expected_writes {
+                    self.engine.note_write_claim(&name, glob);
+                }
             }
 
             // P1-c: subscribe this dispatch to the file-touch bus.
@@ -1850,6 +1864,20 @@ impl SwarmRunner {
                             vec!["summary".to_string()],
                         );
                     }
+                    // Publish a done-marker so a peer that planned to
+                    // consume this subtask's output sees it in the
+                    // team block. `note_subtask_done`'s doc says
+                    // "called by the swarm runner when an agent
+                    // finishes" — pre-fix nothing in production
+                    // called it, so the done state never reached the
+                    // blackboard. The summary is the first line of
+                    // the agent's text, which is what a reader
+                    // scanning the team block needs.
+                    self.engine.note_subtask_done(
+                        &name,
+                        &subtask.name,
+                        text.lines().next().unwrap_or(""),
+                    );
                     per_agent.push(AgentResult {
                         id,
                         name,

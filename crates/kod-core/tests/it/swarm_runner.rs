@@ -1585,3 +1585,104 @@ async fn tool_calls_are_recorded_in_the_turn_trace() {
         "the trace must carry ToolCallTrace entries, not just a count",
     );
 }
+
+/// Regression: the swarm runner publishes each subtask's write
+/// claims and its completion to the shared blackboard. Pre-fix,
+/// `note_write_claim` and `note_subtask_done` had no production
+/// caller at all — the doc comment on each ("called by the swarm
+/// runner before an agent runs" / "when an agent finishes") was
+/// aspirational. A peer agent's "team" block carried the runner's
+/// `agent:<name>:summary` entry but nothing about claims or
+/// completion, so the block could not do the coordination job it
+/// exists for.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn swarm_publishes_write_claims_and_completions() {
+    struct PlainProvider;
+
+    #[async_trait]
+    impl LlmProvider for PlainProvider {
+        fn name(&self) -> &str {
+            "plain"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec!["plain".into()])
+        }
+        async fn generate(
+            &self,
+            prompt: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            if prompt.contains("Split this goal") {
+                return Ok(r#"[{"name":"a","description":"do a","expected_writes":["src/a.rs","src/b.rs"]}]"#
+                    .to_string());
+            }
+            if prompt.contains("Synthesize their work") {
+                return Ok("MERGED".to_string());
+            }
+            Ok("agent a finished".to_string())
+        }
+        async fn generate_with_tools(
+            &self,
+            prompt: &str,
+            _t: &[ToolDefinition],
+            o: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::Text {
+                content: self.generate(prompt, o).await?,
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+        fn stream_with_tools<'a>(
+            &'a self,
+            _p: &'a str,
+            _t: &'a [ToolDefinition],
+            _o: &'a GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+        {
+            Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::Text("agent a finished".to_string())),
+                Ok(StreamChunk::Done),
+            ]))
+        }
+    }
+
+    let provider: Arc<dyn LlmProvider> = Arc::new(PlainProvider);
+    let (engine, _tmp) = build_engine(provider).await;
+
+    let runner = SwarmRunner::new(engine.clone(), 2, false).await.unwrap();
+    let (tx, mut rx) = mpsc::channel::<SwarmEvent>(256);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let _ = runner.run("do a thing", &tx).await;
+    drop(tx);
+    let _ = drain.await;
+
+    let all = engine.blackboard().all();
+    // Two write claims, one per declared glob.
+    let claims: Vec<&str> = all
+        .iter()
+        .filter(|e| e.key.starts_with("claim:"))
+        .map(|e| e.key.as_str())
+        .collect();
+    assert!(
+        claims.iter().any(|k| k.contains("src/a.rs")),
+        "the blackboard must carry a claim for src/a.rs: {claims:?}",
+    );
+    assert!(
+        claims.iter().any(|k| k.contains("src/b.rs")),
+        "the blackboard must carry a claim for src/b.rs: {claims:?}",
+    );
+    // A done marker for the subtask.
+    assert!(
+        all.iter().any(|e| e.key == "done:a"),
+        "the blackboard must carry a done marker for subtask `a`: {:?}",
+        all.iter().map(|e| &e.key).collect::<Vec<_>>(),
+    );
+}
