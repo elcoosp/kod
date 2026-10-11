@@ -360,6 +360,19 @@ impl SessionRecorder {
                 }
                 redactions.extend(self.redactor.redact_json(answers));
             }
+            SessionEntry::Approval { edit, .. } => {
+                // `edit` carries the JSON the user substituted via
+                // `ApproveWith`. It is the same content the model
+                // proposed (`ToolCall.arguments`) after the user
+                // edited it, and `ToolCall.arguments` is redacted a
+                // few arms above. Pre-fix, a user who approved a
+                // `write_file` whose content field held an API key
+                // left the key in the JSONL while the model's own
+                // copy was redacted — an asymmetry with no rationale.
+                if let Some(v) = edit {
+                    redactions.extend(self.redactor.redact_json(v));
+                }
+            }
             _ => {}
         }
         let line =
@@ -933,6 +946,44 @@ mod tests {
             }
             other => panic!("unexpected entry kind: {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_secret_in_approval_edit_is_redacted_before_it_reaches_disk() {
+        // `record` redacts `ToolCall.arguments` and `ToolCall.result`,
+        // `PolicyDecision.rule`, `ModelFallback.error`, and
+        // `JevDecision.state_preview`/`answers`. It did *not* redact
+        // `Approval.edit` — the JSON the user substituted via
+        // `ApproveWith`, which is the same kind of content as
+        // `ToolCall.arguments` (the model's proposed arguments, as
+        // edited). A user who approved a `write_file` with an API key
+        // pasted into the content field left that key in the JSONL.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("session.jsonl");
+        let recorder = SessionRecorder::open(path.clone()).unwrap();
+        let secret = "sk-abcdef1234567890ABCDEFGH";
+        recorder
+            .record(&SessionEntry::Approval {
+                timestamp_ms: 0,
+                holder: "session".to_string(),
+                tool_name: "write_file".to_string(),
+                decision: "approve-edited".to_string(),
+                edit: Some(serde_json::json!({
+                    "path": ".env",
+                    "content": format!("OPENAI_API_KEY={secret}\n"),
+                })),
+            })
+            .unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !raw.contains(secret),
+            "the secret must not survive to disk in Approval.edit: {raw}",
+        );
+        assert!(
+            raw.contains("[REDACTED:openai-key]"),
+            "the redaction marker must be present: {raw}",
+        );
     }
 
     #[test]
