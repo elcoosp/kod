@@ -629,6 +629,23 @@ pub async fn run_skills_copy(name: &str, new_name: &str) -> Result<()> {
 }
 
 pub async fn run_skills_rename(name: &str, new_name: &str) -> Result<()> {
+    // Validate `new_name` *before* it is joined into a path. The
+    // copy path validates internally, but rename joins the name
+    // first to run an existence check — with `new_name = "../../x"`
+    // that check reports whether an arbitrary path outside the
+    // skills directory exists, an information leak even though the
+    // eventual `run_skills_copy` would refuse the write. Same
+    // allow-list as `run_skills_new` / `run_skills_copy`.
+    if new_name.is_empty()
+        || !new_name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(KodError::Config(format!(
+            "invalid new name {:?}: lowercase letters, digits, and hyphens only",
+            new_name
+        )));
+    }
     let src = match find_skill_path(name).await? {
         Some(p) => p,
         None => {
