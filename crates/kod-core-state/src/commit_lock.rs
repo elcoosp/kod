@@ -58,7 +58,22 @@ impl CommitLock {
     }
 
     /// Run `f` while holding the lock.
-        /// Whether two locks would serialize against each other.
+    ///
+    /// A caller that runs `git commit` in a shared checkout takes this
+    /// lock so two agents cannot race on `.git/index.lock` and so
+    /// agent A's commit cannot swallow agent B's staged changes (see
+    /// the module doc). No caller takes it yet; the primitive is here
+    /// because the hazard is real the moment one does.
+    pub async fn with_lock<F, Fut, T>(&self, f: F) -> T
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        let _guard = self.inner.lock().await;
+        f().await
+    }
+
+    /// Whether two locks would serialize against each other.
     pub fn shares_repo_with(&self, other: &Self) -> bool {
         self.key == other.key
     }

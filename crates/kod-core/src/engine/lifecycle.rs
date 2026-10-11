@@ -441,6 +441,12 @@ impl KodEngine {
         // The engine's `drain_due_sharpshooter` runs it there, on the
         // engine's own async context.
         let sharpshooter_due = std::sync::Arc::clone(&self.sharpshooter_due);
+        // Delta §12.7: the same pass that moves facts also invalidates
+        // what the `AfterConsolidation` mental models contain. Flag
+        // the refresh here; the engine drains it at the next turn
+        // boundary (never mid-turn — the model block is in the
+        // cacheable prefix).
+        let mental_models_due = std::sync::Arc::clone(&self.mental_models_due);
         let handle = tokio::spawn(async move {
             let interval = std::time::Duration::from_secs(interval_secs);
             loop {
@@ -456,16 +462,11 @@ impl KodEngine {
                         // sharpshooter's target files should be
                         // refreshed on the next turn.
                         sharpshooter_due.store(true, std::sync::atomic::Ordering::Relaxed);
-                        // Delta §12.7: the design also calls
-                        // for an `AfterConsolidation` refresh of
-                        // the mental models here. This task holds
-                        // only the router `Arc` — it cannot reach
-                        // the engine's `mental_models` map — so the
-                        // refresh is not wired. A future agent that
-                        // plumbs a `Weak<KodEngine>` into this task
-                        // closes the gap. The engine method that
-                        // would do it was removed in the same sweep
-                        // as this note.
+                        // Delta §12.7: the same pass changes what the
+                        // `AfterConsolidation` mental models hold.
+                        // The engine drains this at the next turn
+                        // boundary (see `drain_due_mental_models_refresh`).
+                        mental_models_due.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
                     Ok(_) => {
                         tracing::debug!("memory consolidation pass: nothing to do");

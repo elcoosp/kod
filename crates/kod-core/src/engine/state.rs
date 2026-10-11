@@ -341,6 +341,80 @@ impl KodEngine {
         self.fill_mental_models(None).await;
     }
 
+    /// Delta §12.7: drain the "consolidation moved facts" flag the
+    /// periodic task sets. When set, re-fill the models whose seed
+    /// triggers on `AfterConsolidation` (the decision/convention
+    /// models — see [`Self::fill_mental_models`] for what the trigger
+    /// filter means). Runs at the *start* of a turn, never mid-turn:
+    /// the model block sits in the cacheable prefix and a mid-turn
+    /// rewrite would invalidate the provider's prefix cache.
+    ///
+    /// Idempotent and cheap: a false flag short-circuits before the
+    /// memory lookup.
+    /// Test-only: force the consolidation-refresh flag, so a test can
+    /// assert the drain clears it without waiting out a real
+    /// consolidation interval.
+    pub fn set_mental_models_due_for_tests(&self, due: bool) {
+        self.mental_models_due
+            .store(due, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Test-only: read the consolidation-refresh flag.
+    pub fn mental_models_due_for_tests(&self) -> bool {
+        self.mental_models_due
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub(crate) async fn drain_due_mental_models_refresh(&self) {
+        if !self
+            .mental_models_due
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            return;
+        }
+        if !self.router.has_memory() {
+            return;
+        }
+        self.fill_mental_models(Some(
+            kod_memory::mental_models::RefreshTrigger::AfterConsolidation,
+        ))
+        .await;
+    }
+
+    /// Tier 1.4: allocate the next turn id and return it. Called by
+    /// the swarm runner once per `run` to mint a "run id" that every
+    /// dispatch's trace records as its parent. The id is drawn from
+    /// the same counter as ordinary turn ids, so it is globally
+    /// unique; it is *not* emitted as a `TurnTrace` — the run has no
+    /// single model round to record.
+    pub fn begin_swarm_run(&self) -> kod_core_state::trace::TurnId {
+        self.next_turn_id()
+    }
+
+    /// Tier 1.4: record the parent for the next trace on `key`.
+    /// Idempotent overwrite. `process_streaming_with_model_for` takes
+    /// the entry when it opens the trace.
+    pub async fn set_pending_trace_parent(
+        &self,
+        key: &str,
+        parent: kod_core_state::trace::TurnId,
+    ) {
+        self.pending_trace_parent
+            .write()
+            .await
+            .insert(key.to_string(), parent);
+    }
+
+    /// Tier 1.4: take the pending parent for `key`, if any. Drained
+    /// on read, so a second `process_streaming*` on the same key does
+    /// not inherit a stale parent.
+    pub(crate) async fn take_pending_trace_parent(
+        &self,
+        key: &str,
+    ) -> Option<kod_core_state::trace::TurnId> {
+        self.pending_trace_parent.write().await.remove(key)
+    }
+
     /// Delta §12.7: fill the mental models whose trigger matches the
     /// caller's context.
     ///

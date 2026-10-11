@@ -15,6 +15,16 @@ impl KodEngine {
         // A real turn is starting: the prewarm's speculation is over,
         // and the next fresh turn should warm again.
         self.reset_prewarm(key).await;
+        // Delta §12.3 / §12.7: drain the periodic-task flags at the
+        // one point every entry point reaches. The sharpshooter pass
+        // writes its decisions files; the mental-models refresh
+        // rewrites the `AfterConsolidation` blocks. Both must run
+        // *before* the prompt is built for this turn, because the
+        // model block sits in the cacheable prefix — a mid-turn
+        // rewrite would invalidate it. `prepare_turn` runs before
+        // either prompt is composed, so this is the correct point.
+        self.drain_due_sharpshooter().await;
+        self.drain_due_mental_models_refresh().await;
 
         let response = self
             .classify_and_filter(key, input, retrieval_log_turn_id)

@@ -331,6 +331,21 @@ pub struct KodEngine {
     /// consolidation runs on the engine side (the periodic task
     /// holds only a router clone).
     sharpshooter_due: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Delta §12.7: set by the periodic memory-consolidation task
+    /// when a pass actually moved facts (`archived > 0 ||
+    /// fused > 0`). The engine drains it at the next turn boundary,
+    /// because refreshing the mental-model block mid-turn would
+    /// invalidate the provider's cached prefix. The flag lives here
+    /// rather than on the task so the task can stay router-only.
+    mental_models_due: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Tier 1.4: per-dispatch parent TurnId. The swarm runner
+    /// allocates one TurnId per `run` and stores it here, keyed on
+    /// the dispatch transcript, before calling
+    /// `process_streaming_with_model_for`. That call takes the entry
+    /// when it builds its `TurnTraceBuilder`, so every swarm
+    /// dispatch's trace records a `parent` naming the run it belongs
+    /// to. Drained on read, cleared by `forget_transcript`.
+    pending_trace_parent: RwLock<HashMap<String, kod_core_state::trace::TurnId>>,
     /// Delta §11.12: per-transcript prewalk state. A prewalk arms
     /// when the user wants a one-way mid-session model handoff: it
     /// injects a "plan deliberately" nudge once, and the first

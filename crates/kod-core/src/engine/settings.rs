@@ -234,6 +234,8 @@ impl KodEngine {
             plans: RwLock::new(HashMap::new()),
             prewalks: RwLock::new(HashMap::new()),
             sharpshooter_due: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            mental_models_due: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            pending_trace_parent: RwLock::new(HashMap::new()),
             plan_mode: RwLock::new(std::collections::HashSet::new()),
             plan_reference_paths: RwLock::new(HashMap::new()),
             decision_logs: RwLock::new(HashMap::new()),

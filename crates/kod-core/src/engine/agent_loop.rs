@@ -306,6 +306,24 @@ impl KodEngine {
                 && let Ok(mut g) = mutex.lock()
             {
                 g.begin_round(current_provider.name(), &current_model_ref.model);
+                // Tier 1.4: classify the round. The signal is
+                // `had_tool_results`, which is set the first time a
+                // tool runs and stays set for the rest of the turn:
+                //   - round 0, no tools yet              -> Planning
+                //   - a later round after a tool ran     -> ToolExec
+                //   - a later round, no tool ran yet this turn
+                //                                        -> Synthesis
+                // The final text-only round is therefore a Synthesis
+                // of everything the turn produced, which is what the
+                // reader of `turns.jsonl` wants to see.
+                let kind = if had_tool_results {
+                    kod_core_state::trace::RoundKind::ToolExec
+                } else if round_idx == 0 {
+                    kod_core_state::trace::RoundKind::Planning
+                } else {
+                    kod_core_state::trace::RoundKind::Synthesis
+                };
+                g.set_round_kind(kind);
             }
             if self.is_cancelled_for(round.holder) {
                 return Err(KodError::InvalidState("cancelled by user".to_string()));

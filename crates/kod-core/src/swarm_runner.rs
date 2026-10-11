@@ -388,6 +388,12 @@ impl SwarmRunner {
         // The guard is held for the whole run and released by `Drop`
         // on every return path, including the early `?` returns below
         // and the config-error branches before the first `await`.
+        // Tier 1.4: mint a run id that every dispatch in this run
+        // records as its trace's parent. Drawn from the engine's turn
+        // counter so it is globally unique; no coordinator trace is
+        // emitted, because the run has no single model round — only
+        // its dispatches do.
+        let swarm_run_trace_id = self.engine.begin_swarm_run();
         let _swarm_slot_guard = self.engine.try_acquire_swarm_slot().ok_or_else(|| {
             KodError::InvalidState(
                 "another swarm is already running on this engine; \
@@ -1469,6 +1475,14 @@ impl SwarmRunner {
                             });
 
                             let attempt_cancel_epoch = engine.cancel_epoch_for(&transcript_key);
+                            // Tier 1.4: attach this dispatch's trace
+                            // to the run so a reader of `turns.jsonl`
+                            // can group a swarm's dispatches. Set
+                            // before the streaming call, consumed by
+                            // the trace builder inside it.
+                            engine
+                                .set_pending_trace_parent(&transcript_key, swarm_run_trace_id)
+                                .await;
 
                             let run = engine.process_streaming_with_model_for(
                                 &transcript_key,

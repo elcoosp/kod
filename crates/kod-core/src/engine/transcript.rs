@@ -495,6 +495,7 @@ impl KodEngine {
         // write-set claim, blackboard subscription.
         self.transcript_working_dirs.write().await.remove(key);
         self.transcript_write_globs.write().await.remove(key);
+        self.pending_trace_parent.write().await.remove(key);
         self.blackboard_viewers.write().await.remove(key);
 
         // Pending soft interrupts queued for this transcript. A
@@ -720,6 +721,7 @@ impl KodEngine {
         n += self.decision_logs.read().await.len();
         n += self.transcript_working_dirs.read().await.len();
         n += self.transcript_write_globs.read().await.len();
+        n += self.pending_trace_parent.read().await.len();
         n += self.blackboard_viewers.read().await.len();
         n += self.steers.read().await.len();
         n

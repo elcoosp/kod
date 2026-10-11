@@ -1586,6 +1586,156 @@ async fn tool_calls_are_recorded_in_the_turn_trace() {
     );
 }
 
+/// Regression: the three Tier 1.4 trace fields that used to be dead —
+/// `RoundTrace::kind`, `TurnTrace::parent`, and the round classifier —
+/// are now populated by the engine.
+///
+/// Pre-fix, `TurnTraceBuilder::set_round_kind` had no production
+/// caller (every round wrote `kind: Unknown`), and
+/// `TurnTraceBuilder::with_parent` had no production caller either
+/// (every swarm trace wrote `parent: None`). Both methods are now
+/// called: `agent_loop::run_streaming_loop` classifies each round,
+/// and the swarm runner records the run id as the parent of every
+/// dispatch's trace.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn swarm_trace_rounds_are_classified_and_parented() {
+    use kod_core::RoundKind;
+    use kod_types::ToolCall;
+
+    struct OneToolProvider;
+
+    #[async_trait]
+    impl LlmProvider for OneToolProvider {
+        fn name(&self) -> &str {
+            "one-tool"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec!["one-tool".into()])
+        }
+        async fn generate(
+            &self,
+            prompt: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            if prompt.contains("Split this goal") {
+                return Ok(r#"[{"name":"probe","description":"list the tree","expected_writes":["out/x.txt"]}]"#
+                    .to_string());
+            }
+            if prompt.contains("Synthesize their work") {
+                return Ok("MERGED".to_string());
+            }
+            Ok("done".to_string())
+        }
+        async fn generate_with_tools(
+            &self,
+            _p: &str,
+            _t: &[ToolDefinition],
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::ToolCalls {
+                calls: vec![ToolCall {
+                    id: None,
+                    tool_name: "list_files".to_string(),
+                    arguments: serde_json::json!({ "path": ".", "recursive": false }),
+                }],
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+        fn stream_with_tools<'a>(
+            &'a self,
+            _p: &'a str,
+            _t: &'a [ToolDefinition],
+            _o: &'a GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+        {
+            Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::ToolCallStart {
+                    index: 0,
+                    id: None,
+                    name: "list_files".to_string(),
+                }),
+                Ok(StreamChunk::ToolCallDelta {
+                    index: 0,
+                    arguments: serde_json::json!({
+                        "path": ".",
+                        "recursive": false
+                    })
+                    .to_string(),
+                }),
+                Ok(StreamChunk::Done),
+            ]))
+        }
+    }
+
+    let provider: Arc<dyn LlmProvider> = Arc::new(OneToolProvider);
+    let (engine, _tmp) = build_engine(provider).await;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let trace_path = tmp.path().join("turns.jsonl");
+    let writer = std::sync::Arc::new(
+        kod_core::TraceWriter::open(trace_path.clone()).expect("open trace writer"),
+    );
+    engine.set_turn_trace_writer(writer);
+
+    let runner = SwarmRunner::new(engine.clone(), 2, false).await.unwrap();
+    let (tx, mut rx) = mpsc::channel::<SwarmEvent>(256);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let _ = runner.run("probe the tree", &tx).await;
+    drop(tx);
+    let _ = drain.await;
+
+    let traces = kod_core::read_traces(&trace_path).expect("read trace file");
+    assert!(!traces.is_empty(), "the swarm must have written a trace");
+
+    // Every swarm dispatch's trace must name the run as its parent.
+    // Pre-fix, `parent` was always `None`.
+    for t in &traces {
+        assert!(
+            t.parent.is_some(),
+            "swarm trace for holder {:?} must record a parent run id: {t:?}",
+            t.holder,
+        );
+    }
+
+    // Every round in every trace must have been classified. Pre-fix,
+    // `kind` was always `Unknown`.
+    let all_rounds: Vec<&kod_core_state::trace::RoundTrace> =
+        traces.iter().flat_map(|t| t.rounds.iter()).collect();
+    assert!(
+        !all_rounds.is_empty(),
+        "the swarm must have produced at least one round",
+    );
+    let unknown_count = all_rounds
+        .iter()
+        .filter(|r| r.kind == RoundKind::Unknown)
+        .count();
+    assert_eq!(
+        unknown_count, 0,
+        "every round must be classified; {unknown_count} of {} were Unknown",
+        all_rounds.len(),
+    );
+    // The first round of a turn is a Planning round; a later round
+    // after a tool ran is a ToolExec round. Both must appear.
+    assert!(
+        all_rounds.iter().any(|r| r.kind == RoundKind::Planning),
+        "a first round with no tools must classify as Planning: {:?}",
+        all_rounds.iter().map(|r| r.kind).collect::<Vec<_>>(),
+    );
+    assert!(
+        all_rounds.iter().any(|r| r.kind == RoundKind::ToolExec),
+        "a round after a tool ran must classify as ToolExec: {:?}",
+        all_rounds.iter().map(|r| r.kind).collect::<Vec<_>>(),
+    );
+}
+
 /// Regression: the swarm runner publishes each subtask's write
 /// claims and its completion to the shared blackboard. Pre-fix,
 /// `note_write_claim` and `note_subtask_done` had no production

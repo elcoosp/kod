@@ -332,3 +332,115 @@ async fn cold_revive_for_an_unknown_holder_reports_no_init() {
 
     engine.shutdown().await.unwrap();
 }
+
+
+// ---------------------------------------------------------------------------
+// Mental-models refresh drain (delta 12.7)
+// ---------------------------------------------------------------------------
+
+/// Regression: the periodic memory-consolidation task sets the
+/// `mental_models_due` flag when a pass moves facts, and the next
+/// turn must drain it. Pre-fix, `refresh_mental_models_after_consolidation`
+/// existed but nothing called it, and the periodic task held only a
+/// router `Arc` and could not reach the engine's mental-model map —
+/// so an `AfterConsolidation`-triggered model never refreshed after a
+/// consolidation pass.
+///
+/// This test pins the wiring: set the flag, run a turn, assert the
+/// flag is now clear. The turn does not need a live memory store — the
+/// drain clears the flag before the (early-returning) memory check, so
+/// the property under test is the drain firing, not the fill.
+#[tokio::test]
+async fn a_turn_drains_the_mental_models_refresh_flag() {
+    struct NoopProvider;
+
+    #[async_trait::async_trait]
+    impl LlmProvider for NoopProvider {
+        fn name(&self) -> &str {
+            "noop"
+        }
+        async fn list_models(
+            &self,
+        ) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec![])
+        }
+        async fn generate(
+            &self,
+            _: &str,
+            _: &kod_provider::GenerationOptions,
+        ) -> kod_error::Result<String> {
+            Ok("ok".into())
+        }
+        async fn generate_with_tools(
+            &self,
+            _: &str,
+            _: &[kod_types::ToolDefinition],
+            _: &kod_provider::GenerationOptions,
+        ) -> kod_error::Result<kod_provider::GenerationResponse> {
+            Ok(kod_provider::GenerationResponse::Text {
+                content: "ok".into(),
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _: &str,
+            _: &kod_provider::GenerationOptions,
+        ) -> std::pin::Pin<
+            Box<
+                dyn futures::Stream<
+                        Item = kod_error::Result<kod_provider::StreamChunk>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(futures::stream::empty())
+        }
+    }
+
+    let temp = TempDir::new().unwrap();
+    let engine =
+        KodEngine::new(fixture_config(temp.path()), temp.path().join("test.redb")).unwrap();
+    // Install a provider so `prepare_turn` runs (it sits inside the
+    // provider-present branch of the streaming path).
+    let mut registry = kod_provider::ProviderRegistry::new();
+    registry.insert(
+        "default",
+        std::sync::Arc::new(NoopProvider),
+        kod_provider::ProviderCapabilities::conservative(),
+        "",
+    );
+    engine
+        .set_registry(
+            std::sync::Arc::new(registry),
+            kod_provider::ModelRef::new("default", ""),
+            None,
+        )
+        .await;
+    engine.start().await.unwrap();
+
+    // The flag starts clear: nothing has asked for a refresh.
+    assert!(
+        !engine.mental_models_due_for_tests(),
+        "the flag must start clear on a fresh engine",
+    );
+
+    // Force it, the way the periodic consolidation task does.
+    engine.set_mental_models_due_for_tests(true);
+    assert!(
+        engine.mental_models_due_for_tests(),
+        "the test accessor must be able to set the flag",
+    );
+
+    // Run a turn. `prepare_turn` is the shared entry every `process_*`
+    // path reaches, so the drain runs regardless of which path is
+    // taken; this test uses the simple non-streaming one.
+    let _ = engine.process_for("", "hello").await;
+
+    assert!(
+        !engine.mental_models_due_for_tests(),
+        "a turn must drain the mental-models refresh flag; pre-fix          nothing called the drain and the flag stayed set forever",
+    );
+
+    engine.shutdown().await.unwrap();
+}

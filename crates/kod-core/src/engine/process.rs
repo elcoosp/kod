@@ -256,9 +256,6 @@ impl KodEngine {
     }
 
     pub async fn process_for(&self, key: &str, input: &str) -> Result<TaskResponse> {
-        // Delta §12.3: a due sharpshooter consolidation from the
-        // periodic task runs on this turn's engine-side context.
-        self.drain_due_sharpshooter().await;
         // H-E5: the non-streaming path never set `current_request`,
         // so the request-keyed Jev helpers (task classification,
         // quality gate) ran against an empty or stale request. The
@@ -842,6 +839,11 @@ impl KodEngine {
         // Tier 1.4 — open a turn trace. Emitted when this call returns.
         let trace_id = self.next_turn_id();
         let mut trace_builder = kod_core_state::trace::TurnTraceBuilder::new(trace_id, key);
+        // Tier 1.4: a swarm dispatch's trace records the run it
+        // belongs to. `None` for every other caller.
+        if let Some(parent) = self.take_pending_trace_parent(key).await {
+            trace_builder = trace_builder.with_parent(parent);
+        }
         trace_builder.set_user_prompt(input);
         let trace = std::sync::Mutex::new(trace_builder);
         let trace_ref: Option<&std::sync::Mutex<kod_core_state::trace::TurnTraceBuilder>> =
