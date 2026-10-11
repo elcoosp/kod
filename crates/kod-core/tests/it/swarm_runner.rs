@@ -1686,3 +1686,271 @@ async fn swarm_publishes_write_claims_and_completions() {
         all.iter().map(|e| &e.key).collect::<Vec<_>>(),
     );
 }
+
+/// Arc 3 (session 10). Run the swarm runner repeatedly, back to back,
+/// with N distinct-capability agents driving the tool loop at once, and
+/// assert the invariants the single-run tests pin only once:
+///
+/// - no per-transcript map entry survives a run
+///   (`transcript_scoped_key_count_for_tests() == 0`)
+/// - no file-touch bus stays installed
+///   (`swarm_file_bus_installed_for_tests() == false`)
+/// - no pool agent stays registered on the shared hub
+///   (`swarm_hub().list_agents().is_empty()`)
+///
+/// Every run decomposes into `n_subtasks` with distinct capabilities
+/// (so the pool is N-wide, not one collapsed coding agent), and every
+/// dispatch drives the tool loop (`list_files`) until the engine's
+/// per-agent round limit fires. That exercises `tool_loop_guards`,
+/// `todo_trackers`, `steers`, and `transcript_write_globs` on every
+/// dispatch, all under the debug/release scheduler at once.
+///
+/// Budget and agent count are env-controlled so the test is usable at
+/// both ends of the profile spectrum:
+///   KOD_SWARM_STRESS_SECS   default 5   (set to 30 for the release
+///                                        stress run the handoff wants)
+///   KOD_SWARM_STRESS_AGENTS default 4   (clamped to [2, 8])
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn swarm_stress_repeated_runs_leave_no_state_behind() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    // The eight variants of `kod_swarm::Capability` in `as_str`
+    // order. One per subtask, so `SwarmRunner`'s capability pool is
+    // N-wide instead of collapsing to a single coding agent.
+    const CAPS: &[&str] = &[
+        "coding",
+        "testing",
+        "documentation",
+        "code-review",
+        "planning",
+        "research",
+        "debugging",
+        "refactoring",
+    ];
+
+    struct StressProvider {
+        n_subtasks: usize,
+        tool_rounds: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for StressProvider {
+        fn name(&self) -> &str {
+            "stress"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec!["stress".into()])
+        }
+        async fn generate(
+            &self,
+            prompt: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            if prompt.contains("Split this goal") {
+                let mut items: Vec<String> = Vec::with_capacity(self.n_subtasks);
+                for i in 0..self.n_subtasks {
+                    let cap = CAPS[i % CAPS.len()];
+                    items.push(format!(
+                        r#"{{"name":"s{i}","description":"do subtask {i}","capability":"{cap}","expected_writes":["out/{i}.txt"]}}"#,
+                    ));
+                }
+                return Ok(format!("[{}]", items.join(",")));
+            }
+            if prompt.contains("Synthesize their work") {
+                return Ok("MERGED".to_string());
+            }
+            Ok("done".to_string())
+        }
+        async fn generate_with_tools(
+            &self,
+            _p: &str,
+            _t: &[ToolDefinition],
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            self.tool_rounds.fetch_add(1, Ordering::Relaxed);
+            Ok(GenerationResponse::ToolCalls {
+                calls: vec![kod_types::ToolCall {
+                    id: None,
+                    tool_name: "list_files".to_string(),
+                    arguments: serde_json::json!({
+                        "path": ".",
+                        "recursive": false
+                    }),
+                }],
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+        fn stream_with_tools<'a>(
+            &'a self,
+            _p: &'a str,
+            _t: &'a [ToolDefinition],
+            _o: &'a GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + 'a>>
+        {
+            self.tool_rounds.fetch_add(1, Ordering::Relaxed);
+            // Every poll of this stream emits one `list_files` tool
+            // call. The engine's per-agent loop guard is what
+            // terminates the round-trip (MAX_TOOL_ROUNDS); that is
+            // the point — every dispatch drives the loop the full
+            // way, so the per-transcript maps see maximum churn.
+            Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::ToolCallStart {
+                    index: 0,
+                    id: None,
+                    name: "list_files".to_string(),
+                }),
+                Ok(StreamChunk::ToolCallDelta {
+                    index: 0,
+                    arguments: serde_json::json!({
+                        "path": ".",
+                        "recursive": false
+                    })
+                    .to_string(),
+                }),
+                Ok(StreamChunk::Done),
+            ]))
+        }
+    }
+
+    let n_subtasks: usize = std::env::var("KOD_SWARM_STRESS_AGENTS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4)
+        .clamp(2, 8);
+
+    let budget_secs: u64 = std::env::var("KOD_SWARM_STRESS_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(5);
+
+    let tool_rounds = Arc::new(AtomicUsize::new(0));
+    let provider: Arc<dyn LlmProvider> = Arc::new(StressProvider {
+        n_subtasks,
+        tool_rounds: Arc::clone(&tool_rounds),
+    });
+    let (engine, _tmp) = build_engine(provider).await;
+
+    // A single runner reused across every iteration. `run` takes
+    // `&self`, and the CLI/TUI shape is a long-lived runner behind a
+    // loop — reusing it is the point: state that leaked out of run N
+    // would poison run N+1.
+    let runner = SwarmRunner::new(engine.clone(), 8, false).await.unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(budget_secs);
+    let mut runs_completed: usize = 0;
+    let mut total_started: usize = 0;
+    let mut total_completed: usize = 0;
+    let mut total_failed: usize = 0;
+
+    loop {
+        // A run must start from a clean engine: the previous
+        // iteration's invariants held.
+        assert_eq!(
+            engine.transcript_scoped_key_count_for_tests().await,
+            0,
+            "run {runs_completed}: per-transcript state survived the previous run",
+        );
+
+        let (tx, mut rx) = mpsc::channel::<SwarmEvent>(1024);
+        let drain = tokio::spawn(async move {
+            let mut started = 0usize;
+            let mut completed = 0usize;
+            let mut failed = 0usize;
+            while let Some(ev) = rx.recv().await {
+                match ev {
+                    SwarmEvent::AgentStarted { .. } => started += 1,
+                    SwarmEvent::AgentCompleted { .. } => completed += 1,
+                    SwarmEvent::AgentFailed { .. } => failed += 1,
+                    _ => {}
+                }
+            }
+            (started, completed, failed)
+        });
+
+        let resp = runner
+            .run("stress the swarm bus", &tx)
+            .await
+            .expect("a swarm run must not return Err at the top level");
+        drop(tx);
+        let (started, completed, failed) = drain.await.unwrap();
+
+        assert_eq!(
+            started, n_subtasks,
+            "run {runs_completed}: expected {n_subtasks} AgentStarted events, \
+             got {started}",
+        );
+        assert_eq!(
+            started,
+            completed + failed,
+            "run {runs_completed}: every started agent must end in either \
+             AgentCompleted or AgentFailed (started={started}, \
+             completed={completed}, failed={failed})",
+        );
+        assert_eq!(resp.subtasks.len(), n_subtasks);
+
+        // The guard's async cleanup may not have run yet (it is
+        // spawned from `Drop`, on a captured runtime handle). Poll.
+        for _ in 0..200 {
+            if engine.swarm_hub().list_agents().await.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            engine.swarm_hub().list_agents().await.is_empty(),
+            "run {runs_completed}: pool agents survived the run",
+        );
+        assert!(
+            !engine.swarm_file_bus_installed_for_tests(),
+            "run {runs_completed}: file-touch bus survived the run",
+        );
+        assert_eq!(
+            engine.transcript_scoped_key_count_for_tests().await,
+            0,
+            "run {runs_completed}: per-transcript state leaked",
+        );
+        assert_eq!(
+            engine.blackboard_viewer_count_for_tests().await,
+            0,
+            "run {runs_completed}: blackboard viewer subscription leaked",
+        );
+
+        total_started += started;
+        total_completed += completed;
+        total_failed += failed;
+        runs_completed += 1;
+
+        if Instant::now() >= deadline {
+            break;
+        }
+    }
+
+    assert!(
+        runs_completed >= 1,
+        "the stress loop did not complete a single run within {budget_secs}s — \
+         a run is taking longer than the budget. Raise KOD_SWARM_STRESS_SECS.",
+    );
+    assert_eq!(total_started, total_completed + total_failed);
+    assert!(
+        tool_rounds.load(Ordering::Relaxed) > 0,
+        "every agent must have driven at least one tool round; \
+         saw {} tool rounds across {runs_completed} run(s)",
+        tool_rounds.load(Ordering::Relaxed),
+    );
+    eprintln!(
+        "swarm stress: {runs_completed} run(s), \
+         {total_completed} agent dispatches, \
+         {total_failed} failure(s), \
+         {} tool rounds, budget {budget_secs}s",
+        tool_rounds.load(Ordering::Relaxed),
+    );
+}
