@@ -413,6 +413,64 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
             );
             Ok(())
         }
+        SessionsAction::Revive {
+            path: log_path,
+            holder,
+            force,
+        } => {
+            // Build an engine against the current working directory.
+            // The tool surface this engine registers is the one the
+            // persisted `SessionInit` is compared against — a mismatched
+            // working directory or tool set is exactly the drift
+            // `cold_revive_session` refuses.
+            let cwd = std::env::current_dir().map_err(KodError::Io)?;
+            let db_path = cwd.join(".kod-revive.redb");
+            let router_config = RouterConfig {
+                working_dir: cwd.clone(),
+                ..RouterConfig::default()
+            };
+            let engine = KodEngine::new(router_config, db_path)?;
+            engine.start().await?;
+            let outcome = engine
+                .cold_revive_session(&log_path, &holder, force)
+                .await?;
+            match outcome {
+                kod_core::ColdReviveOutcome::Revived {
+                    messages_appended,
+                } => {
+                    println!(
+                        "Revived {} message(s) from {} (holder {:?}).",
+                        messages_appended,
+                        log_path.display(),
+                        holder,
+                    );
+                }
+                kod_core::ColdReviveOutcome::NoInitEntry => {
+                    println!(
+                        "No SessionInit for holder {:?} in {} — nothing to revive.",
+                        holder,
+                        log_path.display(),
+                    );
+                }
+                kod_core::ColdReviveOutcome::RefusedDrifted { missing, added } => {
+                    eprintln!(
+                        "Refusing to revive: the tool surface drifted since {} was written.",
+                        log_path.display(),
+                    );
+                    if !missing.is_empty() {
+                        eprintln!("  missing tools: {}", missing.join(", "));
+                    }
+                    if !added.is_empty() {
+                        eprintln!("  added tools:   {}", added.join(", "));
+                    }
+                    eprintln!(
+                        "Pass --force to revive anyway, or rebuild the session with the tools it used.",
+                    );
+                    std::process::exit(1);
+                }
+            }
+            Ok(())
+        }
         SessionsAction::Export { path: dest, format } => {
             let raw = std::fs::read_to_string(&path).map_err(KodError::Io)?;
             let messages: Vec<Message> = serde_json::from_str(&raw)

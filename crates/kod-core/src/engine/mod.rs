@@ -40,6 +40,7 @@ pub(crate) use render::strip_conversation_tail;
 pub use render::*;
 pub use settings::GenerationDefaults;
 pub(crate) use types::*;
+pub use types::{ColdReviveOutcome, ColdReviveVerdict};
 
 use crate::router::{RouterConfig, TaskResponse, TaskRouter};
 use kod_error::{KodError, Result};

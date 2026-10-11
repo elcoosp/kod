@@ -1708,6 +1708,25 @@ pub enum SessionsAction {
     Latest,
     /// Print the number of session logs and their combined size.
     Count,
+    /// Cold revive a session: read its persisted tool surface, compare
+    /// it to the current process's, and rehydrate the transcript for
+    /// `holder`. Refuses a drifted surface unless `--force` is set —
+    /// see `KodEngine::cold_revive_session` for why the safe default
+    /// is a refusal.
+    Revive {
+        /// Path to the session log written by a prior run (a `.jsonl`
+        /// under `~/.kod/sessions/`, or any path from
+        /// `kod sessions latest`).
+        path: std::path::PathBuf,
+        /// Transcript key to revive. The default session uses the
+        /// empty string; a swarm agent's key is `swarm:<agent-id>`.
+        #[arg(long, default_value = "")]
+        holder: String,
+        /// Revive even when the persisted tool surface does not match
+        /// this process's. The drift is still reported on stderr.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// `kod chat --remote` — attach an interactive REPL to a running
@@ -3851,6 +3870,45 @@ mod coverage_cli_subactions {
     #[test]
     fn sessions_without_a_subcommand_is_rejected() {
         parse_err(&["kod", "sessions"]);
+    }
+
+    #[test]
+    fn sessions_revive_requires_a_path_and_accepts_holder_force() {
+        parse_err(&["kod", "sessions", "revive"]);
+        match parse_ok(&["kod", "sessions", "revive", "/tmp/s.jsonl"]).command {
+            Some(Command::Sessions {
+                action: SessionsAction::Revive { path, holder, force },
+            }) => {
+                assert_eq!(path, std::path::PathBuf::from("/tmp/s.jsonl"));
+                assert_eq!(holder, "");
+                assert!(!force);
+            }
+            _ => panic!("expected Sessions::Revive"),
+        }
+        match parse_ok(&[
+            "kod",
+            "sessions",
+            "revive",
+            "/tmp/s.jsonl",
+            "--holder",
+            "swarm:agent-7",
+            "--force",
+        ])
+        .command
+        {
+            Some(Command::Sessions {
+                action:
+                    SessionsAction::Revive {
+                        path,
+                        holder,
+                        force: true,
+                    },
+            }) => {
+                assert_eq!(path, std::path::PathBuf::from("/tmp/s.jsonl"));
+                assert_eq!(holder, "swarm:agent-7");
+            }
+            _ => panic!("expected Sessions::Revive with flags"),
+        }
     }
 }
 

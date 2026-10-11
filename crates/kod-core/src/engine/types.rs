@@ -130,6 +130,30 @@ pub enum ColdReviveVerdict {
     },
 }
 
+/// The outcome of a cold revive. Unlike [`ColdReviveVerdict`], which
+/// is the raw surface comparison, this is the result of *acting* on
+/// the comparison — `KodEngine::cold_revive_session` returns this.
+///
+/// A caller that wants the raw verdict for its own policy should call
+/// `verify_cold_revive_surface` directly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ColdReviveOutcome {
+    /// The surface matched and `n` messages were appended to the
+    /// transcript keyed by the holder.
+    Revived { messages_appended: usize },
+    /// The persisted session carried no `SessionInit` for the holder.
+    /// Nothing was compared, nothing was revived.
+    NoInitEntry,
+    /// The surface drifted. The session is *not* revived by default —
+    /// the persisted tool names no longer exist (or new tools were
+    /// added) — but a caller that has decided the drift is safe can
+    /// retry with `force = true`.
+    RefusedDrifted {
+        missing: Vec<String>,
+        added: Vec<String>,
+    },
+}
+
 /// Bundle of values the three `process_*` entry points need after
 /// classification, prompt build, and system-text construction.
 ///

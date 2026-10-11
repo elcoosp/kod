@@ -366,6 +366,54 @@ impl KodEngine {
         }
     }
 
+    /// Delta §11.2: a cold revive. Reads the `SessionInit` from
+    /// `log_path`, compares the persisted tool surface to this
+    /// process's, and — when they match, or when `force` is set —
+    /// rehydrates the transcript for `holder` from the log.
+    ///
+    /// `force = false` is the safe default: a surface that drifted
+    /// between the run that wrote the log and this one might have
+    /// changed the semantics of a recorded tool call (a renamed
+    /// argument, a removed capability), and reviving across that
+    /// boundary would replay a call the model no longer understands.
+    /// A caller that has decided the drift is benign passes `force =
+    /// true`; the returned outcome still names the drift, so the
+    /// caller can log it.
+    ///
+    /// `holder` is the transcript key the session ran under. The
+    /// default session uses `""` — this matches what
+    /// `record_session_init` writes (see the `holder: String::new()`
+    /// in that method).
+    ///
+    /// Returns the messages-append count on success, or a refusal
+    /// naming what changed.
+    pub async fn cold_revive_session(
+        &self,
+        log_path: &std::path::Path,
+        holder: &str,
+        force: bool,
+    ) -> Result<ColdReviveOutcome> {
+        match self.verify_cold_revive_surface(log_path, holder).await {
+            ColdReviveVerdict::NoInitEntry => Ok(ColdReviveOutcome::NoInitEntry),
+            ColdReviveVerdict::SurfaceMatches => {
+                let n = self.rehydrate_from_log_for(holder, log_path).await?;
+                Ok(ColdReviveOutcome::Revived {
+                    messages_appended: n,
+                })
+            }
+            ColdReviveVerdict::SurfaceDrifted { missing, added } => {
+                if force {
+                    let n = self.rehydrate_from_log_for(holder, log_path).await?;
+                    Ok(ColdReviveOutcome::Revived {
+                        messages_appended: n,
+                    })
+                } else {
+                    Ok(ColdReviveOutcome::RefusedDrifted { missing, added })
+                }
+            }
+        }
+    }
+
     /// Spawn the periodic memory-consolidation task (design D2.5).
     /// No-op when `compaction_interval_secs == 0` or memory is disabled.
     ///
