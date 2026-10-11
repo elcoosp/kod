@@ -1108,8 +1108,21 @@ impl TuiLoop {
                 if let Some(engine) = &self.engine {
                     let dir = engine.working_dir().join(".kod");
                     if std::fs::create_dir_all(&dir).is_ok() {
-                        let stamp = chrono::Utc::now().format("%Y-%m-%d-%H%M").to_string();
-                        let path = dir.join(format!("handoff-{stamp}.md"));
+                        // Minute precision is not enough. Two
+                        // `/handoff` invocations in the same minute
+                        // produced the same filename, and because
+                        // `/handoff` clears the transcript right
+                        // after the write, the first handoff
+                        // document was the *only* record of the
+                        // pre-reset session — a silent overwrite
+                        // destroyed it. pid + a process-local counter
+                        // + a second-precision clock is unique for
+                        // any realistic burst while staying
+                        // human-readable.
+                        let stamp = chrono::Utc::now().format("%Y-%m-%d-%H%M%S").to_string();
+                        let seq = next_handoff_seq();
+                        let path =
+                            dir.join(format!("handoff-{stamp}-{}-{seq}.md", std::process::id(),));
                         match std::fs::write(&path, text.as_bytes()) {
                             Ok(()) => written = Some(path),
                             Err(e) => self.app.push_system_message(&format!(
@@ -5068,7 +5081,14 @@ impl TuiLoop {
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_millis())
                             .unwrap_or(0);
-                        dir.join(format!("session-{ts}.html"))
+                        // Same shape as the handoff path: pid +
+                        // process-local counter + a millisecond
+                        // clock. A bare millisecond was enough for
+                        // interactive exports but not for a script
+                        // driving two `/export-html` calls in a
+                        // row; the extra fields cost nothing.
+                        let seq = next_handoff_seq();
+                        dir.join(format!("session-{ts}-{}-{seq}.html", std::process::id(),))
                     }
                 };
                 if let Some(parent) = path.parent()
@@ -8556,4 +8576,13 @@ mod coverage_slash_dispatch_more {
         }
         assert_eq!(yielded_at, vec![32, 64, 96]);
     }
+}
+
+/// Monotonic process-local counter for unique handoff/export
+/// filenames. Paired with the wall clock and the process id so two
+/// writes in the same clock tick cannot collide.
+fn next_handoff_seq() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }

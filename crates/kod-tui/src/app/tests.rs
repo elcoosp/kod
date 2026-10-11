@@ -658,11 +658,18 @@ mod tests {
         use std::time::Duration;
         let mut app = KodApp::new();
 
+        // The margin between the two sleeps must dominate scheduler
+        // noise. `10 ms` vs `1 ms` was flaky under a full parallel
+        // `cargo nextest --workspace` run: a parked thread can wake
+        // 15 ms late, so the second sleep sometimes took longer than
+        // the first and `second_ttft < first_ttft` failed. `200 ms`
+        // vs `1 ms` is a 200× margin — a scheduler delay that large
+        // would starve the test itself.
         app.begin_generation();
-        sleep(Duration::from_millis(10));
+        sleep(Duration::from_millis(200));
         app.add_response_chunk("first");
         let first_ttft = app.ttft_ms().expect("first ttft");
-        assert!(first_ttft >= 10);
+        assert!(first_ttft >= 200, "first ttft = {first_ttft}ms");
 
         app.finish_response("");
         assert!(app.ttft_ms().is_none(), "finished turn has no ttft");
