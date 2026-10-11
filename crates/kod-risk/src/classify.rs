@@ -103,7 +103,13 @@ impl Justification {
 /// destructive half runs without risk classification. Same class as
 /// the env-assignment bypass fixed just above.
 const WRAPPERS: &[(&str, &[&str], usize)] = &[
-    ("sudo", &["-u", "-g", "-p", "-h", "-r", "-t"], 0),
+    // Keep in sync with kod-config's PREFIX_WRAPPERS. `sudo -C` (the
+    // `--close-from` fd-redirect flag, a number) consumes one token;
+    // pre-fix this side omitted it, so `sudo -C 3 rm -rf /` unwrapped
+    // to `3` here while kod-config correctly reached `rm`. The
+    // cross-crate mirror test in kod-core-tools pins the two tables
+    // equal.
+    ("sudo", &["-u", "-g", "-p", "-h", "-r", "-t", "-C"], 0),
     ("doas", &["-u"], 0),
     // `env -i` clears the environment and takes NO argument; `-u`,
     // `-C`, `-S` each consume one. The pre-fix list had `-i` among
@@ -127,6 +133,29 @@ const WRAPPERS: &[(&str, &[&str], usize)] = &[
         0,
     ),
 ];
+
+/// The wrapper table, for the cross-crate mirror test.
+///
+/// `kod-config::policy::wrapper_tables_for_tests` returns the same
+/// shape; the test asserts the two agree element-for-element. The
+/// duplication is deliberate (the crates cannot share a dependency),
+/// so the regression is the only thing keeping them in sync.
+#[doc(hidden)]
+pub fn wrapper_table_for_tests() -> &'static [(&'static str, &'static [&'static str], usize)] {
+    WRAPPERS
+}
+
+/// The command-string wrappers, for the cross-crate mirror test.
+///
+/// Hoisted to module scope (the pre-fix local `SHELLS` inside
+/// `assess` is gone; `assess` now reads this const) so a cross-crate
+/// test can compare it against kod-config's list.
+pub const SHELLS_FOR_TESTS: &[&str] = &["bash", "sh", "zsh", "dash", "ksh"];
+
+#[doc(hidden)]
+pub fn command_string_wrappers_for_tests() -> &'static [&'static str] {
+    SHELLS_FOR_TESTS
+}
 
 /// Commands that delete, and whose operand paths must be checked.
 const DESTRUCTIVE: &[&str] = &[
@@ -460,8 +489,7 @@ pub fn assess(command: &str, ctx: &RiskContext) -> RiskAssessment {
             continue;
         }
 
-        const SHELLS: &[&str] = &["bash", "sh", "zsh", "dash", "ksh"];
-        if SHELLS.contains(&prog_base.as_str()) {
+        if SHELLS_FOR_TESTS.contains(&prog_base.as_str()) {
             let has_command_flag = args.iter().any(|t| {
                 let t = unquote(t);
                 if t == "-c" || t == "--command" {

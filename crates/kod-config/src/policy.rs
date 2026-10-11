@@ -1586,6 +1586,34 @@ mod coverage_policy_deny_rules {
 /// the two are wired together (a separate change). Until then the
 /// two tables are kept in sync by hand; the tests below pin the
 /// shapes that have historically diverged.
+pub const PREFIX_WRAPPERS_FOR_TESTS: &[(&str, &[&str], usize)] = &[
+    ("sudo", &["-u", "-g", "-p", "-h", "-r", "-t", "-C"], 0),
+    ("doas", &["-u"], 0),
+    // `env -i` takes NO argument; `-u`, `-C`, `-S` each consume
+    // one. See the sibling table in `kod-risk::classify` for the
+    // full reasoning.
+    ("env", &["-u", "-C", "-S"], 0),
+    ("nice", &["-n"], 0),
+    // `timeout [OPTION] DURATION COMMAND` — one positional
+    // (the duration) precedes the command.
+    ("timeout", &["-s", "-k"], 1),
+    ("stdbuf", &["-i", "-o", "-e"], 0),
+    ("ionice", &["-c", "-n", "-p"], 0),
+    ("time", &[], 0),
+    ("command", &[], 0),
+    ("builtin", &[], 0),
+    ("exec", &["-a", "-c"], 0),
+    (
+        "xargs",
+        &["-n", "-I", "-i", "-P", "-s", "-d", "-a", "-E"],
+        0,
+    ),
+];
+
+/// Command-string wrappers, hoisted for the cross-crate mirror test.
+#[doc(hidden)]
+pub const COMMAND_STRING_WRAPPERS: &[&str] = &["bash", "sh", "zsh", "dash", "ksh"];
+
 fn binary_candidates(cmd: &str) -> Vec<String> {
     // Wrapper table: name + flags that consume the following token.
     // Two kinds of wrapper:
@@ -1600,34 +1628,15 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
     // table — kod-config does not depend on kod-risk, so the two are
     // kept in sync by hand. The tests below pin the shapes that have
     // historically diverged.
-    const COMMAND_STRING_WRAPPERS: &[&str] = &["bash", "sh", "zsh", "dash", "ksh"];
+    // Hoisted to module scope (below) so a cross-crate test can
+    // compare them against kod-risk's tables. The inner fn aliases
+    // them so the body is unchanged.
+    const COMMAND_STRING_WRAPPERS: &[&str] = crate::policy::COMMAND_STRING_WRAPPERS;
     // (name, flags that consume a following token, count of leading
     // positional arguments before the inner command). The third field
     // is what `timeout 30 rm` needs: `30` is a duration, not the
     // binary.
-    const PREFIX_WRAPPERS: &[(&str, &[&str], usize)] = &[
-        ("sudo", &["-u", "-g", "-p", "-h", "-r", "-t", "-C"], 0),
-        ("doas", &["-u"], 0),
-        // `env -i` takes NO argument; `-u`, `-C`, `-S` each consume
-        // one. See the sibling table in `kod-risk::classify` for the
-        // full reasoning.
-        ("env", &["-u", "-C", "-S"], 0),
-        ("nice", &["-n"], 0),
-        // `timeout [OPTION] DURATION COMMAND` — one positional
-        // (the duration) precedes the command.
-        ("timeout", &["-s", "-k"], 1),
-        ("stdbuf", &["-i", "-o", "-e"], 0),
-        ("ionice", &["-c", "-n", "-p"], 0),
-        ("time", &[], 0),
-        ("command", &[], 0),
-        ("builtin", &[], 0),
-        ("exec", &["-a", "-c"], 0),
-        (
-            "xargs",
-            &["-n", "-I", "-i", "-P", "-s", "-d", "-a", "-E"],
-            0,
-        ),
-    ];
+    const PREFIX_WRAPPERS: &[(&str, &[&str], usize)] = PREFIX_WRAPPERS_FOR_TESTS;
 
     fn unquote(t: &str) -> String {
         let t = t.trim();
@@ -1694,7 +1703,12 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
                 i += 1;
                 continue;
             }
-            if t == "-c" || t == "--command" {
+            // The `-c` / `--command` / `--command=` forms below are
+            // only meaningful for *command-string* wrappers
+            // (`bash`, `sh`, …). A prefix wrapper's `-c` is an
+            // ordinary flag (and for `ionice` it consumes its
+            // argument), so the check must not fire for them.
+            if is_command_string_wrapper && (t == "-c" || t == "--command") {
                 i += 1;
                 // Skip an optional `--` immediately after `-c`.
                 if i < raw.len() && unquote(raw[i]) == "--" {
@@ -1703,7 +1717,9 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
                 inner = Some(raw[i..].join(" "));
                 break;
             }
-            if let Some(rest) = t.strip_prefix("--command=") {
+            if is_command_string_wrapper
+                && let Some(rest) = t.strip_prefix("--command=")
+            {
                 // `--command=STR`: STR is the command, then the tail
                 // is its arguments.
                 let mut all = vec![rest.to_string()];
@@ -1719,10 +1735,17 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
                 continue;
             }
             if t.starts_with('-') && t.len() > 1 {
-                // Combined short flags. `-xc` contains the
-                // command-string flag `c`.
+                // Combined short flags. `-xc` on a *command-string*
+                // wrapper (`bash`, `sh`) contains the command-string
+                // flag `c`; on any other wrapper `-c` is an ordinary
+                // flag (and often one that consumes its argument, e.g.
+                // `ionice -c 3`). Pre-fix this branch ran for every
+                // wrapper, so `ionice -c 3 rm -rf /x` parsed `3` as
+                // the inner program and the wrapper was opaque to the
+                // forbidden-binary check. The mirror test in
+                // `kod-core-tools` caught it.
                 let letters = &t[1..];
-                if letters.contains('c') && !letters.contains('=') {
+                if is_command_string_wrapper && letters.contains('c') && !letters.contains('=') {
                     i += 1;
                     if i < raw.len() && unquote(raw[i]) == "--" {
                         i += 1;
@@ -1759,6 +1782,13 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// The wrapper candidates a command resolves to, for the cross-crate
+/// mirror test. Thin wrapper over the internal parser.
+#[doc(hidden)]
+pub fn binary_candidates_for_tests(cmd: &str) -> Vec<String> {
+    binary_candidates(cmd)
 }
 
 /// T5-C32: cache the compiled GlobBuilder matcher per (pattern,
