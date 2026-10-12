@@ -1798,6 +1798,7 @@ fn compiled_glob(pattern: &str) -> Option<std::sync::Arc<globset::GlobMatcher>> 
     static CACHE: OnceLock<Mutex<HashMap<String, Option<std::sync::Arc<globset::GlobMatcher>>>>> =
         OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    // Fast path: a hit returns the cached Arc.
     if let Ok(g) = cache.lock()
         && let Some(v) = g.get(pattern)
     {
@@ -1809,8 +1810,25 @@ fn compiled_glob(pattern: &str) -> Option<std::sync::Arc<globset::GlobMatcher>> 
         .ok()
         .map(|g| std::sync::Arc::new(g.compile_matcher()));
     if let Ok(mut g) = cache.lock() {
-        if g.len() > 512 {
-            g.clear();
+        // Double-check under the write lock. Two callers that both
+        // missed the fast path both compiled; without this the second
+        // insert overwrites the first and the two callers hold
+        // different Arcs for the same pattern — a real bug, not just
+        // a test artifact. The loser returns the winner's Arc.
+        if let Some(existing) = g.get(pattern) {
+            return existing.clone();
+        }
+        // Evict a few entries instead of clearing everything: a full
+        // clear could drop the entry a concurrent caller just
+        // inserted, so a same-pattern call would recompile and return
+        // a different Arc. Dropping the eldest keeps the cache bounded
+        // without that cliff.
+        if g.len() >= 512 {
+            let excess = g.len() - 511;
+            let keys: Vec<String> = g.keys().take(excess).cloned().collect();
+            for k in keys {
+                g.remove(&k);
+            }
         }
         g.insert(pattern.to_string(), compiled.clone());
     }

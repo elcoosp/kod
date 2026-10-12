@@ -112,6 +112,10 @@ impl SandboxResolver {
     /// Probe the host for available primitives. Cheap; safe to call
     /// from a startup path.
     pub fn detect() -> Self {
+        // Only the linux/macos arms below push; on other targets the
+        // vector is never mutated, so `mut` would warn under
+        // `-D warnings`.
+        #[cfg_attr(any(target_os = "linux", target_os = "macos"), allow(unused_mut))]
         let mut available = Vec::new();
         #[cfg(target_os = "linux")]
         {
