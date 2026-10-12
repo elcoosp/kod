@@ -104,6 +104,33 @@ unsound = "warn"
 yanked = "deny"
 notice = "warn"
 
+# The one accepted vulnerability, with the reachability argument that
+# makes accepting it defensible. Remove this entry the moment the
+# `ratatui` migration to 0.30 lands — 0.30 drops the `lru` dependency
+# entirely, and the advisory goes away with it.
+ignore = [
+    # RUSTSEC-2026-0253 — use-after-free in `LruCache::pop()` when a
+    # stored key's `Drop` panics mid-unwind.
+    #
+    # Reached only through `ratatui 0.29` -> `lru 0.12.5`. The
+    # workspace does not call `LruCache` directly; `ratatui` uses it
+    # for its internal style/symbol cache.
+    #
+    # Not exploitable in a shipped binary: the release profile sets
+    # `panic = "abort"`, so the unwinding path the advisory describes
+    # cannot run — the process aborts before the cache's internal
+    # pointers dangle. It is reachable in debug/test builds (which
+    # unwind), but the trigger requires a panicking `Drop` on a cache
+    # key, and `ratatui`'s keys are `&'static str` and small `Copy`
+    # types that do not panic on drop.
+    #
+    # The fix is `ratatui` 0.30 (which removes the `lru` dependency);
+    # `0.29` pins `lru = "^0.12"` and `0.x` versions are major under
+    # Cargo's semver rules, so no `cargo update` can cross the
+    # boundary. Tracked as the ratatui-0.30 migration.
+    "RUSTSEC-2026-0253",
+]
+
 # ---------------------------------------------------------------------------
 # Bans
 # ---------------------------------------------------------------------------
