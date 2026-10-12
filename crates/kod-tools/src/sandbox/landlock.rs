@@ -72,6 +72,15 @@ const LANDLOCK_RULE_PATH_BENEATH: u32 = 1;
 /// `<linux/prctl.h>` assigns.
 const PR_SET_NO_NEW_PRIVS: libc::c_int = 38;
 
+/// `PR_SET_DUMPABLE`. Set to 0 before the Landlock restrict so this
+/// process refuses to be the target of a `ptrace(2)` attach from a
+/// sibling. Declared here for the same reason as the const above:
+/// `libc` does not expose the Linux `prctl` option constants on every
+/// target, and a macOS-local build would compile the name's absence
+/// into a Linux-only `cfg` block no one exercises. The value is the
+/// one `<linux/prctl.h>` assigns.
+const PR_SET_DUMPABLE: libc::c_int = 4;
+
 // File access rights (bitmask in a u64). Names match
 // `<linux/landlock.h>`; the values are what the kernel reads from
 // `landlock_path_beneath_attr.allowed_access`.

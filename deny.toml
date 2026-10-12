@@ -21,6 +21,8 @@ all-features = true
 # Licences
 # ---------------------------------------------------------------------------
 [licenses]
+# cargo-deny 0.18+ schema; see the [advisories] note.
+version = 2
 # The allow-list. Every entry is a licence that appears in the
 # workspace's dependency tree today, plus a small margin for the
 # standard permissive set a Rust project is likely to pick up. A
@@ -50,28 +52,22 @@ allow = [
     "CC0-1.0",
     "Unlicense",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
+    # Mozilla Community Data License Agreement, permissive. Used by
+    # `webpki-root-certs` (the root-CA bundle).
+    "CDLA-Permissive-2.0",
     # Boost Software License and Zlib: permissive, occasionally seen in
     # compression and utility crates.
     "BSL-1.0",
     "Zlib",
 ]
 
-# Copy the project's own LICENSE file into any package that lacks one,
-# so a downstream consumer of a workspace member always has a text to
-# point at.
-license-files = [
-    { path = "LICENSE.md" },
-]
 
 # Do not fail on a crate whose licence cannot be determined from its
 # Cargo.toml — warn instead. The failure this would prevent (a genuine
 # missing licence) is rare, and a crate that ships without a
 # `license`/`license-file` field is usually a development-only tool.
 confidence-threshold = 0.9
-unlicensed = "deny"
-copyleft = "deny"
-default = "deny"
+
 
 # ---------------------------------------------------------------------------
 # Sources
@@ -88,7 +84,12 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # client — see the `[workspace.dependencies]` comment in
 # Cargo.toml). Pinned by `rev` there so a fresh checkout without
 # the lockfile resolves to the same commit.
-allow-git = ["https://github.com/elcoosp/typesafe-ai-rs"]
+allow-git = [
+    "https://github.com/elcoosp/typesafe-ai-rs",
+    # Dev-only: the TUI e2e harness (terminal-testlib). Not linked
+    # into the release binary.
+    "https://github.com/raibid-labs/ratatui-testlib",
+]
 
 # ---------------------------------------------------------------------------
 # Advisory database (RustSec)
@@ -98,11 +99,17 @@ allow-git = ["https://github.com/elcoosp/typesafe-ai-rs"]
 # and `unsound` are signals that deserve attention but should not gate
 # a build.
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
-unsound = "warn"
+# cargo-deny 0.18+ schema. `version = 2` opts into the new
+# behaviour and makes the removed keys (vulnerability,
+# notice) inert; they are dropped below rather than carried.
+version = 2
+# cargo-deny >= 0.18: `unmaintained` and `unsound` are *scope*
+# selectors, not severities. "all" keeps the pre-0.18 coverage
+# (every dependency is inspected); the accept-list below carries
+# the crates we have consciously decided to keep.
+unmaintained = "all"
+unsound = "all"
 yanked = "deny"
-notice = "warn"
 
 # Consciously accepted advisories. Each is an `unmaintained` notice,
 # not a vulnerability, and each is documented with why it is here and
@@ -158,9 +165,9 @@ ignore = [
 [bans]
 # Multiple versions of the same crate are a signal (duplicated code,
 # possible API skew), not a blocker. Warn.
-multiple-versions = "Warn"
+multiple-versions = "warn"
 # Duplicate a dependency that appears more than once in the tree.
-wildcards = "Warn"
+wildcards = "warn"
 # Crates the design has already decided against. Two entries:
 #
 # - `openssl-sys` — the workspace uses `rustls` exclusively; a
