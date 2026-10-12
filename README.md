@@ -65,12 +65,6 @@ minisign -Vm kod-x86_64-unknown-linux-musl.tar.gz -P "$(cat docs/minisign.pub)"
 - A provider endpoint: a local Ollama server, or an OpenAI-compatible
   or Anthropic API key. `kod doctor` reports what is configured.
 
-### Full commit history
-
-The curated release narrative lives in [`CHANGELOG.md`](CHANGELOG.md).
-The exhaustive per-commit record lives in [`COMMITS.md`](COMMITS.md),
-regenerated with `just changelog`.
-
 ## Table of Contents
 
 - [Why local-first](#why-local-first)
