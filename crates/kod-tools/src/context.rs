@@ -211,6 +211,13 @@ fn landlock_invocation(wd: &Path, opts: SandboxOpts) -> Result<SandboxInvocation
 
     // Build the profile.
     let mut profile = crate::sandbox::landlock::LandlockProfile {
+        // Landlock rules are additive: a blanket worktree rw rule
+        // makes any `.git`-only ro rule a no-op. So when the caller
+        // asked for git_readonly we record the claim and let
+        // `landlock::apply` refuse, rather than silently ship a
+        // sandbox that does not restrict `.git`. (The ro_paths push
+        // below is a best-effort that `apply` will reject.)
+        claims_git_readonly: opts.git_readonly,
         ro_paths: vec![
             PathBuf::from("/usr"),
             PathBuf::from("/lib"),

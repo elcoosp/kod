@@ -85,7 +85,6 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Notify;
 
 // T5-split: `default_socket_path` moved to `kod-core-state`
@@ -162,7 +161,7 @@ struct Response<'a> {
 
 /// Run the daemon until `shutdown` fires or `SIGINT` arrives.
 pub async fn serve(engine: Arc<KodEngine>, socket_path: PathBuf) -> Result<()> {
-    let listener = bind_listener(&socket_path).await?;
+    let listener = crate::transport::bind(&socket_path).await?;
     set_socket_perms(&socket_path)?;
     tracing::info!(socket = %socket_path.display(), "kod serve listening");
 
@@ -182,7 +181,7 @@ pub async fn serve(engine: Arc<KodEngine>, socket_path: PathBuf) -> Result<()> {
         tokio::select! {
             accept = listener.accept() => {
                 match accept {
-                    Ok((stream, _)) => {
+                    Ok(stream) => {
                         let engine = engine.clone();
                         let shutdown = shutdown.clone();
                         tokio::spawn(async move {
@@ -214,12 +213,7 @@ pub async fn serve(engine: Arc<KodEngine>, socket_path: PathBuf) -> Result<()> {
 /// before processing the request is not an error from the caller's
 /// point of view.
 pub async fn stop_daemon(socket_path: &Path) -> Result<()> {
-    let mut stream = UnixStream::connect(socket_path).await.map_err(|e| {
-        KodError::Internal(format!(
-            "could not connect to {}: {e}",
-            socket_path.display()
-        ))
-    })?;
+    let stream = crate::transport::connect(socket_path).await?;
     let req = serde_json::json!({
         "v": PROTOCOL_VERSION,
         "id": "stop-1",
@@ -228,12 +222,13 @@ pub async fn stop_daemon(socket_path: &Path) -> Result<()> {
     });
     let mut line = serde_json::to_string(&req).map_err(|e| KodError::Internal(e.to_string()))?;
     line.push('\n');
-    stream.write_all(line.as_bytes()).await?;
-    stream.flush().await?;
+    let (read_half, mut write_half) = stream.into_split();
+    write_half.write_all(line.as_bytes()).await?;
+    write_half.flush().await?;
     // Read until the daemon closes the connection or answers. The
     // socket being unlinked is the true signal, which the CLI's
     // `kod serve --stop` polls for separately.
-    let mut reader = BufReader::new(stream);
+    let mut reader = BufReader::new(read_half);
     let mut buf = String::new();
     let _ = tokio::time::timeout(
         std::time::Duration::from_secs(2),
@@ -247,73 +242,6 @@ pub async fn stop_daemon(socket_path: &Path) -> Result<()> {
 // Internal
 // ---------------------------------------------------------------------------
 
-/// Bind the daemon's Unix socket, or refuse if a live daemon already
-/// owns it.
-///
-/// The whole check-then-bind runs under an exclusive `flock` on a
-/// sibling `<socket>.lock` file, so two concurrent `kod serve`
-/// invocations serialize. Without the lock, a connect-probe that saw
-/// a stale file could unlink a socket a sibling had just bound
-/// (check-then-act with no atomicity).
-///
-/// The lock is held until the function returns — by then the listener
-/// is bound and the file on disk is ours.
-async fn bind_listener(path: &Path) -> Result<UnixListener> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(KodError::Io)?;
-    }
-    let _lock = SocketLock::acquire(path)?;
-    match UnixStream::connect(path).await {
-        Ok(_) => Err(KodError::InvalidState(format!(
-            "another kod server is already listening on {}",
-            path.display()
-        ))),
-        Err(_) => {
-            // Either no file, or a stale one from a crashed daemon.
-            // Removing is safe *under the lock*: no sibling can bind
-            // between the probe and the unlink.
-            let _ = std::fs::remove_file(path);
-            UnixListener::bind(path)
-                .map_err(|e| KodError::Internal(format!("could not bind {}: {e}", path.display())))
-        }
-    }
-}
-
-/// `flock`-based exclusive lock on `<socket>.lock`. Held for the
-/// duration of `bind_listener`; the lock releases when the file
-/// handle drops (POSIX semantics — no explicit `flock(LOCK_UN)`).
-struct SocketLock {
-    /// Open handle on the lock file. Held only for its side effect;
-    /// the name is prefixed so the compiler does not warn about a
-    /// field that is never read.
-    _file: std::fs::File,
-}
-
-impl SocketLock {
-    fn acquire(socket_path: &Path) -> Result<Self> {
-        let lock_path = socket_path.with_extension("lock");
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&lock_path)
-            .map_err(KodError::Io)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::AsRawFd;
-            // SAFETY: `file` is a valid open fd; `flock` is the
-            // standard advisory-lock syscall. LOCK_EX blocks until
-            // the lock is available — the wait is short (the locked
-            // region runs no await).
-            let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-            if rc != 0 {
-                return Err(KodError::Io(std::io::Error::last_os_error()));
-            }
-        }
-        Ok(Self { _file: file })
-    }
-}
 
 /// `0600` on the socket file. The peer-UID check makes this
 /// redundant at the protocol layer, but filesystem permissions are
@@ -330,57 +258,6 @@ fn set_socket_perms(_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Verify the peer's UID matches ours before reading a single byte.
-///
-/// Uses `tokio::net::UnixStream::peer_cred`, which abstracts
-/// `SO_PEERCRED` on Linux and `getpeereid` on macOS/BSD — the same
-/// syscalls a hand-rolled version would call through `libc`,
-/// reached through tokio's stable API instead. This removes a
-/// `libc` dependency from `kod-core` entirely.
-///
-/// The check is the security boundary for the socket. The
-/// filesystem permissions (`0600`) are the user-visible signal a
-/// `ls -la` shows, but a same-user process on a multi-user machine
-/// is exactly what the UID check is for.
-fn check_peer_uid(stream: &UnixStream) -> Result<()> {
-    let cred = stream
-        .peer_cred()
-        .map_err(|e| KodError::Internal(format!("could not read peer credentials: {e}")))?;
-    let our_uid = current_uid();
-    if cred.uid() != our_uid {
-        return Err(KodError::PermissionDenied {
-            action: "connect".to_string(),
-            reason: format!(
-                "peer uid {} does not match server uid {}",
-                cred.uid(),
-                our_uid
-            ),
-        });
-    }
-    Ok(())
-}
-
-/// The current process's UID.
-///
-/// `std` does not expose this on stable. The C `getuid` symbol is
-/// linked into every Rust binary on Unix by the standard library's
-/// own C runtime linkage, so a direct `extern "C"` binding adds no
-/// dependency.
-#[cfg(unix)]
-fn current_uid() -> u32 {
-    // SAFETY: `getuid` has no preconditions and cannot fail.
-    unsafe { getuid() }
-}
-
-#[cfg(unix)]
-unsafe extern "C" {
-    fn getuid() -> u32;
-}
-
-#[cfg(not(unix))]
-fn current_uid() -> u32 {
-    0
-}
 
 /// One connection's lifetime. Reads lines, dispatches methods,
 /// writes NDJSON responses.
@@ -459,11 +336,11 @@ impl<'a, R: tokio::io::AsyncBufRead + Unpin> CappedLines<'a, R> {
 }
 
 async fn handle_connection(
-    stream: UnixStream,
+    stream: crate::transport::Stream,
     engine: Arc<KodEngine>,
     shutdown: Arc<Notify>,
 ) -> Result<()> {
-    check_peer_uid(&stream)?;
+    // The peer check already ran inside `transport::Listener::accept`.
     let (read_half, write_half) = stream.into_split();
     // H-R4: cap the request line length. The pre-fix read used
     // `BufReader::lines()` with no bound: a same-UID client could
@@ -1319,47 +1196,38 @@ mod coverage_serve_handlers {
         );
     }
 
-    // ---- current_uid ----------------------------------------------------
-
-    #[test]
-    fn current_uid_returns_a_u32() {
-        // The value is environment-dependent; the contract is only
-        // that the call has no preconditions and returns without
-        // panicking. A regression that swapped in a fallible
-        // syscall would fail here.
-        let _uid: u32 = current_uid();
-    }
-
     // ---- prepare_socket -------------------------------------------------
 
     #[tokio::test]
-    async fn bind_listener_creates_the_parent_directory() {
+    async fn transport_bind_creates_the_parent_directory() {
         let tmp = tempfile::TempDir::new().unwrap();
         let sock = tmp.path().join("nested").join("kod.sock");
         assert!(!sock.parent().unwrap().exists());
-        let _l = bind_listener(&sock).await.unwrap();
+        let _l = crate::transport::bind(&sock).await.unwrap();
         assert!(
             sock.parent().unwrap().is_dir(),
-            "bind_listener must create the parent directory",
+            "transport::bind must create the parent directory",
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
-    async fn bind_listener_creates_the_socket_file() {
+    async fn transport_bind_creates_the_socket_file() {
         let tmp = tempfile::TempDir::new().unwrap();
         let sock = tmp.path().join("kod.sock");
-        let _l = bind_listener(&sock).await.unwrap();
+        let _l = crate::transport::bind(&sock).await.unwrap();
         // `bind_listener` returns a bound listener, so the socket
         // path exists and is a socket.
         let md = std::fs::metadata(&sock).expect("socket file exists");
         assert!(
             md.file_type().is_socket(),
-            "bind_listener must leave a socket at the path",
+            "transport::bind must leave a socket at the path",
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
-    async fn bind_listener_replaces_a_stale_socket_file() {
+    async fn transport_bind_replaces_a_stale_socket_file() {
         // A crashed daemon leaves an inode on disk that is not a
         // listening socket. `bind_listener` must clear it so the
         // next bind succeeds, rather than returning "already
@@ -1368,12 +1236,12 @@ mod coverage_serve_handlers {
         let sock = tmp.path().join("kod.sock");
         std::fs::write(&sock, b"stale").unwrap();
         assert!(sock.exists());
-        let _l = bind_listener(&sock).await.unwrap();
+        let _l = crate::transport::bind(&sock).await.unwrap();
         // The path now holds a socket, not the stale text file.
         let md = std::fs::metadata(&sock).expect("path exists after bind");
         assert!(
             md.file_type().is_socket(),
-            "bind_listener must replace the stale file with a socket",
+            "transport::bind must replace the stale file with a socket",
         );
     }
 
@@ -1384,8 +1252,8 @@ mod coverage_serve_handlers {
         // silently steal connections from the first.
         let tmp = tempfile::TempDir::new().unwrap();
         let sock = tmp.path().join("kod.sock");
-        let _listener = UnixListener::bind(&sock).expect("bind test listener");
-        let err = bind_listener(&sock).await.unwrap_err();
+        let _listener = crate::transport::bind(&sock).await.expect("bind test listener");
+        let err = crate::transport::bind(&sock).await.unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("another kod server") || msg.contains("listening"),
