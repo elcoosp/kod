@@ -199,7 +199,7 @@ jobs:
         flags: unittests
         name: codecov-umbrella
 
-  # PR-level size gate. The release workflow has a strict 25 MB ceiling
+  # PR-level size gate. The release workflow has a strict 30 MB ceiling
   # on the musl release binary; this lighter check runs on every PR
   # against the debug binary (which is much larger — the point is to
   # catch a runaway dependency add, not to enforce the release

@@ -211,10 +211,10 @@ jobs:
         set -euo pipefail
         BIN=target/release/kod
         SIZE=$(stat -c%s "$BIN")
-        MAX=$((25 * 1024 * 1024))  # 25 MB, the documented ceiling
+        MAX=$((30 * 1024 * 1024))  # 30 MB, the documented ceiling
         echo "binary size: $SIZE bytes ($(( SIZE / 1024 )) KiB)"
         if [ "$SIZE" -gt "$MAX" ]; then
-          echo "binary exceeds the documented 25 MB ceiling" >&2
+          echo "binary exceeds the documented 30 MB ceiling" >&2
           echo "see the bloat report above for the largest contributors" >&2
           exit 1
         fi

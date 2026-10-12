@@ -3,7 +3,7 @@
 //! # Why this exists
 //!
 //! KOD's local-first promise is a small, self-contained binary. The
-//! design carries a documented binary-size ceiling (25 MB, enforced
+//! design carries a documented binary-size ceiling (30 MB, enforced
 //! by the release pipeline's bloat gate), but *runtime* memory has never
 //! had a measurement. A regression that turned the memory store
 //! quadratic, or that quietly held every turn's full prompt in RAM
