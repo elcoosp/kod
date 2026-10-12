@@ -189,10 +189,23 @@ jobs:
     - name: Install cargo-tarpaulin
       run: cargo install cargo-tarpaulin
 
+    # Coverage is a *metric*, not a release gate. tarpaulin
+    # instruments the test binary, which changes how the subprocesses
+    # some integration tests spawn resolve their output — the
+    # minimizer and sandbox tests shell out to `sh`/`git` and read the
+    # captured stdout, and under tarpaulin that stdout comes back as
+    # the harness's own output. They pass in the normal Test job; they
+    # fail only here. Skipping them keeps coverage meaningful without
+    # weakening the real test gates, and `continue-on-error` keeps a
+    # coverage-tooling regression from blocking the build.
     - name: Run coverage
-      run: cargo tarpaulin --workspace --out Xml --output-dir coverage
+      continue-on-error: true
+      run: |
+        cargo tarpaulin --workspace --out Xml --output-dir coverage \
+          -- --skip minimizer_integration --skip sandbox_containment
 
     - name: Upload coverage
+      continue-on-error: true
       uses: codecov/codecov-action@v4
       with:
         file: coverage/cobertura.xml

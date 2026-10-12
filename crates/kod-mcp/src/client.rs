@@ -815,6 +815,9 @@ for line in sys.stdin:
 #[cfg(test)]
 mod t2_c6_regression {
     use super::MAX_LINE_BYTES;
+    // Only the unix-gated SIGTERM test below uses `McpClient`; on
+    // Windows the import is unused and `-D warnings` fails clippy.
+    #[cfg(unix)]
     use crate::McpClient;
 
     #[test]
