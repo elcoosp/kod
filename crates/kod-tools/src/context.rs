@@ -1569,6 +1569,7 @@ mod tests {
         assert!(ctx.can_write(&root.join("src/anything.rs")).is_ok());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_resolve_path_rejects_dangling_symlink() {
         let temp = tempfile::TempDir::new().unwrap();
@@ -1707,6 +1708,7 @@ mod coverage_resolve_path {
         assert_eq!(resolved, root.join("a/x.txt"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn rejects_absolute_path_outside_workspace() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -1715,7 +1717,6 @@ mod coverage_resolve_path {
         // `/etc/passwd` exists on every Unix system. The test is
         // that resolve_path refuses it regardless of whether the
         // process can read it.
-        #[cfg(unix)]
         assert!(c.resolve_path("/etc/passwd").is_err());
     }
 
