@@ -1717,9 +1717,7 @@ fn binary_candidates(cmd: &str) -> Vec<String> {
                 inner = Some(raw[i..].join(" "));
                 break;
             }
-            if is_command_string_wrapper
-                && let Some(rest) = t.strip_prefix("--command=")
-            {
+            if is_command_string_wrapper && let Some(rest) = t.strip_prefix("--command=") {
                 // `--command=STR`: STR is the command, then the tail
                 // is its arguments.
                 let mut all = vec![rest.to_string()];

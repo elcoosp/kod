@@ -28,8 +28,7 @@ fn the_two_wrapper_tables_agree() {
     let risk = classify::wrapper_table_for_tests();
     let config = kod_config::policy::PREFIX_WRAPPERS_FOR_TESTS;
     assert_eq!(
-        risk,
-        config,
+        risk, config,
         "kod-risk::WRAPPERS and kod-config::PREFIX_WRAPPERS have drifted; \
          update both (the crates cannot share the table):\n\
          risk   = {risk:?}\n\

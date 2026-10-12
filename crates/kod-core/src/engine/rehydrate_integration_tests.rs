@@ -111,7 +111,6 @@ async fn rehydrate_from_log_for_on_missing_file_is_a_no_op() {
     engine.shutdown().await.unwrap();
 }
 
-
 // ---------------------------------------------------------------------------
 // Cold revive (delta 11.2)
 // ---------------------------------------------------------------------------
@@ -152,9 +151,7 @@ async fn cold_revive_matches_after_the_same_session_init() {
         .await
         .expect("cold revive against a matching surface must not error");
     match outcome {
-        crate::ColdReviveOutcome::Revived {
-            messages_appended,
-        } => assert_eq!(
+        crate::ColdReviveOutcome::Revived { messages_appended } => assert_eq!(
             messages_appended, 1,
             "one recorded tool call rehydrates to one prose message",
         ),
@@ -196,7 +193,10 @@ async fn cold_revive_refuses_drift_and_honours_force() {
                 holder: String::new(),
                 endpoint: "default".to_string(),
                 model: "test".to_string(),
-                tool_names: vec!["read_file".to_string(), "a_tool_from_the_future".to_string()],
+                tool_names: vec![
+                    "read_file".to_string(),
+                    "a_tool_from_the_future".to_string(),
+                ],
                 // Any hash: the surface fingerprint comparison dominates.
                 system_prompt_hash: 0,
             })
@@ -237,7 +237,8 @@ async fn cold_revive_refuses_drift_and_honours_force() {
     }
     // Nothing was appended: the refusal must be a no-op on history.
     assert_eq!(
-        engine.transcript_scoped_key_count_for_tests().await, 0,
+        engine.transcript_scoped_key_count_for_tests().await,
+        0,
         "a refused revive must not touch any transcript map",
     );
 
@@ -247,9 +248,7 @@ async fn cold_revive_refuses_drift_and_honours_force() {
         .await
         .expect("a forced cold revive must not error");
     match outcome {
-        crate::ColdReviveOutcome::Revived {
-            messages_appended,
-        } => assert_eq!(messages_appended, 1),
+        crate::ColdReviveOutcome::Revived { messages_appended } => assert_eq!(messages_appended, 1),
         other => panic!("expected Revived under force, got {other:?}"),
     }
     let rendered = engine.render_history().await;
@@ -333,7 +332,6 @@ async fn cold_revive_for_an_unknown_holder_reports_no_init() {
     engine.shutdown().await.unwrap();
 }
 
-
 // ---------------------------------------------------------------------------
 // Mental-models refresh drain (delta 12.7)
 // ---------------------------------------------------------------------------
@@ -359,9 +357,7 @@ async fn a_turn_drains_the_mental_models_refresh_flag() {
         fn name(&self) -> &str {
             "noop"
         }
-        async fn list_models(
-            &self,
-        ) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
             Ok(vec![])
         }
         async fn generate(
@@ -388,9 +384,8 @@ async fn a_turn_drains_the_mental_models_refresh_flag() {
             _: &kod_provider::GenerationOptions,
         ) -> std::pin::Pin<
             Box<
-                dyn futures::Stream<
-                        Item = kod_error::Result<kod_provider::StreamChunk>,
-                    > + Send
+                dyn futures::Stream<Item = kod_error::Result<kod_provider::StreamChunk>>
+                    + Send
                     + '_,
             >,
         > {

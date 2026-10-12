@@ -337,7 +337,7 @@ impl KodEngine {
 
     /// Clear the per-transcript write set for `key`. Called by the
     /// swarm runner after each agent finishes.
-        /// Seed a turn into the default transcript. Used by the TUI after
+    /// Seed a turn into the default transcript. Used by the TUI after
     /// restoring a saved session.
     pub async fn seed_turn(&self, user: bool, text: &str) {
         self.seed_turn_for(DEFAULT_TRANSCRIPT_KEY, user, text).await

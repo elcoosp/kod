@@ -119,9 +119,7 @@ async fn engine_with_provider(provider: Arc<TwoTurnProvider>) -> (TempDir, Arc<K
 /// trait object. The budget regression only needs a running engine; it
 /// does not inspect the provider afterward, so it does not need the
 /// concrete type.
-async fn engine_with_any_provider(
-    provider: Arc<dyn LlmProvider>,
-) -> (TempDir, Arc<KodEngine>) {
+async fn engine_with_any_provider(provider: Arc<dyn LlmProvider>) -> (TempDir, Arc<KodEngine>) {
     let tmp = TempDir::new().unwrap();
     let db = tmp.path().join("t.redb");
     let cfg = RouterConfig {
@@ -182,7 +180,6 @@ async fn goal_loop_second_turn_sees_first_turn_output() {
         calls[1],
     );
 }
-
 
 /// Regression: `/goal --budget N` must actually cap the loop. Pre-fix
 /// `GoalRuntime::start` created a goal with both budgets `None` and

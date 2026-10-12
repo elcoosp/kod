@@ -435,9 +435,7 @@ pub async fn run_sessions(action: SessionsAction) -> Result<()> {
                 .cold_revive_session(&log_path, &holder, force)
                 .await?;
             match outcome {
-                kod_core::ColdReviveOutcome::Revived {
-                    messages_appended,
-                } => {
+                kod_core::ColdReviveOutcome::Revived { messages_appended } => {
                     println!(
                         "Revived {} message(s) from {} (holder {:?}).",
                         messages_appended,

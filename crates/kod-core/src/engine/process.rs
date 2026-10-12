@@ -1397,7 +1397,10 @@ impl KodEngine {
         if _provider_probe.is_some() {
             // Delta §11.6: start the goal in the runtime. A second
             // call replaces any previous goal (status Dropped).
-            self.goal_runtime.write().await.start_with(goal.to_string(), budget);
+            self.goal_runtime
+                .write()
+                .await
+                .start_with(goal.to_string(), budget);
             // S10 phase 3: same shared pipeline as the other two entry
             // points. The goal path is the one caller that does *not*
             // write a retrieval-log entry (`None`), and the one that

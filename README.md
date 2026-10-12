@@ -5,7 +5,7 @@
     Multi-crate Cargo workspace with a full agent loop: skills, multi-layer memory, tool calling, streaming LLM providers, and both a TUI and a scriptable CLI. Point it at Ollama, LM Studio, MLX, vLLM, or any OpenAI-compatible endpoint — the model, the memory, and the tool loop all stay on your machine.
   </p>
   <p>
-    <img src="https://img.shields.io/badge/Rust-1.85%2B%20%7C%202024-000000?style=flat-square&logo=rust" alt="Rust"/>
+    <img src="https://img.shields.io/badge/Rust-1.98.1%2B%20%7C%202024-000000?style=flat-square&logo=rust" alt="Rust"/>
     <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License MIT"/>
     <img src="https://img.shields.io/badge/Crates-20-6F4E37?style=flat-square" alt="Crates"/>
     <img src="https://img.shields.io/badge/Backend-Ollama%20%7C%20OpenAI--Compatible-6A0DAD?style=flat-square" alt="Backend"/>
@@ -61,7 +61,7 @@ minisign -Vm kod-x86_64-unknown-linux-musl.tar.gz -P "$(cat docs/minisign.pub)"
 
 ### Requirements
 
-- Rust 1.85 or newer (`rustup toolchain install 1.85`).
+- Rust 1.98.1 or newer (`rustup toolchain install 1.98.1`).
 - A provider endpoint: a local Ollama server, or an OpenAI-compatible
   or Anthropic API key. `kod doctor` reports what is configured.
 

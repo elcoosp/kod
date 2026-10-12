@@ -230,7 +230,7 @@ impl KodEngine {
     }
 
     /// Delta §10: enable or disable speculative reads. On by default.
-        /// Delta §4.4: the stored provider-native compaction block for a
+    /// Delta §4.4: the stored provider-native compaction block for a
     /// transcript, if any.
     pub async fn native_compaction_block(&self, key: &str) -> Option<String> {
         self.native_compaction_blocks.read().await.get(key).cloned()
@@ -274,7 +274,7 @@ impl KodEngine {
     }
 
     /// Delta §12.7: the concatenated model block, for a readout.
-        /// Delta §12.7: cross a transcript boundary, so a caller can
+    /// Delta §12.7: cross a transcript boundary, so a caller can
     /// re-fill models for a new session. The previous blocks are kept
     /// until re-filled (a stale-but-stable summary beats an empty one).
     pub async fn begin_transcript(&self) {
@@ -394,11 +394,7 @@ impl KodEngine {
     /// Tier 1.4: record the parent for the next trace on `key`.
     /// Idempotent overwrite. `process_streaming_with_model_for` takes
     /// the entry when it opens the trace.
-    pub async fn set_pending_trace_parent(
-        &self,
-        key: &str,
-        parent: kod_core_state::trace::TurnId,
-    ) {
+    pub async fn set_pending_trace_parent(&self, key: &str, parent: kod_core_state::trace::TurnId) {
         self.pending_trace_parent
             .write()
             .await
@@ -475,7 +471,7 @@ impl KodEngine {
     /// `router.consolidate_memory()`. A future change can wire the
     /// periodic task to call it via a channel; the primitive is what
     /// this lands.
-        /// Delta §14.5: install the OTLP telemetry handle. A caller
+    /// Delta §14.5: install the OTLP telemetry handle. A caller
     /// that wants export calls this with an enabled handle built
     /// from `Telemetry::from_env`; the default (installed by
     /// `new()`) is disabled and pays nothing.
@@ -519,16 +515,16 @@ impl KodEngine {
     }
 
     /// Delta §11.6: pause the active goal.
-        /// Delta §11.6: resume a paused goal.
-        /// Delta §11.6: drop the active goal.
-        /// Delta §11.6: set a token budget on the active goal. Returns
+    /// Delta §11.6: resume a paused goal.
+    /// Delta §11.6: drop the active goal.
+    /// Delta §11.6: set a token budget on the active goal. Returns
     /// `false` when there is no goal to attach it to.
-        /// Delta §14.1: replace every registered secret in `text` with
+    /// Delta §14.1: replace every registered secret in `text` with
     /// its placeholder. No-op when no vault is installed.
-        /// Delta §14.1: replace every placeholder in `text` with the raw
+    /// Delta §14.1: replace every placeholder in `text` with the raw
     /// secret. Returns `(restored_text, count)`; count is zero when
     /// no vault is installed.
-        /// Delta §14.1: walk a JSON value recursively and deobfuscate
+    /// Delta §14.1: walk a JSON value recursively and deobfuscate
     /// every string. The tool-argument path uses this — arguments
     /// are arbitrary JSON, and the model may have put a placeholder
     /// in a nested field.
@@ -572,7 +568,7 @@ impl KodEngine {
     }
 
     /// The current read-protection, if any.
-        /// The current redactor (shared handle).
+    /// The current redactor (shared handle).
     pub fn redactor(&self) -> std::sync::Arc<kod_types::redact::Redactor> {
         self.redactor.clone()
     }

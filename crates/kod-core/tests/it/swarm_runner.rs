@@ -1718,7 +1718,8 @@ async fn swarm_trace_rounds_are_classified_and_parented() {
         .filter(|r| r.kind == RoundKind::Unknown)
         .count();
     assert_eq!(
-        unknown_count, 0,
+        unknown_count,
+        0,
         "every round must be classified; {unknown_count} of {} were Unknown",
         all_rounds.len(),
     );

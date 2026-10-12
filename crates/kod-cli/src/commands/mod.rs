@@ -3877,7 +3877,12 @@ mod coverage_cli_subactions {
         parse_err(&["kod", "sessions", "revive"]);
         match parse_ok(&["kod", "sessions", "revive", "/tmp/s.jsonl"]).command {
             Some(Command::Sessions {
-                action: SessionsAction::Revive { path, holder, force },
+                action:
+                    SessionsAction::Revive {
+                        path,
+                        holder,
+                        force,
+                    },
             }) => {
                 assert_eq!(path, std::path::PathBuf::from("/tmp/s.jsonl"));
                 assert_eq!(holder, "");

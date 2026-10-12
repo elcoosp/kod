@@ -8611,9 +8611,7 @@ impl TuiLoop {
     ///   --budget <tokens>   (also `--budget=<tokens>`)
     ///   --time <N[s|m|h]>   (also `--time=<N>`)
     /// Returns the budget and the text with the flags removed.
-    fn parse_goal_flags(
-        rest: &str,
-    ) -> std::result::Result<(kod_core::GoalBudget, String), String> {
+    fn parse_goal_flags(rest: &str) -> std::result::Result<(kod_core::GoalBudget, String), String> {
         let mut budget = kod_core::GoalBudget::default();
         let mut remaining: Vec<&str> = Vec::new();
         let tokens: Vec<&str> = rest.split_whitespace().collect();
@@ -8627,24 +8625,24 @@ impl TuiLoop {
             };
             let take_val =
                 |i: &mut usize, inline: Option<&str>| -> std::result::Result<String, String> {
-                if let Some(v) = inline {
-                    if v.is_empty() {
-                        return Err(format!("{name} needs a value"));
+                    if let Some(v) = inline {
+                        if v.is_empty() {
+                            return Err(format!("{name} needs a value"));
+                        }
+                        return Ok(v.to_string());
                     }
-                    return Ok(v.to_string());
-                }
-                *i += 1;
-                tokens
-                    .get(*i)
-                    .map(|s| s.to_string())
-                    .ok_or_else(|| format!("{name} needs a value"))
-            };
+                    *i += 1;
+                    tokens
+                        .get(*i)
+                        .map(|s| s.to_string())
+                        .ok_or_else(|| format!("{name} needs a value"))
+                };
             match name {
                 "--budget" => {
                     let v = take_val(&mut i, inline_val)?;
-                    let n: u64 = v
-                        .parse()
-                        .map_err(|_| format!("--budget expects a non-negative integer, got `{v}`"))?;
+                    let n: u64 = v.parse().map_err(|_| {
+                        format!("--budget expects a non-negative integer, got `{v}`")
+                    })?;
                     if n == 0 {
                         return Err("--budget 0 would cap the goal at zero tokens; omit the flag for no cap".to_string());
                     }
@@ -8654,7 +8652,10 @@ impl TuiLoop {
                     let v = take_val(&mut i, inline_val)?;
                     let secs = parse_duration_secs(&v)?;
                     if secs == 0 {
-                        return Err("--time 0 would cap the goal at zero seconds; omit the flag for no cap".to_string());
+                        return Err(
+                            "--time 0 would cap the goal at zero seconds; omit the flag for no cap"
+                                .to_string(),
+                        );
                     }
                     budget.time_seconds = Some(secs);
                 }
