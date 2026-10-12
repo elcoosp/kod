@@ -42,6 +42,14 @@ fn make_git_repo() -> tempfile::TempDir {
     run(&["init", "-q", "-b", "main"]);
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "Test"]);
+    // Disable git's background auto-maintenance. `git commit` forks
+    // `gc --auto` as a detached child; the test waits only on the
+    // direct git process, so the grandchild outlives it and nextest
+    // flags the test LEAK. See the same block in `kod-core-quality`'s
+    // worktree test helper.
+    run(&["config", "gc.auto", "0"]);
+    run(&["config", "gc.autoDetach", "false"]);
+    run(&["config", "maintenance.auto", "false"]);
     std::fs::write(tmp.path().join("tracked.rs"), "fn main() {}\n").unwrap();
     run(&["add", "tracked.rs"]);
     run(&["commit", "-q", "-m", "initial"]);

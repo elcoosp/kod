@@ -762,6 +762,24 @@ mod tests {
             .args(["config", "user.name", "Test"])
             .current_dir(&path)
             .status();
+        // Disable git's background auto-maintenance for this repo.
+        // `git commit` and `git worktree add` otherwise fork
+        // `gc --auto` (and, on newer git, `maintenance`) as a
+        // detached child. The test waits on the *direct* git child
+        // only, so the grandchild outlives it and nextest flags the
+        // test LEAK. Under parallel load the gc threshold is crossed
+        // more often, which is why the flag is intermittent.
+        for cfg in [
+            ["gc.auto", "0"],
+            ["gc.autoDetach", "false"],
+            ["maintenance.auto", "false"],
+        ] {
+            let _ = std::process::Command::new("git")
+                .args(["config", cfg[0], cfg[1]])
+                .current_dir(&path)
+                .status();
+        }
+
         std::fs::write(path.join("seed.txt"), "seed\n").unwrap();
         let _ = std::process::Command::new("git")
             .args(["add", "seed.txt"])

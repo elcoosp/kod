@@ -15,6 +15,27 @@
 [test-groups.clipboard]
 max-threads = 1
 
+# Disable git's background auto-maintenance in every test process.
+#
+# `git commit` and `git worktree add` fork `gc --auto` (and, on newer
+# git, a `maintenance` child) as a detached process. A test waits on
+# the *direct* git child, so the grandchild outlives it and nextest
+# flags the test LEAK. Under parallel load the gc threshold is crossed
+# more often, which is why the flag was intermittent — and why a
+# subprocess-free test could inherit the flag when a sibling binary's
+# stray git process was still alive at nextest's check.
+#
+# `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` are
+# read by git as if they were `git config --global` entries, so this
+# applies to every git subprocess any test spawns — no per-helper
+# patching, no missed sites.
+#
+# The test helpers ALSO set these in each repo's local config, so a
+# direct `cargo test` (which does not read this profile) is covered
+# too.
+[profile.default]
+env = { "GIT_CONFIG_COUNT" = "3", "GIT_CONFIG_KEY_0" = "gc.auto", "GIT_CONFIG_VALUE_0" = "0", "GIT_CONFIG_KEY_1" = "gc.autoDetach", "GIT_CONFIG_VALUE_1" = "false", "GIT_CONFIG_KEY_2" = "maintenance.auto", "GIT_CONFIG_VALUE_2" = "false" }
+
 [[profile.default.overrides]]
 filter = 'test(/clipboard/)'
 test-group = 'clipboard'
