@@ -149,12 +149,6 @@ ignore = [
     # Dev-only: `terminal-testlib` (the TUI e2e harness) ->
     # `portable-pty` -> `serial`. Never linked into the `kod` binary.
     "RUSTSEC-2017-0008",
-
-    # RUSTSEC-2025-0052 — async-std discontinued.
-    #
-    # Dev-only: `httpmock` (provider contract tests) -> `async-std`.
-    # Never linked into the `kod` binary.
-    "RUSTSEC-2025-0052",
 ]
 
 

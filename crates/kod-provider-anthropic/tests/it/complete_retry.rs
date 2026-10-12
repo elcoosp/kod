@@ -62,7 +62,7 @@ async fn complete_surfaces_a_permanent_503_after_retries() {
     assert!(!msg.is_empty(), "error must carry a message");
     // The fix routes the 503 through `with_retry`, so the endpoint is
     // hit more than once (default policy: 3 attempts).
-    let hits = endpoint.hits_async().await;
+    let hits = endpoint.calls_async().await;
     assert!(
         hits >= 2,
         "a transient 503 must be retried (>=2 requests), got {hits}"
@@ -89,7 +89,7 @@ async fn complete_does_not_retry_a_hard_error() {
         .expect_err("401 is not retryable");
     let _ = err;
     assert_eq!(
-        endpoint.hits_async().await,
+        endpoint.calls_async().await,
         1,
         "a 401 must not be retried — only one request"
     );

@@ -118,7 +118,7 @@ async fn pre_commit_http_error_retries_up_to_budget_then_errors() {
         oks.is_empty(),
         "no chunk should be delivered on a hard failure",
     );
-    let hits = endpoint.hits_async().await;
+    let hits = endpoint.calls_async().await;
     assert!(
         hits >= 3,
         "the outer attempt loop must issue at least MAX_STREAM_ATTEMPTS requests, got {hits}",
@@ -157,7 +157,7 @@ async fn empty_completion_retries_up_to_budget_then_delivers() {
         oks.iter().any(|c| matches!(c, StreamChunk::Done)),
         "a Done must terminate the stream",
     );
-    let hits = endpoint.hits_async().await;
+    let hits = endpoint.calls_async().await;
     assert_eq!(
         hits, 3,
         "empty completions must be retried up to MAX_STREAM_ATTEMPTS, got {hits}",
@@ -214,7 +214,7 @@ async fn rate_limited_request_waits_out_hint_then_succeeds() {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let mut hits = 0usize;
         while hits == 0 && std::time::Instant::now() < deadline {
-            hits = limited.hits_async().await;
+            hits = limited.calls_async().await;
             if hits == 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
@@ -247,7 +247,7 @@ async fn rate_limited_request_waits_out_hint_then_succeeds() {
         "the retried request must deliver the text"
     );
     assert!(
-        ok_endpoint.hits_async().await >= 1,
+        ok_endpoint.calls_async().await >= 1,
         "the success mock must have served the retry"
     );
 }
@@ -282,9 +282,9 @@ async fn rate_limit_without_wait_budget_fails_fast_as_before() {
         "no chunk should be delivered on a hard failure"
     );
     assert!(
-        endpoint.hits_async().await >= 3,
+        endpoint.calls_async().await >= 3,
         "the attempt budget must be exhausted, got {} hits",
-        endpoint.hits_async().await
+        endpoint.calls_async().await
     );
     assert!(
         started.elapsed() < std::time::Duration::from_secs(10),
@@ -327,7 +327,7 @@ async fn committed_stream_is_delivered_without_retry() {
         "a Done must terminate the stream",
     );
     assert_eq!(
-        endpoint.hits_async().await,
+        endpoint.calls_async().await,
         1,
         "a stream that committed must not be retried",
     );

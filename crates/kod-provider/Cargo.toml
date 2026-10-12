@@ -19,7 +19,7 @@ kod-error = { path = "../kod-error" }
 time = { workspace = true }
 
 [dev-dependencies]
-httpmock = "0.7"
+httpmock = "0.8"
 time = { workspace = true }
 
 [features]

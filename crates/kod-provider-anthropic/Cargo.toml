@@ -27,7 +27,7 @@ kod-config = { path = "../kod-config" }
 [dev-dependencies]
 kod-provider = { path = "../kod-provider", features = ["testkit"] }
 time = { workspace = true }
-httpmock = "0.7"
+httpmock = "0.8"
 tempfile = "3.8"
 
 [lints]

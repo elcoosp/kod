@@ -127,7 +127,7 @@ async fn pre_commit_http_error_retries_up_to_budget_then_errors() {
         "no chunk should be delivered on a hard failure",
     );
     assert_eq!(
-        endpoint.hits_async().await,
+        endpoint.calls_async().await,
         3,
         "the attempt loop must issue exactly MAX_STREAM_ATTEMPTS requests",
     );
@@ -166,7 +166,7 @@ async fn empty_completion_retries_up_to_budget_then_delivers() {
         "a Done must terminate the stream",
     );
     assert_eq!(
-        endpoint.hits_async().await,
+        endpoint.calls_async().await,
         3,
         "empty completions must be retried up to MAX_STREAM_ATTEMPTS",
     );
@@ -206,7 +206,7 @@ async fn committed_stream_is_delivered_without_retry() {
         "a Done must terminate the stream",
     );
     assert_eq!(
-        endpoint.hits_async().await,
+        endpoint.calls_async().await,
         1,
         "a stream that committed must not be retried",
     );

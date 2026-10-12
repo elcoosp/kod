@@ -97,8 +97,8 @@ async fn complete_posts_to_chat_completions_with_system_message() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/v1/chat/completions")
-                .body_contains("\"role\":\"system\"")
-                .body_contains("identity line");
+                .body_includes("\"role\":\"system\"")
+                .body_includes("identity line");
             then.status(200)
                 .header("content-type", "application/json")
                 .body(simple_text_response());
@@ -120,7 +120,7 @@ async fn complete_posts_to_chat_completions_with_system_message() {
         GenerationResponse::Text { content, .. } => assert_eq!(content, "ok"),
         other => panic!("expected Text, got {other:?}"),
     }
-    assert_eq!(endpoint.hits_async().await, 1);
+    assert_eq!(endpoint.calls_async().await, 1);
 }
 
 #[tokio::test]
@@ -132,8 +132,8 @@ async fn complete_concatenates_cacheable_and_volatile_segments() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/v1/chat/completions")
-                .body_contains("identity line")
-                .body_contains("volatile env");
+                .body_includes("identity line")
+                .body_includes("volatile env");
             then.status(200)
                 .header("content-type", "application/json")
                 .body(simple_text_response());
@@ -169,9 +169,9 @@ async fn complete_preserves_tool_call_id_and_tool_result_link() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/v1/chat/completions")
-                .body_contains("call_42")
-                .body_contains("read_file")
-                .body_contains("fn main");
+                .body_includes("call_42")
+                .body_includes("read_file")
+                .body_includes("fn main");
             then.status(200)
                 .header("content-type", "application/json")
                 .body(simple_text_response());
@@ -203,8 +203,8 @@ async fn complete_serializes_tools_as_functions() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/v1/chat/completions")
-                .body_contains("\"read_file\"")
-                .body_contains("\"parameters\"");
+                .body_includes("\"read_file\"")
+                .body_includes("\"parameters\"");
             then.status(200)
                 .header("content-type", "application/json")
                 .body(simple_text_response());
@@ -295,7 +295,7 @@ async fn rate_limited_complete_waits_out_hint_then_succeeds() {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let mut hits = 0usize;
         while hits == 0 && std::time::Instant::now() < deadline {
-            hits = limited.hits_async().await;
+            hits = limited.calls_async().await;
             if hits == 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
@@ -317,7 +317,7 @@ async fn rate_limited_complete_waits_out_hint_then_succeeds() {
         other => panic!("expected Text, got {other:?}"),
     }
     assert!(
-        ok_endpoint.hits_async().await >= 1,
+        ok_endpoint.calls_async().await >= 1,
         "the success mock must have served the retry"
     );
 }

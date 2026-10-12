@@ -116,9 +116,9 @@ async fn complete_places_cache_control_on_last_cacheable_segment() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/v1/messages")
-                .body_contains("cache_control")
-                .body_contains("ephemeral")
-                .body_contains("repomap block");
+                .body_includes("cache_control")
+                .body_includes("ephemeral")
+                .body_includes("repomap block");
             then.status(200)
                 .header("content-type", "application/json")
                 .body(anthropic_text_response());
@@ -157,8 +157,8 @@ async fn complete_sends_messages_as_content_blocks() {
                 .path("/v1/messages")
                 // A user message is a content block array with a text
                 // block inside — not a bare string.
-                .body_contains("\"type\":\"text\"")
-                .body_contains("hello there");
+                .body_includes("\"type\":\"text\"")
+                .body_includes("hello there");
             then.status(200)
                 .header("content-type", "application/json")
                 .body(anthropic_text_response());
@@ -177,10 +177,10 @@ async fn complete_preserves_tool_use_and_tool_result_ids() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/v1/messages")
-                .body_contains("tool_use")
-                .body_contains("call_42")
-                .body_contains("tool_result")
-                .body_contains("read_file");
+                .body_includes("tool_use")
+                .body_includes("call_42")
+                .body_includes("tool_result")
+                .body_includes("read_file");
             then.status(200)
                 .header("content-type", "application/json")
                 .body(anthropic_text_response());
@@ -212,8 +212,8 @@ async fn complete_uses_input_schema_not_parameters() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/v1/messages")
-                .body_contains("input_schema")
-                .body_contains("read_file")
+                .body_includes("input_schema")
+                .body_includes("read_file")
                 // The `parameters` key is OpenAI's spelling; Anthropic
                 // does not accept it. Absence is asserted by the
                 // negative test below.
@@ -256,9 +256,9 @@ async fn complete_merges_consecutive_user_messages() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/v1/messages")
-                .body_contains("first")
-                .body_contains("tool_call_id_marker")
-                .body_contains("call_1");
+                .body_includes("first")
+                .body_includes("tool_call_id_marker")
+                .body_includes("call_1");
             then.status(200)
                 .header("content-type", "application/json")
                 .body(anthropic_text_response());
