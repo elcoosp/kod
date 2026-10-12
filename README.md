@@ -188,7 +188,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full crate-by-crate b
 
 ### Prerequisites
 
-- **Rust** 1.85 or newer (install via [rustup](https://rustup.rs/)). The workspace uses the 2024 edition.
+- **Rust** 1.98.1 or newer (install via [rustup](https://rustup.rs/)). The workspace uses the 2024 edition.
 - **A model server** — [Ollama](https://ollama.ai/) is the recommended default, but any OpenAI-compatible endpoint works.
 - **Git** — required for the git tools and for `build.rs` (version stamping).
 
