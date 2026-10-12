@@ -115,7 +115,7 @@ impl SandboxResolver {
         // Only the linux/macos arms below push; on other targets the
         // vector is never mutated, so `mut` would warn under
         // `-D warnings`.
-        #[cfg_attr(any(target_os = "linux", target_os = "macos"), allow(unused_mut))]
+        #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(unused_mut))]
         let mut available = Vec::new();
         #[cfg(target_os = "linux")]
         {
@@ -514,11 +514,6 @@ fn seatbelt_invocation(wd: &Path, opts: SandboxOpts) -> SandboxInvocation {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn unsupported_platform_invocation() -> SandboxInvocation {
-    unreachable!("sandbox_invocation on unsupported platform")
-}
-
 /// Stub used on platforms where bwrap is unavailable. The resolver
 /// only reaches this arm when `Backend::Bwrap` is in `available`,
 /// which the `detect()` function only populates on Linux — the stub is
@@ -543,7 +538,9 @@ pub fn sandbox_invocation(mode: SandboxMode, wd: &Path) -> Result<Option<Sandbox
     SandboxResolver::detect().invocation(mode, wd, SandboxOpts::default())
 }
 
-/// `true` if `program` is on PATH.
+/// `true` if `program` is on PATH. Only the linux/macos `detect()`
+/// arms call this; gated so it is not dead code elsewhere.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn which(program: &str) -> bool {
     let path = match std::env::var_os("PATH") {
         Some(p) => p,
