@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased — production readiness pass
+## [Unreleased]
+
+
+### production readiness pass
+
 
 Fixes from a full-workspace production-readiness review. Every item
 below is covered by a test; the targeted suites are green.
@@ -180,7 +184,8 @@ below is covered by a test; the targeted suites are green.
   content, the swarm hub teardown, the memory filter's
   fail-open) now match the code.
 
-## Unreleased — follow-up batch
+### follow-up batch
+
 
 A second batch landed after the first round of hardening. Every item
 below is tested; the workspace suite is green.
@@ -243,7 +248,8 @@ state:
   collided with the engine's own handle.
 - The approval dialog's legend fits on one line.
 
-## Unreleased — production hardening
+### production hardening
+
 
 A large batch of features landed on top of the v0.1.0 baseline. Every
 item below is tested; the workspace suite is green. The shape of the
@@ -401,14 +407,6 @@ changes, in the order they matter for a new user:
 
 ---
 
-## Prior history
-
-All notable changes to KOD will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
 
 ### Added
 
@@ -672,6 +670,279 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - **Placebo config fields and dead CLI flags** (design §5.3
 - **`/export-html` + phantom-dep removal** (design H1, D6.5): the
+
+### Persistence, routing, and cache accounting
+
+
+### Added
+
+- **P0 — cache accounting, transcript breakpoint, filter hysteresis.**
+  `TokenUsage` carries `cache_read_tokens` / `cache_creation_tokens`
+  and `ModelPricing` carries the matching rate tiers; the Anthropic
+  wire parser folds the two fields into `prompt_tokens` so cost math
+  has one number. The messages array carries a second
+  `cache_control` marker on its last block so the growing transcript
+  is read back at the cache rate. The per-turn Jev tool-category
+  filter is gated by `ToolFilterState` hysteresis, and a one-shot
+  marker gate suppresses the transcript breakpoint for the single
+  request after a filter change.
+- **P1 — switch-penalty-aware routing.** `CacheLedger` records the
+  last request head each endpoint served and the cache tokens it
+  reported. `resolve_chain_for_task_gated` gates a hop to a cold
+  endpoint against the projected re-processing cost, with a 1.5x
+  margin. The ledger observes from the same call that records cost.
+- **P3 — `tool_search` (partial).** A tool that scores a
+  natural-language query against each registered tool's name,
+  description, and category and returns the top N full schemas; the
+  inventory is shared with the engine and refreshed after
+  registration. **Not yet wired:** the per-turn Jev tool-category
+  filter is still the default path. The intent was for
+  `tool_search` to let the model pull schemas on demand so the
+  per-turn filter could be retired (see P0 hysteresis for the
+  interim mitigation). That replacement has not happened.
+- **P4 — conditional AGENTS.md.** `InstructionChain` loads
+  `AGENTS.md` / `CLAUDE.md` root-to-leaf, shadows same-named
+  sections, and renders the ones whose guards match the turn.
+  Fences: `::: when task=…`, `path=…`, `lang=…`. Rendered into the
+  volatile prompt slot so a different set does not invalidate the
+  prefix cache.
+- **P5 — typed subagent briefs.** `ContextBrief` and
+  `SubagentReport` are the two records; `assemble_brief` fills the
+  first from a `ParentContext`; the swarm runner renders a brief per
+  subtask and parses the reply with `parse_report`. `merge_report`
+  routes the report's fields: facts and proposed decisions to the
+  parent's decisions log, open questions to the steers queue, the
+  summary to the blackboard, and a `SwarmEvent::BoundaryViolation`
+  for writes outside the declared globs.
+- **P7 — sensitivity-aware routing.** `Sensitivity` classifies a
+  turn by its touched paths; `TrustRequirement` maps that to a
+  minimum endpoint tier. `EndpointConfig` gains a `trust` field
+  (trusted / standard / untrusted, default standard), and the chain
+  filter drops endpoints below the requirement.
+- **P8 — relevance-ranked search.** `SearchBackend` with a
+  `RipgrepBackend` that shells out to `rg --json` when it is on
+  PATH and falls back to the in-process walker otherwise.
+  `heatmap_truncate` scores hits by term overlap and keeps the top
+  N. `GrepTool` uses ripgrep when available and re-ranks its
+  results.
+
+
+- **P6 — background jobs.** `BackgroundJobRunner` holds job state
+  behind a `DashMap` and caps concurrent jobs with a semaphore.
+  `READ_ONLY_TOOLS` is the whitelist, enforced two ways: a
+  background child registers only the read-only tools at
+  registration time, and `KodEngine::run_tool` refuses anything
+  else when the engine is in background mode. `/jobs` lists jobs;
+  `/review` spawns a cross-model review that picks an endpoint
+  different from the current one (falling back with a warning),
+  calls the provider's `generate`, and stores the critique as the
+  job's summary.
+
+  Scope note: the review is a single read-and-critique pass — no
+  tools, so the reviewer cannot look up files the turn mentioned.
+  A richer form with a tool-equipped child engine is a documented
+  follow-up; the `background_mode` gate now supports constructing
+  one.
+
+### Changed
+
+- **Hygiene (harness review section 9).**
+  `OpenAICompatibleProvider::capabilities()` reports the matrix it
+  actually implements (`prompt_cache = Automatic`,
+  `streaming_tools = true`) instead of the conservative default.
+  Anthropic `list_models` returns a curated model-family list
+  rather than an empty vec. `prompt_allocation` reads a cached
+  budget hint instead of re-parsing `~/.kod/config.toml` every
+  turn. `EndpointHealth` is a three-strikes circuit breaker that
+  skips a chronically failing endpoint for a cooldown. Dead
+  `record_cost` removed in favour of `record_cost_with_head`.
+- **`/help` opens the overlay.** The command routed to the same
+  `toggle_help` the `?` key and F1 use; before, it pushed a text
+  block that left the overlay unreachable from the command the
+  widget advertises.
+
+### Fixed
+
+- **Repomap must not walk a non-repo directory.** `looks_like_a_repo`
+  gates the walk on a VCS directory or a project manifest, so
+  `kod tui` from `$HOME` no longer walks the whole tree per prompt.
+  `MAX_REPO_FILES` caps the walk.
+- **Byte-boundary panics in `html_to_text` and
+  `parse_unified_diff`.** Found by the fuzz suite; both sliced a
+  string on a byte index that could land mid-character.
+- **`replay --execute` no longer demands `--yes` for a read-only
+  log.**
+- **`/help` and the transcript cache breakpoint:** see Changed.
+
+- **Cache marker gate (P0).** The transcript cache breakpoint is now
+  suppressed for the single request that follows a tool-filter
+  change. `ToolFilterState` carries a one-shot flag, armed on a
+  commit that changed the enabled set and consumed by
+  `build_grounded_request`; that request skips Anthropic's 1.25x
+  cache-write premium for a prefix that is about to churn. All other
+  requests carry the marker.
+### Added
+### Fixed
+- **`deny.toml` now carries a real policy** (design §5.3 B4):
+  the file existed but its `[licenses]` section carried no
+  allow-list and its `[sources]` section was missing entirely, so
+  `cargo deny check` passed trivially and enforced nothing. The
+  new policy adds an explicit licence allow-list covering the
+  licenses in the dependency tree (MIT, Apache-2.0 with and
+  without the LLVM-exception, BSD, ISC, MPL-2.0, CC0-1.0,
+  Unlicense, Unicode, BSL-1.0, Zlib); a `[sources]` section that
+  denies any registry other than crates.io and any git
+  dependency; an `[advisories]` section that blocks on
+  vulnerabilities and warns on `unmaintained`/`unsound`; and a
+  small `[bans]` deny list for `openssl-sys` (the workspace uses
+  rustls) and `fastembed` (removed as a phantom dependency). A
+  licence outside the allow-list is now a build failure at PR
+  time, which is the whole point of the check.
+
+- **Live Anthropic API tests + skippable CI job** (design §4
+  D1.5): `crates/kod-provider-anthropic/tests/live.rs` carries
+  four `#[ignore]`d tests — a text completion, a streaming text
+  completion, a tool-use round trip (which exercises the
+  `tool_call_id` plumbing against the real wire), and a
+  two-call cache-control sanity check. Every test re-checks
+  `ANTHROPIC_API_KEY` and returns cleanly when it is absent, so a
+  maintainer who runs `--ignored` locally without the variable
+  set sees a skip rather than a failure. The CI job
+  `live-anthropic` runs the same command gated on the repository
+  secret — a fork PR is skipped, a maintainer push runs — which
+  is the design's explicit "skip, do not fail" contract.
+- **`kod doctor` reports the `[lsp]` section** (design §4 D5.2):
+  two new checks — `lsp.auto_diagnostics` reports the effective
+  post-write diagnostics switch and names the config knob that
+  disabled it when it is off; `lsp.settle_ms` warns on values
+  outside the recommended 200 ms–10 s range. Closes the loop on
+  the config section: it is now visible in `kod doctor`, not only
+  in `kod config show-merged`.
+- **`kod memory add <text>`
+- **`/check` and `/handoff` slash-command coverage**: two
+- **Swarm panel and `@N` focus state coverage**: `KodApp`'s swarm
+- **`kod serve` NDJSON round-trip test**
+- **The tool-only reply summary now sees the tool results**: the
+- **TUI slash-command coverage: `/policy`, `/map`, `/grep`,
+- **A project's `.kod/policy.toml` can now explicitly pin
+- **`stream_completion` default and `tokens_per_sec` tests**:
+- Engine agentic loop no longer holds the provider read lock across the
+- Provider `list_models()` errors are no longer collapsed to an empty list
+- Config `load_default()` is forgiving of a corrupt file (warns and falls
+- Multiple substring-matcher and word-boundary fixes in `TaskRouter::classify_task`
+- **Sandbox status mapping + containment tests** (design §11.3,
+- **Structured-prompt and capability-routing integration tests**:
+- **`kod config migrate` + `kod policy explain` end-to-end tests**:
+- **`/map` + `/grep` TUI handlers, cold-start bench, PR size gate**:
+- **`[lsp]` config section** (design §4 D5.2): two new knobs.
+- **`LspManager` unit tests**
+- **`SwarmRunner::from_config` and `kod acp` test coverage**: the
+- **Consolidation tests + deterministic embedder mock**
+- **`kod acp` + TUI `/policy`** (design §11.2, §6.2): a new
+- **`[tools] preset` is now honoured** (design §6.1): the global
+- **Consolidation now fuses near-duplicate entries** (design D2.5,
+- **Engine calls the structured provider methods** (design §2
+- **AD-15 complete: `Approval`, `MemoryWrite`, `Diagnostics` are
+- **CI: dedicated contracts + golden jobs** (design §11.4): the
+- **Anthropic wire-level cache stability test**
+- **Sandbox badge + streaming rate in the TUI** (design D3.3,
+- **`stream_completion` added to the trait contract suite**
+- **Engine migrated to `CompletionRequest`** (design §2 AD-01, §4
+- **Swarm run-budget knobs are now read from the config**
+- **Working default for `LlmProvider::stream_completion`**: the
+- **Provider request-shape contract tests** (design D1.5, §11.2):
+- **Anthropic `stream_completion`** (design §4 D1.2, A5b): the
+- **`memory.embedding_endpoint` is now read** (design D2.1): the
+- **`LlmProvider::stream_completion`** (design §2 AD-01, §4 D1.4
+- **Markdown render cache** (design D6.5): the chat widget
+- **Swarm heartbeat watchdog** (design D4.3): the agent's streaming
+- **Capability-pool swarm dispatch** (design D4.3): the swarm
+- **`kod policy forget <n>`** (design §6.2): the CLI verb the
+- **Anthropic `cache_control` on the last cacheable system segment**
+- **`PromptPlan` (design §2 AD-16)**: `TaskRouter::build_prompt_plan`
+- **Swarm runner honours the planner's capability assignment**
+- **Policy-default + metrics test coverage**: new integration tests
+- **Global run timeout for `kod swarm`** (design D4.3):
+- **Periodic memory consolidation** (design D2.5):
+- **Agent panel shows each swarm agent's model, and `@N` focus**
+- **Per-capability swarm model routing** (design D1.4 PR A7):
+- **Explicit redb close on shutdown** (design D0.3).
+- **Multi-language LSP pool wired into the engine**
+- **Multi-language LSP pool** (`kod_lsp::LspManager`): one
+- **Golden prefix test** (`crates/kod-core/tests/golden_prefix.rs`):
+- **`can_execute_command` no longer pattern-matches dangerous
+- **`/debug tokens` reports the prompt allocation table** (AD-14):
+- **`auto_lsp` is now independent of `auto_check`**: a successful
+- **`/remember <text>`** in the TUI: stores a durable fact with the
+- **Multi-endpoint LLM routing**: named `[[llm.endpoints]]` blocks with
+- **Anthropic Messages API provider** (`kod-provider-anthropic`), a
+- **MCP client** (`kod-mcp`): spawns Model Context Protocol servers,
+- **LSP client** (`kod-lsp`): diagnostics, definition, references, and
+- **Landlock sandbox backend**: on Linux kernels ≥ 5.13 without
+- **Unix-socket daemon** (`kod serve`): NDJSON protocol, peer-UID
+- **Policy engine** (`kod-config::policy`): layered presets, per-tool
+- **Batch approval dialog**: one modal per round with `y` / `n` /
+- **Pin & `/handoff`**: pin turns so they survive history compaction;
+- **Research citation verification**: `file:line` citations in
+- **Prompt cache budget** (`kod-core/src/budget.rs`): per-section token
+- **TUI polish**: markdown rendering in assistant replies, USD cost
+- **`kod config migrate`**: brings a v1 config to `config_version = 2`,
+- **`kod policy show|explain`** subcommands.
+- **Release pipeline**: musl and aarch64-linux builds, `.sha256` per
+- **Provider contract suite** (`kod-provider::testkit`): every
+- **Prompt characterization snapshots** (`kod-core/tests/characterization_prompts.rs`):
+- Placeholder handlers in `TaskRouter::process_input` that returned
+- **`kod doctor` reports detected language servers** (one row per
+- `LlmConfig` schema is now v2: named endpoints plus a routing table.
+- `SwarmKnowledge` and `SharedWorkspace` are gone. The swarm's
+- `StreamChunk::ToolCallStart` / `ToolCallDelta` carry an index and an
+- `ChatMessage` carries `tool_calls` and `tool_call_id`; the engine's
+- `kod doctor` — first-run diagnostics (config, endpoint, skills, memory, git)
+- `kod init` — onboarding wizard output
+- `kod models` — list provider models with `--filter`
+- `kod completions <shell>` — bash/zsh/fish/elvish/powershell completion
+- `kod checkpoint list|restore|clear` — file-level undo for `write_file` /
+- `kod update` — check GitHub for a newer release (read-only)
+- `kod skills --json` and `kod skills-validate` — machine-readable skill
+- `web_fetch` tool — HTTP/HTTPS fetch with SSRF protection
+- `git_status` and `git_diff` tools — read-only git inspection
+- `tools.confirm_writes` — opt-in write approval; TUI dialog and CLI stdin
+- `llm.network_access` — opt-in network access for `web_fetch`
+- Approval dialog in TUI (`y`/`n`/Esc); CLI chat prompts on stdin
+- `--sandbox` flag on `kod chat` — run shell commands under bwrap/sandbox-exec
+- Unified-diff attachment on `write_file` / `patch_file` results
+- `Engine::process()` without a provider now returns an `InvalidState` error
+- `LlmConfig::validate()` clamps out-of-range values (temperature, context
+
+### Fixed
+- **Episodic facts are now attributed to a session** (design D2.5):
+- **Collected loop also drains steers at the top of the round**:
+- **Routing table keys are now validated** (design §2 AD-06, §12):
+- **Tool rounds and goal turns accumulate on the structured path**:
+- **`/steer` now reaches the model on the structured path**: the
+- **`KodConfig::default()` now stamps `config_version = 2`** —
+- **Session log + `kod replay` compatibility tests** (design §11.3,
+- **Streaming, session-log, and HTML-export tests**: three
+- **End-of-session extraction writes Episodic entries** (design
+- **Cacheable/volatile split preserved through to the wire**
+- **No double-send of the user turn on the structured path**: the
+- **`@N` focus + session deny-rule tests**: unit tests for
+- **Structured tool rounds in the transcript** (design §2 AD-02,
+- **Default policy preset is now `standard`** (writes require
+- **Sandbox defaults to `Auto`**: `bwrap` / `sandbox-exec` /
+- `kod sessions` — inspect/export/clear the TUI session file
+- Session log (`KOD_SESSION_LOG`) and `kod replay` — every tool call recorded
+
+### Removed
+- **Placebo config fields and dead CLI flags** (design §5.3
+- **`/export-html` + phantom-dep removal** (design H1, D6.5): the
+
+## Prior history
+
+All notable changes to KOD will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.1.0] - 2026-09-04
 

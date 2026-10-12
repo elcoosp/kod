@@ -40,3 +40,19 @@ wr:
     watchexec -w ./wr.sh --clear -r "./wr.sh"
 wr1:
     watchexec -w ./wr1.sh --clear -r "./wr1.sh"
+
+# Regenerate COMMITS.md — the exhaustive commit index behind CHANGELOG.md.
+changelog:
+    ./scripts/gen-commit-index.sh
+
+# Same, for a rev range (e.g. `just changelog-range v0.1.0..HEAD`).
+changelog-range range:
+    ./scripts/gen-commit-index.sh "{{range}}"
+
+# Regenerate COMMITS.md — the exhaustive commit index behind CHANGELOG.md.
+changelog:
+    ./scripts/gen-commit-index.sh
+
+# Same, for a rev range (e.g. `just changelog-range v0.1.0..HEAD`).
+changelog-range range:
+    ./scripts/gen-commit-index.sh "{{range}}"

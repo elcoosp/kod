@@ -29,6 +29,48 @@
 
 ---
 
+## Install
+
+### From source
+
+```bash
+cargo install --locked --path crates/kod-cli
+```
+
+Or build the workspace and take the binary directly:
+
+```bash
+cargo build --release --locked
+./target/release/kod doctor      # verify the toolchain and config
+./target/release/kod profile use local-fast
+./target/release/kod tui
+```
+
+### Prebuilt binaries
+
+Every tagged release publishes archives for the six targets in the
+release matrix (Linux x86_64 glibc + musl, Linux aarch64, macOS x86_64
++ arm64, Windows x86_64). Each archive ships with a `.sha256`, and —
+when the maintainer has configured a signing key — a `.minisig`.
+Verify before unpacking:
+
+```bash
+sha256sum -c kod-x86_64-unknown-linux-musl.tar.gz.sha256
+minisign -Vm kod-x86_64-unknown-linux-musl.tar.gz -P "$(cat docs/minisign.pub)"
+```
+
+### Requirements
+
+- Rust 1.85 or newer (`rustup toolchain install 1.85`).
+- A provider endpoint: a local Ollama server, or an OpenAI-compatible
+  or Anthropic API key. `kod doctor` reports what is configured.
+
+### Full commit history
+
+The curated release narrative lives in [`CHANGELOG.md`](CHANGELOG.md).
+The exhaustive per-commit record lives in [`COMMITS.md`](COMMITS.md),
+regenerated with `just changelog`.
+
 ## Table of Contents
 
 - [Why local-first](#why-local-first)
