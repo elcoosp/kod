@@ -71,10 +71,8 @@ fn walk(dir: &Path, is_root: bool, out: &mut Vec<PathBuf>) {
             // A `SKILL.md` anywhere is a skill; a flat `.md` at the
             // root is one too (kod's original single-file shape).
             // Every other `.md` is a resource a skill points at.
-            let is_entrypoint =
-                path.file_name().and_then(|n| n.to_str()) == Some(SKILL_ENTRYPOINT);
-            let is_flat_skill =
-                is_root && path.extension().and_then(|s| s.to_str()) == Some("md");
+            let is_entrypoint = path.file_name().and_then(|n| n.to_str()) == Some(SKILL_ENTRYPOINT);
+            let is_flat_skill = is_root && path.extension().and_then(|s| s.to_str()) == Some("md");
             if is_entrypoint || is_flat_skill {
                 out.push(path);
             }
