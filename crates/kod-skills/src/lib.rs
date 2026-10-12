@@ -22,11 +22,13 @@
 //! ```
 
 pub mod capability;
+pub mod discovery;
 pub mod loader;
 pub mod matcher;
 pub mod parser;
 pub mod watcher;
 
+pub use discovery::{SKILL_ENTRYPOINT, discover_skill_files, is_skill_file};
 pub use loader::{SkillLoader, load_from_dirs, load_via_registry};
 pub use matcher::SkillMatcher;
 pub use parser::SkillParser;

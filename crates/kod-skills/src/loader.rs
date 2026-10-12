@@ -43,22 +43,13 @@ impl SkillLoader {
         Ok(skills)
     }
 
-    /// Scan the skills directory for skill files — **one level deep**.
+    /// Scan the skills directory for skill files.
     ///
-    /// A skill is a single file at the top of the skills directory
-    /// (`<skills_dir>/<name>.md`) or a package directory whose
-    /// entrypoint is a `SKILL.md` (`<skills_dir>/<name>/SKILL.md`).
-    /// Everything else under a package directory — `references/*.md`,
-    /// `examples/*.md`, `README.md`, `CLAUDE.md` — is a resource the
-    /// skill may point a reader at, **not** a skill in its own right.
-    ///
-    /// The pre-fix shape walked the whole tree with `WalkDir` and
-    /// parsed every `.md`; a curated skill collection (a Claude- or
-    /// Codex-style directory of packages) then flooded the log at
-    /// startup with `Missing YAML front matter` warnings for each
-    /// resource file. The fix is the walk: only the top level is
-    /// consulted, and only one level of subdirectory — enough to
-    /// reach a `SKILL.md`, never enough to reach `references/`.
+    /// Delegates to [`crate::discovery::discover_skill_files`], the
+    /// single rule for "what is a skill file": a `SKILL.md` at any
+    /// depth, or a flat `.md` at the top of the directory. Resource
+    /// files (`references/*.md`, `examples/*.md`, `README.md`) are
+    /// not skills and never reach the parser.
     async fn scan_directory(&self) -> Result<Vec<Skill>> {
         if !self.skills_dir.exists() {
             return Err(KodError::SkillParseError {
@@ -67,24 +58,11 @@ impl SkillLoader {
             });
         }
 
-        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-        let read = std::fs::read_dir(&self.skills_dir).map_err(KodError::Io)?;
-        for entry in read.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            if path.is_file() {
-                // A flat skill file at the top level of the directory.
-                if path.extension().and_then(|s| s.to_str()) == Some("md") {
-                    candidates.push(path);
-                }
-            } else if path.is_dir() {
-                // A skill package: only `SKILL.md` is a skill file;
-                // `references/`, `examples/`, `scripts/` are resources.
-                let skill_md = path.join("SKILL.md");
-                if skill_md.is_file() {
-                    candidates.push(skill_md);
-                }
-            }
-        }
+        // One rule, shared with `kod doctor` and the capability
+        // registry. See `crate::discovery` for why: three
+        // independent answers to "what is a skill file" had already
+        // drifted.
+        let candidates = crate::discovery::discover_skill_files(&self.skills_dir);
 
         let mut skills = Vec::new();
         for path in candidates {

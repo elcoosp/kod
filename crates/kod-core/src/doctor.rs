@@ -480,42 +480,17 @@ pub fn run_diagnostics(config: &KodConfig) -> DiagnosticReport {
     report
 }
 
-/// Every `.md` file under `root`, recursively, following the same
-/// conventions the skill loader uses (no symlink traversal, no
-/// filtering by directory name — a skill can live in a nested
-/// folder).
+/// Every skill file under `root`, by the one shared rule.
 ///
-/// `kod-core` does not depend on `walkdir`; the doctor's walk is the
-/// only place that needs one, and a dozen lines of `std::fs` do not
-/// justify the dependency. Errors on individual entries are
-/// swallowed: a permission-denied subdirectory is reported by the
-/// caller as a parse failure count, not as a crash.
+/// This used to be the doctor's own recursive `.md` walk, which
+/// disagreed with the loader: it counted `references/*.md` and
+/// `examples/*.md` as skills, so a curated collection produced a
+/// wall of `Missing YAML front matter` warnings for files that were
+/// never skills. The rule now lives in
+/// [`kod_skills::discover_skill_files`] and every caller uses it, so
+/// the doctor reports exactly what the loader will load.
 fn collect_md_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let mut out = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(meta) = entry.metadata() else { continue };
-            if meta.is_dir() {
-                // A symlinked directory is skipped rather than
-                // followed. The skill loader does the same with
-                // `follow_links(false)`; matching its behaviour here
-                // means the doctor sees exactly what the loader
-                // would see.
-                if meta.file_type().is_symlink() {
-                    continue;
-                }
-                stack.push(path);
-            } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
-                out.push(path);
-            }
-        }
-    }
-    out
+    kod_skills::discover_skill_files(root)
 }
 
 #[cfg(test)]
@@ -787,40 +762,49 @@ mod coverage_doctor {
     }
 
     #[test]
-    fn collect_md_files_finds_top_level_markdown() {
+    fn collect_md_files_finds_a_flat_top_level_markdown() {
         let tmp = tempfile::TempDir::new().unwrap();
         std::fs::write(tmp.path().join("a.md"), "x").unwrap();
         std::fs::write(tmp.path().join("b.txt"), "x").unwrap();
         let out = collect_md_files(tmp.path());
-        assert_eq!(out.len(), 1, "only .md files, got: {out:?}");
+        assert_eq!(out.len(), 1, "only the flat .md is a skill, got: {out:?}");
         assert!(out[0].ends_with("a.md"));
     }
 
     #[test]
-    fn collect_md_files_recurses_into_subdirectories() {
+    fn collect_md_files_finds_a_nested_skill_md_at_any_depth() {
         let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir(tmp.path().join("nested")).unwrap();
-        std::fs::create_dir(tmp.path().join("nested").join("deeper")).unwrap();
-        std::fs::write(tmp.path().join("top.md"), "x").unwrap();
-        std::fs::write(tmp.path().join("nested").join("mid.md"), "x").unwrap();
+        std::fs::create_dir_all(tmp.path().join(".system").join("imagegen")).unwrap();
         std::fs::write(
-            tmp.path().join("nested").join("deeper").join("deep.md"),
+            tmp.path().join(".system").join("imagegen").join("SKILL.md"),
             "x",
         )
         .unwrap();
         let out = collect_md_files(tmp.path());
-        assert_eq!(out.len(), 3, "must find all three, got: {out:?}");
+        assert_eq!(out.len(), 1, "a nested SKILL.md is a skill: {out:?}");
     }
 
+    /// The bug this whole change fixes: a resource markdown file
+    /// (`references/sample-prompts.md`) is *not* a skill and must not
+    /// be counted, or the doctor warns about missing front matter on
+    /// a file that was never a skill.
     #[test]
-    fn collect_md_files_accepts_a_nested_directory_as_root() {
-        // The caller may hand a subdirectory; the walk is rooted
-        // there and does not ascend.
+    fn collect_md_files_excludes_resource_markdown() {
         let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir(tmp.path().join("only")).unwrap();
-        std::fs::write(tmp.path().join("only").join("x.md"), "x").unwrap();
-        let out = collect_md_files(&tmp.path().join("only"));
-        assert_eq!(out.len(), 1);
+        std::fs::create_dir_all(tmp.path().join("pkg").join("references")).unwrap();
+        std::fs::write(tmp.path().join("pkg").join("SKILL.md"), "x").unwrap();
+        std::fs::write(
+            tmp.path()
+                .join("pkg")
+                .join("references")
+                .join("sample-prompts.md"),
+            "x",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("pkg").join("README.md"), "x").unwrap();
+        let out = collect_md_files(tmp.path());
+        assert_eq!(out.len(), 1, "only the SKILL.md counts, got: {out:?}");
+        assert!(out[0].ends_with("SKILL.md"));
     }
 
     #[test]
