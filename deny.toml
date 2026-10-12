@@ -104,6 +104,59 @@ unsound = "warn"
 yanked = "deny"
 notice = "warn"
 
+# Consciously accepted advisories. Each is an `unmaintained` notice,
+# not a vulnerability, and each is documented with why it is here and
+# what would remove it. cargo audit reports 0 vulnerabilities against
+# this tree; this list keeps the four notices from re-litigating the
+# same decision on every run.
+#
+# No `vulnerability` advisory is ever suppressed — a CVE in the tree
+# is a hard failure regardless of reachability.
+ignore = [
+    # RUSTSEC-2025-0141 — bincode 1.3.3 unmaintained.
+    #
+    # Reached only through `syntect`, which bundles its default syntax
+    # and theme tables as bincode-encoded dumps (`default-syntaxes` /
+    # `default-themes` require the `dump-load` feature, whose codec is
+    # bincode and is not user-selectable). The workspace itself does
+    # not call bincode anywhere. Not a serde-format choice we can swap
+    # for postcard or another codec: the decoder is inside syntect.
+    #
+    # Removed by: dropping syntect's bundled dumps and loading
+    # `.sublime-syntax` / `.tmTheme` files from disk at startup. That
+    # reintroduces a runtime filesystem lookup the TUI deliberately
+    # avoids (see the `syntect` entry in the workspace Cargo.toml), so
+    # the trade is not worth taking for an unmaintained-but-stable,
+    # static-data decoder.
+    "RUSTSEC-2025-0141",
+
+    # RUSTSEC-2024-0449 — unsafe-libyaml unmaintained.
+    #
+    # Reached through `serde_yaml`, used by `kod-skills` to parse the
+    # YAML front matter of a skill file. No maintained drop-in clears
+    # this: `serde_yaml_ng` still depends on `unsafe-libyaml`, and
+    # `serde_norway` depends on `unsafe-libyaml-norway` — a different
+    # crate id, so it only renames the problem.
+    #
+    # Removed by: a YAML-parsing path that does not sit on the
+    # libyaml C bindings. The input is small, trusted, repo-local
+    # front matter; a serde-only YAML 1.2 parser would be the honest
+    # migration if this becomes a release blocker.
+    "RUSTSEC-2024-0449",
+
+    # RUSTSEC-2017-0008 — serial 0.4.0 unmaintained.
+    #
+    # Dev-only: `terminal-testlib` (the TUI e2e harness) ->
+    # `portable-pty` -> `serial`. Never linked into the `kod` binary.
+    "RUSTSEC-2017-0008",
+
+    # RUSTSEC-2025-0052 — async-std discontinued.
+    #
+    # Dev-only: `httpmock` (provider contract tests) -> `async-std`.
+    # Never linked into the `kod` binary.
+    "RUSTSEC-2025-0052",
+]
+
 
 # ---------------------------------------------------------------------------
 # Bans
