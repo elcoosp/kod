@@ -105,15 +105,15 @@ jobs:
 
     - name: Provider request-shape contracts
       run: |
-        cargo test -p kod-provider-openai --test contracts
-        cargo test -p kod-provider-anthropic --test contracts
+        cargo test -p kod-provider-openai --test it -- contracts
+        cargo test -p kod-provider-anthropic --test it -- contracts
 
     - name: Prompt characterization + golden prefix + plan
       run: |
-        cargo test -p kod-core --test characterization_history
-        cargo test -p kod-core --test characterization_prompts
-        cargo test -p kod-core --test golden_prefix
-        cargo test -p kod-core --test prompt_plan
+        cargo test -p kod-core --test it -- characterization_history
+        cargo test -p kod-core --test it -- characterization_prompts
+        cargo test -p kod-core --test it -- golden_prefix
+        cargo test -p kod-core --test it -- prompt_plan
 
   msrv:
     name: MSRV (1.98.1)
@@ -380,7 +380,7 @@ jobs:
         # Keep the cost tiny: the tests default to a small model.
         KOD_LIVE_MODEL: claude-3-5-haiku-latest
       run: |
-        cargo test -p kod-provider-anthropic --test live -- --ignored --nocapture
+        cargo test -p kod-provider-anthropic --test it -- live --ignored --nocapture
 
   benchmark:
     name: Benchmarks

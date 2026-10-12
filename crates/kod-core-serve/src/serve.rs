@@ -242,7 +242,6 @@ pub async fn stop_daemon(socket_path: &Path) -> Result<()> {
 // Internal
 // ---------------------------------------------------------------------------
 
-
 /// `0600` on the socket file. The peer-UID check makes this
 /// redundant at the protocol layer, but filesystem permissions are
 /// what a `ls -la` inspection shows and what a user expects.
@@ -257,7 +256,6 @@ fn set_socket_perms(path: &Path) -> Result<()> {
 fn set_socket_perms(_path: &Path) -> Result<()> {
     Ok(())
 }
-
 
 /// One connection's lifetime. Reads lines, dispatches methods,
 /// writes NDJSON responses.
@@ -1252,7 +1250,9 @@ mod coverage_serve_handlers {
         // silently steal connections from the first.
         let tmp = tempfile::TempDir::new().unwrap();
         let sock = tmp.path().join("kod.sock");
-        let _listener = crate::transport::bind(&sock).await.expect("bind test listener");
+        let _listener = crate::transport::bind(&sock)
+            .await
+            .expect("bind test listener");
         let err = crate::transport::bind(&sock).await.unwrap_err();
         let msg = err.to_string();
         assert!(
