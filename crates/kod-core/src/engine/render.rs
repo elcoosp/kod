@@ -770,6 +770,86 @@ pub(crate) fn render_diagnostics(
     }
 }
 
+/// Render the compiler auto-check block from already-computed inputs.
+///
+/// Pure: the caller runs `cargo check`, diffs against the baseline,
+/// and resolves the Jev "genuinely new" filter; this decides what the
+/// model is told. Extracted so the decision table can be tested
+/// without a nested `cargo check` — the pre-fix integration test drove
+/// the whole path, which meant it asserted on a subprocess succeeding
+/// under CI contention rather than on the logic.
+pub(crate) fn render_compiler_auto_check(
+    block: &mut String,
+    source: &str,
+    diags: &[kod_tools::check::Diagnostic],
+    baseline: Option<&[kod_tools::check::Diagnostic]>,
+    new_diags: &[&kod_tools::check::Diagnostic],
+) {
+    use std::collections::HashSet;
+    let baseline_keys: HashSet<(String, Option<String>, String)> = baseline
+        .map(|v| v.iter().map(diag_key).collect())
+        .unwrap_or_default();
+    let current_keys: HashSet<(String, Option<String>, String)> =
+        diags.iter().map(diag_key).collect();
+    let resolved_count = if baseline.is_some() {
+        baseline_keys
+            .iter()
+            .filter(|k| !current_keys.contains(*k))
+            .count()
+    } else {
+        0
+    };
+
+    block.push_str("\n## Auto-check\n\n");
+    match baseline {
+        None => {
+            if diags.is_empty() {
+                block.push_str(&format!("`{source}` is clean.\n"));
+            } else {
+                block.push_str(&format!(
+                    "`{source}` reported {} diagnostic(s). \
+                     (No baseline was captured, so all are shown — \
+                     some may pre-date this write.)\n\n",
+                    diags.len(),
+                ));
+                render_diagnostics(block, diags, 20);
+            }
+        }
+        Some(_) if !new_diags.is_empty() => {
+            block.push_str(&format!(
+                "`{source}` reported {} NEW diagnostic(s) from this write:\n\n",
+                new_diags.len(),
+            ));
+            let owned: Vec<kod_tools::check::Diagnostic> =
+                new_diags.iter().map(|d| (*d).clone()).collect();
+            render_diagnostics(block, &owned, 20);
+            if resolved_count > 0 {
+                block.push_str(&format!(
+                    "\n({resolved_count} pre-existing diagnostic(s) resolved.)\n",
+                ));
+            }
+            block.push_str("\nFix the new errors before continuing.\n");
+        }
+        Some(_) if resolved_count > 0 => {
+            block.push_str(&format!(
+                "`{source}`: your write introduced no new errors and \
+                 resolved {resolved_count} pre-existing diagnostic(s).\n",
+            ));
+        }
+        Some(_) if diags.is_empty() => {
+            block.push_str(&format!("`{source}` is clean.\n"));
+        }
+        Some(_) => {
+            block.push_str(&format!(
+                "`{source}`: your write introduced no new errors. \
+                 {} pre-existing diagnostic(s) remain, \
+                 unrelated to this change.\n",
+                diags.len(),
+            ));
+        }
+    }
+}
+
 /// Strip the transcript section the router appends to its plan.
 ///
 /// The router's `build_prompt_with_budget` ends with:

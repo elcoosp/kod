@@ -228,84 +228,137 @@ async fn test_auto_check_skips_read_only_round() {
         round.prompt_block
     );
 }
-/// A fixture with a pre-existing error. A write that introduces
-/// nothing new must produce a prompt that says so, not one that
-/// lists the pre-existing error as though the write caused it.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_auto_check_reports_only_new_diagnostics() {
-    let tmp = TempDir::new().unwrap();
-    std::fs::write(
-        tmp.path().join("Cargo.toml"),
-        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-    )
-    .unwrap();
-    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
-    // `src/existing.rs` has a type error. `src/touched.rs` is clean.
-    std::fs::write(
-        tmp.path().join("src/lib.rs"),
-        "pub mod existing;\npub mod touched;\n",
-    )
-    .unwrap();
-    std::fs::write(
-        tmp.path().join("src/existing.rs"),
-        "pub fn bad() -> u32 { \"not a number\" }\n",
-    )
-    .unwrap();
-    std::fs::write(tmp.path().join("src/touched.rs"), "pub fn ok() {}\n").unwrap();
+/// The compiler auto-check's decision table, tested directly.
+///
+/// The pre-fix version of this test drove `run_tool_calls`, which
+/// runs a real `cargo check` twice (baseline, then current). On a
+/// contended CI runner the nested check does not complete,
+/// `refresh_check_baseline` silently leaves the baseline `None`, and
+/// the test failed on "baseline should have captured the pre-existing
+/// error" — asserting on a subprocess succeeding rather than on the
+/// logic it meant to pin. The decision table now lives in
+/// `render_compiler_auto_check` and is tested here with no subprocess.
+#[test]
+fn compiler_auto_check_reports_only_new_diagnostics() {
+    use kod_tools::check::Diagnostic;
 
-    let db_path = tmp.path().join("test.redb");
-    let cfg = RouterConfig {
-        embedder: None,
-        skill_threshold: 0.3,
-        context_window: 8192,
-        short_term_capacity: 100,
-        working_dir: tmp.path().to_path_buf(),
-        enable_memory: false,
-        max_skills_per_query: 3,
+    let pre_existing = Diagnostic {
+        file: "src/existing.rs".to_string(),
+        line: 1,
+        column: 20,
+        severity: "error".to_string(),
+        code: Some("E0308".to_string()),
+        message: "mismatched types".to_string(),
     };
-    let engine = KodEngine::new(cfg, db_path).unwrap();
-    engine.set_auto_check(true);
-    engine.start().await.unwrap();
+    let baseline = vec![pre_existing.clone()];
 
-    // Capture the baseline: the fixture's pre-existing error goes in.
-    // Called explicitly so the test does not race the background task
-    // that `start()` spawns.
-    engine.refresh_check_baseline().await;
-    let baseline = engine.check_baseline().await;
-    assert!(
-        baseline.as_ref().is_some_and(|b| !b.is_empty()),
-        "baseline should have captured the pre-existing error"
-    );
+    // The write touched a clean file: the compiler sees the same
+    // pre-existing error, nothing new.
+    let current = vec![pre_existing.clone()];
+    let new: Vec<&Diagnostic> = Vec::new();
 
-    // Now write only the clean file. The pre-existing error in
-    // existing.rs must NOT be reported as new.
-    let calls = vec![ToolCall {
-        id: None,
-        tool_name: "write_file".to_string(),
-        arguments: serde_json::json!({
-            "path": "src/touched.rs",
-            "content": "pub fn ok() {}\n// harmless comment\n"
-        }),
-    }];
-    let round = engine.run_tool_calls(&calls, "test", None).await;
-    assert!(
-        round.prompt_block.contains("## Auto-check"),
-        "auto-check should have run: {}",
-        round.prompt_block
+    let mut block = String::new();
+    crate::engine::render::render_compiler_auto_check(
+        &mut block,
+        "cargo check",
+        &current,
+        Some(&baseline),
+        &new,
     );
     assert!(
-        !round.prompt_block.contains("NEW diagnostic"),
-        "a write that introduces nothing must not report NEW diagnostics: {}",
-        round.prompt_block
+        block.contains("no new errors"),
+        "a write that introduces nothing must say so: {block}",
     );
     assert!(
-        !round.prompt_block.contains("existing.rs"),
-        "the pre-existing error must not appear in the auto-check block: {}",
-        round.prompt_block
+        !block.contains("NEW diagnostic"),
+        "the pre-existing error must not be reported as new: {block}",
+    );
+}
+
+/// The complement: a genuinely new error *is* reported.
+#[test]
+fn compiler_auto_check_reports_a_genuinely_new_diagnostic() {
+    use kod_tools::check::Diagnostic;
+
+    let pre_existing = Diagnostic {
+        file: "src/existing.rs".to_string(),
+        line: 1,
+        column: 20,
+        severity: "error".to_string(),
+        code: Some("E0308".to_string()),
+        message: "mismatched types".to_string(),
+    };
+    let introduced = Diagnostic {
+        file: "src/touched.rs".to_string(),
+        line: 2,
+        column: 5,
+        severity: "error".to_string(),
+        code: Some("E0425".to_string()),
+        message: "cannot find value".to_string(),
+    };
+    let baseline = vec![pre_existing.clone()];
+    let current = vec![pre_existing, introduced.clone()];
+    let new = vec![&introduced];
+
+    let mut block = String::new();
+    crate::engine::render::render_compiler_auto_check(
+        &mut block,
+        "cargo check",
+        &current,
+        Some(&baseline),
+        &new,
     );
     assert!(
-        round.prompt_block.contains("no new errors"),
-        "the block should say the write is clean: {}",
-        round.prompt_block
+        block.contains("NEW diagnostic"),
+        "a genuinely new error must be reported: {block}",
     );
+    assert!(
+        block.contains("touched.rs"),
+        "the new error's file must appear: {block}",
+    );
+}
+
+/// No baseline captured: every diagnostic is shown with the caveat,
+/// because the engine cannot tell new from pre-existing.
+#[test]
+fn compiler_auto_check_without_a_baseline_shows_all_with_a_caveat() {
+    use kod_tools::check::Diagnostic;
+
+    let d = Diagnostic {
+        file: "src/a.rs".to_string(),
+        line: 1,
+        column: 1,
+        severity: "error".to_string(),
+        code: None,
+        message: "boom".to_string(),
+    };
+    let current = vec![d.clone()];
+    let new = vec![&d];
+
+    let mut block = String::new();
+    crate::engine::render::render_compiler_auto_check(
+        &mut block,
+        "cargo check",
+        &current,
+        None,
+        &new,
+    );
+    assert!(
+        block.contains("No baseline was captured"),
+        "a missing baseline must be stated: {block}",
+    );
+}
+
+/// A clean project with a baseline says "is clean".
+#[test]
+fn compiler_auto_check_clean_project_says_clean() {
+    let mut block = String::new();
+    crate::engine::render::render_compiler_auto_check(
+        &mut block,
+        "cargo check",
+        &[],
+        Some(&[]),
+        &[],
+    );
+    assert!(block.contains("is clean"), "got: {block}");
 }

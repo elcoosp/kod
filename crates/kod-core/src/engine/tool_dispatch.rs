@@ -1852,9 +1852,6 @@ impl KodEngine {
                             .as_ref()
                             .map(|v| v.iter().map(diag_key).collect())
                             .unwrap_or_default();
-                    let current_keys: std::collections::HashSet<(String, Option<String>, String)> =
-                        diags.iter().map(diag_key).collect();
-
                     let syntactically_new: Vec<&kod_tools::check::Diagnostic> = diags
                         .iter()
                         .filter(|d| !baseline_keys.contains(&diag_key(d)))
@@ -1882,68 +1879,13 @@ impl KodEngine {
                         } else {
                             syntactically_new
                         };
-                    let resolved_count = if baseline.is_some() {
-                        baseline_keys
-                            .iter()
-                            .filter(|k| !current_keys.contains(*k))
-                            .count()
-                    } else {
-                        0
-                    };
-
-                    block.push_str("\n## Auto-check\n\n");
-                    match baseline {
-                        None => {
-                            if diags.is_empty() {
-                                block.push_str(&format!("`{}` is clean.\n", source));
-                            } else {
-                                block.push_str(&format!(
-                                    "`{}` reported {} diagnostic(s). \
-                                     (No baseline was captured, so all are shown — \
-                                     some may pre-date this write.)\n\n",
-                                    source,
-                                    diags.len(),
-                                ));
-                                render_diagnostics(&mut block, &diags, 20);
-                            }
-                        }
-                        Some(_) if !new_diags.is_empty() => {
-                            block.push_str(&format!(
-                                "`{}` reported {} NEW diagnostic(s) from this write:\n\n",
-                                source,
-                                new_diags.len(),
-                            ));
-                            let owned: Vec<kod_tools::check::Diagnostic> =
-                                new_diags.iter().map(|d| (*d).clone()).collect();
-                            render_diagnostics(&mut block, &owned, 20);
-                            if resolved_count > 0 {
-                                block.push_str(&format!(
-                                    "\n({} pre-existing diagnostic(s) resolved.)\n",
-                                    resolved_count,
-                                ));
-                            }
-                            block.push_str("\nFix the new errors before continuing.\n");
-                        }
-                        Some(_) if resolved_count > 0 => {
-                            block.push_str(&format!(
-                                "`{}`: your write introduced no new errors and \
-                                 resolved {} pre-existing diagnostic(s).\n",
-                                source, resolved_count,
-                            ));
-                        }
-                        Some(_) if diags.is_empty() => {
-                            block.push_str(&format!("`{}` is clean.\n", source));
-                        }
-                        Some(_) => {
-                            block.push_str(&format!(
-                                "`{}`: your write introduced no new errors. \
-                                 {} pre-existing diagnostic(s) remain, \
-                                 unrelated to this change.\n",
-                                source,
-                                diags.len(),
-                            ));
-                        }
-                    }
+                    crate::engine::render::render_compiler_auto_check(
+                        &mut block,
+                        &source,
+                        &diags,
+                        baseline.as_deref(),
+                        &new_diags,
+                    );
 
                     // One `SessionEntry::Diagnostics` per file (AD-15).
                     // The counts aggregate the round's diagnostics by
