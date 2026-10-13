@@ -15,6 +15,7 @@ pub async fn run_swarm_remote(
     }
 
     let socket_path = socket.unwrap_or_else(kod_core_serve::serve::default_socket_path);
+    #[cfg(unix)]
     if !socket_path.exists() {
         return Err(KodError::InvalidState(format!(
             "no daemon listening at {}. Start one with `kod serve`, \
@@ -23,7 +24,7 @@ pub async fn run_swarm_remote(
         )));
     }
 
-    let stream = tokio::net::UnixStream::connect(&socket_path)
+    let stream = kod_core_serve::transport::connect(&socket_path)
         .await
         .map_err(|e| {
             KodError::InvalidState(format!(
