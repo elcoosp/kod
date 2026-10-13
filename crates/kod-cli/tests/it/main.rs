@@ -10,4 +10,5 @@ mod config_migrate;
 mod integration_tests;
 mod policy_explain;
 mod replay;
+#[cfg(unix)]
 mod tui_e2e;

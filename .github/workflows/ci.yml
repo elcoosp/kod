@@ -56,8 +56,18 @@ jobs:
         RUSTFLAGS: "-D warnings"
       run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+    # nextest, not `cargo test`: one process per test. Several tests
+    # are irreversibly process-wide (the landlock `apply` tests
+    # restrict the whole process; the sandbox/execute-command tests
+    # spawn shells inside it). Under `cargo test` — one shared process
+    # for every test in a crate — one landlock test poisons all the
+    # rest. This is how the suite is developed and run locally, so CI
+    # now matches.
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@nextest
+
     - name: Run tests
-      run: cargo test --workspace --locked
+      run: cargo nextest run --workspace --locked
 
     - name: Run doc tests
       run: cargo test --doc --workspace --locked
