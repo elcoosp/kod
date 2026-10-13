@@ -61,7 +61,13 @@ impl RepoMap {
 
         let mut out = String::new();
         for (path, symbols) in files {
-            let mut line = format!("{}:", path.display());
+            // Forward slashes on every platform: the map is read by
+            // the model, and every path the model sees and produces
+            // (tool arguments, `read_file`, @-references) uses `/`.
+            // `Path::display` would render `sub\lib.rs` on Windows,
+            // inconsistent with the rest of the prompt.
+            let display = path.to_string_lossy().replace('\\', "/");
+            let mut line = format!("{display}:");
             for s in symbols {
                 line.push_str(&format!(" {} {}", s.kind, s.name));
             }
