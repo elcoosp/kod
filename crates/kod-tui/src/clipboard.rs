@@ -5,6 +5,10 @@
 //! hard-fails. The whole module is a thin shim — if nothing matches,
 //! `write_clipboard` returns `false` and the caller falls back to a toast.
 
+// `Command` and `wait_with_timeout` are only used by the macOS and
+// Linux backends; the Windows backend is not yet implemented, so on
+// Windows both would be dead code under `-D warnings`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::process::Command;
 
 pub fn write_clipboard(text: &str) -> bool {
@@ -117,6 +121,10 @@ pub fn read_clipboard() -> Option<String> {
 
 /// T4-H1: wait for `child` to exit, up to `d`. Kill and reap on
 /// timeout so a wedged pbcopy/xclip cannot freeze the TUI.
+///
+/// Used by the macOS and Linux backends only (the Windows backend does
+/// not spawn a child), so it is gated to those targets.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn wait_with_timeout(mut child: std::process::Child, d: std::time::Duration) -> Option<bool> {
     let start = std::time::Instant::now();
     loop {

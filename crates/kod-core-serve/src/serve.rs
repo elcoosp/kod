@@ -1030,6 +1030,7 @@ mod coverage_serve_serde {
 #[cfg(test)]
 mod coverage_serve_handlers {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::FileTypeExt as _;
     use tokio::sync::mpsc;
 
