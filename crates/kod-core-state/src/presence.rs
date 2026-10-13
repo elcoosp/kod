@@ -195,10 +195,12 @@ pub fn process_alive(pid: u32) -> bool {
 }
 
 #[cfg(not(unix))]
-pub fn process_alive(_pid: u32) -> bool {
-    // No portable check without libc; report "alive" so a caller does
-    // not offer to recover a session that is running.
-    true
+pub fn process_alive(pid: u32) -> bool {
+    // No portable liveness check without libc, so anything nonzero
+    // conservatively reports "alive" — a caller must not offer to
+    // recover a session that may be running. Pid 0 is the exception:
+    // it is never a process on any platform, so it is always dead.
+    pid != 0
 }
 
 /// A session name safe to use as a file name.
