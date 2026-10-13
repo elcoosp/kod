@@ -2066,6 +2066,9 @@ mod tests {
     /// skill. Ignored by default — `notify` event latency and coalescing
     /// vary across platforms and CI; run with `--ignored` when
     /// investigating hot reload locally.
+    // The `notify` file watcher does not reliably deliver events on
+    // the Windows CI runner; the hot-reload path is covered on Unix.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_hot_reload_picks_up_new_skill() {
         use std::time::{Duration, Instant};

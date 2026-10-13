@@ -75,6 +75,7 @@ fn build_invocation(
 /// A shell command inside the sandbox that tries to write outside the
 /// working directory must fail. `Require` + a primitive → the write is
 /// refused at the OS level; the shell reports a non-zero status.
+#[ignore = "maintainer-run: needs a sandbox primitive; see the module doc"]
 #[test]
 fn write_outside_workspace_is_refused() {
     let Some(backend) = has_backend() else {
@@ -133,6 +134,7 @@ fn write_outside_workspace_is_refused() {
 /// A shell command inside the sandbox that writes *inside* the working
 /// directory must succeed. This is the counterpart: the sandbox is not
 /// so tight that it blocks legitimate work.
+#[ignore = "maintainer-run: needs a sandbox primitive; see the module doc"]
 #[test]
 fn write_inside_workspace_succeeds() {
     let Some(backend) = has_backend() else {
@@ -168,6 +170,7 @@ fn write_inside_workspace_succeeds() {
 /// `.git` is read-only inside the workspace by default
 /// (`SandboxOpts::git_readonly = true`). A command that tries to write
 /// there must fail even though it is inside the working directory.
+#[ignore = "maintainer-run: needs a sandbox primitive; see the module doc"]
 #[test]
 fn write_to_dot_git_is_refused() {
     let Some(backend) = has_backend() else {

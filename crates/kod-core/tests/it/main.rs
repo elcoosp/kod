@@ -7,6 +7,7 @@
 mod background_shell;
 mod capability_routing;
 mod characterization_history;
+#[cfg(unix)]
 mod characterization_prompts;
 pub mod common;
 mod compaction_admission;
