@@ -1197,6 +1197,10 @@ mod coverage_serve_handlers {
 
     // ---- prepare_socket -------------------------------------------------
 
+    // Unix-only: a Unix socket is a filesystem entry and needs its
+    // parent directory. On Windows the path is a display-only mapping
+    // to a named pipe, so there is no directory to create.
+    #[cfg(unix)]
     #[tokio::test]
     async fn transport_bind_creates_the_parent_directory() {
         let tmp = tempfile::TempDir::new().unwrap();
