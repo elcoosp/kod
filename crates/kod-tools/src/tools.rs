@@ -2552,7 +2552,13 @@ mod tests {
                 execute_commands: true,
                 ..Default::default()
             })
-            .with_timeout(1);
+            .with_timeout(1)
+            // This test targets the timeout machinery, not the
+            // sandbox. On a Linux host without bwrap, Auto falls back
+            // to Landlock, whose launcher is `current_exe()` — which
+            // in a test is the test binary, not `kod`, so it would
+            // run its own suite instead of `sleep`.
+            .with_sandbox(crate::context::SandboxMode::Disabled);
         let tool = ExecuteCommandTool::new();
         // `sleep 60` produces no output and exits only when it
         // finishes. The timeout is the only thing that ends it here.
@@ -2611,6 +2617,7 @@ mod tests {
                 ..Default::default()
             })
             .with_timeout(1)
+            .with_sandbox(crate::context::SandboxMode::Disabled)
             .with_background_adopt_hook(hook);
         let tool = ExecuteCommandTool::new();
         let params = serde_json::json!({ "command": "sleep 30" });
@@ -2643,7 +2650,8 @@ mod tests {
                 execute_commands: true,
                 ..Default::default()
             })
-            .with_timeout(1);
+            .with_timeout(1)
+            .with_sandbox(crate::context::SandboxMode::Disabled);
         let tool = ExecuteCommandTool::new();
         let params = serde_json::json!({ "command": "sleep 30" });
         let result = tool.execute(&params, &ctx).await.unwrap();

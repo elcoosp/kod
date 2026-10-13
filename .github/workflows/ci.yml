@@ -63,8 +63,11 @@ jobs:
     # for every test in a crate — one landlock test poisons all the
     # rest. This is how the suite is developed and run locally, so CI
     # now matches.
+    # cargo install, not taiki-e/install-action: the action's Windows
+    # install fails with "bash startup failure" (partner-runner-images
+    # #169). Slower but works on every runner.
     - name: Install cargo-nextest
-      uses: taiki-e/install-action@nextest
+      run: cargo install cargo-nextest --locked
 
     - name: Run tests
       run: cargo nextest run --workspace --locked
