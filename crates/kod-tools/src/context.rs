@@ -1386,16 +1386,32 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_sandbox_require_linux() {
-        // On a machine without bwrap this returns Err; with bwrap it
-        // returns Some. Both are correct; a panic is not.
+        // `Require` must resolve to *some* real backend, or error
+        // naming what is missing — never `None`, never a panic. Which
+        // backend depends on the host: bwrap if present, else Landlock
+        // (whose launcher is the `kod` binary, not bwrap). The pre-fix
+        // test assumed bwrap and failed on a runner that has none.
         match sandbox_invocation(SandboxMode::Require, Path::new("/tmp")) {
             Ok(Some(inv)) => {
-                assert_eq!(inv.program, "bwrap");
-                assert_eq!(inv.args.last().map(|s| s.as_str()), Some("--"));
+                if inv.program == "bwrap" {
+                    assert_eq!(inv.args.last().map(|s| s.as_str()), Some("--"));
+                } else {
+                    // The Landlock launcher re-execs the current
+                    // binary; assert the shape that matters, not the
+                    // exact path.
+                    assert!(
+                        inv.program.contains("kod"),
+                        "unexpected launcher: {}",
+                        inv.program,
+                    );
+                }
             }
             Ok(None) => panic!("Require must not return None"),
             Err(e) => {
-                assert!(e.to_string().contains("bubblewrap"), "got: {e}");
+                assert!(
+                    e.to_string().contains("bubblewrap") || e.to_string().contains("sandbox"),
+                    "got: {e}",
+                );
             }
         }
     }
