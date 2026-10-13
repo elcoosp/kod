@@ -260,6 +260,10 @@ mod tests {
         assert!(list(tmp.path(), MarkerKind::Streaming).is_empty());
     }
 
+    // Unix-only: the non-Unix `process_alive` has no portable
+    // liveness check and conservatively returns true, so a "dead" pid
+    // is indistinguishable from a live one there.
+    #[cfg(unix)]
     #[test]
     fn a_dead_pid_is_not_listed_but_its_marker_survives() {
         let tmp = tempfile::TempDir::new().unwrap();
