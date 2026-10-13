@@ -88,6 +88,13 @@ fn make_context_with_minimizer(
         .with_locks(Arc::new(kod_tools::PathLockTable::new()), "session")
         .with_protocol_router(router)
         .with_minimizer(minimizer, store)
+        // These tests spawn git/sh and read the captured output. On a
+        // Linux host without bwrap, SandboxMode::Auto falls back to
+        // Landlock, whose launcher is current_exe() — the test binary
+        // in a test — so the child would run the test suite instead of
+        // the command. The tests target minimizer output, not
+        // sandboxing.
+        .with_sandbox(kod_tools::context::SandboxMode::Disabled)
 }
 
 fn make_plain_context(working_dir: &std::path::Path) -> ToolContext {
@@ -99,6 +106,8 @@ fn make_plain_context(working_dir: &std::path::Path) -> ToolContext {
             ..Default::default()
         })
         .with_locks(Arc::new(kod_tools::PathLockTable::new()), "session")
+        // See the note in `make_context_with_minimizer`.
+        .with_sandbox(kod_tools::context::SandboxMode::Disabled)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
