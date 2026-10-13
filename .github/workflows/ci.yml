@@ -74,15 +74,7 @@ jobs:
       # the first. Without it a platform with a long tail of failures
       # (Windows, which had never been green) costs one CI cycle per
       # test.
-      # --no-fail-fast: report every failing test in one run, not just
-      # the first. Without it a platform with a long tail of failures
-      # (Windows, which had never been green) costs one CI cycle per
-      # test.
-      # --no-fail-fast: report every failing test in one run, not just
-      # the first. Without it a platform with a long tail of failures
-      # (Windows, which had never been green) costs one CI cycle per
-      # test.
-      run: cargo nextest run --workspace --locked --no-fail-fast --no-fail-fast --no-fail-fast
+      run: cargo nextest run --workspace --locked --no-fail-fast
 
     - name: Run doc tests
       run: cargo test --doc --workspace --locked
