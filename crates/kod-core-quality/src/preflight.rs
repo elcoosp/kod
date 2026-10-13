@@ -103,6 +103,10 @@ pub fn parse_pmset(text: &str) -> (Option<u8>, bool) {
 
 /// Sample the host.
 pub fn sample() -> PreflightSample {
+    // The fields are only assigned in the linux/macos arms below; on
+    // other targets the binding is never mutated, so `mut` would warn
+    // under `-D warnings`.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(unused_mut))]
     let mut s = PreflightSample::default();
     #[cfg(target_os = "linux")]
     {
