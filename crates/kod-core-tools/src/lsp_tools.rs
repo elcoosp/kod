@@ -468,6 +468,7 @@ mod coverage_lsp_tools {
         assert!(err.to_string().contains("'path' is required"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn diagnostics_path_outside_the_workspace_is_denied() {
         let tmp = TempDir::new().unwrap();

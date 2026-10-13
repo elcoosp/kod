@@ -9,4 +9,5 @@ mod integration;
 mod loader;
 mod matcher;
 mod parser;
+#[cfg(unix)]
 mod watcher;

@@ -276,7 +276,12 @@ async fn a_non_matching_command_is_not_minimized() {
     };
     assert!(v["stdout_minimized_by"].is_null(), "result = {v}");
     assert!(v["stdout_artifact"].is_null(), "result = {v}");
-    assert_eq!(v["stdout"].as_str(), Some("hello\n"));
+    // `cmd /C echo hello` emits CRLF; normalize so the assertion is
+    // about the output, not the shell's line ending.
+    assert_eq!(
+        v["stdout"].as_str().map(|s| s.replace("\r\n", "\n")),
+        Some("hello\n".to_string()),
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

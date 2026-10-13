@@ -320,6 +320,7 @@ mod tests {
         assert_eq!(normalize("~/../.."), PathBuf::from("/"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn etc_exact_is_catastrophic_and_below_it_too() {
         assert_eq!(classify("/etc", &ctx()).0, PathDanger::Catastrophic);
@@ -336,6 +337,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn users_root_is_catastrophic_but_a_sibling_home_is_not() {
         // Deleting `/Users` removes every account's home; deleting
@@ -367,12 +369,14 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn device_node_is_catastrophic() {
         assert_eq!(classify("/dev/sda", &ctx()).0, PathDanger::Catastrophic,);
         assert_ne!(classify("/dev/null", &ctx()).0, PathDanger::Catastrophic);
     }
 
+    #[cfg(unix)]
     #[test]
     fn dot_dot_out_of_a_protected_dir_is_caught() {
         // `~/.ssh/../../..` normalizes to `/Users`, not the store,

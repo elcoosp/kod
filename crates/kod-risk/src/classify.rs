@@ -1005,6 +1005,7 @@ mod t5_regression {
         RiskContext::from_env()
     }
 
+    #[cfg(unix)]
     #[test]
     fn xargs_with_destructive_wrapped_command_is_flagged() {
         let r = assess("xargs rm /etc/passwd", &ctx());
