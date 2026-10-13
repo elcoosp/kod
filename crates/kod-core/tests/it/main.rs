@@ -32,6 +32,7 @@ mod registry_wiring;
 mod router;
 mod sandbox_status;
 mod secret_placeholder_integration;
+#[cfg(unix)]
 mod serve_roundtrip;
 mod session_log_compat;
 mod steers_reach_the_provider;

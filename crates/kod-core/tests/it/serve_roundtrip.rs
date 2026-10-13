@@ -24,8 +24,6 @@
 //! exercised here. The trait-level dispatch is covered by the engine
 //! tests; this file is the socket-transport test.
 
-#![cfg(unix)]
-
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
