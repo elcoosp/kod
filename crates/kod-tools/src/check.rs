@@ -406,38 +406,90 @@ impl CheckTool {
         })?;
         let (program, args) = kind.command();
         let mut cmd = tokio::process::Command::new(program);
-        // H-R12: kill_on_drop for the same reason as `git.rs` — a
-        // timed-out `cargo check` must not keep running (and holding
-        // the target-dir lock) after the tool returned.
         cmd.args(&args)
             .current_dir(workdir)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            // H-R12 actually applied: a timed-out `cargo check` must not
-            // keep running (and holding the target-dir lock) after the
-            // tool returned.
+            // kill_on_drop reaps the direct child on timeout. It does
+            // NOT reach grandchildren: `cargo check` forks `rustc`,
+            // and on timeout the `rustc` children survive `cargo`'s
+            // death, holding the target-dir lock and keeping the test
+            // process's child list non-empty (nextest flags LEAK).
+            // Putting the child in its own process group and killing
+            // the group reaches the whole tree — the same shape
+            // `tools.rs::kill_child_tree` uses for `execute_command`.
             .kill_on_drop(true);
+        #[cfg(unix)]
+        cmd.process_group(0);
 
-        let output =
-            match tokio::time::timeout(Duration::from_secs(timeout_secs), cmd.output()).await {
-                Ok(Ok(o)) => o,
-                Ok(Err(e)) => {
-                    return Err(KodError::ToolExecution {
-                        tool_name: "check".to_string(),
-                        reason: format!(
-                            "could not run `{}`: {}. Is the toolchain on PATH?",
-                            program, e
-                        ),
-                    });
+        // Spawn explicitly so the child's pid is available: on
+        // timeout the whole process *group* is killed, reaching the
+        // `rustc` children `cargo` forked. `cmd.output()` would hide
+        // the pid and only `kill_on_drop` the direct child.
+        let mut child = cmd.spawn().map_err(|e| KodError::ToolExecution {
+            tool_name: "check".to_string(),
+            reason: format!(
+                "could not run `{}`: {}. Is the toolchain on PATH?",
+                program, e
+            ),
+        })?;
+        // Drain both pipes CONCURRENTLY with the wait. A child that
+        // fills the ~64 KiB pipe buffer blocks writing and never
+        // exits, so `wait()` alone would deadlock until the timeout.
+        use tokio::io::AsyncReadExt;
+        let mut stdout_pipe = child.stdout.take();
+        let mut stderr_pipe = child.stderr.take();
+        let drain = async {
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+            if let Some(p) = stdout_pipe.as_mut() {
+                let _ = p.read_to_end(&mut out).await;
+            }
+            if let Some(p) = stderr_pipe.as_mut() {
+                let _ = p.read_to_end(&mut err).await;
+            }
+            (out, err)
+        };
+
+        let waited = tokio::time::timeout(Duration::from_secs(timeout_secs), async {
+            let (status, (stdout, stderr)) = tokio::join!(child.wait(), drain);
+            (status, stdout, stderr)
+        })
+        .await;
+
+        let (status, stdout_buf, stderr_buf) = match waited {
+            Ok((Ok(status), stdout, stderr)) => (status, stdout, stderr),
+            Ok((Err(e), _, _)) => {
+                return Err(KodError::ToolExecution {
+                    tool_name: "check".to_string(),
+                    reason: format!("`{}` could not be waited on: {e}", program),
+                });
+            }
+            Err(_) => {
+                // Timed out: kill the whole group, then reap.
+                #[cfg(unix)]
+                if let Some(pid) = child.id() {
+                    // SAFETY: kill(-pgid) with the child's pid as the
+                    // group id is the standard group signal; ESRCH
+                    // (already dead) is ignored.
+                    unsafe {
+                        libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+                    }
                 }
-                Err(_) => {
-                    return Err(KodError::ToolExecution {
-                        tool_name: "check".to_string(),
-                        reason: format!("`{}` did not finish within {}s", program, timeout_secs),
-                    });
-                }
-            };
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                return Err(KodError::ToolExecution {
+                    tool_name: "check".to_string(),
+                    reason: format!("`{}` did not finish within {}s", program, timeout_secs),
+                });
+            }
+        };
+        let output = std::process::Output {
+            status,
+            stdout: stdout_buf,
+            stderr: stderr_buf,
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);

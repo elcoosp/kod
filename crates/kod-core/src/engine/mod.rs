@@ -726,6 +726,14 @@ pub struct KodEngine {
     /// clone of the router, and the close needs the last reference.
     memory_consolidation_task: tokio::sync::RwLock<Option<tokio::task::JoinHandle<()>>>,
 
+    /// The `cargo check` baseline refresh `start()` spawns. Tracked so
+    /// `shutdown()` can abort it: the task shells out to the project's
+    /// compiler, and that child (and its `rustc` grandchildren)
+    /// outlives the process that spawned it if not aborted. A test
+    /// engine left the compiler running; nextest then flagged an
+    /// unrelated test LEAK because a stray child was still alive.
+    baseline_refresh_task: tokio::sync::RwLock<Option<tokio::task::JoinHandle<()>>>,
+
     /// MCP host (D6.1). `None` — the default — means no MCP tools
     /// are registered. The CLI/TUI install one via `set_mcp_host`
     /// when `[mcp.servers]` is non-empty. The host owns the spawned

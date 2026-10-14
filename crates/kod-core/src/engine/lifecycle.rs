@@ -256,10 +256,11 @@ impl KodEngine {
             working_dir: self.working_dir.clone(),
             check_baseline: Arc::clone(&self.check_baseline),
         };
-        tokio::spawn(async move {
+        let baseline_handle = tokio::spawn(async move {
             this.refresh_check_baseline().await;
             tracing::debug!("baseline refresh spawned");
         });
+        *self.baseline_refresh_task.write().await = Some(baseline_handle);
 
         self.start_memory_consolidation_task().await;
 
@@ -654,6 +655,18 @@ impl KodEngine {
                 files = consolidated,
                 "sharpshooter consolidation wrote decisions files"
             );
+        }
+
+        // 7a. Abort the baseline-refresh task. It shells out to the
+        //     project's compiler; without this its `cargo`/`rustc`
+        //     children outlive the engine, and a test process exits
+        //     with a live child still holding the target-dir lock.
+        {
+            let handle = self.baseline_refresh_task.write().await.take();
+            if let Some(h) = handle {
+                h.abort();
+                let _ = h.await;
+            }
         }
 
         // 7b. Stop the consolidation task before any redb close —

@@ -326,6 +326,7 @@ impl KodEngine {
             todo_list: kod_tools::new_todo_list(),
             checkpoints,
             memory_consolidation_task: tokio::sync::RwLock::new(None),
+            baseline_refresh_task: tokio::sync::RwLock::new(None),
             mcp: RwLock::new(None),
         })
     }
