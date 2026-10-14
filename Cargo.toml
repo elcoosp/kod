@@ -278,8 +278,13 @@ criterion = "0.5"
 typesafe-ai-rs = { git = "https://github.com/elcoosp/typesafe-ai-rs", rev = "35e6f7f6e4e4e77f28b5d276ee0eabd23a220b71", default-features = false, features = ["rustls-tls"] }
 
 [profile.release]
-opt-level = 3
-lto = "thin"
+# Size-tuned. The binary ships bundled tree-sitter grammars (8 C
+# parsers) and syntect's syntax/theme tables; `opt-level = 3` and thin
+# LTO left it at 41 MB on Linux, over the documented ceiling. `z` +
+# fat LTO trades a little speed — irrelevant for a CLI that waits on
+# network I/O — for roughly a third off the binary.
+opt-level = "z"
+lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
@@ -292,8 +297,8 @@ overflow-checks = false
 # without shrinking the final binary's LTO output — the LTO pass
 # reads the dep's bitcode, which cgu=1 does not improve.
 [profile.release.package."*"]
-opt-level = 3
-codegen-units = 16
+# Dependencies are the bulk of the binary; size-tune them too.
+opt-level = "z"
 
 
 [profile.dev]
