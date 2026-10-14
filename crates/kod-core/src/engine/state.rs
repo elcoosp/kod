@@ -563,11 +563,6 @@ impl KodEngine {
         walk(value, &vault)
     }
 
-    pub fn set_redactor(&mut self, redactor: kod_types::redact::Redactor) {
-        self.redactor = std::sync::Arc::new(redactor);
-    }
-
-    /// The current read-protection, if any.
     /// The current redactor (shared handle).
     pub fn redactor(&self) -> std::sync::Arc<kod_types::redact::Redactor> {
         self.redactor.clone()
