@@ -57,6 +57,10 @@ pub enum MockStep {
         /// JSON string the model would emit as `function.arguments`.
         arguments: String,
     },
+    /// Several tool calls in one response. The engine gates every
+    /// call in a round together, so this is what produces a
+    /// multi-item approval dialog.
+    ToolCalls(Vec<(String, String)>),
     /// The request fails with an HTTP error before any content is
     /// streamed. Exercises the provider's error path and the TUI's
     /// error rendering.
@@ -254,7 +258,7 @@ async fn chat_completions(
     if !streaming {
         let content = match &step {
             MockStep::Text(t) => t.clone(),
-            MockStep::ToolCall { .. } => String::new(),
+            MockStep::ToolCall { .. } | MockStep::ToolCalls(_) => String::new(),
             MockStep::Error { status, message } => {
                 let body = serde_json::json!({
                     "error": { "message": message, "type": "mock_error" }
@@ -298,6 +302,7 @@ async fn chat_completions(
             // one turn collapse into a single row.
             sse_tool_call_events(&name, &arguments, n)
         }
+        MockStep::ToolCalls(calls) => sse_multi_tool_call_events(&calls, n),
         // Handled above.
         MockStep::Error { .. } => unreachable!("error step returned before SSE"),
     };
@@ -314,6 +319,46 @@ async fn chat_completions(
 /// and a `function` with `name` and (possibly fragmented)
 /// `arguments`. The finish chunk carries `finish_reason: "tool_calls"`,
 /// which is what tells the parser to emit the accumulated call.
+/// SSE events for N tool calls in one response.
+///
+/// Each call gets a distinct `index` and id, so the engine's
+/// accumulator produces N calls and the approval gate batches them.
+fn sse_multi_tool_call_events(calls: &[(String, String)], call_seq: usize) -> Vec<Event> {
+    let mut events = Vec::new();
+    for (i, (name, args)) in calls.iter().enumerate() {
+        let start = serde_json::json!({
+            "id": "chatcmpl-mock",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "mock-model",
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "index": i,
+                        "id": format!("call_mock_{call_seq}_{i}"),
+                        "type": "function",
+                        "function": { "name": name, "arguments": args }
+                    }]
+                },
+                "finish_reason": null,
+            }]
+        });
+        events.push(Event::default().data(serde_json::to_string(&start).expect("json")));
+    }
+    let finish = serde_json::json!({
+        "id": "chatcmpl-mock",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": "mock-model",
+        "choices": [{ "index": 0, "delta": {}, "finish_reason": "tool_calls" }]
+    });
+    events.push(Event::default().data(serde_json::to_string(&finish).expect("json")));
+    events.push(Event::default().data("[DONE]"));
+    events
+}
+
 fn sse_tool_call_events(name: &str, arguments: &str, call_seq: usize) -> Vec<Event> {
     // First delta: id + name, empty arguments. Second: the arguments.
     // Splitting them mirrors how real providers stream a call and

@@ -1005,3 +1005,194 @@ fn swarm_without_a_goal_shows_usage() {
     let screen = run_command(&session, "/swarm", "usage: /swarm");
     assert!(screen.contains("/swarm"));
 }
+
+// ---------------------------------------------------------------------------
+// Multi-item approval batch
+// ---------------------------------------------------------------------------
+
+/// Two `write_file` calls in one response produce a single two-item
+/// dialog. Approving both creates both files.
+#[test]
+fn a_two_item_batch_approves_both() {
+    let env = TestEnv::new_scripted(vec![
+        MockStep::ToolCalls(vec![
+            (
+                "write_file".to_string(),
+                serde_json::json!({ "path": "first.txt", "content": "one\n" }).to_string(),
+            ),
+            (
+                "write_file".to_string(),
+                serde_json::json!({ "path": "second.txt", "content": "two\n" }).to_string(),
+            ),
+        ]),
+        MockStep::Text("Both written.".to_string()),
+    ]);
+    let session = env.spawn(110, 42);
+    harness::wait_for_ready(&session);
+
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("write two files");
+    session.send_key(KeyCode::Enter);
+
+    // First item.
+    wait_ci(&session, "approval required", Duration::from_secs(15));
+    wait_ci(&session, "first.txt", Duration::from_secs(10));
+    session.send_key(KeyCode::Char('y'));
+    // Wait for the second item's path before deciding it.
+    wait_ci(&session, "second.txt", Duration::from_secs(10));
+    session.send_key(KeyCode::Char('y'));
+
+    wait_ci(&session, "Both written", Duration::from_secs(20));
+    assert!(
+        env.workspace.join("first.txt").exists(),
+        "first approved file"
+    );
+    assert!(
+        env.workspace.join("second.txt").exists(),
+        "second approved file"
+    );
+}
+
+/// Approve the first item, deny the second: only the first is created.
+#[test]
+fn a_two_item_batch_can_mix_decisions() {
+    let env = TestEnv::new_scripted(vec![
+        MockStep::ToolCalls(vec![
+            (
+                "write_file".to_string(),
+                serde_json::json!({ "path": "keep.txt", "content": "keep\n" }).to_string(),
+            ),
+            (
+                "write_file".to_string(),
+                serde_json::json!({ "path": "drop.txt", "content": "drop\n" }).to_string(),
+            ),
+        ]),
+        MockStep::Text("Handled.".to_string()),
+    ]);
+    let session = env.spawn(110, 42);
+    harness::wait_for_ready(&session);
+
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("write two, deny the second");
+    session.send_key(KeyCode::Enter);
+
+    wait_ci(&session, "approval required", Duration::from_secs(15));
+    // Approve the current item, then deny the next. The batch order is
+    // not deterministic — the engine builds it from a `HashSet` — so
+    // the test does not assume which path is first. The invariant is
+    // "exactly one approved, one denied".
+    session.send_key(KeyCode::Char('y'));
+    std::thread::sleep(Duration::from_millis(500));
+    session.send_key(KeyCode::Char('n'));
+
+    wait_ci(&session, "Handled", Duration::from_secs(20));
+    let keep = env.workspace.join("keep.txt").exists();
+    let drop = env.workspace.join("drop.txt").exists();
+    assert!(
+        keep ^ drop,
+        "exactly one file must exist (approved) and one must not (denied); \
+         keep={keep} drop={drop}",
+    );
+}
+
+/// Esc on the first item denies both (the whole batch).
+#[test]
+fn escape_denies_a_whole_batch() {
+    let env = TestEnv::new_scripted(vec![
+        MockStep::ToolCalls(vec![
+            (
+                "write_file".to_string(),
+                serde_json::json!({ "path": "a.txt", "content": "a\n" }).to_string(),
+            ),
+            (
+                "write_file".to_string(),
+                serde_json::json!({ "path": "b.txt", "content": "b\n" }).to_string(),
+            ),
+        ]),
+        MockStep::Text("All denied.".to_string()),
+    ]);
+    let session = env.spawn(110, 42);
+    harness::wait_for_ready(&session);
+
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("write two, then escape");
+    session.send_key(KeyCode::Enter);
+
+    wait_ci(&session, "approval required", Duration::from_secs(15));
+    session.send_key(KeyCode::Esc);
+
+    wait_ci(&session, "All denied", Duration::from_secs(20));
+    assert!(!env.workspace.join("a.txt").exists(), "Esc denied item 1");
+    assert!(!env.workspace.join("b.txt").exists(), "Esc denied item 2");
+}
+
+// ---------------------------------------------------------------------------
+// Swarm agent panel
+// ---------------------------------------------------------------------------
+
+/// After a swarm runs, `a` opens the agent panel and it names the
+/// agents that ran. The empty-panel state is also asserted (before the
+/// panel has agents, it says so).
+#[test]
+fn the_agent_panel_lists_swarm_agents() {
+    let env = TestEnv::new_scripted(vec![
+        MockStep::Text(
+            r#"[{"name":"alpha","description":"do alpha","expected_writes":[]},{"name":"beta","description":"do beta","expected_writes":[]}]"#
+                .to_string(),
+        ),
+        MockStep::Text("alpha finished".to_string()),
+        MockStep::Text("beta finished".to_string()),
+        MockStep::Text("MERGED both".to_string()),
+    ]);
+    let session = env.spawn(120, 44);
+    harness::wait_for_ready(&session);
+
+    // Per-key settling: back-to-back keys can land in one poll.
+    std::thread::sleep(Duration::from_millis(200));
+    session.send_key(KeyCode::Esc);
+    std::thread::sleep(Duration::from_millis(80));
+    session.send_key(KeyCode::Char('i'));
+    std::thread::sleep(Duration::from_millis(80));
+    session.send_text("/swarm two things");
+    session.send_key(KeyCode::Enter);
+
+    // Let the swarm actually run: the merged text is the last thing it
+    // prints, after decompose + both agents + the merge.
+    wait_ci(&session, "MERGED", Duration::from_secs(40));
+
+    // Open the agent panel (normal mode `a`).
+    session.send_key(KeyCode::Esc);
+    std::thread::sleep(Duration::from_millis(200));
+    session.send_key(KeyCode::Char('a'));
+
+    // The panel is a 30%-wide column. It must name an agent that ran —
+    // "no active agents" is the *empty* state, which would mean the
+    // swarm panel never populated.
+    let screen = wait_ci(&session, "Agents", Duration::from_secs(10));
+    let lower = screen.to_lowercase();
+    assert!(
+        lower.contains("alpha") || lower.contains("beta"),
+        "the agent panel must list a swarm agent (not the empty state):\n{screen}"
+    );
+}
+
+/// Before any swarm runs, the panel says there are no active agents.
+#[test]
+fn the_agent_panel_is_empty_before_a_swarm() {
+    let env = TestEnv::new();
+    let session = env.spawn(120, 44);
+    harness::wait_for_ready(&session);
+
+    session.send_key(KeyCode::Esc);
+    std::thread::sleep(Duration::from_millis(200));
+    session.send_key(KeyCode::Char('a'));
+
+    let screen = wait_ci(&session, "Agents", Duration::from_secs(10));
+    assert!(
+        screen.to_lowercase().contains("no active agents"),
+        "an idle panel should say it is empty:\n{screen}"
+    );
+}
