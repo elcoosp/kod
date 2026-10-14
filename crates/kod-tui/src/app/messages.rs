@@ -178,7 +178,24 @@ impl KodApp {
     /// Remove the trailing (assistant, ...) pair through the preceding
     /// user message. Returns the removed user text when something was
     /// removed, so the caller can feed it back into a new turn.
+    ///
+    /// A trailing slash-command echo is skipped first. `dispatch_prompt`
+    /// records every input as a user message *before* dispatching it,
+    /// so when `/regenerate`, `/delete`, or `/refine` runs, the last
+    /// message is the command itself. Without this skip, the command
+    /// dropped its own echo, found the input box empty, and — for
+    /// `/regenerate` — re-dispatched the same command in a loop until
+    /// the process died. A real user prompt never begins with `/`
+    /// (`dispatch_prompt` routes any `/`-prefixed input to the command
+    /// handler), so the skip cannot swallow a genuine turn.
     pub fn drop_last_exchange(&mut self) -> Option<String> {
+        if self
+            .messages
+            .last()
+            .is_some_and(|m| m.role == MessageRole::User && m.content.trim_start().starts_with('/'))
+        {
+            self.messages.pop();
+        }
         // Walk back from the end: drop tool / assistant / system
         // messages, then the user message, then stop.
         let mut user_text: Option<String> = None;

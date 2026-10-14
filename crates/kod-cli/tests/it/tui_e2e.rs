@@ -12,6 +12,7 @@
 //! substring; the discrepancy is usually a rendering change, not a
 //! race.
 
+mod commands;
 mod harness;
 mod mock_llm;
 mod mock_probe;

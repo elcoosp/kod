@@ -123,6 +123,9 @@ impl TestEnv {
 
     fn write_config(&self) {
         let port = self.mock.port;
+        // A dedicated empty skills dir per test.
+        let skills_dir = self.state_dir.join("skills");
+        let _ = std::fs::create_dir_all(&skills_dir);
         let config = format!(
             r#"config_version = 2
 
@@ -139,6 +142,14 @@ max_tokens = 256
 context_window = 8192
 timeout_secs = 30
 
+[skills]
+# Point at an empty temp dir. Without this the TUI falls back to the
+# standard skill directories (including the developer's real
+# ~/.agents/skills), so every test scanned the host's skill
+# collection — non-hermetic, and slow enough that 41 parallel TUI
+# startups blew the readiness timeout.
+skills_dir = "{skills_dir}"
+
 [memory]
 enable_memory = false
 enable_semantic_search = false
@@ -149,7 +160,8 @@ enabled = false
 [tools]
 auto_check = false
 auto_lsp = false
-"#
+"#,
+            skills_dir = skills_dir.display(),
         );
         eprintln!(
             "test: writing config.toml pointing at mock on port {}",

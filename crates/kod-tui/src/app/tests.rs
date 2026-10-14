@@ -1449,6 +1449,48 @@ mod coverage_app_state {
         assert!(app.drop_last_exchange().is_none());
     }
 
+    /// Regression: `dispatch_prompt` records the command as a user
+    /// message before dispatching it, so `/regenerate` (and `/delete`,
+    /// `/refine`) saw the command echo as the "last exchange". For
+    /// `/regenerate` that meant re-sending the command in a loop until
+    /// the process died.
+    #[test]
+    fn drop_last_exchange_skips_a_trailing_command_echo() {
+        let mut app = KodApp::new();
+        app.add_message(user("the real question"));
+        app.add_message(Message {
+            id: MessageId::new(),
+            role: MessageRole::Assistant,
+            content: "the answer".into(),
+            timestamp: Utc::now(),
+            metadata: MessageMetadata::default(),
+            sequence: 0,
+        });
+        // The command echo that `submit_input` recorded.
+        app.add_message(user("/regenerate"));
+
+        let dropped = app.drop_last_exchange();
+        assert_eq!(
+            dropped.as_deref(),
+            Some("the real question"),
+            "must drop the real exchange, not the command echo",
+        );
+        assert!(
+            app.messages().is_empty(),
+            "both the echo and the exchange are gone"
+        );
+    }
+
+    /// A command typed into an otherwise-empty chat leaves only its own
+    /// echo; dropping must consume it and report nothing to drop.
+    #[test]
+    fn drop_last_exchange_on_a_lone_command_echo_returns_none() {
+        let mut app = KodApp::new();
+        app.add_message(user("/regenerate"));
+        assert!(app.drop_last_exchange().is_none());
+        assert!(app.messages().is_empty(), "the echo itself is removed");
+    }
+
     #[test]
     fn setting_then_clearing_the_goal_is_a_round_trip() {
         let mut app = KodApp::new();
