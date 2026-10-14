@@ -32,7 +32,7 @@ use axum::Router;
 use axum::extract::State;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
-use futures::stream::{self, Stream};
+use futures::stream;
 use tokio::sync::oneshot;
 
 /// Canned reply the mock sends for every completion request.
@@ -60,10 +60,7 @@ pub enum MockStep {
     /// The request fails with an HTTP error before any content is
     /// streamed. Exercises the provider's error path and the TUI's
     /// error rendering.
-    Error {
-        status: u16,
-        message: String,
-    },
+    Error { status: u16, message: String },
 }
 
 /// Per-request configuration shared by the router's handlers.
@@ -251,9 +248,7 @@ async fn chat_completions(
     // answer rather than an empty stream.
     let step_index = n.min(state.script.len() - 1);
     let step = state.script[step_index].clone();
-    eprintln!(
-        "mock: serving chat completion #{n} (step {step_index}, streaming={streaming})"
-    );
+    eprintln!("mock: serving chat completion #{n} (step {step_index}, streaming={streaming})");
 
     // Non-streaming request: answer with one plain JSON completion.
     if !streaming {

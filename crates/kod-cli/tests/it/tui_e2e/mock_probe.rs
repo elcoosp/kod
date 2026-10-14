@@ -72,6 +72,9 @@ fn mock_handles_get_and_post() {
         assert!(r3.status().is_success());
         let text = r3.text().await.unwrap_or_default();
         eprintln!("probe: POST (stream=true) body = {text}");
-        assert!(text.contains("data:"), "streaming POST body missing SSE: {text}");
+        assert!(
+            text.contains("data:"),
+            "streaming POST body missing SSE: {text}"
+        );
     });
 }

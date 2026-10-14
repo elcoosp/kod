@@ -841,7 +841,6 @@ fn the_approval_dialog_shows_the_tool_and_legend() {
     session.send_key(KeyCode::Esc);
 }
 
-
 // ---------------------------------------------------------------------------
 // Provider errors
 // ---------------------------------------------------------------------------
@@ -959,7 +958,10 @@ fn branch_drops_a_marker() {
     let session = env.spawn(90, 30);
     harness::wait_for_ready(&session);
     let screen = run_command(&session, "/branch my-checkpoint", "branch point");
-    assert!(screen.contains("my-checkpoint"), "branch names its label:\n{screen}");
+    assert!(
+        screen.contains("my-checkpoint"),
+        "branch names its label:\n{screen}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -973,9 +975,7 @@ fn swarm_runs_and_merges() {
     // Decompose is the first request (prompt contains "Split this
     // goal"); each agent and the merge follow.
     let env = TestEnv::new_scripted(vec![
-        MockStep::Text(
-            r#"[{"name":"a","description":"do a","expected_writes":[]}]"#.to_string(),
-        ),
+        MockStep::Text(r#"[{"name":"a","description":"do a","expected_writes":[]}]"#.to_string()),
         MockStep::Text("agent a done".to_string()),
         MockStep::Text("MERGED result".to_string()),
     ]);
@@ -988,7 +988,7 @@ fn swarm_runs_and_merges() {
     session.send_key(KeyCode::Enter);
 
     // The swarm announces it started; the merged result follows.
-    let screen = wait_ci(&session, "starting swarm", Duration::from_secs(25));
+    let _ = wait_ci(&session, "starting swarm", Duration::from_secs(25));
     let screen = wait_ci(&session, "MERGED", Duration::from_secs(25));
     assert!(
         screen.to_lowercase().contains("swarm") || screen.contains("MERGED"),

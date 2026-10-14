@@ -5108,8 +5108,7 @@ impl TuiLoop {
                     let body = match serde_json::to_string_pretty(self.app.messages()) {
                         Ok(s) => s,
                         Err(e) => {
-                            self.app
-                                .push_system_message(&format!("Export failed: {e}"));
+                            self.app.push_system_message(&format!("Export failed: {e}"));
                             return Ok(());
                         }
                     };
