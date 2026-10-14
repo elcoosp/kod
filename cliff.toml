@@ -1,0 +1,65 @@
+# git-cliff configuration - generates the release notes attached to
+# a GitHub Release.
+#
+# This is *not* CHANGELOG.md. The hand-written CHANGELOG carries the
+# narrative (why a change was made); these notes are the audience-facing
+# "what changed in this release", grouped by conventional-commit type
+# and linked to each commit.
+#
+# Nothing is committed from this: the notes are generated in the release
+# workflow for the tag being published, so they cannot drift the way a
+# checked-in file would.
+#
+# No emoji. No GitHub API call: the commit URL is built from a fixed
+# base, so generation is offline and cannot hit an API rate limit.
+
+[changelog]
+header = ""
+body = """
+{% if version %}\
+## {{ version | trim_start_matches(pat="v") }} - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## Unreleased
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+{% for commit in commits %}\
+- {{ commit.message | upper_first }} ([`{{ commit.id | truncate(length=7, end="") }}`](https://github.com/elcoosp/kod/commit/{{ commit.id }}))
+{% endfor %}
+{% endfor %}\n
+"""
+footer = ""
+trim = true
+
+[git]
+conventional_commits = true
+# A commit that does not follow the convention (and matches no parser
+# below) is dropped rather than dumped into the notes.
+filter_unconventional = true
+split_commits = false
+
+commit_parsers = [
+    { message = "^feat", group = "Features" },
+    { message = "^fix", group = "Bug Fixes" },
+    { message = "^perf", group = "Performance" },
+    { message = "^refactor", group = "Refactoring" },
+    { message = "^docs", group = "Documentation" },
+    { message = "^revert", group = "Reverted" },
+    # Internal-only: omitted from the audience-facing notes.
+    { message = "^test", skip = true },
+    { message = "^chore", skip = true },
+    { message = "^style", skip = true },
+    { message = "^ci", skip = true },
+    { message = "^build", skip = true },
+    { message = "^deps", skip = true },
+    { message = "^cleanup", skip = true },
+    { message = "^release", skip = true },
+    # Anything else conventional but unrecognised: drop it rather than
+    # warn about a grouping error.
+    { message = ".*", skip = true },
+]
+
+protect_breaking_commits = false
+filter_commits = true
+tag_pattern = "v[0-9]*"
+sort_commits = "oldest"

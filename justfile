@@ -40,3 +40,12 @@ wr:
     watchexec -w ./wr.sh --clear -r "./wr.sh"
 wr1:
     watchexec -w ./wr1.sh --clear -r "./wr1.sh"
+
+# Preview the release notes git-cliff would generate for the next tag
+# (unreleased commits). Uses the same cliff.toml as the release workflow.
+changelog-preview:
+    git cliff --config cliff.toml --unreleased
+
+# Print the notes for the most recent tag.
+changelog-latest:
+    git cliff --config cliff.toml --latest --strip header
