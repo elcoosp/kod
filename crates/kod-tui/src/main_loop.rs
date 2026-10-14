@@ -113,6 +113,30 @@ impl TuiLoop {
         self.cli_preset = preset;
     }
 
+    /// Parse a `--preset` string into a [`kod_config::Preset`], or
+    /// `None` when absent. An unknown value is a hard error in the
+    /// CLI; here it logs and falls back to the config preset, so a
+    /// typo cannot leave the TUI with no policy at all (which would
+    /// silently allow every call).
+    fn resolve_preset(raw: Option<&str>) -> Option<kod_config::Preset> {
+        let raw = raw?.trim();
+        if raw.is_empty() {
+            return None;
+        }
+        match raw.to_ascii_lowercase().as_str() {
+            "read-only" | "readonly" | "ro" => Some(kod_config::Preset::ReadOnly),
+            "standard" | "default" => Some(kod_config::Preset::Standard),
+            "yolo" | "unrestricted" => Some(kod_config::Preset::Yolo),
+            other => {
+                tracing::warn!(
+                    value = other,
+                    "unknown --preset; using the config preset instead",
+                );
+                None
+            }
+        }
+    }
+
     /// When true, skip loading the saved session on startup. Called by
     /// `kod tui --no-resume`. The TUI still writes a session on exit;
     /// `--no-resume` only affects the *restore* half.
@@ -333,6 +357,36 @@ impl TuiLoop {
             engine.set_sandbox_mode(kod_tools::context::SandboxMode::Require);
         }
         kod_core::mcp_adapters::install_from_config(&engine, &config).await;
+        // Install the PolicyEngine. Without this the engine's gate
+        // falls back to `Allow` for every call (see
+        // `gate_tool_calls`'s `None` arm), so the `standard` preset's
+        // write-approval and deny rules were silently dead in the TUI
+        // — the primary interactive surface. The CLI paths
+        // (`kod prompt`, `kod swarm`, `kod memory`) already install
+        // one; the TUI stored `--preset` in `self.cli_preset` and
+        // never read it.
+        match Self::resolve_preset(self.cli_preset.as_deref()) {
+            Some(preset) => match kod_config::PolicyEngine::load(&config, None, Some(preset)) {
+                Ok(policy) => {
+                    engine.set_policy(std::sync::Arc::new(policy)).await;
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "could not load policy engine");
+                }
+            },
+            None => {
+                // No `--preset`: use the config's own preset (or the
+                // Standard default) with no override.
+                match kod_config::PolicyEngine::load(&config, None, None) {
+                    Ok(policy) => {
+                        engine.set_policy(std::sync::Arc::new(policy)).await;
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "could not load policy engine");
+                    }
+                }
+            }
+        }
         // Tier 1.3 — read-protection from the effective policy.
         if let Some(policy) = engine.policy().await {
             engine.set_read_protection(policy.read_protection().clone());

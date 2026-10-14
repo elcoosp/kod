@@ -677,10 +677,15 @@ fn a_write_file_tool_call_creates_the_file() {
     session.send_text("write a file");
     session.send_key(KeyCode::Enter);
 
+    // `write_file` requires approval under the standard preset; the
+    // dialog must appear before the call runs.
+    wait_ci(&session, "approval required", Duration::from_secs(15));
+    session.send_key(KeyCode::Char('y'));
+
     wait_ci(&session, "Wrote the file", Duration::from_secs(20));
     assert!(
         env.workspace.join("written.txt").exists(),
-        "the write_file call must have created the file in the workspace",
+        "the approved write_file call must have created the file",
     );
 }
 
@@ -717,4 +722,113 @@ fn retry_after_a_turn_resends_the_prompt() {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Approval flow
+// ---------------------------------------------------------------------------
+
+/// A `write_file` under the standard preset must prompt, and `n` must
+/// deny it — the file is never created.
+#[test]
+fn denying_a_write_leaves_no_file() {
+    let env = TestEnv::new_scripted(vec![
+        MockStep::ToolCall {
+            name: "write_file".to_string(),
+            arguments: serde_json::json!({
+                "path": "denied.txt",
+                "content": "should not exist\n"
+            })
+            .to_string(),
+        },
+        MockStep::Text("Understood, I will not write it.".to_string()),
+    ]);
+    let session = env.spawn(100, 40);
+    harness::wait_for_ready(&session);
+
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("write a file I will deny");
+    session.send_key(KeyCode::Enter);
+
+    wait_ci(&session, "approval required", Duration::from_secs(15));
+    session.send_key(KeyCode::Char('n'));
+
+    // The denial is fed back to the model, which answers.
+    wait_ci(&session, "Understood", Duration::from_secs(20));
+    assert!(
+        !env.workspace.join("denied.txt").exists(),
+        "a denied write must not create the file",
+    );
+}
+
+/// Esc denies the whole batch. Same invariant as `n` for a single item.
+#[test]
+fn escape_denies_the_approval() {
+    let env = TestEnv::new_scripted(vec![
+        MockStep::ToolCall {
+            name: "write_file".to_string(),
+            arguments: serde_json::json!({
+                "path": "escaped.txt",
+                "content": "nope\n"
+            })
+            .to_string(),
+        },
+        MockStep::Text("Cancelled.".to_string()),
+    ]);
+    let session = env.spawn(100, 40);
+    harness::wait_for_ready(&session);
+
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("write, then I press escape");
+    session.send_key(KeyCode::Enter);
+
+    wait_ci(&session, "approval required", Duration::from_secs(15));
+    session.send_key(KeyCode::Esc);
+
+    wait_ci(&session, "Cancelled", Duration::from_secs(20));
+    assert!(
+        !env.workspace.join("escaped.txt").exists(),
+        "an Esc-denied write must not create the file",
+    );
+}
+
+/// The approval dialog names the tool and shows the key legend.
+#[test]
+fn the_approval_dialog_shows_the_tool_and_legend() {
+    let env = TestEnv::new_scripted(vec![
+        MockStep::ToolCall {
+            name: "write_file".to_string(),
+            arguments: serde_json::json!({
+                "path": "shown.txt",
+                "content": "hi\n"
+            })
+            .to_string(),
+        },
+        MockStep::Text("Done.".to_string()),
+    ]);
+    let session = env.spawn(110, 40);
+    harness::wait_for_ready(&session);
+
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("write a file");
+    session.send_key(KeyCode::Enter);
+
+    let screen = wait_ci(&session, "approval required", Duration::from_secs(15));
+    assert!(
+        screen.contains("write_file"),
+        "dialog names the tool:\n{screen}"
+    );
+    assert!(
+        screen.contains("y approve") && screen.contains("n / Esc deny"),
+        "dialog shows the key legend:\n{screen}"
+    );
+    assert!(
+        screen.contains("shown.txt"),
+        "dialog names the target path:\n{screen}"
+    );
+    // Leave the dialog so the child does not linger.
+    session.send_key(KeyCode::Esc);
 }
