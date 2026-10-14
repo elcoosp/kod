@@ -968,7 +968,6 @@ impl SwarmRunner {
         let (watchdog_stop_tx, mut watchdog_stop_rx) = tokio::sync::mpsc::channel::<()>(1);
         let watchdog_engine = self.engine.clone();
         let watchdog_swarm = swarm.clone();
-        let watchdog_chunk_tx = chunk_tx.clone();
         let watchdog_dispatch_keys = dispatch_keys.clone();
         // H-R6: derive the idle threshold from the configured agent
         // timeout instead of the hardcoded 90 s. A user who raised
@@ -1032,20 +1031,28 @@ impl SwarmRunner {
                                 "swarm watchdog: dispatch has not reported within the idle window;                                  sending cooperative cancel",
                             );
                             // Retry-cancel, not user-cancel: the
-                            // watchdog wants the *attempt* stopped so
-                            // the retry loop re-dispatches the agent
-                            // (design H-R6). A user-cancel would be
-                            // terminal and the retry would be refused.
+                            // Cancel so the retry loop re-dispatches
+                            // the agent. `request_retry_cancel_for`,
+                            // not `request_cancel_for`: a user-cancel is
+                            // terminal, a watchdog-cancel is retried
+                            // (design H-R6: "the retry loop re-runs
+                            // them").
+                            //
+                            // Emit NO event here. The old code sent
+                            // `AgentRetrying { attempt: 0, max_attempts:
+                            // 0 }`, which renders as "retrying (0/0)"
+                            // (design H-R6 names this). The watchdog
+                            // does not know the attempt number, so it
+                            // cannot fill those fields. The retry loop
+                            // emits the accurate `AgentRetrying` with
+                            // the real attempt and budget when the
+                            // cancelled attempt fails — and an
+                            // `AgentFailed` here would be worse: it
+                            // marks the agent finished+failed in the
+                            // panel, and `swarm_set_retrying` does not
+                            // clear that, so a retrying agent would show
+                            // as dead.
                             watchdog_engine.request_retry_cancel_for(&key);
-                            let _ = watchdog_chunk_tx
-                                .send(SwarmEvent::AgentRetrying {
-                                    id: id.clone(),
-                                    name: agent.name().to_string(),
-                                    attempt: 0,
-                                    max_attempts: 0,
-                                    previous_error: "watchdog: no output in 90s".to_string(),
-                                })
-                                .await;
                         }
                     }
                 }

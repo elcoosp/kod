@@ -2235,3 +2235,140 @@ async fn a_watchdog_cancel_retries_but_a_user_cancel_does_not() {
         "a user cancel is terminal; the retry loop must not re-dispatch",
     );
 }
+
+/// A retry-cancel (the watchdog's shape) must produce no
+/// `AgentRetrying` with `attempt: 0, max_attempts: 0` and no
+/// `AgentFailed` — the retrying agent is neither bogus-labelled nor
+/// dead.
+///
+/// Scope: this drives the *retry loop*, not the watchdog itself. The
+/// watchdog runs on a 10s tick with a 90s idle threshold; driving it
+/// here would make the test slow and timing-dependent. The watchdog's
+/// own event emission is guarded by the
+/// `no_bogus_watchdog_retry_event` source lint instead.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_retry_cancel_emits_no_bogus_retry_or_failure_event() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct WatchdogShapeProvider {
+        engine: Arc<Mutex<Option<Arc<KodEngine>>>>,
+        dispatches: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for WatchdogShapeProvider {
+        fn name(&self) -> &str {
+            "watchdog-shape"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec!["watchdog-shape".into()])
+        }
+        async fn generate(
+            &self,
+            prompt: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            if prompt.contains("Split this goal") {
+                return Ok(r#"[{"name":"a","description":"do a"}]"#.to_string());
+            }
+            if prompt.contains("Synthesize their work") {
+                return Ok("MERGED".to_string());
+            }
+            let n = self.dispatches.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                let engine = self.engine.lock().unwrap().clone().expect("engine set");
+                if let Some(key) = engine
+                    .swarm_dispatch_keys_for_tests()
+                    .await
+                    .into_iter()
+                    .next()
+                {
+                    // Exactly what the watchdog does.
+                    engine.request_retry_cancel_for(&key);
+                }
+                return Err(kod_error::KodError::Provider("wedged".into()));
+            }
+            Ok("done".to_string())
+        }
+        async fn generate_with_tools(
+            &self,
+            prompt: &str,
+            _t: &[ToolDefinition],
+            o: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::Text {
+                content: self.generate(prompt, o).await?,
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+    }
+
+    let dispatches = Arc::new(AtomicUsize::new(0));
+    let engine_slot = Arc::new(Mutex::new(None::<Arc<KodEngine>>));
+
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("t.redb");
+    let cfg = RouterConfig {
+        skill_threshold: 0.3,
+        context_window: 8192,
+        short_term_capacity: 100,
+        working_dir: tmp.path().to_path_buf(),
+        enable_memory: false,
+        max_skills_per_query: 3,
+        embedder: None,
+    };
+    let engine = Arc::new(KodEngine::new(cfg, db).unwrap());
+    let provider = Arc::new(WatchdogShapeProvider {
+        engine: Arc::clone(&engine_slot),
+        dispatches: Arc::clone(&dispatches),
+    });
+    install_test_provider(&engine, provider).await;
+    engine.start().await.unwrap();
+    *engine_slot.lock().unwrap() = Some(Arc::clone(&engine));
+
+    let runner = SwarmRunner::new(Arc::clone(&engine), 2, false)
+        .await
+        .unwrap();
+    let (tx, mut rx) = mpsc::channel::<SwarmEvent>(256);
+    let collect = tokio::spawn(async move {
+        let mut bogus = 0usize;
+        let mut failed = 0usize;
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                SwarmEvent::AgentRetrying {
+                    attempt,
+                    max_attempts,
+                    ..
+                } if attempt == 0 && max_attempts == 0 => bogus += 1,
+                SwarmEvent::AgentFailed { .. } => failed += 1,
+                _ => {}
+            }
+        }
+        (bogus, failed)
+    });
+    let _ = runner.run("do a thing", &tx).await;
+    drop(tx);
+    let (bogus, failed) = collect.await.unwrap();
+
+    assert_eq!(
+        bogus, 0,
+        "no AgentRetrying may carry attempt 0 / max_attempts 0",
+    );
+    assert_eq!(
+        failed, 0,
+        "a watchdog-cancelled attempt retries; it must not be reported as failed",
+    );
+    assert_eq!(
+        dispatches.load(Ordering::SeqCst),
+        2,
+        "the retry must have run",
+    );
+}

@@ -443,3 +443,56 @@ fn unguarded_length_subtraction_budget_is_not_exceeded() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Class: a watchdog-shaped cancel that emits a bogus retry/failure event
+// ---------------------------------------------------------------------------
+//
+// The heartbeat watchdog in `swarm_runner.rs` cancels a wedged agent
+// so the retry loop re-dispatches it. It does not know the attempt
+// number, so it must not emit `AgentRetrying { attempt, max_attempts
+// }` — a hardcoded `0, 0` renders as "retrying (0/0)" (design H-R6
+// names this). Nor may it emit `AgentFailed`, which marks the agent
+// finished+failed in the panel; `swarm_set_retrying` does not clear
+// that, so a retrying agent would show as dead. The retry loop emits
+// the accurate event when the cancelled attempt fails.
+
+#[test]
+fn no_bogus_watchdog_retry_event() {
+    let src = fs::read_to_string(workspace_root().join("crates/kod-core/src/swarm_runner.rs"))
+        .expect("swarm_runner.rs is readable");
+
+    // The watchdog task block: from its spawn to the line that ends
+    // it (`let mut remaining`, the wave loop that follows). Bounded
+    // this way so the scan does not run into the *wave loop*, whose
+    // `AgentFailed` emissions are legitimate (a real agent failure).
+    let Some(start) = src.find("let watchdog_task = tokio::spawn") else {
+        panic!("watchdog_task marker not found in swarm_runner.rs");
+    };
+    let Some(end_rel) = src[start..].find("let mut remaining") else {
+        panic!("watchdog_task end marker (`let mut remaining`) not found");
+    };
+    let block = &src[start..start + end_rel];
+    // Line number of `block`'s first line in the file, for the report.
+    let start_line = src[..start].lines().count() + 1;
+
+    let mut bad: Vec<(PathBuf, usize, String)> = Vec::new();
+    let path = workspace_root().join("crates/kod-core/src/swarm_runner.rs");
+    for (i, line) in block.lines().enumerate() {
+        let trimmed = line.trim();
+        if is_comment(trimmed) {
+            continue;
+        }
+        if trimmed.contains("AgentRetrying") || trimmed.contains("AgentFailed") {
+            bad.push((path.clone(), start_line + i, trimmed.to_string()));
+        }
+    }
+    if !bad.is_empty() {
+        report(
+            &bad,
+            "the watchdog must not emit AgentRetrying (it cannot know the \
+             attempt number) or AgentFailed (it would mark a retrying agent \
+             as dead). The retry loop emits the accurate event:",
+        );
+    }
+}
