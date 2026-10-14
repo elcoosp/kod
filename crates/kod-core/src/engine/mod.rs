@@ -9,6 +9,7 @@ mod at_refs;
 mod compaction;
 mod constants;
 mod control;
+pub use control::CancelReason;
 mod hook;
 mod jev;
 mod jev_advisor;
@@ -162,7 +163,7 @@ pub struct KodEngine {
     /// carries the epoch it observed; if a newer fire has happened
     /// since, the clear is a no-op and the cancel stands. Without
     /// this, cancelling an agent mid-retry could be silently undone.
-    cancels: parking_lot::RwLock<std::collections::HashMap<String, (u64, bool)>>,
+    cancels: parking_lot::RwLock<std::collections::HashMap<String, (u64, bool, CancelReason)>>,
     /// Delta §9.8: the process-wide pause gate. Checked at exactly
     /// two boundaries — before each model call and before each tool
     /// round — so an in-flight stream runs to completion rather than

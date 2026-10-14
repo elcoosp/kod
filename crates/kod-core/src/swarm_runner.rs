@@ -34,7 +34,7 @@
 //! the user reads — but a per-agent transcript is the honest next step
 //! if agents are ever expected to see each other's reasoning.
 
-use crate::engine::KodEngine;
+use crate::engine::{CancelReason, KodEngine};
 use futures::FutureExt;
 use futures::future::join_all;
 use kod_error::{KodError, Result};
@@ -1031,7 +1031,12 @@ impl SwarmRunner {
                                 key = %key,
                                 "swarm watchdog: dispatch has not reported within the idle window;                                  sending cooperative cancel",
                             );
-                            watchdog_engine.request_cancel_for(&key);
+                            // Retry-cancel, not user-cancel: the
+                            // watchdog wants the *attempt* stopped so
+                            // the retry loop re-dispatches the agent
+                            // (design H-R6). A user-cancel would be
+                            // terminal and the retry would be refused.
+                            watchdog_engine.request_retry_cancel_for(&key);
                             let _ = watchdog_chunk_tx
                                 .send(SwarmEvent::AgentRetrying {
                                     id: id.clone(),
@@ -1538,35 +1543,38 @@ impl SwarmRunner {
                                     if attempt >= max_attempts {
                                         return (id, name, subtask, Vec::new(), Err(err));
                                     }
-                                    // A cancel that survived the scoped clear
-                                    // (`clear_cancel_through` above) means a
-                                    // coordinator stopped this agent while it
-                                    // ran. Do not retry — the stop outranks
-                                    // the retry budget.
-                                    //
-                                    // The pre-fix code called
-                                    // `request_cancel_for` on the same key
-                                    // here, *before* this check. That call
-                                    // unconditionally sets the `fired` flag,
-                                    // so `is_cancelled_for` was always true
-                                    // on the next line and the retry path
-                                    // was unreachable: every failure was
-                                    // reported as "a coordinator cancelled
-                                    // this agent" and `agent_retries` was
-                                    // dead code. The call was also
-                                    // unnecessary — the previous attempt's
-                                    // future has already returned `Err`, and
-                                    // a `tokio::time::timeout` that fired has
-                                    // already dropped it. There is no
-                                    // in-flight loop left to signal.
-                                    if engine.is_cancelled_for(&transcript_key) {
-                                        return (
-                                            id,
-                                            name,
-                                            subtask,
-                                            Vec::new(),
-                                            Err("a coordinator cancelled this agent".to_string()),
-                                        );
+                                    // A cancel that survived the scoped
+                                    // clear (`clear_cancel_through` above)
+                                    // has a reason. A user/coordinator
+                                    // cancel is terminal — do not retry, the
+                                    // stop outranks the retry budget. A
+                                    // watchdog cancel means the agent was
+                                    // wedged and *should* be re-dispatched
+                                    // (design H-R6: "the retry loop re-runs
+                                    // them"), so it falls through to the
+                                    // retry below. Before the reason existed,
+                                    // the watchdog's cancel was
+                                    // indistinguishable from a user's and
+                                    // every wedged agent was reported as "a
+                                    // coordinator cancelled this agent" — the
+                                    // watchdog defeated its own purpose.
+                                    match engine.cancel_reason_for(&transcript_key) {
+                                        Some(CancelReason::User) => {
+                                            return (
+                                                id,
+                                                name,
+                                                subtask,
+                                                Vec::new(),
+                                                Err("a coordinator cancelled this agent"
+                                                    .to_string()),
+                                            );
+                                        }
+                                        Some(CancelReason::WatchdogRetry) | None => {
+                                            // Retry: clear the watchdog's
+                                            // cancel so the next attempt
+                                            // starts clean.
+                                            engine.clear_cancel_for(&transcript_key);
+                                        }
                                     }
                                     // Announce the retry so a live UI can show
                                     // "agent-1 retrying (2/2): …".

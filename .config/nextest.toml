@@ -15,7 +15,7 @@
 [test-groups.clipboard]
 max-threads = 1
 
-# Disable git's background auto-maintenance in every test process.
+# Git's background auto-maintenance is disabled per-repo, not here.
 #
 # `git commit` and `git worktree add` fork `gc --auto` (and, on newer
 # git, a `maintenance` child) as a detached process. A test waits on
@@ -25,16 +25,20 @@ max-threads = 1
 # subprocess-free test could inherit the flag when a sibling binary's
 # stray git process was still alive at nextest's check.
 #
-# `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` are
-# read by git as if they were `git config --global` entries, so this
-# applies to every git subprocess any test spawns — no per-helper
-# patching, no missed sites.
+# The fix lives in the test helpers that create a git repo: each runs
+# `git config gc.auto 0` (and `gc.autoDetach false`,
+# `maintenance.auto false`) on the repo it makes. Every leak-prone
+# spawn is inside such a repo — the only `commit` calls in the test
+# tree are in `git_tools.rs`, `minimizer_integration.rs`, and
+# `worktree.rs`, all of which set those keys.
 #
-# The test helpers ALSO set these in each repo's local config, so a
-# direct `cargo test` (which does not read this profile) is covered
-# too.
-[profile.default]
-env = { "GIT_CONFIG_COUNT" = "3", "GIT_CONFIG_KEY_0" = "gc.auto", "GIT_CONFIG_VALUE_0" = "0", "GIT_CONFIG_KEY_1" = "gc.autoDetach", "GIT_CONFIG_VALUE_1" = "false", "GIT_CONFIG_KEY_2" = "maintenance.auto", "GIT_CONFIG_VALUE_2" = "false" }
+# This file carried a `[profile.default] env = { GIT_CONFIG_* }` block
+# intended to cover every git subprocess at once. nextest 0.9 has no
+# config `env` key — it was silently ignored and produced a warning —
+# so that layer never applied. It is removed rather than reimplemented
+# via the experimental `setup-scripts` feature: the per-repo layer
+# covers the actual spawns, and a dead config block that claims
+# coverage is worse than none.
 
 [[profile.default.overrides]]
 filter = 'test(/clipboard/)'

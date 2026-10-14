@@ -2105,3 +2105,133 @@ async fn swarm_stress_repeated_runs_leave_no_state_behind() {
         tool_rounds.load(Ordering::Relaxed),
     );
 }
+
+/// Regression (H-R6 contradiction): the heartbeat watchdog cancels a
+/// wedged agent with a *retry* cancel, and the retry loop must
+/// re-dispatch it. A user cancel on the same key must NOT retry — the
+/// stop outranks the retry budget.
+///
+/// Pre-fix the two were indistinguishable: the watchdog's cancel was
+/// reported as "a coordinator cancelled this agent" and no retry ran,
+/// so the watchdog defeated its own purpose.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_watchdog_cancel_retries_but_a_user_cancel_does_not() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// The engine is set after construction: the provider needs it, but
+    /// the engine needs the provider installed to be built.
+    struct CancellingProvider {
+        engine: Arc<Mutex<Option<Arc<KodEngine>>>>,
+        retry_cancel: bool,
+        dispatches: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for CancellingProvider {
+        fn name(&self) -> &str {
+            "cancelling"
+        }
+        async fn list_models(&self) -> kod_error::Result<Vec<kod_provider::ModelInfo>> {
+            Ok(vec!["cancelling".into()])
+        }
+        async fn generate(
+            &self,
+            prompt: &str,
+            _o: &GenerationOptions,
+        ) -> kod_error::Result<String> {
+            if prompt.contains("Split this goal") {
+                return Ok(r#"[{"name":"a","description":"do a"}]"#.to_string());
+            }
+            if prompt.contains("Synthesize their work") {
+                return Ok("MERGED".to_string());
+            }
+            let n = self.dispatches.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                let engine = self.engine.lock().unwrap().clone().expect("engine set");
+                if let Some(key) = engine
+                    .swarm_dispatch_keys_for_tests()
+                    .await
+                    .into_iter()
+                    .next()
+                {
+                    if self.retry_cancel {
+                        engine.request_retry_cancel_for(&key);
+                    } else {
+                        engine.request_cancel_for(&key);
+                    }
+                }
+                return Err(kod_error::KodError::Provider("attempt failed".into()));
+            }
+            Ok("done".to_string())
+        }
+        async fn generate_with_tools(
+            &self,
+            prompt: &str,
+            _t: &[ToolDefinition],
+            o: &GenerationOptions,
+        ) -> kod_error::Result<GenerationResponse> {
+            Ok(GenerationResponse::Text {
+                content: self.generate(prompt, o).await?,
+                usage: None,
+            })
+        }
+        fn stream(
+            &self,
+            _p: &str,
+            _o: &GenerationOptions,
+        ) -> Pin<Box<dyn futures::Stream<Item = kod_error::Result<StreamChunk>> + Send + '_>>
+        {
+            Box::pin(futures::stream::empty())
+        }
+    }
+
+    async fn run_with_cancel(retry_cancel: bool) -> usize {
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let engine_slot = Arc::new(Mutex::new(None::<Arc<KodEngine>>));
+
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("t.redb");
+        let cfg = RouterConfig {
+            skill_threshold: 0.3,
+            context_window: 8192,
+            short_term_capacity: 100,
+            working_dir: tmp.path().to_path_buf(),
+            enable_memory: false,
+            max_skills_per_query: 3,
+            embedder: None,
+        };
+        let engine = Arc::new(KodEngine::new(cfg, db).unwrap());
+
+        let provider = Arc::new(CancellingProvider {
+            engine: Arc::clone(&engine_slot),
+            retry_cancel,
+            dispatches: Arc::clone(&dispatches),
+        });
+        install_test_provider(&engine, provider).await;
+        engine.start().await.unwrap();
+        *engine_slot.lock().unwrap() = Some(Arc::clone(&engine));
+
+        let runner = SwarmRunner::new(Arc::clone(&engine), 2, false)
+            .await
+            .unwrap();
+        let (tx, mut rx) = mpsc::channel::<SwarmEvent>(256);
+        let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+        let _ = runner.run("do a thing", &tx).await;
+        drop(tx);
+        let _ = drain.await;
+
+        dispatches.load(Ordering::SeqCst)
+    }
+
+    let watchdog_attempts = run_with_cancel(true).await;
+    assert_eq!(
+        watchdog_attempts, 2,
+        "a watchdog cancel must let the retry loop re-dispatch (2 attempts)",
+    );
+
+    let user_attempts = run_with_cancel(false).await;
+    assert_eq!(
+        user_attempts, 1,
+        "a user cancel is terminal; the retry loop must not re-dispatch",
+    );
+}

@@ -765,6 +765,20 @@ impl KodEngine {
         Some((k.clone(), globs))
     }
 
+    /// Test-only: every transcript key currently holding a request
+    /// that looks like a swarm dispatch (`swarm:*`). Lets a test
+    /// provider find the key of the dispatch it is running under, so
+    /// it can cancel it mid-attempt.
+    pub async fn swarm_dispatch_keys_for_tests(&self) -> Vec<String> {
+        self.current_requests
+            .read()
+            .await
+            .keys()
+            .filter(|k| k.starts_with("swarm:"))
+            .cloned()
+            .collect()
+    }
+
     /// Test-only: the single transcript key with a working-dir
     /// override, when exactly one entry exists. `None` otherwise.
     pub async fn only_working_dir_for_tests(&self) -> Option<(String, PathBuf)> {

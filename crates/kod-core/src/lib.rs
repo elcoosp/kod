@@ -19,6 +19,7 @@ pub mod swarm_adapters;
 pub mod swarm_runner;
 pub mod tool_quota;
 pub mod unexpected_stop;
+pub use engine::CancelReason;
 pub use engine::KodEngine;
 pub use engine::{ColdReviveOutcome, ColdReviveVerdict};
 pub use fixture::{

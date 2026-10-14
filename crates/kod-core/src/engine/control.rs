@@ -1,5 +1,22 @@
 use super::*;
 
+/// Why a cancel was requested for a transcript.
+///
+/// The swarm watchdog and a user press the same "cancel" button but
+/// mean opposite things: the watchdog wants the *attempt* stopped so
+/// the retry loop re-dispatches the agent (design H-R6), while a user
+/// wants the agent stopped for good. Without this distinction the
+/// retry loop cannot tell them apart, so it treated every cancel as
+/// terminal — the watchdog's cancel defeated its own purpose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelReason {
+    /// A user (or the coordinator) stopped the agent. Terminal.
+    User,
+    /// The swarm watchdog found the agent wedged and wants it
+    /// re-dispatched. The retry loop clears it and retries.
+    WatchdogRetry,
+}
+
 impl KodEngine {
     /// Ask the default transcript's running prompt to stop at the next
     /// round boundary.
@@ -17,13 +34,35 @@ impl KodEngine {
     /// [`Self::clear_cancel_through`], so a cancel arriving in the
     /// interim is not erased.
     pub fn request_cancel_for(&self, key: &str) -> u64 {
+        self.request_cancel_with_reason(key, CancelReason::User)
+    }
+
+    /// Ask a transcript's running prompt to stop so the swarm retry
+    /// loop re-dispatches it. Used only by the heartbeat watchdog;
+    /// distinct from [`Self::request_cancel_for`] because the retry
+    /// loop retries a `WatchdogRetry` cancel and refuses to retry a
+    /// `User` one.
+    pub fn request_retry_cancel_for(&self, key: &str) -> u64 {
+        self.request_cancel_with_reason(key, CancelReason::WatchdogRetry)
+    }
+
+    fn request_cancel_with_reason(&self, key: &str, reason: CancelReason) -> u64 {
         // H-E10: `cancels` is a parking_lot RwLock — synchronous, no
         // block_on on the async hot path.
         let mut g = self.cancels.write();
-        let entry = g.entry(key.to_string()).or_insert((0, false));
+        let entry = g.entry(key.to_string()).or_insert((0, false, reason));
         entry.0 = entry.0.wrapping_add(1);
         entry.1 = true;
+        entry.2 = reason;
         entry.0
+    }
+
+    /// Why `key` was last cancelled, if it is currently cancelled.
+    pub fn cancel_reason_for(&self, key: &str) -> Option<CancelReason> {
+        self.cancels
+            .read()
+            .get(key)
+            .and_then(|(_, fired, reason)| fired.then_some(*reason))
     }
 
     /// Clear a previous cancel for the default transcript (called when
@@ -44,7 +83,11 @@ impl KodEngine {
     /// on retry passes it to [`Self::clear_cancel_through`]. Zero when
     /// no cancel was ever requested for the key.
     pub fn cancel_epoch_for(&self, key: &str) -> u64 {
-        self.cancels.read().get(key).map(|(e, _)| *e).unwrap_or(0)
+        self.cancels
+            .read()
+            .get(key)
+            .map(|(e, _, _)| *e)
+            .unwrap_or(0)
     }
 
     /// Clear a transcript's cancel only if no newer fire has happened
@@ -97,7 +140,7 @@ impl KodEngine {
         self.cancels
             .read()
             .get(key)
-            .is_some_and(|(_, fired)| *fired)
+            .is_some_and(|(_, fired, _)| *fired)
     }
 
     /// H-RL1: the longest provider-suggested rate-limit window the
@@ -408,5 +451,64 @@ impl KodEngine {
     ) -> Vec<kod_core_state::steer::SoftInterrupt> {
         let mut guard = self.steers.write().await;
         guard.remove(key).unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod cancel_reason_tests {
+    use super::*;
+    use crate::router::RouterConfig;
+
+    async fn engine() -> KodEngine {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cfg = RouterConfig {
+            working_dir: dir.path().to_path_buf(),
+            enable_memory: false,
+            ..RouterConfig::default()
+        };
+        // Leak the tempdir for the test's duration; the engine holds
+        // the path but writes nothing here.
+        std::mem::forget(dir);
+        KodEngine::new(cfg, std::path::PathBuf::from(":memory:")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_user_cancel_reports_user() {
+        let e = engine().await;
+        e.request_cancel_for("swarm:x");
+        assert_eq!(e.cancel_reason_for("swarm:x"), Some(CancelReason::User),);
+    }
+
+    #[tokio::test]
+    async fn a_watchdog_cancel_reports_watchdog_retry() {
+        let e = engine().await;
+        e.request_retry_cancel_for("swarm:x");
+        assert_eq!(
+            e.cancel_reason_for("swarm:x"),
+            Some(CancelReason::WatchdogRetry),
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cleared_key_has_no_reason() {
+        let e = engine().await;
+        e.request_cancel_for("swarm:x");
+        e.clear_cancel_for("swarm:x");
+        assert_eq!(e.cancel_reason_for("swarm:x"), None);
+    }
+
+    /// A newer cancel keeps its reason through a `clear_cancel_through`
+    /// that observed an older epoch — the epoch guard still holds.
+    #[tokio::test]
+    async fn a_newer_user_cancel_survives_a_scoped_clear() {
+        let e = engine().await;
+        let observed = e.cancel_epoch_for("swarm:x");
+        e.request_cancel_for("swarm:x");
+        e.clear_cancel_through("swarm:x", observed);
+        assert_eq!(
+            e.cancel_reason_for("swarm:x"),
+            Some(CancelReason::User),
+            "a user cancel during the attempt must not be cleared",
+        );
     }
 }
