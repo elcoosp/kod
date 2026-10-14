@@ -21,12 +21,16 @@ body = """
 {% else %}\
 ## Unreleased
 {% endif %}\
+{% if commits | length == 0 %}\
+Internal changes only (dependencies, CI, tests). No user-facing changes.
+{% else %}\
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | striptags | trim }}
 {% for commit in commits %}\
 - {{ commit.message | upper_first }} ([`{{ commit.id | truncate(length=7, end="") }}`](https://github.com/elcoosp/kod/commit/{{ commit.id }}))
 {% endfor %}
-{% endfor %}\n
+{% endfor %}\
+{% endif %}\n
 """
 footer = ""
 trim = true

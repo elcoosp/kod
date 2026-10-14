@@ -231,6 +231,10 @@ jobs:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
+        # git-cliff needs the previous tag to compute the range.
+        # `fetch-depth: 0` implies tags, but being explicit guards
+        # against a future default change.
+        fetch-tags: true
 
     - name: Download artifacts
       uses: actions/download-artifact@v4
