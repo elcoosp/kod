@@ -517,6 +517,22 @@ impl PolicyEngine {
 
         // 1. Per-tool policy overrides the preset.
         if let Some(tp) = self.effective.tools.get(tool) {
+            // Per-tool network override. `ToolPolicy::network`'s
+            // own doc comment promises this overrides the global
+            // `llm.network_access` for the tool; nothing enforced
+            // it — a config key the user could set that did
+            // nothing. A tool marked `network = false` is denied
+            // outright. The override can only narrow (turn a tool
+            // off), never widen: the global `llm.network_access`
+            // permission remains the only grant path at the tool
+            // context layer.
+            if tp.network == Some(false) {
+                return PolicyDecision {
+                    outcome: Decision::Deny,
+                    rule: format!("{tool} network = false"),
+                    source: self.source_for(tool),
+                };
+            }
             // Forbidden paths: any match is a hard deny.
             if let (Some(forbidden), Some(p)) = (&tp.forbidden, &resolved_path) {
                 for g in forbidden {
@@ -961,6 +977,116 @@ mod tests {
             &HashSet::new(),
         );
         assert_eq!(d.outcome, Decision::Deny);
+    }
+
+    // `ToolPolicy.network = false` was documented as overriding
+    // `llm.network_access` per tool, but nothing read the field —
+    // the same shape as the PolicyEngine-install bug. This pins the
+    // enforcement and the narrow-only rule in one place.
+    #[test]
+    fn tool_policy_network_false_denies_the_tool() {
+        let mut effective = Policy {
+            preset: Preset::Yolo,
+            ..Policy::default()
+        };
+        effective.tools.insert(
+            "web_fetch".to_string(),
+            ToolPolicy {
+                network: Some(false),
+                ..Default::default()
+            },
+        );
+        let e = PolicyEngine {
+            effective,
+            sources: BTreeMap::new(),
+        };
+        let wd = Path::new("/tmp");
+        let d = e.decide(
+            "web_fetch",
+            &serde_json::json!({"url": "https://example.com"}),
+            wd,
+            &HashSet::new(),
+        );
+        assert_eq!(
+            d.outcome,
+            Decision::Deny,
+            "network = false must deny even under a permissive preset; got rule {:?}",
+            d.rule,
+        );
+        // An unrelated tool is untouched.
+        let d = e.decide(
+            "read_file",
+            &serde_json::json!({"path": "a.txt"}),
+            wd,
+            &HashSet::new(),
+        );
+        assert_eq!(d.outcome, Decision::Allow);
+    }
+
+    // The override must only ever narrow: `network = true` cannot
+    // grant network to a tool under a read-only preset, because the
+    // global `llm.network_access` permission flag is the only grant
+    // path (see `kod-tools/src/context.rs`). The policy-engine layer
+    // has no way to hand out a permission the engine never set.
+    #[test]
+    fn tool_policy_network_true_cannot_widen() {
+        let mut effective = Policy {
+            preset: Preset::ReadOnly,
+            ..Policy::default()
+        };
+        effective.tools.insert(
+            "web_fetch".to_string(),
+            ToolPolicy {
+                network: Some(true),
+                ..Default::default()
+            },
+        );
+        let e = PolicyEngine {
+            effective,
+            sources: BTreeMap::new(),
+        };
+        let wd = Path::new("/tmp");
+        let d = e.decide(
+            "web_fetch",
+            &serde_json::json!({"url": "https://example.com"}),
+            wd,
+            &HashSet::new(),
+        );
+        assert_eq!(
+            d.outcome,
+            Decision::Deny,
+            "read-only preset must win; `network = true` may not widen"
+        );
+    }
+
+    // `network = None` (the default) leaves the preset in charge,
+    // exactly as before the field was enforced.
+    #[test]
+    fn tool_policy_network_none_falls_through_to_preset() {
+        let mut effective = Policy {
+            preset: Preset::ReadOnly,
+            ..Policy::default()
+        };
+        effective.tools.insert(
+            "web_fetch".to_string(),
+            ToolPolicy {
+                network: None,
+                ..Default::default()
+            },
+        );
+        let e = PolicyEngine {
+            effective,
+            sources: BTreeMap::new(),
+        };
+        let wd = Path::new("/tmp");
+        let d = e.decide(
+            "web_fetch",
+            &serde_json::json!({"url": "https://example.com"}),
+            wd,
+            &HashSet::new(),
+        );
+        assert_eq!(d.outcome, Decision::Deny); // read-only: unchanged
+        assert_eq!(d.source, PolicySource::Preset);
     }
 
     #[test]
