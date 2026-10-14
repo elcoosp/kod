@@ -51,6 +51,9 @@ commit_parsers = [
     { message = "^revert", group = "Reverted" },
     # Internal-only: omitted from the audience-facing notes.
     { message = "^test", skip = true },
+    # Dependency bumps are user-facing (a security bump especially);
+    # group them rather than hiding them with the rest of `chore`.
+    { message = "^chore\\(deps\\)", group = "Dependencies" },
     { message = "^chore", skip = true },
     { message = "^style", skip = true },
     { message = "^ci", skip = true },
