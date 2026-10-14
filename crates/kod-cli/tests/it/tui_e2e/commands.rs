@@ -27,6 +27,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use super::harness::{self, KeyCode, TestEnv};
+use super::mock_llm::MockStep;
 
 /// Wait until the screen contains `needle`, **case-insensitively**.
 ///
@@ -562,4 +563,158 @@ fn unknown_command_is_reported() {
         screen.to_lowercase().contains("unknown") || screen.to_lowercase().contains("not a"),
         "unknown command produced no error:\n{screen}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Tool-call loop (scripted provider)
+// ---------------------------------------------------------------------------
+
+/// The mock serves a tool call, the engine runs it, the model is
+/// called again and answers. This is the agentic turn end to end
+/// through the TUI: a `read_file` tool row must appear, then the
+/// final text.
+#[test]
+fn tool_call_round_trip_renders_a_tool_row() {
+    let env = TestEnv::new_scripted(vec![
+        MockStep::ToolCall {
+            name: "list_files".to_string(),
+            arguments: serde_json::json!({ "path": ".", "recursive": false }).to_string(),
+        },
+        MockStep::Text("I listed the files.".to_string()),
+    ]);
+    let session = env.spawn(100, 40);
+    harness::wait_for_ready(&session);
+
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("what files are here?");
+    session.send_key(KeyCode::Enter);
+
+    // The tool row appears while the tool runs; the final text after.
+    let screen = wait_ci(&session, "I listed the files.", Duration::from_secs(20));
+    assert!(
+        screen.to_lowercase().contains("list_files") || screen.to_lowercase().contains("tool"),
+        "a tool row should render for the list_files call:\n{screen}"
+    );
+}
+
+/// A failed tool call must render an error row and let the model
+/// continue — the agentic loop does not abort on a tool error.
+#[test]
+fn a_failing_tool_call_is_surfaced_and_the_turn_continues() {
+    let env = TestEnv::new_scripted(vec![
+        MockStep::ToolCall {
+            name: "read_file".to_string(),
+            arguments: serde_json::json!({ "path": "does/not/exist.txt" }).to_string(),
+        },
+        MockStep::Text("That file does not exist.".to_string()),
+    ]);
+    let session = env.spawn(100, 40);
+    harness::wait_for_ready(&session);
+
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("read a missing file");
+    session.send_key(KeyCode::Enter);
+
+    let screen = wait_ci(&session, "does not exist", Duration::from_secs(20));
+    assert!(
+        screen.to_lowercase().contains("read_file") || screen.to_lowercase().contains("error"),
+        "the failed tool call should leave a visible row:\n{screen}"
+    );
+}
+
+/// Two tool calls back to back in one turn: the script serves call,
+/// call, text. Both rows must render and the final text must arrive.
+#[test]
+fn two_tool_calls_in_one_turn_both_render() {
+    let env = TestEnv::new_scripted(vec![
+        MockStep::ToolCall {
+            name: "list_files".to_string(),
+            arguments: serde_json::json!({ "path": ".", "recursive": false }).to_string(),
+        },
+        MockStep::ToolCall {
+            name: "list_files".to_string(),
+            arguments: serde_json::json!({ "path": "src", "recursive": false }).to_string(),
+        },
+        MockStep::Text("Listed twice.".to_string()),
+    ]);
+    let session = env.spawn(100, 40);
+    harness::wait_for_ready(&session);
+
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("list twice");
+    session.send_key(KeyCode::Enter);
+
+    let screen = wait_ci(&session, "Listed twice", Duration::from_secs(20));
+    let hits = screen.matches("list_files").count();
+    assert!(
+        hits >= 2,
+        "two tool calls should produce at least two rows, found {hits}:\n{screen}"
+    );
+}
+
+/// A `write_file` tool call must actually run: the file exists after.
+#[test]
+fn a_write_file_tool_call_creates_the_file() {
+    let env = TestEnv::new_scripted(vec![
+        MockStep::ToolCall {
+            name: "write_file".to_string(),
+            arguments: serde_json::json!({
+                "path": "written.txt",
+                "content": "hello from the tool\n"
+            })
+            .to_string(),
+        },
+        MockStep::Text("Wrote the file.".to_string()),
+    ]);
+    let session = env.spawn(100, 40);
+    harness::wait_for_ready(&session);
+
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("write a file");
+    session.send_key(KeyCode::Enter);
+
+    wait_ci(&session, "Wrote the file", Duration::from_secs(20));
+    assert!(
+        env.workspace.join("written.txt").exists(),
+        "the write_file call must have created the file in the workspace",
+    );
+}
+
+/// `/retry` after a completed turn re-sends the last prompt; the mock
+/// answers the repeated last step, so a second reply appears.
+#[test]
+fn retry_after_a_turn_resends_the_prompt() {
+    let env = TestEnv::new_with_reply("First answer.");
+    let session = env.spawn(100, 40);
+    harness::wait_for_ready(&session);
+
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("hello");
+    session.send_key(KeyCode::Enter);
+    wait_ci(&session, "First answer", Duration::from_secs(20));
+
+    session.send_key(KeyCode::Esc);
+    session.send_key(KeyCode::Char('i'));
+    session.send_text("/retry");
+    session.send_key(KeyCode::Enter);
+    // `wait_ci("First answer")` would return at once — that text is
+    // already on screen from the first turn. Wait for the *second*
+    // occurrence by polling the count.
+    let start = std::time::Instant::now();
+    loop {
+        let text = session.screen_text();
+        let hits = text.matches("First answer").count();
+        if hits >= 2 {
+            break;
+        }
+        if start.elapsed() > Duration::from_secs(20) {
+            panic!("retry produced {hits} repl(ies), expected 2:\n{text}");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }

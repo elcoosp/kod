@@ -38,10 +38,35 @@ use tokio::sync::oneshot;
 /// Canned reply the mock sends for every completion request.
 pub const MOCK_REPLY: &str = "Hi from the mock";
 
+/// One scripted response the mock serves for a single request.
+///
+/// A real agentic turn is request/response/request: the model asks for
+/// a tool, the harness runs it, the model is called again with the
+/// result. A single fixed reply cannot drive that loop, so the mock
+/// serves a *script* — one step per incoming request, the last step
+/// repeated once the list is exhausted.
+#[derive(Clone)]
+pub enum MockStep {
+    /// Plain text, streamed as content deltas.
+    Text(String),
+    /// One tool call, streamed in the OpenAI `tool_calls` delta shape.
+    /// The harness then runs the tool and calls the model again; the
+    /// next step answers that call.
+    ToolCall {
+        name: String,
+        /// JSON string the model would emit as `function.arguments`.
+        arguments: String,
+    },
+}
+
 /// Per-request configuration shared by the router's handlers.
 #[derive(Clone)]
 struct AppState {
-    reply: String,
+    /// The script, consumed one step per `POST /v1/chat/completions`.
+    script: Arc<Vec<MockStep>>,
+    /// How many completion requests have been served. `fetch_add(1)`
+    /// picks the step; past the end, the last step repeats.
+    request_count: Arc<std::sync::atomic::AtomicUsize>,
     byte_by_byte: bool,
 }
 
@@ -56,6 +81,24 @@ pub struct MockServer {
     pub port: u16,
     _rt: tokio::runtime::Runtime,
     shutdown: Option<oneshot::Sender<()>>,
+}
+
+impl MockServer {
+    /// A server that serves `script`, one step per request, repeating
+    /// the last step once exhausted. The first call returns a tool
+    /// call, the second the text answer — the shape of an agentic
+    /// turn.
+    pub fn start_scripted(script: Vec<MockStep>) -> Self {
+        assert!(!script.is_empty(), "a script needs at least one step");
+        Self::start_inner(script, false)
+    }
+
+    /// Like [`Self::start_scripted`] but streams each text step one
+    /// character at a time.
+    pub fn start_scripted_char_by_char(script: Vec<MockStep>) -> Self {
+        assert!(!script.is_empty(), "a script needs at least one step");
+        Self::start_inner(script, true)
+    }
 }
 
 impl MockServer {
@@ -77,6 +120,12 @@ impl MockServer {
     }
 
     fn start_with(reply: &str, byte_by_byte: bool) -> Self {
+        // A single-step text script: the pre-scripted behaviour,
+        // expressed through the same machinery.
+        Self::start_inner(vec![MockStep::Text(reply.to_string())], byte_by_byte)
+    }
+
+    fn start_inner(script: Vec<MockStep>, byte_by_byte: bool) -> Self {
         // A multi-thread runtime with one worker so the server runs
         // on a background thread while the test thread drives the
         // PTY. A current-thread runtime would require the test
@@ -92,7 +141,8 @@ impl MockServer {
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
         let state = AppState {
-            reply: reply.to_string(),
+            script: Arc::new(script),
+            request_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             byte_by_byte,
         };
 
@@ -172,17 +222,102 @@ async fn models() -> axum::Json<serde_json::Value> {
 async fn chat_completions(
     State(state): State<Arc<AppState>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    eprintln!("mock: serving chat completion");
-    let events = sse_events(&state.reply, state.byte_by_byte);
+    let n = state
+        .request_count
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    // Past the end of the script, repeat the last step so a client
+    // that calls more times than the script expects still gets an
+    // answer rather than an empty stream.
+    let step_index = n.min(state.script.len() - 1);
+    let step = state.script[step_index].clone();
+    eprintln!("mock: serving chat completion #{n} (step {step_index})");
+
+    let events = match step {
+        MockStep::Text(t) => sse_text_events(&t, state.byte_by_byte),
+        MockStep::ToolCall { name, arguments } => {
+            // The call id must be unique per request: the TUI keys its
+            // tool rows by call id, so a fixed id makes two calls in
+            // one turn collapse into a single row.
+            sse_tool_call_events(&name, &arguments, n)
+        }
+    };
     let stream = stream::iter(events.into_iter().map(Ok::<_, Infallible>));
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// SSE events for a tool call.
+///
+/// The OpenAI wire shape the provider's adk parser expects: a
+/// `tool_calls` array in the delta, each entry carrying `index`, `id`,
+/// and a `function` with `name` and (possibly fragmented)
+/// `arguments`. The finish chunk carries `finish_reason: "tool_calls"`,
+/// which is what tells the parser to emit the accumulated call.
+fn sse_tool_call_events(name: &str, arguments: &str, call_seq: usize) -> Vec<Event> {
+    // First delta: id + name, empty arguments. Second: the arguments.
+    // Splitting them mirrors how real providers stream a call and
+    // exercises the accumulator's append path.
+    let start = serde_json::json!({
+        "id": "chatcmpl-mock",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": "mock-model",
+        "choices": [{
+            "index": 0,
+            "delta": {
+                "role": "assistant",
+                "tool_calls": [{
+                    "index": 0,
+                    "id": format!("call_mock_{call_seq}"),
+                    "type": "function",
+                    "function": { "name": name, "arguments": "" }
+                }]
+            },
+            "finish_reason": null,
+        }]
+    });
+
+    let args_delta = serde_json::json!({
+        "id": "chatcmpl-mock",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": "mock-model",
+        "choices": [{
+            "index": 0,
+            "delta": {
+                "tool_calls": [{
+                    "index": 0,
+                    "function": { "arguments": arguments }
+                }]
+            },
+            "finish_reason": null,
+        }]
+    });
+
+    let finish = serde_json::json!({
+        "id": "chatcmpl-mock",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": "mock-model",
+        "choices": [{
+            "index": 0,
+            "delta": {},
+            "finish_reason": "tool_calls",
+        }]
+    });
+
+    vec![
+        Event::default().data(serde_json::to_string(&start).expect("start json")),
+        Event::default().data(serde_json::to_string(&args_delta).expect("args json")),
+        Event::default().data(serde_json::to_string(&finish).expect("finish json")),
+        Event::default().data("[DONE]"),
+    ]
 }
 
 /// Build the SSE event list for `reply`.
 ///
 /// Owned `Event`s are returned rather than a borrowed stream, so the
 /// handler does not have to name a lifetime tied to `state.reply`.
-fn sse_events(reply: &str, byte_by_byte: bool) -> Vec<Event> {
+fn sse_text_events(reply: &str, byte_by_byte: bool) -> Vec<Event> {
     let mut events = Vec::with_capacity(reply.len() + 4);
 
     // Opening chunk: role only. The OpenAI spec includes `role` in

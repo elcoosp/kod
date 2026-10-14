@@ -88,6 +88,41 @@ impl TestEnv {
         Self::new_full(reply, true)
     }
 
+    /// A test env whose mock serves `script`, one step per request.
+    /// Use for agentic turns: a tool call, then a text answer.
+    pub fn new_scripted(script: Vec<super::mock_llm::MockStep>) -> Self {
+        Self::new_scripted_full(script, false)
+    }
+
+    fn new_scripted_full(script: Vec<super::mock_llm::MockStep>, byte_by_byte: bool) -> Self {
+        let temp = TempDir::new().expect("tempdir");
+        let config_dir = temp.path().join("config");
+        let state_dir = temp.path().join("state");
+        let workspace = temp.path().join("workspace");
+        let db_path = temp.path().join("kod.redb");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        std::fs::create_dir_all(&state_dir).expect("state dir");
+        std::fs::create_dir_all(&workspace).expect("workspace dir");
+        std::fs::write(workspace.join("main.rs"), "fn main() {}\n").expect("seed");
+
+        let mock = if byte_by_byte {
+            MockServer::start_scripted_char_by_char(script)
+        } else {
+            MockServer::start_scripted(script)
+        };
+
+        let env = TestEnv {
+            _temp: temp,
+            config_dir,
+            state_dir,
+            db_path,
+            workspace,
+            mock,
+        };
+        env.write_config();
+        env
+    }
+
     fn new_full(reply: &str, byte_by_byte: bool) -> Self {
         let temp = TempDir::new().expect("tempdir");
         let config_dir = temp.path().join("config");
