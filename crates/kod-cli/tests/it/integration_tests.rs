@@ -26,7 +26,13 @@ fn test_cli_help() {
 fn test_cli_version() {
     let env = TestEnvironment::new();
     let output = run_kod_command(&["--version"], &env.working_dir).unwrap();
-    assert!(output.contains("0.1.0"));
+    // Compare against the crate's own version rather than a literal:
+    // a hardcoded string goes stale on every bump (it did for 0.1.1).
+    assert!(
+        output.contains(env!("CARGO_PKG_VERSION")),
+        "expected version {} in: {output}",
+        env!("CARGO_PKG_VERSION"),
+    );
 }
 
 #[test]

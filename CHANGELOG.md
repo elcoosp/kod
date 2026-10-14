@@ -1,5 +1,69 @@
 # Changelog
 
+## [0.1.1] - 2026-10-14
+
+### Security
+
+- **The TUI installed no PolicyEngine.** `init_engine` read
+  `engine.policy()` for read-protection but never called
+  `set_policy`, so the engine's gate fell through to its
+  "no policy installed" arm — `Decision::Allow` for every call. The
+  `standard` preset's write-approval and deny rules did nothing in the
+  TUI. The CLI paths already installed one; the TUI stored `--preset`
+  and never read it. (0362d30)
+
+- **rustls 0.23.45 → 0.23.46**, clearing four advisories
+  (RUSTSEC-2026-0346..0349: TLS secret exposure via `Debug`, an ECH
+  buffered-data leak, a brotli decompression DoS, and a classical-KEX
+  downgrade). (e5a72db)
+
+### Fixed
+
+- **`/regenerate` looped forever.** `dispatch_prompt` records every
+  input as a user message before dispatching it — including slash
+  commands — so `drop_last_exchange` found and dropped the command's
+  own echo, then re-dispatched the same command. The process died.
+  `/delete` and `/refine` dropped the wrong message for the same
+  reason. (7c0cf9d)
+
+- **`/load` was unusable.** Its error message said "Use `/export
+  --json` to produce one", but no such flag existed and `/save` writes
+  markdown. `/export --json <path>` now writes the JSON `/load`
+  reads. (65520ce)
+
+### Cross-platform
+
+- The Linux and Windows release targets had **never compiled**: the
+  Linux sandbox referenced `libc::PR_SET_DUMPABLE` (absent from the
+  Linux libc crate) and omitted a struct field, and the daemon used
+  `tokio::net::UnixStream` directly, which does not exist on Windows.
+  A `transport` module now abstracts the IPC (Unix socket / Windows
+  named pipe), and the sandbox compiles on both. (bd2737a, abbc651)
+
+- Repo-map paths render with `/` on every platform, not `\` on
+  Windows. (0e308da)
+
+- A `compiled_glob` cache race: two callers that missed the read
+  cache both compiled and both inserted, so they held different
+  `Arc`s for the same pattern. (3a0eb3b)
+
+### Added
+
+- `/goal --budget N` and `--time 30m`. The budget fields existed and
+  the runtime accounted against them, but nothing ever set them, so
+  the steer could not fire.
+- `kod sessions revive <path>` — the cold-revive surface check
+  (`verify_cold_revive_surface`) had no caller.
+- One shared rule for "what is a skill file". Three callers disagreed:
+  the loader missed nested `SKILL.md` files, the doctor counted
+  resource files as skills.
+
+### Removed
+
+- 14 dead public methods on `Engine`/`TraceWriter`, with the trace
+  system's three silently-unpopulated fields (round kind, dispatch
+  parent, mental-model refresh) now wired.
+
 ## [0.1.0] - 2026-10-12
 
 
