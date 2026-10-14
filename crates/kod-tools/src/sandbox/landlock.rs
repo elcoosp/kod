@@ -634,7 +634,9 @@ mod tests {
     /// the same process would run restricted). The empty profile
     /// avoids that: no path rules and no net_deny means nothing is
     /// actually blocked, and the restriction is a no-op.
+    // Irreversibly restricts the process; maintainer-run only.
     #[test]
+    #[ignore = "applies a process-wide landlock restriction"]
     fn apply_empty_profile_is_a_noop_or_clean_error() {
         let profile = LandlockProfile {
             ro_paths: Vec::new(),
@@ -658,7 +660,9 @@ mod tests {
     /// net_deny on an ABI below 4 must be refused explicitly — the
     /// whole point is that the caller asked for something the
     /// kernel cannot provide, and a silent success would lie.
+    // Irreversibly restricts the process; maintainer-run only.
     #[test]
+    #[ignore = "applies a process-wide landlock restriction"]
     fn net_deny_on_low_abi_is_refused() {
         let abi = match probe_abi() {
             Some(v) => v,

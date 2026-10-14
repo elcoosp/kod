@@ -39,3 +39,12 @@ env = { "GIT_CONFIG_COUNT" = "3", "GIT_CONFIG_KEY_0" = "gc.auto", "GIT_CONFIG_VA
 [[profile.default.overrides]]
 filter = 'test(/clipboard/)'
 test-group = 'clipboard'
+
+# Per-test timeout. A single test hung for six hours on the Linux CI
+# runner (a landlock `apply` test that blocks after restricting the
+# process), consuming the whole job. nextest terminates a test that
+# exceeds `terminate-after` periods, so one bad test costs seconds,
+# not the job.
+[[profile.default.overrides]]
+filter = 'all()'
+slow-timeout = { period = "60s", terminate-after = 5 }
